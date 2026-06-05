@@ -1485,6 +1485,128 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
     return out;
 }
 
+// name_in reports whether `n` is one of `names`.
+function name_in(names: string[], n: string): boolean {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (names[i] == n) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// find_struct_sig returns the struct sig named `name`, or an empty-named
+// sentinel when there's no such struct.
+function find_struct_sig(structs: StructSig[], name: string): StructSig {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return structs[i]; }
+        i = i + 1;
+    }
+    var none: string[] = [];
+    var nonet: Type[] = [];
+    return StructSig { name: "", field_names: none, field_types: nonet };
+}
+
+// slit_diags recurses through an expression and emits E005 for every
+// non-update struct literal that omits a declared field. The struct table
+// is module-global, so this needs no scope — and recursing into field
+// values + lambda bodies catches nested literals. A literal whose type
+// isn't a known struct is skipped (a separate error / a variant
+// constructor), as is a struct-update `Name { ...base, … }` (partial
+// overrides are legal).
+function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
+    var out: Diag[] = [];
+    match (e) {
+        parser.ExprStructLit(sl) => {
+            var fv: i32 = 0;
+            while (fv < sl.field_values.len()) { out = append_diags(out, slit_diags(sl.field_values[fv], structs)); fv = fv + 1; }
+            if (sl.has_base) {
+                out = append_diags(out, slit_diags(sl.base, structs));
+            } else {
+                var ssig: StructSig = find_struct_sig(structs, sl.type_name);
+                if (ssig.name.len() > 0) {
+                    var d: i32 = 0;
+                    while (d < ssig.field_names.len()) {
+                        if (!name_in(sl.field_names, ssig.field_names[d])) {
+                            out = out.push(Diag { code: "E005", message: "struct literal missing field \"" + ssig.field_names[d] + "\"" });
+                        }
+                        d = d + 1;
+                    }
+                }
+            }
+        },
+        parser.ExprBinary(b) => {
+            out = append_diags(slit_diags(b.left, structs), slit_diags(b.right, structs));
+        },
+        parser.ExprUnary(u) => { out = slit_diags(u.operand, structs); },
+        parser.ExprCall(c) => {
+            out = slit_diags(c.callee, structs);
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = append_diags(out, slit_diags(c.args[i], structs)); i = i + 1; }
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, slit_diags(a.elements[i], structs)); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, slit_diags(t.elements[i], structs)); i = i + 1; }
+        },
+        parser.ExprIndex(ix) => {
+            out = append_diags(slit_diags(ix.array, structs), slit_diags(ix.index, structs));
+        },
+        parser.ExprSlice(s2) => {
+            out = append_diags(slit_diags(s2.array, structs), append_diags(slit_diags(s2.start, structs), slit_diags(s2.end, structs)));
+        },
+        parser.ExprFieldAccess(fa) => { out = slit_diags(fa.obj, structs); },
+        parser.ExprLambda(lm) => { out = stmts_slit_diags(lm.body, structs); },
+        _ => { }
+    }
+    return out;
+}
+
+// stmts_slit_diags walks a statement list (recursing into nested blocks
+// and lambda bodies via slit_diags) collecting the struct-literal E005s
+// from every expression it contains.
+function stmts_slit_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { out = append_diags(out, slit_diags(v.init, structs)); },
+            parser.StmtReturn(r) => { out = append_diags(out, slit_diags(r.value, structs)); },
+            parser.StmtExpr(x) => { out = append_diags(out, slit_diags(x.value, structs)); },
+            parser.StmtAssign(a) => { out = append_diags(out, slit_diags(a.value, structs)); },
+            parser.StmtIf(f) => {
+                out = append_diags(out, slit_diags(f.cond, structs));
+                out = append_diags(out, stmts_slit_diags(f.then_body, structs));
+                out = append_diags(out, stmts_slit_diags(f.else_body, structs));
+            },
+            parser.StmtWhile(w) => {
+                out = append_diags(out, slit_diags(w.cond, structs));
+                out = append_diags(out, stmts_slit_diags(w.body, structs));
+            },
+            parser.StmtFor(fr) => {
+                out = append_diags(out, slit_diags(fr.iter, structs));
+                out = append_diags(out, stmts_slit_diags(fr.body, structs));
+            },
+            parser.StmtMatch(m) => {
+                out = append_diags(out, slit_diags(m.scrutinee, structs));
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, stmts_slit_diags(m.arms[a].body, structs)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, stmts_slit_diags(one, structs));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // check_module is the new entry point for sources that declare
 // functions. Builds the sig table, walks each function body,
 // and (separately) type-checks top-level stmts in a scope that
@@ -1621,6 +1743,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
             var fsc: Scope = build_func_scope(mod.funcs[i], sigs, structs, unions, methods);
             body_diags = append_diags(body_diags, ret_diags(mod.funcs[i].body, fsc, fsc.ret_type, unions));
         }
+        // E005: struct literal missing a declared field (any expression in
+        // the body, struct table is module-global so no scope needed).
+        body_diags = append_diags(body_diags, stmts_slit_diags(mod.funcs[i].body, structs));
         i = i + 1;
     }
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
@@ -1633,6 +1758,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         top_tys = top_tys.push(r.ty);
         j = j + 1;
     }
+    body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));
     var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };

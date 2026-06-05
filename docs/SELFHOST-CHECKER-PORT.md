@@ -80,9 +80,17 @@ same code(s) the Go checker does — restricted to
   `type_assignable` predicate `check_stmt` already uses, so it fires
   exactly where the checker already flagged the function ill-typed (no new
   false positives) and only attaches the stable code. Remaining
-  type-mismatch codes — E003 (assignment), E004 (arity), E005 (struct
-  literal missing field), E038 (argument type) — follow in the next
-  slices via the same per-function diagnostic collection.
+  type-mismatch codes — E003 (assignment), E004 (arity), E038 (argument
+  type) — follow in the next slices via the same per-function diagnostic
+  collection.
+- **Slice 4 (done): struct literal missing field** (E005). `slit_diags` /
+  `stmts_slit_diags` recurse through every expression in a function body /
+  top-level statements (and into nested blocks + lambda bodies), and for
+  each non-update struct literal emit E005 for every declared field the
+  literal omits. The struct table is module-global, so this needs no
+  scope; struct-update literals (`Name { ...base, … }`) and
+  non-struct/variant type names are skipped (conservative — no false
+  positives).
 - **Slice 4: control-flow + conditions** (E008, E011, E012).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
