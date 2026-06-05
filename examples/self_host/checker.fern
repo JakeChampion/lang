@@ -1466,11 +1466,11 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
                     _ => { }
                 }
                 if (bare) {
-                    out = out.push(Diag { code: "E012", message: "return without value in function returning " + type_label(ret_ty) });
+                    out = out.push(dg("E012", "return without value in function returning " + type_label(ret_ty)));
                 } else {
                     var t: Type = check_expr(r.value, cur);
                     if (!is_unknown(t) && !type_assignable(t, ret_ty, unions)) {
-                        out = out.push(Diag { code: "E002", message: "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t) });
+                        out = out.push(dg("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t)));
                     }
                 }
             },
@@ -1541,7 +1541,7 @@ function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
                     var d: i32 = 0;
                     while (d < ssig.field_names.len()) {
                         if (!name_in(sl.field_names, ssig.field_names[d])) {
-                            out = out.push(Diag { code: "E005", message: "struct literal missing field \"" + ssig.field_names[d] + "\"" });
+                            out = out.push(dg("E005", "struct literal missing field \"" + ssig.field_names[d] + "\""));
                         }
                         d = d + 1;
                     }
@@ -1630,10 +1630,10 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtBreak(_) => {
-                if (!in_loop) { out = out.push(Diag { code: "E011", message: "break outside of a loop or switch" }); }
+                if (!in_loop) { out = out.push(dg("E011", "break outside of a loop or switch")); }
             },
             parser.StmtContinue(_) => {
-                if (!in_loop) { out = out.push(Diag { code: "E011", message: "continue outside of a loop" }); }
+                if (!in_loop) { out = out.push(dg("E011", "continue outside of a loop")); }
             },
             parser.StmtWhile(w) => { out = append_diags(out, loop_diags(w.body, true)); },
             parser.StmtFor(fr) => { out = append_diags(out, loop_diags(fr.body, true)); },
@@ -1711,7 +1711,7 @@ function type_arity_diag(t: string, structs: parser.StructDecl[]): Diag[] {
     if (nargs >= 0) {
         var tpc: i32 = struct_type_param_count(structs, type_base(t));
         if (tpc >= 0 && nargs != tpc) {
-            out = out.push(Diag { code: "E019", message: "struct " + type_base(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied" });
+            out = out.push(dg("E019", "struct " + type_base(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied"));
         }
     }
     return out;
@@ -1733,13 +1733,13 @@ function match_diags(stmts: parser.Stmt[]): Diag[] {
                     match (m.arms[a].pattern) {
                         parser.PatWildcard(_) => {
                             if (a < m.arms.len() - 1) {
-                                out = out.push(Diag { code: "E026", message: "wildcard `_` arm must be last in the match" });
+                                out = out.push(dg("E026", "wildcard `_` arm must be last in the match"));
                             }
                         },
                         parser.PatVariant(pv) => {
                             if (pv.type_name.len() > 0) {
                                 if (name_in(seen, pv.type_name)) {
-                                    out = out.push(Diag { code: "E028", message: "variant \"" + pv.type_name + "\" already covered earlier in this match" });
+                                    out = out.push(dg("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match"));
                                 } else {
                                     seen = seen.push(pv.type_name);
                                 }
@@ -1801,7 +1801,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (name_in(declared, v.name)) {
-                    out = out.push(Diag { code: "E013", message: "variable \"" + v.name + "\" already declared in this scope" });
+                    out = out.push(dg("E013", "variable \"" + v.name + "\" already declared in this scope"));
                 } else {
                     declared = declared.push(v.name);
                 }
@@ -1809,7 +1809,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
                     match (v.init) {
                         parser.ExprArray(arr) => {
                             if (arr.elements.len() == 0) {
-                                out = out.push(Diag { code: "E020", message: "empty array literal needs a type annotation" });
+                                out = out.push(dg("E020", "empty array literal needs a type annotation"));
                             }
                         },
                         _ => { }
@@ -1821,7 +1821,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
                     match (v.init) {
                         parser.ExprNumber(num) => {
                             if (!num.is_float && num.suffix.len() == 0 && !digits_fit_i32(num.text)) {
-                                out = out.push(Diag { code: "E047", message: "literal " + num.text + " does not fit in i32" });
+                                out = out.push(dg("E047", "literal " + num.text + " does not fit in i32"));
                             }
                         },
                         _ => { }
@@ -1852,7 +1852,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
 // itoa_nn renders a non-negative i32 as decimal (checker.fern has no
 // int→string, and diagnostic messages aren't part of the differential
 // gate, but a faithful count reads better).
-function itoa_nn(n: i32): string {
+pub function itoa_nn(n: i32): string {
     if (n == 0) { return "0"; }
     var digits: string = "0123456789";
     var s: string = "";
@@ -1892,7 +1892,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         var sig: FuncSig = s.lookup_sig(id.name);
                         if (sig.name.len() > 0) {
                             if (c.args.len() != sig.param_types.len()) {
-                                out = out.push(Diag { code: "E004", message: "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()) });
+                                out = out.push(dg("E004", "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len())));
                             } else {
                                 // E038: per-argument type mismatch (only when
                                 // the arity matches, so indices line up).
@@ -1900,7 +1900,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 while (ai < c.args.len()) {
                                     var at: Type = check_expr(c.args[ai], s);
                                     if (!is_unknown(at) && !type_assignable(at, sig.param_types[ai], s.unions)) {
-                                        out = out.push(Diag { code: "E038", message: "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at) });
+                                        out = out.push(dg("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at)));
                                     }
                                     ai = ai + 1;
                                 }
@@ -1917,11 +1917,11 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (b.op == "&&" || b.op == "||") {
                 var lt: Type = check_expr(b.left, s);
                 if (!is_unknown(lt) && !type_eq(lt, t_bool())) {
-                    out = out.push(Diag { code: "E009", message: "operator \"" + b.op + "\" requires boolean, got " + type_label(lt) });
+                    out = out.push(dg("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(lt)));
                 }
                 var rt: Type = check_expr(b.right, s);
                 if (!is_unknown(rt) && !type_eq(rt, t_bool())) {
-                    out = out.push(Diag { code: "E009", message: "operator \"" + b.op + "\" requires boolean, got " + type_label(rt) });
+                    out = out.push(dg("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(rt)));
                 }
             }
             // E041: `==` / `!=` require same-typed operands (the same rule
@@ -1931,7 +1931,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var elt: Type = check_expr(b.left, s);
                 var ert: Type = check_expr(b.right, s);
                 if (!is_unknown(elt) && !is_unknown(ert) && !type_eq(elt, ert)) {
-                    out = out.push(Diag { code: "E041", message: "cannot compare " + type_label(elt) + " and " + type_label(ert) });
+                    out = out.push(dg("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert)));
                 }
             }
             // E009: `+` is overloaded — both string (concat), both i32, or
@@ -1947,7 +1947,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var oki2: boolean = type_eq(pl, t_i32()) && type_eq(pr, t_i32());
                     var okf2: boolean = type_eq(pl, t_float()) && type_eq(pr, t_float());
                     if (!oks && !oki2 && !okf2) {
-                        out = out.push(Diag { code: "E009", message: "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr) });
+                        out = out.push(dg("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr)));
                     }
                 }
             }
@@ -1958,7 +1958,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var oki: boolean = type_eq(alt, t_i32()) && type_eq(art, t_i32());
                     var okf: boolean = b.op != "%" && type_eq(alt, t_float()) && type_eq(art, t_float());
                     if (!oki && !okf) {
-                        out = out.push(Diag { code: "E009", message: "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art) });
+                        out = out.push(dg("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art)));
                     }
                 }
             }
@@ -1969,7 +1969,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (u.op == "!") {
                 var ot: Type = check_expr(u.operand, s);
                 if (!is_unknown(ot) && !type_eq(ot, t_bool())) {
-                    out = out.push(Diag { code: "E009", message: "operator \"!\" requires boolean, got " + type_label(ot) });
+                    out = out.push(dg("E009", "operator \"!\" requires boolean, got " + type_label(ot)));
                 }
             }
         },
@@ -1988,11 +1988,11 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // (`s[:]`, `s[a:]`) parses to an unknown placeholder — skip it.
             var sbt: Type = check_expr(s2.start, s);
             if (!is_unknown(sbt) && !type_eq(sbt, t_i32())) {
-                out = out.push(Diag { code: "E037", message: "slice low bound must be i32, got " + type_label(sbt) });
+                out = out.push(dg("E037", "slice low bound must be i32, got " + type_label(sbt)));
             }
             var ebt: Type = check_expr(s2.end, s);
             if (!is_unknown(ebt) && !type_eq(ebt, t_i32())) {
-                out = out.push(Diag { code: "E037", message: "slice high bound must be i32, got " + type_label(ebt) });
+                out = out.push(dg("E037", "slice high bound must be i32, got " + type_label(ebt)));
             }
         },
         parser.ExprFieldAccess(fa) => {
@@ -2008,16 +2008,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     if (fsig.name.len() > 0
                             && !name_in(fsig.field_names, fa.field)
                             && s.lookup_method(fa.field, sn.name).name.len() == 0) {
-                        out = out.push(Diag { code: "E043", message: "struct " + sn.name + " has no field \"" + fa.field + "\"" });
+                        out = out.push(dg("E043", "struct " + sn.name + " has no field \"" + fa.field + "\""));
                     }
                 },
                 TypeTuple(tt) => {
                     // E046: a tuple field must be a numeric index in range.
                     var idx: i32 = digit_string_to_i32(fa.field);
                     if (idx < 0) {
-                        out = out.push(Diag { code: "E046", message: "tuple field access requires a numeric index, got \"" + fa.field + "\"" });
+                        out = out.push(dg("E046", "tuple field access requires a numeric index, got \"" + fa.field + "\""));
                     } else if (idx >= tt.elements.len()) {
-                        out = out.push(Diag { code: "E046", message: "tuple has " + itoa_nn(tt.elements.len()) + " elements; index " + itoa_nn(idx) + " is out of range" });
+                        out = out.push(dg("E046", "tuple has " + itoa_nn(tt.elements.len()) + " elements; index " + itoa_nn(idx) + " is out of range"));
                     }
                 },
                 _ => { }
@@ -2113,7 +2113,7 @@ function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): Diag[] {
     match (e) {
         parser.ExprIdent(id) => {
             if (name_in(ambig, id.name) && is_unknown(s.lookup(id.name))) {
-                out = out.push(Diag { code: "E036", message: "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference" });
+                out = out.push(dg("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference"));
             }
         },
         parser.ExprBinary(b) => { out = append_diags(vref_expr(b.left, s, ambig), vref_expr(b.right, s, ambig)); },
@@ -2208,7 +2208,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                     var declared: Type = type_from_name_with_structs_unions(v.type_name, cur.structs, cur.unions);
                     var initt: Type = check_expr(v.init, cur);
                     if (!is_unknown(declared) && !is_unknown(initt) && !type_assignable(initt, declared, unions)) {
-                        out = out.push(Diag { code: "E003", message: "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) });
+                        out = out.push(dg("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared)));
                     }
                 }
             },
@@ -2216,13 +2216,13 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                 var tt: Type = cur.lookup(a.target);
                 var vt: Type = check_expr(a.value, cur);
                 if (!is_unknown(tt) && !is_unknown(vt) && !type_assignable(vt, tt, unions)) {
-                    out = out.push(Diag { code: "E003", message: "cannot assign " + type_label(vt) + " to " + type_label(tt) });
+                    out = out.push(dg("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt)));
                 }
             },
             parser.StmtIf(f) => {
                 var ic: Type = check_expr(f.cond, cur);
                 if (!is_unknown(ic) && !type_eq(ic, t_bool())) {
-                    out = out.push(Diag { code: "E008", message: "if condition must be boolean, got " + type_label(ic) });
+                    out = out.push(dg("E008", "if condition must be boolean, got " + type_label(ic)));
                 }
                 out = append_diags(out, stmts_assign_diags(f.then_body, cur, unions));
                 out = append_diags(out, stmts_assign_diags(f.else_body, cur, unions));
@@ -2230,7 +2230,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
             parser.StmtWhile(w) => {
                 var wc: Type = check_expr(w.cond, cur);
                 if (!is_unknown(wc) && !type_eq(wc, t_bool())) {
-                    out = out.push(Diag { code: "E008", message: "while condition must be boolean, got " + type_label(wc) });
+                    out = out.push(dg("E008", "while condition must be boolean, got " + type_label(wc)));
                 }
                 out = append_diags(out, stmts_assign_diags(w.body, cur, unions));
             },
@@ -2259,13 +2259,23 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
 pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boolean, diags: Diag[] }
 
 // Diag is a coded diagnostic — the stable `E0XX` code (matching the Go
-// checker's `internal/checker` codes, so the two can be differentially
-// gated) plus a human message. Positions are not yet threaded through the
-// AST (tokens carry line/col, the parser drops them), so a Diag is
-// message-only for now — the first parity milestone is matching the SET of
-// codes a program triggers; spans follow once positions reach the AST.
-// See docs/SELFHOST-CHECKER-PORT.md.
-pub struct Diag { code: string, message: string }
+// checker's `internal/checker` codes) plus a human message and an
+// optional 1-based source position (line/col, 0 when no position is
+// available yet). Positions are being threaded through the AST node by
+// node; a diagnostic emitted from a node that already carries a position
+// renders `line:col: error[E0XX]: …` like the Go checker, the rest still
+// render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md.
+pub struct Diag { code: string, message: string, line: i32, col: i32 }
+
+// dg builds a position-less diagnostic; dg_at attaches a 1-based source
+// position. Most emitters use dg today and migrate to dg_at as their AST
+// node gains a position.
+function dg(code: string, message: string): Diag {
+    return Diag { code: code, message: message, line: 0, col: 0 };
+}
+function dg_at(code: string, message: string, line: i32, col: i32): Diag {
+    return Diag { code: code, message: message, line: line, col: col };
+}
 
 // dup_name_before reports whether names[idx] already appears at a lower
 // index — the duplicate test shared by the declaration-level rules.
@@ -2295,7 +2305,7 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         var fk: i32 = 0;
         while (fk < fnames.len()) {
             if (dup_name_before(fnames, fk)) {
-                out = out.push(Diag { code: "E007", message: "duplicate field \"" + fnames[fk] + "\" in struct " + sd.name });
+                out = out.push(dg("E007", "duplicate field \"" + fnames[fk] + "\" in struct " + sd.name));
             }
             fk = fk + 1;
         }
@@ -2311,7 +2321,7 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         var pk: i32 = 0;
         while (pk < pnames.len()) {
             if (dup_name_before(pnames, pk)) {
-                out = out.push(Diag { code: "E018", message: "duplicate parameter \"" + pnames[pk] + "\"" });
+                out = out.push(dg("E018", "duplicate parameter \"" + pnames[pk] + "\""));
             }
             pk = pk + 1;
         }
@@ -2342,9 +2352,9 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         if (earlier) {
             if (f2.receiver_name.len() == 0) {
-                out = out.push(Diag { code: "E006", message: "function \"" + f2.name + "\" redeclared" });
+                out = out.push(dg("E006", "function \"" + f2.name + "\" redeclared"));
             } else {
-                out = out.push(Diag { code: "E006", message: "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared" });
+                out = out.push(dg("E006", "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared"));
             }
         }
         di = di + 1;
@@ -2362,13 +2372,13 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
             ej2 = ej2 + 1;
         }
         if (edup) {
-            out = out.push(Diag { code: "E006", message: "enum \"" + mod.enums[en].name + "\" redeclared" });
+            out = out.push(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
         }
         var vn: string[] = mod.enums[en].variant_names;
         var vk: i32 = 0;
         while (vk < vn.len()) {
             if (dup_name_before(vn, vk)) {
-                out = out.push(Diag { code: "E017", message: "duplicate variant \"" + vn[vk] + "\" in enum " + mod.enums[en].name });
+                out = out.push(dg_at("E017", "duplicate variant \"" + vn[vk] + "\" in enum " + mod.enums[en].name, mod.enums[en].line, mod.enums[en].col));
             }
             vk = vk + 1;
         }
