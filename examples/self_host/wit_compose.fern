@@ -1,0 +1,32 @@
+// examples/self_host/wit_compose.fern — the self-host world-driven component
+// composer (docs/WIT-BRING-YOUR-OWN.md, P2/P3). Given a decoded world's
+// type-section body and a user core module, it derives the imports the core
+// uses, classifies each against the world, emits the full world import prefix,
+// and wires the suffix — producing a wasi:cli/run component scoped to that
+// world. The world's type-body may come from the embedded fern world or a
+// user-supplied WIT (bring-your-own); the path is identical.
+//
+// Depends on wit_decode.fern (decode / classify / emit / layout / core-import
+// parsing) and wat_component.fern (component_suffix / comp_core_module_section
+// / component_preamble / wcat); the compose driver concatenates both.
+
+function component_from_world(tbody: i32[], core: i32[]): i32[] {
+    var ci: WitCoreImports = wit_core_func_imports(core);
+    var n: i32 = ci.ifaces.len();
+    var kinds: i32[] = [];
+    var insts: i32[] = [];
+    var rts: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        kinds = kinds.push(wit_classify(tbody, ci.ifaces[i], ci.names[i]));
+        insts = insts.push(wit_import_instance_index(tbody, ci.ifaces[i]));
+        rts = rts.push(0);
+        i = i + 1;
+    }
+    var pl: WitPrefixLayout = wit_prefix_layout(tbody);
+    var suffix: i32[] = component_suffix(ci.ifaces, ci.names, kinds, insts, ci.params, rts, pl.types, pl.instances, 0, "_lang_run");
+    var o: i32[] = component_preamble();
+    o = wcat(o, wit_emit_world_imports(tbody));
+    o = wcat(o, comp_core_module_section(core));
+    return wcat(o, suffix);
+}
