@@ -888,6 +888,32 @@ func TestPubBeforeUnsupportedKindIsError(t *testing.T) {
 	}
 }
 
+// TestDecimalLiteralOverflowIsError — a decimal literal exceeding the
+// 64-bit range must be reported, not silently wrapped two's-complement.
+// The old hand-rolled `n = n*10 + digit` overflowed without a
+// diagnostic, and the wrapped value (which happened to fit i64) slipped
+// past the checker's range check. Regression for F3 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestDecimalLiteralOverflowIsError(t *testing.T) {
+	_, err := Parse(`function main(): i64 { return 99999999999999999999999999; }`)
+	if err == nil {
+		t.Fatal("expected parse error for out-of-range decimal literal")
+	}
+	if !strings.Contains(err.Error(), "integer literal") {
+		t.Errorf("error should mention the integer literal; got %v", err)
+	}
+}
+
+// TestLargeU64DecimalLiteralParses — a decimal literal above i64 max but
+// within u64 range is still accepted via the unsigned fallback (u64 max
+// = 18446744073709551615). Guards that the overflow check didn't reject
+// legitimate large unsigned literals.
+func TestLargeU64DecimalLiteralParses(t *testing.T) {
+	if _, err := Parse(`function main(): u64 { return 18446744073709551615u64; }`); err != nil {
+		t.Fatalf("u64-max literal should parse: %v", err)
+	}
+}
+
 // Top-level `const NAME[: T] = expr;` parses into a ConstDecl on
 // the program. Type annotations and the `pub` prefix are both
 // optional.
