@@ -1797,6 +1797,23 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// the `for` type with a matching signature. We also enforce the
 	// orphan rule (the impl's module must declare the trait or the
 	// type) and reject duplicate `(Trait, Type)` impls. See docs/TRAITS.md.
+	//
+	// Per-(hoisted method) `own` flags, read straight off the FuncDecl params
+	// since c.ownFuncs / info.OwnFuncs aren't built until after this pass. The
+	// receiver-hoist above already merged each method's receiver into Params[0],
+	// so index 0 is `self`.
+	methodOwns := map[string][]bool{}
+	for _, fn := range prog.Funcs {
+		flags := make([]bool, len(fn.Params))
+		any := false
+		for i, p := range fn.Params {
+			flags[i] = p.Own
+			any = any || p.Own
+		}
+		if any {
+			methodOwns[fn.Name] = flags
+		}
+	}
 	for _, impl := range prog.Impls {
 		typeName, ok := methodTypeName(impl.Type)
 		if !ok {
@@ -1860,15 +1877,49 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// up with the hoisted method's prepended receiver.
 			want := make([]ast.Type, len(m.Params))
 			for i, p := range m.Params {
-				want[i] = ast.SubstSelf(p.Type, impl.Type)
+				want[i] = c.normalizeEnumKinds(ast.SubstSelf(p.Type, impl.Type))
 			}
-			wantRet := ast.SubstSelf(m.Result, impl.Type)
-			if !sigMatches(sig, want, wantRet) {
+			wantRet := c.normalizeEnumKinds(ast.SubstSelf(m.Result, impl.Type))
+			// Normalize the impl side to the same nominal kinds. The parser
+			// defaults every bare type name to StructType (no symbol table), so a
+			// trait signature naming an enum — `Self` on an enum impl, or a
+			// literal `E` return — arrives as StructType(E) while the impl
+			// method's real signature carries EnumType(E); without reconciling the
+			// kinds, sigMatches saw a spurious mismatch (the E021 "expected
+			// (E)=>E, got (E)=>E" that blocked every enum-returning trait method).
+			gotSig := &ast.FuncType{Params: make([]ast.Type, len(sig.Params)), Result: c.normalizeEnumKinds(sig.Result)}
+			for i, pt := range sig.Params {
+				gotSig.Params[i] = c.normalizeEnumKinds(pt)
+			}
+			if !sigMatches(gotSig, want, wantRet) {
 				c.errfCode(impl.P, "E021",
 					"%s.%s has the wrong signature for trait %s: expected %s, got %s",
 					demangle(typeName), m.Name, demangle(impl.Trait),
-					(&ast.FuncType{Params: want, Result: wantRet}).String(), sig.String())
+					(&ast.FuncType{Params: want, Result: wantRet}).String(), gotSig.String())
 				conforms = false
+			}
+			// Ownership (`own`) is part of the trait contract. A generic call
+			// `x.m()` through a `T: Trait` bound transfers (or borrows) each
+			// argument based on the TRAIT's declared own-ness — so an impl whose
+			// ownership disagrees would make that call double-free (impl consumes
+			// where the trait borrows) or leak / move-after-use (the trait
+			// consumes where the impl borrows). Require them to match
+			// position-by-position; the impl's flags live in OwnFuncs (absent ==
+			// all-borrowed).
+			implOwns := methodOwns[mangled]
+			for i, p := range m.Params {
+				implOwn := i < len(implOwns) && implOwns[i]
+				if p.Own != implOwn {
+					verb := "must take `own` on"
+					if !p.Own {
+						verb = "must not take `own` on"
+					}
+					c.errfCode(impl.P, "E021",
+						"%s.%s %s parameter %q to match trait %s",
+						demangle(typeName), m.Name, verb, p.Name, demangle(impl.Trait))
+					conforms = false
+					break
+				}
 			}
 		}
 		if conforms {
@@ -2230,6 +2281,44 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 	n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: dt}
 	n.DynTrait = dt.Trait
 	return ast.SubstSelf(tm.Result, dt)
+}
+
+// normalizeEnumKinds rewrites a type so every nominal reference to an enum is an
+// ast.EnumType, recursively. The parser defaults any bare type name to
+// ast.StructType (it has no symbol table), so a name that is actually an enum
+// arrives as StructType — which then mismatches the same enum spelled EnumType
+// elsewhere. Applied to both sides of trait-conformance comparison so the kinds
+// line up; idempotent on already-correct types and a no-op when the name is a
+// real struct / generic / builtin.
+func (c *checker) normalizeEnumKinds(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.StructType:
+		args := make([]ast.Type, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = c.normalizeEnumKinds(a)
+		}
+		if _, isEnum := c.info.Enums[x.Name]; isEnum {
+			return ast.EnumType{Name: x.Name, Args: args}
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		args := make([]ast.Type, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = c.normalizeEnumKinds(a)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.normalizeEnumKinds(x.Elem)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.normalizeEnumKinds(x.Elem)}
+	case ast.TupleType:
+		els := make([]ast.Type, len(x.Elems))
+		for i, e := range x.Elems {
+			els[i] = c.normalizeEnumKinds(e)
+		}
+		return ast.TupleType{Elems: els}
+	}
+	return t
 }
 
 // sigMatches reports whether the registered method signature sig has
