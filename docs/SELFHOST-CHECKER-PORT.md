@@ -67,11 +67,10 @@ same code(s) the Go checker does — restricted to
 - **Slice 2 (done): function / method redeclaration** — E006 for a
   free function (same name, both receiver-less) and a method (same name +
   receiver type), flagging the redeclaration site like the Go checker.
-  Struct / enum redeclaration (E006) and duplicate variants (E017) are
-  deferred: the parser desugars enums into variant structs and drops the
-  enum name, so a `mod.structs` entry can't be told apart from a variant
-  — that grouping must be recovered first. Duplicate var in scope (E013)
-  and reserved-name (E010) also remain.
+  Enum redeclaration (E006) and duplicate variants (E017) were deferred
+  here (the enum→variant grouping is dropped at parse) and later landed in
+  slice 20 once that grouping was restored. Struct redeclaration (E006-
+  struct) and reserved-name (E010) remain.
 - **Slice 3 (in progress): return-type mismatch** (E002). `ret_diags`
   walks each function body — recursing through if / while / for / match /
   defer sub-bodies and threading scope so a return sees locals declared
@@ -185,9 +184,21 @@ same code(s) the Go checker does — restricted to
   the decimal digit string against "2147483647" (length, then char-by-char
   at 10 digits). Scoped to `i32`-annotated vars (other integer widths /
   contexts are under-reported — safe).
-- **Later: pattern matching** (E014/E025/E036), traits (E021), maps
-  (E045), owned-parameter move checking (E050/E051), then source
-  positions, then wiring the self-host checker in as the gate.
+- **Slice 20 (done): enum→variant grouping + enum declaration codes**
+  (E006-enum, E017). The parser desugars enums into variant structs and
+  dropped the enum name, so the checker couldn't tell a variant from a
+  struct. This adds an `enums: EnumDecl[]` field to `Module`
+  (`EnumDecl { name, variant_names }`), populated at parse and threaded
+  through `flatten`'s bundle/merge — additive, and codegen ignores it, so
+  the byte-identical fixpoint holds (verified x86 + arm64). With the
+  grouping, `collect_decl_diags` emits E006 for a redeclared enum and E017
+  for a duplicate variant within an enum — closing the deferral from
+  slice 2. This grouping is also the prerequisite for the remaining
+  match/variant codes (E014/E023/E036).
+- **Later: pattern matching** (E014/E023/E036, now unblocked by the
+  grouping), traits (E021), maps (E045), owned-parameter move checking
+  (E050/E051), then source positions, then wiring the self-host checker
+  in as the gate.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

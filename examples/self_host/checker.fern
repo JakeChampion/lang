@@ -2128,6 +2128,31 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         di = di + 1;
     }
+    // E006: enum redeclared, and E017: duplicate variant within an enum.
+    // These need the enum -> variants grouping the parser preserves in
+    // mod.enums (the flat struct table can't tell a variant from a
+    // struct).
+    var en: i32 = 0;
+    while (en < mod.enums.len()) {
+        var edup: boolean = false;
+        var ej2: i32 = 0;
+        while (ej2 < en) {
+            if (mod.enums[ej2].name == mod.enums[en].name) { edup = true; }
+            ej2 = ej2 + 1;
+        }
+        if (edup) {
+            out = out.push(Diag { code: "E006", message: "enum \"" + mod.enums[en].name + "\" redeclared" });
+        }
+        var vn: string[] = mod.enums[en].variant_names;
+        var vk: i32 = 0;
+        while (vk < vn.len()) {
+            if (dup_name_before(vn, vk)) {
+                out = out.push(Diag { code: "E017", message: "duplicate variant \"" + vn[vk] + "\" in enum " + mod.enums[en].name });
+            }
+            vk = vk + 1;
+        }
+        en = en + 1;
+    }
     return out;
 }
 
