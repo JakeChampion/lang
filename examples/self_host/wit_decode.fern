@@ -431,3 +431,204 @@ function wit_encode_func(out: i32[], f: WitFunc): i32[] {
     }
     return out;
 }
+
+// ---- slice 3: component/instance types + decls + the full round-trip ------
+//
+// The outer structure (component 0x41 / instance 0x42 types, their decls —
+// type / alias / import / export — externdescs and aliases) is transcoded:
+// every byte is parsed and re-emitted through the same encoders, with the
+// value-type leaves going through slice 2's decode/encode. A structural
+// mis-parse desyncs the cursor and changes the output, so round-tripping the
+// whole fern.bin / http.bin type + export sections is a strong oracle —
+// matching the Go decoder's World round-trip, but in the self-host.
+
+struct TxR { next: i32, out: i32[] }
+
+// wit_tx_typedef transcodes one type definition at pos.
+function wit_tx_typedef(buf: i32[], pos: i32, out: i32[]): TxR {
+    var tag: i32 = buf[pos];
+    if (tag == 65 || tag == 66) {
+        out = out.push(tag);
+        var p: i32 = pos + 1;
+        var rc: UlebRead = wit_read_uleb(buf, p);
+        var count: i32 = rc.value;
+        p = rc.next;
+        out = leb_u32(out, count);
+        var i: i32 = 0;
+        while (i < count) {
+            var t: TxR = wit_tx_decl(buf, p, out);
+            p = t.next;
+            out = t.out;
+            i = i + 1;
+        }
+        return TxR { next: p, out: out };
+    } else if (tag == 64) {
+        var fr: WitFuncR = wit_decode_func(buf, pos);
+        out = wit_encode_func(out, fr.fn);
+        return TxR { next: fr.next, out: out };
+    } else if (tag >= 104 && tag <= 114) {
+        var dr: WitDefR = wit_decode_def(buf, pos);
+        out = wit_encode_def(out, dr.def);
+        return TxR { next: dr.next, out: out };
+    } else {
+        out = out.push(tag);
+        return TxR { next: pos + 1, out: out };
+    }
+}
+
+// wit_tx_decl transcodes one declaration inside a component/instance type.
+function wit_tx_decl(buf: i32[], pos: i32, out: i32[]): TxR {
+    var kind: i32 = buf[pos];
+    out = out.push(kind);
+    var p: i32 = pos + 1;
+    if (kind == 1) {
+        return wit_tx_typedef(buf, p, out);
+    } else if (kind == 2) {
+        return wit_tx_alias(buf, p, out);
+    } else if (kind == 3 || kind == 4) {
+        var ne: TxR = wit_tx_externname(buf, p, out);
+        p = ne.next;
+        out = ne.out;
+        return wit_tx_externdesc(buf, p, out);
+    }
+    return TxR { next: p, out: out };
+}
+
+// wit_tx_externname transcodes a label-kind name (0x00 + uleb-len + bytes).
+function wit_tx_externname(buf: i32[], pos: i32, out: i32[]): TxR {
+    out = out.push(buf[pos]);
+    var nr: NameR = wit_read_name(buf, pos + 1);
+    out = wit_append_name(out, nr.s);
+    return TxR { next: nr.next, out: out };
+}
+
+// wit_tx_externdesc transcodes an import/export externdesc.
+function wit_tx_externdesc(buf: i32[], pos: i32, out: i32[]): TxR {
+    var kind: i32 = buf[pos];
+    out = out.push(kind);
+    var p: i32 = pos + 1;
+    if (kind == 1 || kind == 4 || kind == 5) {
+        var r: UlebRead = wit_read_uleb(buf, p);
+        out = leb_u32(out, r.value);
+        p = r.next;
+    } else if (kind == 2) {
+        var sr: SlebR = wit_read_sleb(buf, p);
+        out = leb_i32(out, sr.value);
+        p = sr.next;
+    } else if (kind == 3) {
+        var bound: i32 = buf[p];
+        out = out.push(bound);
+        p = p + 1;
+        if (bound == 0) {
+            var r2: UlebRead = wit_read_uleb(buf, p);
+            out = leb_u32(out, r2.value);
+            p = r2.next;
+        }
+    } else if (kind == 0) {
+        out = out.push(buf[p]);
+        p = p + 1;
+        var r3: UlebRead = wit_read_uleb(buf, p);
+        out = leb_u32(out, r3.value);
+        p = r3.next;
+    }
+    return TxR { next: p, out: out };
+}
+
+// wit_tx_alias transcodes an alias declaration.
+function wit_tx_alias(buf: i32[], pos: i32, out: i32[]): TxR {
+    var sort: i32 = buf[pos];
+    out = out.push(sort);
+    var p: i32 = pos + 1;
+    if (sort == 0) {
+        out = out.push(buf[p]);
+        p = p + 1;
+    }
+    var target: i32 = buf[p];
+    out = out.push(target);
+    p = p + 1;
+    if (target == 0 || target == 1) {
+        var r: UlebRead = wit_read_uleb(buf, p);
+        out = leb_u32(out, r.value);
+        p = r.next;
+        var nr: NameR = wit_read_name(buf, p);
+        out = wit_append_name(out, nr.s);
+        p = nr.next;
+    } else if (target == 2) {
+        var r2: UlebRead = wit_read_uleb(buf, p);
+        out = leb_u32(out, r2.value);
+        p = r2.next;
+        var r3: UlebRead = wit_read_uleb(buf, p);
+        out = leb_u32(out, r3.value);
+        p = r3.next;
+    }
+    return TxR { next: p, out: out };
+}
+
+// wit_transcode_type_section round-trips a component type section body.
+function wit_transcode_type_section(buf: i32[]): i32[] {
+    var out: i32[] = [];
+    var rc: UlebRead = wit_read_uleb(buf, 0);
+    out = leb_u32(out, rc.value);
+    var p: i32 = rc.next;
+    var i: i32 = 0;
+    while (i < rc.value) {
+        var t: TxR = wit_tx_typedef(buf, p, out);
+        p = t.next;
+        out = t.out;
+        i = i + 1;
+    }
+    return out;
+}
+
+// wit_transcode_export_section round-trips a component export section body.
+function wit_transcode_export_section(buf: i32[]): i32[] {
+    var out: i32[] = [];
+    var rc: UlebRead = wit_read_uleb(buf, 0);
+    out = leb_u32(out, rc.value);
+    var p: i32 = rc.next;
+    var i: i32 = 0;
+    while (i < rc.value) {
+        var ne: TxR = wit_tx_externname(buf, p, out);
+        p = ne.next;
+        out = ne.out;
+        out = out.push(buf[p]);
+        p = p + 1;
+        var r: UlebRead = wit_read_uleb(buf, p);
+        out = leb_u32(out, r.value);
+        p = r.next;
+        var has: i32 = buf[p];
+        out = out.push(has);
+        p = p + 1;
+        if (has == 1) {
+            var de: TxR = wit_tx_externdesc(buf, p, out);
+            p = de.next;
+            out = de.out;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// wit_section_body returns the body of the first section with id want_id.
+function wit_section_body(payload: i32[], want_id: i32): i32[] {
+    var pos: i32 = 8;
+    var found: i32[] = [];
+    var done: boolean = false;
+    while (pos < payload.len() && !done) {
+        var id: i32 = payload[pos];
+        pos = pos + 1;
+        var r: UlebRead = wit_read_uleb(payload, pos);
+        var size: i32 = r.value;
+        pos = r.next;
+        if (id == want_id) {
+            var j: i32 = 0;
+            while (j < size) {
+                found = found.push(payload[pos + j]);
+                j = j + 1;
+            }
+            done = true;
+        }
+        pos = pos + size;
+    }
+    return found;
+}
