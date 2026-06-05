@@ -1735,6 +1735,28 @@ function field_type_tag(field: string, s: EmitState): string {
     return "unknown";
 }
 
+// struct_local_tag types a receiver / parameter local by its struct NAME
+// when the declared type is a plain struct name, so a later `local.field`
+// read resolves the field WITHIN that struct (field_type_tag_in) rather
+// than first-match-scanning every struct — the distinction that lets two
+// monomorphised clones (`Box__i32` / `Box__string`) with a shared field
+// name dispatch `self.v.to_string()` to the right helper. A bracketed
+// type (`FuncDecl[]`, `Map[K, V]`, `Option[i32]`) keeps its coarse
+// ret_tag_of tag — structifying it would mis-type arrays/maps/options.
+function struct_local_tag(type_name: string, s: EmitState): string {
+    var bi: i32 = 0;
+    while (bi < type_name.len()) {
+        if (type_name[bi] == 91) { return ret_tag_of(type_name); }
+        bi = bi + 1;
+    }
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == type_name) { return type_name; }
+        di = di + 1;
+    }
+    return ret_tag_of(type_name);
+}
+
 function infer_expr_type(e: parser.Expr, s: EmitState): string {
     match (e) {
         parser.ExprNumber(n) => { if (n.is_float) { return "f64"; } return "i32"; },
@@ -6131,7 +6153,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     // +32, +48, … (caller pushed args right-to-left then the
     // receiver, so receiver is closest to the saved fp).
     if (has_recv) {
-        s = s.bind_local_typed(fd.receiver_name, ret_tag_of(fd.receiver_type));
+        s = s.bind_local_typed(fd.receiver_name, struct_local_tag(fd.receiver_type, s));
         var recv_off: i32 = s.lookup_local(fd.receiver_name);
         s = s.write("    ldr x0, [x29, #16]   // recv " + fd.receiver_name + "\n");
         s = s.frame_str("x0", recv_off);
@@ -6141,7 +6163,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     var n_params: i32 = fd.params.len();
     var i: i32 = 0;
     while (i < n_params) {
-        s = s.bind_local_typed(fd.params[i].name, ret_tag_of(fd.params[i].type_name));
+        s = s.bind_local_typed(fd.params[i].name, struct_local_tag(fd.params[i].type_name, s));
         var local_off: i32 = s.lookup_local(fd.params[i].name);
         var arg_off: i32 = 16 + (i + recv_shift) * 16;
         s = s.frame_ldr("x0", arg_off);
@@ -6343,11 +6365,11 @@ function check_func(fd: parser.FuncDecl, s: EmitState): string {
     var want: string = ret_tag_of(fd.ret_type);
     var s2: EmitState = s.reset_locals();
     if (fd.receiver_type.len() > 0) {
-        s2 = s2.bind_local_typed(fd.receiver_name, ret_tag_of(fd.receiver_type));
+        s2 = s2.bind_local_typed(fd.receiver_name, struct_local_tag(fd.receiver_type, s2));
     }
     var pi: i32 = 0;
     while (pi < fd.params.len()) {
-        s2 = s2.bind_local_typed(fd.params[pi].name, ret_tag_of(fd.params[pi].type_name));
+        s2 = s2.bind_local_typed(fd.params[pi].name, struct_local_tag(fd.params[pi].type_name, s2));
         pi = pi + 1;
     }
     var ctx: CheckCtx = CheckCtx { st: s2, errs: "" };

@@ -654,6 +654,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// (`Low(1).cmp(Low(2))`) is the one remaining wasm gap — see
 		// docs/TRAITS.md — so receivers are bound to vars first.
 		{"derive-ord-enum", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) enum Lvl { Low(i32), High } function main(): i32 { var a: Lvl = Low(1); var a2: Lvl = Low(2); var h: Lvl = High; var lo: Lvl = Low(0); var a3: Lvl = Low(1); var r: i32 = 0; if (a.cmp(a2) < 0) { r = r + 1; } if (a.cmp(h) < 0) { r = r + 2; } if (h.cmp(lo) > 0) { r = r + 4; } if (a.cmp(a3) == 0) { r = r + 8; } return r; }", 15, ""},
+		// Generic-struct monomorphisation reaches the wasm backend through
+		// the shared module_with_builtins pass: `Box[i32]` / `Box[string]`
+		// become concrete `Box__i32` / `Box__string` clones, and wasm's
+		// static dispatch (struct_type_of -> $Box__i32__to_string) routes
+		// each to its own helper. Both clones coexist with a shared `v`.
+		{"generic-struct-display-i32", "@derive(Display) struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 5 }; write(b.to_string()); return 0; }", 0, "Box { v: 5 }"},
+		{"generic-struct-display-string", "@derive(Display) struct Box[T] { v: T } function main(): i32 { var b: Box[string] = Box { v: \"hi\" }; write(b.to_string()); return 0; }", 0, "Box { v: hi }"},
+		{"generic-struct-display-both", "@derive(Display) struct Box[T] { v: T } function main(): i32 { var a: Box[i32] = Box { v: 5 }; var b: Box[string] = Box { v: \"hi\" }; write(a.to_string()); write(\"|\"); write(b.to_string()); return 0; }", 0, "Box { v: 5 }|Box { v: hi }"},
+		{"generic-struct-derive-eq", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) struct Box[T] { v: T } function main(): i32 { var a: Box[i32] = Box { v: 5 }; var b: Box[i32] = Box { v: 5 }; var c: Box[i32] = Box { v: 9 }; var r: i32 = 0; if (a.eq(b)) { r = r + 1; } if (!a.eq(c)) { r = r + 2; } return r; }", 3, ""},
+		// Parametric `impl[T: Show] Show for Box[T]` cloned per concrete T:
+		// `Box__i32` dispatches `self.v.show()` to `impl Show for i32`,
+		// `Box__string` to `impl Show for string`.
+		{"generic-struct-parametric-impl", "trait Show { function show(self: Self): string; } impl Show for i32 { function show(self: Self): string { return self.to_string(); } } impl Show for string { function show(self: Self): string { return self; } } struct Box[T] { v: T } impl[T: Show] Show for Box[T] { function show(self: Self): string { return \"Box(\" + self.v.show() + \")\"; } } function main(): i32 { var a: Box[i32] = Box { v: 7 }; var b: Box[string] = Box { v: \"hi\" }; write(a.show()); write(\"|\"); write(b.show()); return 0; }", 0, "Box(7)|Box(hi)"},
 		{"tostring-expr", "function main(): i32 { write((3 * 14).to_string()); return 0; }", 0, "42"},
 		{"fstring-int", "function main(): i32 { var n: i32 = 42; write(f\"n is {n}!\"); return 0; }", 0, "n is 42!"},
 		{"fstring-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; write(f\"{a}+{b}={a + b}\"); return 0; }", 0, "3+4=7"},
