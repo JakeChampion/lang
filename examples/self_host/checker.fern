@@ -1662,6 +1662,26 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
 // a fresh name set, so shadowing across nested blocks / over a parameter
 // is allowed, matching the Go checker), and E020 for an un-annotated
 // `var x = []` whose empty-array initializer can't infer an element type.
+// digits_fit_i32 reports whether a non-negative decimal digit string is
+// <= i32's max (2147483647). Equal-length digit strings compare
+// lexicographically the same as numerically, so the 10-digit case is a
+// char-by-char compare against the max.
+function digits_fit_i32(text: string): boolean {
+    var n: i32 = text.len();
+    if (n < 10) { return true; }
+    if (n > 10) { return false; }
+    var maxs: string = "2147483647";
+    var i: i32 = 0;
+    while (i < 10) {
+        var tc: i32 = text[i];
+        var mc: i32 = maxs[i];
+        if (tc < mc) { return true; }
+        if (tc > mc) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
     var out: Diag[] = [];
     var declared: string[] = [];
@@ -1679,6 +1699,18 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
                         parser.ExprArray(arr) => {
                             if (arr.elements.len() == 0) {
                                 out = out.push(Diag { code: "E020", message: "empty array literal needs a type annotation" });
+                            }
+                        },
+                        _ => { }
+                    }
+                }
+                // E047: an integer literal assigned to an i32 var that
+                // doesn't fit i32's range.
+                if (v.type_name == "i32") {
+                    match (v.init) {
+                        parser.ExprNumber(num) => {
+                            if (!num.is_float && num.suffix.len() == 0 && !digits_fit_i32(num.text)) {
+                                out = out.push(Diag { code: "E047", message: "literal " + num.text + " does not fit in i32" });
                             }
                         },
                         _ => { }

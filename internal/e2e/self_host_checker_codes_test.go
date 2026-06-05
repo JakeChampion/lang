@@ -39,6 +39,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E041": true, // == / != on mismatched types
 	"E043": true, // unknown struct field (read)
 	"E046": true, // tuple field index (non-numeric / out of range)
+	"E047": true, // integer literal doesn't fit i32
 	"E005": true, // struct literal missing field
 	"E006": true, // function / method redeclared
 	"E007": true, // duplicate struct field
@@ -212,6 +213,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arith-add-mismatch", "function main(): i32 { var s = 1 + \"x\"; return 0; }\n", []string{"E009"}},
 		{"arith-mul-ok", "function main(): i32 { return 3 * 4; }\n", nil},
 		{"string-concat-ok", "function main(): i32 { var s: string = \"a\" + \"b\"; return 0; }\n", nil},
+		{"literal-too-big-i32", "function main(): i32 { var x: i32 = 3000000000; return 0; }\n", []string{"E047"}},
+		{"literal-i32-max-ok", "function main(): i32 { var x: i32 = 2147483647; return 0; }\n", nil},
+		{"literal-i32-maxplus1", "function main(): i32 { var x: i32 = 2147483648; return 0; }\n", []string{"E047"}},
+		{"literal-fits-i32-ok", "function main(): i32 { var x: i32 = 2000000000; return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
