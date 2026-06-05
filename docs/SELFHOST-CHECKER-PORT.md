@@ -244,6 +244,14 @@ same code(s) the Go checker does — restricted to
   codegen-ignored, so the byte-identical fixpoint holds (x86 + arm64).
   Gated by a new `TestSelfHostCLIX86_64/check-position`. Remaining nodes
   (`StructDecl`, `FuncDecl`, then `Expr`/`Stmt`) migrate in follow-ups.
+- **Slice 26 (done): `StructDecl` positions → E007 line:col.**
+  `StructDecl` gains `line`/`col`, captured at the `struct` keyword (all
+  three `parse_struct_decl` returns); enum-variant + builtin structs carry
+  0, and the monomorphiser / merge / flatten rewrite + clone sites
+  propagate the source struct's position. **E007** (duplicate field) now
+  prints `1:1: error[E007]: …`, matching Go. 13 parser + 1 flatten site
+  updated; fixpoint-safe (codegen ignores the fields; x86 + arm64
+  verified). Gated by `TestSelfHostCLIX86_64/check-position-struct`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
