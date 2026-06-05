@@ -99,7 +99,7 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 // binds `sh` as TypeUnion("Shape") rather than the inferred
 // TypeStruct("Circle"). Interp / VM ignore it (annotations
 // are checker-only metadata).
-pub struct StmtVar { name: string, type_name: string, init: Expr }
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32 }
 pub struct StmtReturn { value: Expr }
 pub struct StmtExpr { value: Expr }
 // StmtIf models `if (cond) { then... } else { else... }`. else_body
@@ -273,7 +273,13 @@ function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
 function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 
 function s_var(name: string, type_name: string, init: Expr): Stmt {
-    return StmtVar { name: name, type_name: type_name, init: init };
+    return StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0 };
+}
+// s_var_at is s_var with an explicit source position (used at the parse
+// site so a `var` declaration's diagnostics — E003 / E013 / E020 — point
+// at the `var` keyword).
+function s_var_at(name: string, type_name: string, init: Expr, line: i32, col: i32): Stmt {
+    return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col };
 }
 function s_return(value: Expr): Stmt { return StmtReturn { value: value }; }
 function s_expr(value: Expr): Stmt { return StmtExpr { value: value }; }
@@ -1500,6 +1506,8 @@ function parse_stmt(p: Par): StmtResult {
     // form is not used by any self-host source and falls to the
     // "missing = in var" graceful error rather than looping.
     if (kw == "var" || kw == "let") {
+        var vline: i32 = p.peek_line();
+        var vcol: i32 = p.peek_col();
         p = p.advance();
         // `var (x, y) = E` / `let (x, y) = E` — tuple destructuring.
         // The two names are encoded as "x,y"; the emitter splits them
@@ -1516,7 +1524,7 @@ function parse_stmt(p: Par): StmtResult {
             var tdinit: ExprResult = parse_expr(p);
             p = tdinit.par;
             if (p.peek_punct() == ";") { p = p.advance(); }
-            return StmtResult { par: p, stmt: s_var(tdx + "," + tdy, "", tdinit.expr) };
+            return StmtResult { par: p, stmt: s_var_at(tdx + "," + tdy, "", tdinit.expr, vline, vcol) };
         }
         var name: string = p.peek_ident();
         if (name.len() == 0) {
@@ -1541,7 +1549,7 @@ function parse_stmt(p: Par): StmtResult {
         var init = parse_expr(p);
         p = init.par;
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_var(name, type_name, init.expr) };
+        return StmtResult { par: p, stmt: s_var_at(name, type_name, init.expr, vline, vcol) };
     }
     if (kw == "return") {
         p = p.advance();
@@ -2672,7 +2680,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
             var iv: RExpr = mono_expr(v.init, env, funcs, ins);
             var ty: string = v.type_name;
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr }, renv: env.ebind(v.name, ty), rins2: iv.rins };
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, ty), rins2: iv.rins };
         },
         StmtReturn(r) => {
             var rv: RExpr = mono_expr(r.value, env, funcs, ins);
@@ -2784,7 +2792,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.push(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: v.init }); },
+            StmtVar(v) => { out = out.push(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: v.init, line: v.line, col: v.col }); },
             StmtIf(f) => { out = out.push(StmtIf { cond: f.cond, then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
             StmtWhile(w) => { out = out.push(StmtWhile { cond: w.cond, body: subst_stmts(w.body, tparams, cts) }); },
             StmtFor(fr) => { out = out.push(StmtFor { var_name: fr.var_name, iter: fr.iter, body: subst_stmts(fr.body, tparams, cts) }); },
@@ -3136,7 +3144,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         StmtVar(v) => {
             var iv: RExpr = ms_expr(v.init, env, gstructs, funcs, ins);
             var ta: TyIns = mg_ty(v.type_name, gstructs, iv.rins);
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: iv.rexpr }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);

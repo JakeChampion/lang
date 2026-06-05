@@ -262,6 +262,16 @@ same code(s) the Go checker does — restricted to
   **E018** (dup param) now print `2:1: error[E006]` / `1:1: error[E018]`,
   matching Go. Fixpoint-safe (x86 + arm64 verified). Gated by
   `TestSelfHostCLIX86_64/check-position-func`.
+- **Slice 28 (done): `StmtVar` positions → E003 / E013 / E020 line:col.**
+  First statement node. `StmtVar` gains `line`/`col`; `parse_stmt` captures
+  the `var`/`let` keyword and the regular-var + tuple-destructure paths
+  build via a new `s_var_at` helper (`s_var` keeps a 0 position for
+  desugar / synth callers); the monomorphiser / constfold / flatten
+  rebuilds propagate, the ssa lowering synthetics carry 0. **E003** /
+  **E013** / **E020** now point at the `var` keyword, matching Go. (E047
+  stays position-less — Go reports it at the literal, an `ExprNumber`
+  position, in a later slice.) Fixpoint-safe (x86 + arm64). Gated by
+  `TestSelfHostCLIX86_64/check-position-var`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

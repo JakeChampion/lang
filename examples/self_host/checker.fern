@@ -1801,7 +1801,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (name_in(declared, v.name)) {
-                    out = out.push(dg("E013", "variable \"" + v.name + "\" already declared in this scope"));
+                    out = out.push(dg_at("E013", "variable \"" + v.name + "\" already declared in this scope", v.line, v.col));
                 } else {
                     declared = declared.push(v.name);
                 }
@@ -1809,7 +1809,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
                     match (v.init) {
                         parser.ExprArray(arr) => {
                             if (arr.elements.len() == 0) {
-                                out = out.push(dg("E020", "empty array literal needs a type annotation"));
+                                out = out.push(dg_at("E020", "empty array literal needs a type annotation", v.line, v.col));
                             }
                         },
                         _ => { }
@@ -2208,7 +2208,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                     var declared: Type = type_from_name_with_structs_unions(v.type_name, cur.structs, cur.unions);
                     var initt: Type = check_expr(v.init, cur);
                     if (!is_unknown(declared) && !is_unknown(initt) && !type_assignable(initt, declared, unions)) {
-                        out = out.push(dg("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared)));
+                        out = out.push(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared), v.line, v.col));
                     }
                 }
             },

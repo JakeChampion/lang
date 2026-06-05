@@ -239,6 +239,26 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-var", func(t *testing.T) {
+		// Statement-level codes are reported at the `var` keyword: E013
+		// (dup var) at the redeclaration, E003 (annotated-var mismatch) and
+		// E020 (empty array, no annotation) at the var.
+		for _, c := range []struct{ name, src, want string }{
+			{"dup_var", "function main(): i32 { var x: i32 = 1; var x: i32 = 2; return x; }\n", "1:40: error[E013]"},
+			{"var_mismatch", "function main(): i32 { var x: i32 = \"no\"; return x; }\n", "1:24: error[E003]"},
+			{"empty_array", "function main(): i32 { var z = []; return 0; }\n", "1:24: error[E020]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("interp", func(t *testing.T) {
 		// -interp evaluates via the tree-walker; the program's i32
 		// result becomes the exit code (mirrors interp_run.fern).
