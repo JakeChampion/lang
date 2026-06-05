@@ -829,3 +829,145 @@ function main(): i32 {
     return 2;
 }
 `
+
+// TestSelfHostWasmComponentReadFile exercises the fully self-hosted preview2
+// read_file path: source -> emit_module_run_io_fs (a run core importing the
+// wasi:filesystem read interfaces + the stdout shim, with a preview2
+// $__fern_read_file + cabi_realloc) -> emit_binary -> component_full_io_fs ->
+// a wasi:cli/run component that reads a preopened file under wasmtime.
+func TestSelfHostWasmComponentReadFile(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping component-readfile e2e")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH; skipping component-readfile e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+		t.Fatalf("write wasm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
+		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
+
+	var asmSrc strings.Builder
+	for _, name := range []string{"leb128.fern", "wat_lex.fern", "wat_parse.fern", "wat_encode.fern", "wat_emit_bin.fern", "wat_component.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(componentCompileIOFSDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("io-fs component assembler produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "casm.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write casm wat: %v", err)
+	}
+
+	build := func(t *testing.T, source string) string {
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		if len(coreWat) == 0 {
+			t.Fatal("preview2 fs core WAT empty")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "core.wat"), coreWat, 0o644); err != nil {
+			t.Fatalf("write core.wat: %v", err)
+		}
+		out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
+		if err != nil {
+			t.Fatalf("run io-fs assembler: %v", err)
+		}
+		var comp []byte
+		for _, tok := range strings.Fields(string(out)) {
+			n, _ := strconv.Atoi(tok)
+			comp = append(comp, byte(n))
+		}
+		p := filepath.Join(dir, "comp.wasm")
+		if err := os.WriteFile(p, comp, 0o644); err != nil {
+			t.Fatalf("write comp: %v", err)
+		}
+		if vout, err := exec.Command(wasmtools, "validate", p).CombinedOutput(); err != nil {
+			t.Fatalf("validate: %v\n%s", err, vout)
+		}
+		return p
+	}
+
+	t.Run("read", func(t *testing.T) {
+		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR"); return 1; } } return 2; }`)
+		if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("the file contents"), 0o644); err != nil {
+			t.Fatalf("write in.txt: %v", err)
+		}
+		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
+		if string(out) != "the file contents" {
+			t.Errorf("read: stdout = %q, want %q", string(out), "the file contents")
+		}
+	})
+
+	t.Run("missing-file-err", func(t *testing.T) {
+		comp := build(t, `function main(): i32 { match (read_file("nope.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { write("ERR"); return 1; } } return 2; }`)
+		cmd := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp)
+		out, _ := cmd.Output()
+		if string(out) != "ERR" {
+			t.Errorf("missing-file: stdout = %q, want %q", string(out), "ERR")
+		}
+		if code := cmd.ProcessState.ExitCode(); code != 1 {
+			t.Errorf("missing-file: exit = %d, want 1", code)
+		}
+	})
+
+	t.Run("large-file-loop", func(t *testing.T) {
+		comp := build(t, `function main(): i32 { match (read_file("big.txt")) { Ok(s) => { print_int(s.len()); return 0; }, Err(e) => { return 1; } } return 2; }`)
+		if err := os.WriteFile(filepath.Join(dir, "big.txt"), make([]byte, 10000), 0o644); err != nil {
+			t.Fatalf("write big.txt: %v", err)
+		}
+		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
+		if string(out) != "10000" {
+			t.Errorf("large-file: stdout = %q, want %q (multi-chunk read loop)", string(out), "10000")
+		}
+	})
+}
+
+const p2FSDriver = `import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./wasm";
+function main(): i32 { write(wasm.emit_module_run_io_fs(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))))); return 0; }
+`
+
+// componentCompileIOFSDriver reads a preview2 read_file+stdout core WAT,
+// assembles it, and wraps it via component_full_io_fs.
+const componentCompileIOFSDriver = `
+function main(): i32 {
+    match (read_file("core.wat")) {
+        Ok(wat) => {
+            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            var comp: i32[] = component_full_io_fs(core);
+            var i: i32 = 0;
+            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`

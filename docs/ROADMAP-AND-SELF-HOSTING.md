@@ -739,8 +739,25 @@ which `component_full`'s import-free path can't take):
    write / `\n` / f-string / print-int / multi-write, and a non-zero-main
    err path). (Not byte-identical end-to-end — the self-host's core differs
    from native's codegen — but the same preview2 shape, adapter-free.)
-   **Remaining: file I/O** (`wasi:filesystem` `read_file`/`write_file`)
-   needs its own imports + framing; stdout is done.
+3. **Preview2-native file read — `read_file` works.** A third `fs` mode
+   (`emit_module_run_io_fs`, `wasm.fern`) extends the stdout core with the
+   `wasi:filesystem` import set: `preopens/get-directories`,
+   `types/[method]descriptor.open-at` + `read-via-stream`, and
+   `io/streams/[method]input-stream.blocking-read`, plus a `cabi_realloc`
+   export so the canonical ABI can grow runtime lists. `$__fern_read_file`
+   is rewritten against those interfaces (get the preopened dir; `open-at`
+   the path; `read-via-stream`; loop `blocking-read` 4 KiB chunks into a
+   grown buffer until EOF), returning the same `[tag][payload]` Result box
+   the preview1 path produced, so every `read_file` call site is unchanged.
+   The framing (`component_full_io_fs`, `wat_component.fern`) embeds the
+   read_file+stdout import-set's prefix/suffix as `\xNN` blobs, byte-identical
+   to native's component when given the same core. End to end — source →
+   `emit_module_run_io_fs` → `emit_binary` → `component_full_io_fs` → a
+   `wasi:cli/run` component that reads a preopened file under `wasmtime`
+   (`TestSelfHostWasmComponentReadFile`: read contents / missing-file err
+   path / a 10 000-byte multi-chunk read exercising the grow loop).
+   **Remaining: file I/O** the `write_file` (`wasi:filesystem`
+   write-via-stream) path; the read path is done.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
