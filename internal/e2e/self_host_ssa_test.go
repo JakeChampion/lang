@@ -136,6 +136,17 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"for-string-bytes", "function main(): i32 { var t = 0; for b in \"AB\" { t = t + b; } return t; }", 131},
 		// for over a struct's array field.
 		{"for-struct-array-field", "struct Box { tag: i32, data: i32[] } function main(): i32 { var b = Box { tag: 100, data: [1, 2, 3] }; var s = 0; for x in b.data { s = s + x; } return s; }", 6},
+		// Indexed assignment `arr[i] = v` — the parser desugars it to the
+		// builtin __set_index(arr, idx, val), lowered to a store_elem at
+		// idx+1 (the foundation the map series builds on: an i32[] buffer
+		// mutated in place).
+		{"set-index", "function main(): i32 { var a = [10, 20, 30]; a[1] = 99; return a[0] + a[1] + a[2]; }", 139},
+		{"set-index-fill", "function main(): i32 { var a = [0, 0, 0, 0, 0]; var i = 0; while (i < 5) { a[i] = i * i; i = i + 1; } return a[0] + a[1] + a[2] + a[3] + a[4]; }", 30},
+		{"set-index-computed-rhs", "function main(): i32 { var a = [1, 2, 3]; a[0] = a[0] + 10; a[2] = a[1] * 5; return a[0] + a[2]; }", 21},
+		{"set-index-swap", "function main(): i32 { var a = [7, 3]; var t = a[0]; a[0] = a[1]; a[1] = t; return a[0] * 10 + a[1]; }", 37},
+		{"set-index-compound", "function main(): i32 { var a = [10, 20, 30]; a[0] += 5; a[1] -= 4; a[2] *= 2; return a[0] + a[1] + a[2]; }", 91},
+		{"set-index-in-for", "function main(): i32 { var a = [5, 5, 5, 5]; for x in a { a[0] = a[0] + 1; } return a[0]; }", 9},
+		{"set-index-running-sum", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; var run = 0; while (i < 4) { run = run + (i + 1); a[i] = run; i = i + 1; } return a[3]; }", 10},
 		// Strings: a byte sequence lowered to the same length-prefixed array.
 		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
 		{"str-index", "function main(): i32 { var s = \"ABC\"; return s[0]; }", 65},
