@@ -306,6 +306,24 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-match-arm", func(t *testing.T) {
+		// E026 (non-final wildcard) and E028 (duplicate variant) are
+		// reported at the offending arm (its pattern's first token).
+		for _, c := range []struct{ name, src, want string }{
+			{"wildcard_not_last", "enum E { A, B }\nfunction main(): i32 { var e: E = E.A; match (e) { _ => { return 0; }, A => { return 1; } } }\n", "2:52: error[E026]"},
+			{"dup_variant", "enum E { A, B }\nfunction main(): i32 { var e: E = E.A; match (e) { A => { return 0; }, A => { return 1; }, B => { return 2; } } }\n", "2:72: error[E028]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-break-continue", func(t *testing.T) {
 		// E011 (break / continue outside a loop) is reported at the
 		// keyword.
