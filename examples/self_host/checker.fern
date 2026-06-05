@@ -1718,6 +1718,58 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
     return out;
 }
 
+// stmts_assign_diags walks a statement list (scope-threaded, recursing
+// into nested blocks) and emits E003 when a value isn't assignable to its
+// target: an annotated `var x: T = v` whose init type doesn't match T, or
+// an assignment `x = v` whose value type doesn't match x's declared type.
+// It reuses the same `type_assignable` predicate check_stmt uses, so it
+// fires exactly where the checker already flags the mismatch (no new
+// false positives); unknown types on either side are skipped.
+function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => {
+                if (v.type_name.len() > 0) {
+                    var declared: Type = type_from_name_with_structs_unions(v.type_name, cur.structs, cur.unions);
+                    var initt: Type = check_expr(v.init, cur);
+                    if (!is_unknown(declared) && !is_unknown(initt) && !type_assignable(initt, declared, unions)) {
+                        out = out.push(Diag { code: "E003", message: "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) });
+                    }
+                }
+            },
+            parser.StmtAssign(a) => {
+                var tt: Type = cur.lookup(a.target);
+                var vt: Type = check_expr(a.value, cur);
+                if (!is_unknown(tt) && !is_unknown(vt) && !type_assignable(vt, tt, unions)) {
+                    out = out.push(Diag { code: "E003", message: "cannot assign " + type_label(vt) + " to " + type_label(tt) });
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, stmts_assign_diags(f.then_body, cur, unions));
+                out = append_diags(out, stmts_assign_diags(f.else_body, cur, unions));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, stmts_assign_diags(w.body, cur, unions)); },
+            parser.StmtFor(fr) => { out = append_diags(out, stmts_assign_diags(fr.body, cur, unions)); },
+            parser.StmtMatch(m) => {
+                var a2: i32 = 0;
+                while (a2 < m.arms.len()) { out = append_diags(out, stmts_assign_diags(m.arms[a2].body, cur, unions)); a2 = a2 + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, stmts_assign_diags(one, cur, unions));
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
 // check_module is the new entry point for sources that declare
 // functions. Builds the sig table, walks each function body,
 // and (separately) type-checks top-level stmts in a scope that
@@ -1860,6 +1912,8 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         // E004: free-function call arity (scope-threaded so a shadowing
         // local isn't mistaken for the function).
         body_diags = append_diags(body_diags, stmts_call_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
+        // E003: assignment / annotated-var type mismatch (scope-threaded).
+        body_diags = append_diags(body_diags, stmts_assign_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
         i = i + 1;
     }
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
@@ -1874,6 +1928,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));
     body_diags = append_diags(body_diags, stmts_call_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
+    body_diags = append_diags(body_diags, stmts_assign_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));
     var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
