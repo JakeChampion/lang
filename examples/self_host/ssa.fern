@@ -282,6 +282,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "map_new_i32") { return "Map"; }
                     if (cid.name == "map_new") { return "SMap"; }
+                    if (cid.name == "string_from_bytes") { return "string"; }
                     // A call's result has the callee's declared return type
                     // (seeded "gfn:<ret>"). So a struct-returning `foo().field`
                     // resolves, a string-returning call's `.len()` dispatches,
@@ -577,6 +578,28 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         s = s.fresh();
                         var sqargs: i32[] = [sqa, sqb];
                         return s.emit(SInst { kind: "streq", result: s.cur_id(), args: sqargs, imm: 0, str: "" });
+                    }
+                    // string_from_bytes(bs) builds a string from an i32 byte
+                    // array. A string and a byte array share the same length-
+                    // prefixed layout, so this is a full-array copy: slice the
+                    // whole input (__ssa_arr_slice(bs, 0, bs.len())) into a fresh
+                    // array, which IS the resulting string. type_of_expr types
+                    // the result "string" so .len() / concat dispatch.
+                    if (cid.name == "string_from_bytes" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var sbarr: i32 = s.cur_id();
+                        s = s.kconst(0);
+                        var sbz: i32 = s.cur_id();
+                        s = s.fresh();
+                        var sbla: i32[] = [sbarr, sbz];
+                        s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: sbla, imm: 0, str: "" });
+                        var sblen: i32 = s.cur_id();
+                        s = s.kconst(0);
+                        var sblo: i32 = s.cur_id();
+                        s = s.fresh();
+                        var sbargs: i32[] = [sbarr, sblo, sblen];
+                        return s.emit(SInst { kind: "call", result: s.cur_id(), args: sbargs, imm: 0, str: "__ssa_arr_slice" });
                     }
                     // Map constructors. The parser desugars a `Map { … }`
                     // literal to map_new_i32(8)… (integer keys) or map_new(8)…
