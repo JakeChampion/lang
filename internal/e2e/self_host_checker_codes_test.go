@@ -35,6 +35,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E017": true, // duplicate variant in an enum
 	"E020": true, // empty array literal needs a type annotation
 	"E004": true, // free-function call arity
+	"E036": true, // unqualified reference to a variant shared by 2+ enums
 	"E037": true, // slice bound must be i32
 	"E038": true, // free-function argument type
 	"E041": true, // == / != on mismatched types
@@ -221,6 +222,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"enum-redeclared", "enum Opt { A, B }\nenum Opt { C, D }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"enum-dup-variant", "enum Opt { A, A, B }\nfunction main(): i32 { return 0; }\n", []string{"E017"}},
 		{"enum-clean-ok", "enum Opt { A, B }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-multi-enum-ref", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { var a: A = X; return 0; }\n", []string{"E036"}},
+		{"variant-multi-enum-unref-ok", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-disjoint-ref-ok", "enum A { P, Q }\nenum B { R, S }\nfunction main(): i32 { var a: A = P; return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

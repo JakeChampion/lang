@@ -195,10 +195,16 @@ same code(s) the Go checker does — restricted to
   for a duplicate variant within an enum — closing the deferral from
   slice 2. This grouping is also the prerequisite for the remaining
   match/variant codes (E014/E023/E036).
-- **Later: pattern matching** (E014/E023/E036, now unblocked by the
-  grouping), traits (E021), maps (E045), owned-parameter move checking
-  (E050/E051), then source positions, then wiring the self-host checker
-  in as the gate.
+- **Slice 21 (done): variant declared in multiple enums** (E036). Using
+  the slice-20 grouping, `ambiguous_variants` collects variant names that
+  appear in 2+ enums, and `vref_stmts` / `vref_expr` (scope-threaded so a
+  shadowing local isn't flagged) emit E036 for a bare, unqualified
+  reference to one — a qualified `Enum.Variant` is an `ExprFieldAccess`,
+  so it's not flagged. Fires only on reference, matching the Go checker.
+- **Later: pattern matching** (E014 bad-variant-in-match, E023 — both
+  need match-scrutinee enum inference), traits (E021), maps (E045),
+  owned-parameter move checking (E050/E051), then source positions, then
+  wiring the self-host checker in as the gate.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
