@@ -1126,6 +1126,246 @@ func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]
 	return q
 }
 
+// inferParamEscapes computes, per function and per POINTER parameter, whether
+// that parameter's heap value can ESCAPE the function — flow out through the
+// return value, or be stored into a caller-visible container (a retain sink such
+// as `m.set` / `arr.push`, or an `own` argument the callee itself lets escape).
+// A NON-escaping parameter is reclaim-safe: under an owned-by-default model the
+// callee may free it at the end without transferring ownership out, and if it is
+// additionally only read it may be borrowed. This is the foundation analysis for
+// ownership / borrow inference — Slice 0 of docs/OWNERSHIP-INFERENCE-PLAN.md. It
+// does NOT change codegen yet.
+//
+// Greatest fixpoint over the call graph (optimistic: nothing escapes; a
+// parameter flips to "escapes" once and never back, so it terminates). A value
+// passed to a borrowing callee position does not escape through that call;
+// passed to a position the callee escapes, to a retain sink, or returned as part
+// of the result, it does. Unknown / builtin callees are treated conservatively
+// (assume they escape a tainted argument) so the result is a sound
+// under-approximation of "borrowable".
+func inferParamEscapes(prog *ast.Program, info *checker.Info) map[string][]bool {
+	variantPayloads := map[string][]ast.Type{}
+	for _, en := range info.Enums {
+		for _, v := range en.Variants {
+			variantPayloads[v.Name] = v.Payloads
+		}
+	}
+	escapes := map[string][]bool{}
+	for _, fn := range prog.Funcs {
+		escapes[fn.Name] = make([]bool, len(fn.Params))
+	}
+	for {
+		changed := false
+		for _, fn := range prog.Funcs {
+			if fn.Body == nil {
+				continue
+			}
+			for i, p := range fn.Params {
+				if escapes[fn.Name][i] || !ast.IsPointerType(p.Type) {
+					continue
+				}
+				if paramEscapesInFn(fn, p.Name, info, variantPayloads, escapes) {
+					escapes[fn.Name][i] = true
+					changed = true
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return escapes
+}
+
+// exprRefsTainted reports whether any tainted name appears anywhere in e.
+func exprRefsTainted(e ast.Expr, tainted map[string]bool) bool {
+	found := false
+	ast.Walk(e, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && tainted[id.Name] {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+// taintedReachesSlot reports whether evaluating e to fill a slot of static type
+// `slot` can place a TAINTED (parameter-derived) heap value into that slot — the
+// inverse of exprNoParamEscape, specialized to a concrete taint set and aware of
+// per-callee escape facts.
+func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info *checker.Info, variantPayloads map[string][]ast.Type, escapes map[string][]bool) bool {
+	if isDefinitelyScalar(slot) {
+		return false // a scalar slot cannot carry a heap pointer
+	}
+	switch x := e.(type) {
+	case *ast.Ident:
+		return tainted[x.Name]
+	case *ast.FieldAccess:
+		return exprRefsTainted(x.Target, tainted) // projecting a tainted value's sub-heap out
+	case *ast.Index:
+		return exprRefsTainted(x.Array, tainted)
+	case *ast.IfExpr:
+		return taintedReachesSlot(x.Then, slot, tainted, info, variantPayloads, escapes) ||
+			taintedReachesSlot(x.Else, slot, tainted, info, variantPayloads, escapes)
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if taintedReachesSlot(arm.Body, slot, tainted, info, variantPayloads, escapes) {
+				return true
+			}
+		}
+		return false
+	case *ast.TupleLit:
+		tt, ok := slot.(ast.TupleType)
+		for i, el := range x.Elems {
+			var es ast.Type
+			if ok && i < len(tt.Elems) {
+				es = tt.Elems[i]
+			}
+			if taintedReachesSlot(el, es, tainted, info, variantPayloads, escapes) {
+				return true
+			}
+		}
+		return false
+	case *ast.ArrayLit:
+		for _, el := range x.Elems {
+			if taintedReachesSlot(el, x.ElemType, tainted, info, variantPayloads, escapes) {
+				return true
+			}
+		}
+		return false
+	case *ast.StructLit:
+		if x.Base != nil && exprRefsTainted(x.Base, tainted) {
+			return true
+		}
+		sd, ok := info.Structs[x.TypeName]
+		if !ok {
+			return exprRefsTainted(e, tainted)
+		}
+		ft := map[string]ast.Type{}
+		for _, f := range sd.Fields {
+			ft[f.Name] = f.Type
+		}
+		for _, fi := range x.Fields {
+			if taintedReachesSlot(fi.Value, ft[fi.Name], tainted, info, variantPayloads, escapes) {
+				return true
+			}
+		}
+		return false
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok {
+			return exprRefsTainted(e, tainted)
+		}
+		// Variant constructor: the result embeds its payloads.
+		if pls, isVariant := variantPayloads[id.Name]; isVariant {
+			for i, a := range x.Args {
+				var pt ast.Type
+				if i < len(pls) {
+					pt = pls[i]
+				}
+				if taintedReachesSlot(a, pt, tainted, info, variantPayloads, escapes) {
+					return true
+				}
+			}
+			return false
+		}
+		// User function / method: a tainted argument reaches the result only if
+		// the callee itself escapes that argument position. Unknown callees
+		// (absent from `escapes`) are conservative: a tainted arg reaches out.
+		ce, known := escapes[id.Name]
+		for i, a := range x.Args {
+			if !exprRefsTainted(a, tainted) {
+				continue
+			}
+			if !known || (i < len(ce) && ce[i]) {
+				return true
+			}
+		}
+		return false
+	}
+	return exprRefsTainted(e, tainted)
+}
+
+// paramEscapesInFn reports whether parameter `pname` of `fn` escapes, given the
+// current per-callee escape facts. It first taints every local / binding that
+// carries pname's heap (match bindings of a tainted scrutinee, and any var whose
+// init lets a tainted value reach its slot), then checks the escape sinks:
+// returns, and tainted whole-value arguments passed to a retain sink or an
+// escaping `own` position.
+func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, variantPayloads map[string][]ast.Type, escapes map[string][]bool) bool {
+	tainted := map[string]bool{pname: true}
+	for {
+		grew := false
+		taintBindings := func(scrut ast.Expr, names []string) {
+			if !exprRefsTainted(scrut, tainted) {
+				return
+			}
+			for _, nm := range names {
+				if nm != "" && !tainted[nm] {
+					tainted[nm] = true
+					grew = true
+				}
+			}
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Var:
+				if x.Init != nil && !tainted[x.Name] &&
+					taintedReachesSlot(x.Init, x.Type, tainted, info, variantPayloads, escapes) {
+					tainted[x.Name] = true
+					grew = true
+				}
+			case *ast.Match:
+				for _, arm := range x.Arms {
+					taintBindings(x.Tag, arm.Bindings)
+				}
+			case *ast.MatchExpr:
+				for _, arm := range x.Arms {
+					taintBindings(x.Tag, arm.Bindings)
+				}
+			}
+			return true
+		})
+		if !grew {
+			break
+		}
+	}
+	escaped := false
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Return:
+			if x.Value != nil && taintedReachesSlot(x.Value, fn.ReturnType, tainted, info, variantPayloads, escapes) {
+				escaped = true
+			}
+		case *ast.Call:
+			id, ok := x.Callee.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			retains := calleeRetainsAnyArg(id.Name)
+			ownFlags := info.OwnFuncs[id.Name]
+			ce, known := escapes[id.Name]
+			for i, a := range x.Args {
+				aid, isIdent := a.(*ast.Ident)
+				if !isIdent || !tainted[aid.Name] {
+					continue
+				}
+				// Stored into a container (retain sink), or handed to an `own`
+				// parameter the callee itself lets escape — either way the value
+				// outlives this call frame.
+				if retains {
+					escaped = true
+				}
+				if i < len(ownFlags) && ownFlags[i] && (!known || (i < len(ce) && ce[i])) {
+					escaped = true
+				}
+			}
+		}
+		return true
+	})
+	return escaped
+}
+
 // computeFreshLocals returns the locals of `fn` that provably hold a param-free
 // value at every return — letting `return r` (where r was built locally)
 // qualify, not just `return Ctor(..)`. A local is fresh when:
