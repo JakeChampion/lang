@@ -2143,6 +2143,10 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (id.name == "string_from_bytes" && c.args.len() == 1) {
                         return "(call $__fern_string_from_bytes " + emit_expr(c.args[0], cx, depth + 1) + ")";
                     }
+                    // random_i32(): a single i32 of randomness.
+                    if (id.name == "random_i32" && c.args.len() == 0) {
+                        return "(call $__fern_random_i32)";
+                    }
                     // args(): string[] — the wasi argv vector.
                     if (id.name == "args" && c.args.len() == 0) {
                         return "(call $__fern_args)";
@@ -3070,6 +3074,10 @@ function random_func(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (local.get $arr))\n";
+    // random_i32(): fill 4 wasi bytes at addr 16 and load them as an i32.
+    o = o + "  (func $__fern_random_i32 (result i32)\n";
+    o = o + "    (drop (call $random_get (i32.const 16) (i32.const 4)))\n";
+    o = o + "    (i32.load (i32.const 16)))\n";
     return o;
 }
 
@@ -3093,6 +3101,9 @@ function random_func_p2(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (local.get $arr))\n";
+    // random_i32(): the low 32 bits of one get-random-u64 call.
+    o = o + "  (func $__fern_random_i32 (result i32)\n";
+    o = o + "    (i32.wrap_i64 (call $get_random_u64)))\n";
     return o;
 }
 
@@ -6003,7 +6014,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var f64_funcs: string[] = collect_f64_func_names(mod);
 
     var has_env: boolean = module_calls(mod, "env");
-    var has_random: boolean = module_calls(mod, "random_bytes");
+    var has_random: boolean = module_calls(mod, "random_bytes") || module_calls(mod, "random_i32");
     var has_sfb: boolean = module_calls(mod, "string_from_bytes");
     var has_args: boolean = module_calls(mod, "args");
     var has_readfile: boolean = module_calls(mod, "read_file");

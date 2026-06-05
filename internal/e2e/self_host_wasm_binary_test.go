@@ -146,6 +146,10 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// block. len() * 10 + first byte offset from 'A': 4*10 + (65-65) = 40.
 		{"string-from-bytes", "function main(): i32 { var s: string = string_from_bytes([65, 66, 67, 68]); return s.len() * 10 + (s[0] - 65); }", 40},
 		{"string-from-bytes-write", "function main(): i32 { var s: string = string_from_bytes([104, 105]); write(s); return s.len(); }", 2},
+		// random_i32(): a single i32 of randomness. Used in self-cancelling
+		// arithmetic so the result is deterministic (42) while still
+		// exercising the builtin's call + helper emission end-to-end.
+		{"random-i32", "function main(): i32 { var r: i32 = random_i32(); return (r - r) + 42; }", 42},
 	}
 
 	for _, tc := range cases {
