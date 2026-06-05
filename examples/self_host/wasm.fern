@@ -1128,6 +1128,60 @@ function is_enum_type_name(cx: Ctx, name: string): boolean {
     return false;
 }
 
+// func_body_matches_variant reports whether `stmts` contains a top-level
+// `match (<recv>) { … }` with an arm whose variant pattern names `variant`
+// — i.e. the receiver method dispatches that variant. Used to recover the
+// enum a variant belongs to (the variant->enum link is dropped at parse;
+// only the enum's methods carry it, in their `match (self)` arms).
+function func_body_matches_variant(stmts: parser.Stmt[], recv: string, variant: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtMatch(m) => {
+                var is_recv: boolean = false;
+                match (m.scrutinee) {
+                    parser.ExprIdent(id) => { if (id.name == recv) { is_recv = true; } },
+                    _ => {},
+                }
+                if (is_recv) {
+                    var a: i32 = 0;
+                    while (a < m.arms.len()) {
+                        match (m.arms[a].pattern) {
+                            parser.PatVariant(pv) => { if (pv.type_name == variant) { return true; } },
+                            _ => {},
+                        }
+                        a = a + 1;
+                    }
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// enum_of_variant returns the enum type a variant constructor `name`
+// belongs to (`Has` -> `Opt`), or "" if `name` isn't a known variant. It
+// scans the enum methods (a receiver method whose type is an enum, not a
+// struct) for the one whose `match (self)` handles `name`. This lets an
+// INLINE variant receiver (`Has(5).eq(…)`, `Nil.eq(…)`) dispatch to the
+// enum's method statically — the var-typed form already worked because the
+// var's annotation records the enum directly.
+function enum_of_variant(cx: Ctx, name: string): string {
+    var i: i32 = 0;
+    while (i < cx.mod_funcs.len()) {
+        var fd: parser.FuncDecl = cx.mod_funcs[i];
+        if (fd.receiver_name.len() > 0 && is_enum_type_name(cx, fd.receiver_type)) {
+            if (func_body_matches_variant(fd.body, fd.receiver_name, name)) {
+                return fd.receiver_type;
+            }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // expr_is_void_call is true when `e` calls a user free function or method
 // declared with no return type — such a call leaves nothing on the stack,
 // so it must NOT be wrapped in `(drop …)`. Builtins (which return values)
@@ -1326,11 +1380,24 @@ function struct_field_off(idx: i32): i32 {
 // literal, a struct-returning call, or a struct-typed field of a struct.
 function struct_type_of(e: parser.Expr, cx: Ctx): string {
     match (e) {
-        parser.ExprIdent(id) => { return lookup_pair(cx.sv_names, cx.sv_types, id.name); },
+        parser.ExprIdent(id) => {
+            var sv: string = lookup_pair(cx.sv_names, cx.sv_types, id.name);
+            if (sv.len() > 0) { return sv; }
+            // A bare unit-variant receiver (`Nil.eq(…)`): map it to its enum.
+            if (is_struct_type(cx.structs, id.name)) { return enum_of_variant(cx, id.name); }
+            return "";
+        },
         parser.ExprStructLit(sl) => { return sl.type_name; },
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => { return lookup_pair(cx.sf_names, cx.sf_types, id.name); },
+                parser.ExprIdent(id) => {
+                    var sf: string = lookup_pair(cx.sf_names, cx.sf_types, id.name);
+                    if (sf.len() > 0) { return sf; }
+                    // A positional variant constructor receiver (`Has(5).eq(…)`):
+                    // map the variant to its enum so the method dispatches.
+                    if (is_struct_type(cx.structs, id.name)) { return enum_of_variant(cx, id.name); }
+                    return "";
+                },
                 parser.ExprFieldAccess(fa) => {
                     // A receiver method returning a struct.
                     var rt: string = method_ret(cx, struct_type_of(fa.obj, cx), fa.field);
