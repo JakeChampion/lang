@@ -801,9 +801,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// stage-(b) arg-temp reclaim safely free an owned temp passed to a
 	// pointer-returning callee (findReturnsNoParamEscape).
 	returnsNoParamEscape := findReturnsNoParamEscape(prog, info)
-	trmcFuncs := findTrmcFuncs(prog, info, ptrW, pairForm)
+	trmcFuncs, trmcConsumeSafe := findTrmcFuncs(prog, info, ptrW, pairForm)
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs)
+		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe)
 		if err != nil {
 			return nil, err
 		}
@@ -1088,24 +1088,35 @@ func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int) map[stri
 // the property — the greatest fixpoint, so a self-recursive fresh-returner like
 // `dup` (returns `Cons(h, t.dup())`) correctly stays true.
 // findTrmcFuncs returns the set of functions that will lower via the TRMC
-// hole-passing loop (detectTrmc + TrmcEnabled). Their custom loop exit bypasses
-// the normal param exit-sweep, so Slice 2 (OwnedByDefault) excludes a TRMC
-// function's parameters from owned-by-default — they keep the borrow model until
-// TRMC itself is taught to free its scrutinee (a follow-up sub-slice). Used at
-// both the definition side (the function's own params) and the call site (a
-// TRMC callee doesn't reclaim its argument, so the caller must not retain it).
-func findTrmcFuncs(prog *ast.Program, info *checker.Info, ptrW int, pairForm map[string]bool) map[string]bool {
-	out := map[string]bool{}
+// hole-passing loop (detectTrmc + TrmcEnabled), and the consume-safe SUBSET
+// whose owned-by-default scrutinee is reclaimed per-cell inside the loop
+// (trmcShapeConsumeSafe — scalar head payloads, the FBIP list-map case).
+//
+// A TRMC function's custom loop exit bypasses the normal param exit-sweep, so
+// Slice 2 (OwnedByDefault) excludes a plain TRMC function's parameters from
+// owned-by-default — they keep the borrow model. A consume-safe TRMC function
+// instead frees its scrutinee cell-by-cell as the loop advances, so its
+// scrutinee parameter IS owned-by-default at the CALL site (the caller retains
+// an aliased arg) — the definition side still skips the exit-sweep (the loop,
+// not the sweep, does the freeing).
+func findTrmcFuncs(prog *ast.Program, info *checker.Info, ptrW int, pairForm map[string]bool) (trmc, consumeSafe map[string]bool) {
+	trmc = map[string]bool{}
+	consumeSafe = map[string]bool{}
 	if !ast.TrmcEnabled {
-		return out
+		return trmc, consumeSafe
 	}
 	for _, fn := range prog.Funcs {
 		lb := &builder{info: info, fn: fn, ptrW: ptrW, pairForm: pairForm, thisIsPair: pairForm[fn.Name]}
-		if lb.detectTrmc() != nil {
-			out[fn.Name] = true
+		sh := lb.detectTrmc()
+		if sh == nil {
+			continue
+		}
+		trmc[fn.Name] = true
+		if lb.trmcShapeConsumeSafe(sh) {
+			consumeSafe[fn.Name] = true
 		}
 	}
-	return out
+	return trmc, consumeSafe
 }
 
 func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]bool {
@@ -2125,6 +2136,17 @@ type builder struct {
 	// trmcFuncs is the set of functions lowered via TRMC (findTrmcFuncs); Slice 2
 	// excludes their params from owned-by-default (their exit bypasses the sweep).
 	trmcFuncs map[string]bool
+	// trmcConsumeSafe is the subset of trmcFuncs whose owned-by-default scrutinee
+	// can be consumed in the loop (scalar head payloads); those DO take
+	// owned-by-default at the call site, balanced by the loop's per-cell free.
+	trmcConsumeSafe map[string]bool
+	// TRMC-consuming loop state (set by emitTrmc): trmcConsuming gates the
+	// per-cell free, trmcStillSlot holds the still-freeing flag (1 until the
+	// first shared cell), trmcScrutEnum/Slot identify the walked scrutinee.
+	trmcConsuming bool
+	trmcStillSlot int32
+	trmcScrutEnum ast.EnumType
+	trmcScrutSlot int32
 	// freeEligible[name] is true for array-typed locals the
 	// borrow-aware analysis proved are OWNED — safe for the array
 	// dec sites to return to the freelist at rc==0. Borrowed /
@@ -5927,7 +5949,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs map[string]bool) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5948,6 +5970,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		genTupleDrops:        genTupleDrops,
 		returnsNoParamEscape: returnsNoParamEscape,
 		trmcFuncs:            trmcFuncs,
+		trmcConsumeSafe:      trmcConsumeSafe,
 		thisIsPair:           pairForm[fn.Name],
 	}
 	if b.thisIsPair {
@@ -6399,9 +6422,14 @@ func (b *builder) paramOwnedByDefault(t ast.Type) bool {
 }
 
 // calleeParamOwnedByDefault: the CALLEE reclaims this parameter (so the caller
-// must retain an aliased arg) unless the callee lowers via TRMC.
+// must retain an aliased arg) unless the callee lowers via TRMC — except a
+// consume-safe TRMC callee, which DOES reclaim its scrutinee cell-by-cell in the
+// loop and so is owned-by-default at the call site.
 func (b *builder) calleeParamOwnedByDefault(callee string, t ast.Type) bool {
-	return b.isOwnedByDefaultType(t) && !b.trmcFuncs[callee]
+	if !b.isOwnedByDefaultType(t) {
+		return false
+	}
+	return !b.trmcFuncs[callee] || b.trmcConsumeSafe[callee]
 }
 
 // enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
