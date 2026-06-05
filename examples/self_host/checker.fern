@@ -1691,6 +1691,26 @@ function struct_type_param_count(structs: parser.StructDecl[], name: string): i3
     return 0 - 1;
 }
 
+// struct_decl_line / struct_decl_col return the declaration position of a
+// named struct (0 when absent). E019 is reported at the struct's
+// definition (Go's `sd.P`), not the use site.
+function struct_decl_line(structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return structs[i].line; }
+        i = i + 1;
+    }
+    return 0;
+}
+function struct_decl_col(structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return structs[i].col; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 // type_base strips a `[...]` suffix from a type annotation: `Box[i32]` ->
 // `Box`, `P` -> `P`.
 function type_base(t: string): string {
@@ -1711,7 +1731,7 @@ function type_arity_diag(t: string, structs: parser.StructDecl[]): Diag[] {
     if (nargs >= 0) {
         var tpc: i32 = struct_type_param_count(structs, type_base(t));
         if (tpc >= 0 && nargs != tpc) {
-            out = out.push(dg("E019", "struct " + type_base(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied"));
+            out = out.push(dg_at("E019", "struct " + type_base(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied", struct_decl_line(structs, type_base(t)), struct_decl_col(structs, type_base(t))));
         }
     }
     return out;
