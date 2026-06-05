@@ -220,6 +220,43 @@ redundant and can be removed in that same phase. The end state: one
 combinations (anything the core can import) wrapped correctly — including
 shapes the native backend never emitted.
 
+## Implementation status (this session)
+
+The **prefix decomposition is complete** (PRs #2079, #2080, #2083). Every
+component prefix is now assembled from shared per-interface type blocks —
+all 14 `io_*_prefix` blobs are gone:
+
+- `tb_io_error` (universal first block), `tb_io_streams_out` /
+  `tb_io_streams_inout`, `tb_cli_stdout` / `tb_cli_stderr`, the interface
+  tails (`tb_random`, `tb_cli_environment_env` / `_args`, `tb_wall_clock`,
+  `tb_monotonic_clock`, `tb_cli_exit`), and the fs tails (`fs_read_tail` /
+  `fs_rw_tail` / `fs_write_tail`).
+- `io_stdout_head()` / `io_fs_read_head()` / `io_fs_rw_head()` /
+  `io_fs_write_head()` compose them; combination prefixes append one more
+  interface tail.
+
+The decomposition worked because, in canonical order, leading blocks have
+fixed indices (so they're byte-identical across shapes) and combination
+prefixes are exactly `base ++ tail`.
+
+**The suffixes do NOT decompose this way.** Measured: the universal common
+head across all 15 `io_*_suffix` blobs is **1 byte** — the fs-family and
+stdout-family have different *leading* shim cores (their import signatures
+differ, e.g. the `i64`-offset read/write trampolines vs the stdout
+`(i32 i32 i32 i32)` one), and even within a family combination suffixes
+share only a partial head (~120–700 bytes) before the per-import wiring
+interleaves with the lift/export tail. So suffix dedup has **no
+composition shortcut**: it requires the computed table-trampoline wiring
+described above (the `shim_core` + `wire` building blocks). That remains
+the one large, deferred phase.
+
+**Pragmatic priority.** With prefixes composed, adding a new program shape
+is already cheap: the prefix composes for free from existing blocks, and
+only **one** captured `io_*_suffix` blob (plus tests) is needed per shape.
+That keeps the combinatorial cost linear, not exponential — so the full
+generative *suffix* builder is now a lower-priority cleanup (it removes the
+last per-shape artifact) rather than a blocker for new shapes.
+
 ## Risks / notes
 
 - **Index arithmetic is the bug-prone surface.** The byte-identical gate
