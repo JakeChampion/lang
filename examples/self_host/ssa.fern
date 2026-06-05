@@ -339,6 +339,33 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var pa: i32[] = [sv];
                         return s.emit(SInst { kind: "print", result: s.cur_id(), args: pa, imm: fd, str: "" });
                     }
+                    // arr[idx] = val — the parser desugars an indexed
+                    // assignment to the builtin __set_index(arr, idx, val).
+                    // Lower it to a store_elem at idx+1 (offset 0 is the
+                    // length prefix), mirroring ExprIndex's load. Width 0
+                    // matches the i32-element read/construct path (pointer-
+                    // element arrays aren't indexed in the subset yet). The
+                    // expression's value is the stored element.
+                    if (cid.name == "__set_index" && c.args.len() == 3) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var iptr: i32 = s.cur_id();
+                        s = build_expr(c.args[1], s);
+                        if (!s.ok) { return s; }
+                        var iidx: i32 = s.cur_id();
+                        s = s.kconst(1);
+                        var ione: i32 = s.cur_id();
+                        s = s.fresh();
+                        var iba: i32[] = [iidx, ione];
+                        s = s.emit(SInst { kind: "binary", result: s.cur_id(), args: iba, imm: 0, str: "+" });
+                        var iidx1: i32 = s.cur_id();
+                        s = build_expr(c.args[2], s);
+                        if (!s.ok) { return s; }
+                        var ival: i32 = s.cur_id();
+                        s = s.fresh();
+                        var isa: i32[] = [iptr, iidx1, ival];
+                        return s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: isa, imm: 0, str: "" });
+                    }
                     var argvals: i32[] = [];
                     var i: i32 = 0;
                     while (i < c.args.len()) {
