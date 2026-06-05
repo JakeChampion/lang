@@ -266,9 +266,10 @@ func (p *parser) parseProgram() *ast.Program {
 				!p.match(lexer.Keyword, "type") &&
 				!p.match(lexer.Keyword, "trait") &&
 				!p.match(lexer.Keyword, "const") &&
-				!p.match(lexer.Ident, "opaque") {
+				!p.match(lexer.Ident, "opaque") &&
+				!p.match(lexer.Ident, "fip") {
 				p.errors = append(p.errors, p.errorf(pubTok.Pos,
-					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, or `opaque`"))
+					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, or `fip`"))
 				p.syncToTopLevel()
 				if p.i == before {
 					p.advance()
@@ -276,6 +277,17 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			isPub = true
+		}
+		// `fip` is a contextual modifier on a function decl (`pub fip
+		// function …` / `fip function …`): the checker (E053) verifies the
+		// function performs no heap allocation — a Koka-style fully-in-place
+		// guarantee. Recognised only when directly followed by `function`, so
+		// `fip` stays usable as an ordinary identifier everywhere else.
+		isFip := false
+		if p.match(lexer.Ident, "fip") && p.i+1 < len(p.tokens) &&
+			p.tokens[p.i+1].Kind == lexer.Keyword && p.tokens[p.i+1].Text == "function" {
+			p.advance() // fip
+			isFip = true
 		}
 		// `opaque` is a contextual modifier on a struct decl
 		// (`pub opaque struct …`): the type is exported but its fields
@@ -417,6 +429,7 @@ func (p *parser) parseProgram() *ast.Program {
 		}
 		if fn != nil {
 			fn.Public = isPub
+			fn.Fip = isFip
 			prog.Funcs = append(prog.Funcs, fn)
 		}
 	}
