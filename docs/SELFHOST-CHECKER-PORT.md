@@ -119,8 +119,14 @@ same code(s) the Go checker does — restricted to
   uses). (Note: the self-host accepts `bool` as well as `boolean` as a
   type name; the Go checker only accepts `boolean` — a separate, minor
   leniency, not one of the ported codes.)
-- **Later: control flow** (E011 break/continue outside loop, E012 return
-  without value).
+- **Slice 9 (done): break / continue outside a loop** (E011). `loop_diags`
+  walks statements tracking an `in_loop` flag (set true in `while` / `for`
+  bodies, passed through `if` / `match` / `defer`) and emits E011 for a
+  `break` / `continue` reached outside a loop — so a `break` in a match arm
+  is legal only when that match is inside a loop (matching the Go checker).
+  Purely structural, no scope.
+- **Later: control flow** (E012 return without value), pattern matching
+  (E014/E025/E036), traits (E021).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

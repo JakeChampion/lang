@@ -1607,6 +1607,43 @@ function stmts_slit_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
     return out;
 }
 
+// loop_diags emits E011 for a `break` / `continue` that isn't inside a
+// loop. It's purely structural (no scope): `while` / `for` bodies recurse
+// with in_loop = true, while `if` / `match` / `defer` pass the flag
+// through unchanged — so a `break` in a match arm is legal only when that
+// match is itself inside a loop (matching the Go checker).
+function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtBreak(_) => {
+                if (!in_loop) { out = out.push(Diag { code: "E011", message: "break outside of a loop or switch" }); }
+            },
+            parser.StmtContinue(_) => {
+                if (!in_loop) { out = out.push(Diag { code: "E011", message: "continue outside of a loop" }); }
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, loop_diags(w.body, true)); },
+            parser.StmtFor(fr) => { out = append_diags(out, loop_diags(fr.body, true)); },
+            parser.StmtIf(f) => {
+                out = append_diags(out, loop_diags(f.then_body, in_loop));
+                out = append_diags(out, loop_diags(f.else_body, in_loop));
+            },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, loop_diags(m.arms[a].body, in_loop)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, loop_diags(one, in_loop));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // itoa_nn renders a non-negative i32 as decimal (checker.fern has no
 // int→string, and diagnostic messages aren't part of the differential
 // gate, but a faithful count reads better).
@@ -1938,6 +1975,8 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         body_diags = append_diags(body_diags, stmts_call_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
         // E003: assignment / annotated-var type mismatch (scope-threaded).
         body_diags = append_diags(body_diags, stmts_assign_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
+        // E011: break / continue outside a loop (structural, no scope).
+        body_diags = append_diags(body_diags, loop_diags(mod.funcs[i].body, false));
         i = i + 1;
     }
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
@@ -1953,6 +1992,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));
     body_diags = append_diags(body_diags, stmts_call_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
     body_diags = append_diags(body_diags, stmts_assign_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));
+    body_diags = append_diags(body_diags, loop_diags(mod.top_stmts, false));
     var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
