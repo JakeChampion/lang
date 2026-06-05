@@ -3596,6 +3596,15 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 	return c.checkExpr(wrapped, s)
 }
 
+// inStdlibContext reports whether the checker is currently inside a
+// stdlib/prelude function body, where the low-level usize escape-hatch
+// conversions in assignable are permitted. User code (c.current nil or a
+// non-stdlib module) must use an explicit `as` cast instead. See
+// docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
+func (c *checker) inStdlibContext() bool {
+	return c.current != nil && strings.HasPrefix(c.current.SourceModule, "stdlib://")
+}
+
 func (c *checker) assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
@@ -3616,43 +3625,39 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 		}
 		return false
 	}
-	// Pointer-shaped values ↔ usize. The prelude's raw-pointer
-	// helpers (__load_ptr / __store_ptr / __alloc) declare their
-	// pointer params + result as usize so the full 8-byte address
-	// survives on arm64-darwin. User-code pointer values (string,
-	// Map, T[], [T], struct) flow into these helpers without an
-	// explicit `as` cast — runtime representation is the same
-	// pointer, only the type-level view changes. Mirrors the
-	// CastExpr machinery that already allows the explicit `as
-	// usize` hop.
-	if dn, ok := dst.(ast.NumberType); ok && dn.IsPointerWidth() {
-		switch src.(type) {
-		case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
-			return true
+	// Pointer-shaped values ↔ usize, and usize ↔ i32 / i64. These
+	// implicit conversions are a low-level escape hatch the stdlib's
+	// raw-pointer helpers (__load_ptr / __store_ptr / __alloc, the Map
+	// runtime) need: they declare pointer params + result as usize so the
+	// full 8-byte address survives on arm64-darwin, and flow user-shaped
+	// pointer / integer values through without an `as` cast. Exposing this
+	// implicitly to USER code, though, turns usize into a wormhole that
+	// launders i64→i32 narrowing and even string→struct reinterpretation
+	// past the type system. So gate it to stdlib context; user code must
+	// use an explicit `as` cast (the CastExpr machinery already allows the
+	// usize hop). See docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
+	if c.inStdlibContext() {
+		if dn, ok := dst.(ast.NumberType); ok && dn.IsPointerWidth() {
+			switch src.(type) {
+			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+				return true
+			}
 		}
-	}
-	if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
-		switch dst.(type) {
-		case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
-			return true
+		if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
+			switch dst.(type) {
+			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+				return true
+			}
 		}
-	}
-	// usize ↔ i32 / i64 at assignment boundaries. The prelude's
-	// internal helpers return usize for pointer-shaped values;
-	// existing user code passing the same value to an i32-typed
-	// param (or storing in an i32 var) needs to type-check
-	// without an explicit `as i32` everywhere. The narrowing
-	// case (usize → i32) is the existing behavior; the bug fix
-	// kicks in at the LOAD/STORE level where usize values stay
-	// wide internally. Bidirectional for the wide case too.
-	if dn, ok := dst.(ast.NumberType); ok && dn.IsPointerWidth() {
-		if _, sok := src.(ast.NumberType); sok {
-			return true
+		if dn, ok := dst.(ast.NumberType); ok && dn.IsPointerWidth() {
+			if _, sok := src.(ast.NumberType); sok {
+				return true
+			}
 		}
-	}
-	if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
-		if _, dok := dst.(ast.NumberType); dok {
-			return true
+		if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
+			if _, dok := dst.(ast.NumberType); dok {
+				return true
+			}
 		}
 	}
 	// Option[usize] / Option[V] cross-assign for the codegen
