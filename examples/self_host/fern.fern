@@ -183,11 +183,6 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
         i = i + 1;
     }
     if (!has_main) { return SsaResult { asm: "", ok: false }; }
-    // NOTE: emit without the register allocator. The SSA emit test-suite only
-    // ever exercises regalloc=false, and the allocator currently miscompiles
-    // some helper-heavy programs (e.g. a slice helper under spilling) — so the
-    // validated, always-correct stack path is used here. (Re-enabling regalloc
-    // is a separate task gated on test coverage + the spill fix.)
     // Inject each runtime helper body the program actually calls.
     var hj: i32 = 0;
     while (hj < hmod.funcs.len()) {
@@ -198,8 +193,8 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
         hj = hj + 1;
     }
     var asm: string = "";
-    if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, false); }
-    else { asm = ssa_x86.emit_program(sfuncs, false); }
+    if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, true); }
+    else { asm = ssa_x86.emit_program(sfuncs, true); }
     return SsaResult { asm: asm, ok: true };
 }
 

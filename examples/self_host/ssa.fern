@@ -368,7 +368,7 @@ function emit_fn_box(s: BState, fnname: string): BState {
     var z: i32 = s.cur_id();
     s = s.fresh();
     var sa: i32[] = [box, z, fa];
-    s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: sa, imm: 0, str: "" });
+    s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: sa, imm: 64, str: "" });
     s = s.fresh();
     var ca: i32[] = [box];
     return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ca, imm: 0, str: "" });
@@ -483,7 +483,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var bzi: i32 = s.cur_id();
                         s = s.fresh();
                         var bla: i32[] = [boxv, bzi];
-                        s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: bla, imm: 0, str: "" });
+                        s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: bla, imm: 64, str: "" });
                         var fnaddr: i32 = s.cur_id();
                         var icargs: i32[] = [fnaddr];
                         var ica: i32 = 0;
@@ -975,7 +975,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                     var lz: i32 = s.cur_id();
                     s = s.fresh();
                     var lsa: i32[] = [lbox, lz, lfa];
-                    s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: lsa, imm: 0, str: "" });
+                    s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: lsa, imm: 64, str: "" });
                     var lci: i32 = 0;
                     while (lci < lcaps.len()) {
                         s = s.kconst(lci + 1);
@@ -2785,7 +2785,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "print" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.push(pos); }
+            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.push(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -2819,6 +2819,57 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         }
         ppos = ppos + 1;
         bj = bj + 1;
+    }
+
+    // Loop-invariant fix: a value defined BEFORE a loop header and used inside
+    // the loop is live across the whole loop (re-read every iteration), so its
+    // interval must reach the back-edge — otherwise the scan expires it at its
+    // textual last use and a loop-body temp reuses its register, corrupting it
+    // on the next iteration. (The phi fix above covers loop-CARRIED values;
+    // this covers loop-INVARIANT ones.) Block start positions are recomputed
+    // with the same per-block stride (insts + one terminator slot); a
+    // terminator targeting a block at or before its own block is a back-edge,
+    // and the loop spans [header_start, terminator_pos].
+    var blk_ids: i32[] = [];
+    var blk_starts: i32[] = [];
+    var rpos: i32 = 0;
+    var rbi: i32 = 0;
+    while (rbi < f.blocks.len()) {
+        blk_ids = blk_ids.push(f.blocks[rbi].id);
+        blk_starts = blk_starts.push(rpos);
+        rpos = rpos + f.blocks[rbi].insts.len() + 1;
+        rbi = rbi + 1;
+    }
+    var lbi: i32 = 0;
+    var lstart: i32 = 0;
+    while (lbi < f.blocks.len()) {
+        var lblk: SBlock = f.blocks[lbi];
+        var lterm_pos: i32 = lstart + lblk.insts.len();
+        var th: i32 = 0;
+        while (th < 2) {
+            var tgt: i32 = 0 - 1;
+            if (th == 0) {
+                if (lblk.term.kind == "br") { tgt = lblk.term.target; }
+                else if (lblk.term.kind == "brif") { tgt = lblk.term.t; }
+            } else if (lblk.term.kind == "brif") { tgt = lblk.term.f; }
+            if (tgt >= 0) {
+                var hstart: i32 = 0 - 1;
+                var si2: i32 = 0;
+                while (si2 < blk_ids.len()) { if (blk_ids[si2] == tgt) { hstart = blk_starts[si2]; } si2 = si2 + 1; }
+                if (hstart >= 0 && hstart <= lstart) {
+                    var vv: i32 = 0;
+                    while (vv < f.nvals) {
+                        if (def_pos[vv] >= 0 && def_pos[vv] < hstart && hi[vv] >= hstart && lterm_pos > hi[vv]) {
+                            hi = upd_hi(hi, vv, lterm_pos);
+                        }
+                        vv = vv + 1;
+                    }
+                }
+            }
+            th = th + 1;
+        }
+        lstart = lterm_pos + 1;
+        lbi = lbi + 1;
     }
 
     var reg_of: i32[] = [];
