@@ -1466,11 +1466,11 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
                     _ => { }
                 }
                 if (bare) {
-                    out = out.push(dg("E012", "return without value in function returning " + type_label(ret_ty)));
+                    out = out.push(dg_at("E012", "return without value in function returning " + type_label(ret_ty), r.line, r.col));
                 } else {
                     var t: Type = check_expr(r.value, cur);
                     if (!is_unknown(t) && !type_assignable(t, ret_ty, unions)) {
-                        out = out.push(dg("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t)));
+                        out = out.push(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t), r.line, r.col));
                     }
                 }
             },
