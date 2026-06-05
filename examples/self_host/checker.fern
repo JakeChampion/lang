@@ -1732,12 +1732,13 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
 }
 
 // stmts_assign_diags walks a statement list (scope-threaded, recursing
-// into nested blocks) and emits E003 when a value isn't assignable to its
-// target: an annotated `var x: T = v` whose init type doesn't match T, or
-// an assignment `x = v` whose value type doesn't match x's declared type.
-// It reuses the same `type_assignable` predicate check_stmt uses, so it
-// fires exactly where the checker already flags the mismatch (no new
-// false positives); unknown types on either side are skipped.
+// into nested blocks) emitting statement-level type diagnostics: E003
+// when a value isn't assignable to its target (an annotated `var x: T = v`
+// whose init type doesn't match T, or an assignment `x = v` whose value
+// type doesn't match x's declared type), and E008 when an `if` / `while`
+// condition isn't boolean. It reuses the same predicates check_stmt uses,
+// so it fires exactly where the checker already flags the problem (no new
+// false positives); unknown types are skipped.
 function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Diag[] {
     var out: Diag[] = [];
     var cur: Scope = s;
@@ -1762,10 +1763,20 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                 }
             },
             parser.StmtIf(f) => {
+                var ic: Type = check_expr(f.cond, cur);
+                if (!is_unknown(ic) && !type_eq(ic, t_bool())) {
+                    out = out.push(Diag { code: "E008", message: "if condition must be boolean, got " + type_label(ic) });
+                }
                 out = append_diags(out, stmts_assign_diags(f.then_body, cur, unions));
                 out = append_diags(out, stmts_assign_diags(f.else_body, cur, unions));
             },
-            parser.StmtWhile(w) => { out = append_diags(out, stmts_assign_diags(w.body, cur, unions)); },
+            parser.StmtWhile(w) => {
+                var wc: Type = check_expr(w.cond, cur);
+                if (!is_unknown(wc) && !type_eq(wc, t_bool())) {
+                    out = out.push(Diag { code: "E008", message: "while condition must be boolean, got " + type_label(wc) });
+                }
+                out = append_diags(out, stmts_assign_diags(w.body, cur, unions));
+            },
             parser.StmtFor(fr) => { out = append_diags(out, stmts_assign_diags(fr.body, cur, unions)); },
             parser.StmtMatch(m) => {
                 var a2: i32 = 0;
