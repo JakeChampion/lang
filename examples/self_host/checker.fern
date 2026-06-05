@@ -1944,6 +1944,26 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         }
                     }
                 },
+                parser.ExprFieldAccess(mfa) => {
+                    // E004 for a method call `obj.m(args)`: when `obj` is a
+                    // known struct with a USER-DEFINED method `m`, the
+                    // explicit-argument count must match the method's
+                    // declared parameter count (the receiver is stored
+                    // separately, so param_types already excludes `self`).
+                    // Built-in methods (.len / .push / .write …) and
+                    // non-struct receivers aren't in the method table, so
+                    // lookup returns empty and they're left alone.
+                    var recv: Type = check_expr(mfa.obj, s);
+                    match (recv) {
+                        TypeStruct(sn) => {
+                            var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
+                            if (msig.name.len() > 0 && c.args.len() != msig.param_types.len()) {
+                                out = out.push(dg_at("E004", "method \"" + mfa.field + "\" expects " + itoa_nn(msig.param_types.len()) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
+                            }
+                        },
+                        _ => { }
+                    }
+                },
                 _ => { }
             }
         },

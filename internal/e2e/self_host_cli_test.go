@@ -306,6 +306,23 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-method-arity", func(t *testing.T) {
+		// E004 for a method call with the wrong argument count is reported
+		// at the call's opening paren.
+		for _, c := range []struct{ name, src, want string }{
+			{"method_too_few", "struct P { x: i32 }\nfunction (p: P) add(a: i32, b: i32): i32 { return p.x + a + b; }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.add(5); }\n", "3:59: error[E004]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-match-nonenum", func(t *testing.T) {
 		// E035 (variant pattern on a non-enum scrutinee) is reported at
 		// the offending arm.

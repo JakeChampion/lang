@@ -417,6 +417,23 @@ same code(s) the Go checker does — restricted to
   (`match-variant-on-*`, `match-i32-wildcard-only-ok`),
   `check-position-match-nonenum`, and the `selfHostImplementedCodes`
   entry.
+- **Slice 43 (done): E004 for method-call arity.** Extends the existing
+  free-function arity check to method calls `obj.m(args)`: when `obj`
+  types to a known struct (`TypeStruct`) and `m` resolves to a
+  USER-DEFINED method via `lookup_method`, the explicit-argument count
+  must equal the method's `param_types` length (the receiver is stored
+  separately, so `self` is already excluded). Reported at the call's
+  opening paren (Go's `n.P`). Conservative: built-in methods (`.len` /
+  `.push` / `.write` …) and non-struct receivers aren't in the method
+  table, so `lookup_method` returns empty and they're skipped — verified
+  zero false positives by running `fern -check` over all thirteen
+  self-host modules. `p.add(5)` for a 2-arg method → `3:59: error[E004]`,
+  matching Go's code + position. (The self-host message — `method "add"
+  expects 2 argument(s), got 1` — is clearer than Go's receiver-counting
+  `function expects 3, got 2`; the gate compares codes + positions, not
+  message text.) Checker-only (trivially fixpoint-safe). Gated by new
+  corpus (`method-too-few-args`, `method-too-many-args`,
+  `method-correct-arity-ok`) and `check-position-method-arity`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
