@@ -2284,7 +2284,24 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                     _ => { }
                 }
                 var a: i32 = 0;
-                while (a < m.arms.len()) { out = append_diags(out, stmts_call_diags(m.arms[a].body, cur)); a = a + 1; }
+                while (a < m.arms.len()) {
+                    // Bring the variant payload binding into the arm's
+                    // scope (as `TypeStruct(variant)`) before walking the
+                    // body, so a field access on it (`TokIdent(t) => t.name`)
+                    // resolves against the right struct instead of tripping
+                    // a spurious E043. Mirrors the body-check path's binding.
+                    var armScope: Scope = cur;
+                    match (m.arms[a].pattern) {
+                        parser.PatVariant(apv) => {
+                            if (apv.binding.len() > 0 && apv.binding != "_") {
+                                armScope = armScope.bind(apv.binding, t_struct(apv.type_name));
+                            }
+                        },
+                        _ => { }
+                    }
+                    out = append_diags(out, stmts_call_diags(m.arms[a].body, armScope));
+                    a = a + 1;
+                }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
