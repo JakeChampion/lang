@@ -156,6 +156,9 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// eprint(s): write to stderr (preview1 fd 2). stdout stays "x" (the
 		// stderr write must be a valid call and must not corrupt stdout).
 		{"eprint", "function main(): i32 { eprint(\"log\"); write(\"x\"); return 0; }", 0},
+		// exit(code): preview1 proc_exit. exit(0) terminates early -> stdout
+		// "a" only (the "b" after exit is unreachable), exit code 0.
+		{"exit", "function main(): i32 { write(\"a\"); exit(0); write(\"b\"); return 0; }", 0},
 	}
 
 	for _, tc := range cases {
