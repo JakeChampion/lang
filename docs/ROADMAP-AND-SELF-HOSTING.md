@@ -756,8 +756,30 @@ which `component_full`'s import-free path can't take):
    `wasi:cli/run` component that reads a preopened file under `wasmtime`
    (`TestSelfHostWasmComponentReadFile`: read contents / missing-file err
    path / a 10 000-byte multi-chunk read exercising the grow loop).
-   **Remaining: file I/O** the `write_file` (`wasi:filesystem`
-   write-via-stream) path; the read path is done.
+4. **Preview2-native file write — `write_file` works.** The same `fs` mode
+   adapts its imports to the file ops a program uses: `get-directories` +
+   `open-at` are shared; read pulls in `read-via-stream` +
+   `input-stream.blocking-read`; write pulls in
+   `types/[method]descriptor.write-via-stream` (reusing the stdout shim's
+   already-imported `output-stream.blocking-write-and-flush`).
+   `$__fern_write_file` opens the path with `open-flags` create|truncate (9)
+   and `descriptor-flags` write (2), `write-via-stream`s it, then loops
+   `blocking-write-and-flush` over <=4 KiB chunks until the content block is
+   drained, returning the same `[tag][payload]` Option box (None=success /
+   Some(errcode)) the preview1 path produced. The framing
+   (`component_full_io_fs_write`, `wat_component.fern`) carries the
+   write import-set's prefix/suffix `\xNN` blobs (write-via-stream replaces
+   read-via-stream + blocking-read), byte-identical to native's component for
+   that core. End to end — `TestSelfHostWasmComponentWriteFile` (write +
+   read-back / truncate-existing / a 10 000-byte multi-chunk write loop) plus
+   the byte-identical `TestSelfHostWasmComponentFullIOFSWrite`. (A subtlety
+   the multi-chunk case surfaced: the canonical-ABI result discriminant is a
+   single byte, so the success check reads it with `i32.load8_u`, not a
+   4-byte `i32.load` that would trip over stale padding in the reused return
+   area — the read path's discriminant checks were tightened to match.)
+   **File I/O is done** for read + write; remaining filesystem builtins
+   (`stat` / `read_dir` / `remove_*` / `temp_dir`) are the next preview2
+   surface.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
