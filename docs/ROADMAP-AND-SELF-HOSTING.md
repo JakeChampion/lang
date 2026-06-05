@@ -811,10 +811,31 @@ which `component_full`'s import-free path can't take):
    native's component for that core. Tests:
    `TestSelfHostWasmComponentFullIORandom` (byte-identical) +
    `TestSelfHostWasmComponentRandom` (length / every byte in 0..255 / a
-   non-multiple-of-8 length). `env` / `args` (→ `wasi:cli/environment`) and
-   `now_unix_ms` (→ `wasi:clocks/wall-clock`) are the same shape and the
-   natural follow-ups; the static-blob-per-import-set approach will want a
-   generative component builder once the combinations multiply.
+   non-multiple-of-8 length).
+7. **Preview2-native environment — `env` works.** `env(name)` is gated on
+   `io` the same way: the adapter route keeps the preview1
+   `environ_sizes_get` / `environ_get` pair, while the adapter-free route
+   imports `wasi:cli/environment@0.2.0`'s `get-environment` (a
+   `list<tuple<string,string>>` — header `(ptr, count)` into the return area,
+   each tuple 16 bytes: key `{ptr@0,len@4}`, value `{ptr@8,len@12}`). The
+   rewritten `$__fern_env` scans the tuples for a key byte-equal to `name` and
+   returns the same `Option[string]` box (Some=tag 0 + a fresh `[len][bytes]`
+   value block; None=tag 1). Because `get-environment` returns a
+   host-allocated list, the core now exports `cabi_realloc` whenever the
+   adapter-free path uses env (not just `fs`). Import order is `get-stdout`,
+   `blocking-write-and-flush`, `get-environment`; framing
+   `component_full_io_env`, byte-identical to native. Tests:
+   `TestSelfHostWasmComponentFullIOEnv` (byte-identical) +
+   `TestSelfHostWasmComponentEnv` (present / absent→None / a prefix var that
+   must not false-match — exact key compare). (A subtlety: the
+   `get-environment` return area must be aligned — its `(ptr, count)` header
+   is two i32s — so `$ra` is over-allocated and rounded up to 8, the same
+   trick the stdout shim and the file-I/O return areas use; an unaligned bump
+   cursor traps `pointer not aligned`.)
+   `args` (→ `wasi:cli/environment` `get-arguments`) and `now_unix_ms`
+   (→ `wasi:clocks/wall-clock`) are the same shape and the natural
+   follow-ups; the static-blob-per-import-set approach will want a generative
+   component builder once the combinations multiply.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
