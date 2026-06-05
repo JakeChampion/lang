@@ -431,21 +431,18 @@ regressing the self-host gates. It needs traits in two slices:
   self-host fixpoint + stdtest gates confirm the compiler still builds
   itself.
 
-  **Boundary for primitive/string `T` (investigated, deferred):**
+  **Boundary for primitive/string `T` (CLOSED by slice 8 below):**
   completing this is *not* just "clone the generic receiver method." The
   method body does `self.v.m()` where the field `v` is declared `T`; to
   dispatch that statically for `Box[i32]` the compiler must know
   `self.v` is `i32` — i.e. it must monomorphise the generic STRUCT so the
   instantiated field types are concrete (`Box[i32]` becomes a `Box__i32`
-  whose `v: i32`). The self-host deliberately ERASES generic structs
-  (every `Box[…]` shares one shape; fields are uniform 8-byte slots), so
-  neither the monomorphiser nor the emitter tracks a generic struct's
-  field types under instantiation. Generic-struct monomorphisation is a
-  large departure from that erasure model; it is the real prerequisite
-  for primitive/string-`T` parametric impls (and would also be the
-  vehicle for generic `@derive`). Deferred until a use case justifies
-  the architectural cost — the struct-typed-`T` slice above is the
-  natural milestone within the erasure model.
+  whose `v: i32`). The self-host historically ERASED generic structs
+  (every `Box[…]` shared one shape; fields uniform 8-byte slots), so
+  neither the monomorphiser nor the emitter tracked a generic struct's
+  field types under instantiation. **Slice 8 adds generic-struct
+  monomorphisation**, lifting that erasure and closing this boundary on
+  all three backends.
 
 - **Self-host slice 5 (shipped): `dyn Trait` + `@derive` on structs.**
   Two more of the Go-side trait features ported toward retiring the Go
@@ -462,8 +459,8 @@ regressing the self-host gates. It needs traits in two slices:
   emit (byte-identical Display, so the differential oracle agrees).
   Structs only — enums desugar to struct-unions here, so enum `@derive`
   needs variant-wise synthesis over the variant structs (follow-up), and
-  generic-struct `@derive` waits on generic-struct monomorphisation
-  (slice-4 boundary). Both work for the cases the erasure model supports
+  generic-struct `@derive` waited on generic-struct monomorphisation
+  (now landed — slice 8). Both work for the cases the erasure model supports
   (struct/enum concrete types; primitive/string fields use their
   intrinsic / explicitly-impl'd methods). Tested via
   `trait-dyn-object-heterogeneous`, `trait-struct-array-loop-method`,
@@ -533,6 +530,46 @@ regressing the self-host gates. It needs traits in two slices:
   var first (`var h: Opt = Has(5); h.eq(…)`) works. And `dyn Trait` on
   wasm still needs genuine runtime dispatch (the backend is
   static-dispatch).
+
+- **Self-host slice 8 (shipped): generic-struct monomorphisation.**
+  Closes the slice-4 boundary: a generic struct instantiated at a
+  primitive / string `T` (`Box[i32]`, `Box[string]`) is now cloned to a
+  concrete struct (`Box__i32` whose `v: i32`, `Box__string` whose
+  `v: string`) so a `@derive` / parametric-`impl` method body's
+  `self.v.m()` resolves the field type statically. The pass
+  (`parser.monomorphize_structs`, run inside `module_with_builtins` right
+  after the function monomorphiser) reuses the existing
+  `mono_infer` / `bind_unify` / `subst_ty` / `split_dunder` machinery:
+  `StructDecl` now records its `type_params` (captured by
+  `parse_struct_decl` instead of discarded); a walk rewrites every
+  generic-struct annotation (`Box[i32]` → `Box__i32`, via `mg_ty`) and
+  every struct literal (`Box { v: 5 }` → `Box__i32 { v: 5 }`, key inferred
+  from the field values by `infer_lit_key`), collecting the
+  instantiations; a worklist then clones each generic struct (fields
+  substituted) and re-points its @derive-synthesised methods (bare `Box`
+  receiver) and parametric-`impl` methods (`Box[T]` receiver + type
+  params) at the mangled clone (`clone_struct_method`). The clones'
+  literal display strings stay the ORIGINAL base name (`"Box { "` is baked
+  at synth time), so `Display` output is unchanged. A no-op when no struct
+  is generic — the self-host source + stdlib use none — which keeps the
+  byte-identical fixpoint.
+
+  The one cross-cutting emitter fix: `self` / struct-typed params were
+  bound with `ret_tag_of(type)`, which maps a struct NAME to `"unknown"`,
+  so `self.v` fell back to a first-match field scan across *all* structs —
+  fine until two clones (`Box__i32`, `Box__string`) share a field name
+  `v`, where the first-match returned the wrong clone's field type. Both
+  native emitters now bind a receiver / param to its struct NAME when the
+  declared type is a plain struct (the new `struct_local_tag` — bracketed
+  types like `FuncDecl[]` / `Map[K, V]` / `Option[i32]` keep their coarse
+  tag so arrays/maps/options aren't mis-typed), so `self.v` resolves
+  `field_type_tag_in` the right struct. The wasm backend needed no emitter
+  change — its static dispatch (`struct_type_of` → `$Box__i32__to_string`)
+  routes the distinct clones for free. Tested via
+  `trait-generic-struct-derive-{display-i32,display-string,display-both,eq,ord}`
+  and `trait-generic-struct-parametric-impl` on x86-64 + arm64, the
+  `generic-struct-*` cases through the wasm gate, and the x86-64 + arm64
+  fixpoint gates (the compiler still builds itself byte-identically).
 
 ## 7b. The `std/test` collapse (landed)
 

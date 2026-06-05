@@ -198,6 +198,63 @@ var traitsCases = []struct {
 			"function main(): i32 { var r: i32 = 0; " +
 			"if (Low(1).cmp(Low(2)) < 0) { r = r + 1; } if (Low(9).cmp(High) < 0) { r = r + 2; } " +
 			"if (High.cmp(Low(0)) > 0) { r = r + 4; } if (Low(3).cmp(Low(3)) == 0) { r = r + 8; } return r; }", 15},
+	// Generic-struct monomorphisation: a `@derive(Display) struct Box[T]`
+	// instantiated at `Box[i32]` is cloned to a concrete `Box__i32` with
+	// `v: i32`, so `self.v.to_string()` dispatches statically to the i32
+	// helper (the erased "T" shape couldn't). Renders "Box { v: 5 }" (12).
+	{"trait-generic-struct-derive-display-i32",
+		"@derive(Display) struct Box[T] { v: T } " +
+			"function main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.to_string().len(); }",
+		len("Box { v: 5 }")},
+	// Same generic struct instantiated at `Box[string]` — a SEPARATE
+	// `Box__string` clone whose `self.v` is a string. Renders
+	// "Box { v: hi }" (13).
+	{"trait-generic-struct-derive-display-string",
+		"@derive(Display) struct Box[T] { v: T } " +
+			"function main(): i32 { var b: Box[string] = Box { v: \"hi\" }; return b.to_string().len(); }",
+		len("Box { v: hi }")},
+	// Both instantiations of the same generic struct coexisting: two
+	// clones (`Box__i32`, `Box__string`) each dispatch `to_string` to its
+	// own concrete field type. 12 + 13 = 25. Guards the shared-field-name
+	// dispatch (both clones declare `v`).
+	{"trait-generic-struct-derive-display-both",
+		"@derive(Display) struct Box[T] { v: T } " +
+			"function main(): i32 { var a: Box[i32] = Box { v: 5 }; var b: Box[string] = Box { v: \"hi\" }; " +
+			"return a.to_string().len() + b.to_string().len(); }",
+		len("Box { v: 5 }") + len("Box { v: hi }")},
+	// `@derive(Eq)` on a generic struct: the cloned `Box__i32` gets a
+	// field-wise `eq` whose `self.v.eq(other.v)` dispatches to the inline
+	// `impl Eq for i32`. r=3 only if equal values compare true AND
+	// differing values compare false.
+	{"trait-generic-struct-derive-eq",
+		"trait Eq { function eq(self: Self, other: Self): boolean; } " +
+			"impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } " +
+			"@derive(Eq) struct Box[T] { v: T } " +
+			"function main(): i32 { var a: Box[i32] = Box { v: 5 }; var b: Box[i32] = Box { v: 5 }; var c: Box[i32] = Box { v: 9 }; " +
+			"var r: i32 = 0; if (a.eq(b)) { r = r + 1; } if (!a.eq(c)) { r = r + 2; } return r; }", 3},
+	// `@derive(Ord)` on a generic struct: the cloned `cmp` compares the
+	// concrete `i32` field via the inline `impl Ord for i32`. 42 only if
+	// the lexicographic cmp orders correctly in both directions + equal.
+	{"trait-generic-struct-derive-ord",
+		"trait Ord { function cmp(self: Self, other: Self): i32; } " +
+			"impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } " +
+			"@derive(Ord) struct Box[T] { v: T } " +
+			"function main(): i32 { var a: Box[i32] = Box { v: 1 }; var c: Box[i32] = Box { v: 9 }; " +
+			"if (a.cmp(c) < 0) { if (c.cmp(a) > 0) { if (a.cmp(a) == 0) { return 42; } } } return 0; }", 42},
+	// A parametric `impl[T: Show] Show for Box[T]` cloned per concrete T:
+	// `Box__i32`'s method dispatches `self.v.show()` to `impl Show for
+	// i32`, `Box__string`'s to `impl Show for string`. "Box(7)"=6 +
+	// "Box(hi)"=7 = 13. Exercises generic receiver-method monomorphisation
+	// over a primitive AND a string T in one program.
+	{"trait-generic-struct-parametric-impl",
+		"trait Show { function show(self: Self): string; } " +
+			"impl Show for i32 { function show(self: Self): string { return self.to_string(); } } " +
+			"impl Show for string { function show(self: Self): string { return self; } } " +
+			"struct Box[T] { v: T } " +
+			"impl[T: Show] Show for Box[T] { function show(self: Self): string { return \"Box(\" + self.v.show() + \")\"; } } " +
+			"function main(): i32 { var a: Box[i32] = Box { v: 7 }; var b: Box[string] = Box { v: \"hi\" }; " +
+			"return a.show().len() + b.show().len(); }",
+		len("Box(7)") + len("Box(hi)")},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted

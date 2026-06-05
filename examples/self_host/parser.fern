@@ -181,7 +181,11 @@ pub struct FuncDecl { name: string, receiver_name: string, receiver_type: string
 // captured as bare strings; full type syntax (arrays /
 // generics / unions) lands in a follow-up.
 pub struct StructFieldDecl { name: string, type_name: string }
-pub struct StructDecl { name: string, fields: StructFieldDecl[] }
+// type_params holds a generic struct's parameter names (`["T"]` for
+// `struct Box[T]`); empty for a non-generic struct. The monomorphiser
+// uses it to clone `Box[i32]` → a concrete `Box__i32` with the field
+// types substituted, so primitive/string payloads resolve their methods.
+pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[] }
 
 // Top-level union type alias: `type Name = V1 | V2 | V3;`.
 // Variants are captured as bare type-name strings — they
@@ -1898,26 +1902,34 @@ pub struct StructResult { par: Par, decl: StructDecl }
 function parse_struct_decl(p: Par): StructResult {
     p = p.advance();  // consume `struct`
     var name: string = p.peek_ident();
+    var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return StructResult { par: p, decl: StructDecl { name: "", fields: empty } };
+        return StructResult { par: p, decl: StructDecl { name: "", fields: empty, type_params: notp0 } };
     }
     p = p.advance();
-    // Optional generic type parameters: `struct Box[T] { … }`. Erased
-    // like function type params — the field layout is the same uniform
-    // 8-byte-slot shape for every instantiation. Consume + discard.
+    // Optional generic type parameters: `struct Box[T] { … }`. Captured
+    // so the monomorphiser can clone a concrete struct per instantiation
+    // (the field layout is uniform, but the per-instantiation field
+    // TYPES drive primitive/string method dispatch).
+    var tparams: string[] = [];
     if (p.peek_punct() == "[") {
-        var gd: i32 = 0;
-        while (!p.at_end()) {
+        p = p.advance(); // consume `[`
+        var gd: i32 = 1;
+        while (!p.at_end() && gd > 0) {
             var gpk: string = p.peek_punct();
             if (gpk == "[") { gd = gd + 1; p = p.advance(); continue; }
-            if (gpk == "]") { gd = gd - 1; p = p.advance(); if (gd == 0) { break; } continue; }
+            if (gpk == "]") { gd = gd - 1; p = p.advance(); continue; }
+            if (gd == 1) {
+                var tpn: string = p.peek_ident();
+                if (tpn.len() > 0) { tparams = tparams.push(tpn); }
+            }
             p = p.advance();
         }
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return StructResult { par: p, decl: StructDecl { name: name, fields: empty } };
+        return StructResult { par: p, decl: StructDecl { name: name, fields: empty, type_params: tparams } };
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
@@ -1931,7 +1943,7 @@ function parse_struct_decl(p: Par): StructResult {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return StructResult { par: p, decl: StructDecl { name: name, fields: fields } };
+    return StructResult { par: p, decl: StructDecl { name: name, fields: fields, type_params: tparams } };
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -2009,7 +2021,7 @@ function parse_enum_decl(p: Par): EnumResult {
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
         }
-        out = out.push(StructDecl { name: vname, fields: fields });
+        out = out.push(StructDecl { name: vname, fields: fields, type_params: [] });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -2084,7 +2096,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
     if (payload_type.len() > 0) {
         fields = fields.push(StructFieldDecl { name: "__ev", type_name: payload_type });
     }
-    return acc.push(StructDecl { name: name, fields: fields });
+    return acc.push(StructDecl { name: name, fields: fields, type_params: [] });
 }
 
 // inject_builtin_enums adds the variant structs for the enums the
@@ -2118,7 +2130,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.push(StructFieldDecl { name: "is_file", type_name: "boolean" });
         fsf = fsf.push(StructFieldDecl { name: "is_dir", type_name: "boolean" });
         fsf = fsf.push(StructFieldDecl { name: "size", type_name: "i32" });
-        structs = structs.push(StructDecl { name: "FileStat", fields: fsf });
+        structs = structs.push(StructDecl { name: "FileStat", fields: fsf, type_params: [] });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess
@@ -2131,7 +2143,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         prf = prf.push(StructFieldDecl { name: "stdout", type_name: "string" });
         prf = prf.push(StructFieldDecl { name: "stderr", type_name: "string" });
         prf = prf.push(StructFieldDecl { name: "exit_code", type_name: "i32" });
-        structs = structs.push(StructDecl { name: "ProcessResult", fields: prf });
+        structs = structs.push(StructDecl { name: "ProcessResult", fields: prf, type_params: [] });
     }
     // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
     // are constructed via record literals (e.g. `HeaderMap { names: …,
@@ -2147,7 +2159,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var hmf: StructFieldDecl[] = [];
         hmf = hmf.push(StructFieldDecl { name: "names", type_name: "string[]" });
         hmf = hmf.push(StructFieldDecl { name: "values", type_name: "string[]" });
-        structs = structs.push(StructDecl { name: "HeaderMap", fields: hmf });
+        structs = structs.push(StructDecl { name: "HeaderMap", fields: hmf, type_params: [] });
     }
     if (!struct_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
@@ -2155,14 +2167,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.push(StructFieldDecl { name: "path", type_name: "string" });
         hrf = hrf.push(StructFieldDecl { name: "body", type_name: "string" });
         hrf = hrf.push(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
-        structs = structs.push(StructDecl { name: "HttpRequest", fields: hrf });
+        structs = structs.push(StructDecl { name: "HttpRequest", fields: hrf, type_params: [] });
     }
     if (!struct_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.push(StructFieldDecl { name: "status", type_name: "i32" });
         hsf = hsf.push(StructFieldDecl { name: "body", type_name: "string" });
         hsf = hsf.push(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
-        structs = structs.push(StructDecl { name: "HttpResponse", fields: hsf });
+        structs = structs.push(StructDecl { name: "HttpResponse", fields: hsf, type_params: [] });
     }
     return structs;
 }
@@ -2810,6 +2822,460 @@ pub function monomorphize_module(mod: Module): Module {
     };
 }
 
+// ---- generic-struct monomorphisation --------------------------------
+// The self-host historically erased generic struct type parameters: a
+// `Box[i32]` and a `Box[string]` shared one untyped "Box" shape. That's
+// fine when the type argument is a heap value (its runtime shape drives
+// method dispatch) but breaks for a primitive/string `T`, because then
+// `self.v` has static type "T" and `self.v.to_string()` can't be
+// dispatched (no shape header on a raw i32). This pass clones each
+// generic struct per concrete instantiation (`Box[i32]` -> `Box__i32`
+// with `v: i32`), re-points its @derive- and `impl`-synthesised methods
+// at the clone, and rewrites every annotation + struct literal to the
+// mangled name — so the field types are concrete and dispatch resolves
+// statically (the same `f__<key>` scheme the function monomorphiser
+// uses). A no-op when no struct is generic (the self-host source +
+// stdlib use none), which keeps the byte-identical fixpoint.
+
+// TyIns threads a rewritten type string alongside the running
+// instantiation accumulator.
+struct TyIns { ty: string, mins: Insts }
+// FRes threads a rewritten function alongside the accumulator.
+struct FRes { ffn: FuncDecl, fins: Insts }
+
+// gstruct_index returns the index of the generic struct named `base` in
+// `gstructs`, or -1.
+function gstruct_index(gstructs: StructDecl[], base: string): i32 {
+    var i: i32 = 0;
+    while (i < gstructs.len()) {
+        if (gstructs[i].name == base) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// strip_struct_base returns a (possibly generic) receiver/struct type's
+// base name: `Box` / `Box[T]` / `Box[i32]` all yield "Box".
+function strip_struct_base(ty: string): string {
+    var lb: i32 = first_bracket(ty);
+    if (lb > 0) { return ty[0 : lb]; }
+    return ty;
+}
+
+// mg_ty mangles a generic-struct reference inside a type string to its
+// monomorphised clone name (`Box[i32]` -> `Box__i32`), recursing through
+// an array suffix and nested generic arguments, recording each
+// instantiation it discovers. Non-generic types pass through unchanged.
+function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
+    if (type_ends_arr(ty)) {
+        var r: TyIns = mg_ty(ty[0 : ty.len() - 2], gstructs, ins);
+        return TyIns { ty: r.ty + "[]", mins: r.mins };
+    }
+    var lb: i32 = first_bracket(ty);
+    if (lb > 0 && ty[ty.len() - 1 : ty.len()] == "]") {
+        var base: string = ty[0 : lb];
+        if (gstruct_index(gstructs, base) >= 0) {
+            var inner: string = ty[lb + 1 : ty.len() - 1];
+            var parts: string[] = split_top_commas(inner);
+            var cur: Insts = ins;
+            var key: string = "";
+            var j: i32 = 0;
+            while (j < parts.len()) {
+                var pr: TyIns = mg_ty(parts[j], gstructs, cur);
+                cur = pr.mins;
+                if (j > 0) { key = key + "__"; }
+                key = key + pr.ty;
+                j = j + 1;
+            }
+            cur = cur.iadd(base, key);
+            return TyIns { ty: base + "__" + key, mins: cur };
+        }
+    }
+    return TyIns { ty: ty, mins: ins };
+}
+
+// to_concrete_struct_ty resolves a method's substituted type string to
+// the concrete clone name: a bare base (`Box`, from a @derive method's
+// `other: Box` param) becomes the mangled name directly; an arg form
+// (`Box[i32]`, from a parametric `impl[T]`) goes through mg_ty.
+function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs: StructDecl[]): string {
+    if (ty == base) { return mang; }
+    var fresh: Insts = Insts { inames: [], itypes: [] };
+    return mg_ty(ty, gstructs, fresh).ty;
+}
+
+// infer_lit_key infers the concrete instantiation key for a struct
+// literal of generic struct `gd` from its field values — unifying each
+// value's inferred type against the field's declared type, exactly the
+// way a call's arguments pin its type parameters. Returns "" if any type
+// parameter is left unbound (the literal then stays erased).
+function infer_lit_key(gd: StructDecl, fnames: string[], fvals: Expr[], env: MEnv, funcs: FuncDecl[]): string {
+    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+    var fi: i32 = 0;
+    while (fi < gd.fields.len()) {
+        var fname: string = gd.fields[fi].name;
+        var vi: i32 = 0;
+        while (vi < fnames.len()) {
+            if (fnames[vi] == fname) {
+                var ct: string = mono_infer(fvals[vi], env, funcs);
+                if (ct.len() > 0) {
+                    binds = bind_unify(gd.fields[fi].type_name, ct, gd.type_params, binds);
+                }
+            }
+            vi = vi + 1;
+        }
+        fi = fi + 1;
+    }
+    var key: string = "";
+    var k: i32 = 0;
+    while (k < gd.type_params.len()) {
+        var b: string = binds.elook(gd.type_params[k]);
+        if (b.len() == 0) { return ""; }
+        if (k > 0) { key = key + "__"; }
+        key = key + b;
+        k = k + 1;
+    }
+    return key;
+}
+
+// ms_expr rewrites a struct literal of a generic struct to its mangled
+// clone name (inferring the key from field values) and recurses through
+// every sub-expression, threading the instantiation accumulator.
+function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RExpr {
+    match (e) {
+        ExprBinary(b) => {
+            var l: RExpr = ms_expr(b.left, env, gstructs, funcs, ins);
+            var r: RExpr = ms_expr(b.right, env, gstructs, funcs, l.rins);
+            return RExpr { rexpr: ExprBinary { op: b.op, left: l.rexpr, right: r.rexpr }, rins: r.rins };
+        },
+        ExprUnary(u) => {
+            var o: RExpr = ms_expr(u.operand, env, gstructs, funcs, ins);
+            return RExpr { rexpr: ExprUnary { op: u.op, operand: o.rexpr }, rins: o.rins };
+        },
+        ExprCall(c) => {
+            var rc: RExpr = ms_expr(c.callee, env, gstructs, funcs, ins);
+            var cur: Insts = rc.rins;
+            var nargs: Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var ra: RExpr = ms_expr(c.args[i], env, gstructs, funcs, cur);
+                cur = ra.rins;
+                nargs = nargs.push(ra.rexpr);
+                i = i + 1;
+            }
+            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs }, rins: cur };
+        },
+        ExprArray(a) => {
+            var els: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                var re: RExpr = ms_expr(a.elements[i], env, gstructs, funcs, cur);
+                cur = re.rins;
+                els = els.push(re.rexpr);
+                i = i + 1;
+            }
+            return RExpr { rexpr: ExprArray { elements: els }, rins: cur };
+        },
+        ExprTuple(t) => {
+            var els: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                var re: RExpr = ms_expr(t.elements[i], env, gstructs, funcs, cur);
+                cur = re.rins;
+                els = els.push(re.rexpr);
+                i = i + 1;
+            }
+            return RExpr { rexpr: ExprTuple { elements: els }, rins: cur };
+        },
+        ExprIndex(ix) => {
+            var ar: RExpr = ms_expr(ix.array, env, gstructs, funcs, ins);
+            var idx: RExpr = ms_expr(ix.index, env, gstructs, funcs, ar.rins);
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr }, rins: idx.rins };
+        },
+        ExprSlice(sl) => {
+            var ar: RExpr = ms_expr(sl.array, env, gstructs, funcs, ins);
+            var st: RExpr = ms_expr(sl.start, env, gstructs, funcs, ar.rins);
+            var en: RExpr = ms_expr(sl.end, env, gstructs, funcs, st.rins);
+            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr }, rins: en.rins };
+        },
+        ExprFieldAccess(fa) => {
+            var o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
+            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field }, rins: o.rins };
+        },
+        ExprStructLit(s) => {
+            var cur: Insts = ins;
+            var vals: Expr[] = [];
+            var i: i32 = 0;
+            while (i < s.field_values.len()) {
+                var rv: RExpr = ms_expr(s.field_values[i], env, gstructs, funcs, cur);
+                cur = rv.rins;
+                vals = vals.push(rv.rexpr);
+                i = i + 1;
+            }
+            var rb: RExpr = ms_expr(s.base, env, gstructs, funcs, cur);
+            cur = rb.rins;
+            var tn: string = s.type_name;
+            var gi: i32 = gstruct_index(gstructs, s.type_name);
+            if (gi >= 0) {
+                var key: string = infer_lit_key(gstructs[gi], s.field_names, vals, env, funcs);
+                if (key.len() > 0) {
+                    tn = s.type_name + "__" + key;
+                    cur = cur.iadd(s.type_name, key);
+                }
+            }
+            return RExpr { rexpr: ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr }, rins: cur };
+        },
+        ExprLambda(lm) => {
+            var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, ins);
+            var rt: TyIns = mg_ty(lm.ret_type, gstructs, bodyr.rins3);
+            var nparams: ParamDecl[] = [];
+            var pcur: Insts = rt.mins;
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) {
+                var pt: TyIns = mg_ty(lm.params[pi].type_name, gstructs, pcur);
+                pcur = pt.mins;
+                nparams = nparams.push(ParamDecl { name: lm.params[pi].name, type_name: pt.ty });
+                pi = pi + 1;
+            }
+            return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts }, rins: pcur };
+        },
+        _ => { return RExpr { rexpr: e, rins: ins }; }
+    }
+    return RExpr { rexpr: e, rins: ins };
+}
+
+// ms_stmt rewrites one statement: generic-struct annotations on a `var`
+// go through mg_ty, struct literals through ms_expr, threading env+ins.
+function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmtOne {
+    match (st) {
+        StmtVar(v) => {
+            var iv: RExpr = ms_expr(v.init, env, gstructs, funcs, ins);
+            var ta: TyIns = mg_ty(v.type_name, gstructs, iv.rins);
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: iv.rexpr }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+        },
+        StmtReturn(r) => {
+            var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
+            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr }, renv: env, rins2: rv.rins };
+        },
+        StmtExpr(x) => {
+            var xv: RExpr = ms_expr(x.value, env, gstructs, funcs, ins);
+            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr }, renv: env, rins2: xv.rins };
+        },
+        StmtAssign(a) => {
+            var av: RExpr = ms_expr(a.value, env, gstructs, funcs, ins);
+            return RStmtOne { rstmt: StmtAssign { target: a.target, value: av.rexpr }, renv: env, rins2: av.rins };
+        },
+        StmtIf(f) => {
+            var cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
+            var tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins);
+            var eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3);
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
+        },
+        StmtWhile(w) => {
+            var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
+            var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins);
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts }, renv: env, rins2: wb.rins3 };
+        },
+        StmtFor(fr) => {
+            var it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
+            var benv: MEnv = env.ebind(fr.var_name, "");
+            var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins);
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts }, renv: env, rins2: fb.rins3 };
+        },
+        StmtMatch(m) => {
+            var sv: RExpr = ms_expr(m.scrutinee, env, gstructs, funcs, ins);
+            var arms: MatchArm[] = [];
+            var cur: Insts = sv.rins;
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur);
+                cur = ab.rins3;
+                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts });
+                i = i + 1;
+            }
+            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
+        },
+        _ => { return RStmtOne { rstmt: st, renv: env, rins2: ins }; }
+    }
+    return RStmtOne { rstmt: st, renv: env, rins2: ins };
+}
+
+// ms_stmts walks a statement list, threading the (block-local) env.
+function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmts {
+    var out: Stmt[] = [];
+    var e2: MEnv = env;
+    var cur: Insts = ins;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var rs: RStmtOne = ms_stmt(stmts[i], e2, gstructs, funcs, cur);
+        out = out.push(rs.rstmt);
+        e2 = rs.renv;
+        cur = rs.rins2;
+        i = i + 1;
+    }
+    return RStmts { rstmts: out, rins3: cur };
+}
+
+// ms_func rewrites a non-generic function's param/return/receiver
+// annotations and body, recording any generic-struct instantiation used.
+function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): FRes {
+    var cur: Insts = ins;
+    var nparams: ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        var pt: TyIns = mg_ty(fn.params[i].type_name, gstructs, cur);
+        cur = pt.mins;
+        nparams = nparams.push(ParamDecl { name: fn.params[i].name, type_name: pt.ty });
+        i = i + 1;
+    }
+    var rt: TyIns = mg_ty(fn.ret_type, gstructs, cur);
+    cur = rt.mins;
+    var rcv: TyIns = mg_ty(fn.receiver_type, gstructs, cur);
+    cur = rcv.mins;
+    var br: RStmts = ms_stmts(fn.body, env_from_params(fn.params), gstructs, funcs, cur);
+    cur = br.rins3;
+    return FRes {
+        ffn: FuncDecl {
+            name: fn.name, receiver_name: fn.receiver_name, receiver_type: rcv.ty,
+            type_params: fn.type_params, params: nparams, ret_type: rt.ty, body: br.rstmts
+        },
+        fins: cur
+    };
+}
+
+// clone_struct_method builds the per-instantiation clone of a generic
+// struct's method (a @derive-synthesised one with a bare `Box` receiver,
+// or a parametric-`impl` one with a `Box[T]` receiver + type params),
+// substituting the type variables and re-pointing receiver/params/return
+// at the mangled clone name. The body's `var T` annotations are
+// substituted; its literal display strings (baked from the original
+// struct's name at synth time) stay intact.
+function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[]): FuncDecl {
+    var cts: string[] = split_dunder(key);
+    var tparams: string[] = m.type_params;
+    var mang: string = base + "__" + key;
+    var nparams: ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < m.params.len()) {
+        var pt: string = to_concrete_struct_ty(subst_ty(m.params[i].type_name, tparams, cts), base, mang, gstructs);
+        nparams = nparams.push(ParamDecl { name: m.params[i].name, type_name: pt });
+        i = i + 1;
+    }
+    var rt: string = to_concrete_struct_ty(subst_ty(m.ret_type, tparams, cts), base, mang, gstructs);
+    var notp: string[] = [];
+    return FuncDecl {
+        name: m.name, receiver_name: m.receiver_name, receiver_type: mang,
+        type_params: notp, params: nparams, ret_type: rt,
+        body: subst_stmts(m.body, tparams, cts)
+    };
+}
+
+// monomorphize_structs clones every generic struct (and its methods) per
+// concrete instantiation, rewriting all references to the mangled name.
+// See the section comment above. Runs after function monomorphisation so
+// it also sees the concrete `Box[i32]` annotations those clones produce.
+pub function monomorphize_structs(mod: Module): Module {
+    var gstructs: StructDecl[] = [];
+    var gi: i32 = 0;
+    while (gi < mod.structs.len()) {
+        if (mod.structs[gi].type_params.len() > 0) { gstructs = gstructs.push(mod.structs[gi]); }
+        gi = gi + 1;
+    }
+    if (gstructs.len() == 0) { return mod; }
+
+    var ins: Insts = Insts { inames: [], itypes: [] };
+
+    // Phase 1: rewrite all references; drop the generic decls.
+    var nstructs: StructDecl[] = [];
+    var si: i32 = 0;
+    while (si < mod.structs.len()) {
+        var sd: StructDecl = mod.structs[si];
+        if (sd.type_params.len() == 0) {
+            var nf: StructFieldDecl[] = [];
+            var fj: i32 = 0;
+            while (fj < sd.fields.len()) {
+                var ft: TyIns = mg_ty(sd.fields[fj].type_name, gstructs, ins);
+                ins = ft.mins;
+                nf = nf.push(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty });
+                fj = fj + 1;
+            }
+            nstructs = nstructs.push(StructDecl { name: sd.name, fields: nf, type_params: [] });
+        }
+        si = si + 1;
+    }
+
+    var nfuncs: FuncDecl[] = [];
+    var fi2: i32 = 0;
+    while (fi2 < mod.funcs.len()) {
+        var fn: FuncDecl = mod.funcs[fi2];
+        var rbase: string = strip_struct_base(fn.receiver_type);
+        if (fn.receiver_name.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {
+            // generic-struct method — dropped here, cloned in phase 2.
+        } else {
+            var fr: FRes = ms_func(fn, gstructs, mod.funcs, ins);
+            ins = fr.fins;
+            nfuncs = nfuncs.push(fr.ffn);
+        }
+        fi2 = fi2 + 1;
+    }
+
+    var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
+    var tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, mod.funcs, ins);
+    ins = tr.rins3;
+
+    // Phase 2: generate clones; a worklist covers clones whose own field
+    // types / method bodies reference further instantiations.
+    var done: Insts = Insts { inames: [], itypes: [] };
+    var wi: i32 = 0;
+    while (wi < ins.inames.len()) {
+        var base: string = ins.inames[wi];
+        var key: string = ins.itypes[wi];
+        if (done.ihas(base, key)) { wi = wi + 1; continue; }
+        done = done.iadd(base, key);
+        var idx: i32 = gstruct_index(gstructs, base);
+        if (idx >= 0) {
+            var gd: StructDecl = gstructs[idx];
+            var cts: string[] = split_dunder(key);
+            var mang: string = base + "__" + key;
+            var cf: StructFieldDecl[] = [];
+            var cfi: i32 = 0;
+            while (cfi < gd.fields.len()) {
+                var subbed: string = subst_ty(gd.fields[cfi].type_name, gd.type_params, cts);
+                var ft2: TyIns = mg_ty(subbed, gstructs, ins);
+                ins = ft2.mins;
+                cf = cf.push(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty });
+                cfi = cfi + 1;
+            }
+            nstructs = nstructs.push(StructDecl { name: mang, fields: cf, type_params: [] });
+            var mi: i32 = 0;
+            while (mi < mod.funcs.len()) {
+                var mm: FuncDecl = mod.funcs[mi];
+                if (mm.receiver_name.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
+                    var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
+                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins);
+                    ins = br2.rins3;
+                    nfuncs = nfuncs.push(FuncDecl {
+                        name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
+                        type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts
+                    });
+                }
+                mi = mi + 1;
+            }
+        }
+        wi = wi + 1;
+    }
+
+    return Module {
+        funcs: nfuncs,
+        structs: nstructs,
+        aliases: mod.aliases,
+        imports: mod.imports,
+        top_stmts: tr.rstmts
+    };
+}
+
 // ---- defer lowering -------------------------------------------------
 // `defer ACTION;` runs ACTION when the enclosing function exits — at every
 // return path and at falloff, in LIFO order, and only if the defer
@@ -3006,7 +3472,7 @@ pub function lower_defers_module(mod: Module): Module {
 }
 
 pub function module_with_builtins(mod: Module): Module {
-    var mono: Module = monomorphize_module(lower_defers_module(mod));
+    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(mod)));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
@@ -3564,7 +4030,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var si: i32 = 0;
     while (si < from.structs.len()) {
         var sd: StructDecl = from.structs[si];
-        nstructs = nstructs.push(StructDecl { name: prefix + "." + sd.name, fields: sd.fields });
+        nstructs = nstructs.push(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params });
         si = si + 1;
     }
     var naliases: TypeAlias[] = into.aliases;
