@@ -2384,7 +2384,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // box + 4 + i*4 (matching the lambda body's $__env loads).
             var ic: i32 = 0;
             while (ic < caps.len()) {
-                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(4 + ic * 4) + ")) " + emit_expr(parser.ExprIdent { name: caps[ic] }, cx, depth + 1) + ")";
+                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(4 + ic * 4) + ")) " + emit_expr(parser.ExprIdent { name: caps[ic], line: 0, col: 0 }, cx, depth + 1) + ")";
                 ic = ic + 1;
             }
             s = s + " (local.get " + ap + "))";
@@ -5167,7 +5167,7 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
     var ci: i32 = 0;
     while (ci < caps.len()) {
         if (contains_str(cx.locals, caps[ci])) { cap_str = cap_str.push(caps[ci]); }
-        var cst: string = struct_type_of(parser.ExprIdent { name: caps[ci] }, cx);
+        var cst: string = struct_type_of(parser.ExprIdent { name: caps[ci], line: 0, col: 0 }, cx);
         if (cst.len() > 0) {
             cap_sv_names = cap_sv_names.push(caps[ci]);
             cap_sv_types = cap_sv_types.push(cst);

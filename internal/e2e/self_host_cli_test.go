@@ -278,6 +278,24 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-ident", func(t *testing.T) {
+		// E036 (ambiguous unqualified variant) and the ident-argument
+		// case of E038 are reported at the identifier's own position.
+		for _, c := range []struct{ name, src, want string }{
+			{"ambiguous_variant", "enum A { Foo, Bar }\nenum B { Foo, Baz }\nfunction main(): i32 { var x = Foo; return 0; }\n", "3:32: error[E036]"},
+			{"arg_ident", "function f(a: string): i32 { return 0; }\nfunction main(): i32 { var n: i32 = 5; return f(n); }\n", "2:49: error[E038]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-number", func(t *testing.T) {
 		// E047 (literal out of range) and the number-argument case of
 		// E038 (argument type mismatch) are reported at the numeric
