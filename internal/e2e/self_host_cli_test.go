@@ -278,6 +278,26 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-cond-slice", func(t *testing.T) {
+		// E008 (if/while condition) and E037 (slice bound) are reported
+		// at the offending expression's own position.
+		for _, c := range []struct{ name, src, want string }{
+			{"if_cond", "function main(): i32 { if (5) { return 1; } return 0; }\n", "1:28: error[E008]"},
+			{"while_cond", "function main(): i32 { while (5) { return 1; } return 0; }\n", "1:31: error[E008]"},
+			{"slice_low", "function main(): i32 { var a = [1,2,3]; var s: string = \"x\"; var b = a[s:2]; return 0; }\n", "1:72: error[E037]"},
+			{"slice_high", "function main(): i32 { var a = [1,2,3]; var s: string = \"x\"; var b = a[0:s]; return 0; }\n", "1:74: error[E037]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-field", func(t *testing.T) {
 		// E043 (no such struct field) and E046 (bad tuple index) are
 		// reported at the field-access dot.
