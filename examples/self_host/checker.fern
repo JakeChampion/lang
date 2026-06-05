@@ -1733,13 +1733,13 @@ function match_diags(stmts: parser.Stmt[]): Diag[] {
                     match (m.arms[a].pattern) {
                         parser.PatWildcard(_) => {
                             if (a < m.arms.len() - 1) {
-                                out = out.push(dg("E026", "wildcard `_` arm must be last in the match"));
+                                out = out.push(dg_at("E026", "wildcard `_` arm must be last in the match", m.arms[a].line, m.arms[a].col));
                             }
                         },
                         parser.PatVariant(pv) => {
                             if (pv.type_name.len() > 0) {
                                 if (name_in(seen, pv.type_name)) {
-                                    out = out.push(dg("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match"));
+                                    out = out.push(dg_at("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
                                 } else {
                                     seen = seen.push(pv.type_name);
                                 }

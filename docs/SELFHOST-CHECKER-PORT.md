@@ -356,6 +356,21 @@ same code(s) the Go checker does — restricted to
   `Continue{P}`). **E011** (break / continue outside a loop) now prints
   `1:24: error[E011]` for both, matching Go. Fixpoint-safe. Gated by a new
   `check-position-break-continue`.
+- **Slice 39 (done): `MatchArm` positions → E026 + E028 line:col.**
+  `MatchArm` gains `line`/`col`, captured at the arm's pattern in
+  `parse_match_stmt` (matching the Go checker's `arm.P`). Because the
+  `-check` pipeline runs `flatten.bundle` *before* the checker, the
+  flatten (and constfold / mono) MatchArm rebuilds must **propagate** the
+  arm position, not zero it. **E026** (non-final wildcard `_`) prints
+  `2:52: error[E026]` and **E028** (variant covered twice) prints
+  `2:72: error[E028]`, both matching Go. Gated by a new
+  `check-position-match-arm`.
+  *Gotcha for future slices:* the **asm backend assigns struct-literal
+  fields positionally** (`P { b: 9, a: 4 }` stores `9` into field `a`),
+  so a struct literal's field order MUST match the declaration order —
+  always append new `line`/`col` fields at the END of both the struct
+  and every literal, never the front. (This bit slice 39: a blanket
+  insert put them first and segfaulted the fixpoint until reordered.)
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

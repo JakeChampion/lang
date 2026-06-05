@@ -129,7 +129,7 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32 }
 pub struct PatVariant { type_name: string, binding: string }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
-pub struct MatchArm { pattern: Pattern, body: Stmt[] }
+pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32 }
 pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[] }
 // StmtFor models `for VAR in EXPR { body }`. The iter expr
 // evaluates to an array (interp) / TypeArray (checker); the
@@ -1227,6 +1227,10 @@ function parse_match_stmt(p: Par): MatchStmtResult {
     p = p.advance();
     var arms: MatchArm[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
+        // E026 / E028 are reported at the arm (Go's `arm.P`), which is the
+        // pattern's first token.
+        var aline: i32 = p.peek_line();
+        var acol: i32 = p.peek_col();
         var pr: PatternResult = parse_pattern(p);
         p = pr.par;
         // `=>` arrives as a single punct token from the lexer.
@@ -1235,7 +1239,7 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         }
         var bb: BlockResult = parse_block(p);
         p = bb.par;
-        arms = arms.push(MatchArm { pattern: pr.pattern, body: bb.body });
+        arms = arms.push(MatchArm { pattern: pr.pattern, body: bb.body, line: aline, col: acol });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -1448,8 +1452,8 @@ function parse_stmt(p: Par): StmtResult {
                 ilelse = ileb.body;
             }
             var ilarms: MatchArm[] = [];
-            ilarms = ilarms.push(MatchArm { pattern: ilpat.pattern, body: ilthen.body });
-            ilarms = ilarms.push(MatchArm { pattern: p_wildcard(), body: ilelse });
+            ilarms = ilarms.push(MatchArm { pattern: ilpat.pattern, body: ilthen.body, line: 0, col: 0 });
+            ilarms = ilarms.push(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0 });
             return StmtResult { par: p, stmt: s_match(ilscrut.expr, ilarms) };
         }
         if (p.peek_punct() != "(") {
@@ -2771,7 +2775,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
             while (i < m.arms.len()) {
                 var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur);
                 cur = ab.rins3;
-                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts });
+                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
@@ -2852,7 +2856,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
                 while (j < m.arms.len()) {
-                    arms = arms.push(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts) });
+                    arms = arms.push(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col });
                     j = j + 1;
                 }
                 out = out.push(StmtMatch { scrutinee: m.scrutinee, arms: arms });
@@ -3235,7 +3239,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             while (i < m.arms.len()) {
                 var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur);
                 cur = ab.rins3;
-                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts });
+                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
@@ -3492,7 +3496,7 @@ function dl_collect_stmt(st: Stmt, actions: Stmt[]): DeferAcc {
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc);
-                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts });
+                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col });
                 acc = ar.actions;
                 i = i + 1;
             }
@@ -3566,7 +3570,7 @@ function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup) });
+                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup), line: m.arms[i].line, col: m.arms[i].col });
                 i = i + 1;
             }
             var one: Stmt[] = [s_match(m.scrutinee, arms)];
@@ -3736,9 +3740,9 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
             var e: Expr = e_string(v.name + "(");
             e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_string"));
             e = e_binary("+", e, e_string(")"));
-            arms = arms.push(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)] });
+            arms = arms.push(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0 });
         } else {
-            arms = arms.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))] });
+            arms = arms.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0 });
         }
         i = i + 1;
     }
@@ -3759,13 +3763,13 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
         var inner: MatchArm[] = [];
         if (v.fields.len() > 0) {
             var eqx: Expr = dv_call1(e_ident("__s0"), "eq", e_ident("__o0"));
-            inner = inner.push(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)] });
-            inner = inner.push(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))] });
-            arms = arms.push(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)] });
+            inner = inner.push(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)], line: 0, col: 0 });
+            inner = inner.push(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0 });
+            arms = arms.push(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)], line: 0, col: 0 });
         } else {
-            inner = inner.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))] });
-            inner = inner.push(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))] });
-            arms = arms.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)] });
+            inner = inner.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))], line: 0, col: 0 });
+            inner = inner.push(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0 });
+            arms = arms.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)], line: 0, col: 0 });
         }
         i = i + 1;
     }
@@ -3808,12 +3812,12 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
                     }
                 }
             }
-            inner = inner.push(MatchArm { pattern: p_variant(vj.name, ob), body: ibody });
+            inner = inner.push(MatchArm { pattern: p_variant(vj.name, ob), body: ibody, line: 0, col: 0 });
             j = j + 1;
         }
         var sb: string = "";
         if (vi.fields.len() > 0) { sb = "__s0"; }
-        arms = arms.push(MatchArm { pattern: p_variant(vi.name, sb), body: [s_match(e_ident("other"), inner)] });
+        arms = arms.push(MatchArm { pattern: p_variant(vi.name, sb), body: [s_match(e_ident("other"), inner)], line: 0, col: 0 });
         i = i + 1;
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
