@@ -165,8 +165,16 @@ same code(s) the Go checker does — restricted to
   ExprSlice arm over-rejects open slices via `all_well_typed` — a separate
   pre-existing quirk, not a diagnostic, so it doesn't affect the code
   differential.)
+- **Slice 17 (done): tuple field index** (E046). The field-access arm of
+  `call_diags` emits E046 when a tuple field name isn't a numeric index
+  ("requires a numeric index") or the index is out of range. Fires for an
+  inferred tuple value (`var t = (1, 2)`), where `check_expr` yields a
+  `TypeTuple`; an annotated tuple (`var t: (i32, i32)`) doesn't yet resolve
+  to a `TypeTuple` (a separate self-host gap), so it's under-reported there
+  — safe, and the differential corpus uses inferred tuples where the two
+  checkers agree.
 - **Later: pattern matching** (E014/E025/E036), traits (E021),
-  arithmetic operand type (E009 integer/float), tuples / maps,
+  arithmetic operand type (E009 integer/float), maps (E045),
   owned-parameter move checking (E050/E051), then source positions.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
