@@ -107,6 +107,13 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"array-push-loop", "function main(): i32 { var a = [0]; var i = 1; while (i <= 5) { a = a.push(i * i); i = i + 1; } var s = 0; var j = 0; while (j < a.len()) { s = s + a[j]; j = j + 1; } return s; }", 55},
 		{"array-push-for", "function main(): i32 { var a = [10]; a = a.push(20); a = a.push(30); var s = 0; for x in a { s = s + x; } return s; }", 60},
 		{"array-push-string", "function main(): i32 { var a = [\"ab\"]; a = a.push(\"cde\"); return a[0].len() + a[1].len() + a.len(); }", 7},
+		// a[lo:hi] slicing → __ssa_arr_slice (fresh array holding a[lo..hi-1]);
+		// a string slice is a substring (a string is a byte array).
+		{"slice-array", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[1] + b[2] + b.len(); }", 93},
+		{"slice-for", "function main(): i32 { var a = [1, 2, 3, 4, 5, 6]; var sum = 0; var b = a[2:5]; for x in b { sum = sum + x; } return sum; }", 12},
+		{"slice-empty", "function main(): i32 { var a = [7, 8, 9]; var b = a[0:0]; return b.len() + a[1]; }", 8},
+		{"slice-string-eq", "function main(): i32 { var s = \"hello\"; if (s[1:4] == \"ell\") { return 7; } return 0; }", 7},
+		{"slice-string-len", "function main(): i32 { var s = \"hello world\"; var a = s[0:5]; var b = s[6:11]; return a.len() + b.len(); }", 10},
 		// Indexed assignment `arr[i] = v` (parser desugar → __set_index →
 		// store_elem): constant index, computed RHS, loop-fill, swap, and
 		// compound `+=`.

@@ -112,6 +112,10 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"array-push", "function main(): i32 { var a = [1, 2]; a = a.push(3); a = a.push(4); return a[0] + a[1] + a[2] + a[3] + a.len(); }", 14},
 		{"array-push-loop", "function main(): i32 { var a = [0]; var i = 1; while (i <= 5) { a = a.push(i * i); i = i + 1; } var s = 0; var j = 0; while (j < a.len()) { s = s + a[j]; j = j + 1; } return s; }", 55},
 		{"array-push-string", "function main(): i32 { var a = [\"ab\"]; a = a.push(\"cde\"); return a[0].len() + a[1].len() + a.len(); }", 7},
+		// a[lo:hi] slicing → __ssa_arr_slice (substring for a string).
+		{"slice-array", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[1] + b[2] + b.len(); }", 93},
+		{"slice-for", "function main(): i32 { var a = [1, 2, 3, 4, 5, 6]; var sum = 0; var b = a[2:5]; for x in b { sum = sum + x; } return sum; }", 12},
+		{"slice-string-eq", "function main(): i32 { var s = \"hello\"; if (s[1:4] == \"ell\") { return 7; } return 0; }", 7},
 		// Indexed assignment `arr[i] = v` (→ __set_index → store_elem):
 		// constant index, loop-fill, swap, compound, and cross-call mutation
 		// through a shared array param.
