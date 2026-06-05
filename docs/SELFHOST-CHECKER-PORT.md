@@ -91,6 +91,14 @@ same code(s) the Go checker does — restricted to
   scope; struct-update literals (`Name { ...base, … }`) and
   non-struct/variant type names are skipped (conservative — no false
   positives).
+- **Slice 5 (done): free-function call arity** (E004). `call_diags` /
+  `stmts_call_diags` walk every expression (scope-threaded, so a callee
+  name shadowed by a local `var` / closure is recognised as a local, not
+  the function) and emit E004 when a free-function call's argument count
+  doesn't match the function's declared parameter count. Conservative:
+  only a name that resolves to a module function sig (and isn't a local
+  binding) is checked; method and closure arity are deferred. Remaining
+  type-mismatch codes — E003 (assignment), E038 (argument type) — follow.
 - **Slice 4: control-flow + conditions** (E008, E011, E012).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
