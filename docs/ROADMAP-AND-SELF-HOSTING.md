@@ -836,6 +836,19 @@ which `component_full`'s import-free path can't take):
    (→ `wasi:clocks/wall-clock`) are the same shape and the natural
    follow-ups; the static-blob-per-import-set approach will want a generative
    component builder once the combinations multiply.
+8. **Preview2-native arguments — `args` works.** `args()` follows env exactly:
+   `io`-gated, the adapter-free route imports `wasi:cli/environment@0.2.0`'s
+   `get-arguments` (a `list<string>` — header `(ptr, count)` into the return
+   area, each string 8 bytes `{ptr@0,len@4}`) and copies each entry into a
+   fresh `[len][bytes]` block stored in the same `string[]` array block
+   (`[len][cap][elem-ptrs]`) the preview1 helper built — so every `args()`
+   call site is unchanged. Same aligned return area (`get-arguments` writes a
+   two-i32 header) and the same `cabi_realloc` export (now gated on
+   `io && (has_env || has_args)`). Framing `component_full_io_args`,
+   byte-identical to native. Tests: `TestSelfHostWasmComponentFullIOArgs`
+   (byte-identical) + `TestSelfHostWasmComponentArgs` (count incl. argv[0] /
+   the passed values in order). `now_unix_ms` (→ `wasi:clocks/wall-clock`)
+   is the remaining same-shape builtin.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
