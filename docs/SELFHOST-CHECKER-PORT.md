@@ -402,6 +402,21 @@ same code(s) the Go checker does — restricted to
   both matching Go. Fixpoint-safe. Gated by a new corpus
   (`array-elem-*`), `check-position-array-elem`, and the
   `selfHostImplementedCodes` entry.
+- **Slice 42 (done): E035 — variant pattern in a match on a non-enum.**
+  In `stmts_call_diags`' scope-aware `StmtMatch` arm, the scrutinee is
+  typed via `check_expr`; if it's a primitive (i32 / string / f64 / bool)
+  and an arm is a *named* variant pattern, that's E035, reported at the
+  arm (Go's `arm.P`). Conservative again — literal patterns parse to
+  empty-name variants (skipped) and `true` / `false` are literal bool
+  patterns (skipped), and the primitive guard means an enum / Option /
+  Result scrutinee (the only kind the real bundle matches on) is never
+  flagged. Verified zero false positives by running `fern -check` over
+  all nine self-host modules. `match (n) { A => … }` with `n: i32` →
+  `2:52: error[E035]`, matching Go's code, position, and message.
+  Checker-only (trivially fixpoint-safe). Gated by new corpus
+  (`match-variant-on-*`, `match-i32-wildcard-only-ok`),
+  `check-position-match-nonenum`, and the `selfHostImplementedCodes`
+  entry.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

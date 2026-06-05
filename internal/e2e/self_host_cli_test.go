@@ -306,6 +306,23 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-match-nonenum", func(t *testing.T) {
+		// E035 (variant pattern on a non-enum scrutinee) is reported at
+		// the offending arm.
+		for _, c := range []struct{ name, src, want string }{
+			{"variant_on_i32", "enum E { A, B }\nfunction main(): i32 { var n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", "2:52: error[E035]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-array-elem", func(t *testing.T) {
 		// E034 (heterogeneous array element) is reported at the offending
 		// element's own position.
