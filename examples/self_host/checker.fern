@@ -219,6 +219,22 @@ function is_unknown(t: Type): boolean {
     return false;
 }
 
+// is_primitive_type reports whether t is one of the scalar primitives
+// (i32 / bool / string / f64). Used by the E034 array-element check to
+// stay conservative — it only compares element types when both are
+// primitives, leaving struct / enum / array / tuple unification (which
+// the Go checker widens through unions) untouched.
+function is_primitive_type(t: Type): boolean {
+    match (t) {
+        TypeI32(_) => { return true; },
+        TypeBool(_) => { return true; },
+        TypeString(_) => { return true; },
+        TypeFloat(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // type_from_name accepts an optional `[]` suffix on the type
 // name string (the parser currently only captures the first
 // token, but a future extension that captures `i32[]` should
@@ -1996,6 +2012,28 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) { out = append_diags(out, call_diags(a.elements[i], s)); i = i + 1; }
+            // E034: heterogeneous array literal. Anchor on the first
+            // element's type and flag the first later element whose type
+            // differs. Conservative: only fires when every type involved
+            // is a known PRIMITIVE (i32 / bool / string / f64), so it
+            // never trips on arrays of structs / enums / nested arrays
+            // (whose union-widening the Go checker handles and this port
+            // doesn't yet). The Go checker reports E034 at the element.
+            if (a.elements.len() >= 2) {
+                var et0: Type = check_expr(a.elements[0], s);
+                if (is_primitive_type(et0)) {
+                    var k: i32 = 1;
+                    var flagged: boolean = false;
+                    while (k < a.elements.len() && !flagged) {
+                        var etk: Type = check_expr(a.elements[k], s);
+                        if (is_primitive_type(etk) && !type_eq(etk, et0)) {
+                            out = out.push(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(et0), expr_line(a.elements[k]), expr_col(a.elements[k])));
+                            flagged = true;
+                        }
+                        k = k + 1;
+                    }
+                }
+            }
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
@@ -2304,6 +2342,7 @@ function dg_at(code: string, message: string, line: i32, col: i32): Diag {
 function expr_line(e: parser.Expr): i32 {
     match (e) {
         parser.ExprNumber(n) => { return n.line; },
+        parser.ExprString(st) => { return st.line; },
         parser.ExprIdent(id) => { return id.line; },
         parser.ExprFieldAccess(fa) => { return fa.line; },
         parser.ExprCall(c) => { return c.line; },
@@ -2314,6 +2353,7 @@ function expr_line(e: parser.Expr): i32 {
 function expr_col(e: parser.Expr): i32 {
     match (e) {
         parser.ExprNumber(n) => { return n.col; },
+        parser.ExprString(st) => { return st.col; },
         parser.ExprIdent(id) => { return id.col; },
         parser.ExprFieldAccess(fa) => { return fa.col; },
         parser.ExprCall(c) => { return c.col; },

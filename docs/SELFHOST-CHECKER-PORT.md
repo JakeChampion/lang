@@ -386,6 +386,22 @@ same code(s) the Go checker does — restricted to
   E020, E026, E028, E036, E037, E038, E041, E043, E046, E047 — prints
   `line:col: error[E0XX]` identically to `diag.Format`. The
   source-positioning goal (slice 9 / 10 below) is achieved.
+- **Slice 41 (done): E034 — heterogeneous array element type.** First
+  NEW diagnostic code past the positioning arc. `call_diags`' `ExprArray`
+  arm now anchors on the first element's type and flags the first later
+  element whose type differs, reported at that element (Go's `el.Pos()`).
+  Conservative by design — a new `is_primitive_type` guard restricts it
+  to arrays where every element is a known scalar (i32 / bool / string /
+  f64), so it never trips on arrays of structs / enums / nested arrays
+  (whose union widening this port doesn't model). This guarantees ZERO
+  false positives on real code — verified by the differential gate, which
+  compiles `checker.fern` / `flatten.fern` / `bundle_run.fern` (all full
+  of array literals) and sees no E034. `ExprString` gained `line`/`col`
+  (appended last, per the slice-39 positional-field rule) so a string
+  offender positions too: `[1, "x", 3]` → `1:36`, `["a", 1]` → `1:38`,
+  both matching Go. Fixpoint-safe. Gated by a new corpus
+  (`array-elem-*`), `check-position-array-elem`, and the
+  `selfHostImplementedCodes` entry.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

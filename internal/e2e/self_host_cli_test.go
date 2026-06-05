@@ -306,6 +306,24 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-array-elem", func(t *testing.T) {
+		// E034 (heterogeneous array element) is reported at the offending
+		// element's own position.
+		for _, c := range []struct{ name, src, want string }{
+			{"string_in_i32", "function main(): i32 { var a = [1, \"x\", 3]; return 0; }\n", "1:36: error[E034]"},
+			{"i32_in_string", "function main(): i32 { var a = [\"a\", 1]; return 0; }\n", "1:38: error[E034]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-type-arity", func(t *testing.T) {
 		// E019 (generic-struct type-arg count mismatch) is reported at
 		// the struct's declaration, not the use site.

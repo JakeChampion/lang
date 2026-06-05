@@ -49,6 +49,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E006": true, // function / method redeclared
 	"E007": true, // duplicate struct field
 	"E018": true, // duplicate parameter
+	"E034": true, // heterogeneous array element type (primitives)
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -235,6 +236,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"type-arity-param", "struct Box[T] { v: T }\nfunction f(b: Box[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
 		{"type-arity-field", "struct Box[T] { v: T }\nstruct W { b: Box[i32, i32] }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
 		{"type-arity-param-ok", "struct Box[T] { v: T }\nfunction f(b: Box[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"array-elem-string-in-i32", "function main(): i32 { var a = [1, \"x\", 3]; return 0; }\n", []string{"E034"}},
+		{"array-elem-i32-in-string", "function main(): i32 { var a = [\"a\", 1]; return 0; }\n", []string{"E034"}},
+		{"array-elem-homogeneous-i32-ok", "function main(): i32 { var a = [1, 2, 3]; return a[0]; }\n", nil},
+		{"array-elem-homogeneous-string-ok", "function main(): i32 { var a = [\"p\", \"q\"]; return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
