@@ -38,6 +38,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E038": true, // free-function argument type
 	"E041": true, // == / != on mismatched types
 	"E043": true, // unknown struct field (read)
+	"E046": true, // tuple field index (non-numeric / out of range)
 	"E005": true, // struct literal missing field
 	"E006": true, // function / method redeclared
 	"E007": true, // duplicate struct field
@@ -204,6 +205,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"slice-high-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: string = s[1:\"y\"]; return 0; }\n", []string{"E037"}},
 		{"slice-bounds-ok", "function main(): i32 { var s: string = \"hello\"; var t: string = s[1:3]; return 0; }\n", nil},
 		{"slice-full-ok", "function main(): i32 { var s: string = \"hello\"; var t: string = s[:]; return 0; }\n", nil},
+		{"tuple-field-non-numeric", "function main(): i32 { var t = (1, 2); return t.foo; }\n", []string{"E046"}},
+		{"tuple-field-out-of-range", "function main(): i32 { var t = (1, 2); return t.5; }\n", []string{"E046"}},
+		{"tuple-field-ok", "function main(): i32 { var t = (1, 2); return t.0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

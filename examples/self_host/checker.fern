@@ -1840,6 +1840,15 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         out = out.push(Diag { code: "E043", message: "struct " + sn.name + " has no field \"" + fa.field + "\"" });
                     }
                 },
+                TypeTuple(tt) => {
+                    // E046: a tuple field must be a numeric index in range.
+                    var idx: i32 = digit_string_to_i32(fa.field);
+                    if (idx < 0) {
+                        out = out.push(Diag { code: "E046", message: "tuple field access requires a numeric index, got \"" + fa.field + "\"" });
+                    } else if (idx >= tt.elements.len()) {
+                        out = out.push(Diag { code: "E046", message: "tuple has " + itoa_nn(tt.elements.len()) + " elements; index " + itoa_nn(idx) + " is out of range" });
+                    }
+                },
                 _ => { }
             }
         },
