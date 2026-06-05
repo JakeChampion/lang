@@ -118,11 +118,14 @@ per phase, before moving on.
    `component-type` payload (option 1); round-trip
    `componenttype/fern.bin` → structured world → re-encode == original.
    Pure internal, no language changes. *De-risks ingestion.*
-2. **P2 — drive the existing WASI set from the decoded world.** Replace the
-   hand-written `Wasi*InstanceTypeBody` + `knownPreview2Imports` registry
-   with type bodies/classification **derived** from the decoded `fern` world;
-   gate on reproducing every current `component_full_io_*` component
-   byte-for-byte. *Proves Gap A without new language surface.*
+2. **P2 — drive the WASI set from the decoded world.** Lift the world to a
+   per-interface model (done), resolve signatures (done), classify each
+   import by the canonical ABI (done), then emit the type imports from the
+   world. **See "P2 finding & direction" below** — the original
+   byte-identical gate does *not* hold (the composer emits ~12+ minimized,
+   direction-specific bodies, not full interfaces), so emission targets the
+   **full** interface with a **run gate** (validates + runs under wasmtime),
+   not byte-identity with the current output.
 3. **P3 — accept a user `--wit` + import classification.** Allow a
    user-supplied world; classify its imports; emit type imports + the
    generative suffix. Still no new *call* surface — validate by composing a
@@ -141,6 +144,54 @@ per phase, before moving on.
 P1–P3 are tractable and high-value (they make the *interface set*
 pluggable). P4–P6 are the genuine language feature and are where most of the
 cost lives.
+
+## P2 finding & direction
+
+**Status: P2 slices 1–3 are done** (Go side) — the decoder lifts the world to
+a per-interface model (`World.Interfaces`), resolves each function's
+signature (`FuncSigs` / `ResolveDef`), and classifies every import's lowering
+kind from the canonical ABI (`Classify`: list/string params ⇒ mem,
+heap-carrying results ⇒ mem+realloc, indirect/multi-flat returns ⇒ mem). The
+classifier reproduces the composer's hard-coded kinds across 17 functions,
+derived from the `fern` world alone.
+
+**The byte-identical emission gate does not hold.** The composer does not emit
+each interface's full type — it emits one of **~12+ minimized,
+direction-specific hand-written bodies** (`WasiIoStreams{,Read,ReadWrite}
+InstanceTypeBody`; nine `WasiFilesystemTypes*InstanceTypeBody`; the
+`wasiCliStreamGetter` getters), each carrying only the methods/resources a
+given program shape uses. The decoded world carries the **full** interface, so
+"re-emit from the world, byte-identical to current output" is neither
+achievable (the minimization is ad-hoc per shape) nor desirable — it would not
+generalize to arbitrary user worlds, which arrive un-minimized.
+
+**Decision: emit the full interface, gated by running, not by bytes.** P2's
+emission produces each used interface's **complete** type-import from the
+world (every method/resource — what any WASI 0.2 host already provides and
+what user worlds need), and the gate becomes *the component validates under
+`wasm-tools` and runs correctly under `wasmtime`*, not byte-identity with the
+current/native output. This is the honest, generalizable shape and aligns with
+the full P1–P6 goal; minimization was always a current-implementation detail
+that can't survive bring-your-own-WIT.
+
+**The native Go composer (`internal/wasm/component`) stays as-is for now** —
+the WIT-driven path is built alongside it; whether/when native retires its
+minimized bodies is deferred until the world-driven emission proves out.
+
+**Emission's real work (revised P2 tail).** Transforming a world interface's
+instance type into a standalone component type+import section is a
+**scope/index rewrite**, not a copy: inside the world the interface's
+instance type references shared types (`error`, `output-stream`, …) via
+*outer aliases* into the world-component scope, and emitting them as top-level
+component sections re-points those at surfaced component-level type indices
+(exactly what the hand-written bodies take as an `errAlias`-style parameter,
+but for the full method set). Cross-interface **type identity must be
+preserved** (an `error` handle from `io/streams` is the same type as
+`io/error`'s), so shared types are surfaced once and aliased — they cannot be
+inlined per interface. And because the suffix wiring (`component_suffix`)
+indexes off the prefix's instance/type counts, a world-driven prefix needs the
+suffix regenerated for its instance layout. These are the next P2 slices, each
+gated by a running component.
 
 ## Open decisions (need a steer)
 
