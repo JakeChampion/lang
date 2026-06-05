@@ -306,6 +306,23 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-struct-field-type", func(t *testing.T) {
+		// E043 for a struct-literal field value whose type doesn't match
+		// the declared field type is reported at the value.
+		for _, c := range []struct{ name, src, want string }{
+			{"string_for_i32", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: \"no\" }; return 0; }\n", "2:48: error[E043]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-method-argtype", func(t *testing.T) {
 		// E038 for a primitive method-argument type mismatch is reported
 		// at the offending argument.

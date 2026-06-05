@@ -378,6 +378,18 @@ function (s: Scope) lookup_struct(name: string): StructSig {
     return StructSig { name: "", field_names: empty_n, field_types: empty_t };
 }
 
+// field_index returns the index of `name` in a struct sig's field list,
+// or -1 when absent. Used by the E043 field-value-type check to line a
+// provided field up with its declared type.
+function field_index(ssig: StructSig, name: string): i32 {
+    var i: i32 = 0;
+    while (i < ssig.field_names.len()) {
+        if (ssig.field_names[i] == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     var i: i32 = 0;
     while (i < s.methods.len()) {
@@ -2147,6 +2159,25 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             var i: i32 = 0;
             while (i < sl.field_values.len()) { out = append_diags(out, call_diags(sl.field_values[i], s)); i = i + 1; }
             if (sl.has_base) { out = append_diags(out, call_diags(sl.base, s)); }
+            // E043: a provided field's value must be assignable to the
+            // declared field type. Only for a known struct; an unresolved
+            // value type (`unknown`) is skipped, as is any field name not
+            // in the declaration (E005 / unknown-field paths own those).
+            var ssig: StructSig = s.lookup_struct(sl.type_name);
+            if (ssig.name.len() > 0) {
+                var fi: i32 = 0;
+                while (fi < sl.field_names.len()) {
+                    var fidx: i32 = field_index(ssig, sl.field_names[fi]);
+                    if (fidx >= 0) {
+                        var ft: Type = ssig.field_types[fidx];
+                        var vt: Type = check_expr(sl.field_values[fi], s);
+                        if (!is_unknown(ft) && !is_unknown(vt) && !type_assignable(vt, ft, s.unions)) {
+                            out = out.push(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
+                        }
+                    }
+                    fi = fi + 1;
+                }
+            }
         },
         parser.ExprLambda(lm) => { out = stmts_call_diags(lm.body, s); },
         _ => { }
