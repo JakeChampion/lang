@@ -164,6 +164,12 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"tuple-in-loop", "function main(): i32 { var s = 0; var i = 0; while (i < 3) { var t = (i, i * i); s = s + t.0 + t.1; i = i + 1; } return s; }", 8},
 		{"tuple-string-elem", "function main(): i32 { var t = (42, \"hello\"); return t.0 + t.1.len(); }", 47},
 		{"tuple-two", "function main(): i32 { var a = (1, 2); var b = (3, 4); return a.0 + a.1 + b.0 + b.1; }", 10},
+		// __new_array(n): the dynamic-allocation primitive — a length-prefixed
+		// i32 array of n zeroed elements at a RUNTIME size (the alloc op carries
+		// its size in args[0] rather than the imm). Filled / read via the
+		// indexed-assignment + index paths. The foundation push / slice build on.
+		{"new-array-fixed", "function main(): i32 { var b = __new_array(3); b[0] = 10; b[1] = 20; b[2] = 30; return b[0] + b[1] + b[2] + b.len(); }", 63},
+		{"new-array-dynamic", "function main(): i32 { var n = 5; var b = __new_array(n); var i = 0; while (i < n) { b[i] = i * i; i = i + 1; } var s = 0; var j = 0; while (j < b.len()) { s = s + b[j]; j = j + 1; } return s; }", 30},
 		// Strings: a byte sequence lowered to the same length-prefixed array.
 		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
 		{"str-index", "function main(): i32 { var s = \"ABC\"; return s[0]; }", 65},

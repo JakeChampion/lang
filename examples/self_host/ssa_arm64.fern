@@ -197,8 +197,21 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         return store_reg(reg_of, ins.result, rsrc, widths[ins.result], out);
     }
     if (ins.kind == "alloc") {
-        // Bump-allocate imm 8-byte word slots (a pointer element fits; i32
-        // elements use the low 4 bytes); result = old hp.
+        // Bump-allocate 8-byte word slots (a pointer element fits; i32
+        // elements use the low 4 bytes); result = old hp. The slot count is
+        // imm (compile-time) unless args[0] is present — a runtime size
+        // (__new_array), loaded into x10 and scaled ×8. x9/x10/x11 are scratch
+        // (SSA values live in x12-x15).
+        if (ins.args.len() > 0) {
+            out = load_op(reg_of, widths, ins.args[0], "c", out);   // size → w10 (x10 zero-extended)
+            out = out + "    adrp x11, __fern_ssa_hp\n";
+            out = out + "    add x11, x11, :lo12:__fern_ssa_hp\n";
+            out = out + "    ldr x9, [x11]\n";                       // old hp → result
+            out = out + "    lsl x10, x10, #3\n";                    // size * 8
+            out = out + "    add x10, x9, x10\n";                    // new hp
+            out = out + "    str x10, [x11]\n";
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
         out = out + "    adrp x10, __fern_ssa_hp\n";
         out = out + "    add x10, x10, :lo12:__fern_ssa_hp\n";
         out = out + "    ldr x9, [x10]\n";

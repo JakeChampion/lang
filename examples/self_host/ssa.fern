@@ -413,6 +413,35 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var isa: i32[] = [iptr, iidx1, ival];
                         return s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: isa, imm: 0, str: "" });
                     }
+                    // __new_array(n) — allocate a length-prefixed i32 array of
+                    // n zeroed elements at a RUNTIME size (the alloc op carries
+                    // its size in args[0], unlike literal arrays whose size is
+                    // the imm). The dynamic-allocation primitive the array
+                    // helpers (push / slice) build on. Layout matches ExprArray:
+                    // length n at physical offset 0, elements at 1..n.
+                    if (cid.name == "__new_array" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var nav: i32 = s.cur_id();
+                        s = s.kconst(1);
+                        var naone: i32 = s.cur_id();
+                        s = s.fresh();
+                        var nasz: i32[] = [nav, naone];
+                        s = s.emit(SInst { kind: "binary", result: s.cur_id(), args: nasz, imm: 0, str: "+" });
+                        var nasize: i32 = s.cur_id();
+                        s = s.fresh();
+                        var nahandle: i32 = s.cur_id();
+                        var naa: i32[] = [nasize];
+                        s = s.emit(SInst { kind: "alloc", result: nahandle, args: naa, imm: 0, str: "" });
+                        s = s.kconst(0);
+                        var nazidx: i32 = s.cur_id();
+                        s = s.fresh();
+                        var nast: i32[] = [nahandle, nazidx, nav];
+                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: nast, imm: 0, str: "" });
+                        s = s.fresh();
+                        var naret: i32[] = [nahandle];
+                        return s.emit(SInst { kind: "copy", result: s.cur_id(), args: naret, imm: 0, str: "" });
+                    }
                     // Map constructors. The parser desugars a `Map { … }`
                     // literal to map_new_i32(8)… (integer keys) or map_new(8)…
                     // (string keys). i32 keys route to the injected helper;
@@ -2345,10 +2374,14 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 if (inst.str == "-") { tab = vtab_set(tab, inst.result, 0 - x); }
                 else { if (x == 0) { tab = vtab_set(tab, inst.result, 1); } else { tab = vtab_set(tab, inst.result, 0); } }
             } else if (inst.kind == "alloc") {
-                // Bump-allocate inst.imm elements; the handle is the base.
+                // Bump-allocate the handle's base. The slot count is inst.imm
+                // (compile-time size) unless args[0] is present (a runtime
+                // size, e.g. __new_array).
+                var asz: i32 = inst.imm;
+                if (inst.args.len() > 0) { asz = tab[inst.args[0]]; }
                 var base: i32 = mem.len();
                 var a: i32 = 0;
-                while (a < inst.imm) { mem = mem.push(0); a = a + 1; }
+                while (a < asz) { mem = mem.push(0); a = a + 1; }
                 tab = vtab_set(tab, inst.result, base);
             } else if (inst.kind == "load_elem") {
                 var p: i32 = tab[inst.args[0]];
