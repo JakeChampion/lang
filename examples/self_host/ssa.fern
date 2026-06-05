@@ -258,6 +258,18 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             }
             return "";
         },
+        parser.ExprCall(c) => {
+            // A map-producing expression is typed "Map" so `.len()` on it
+            // dispatches to the map helper (count) rather than the array
+            // length load: the constructor map_new_i32(…) and `.set(…)`
+            // (which returns the map, threading the construction chain).
+            match (c.callee) {
+                parser.ExprIdent(cid) => { if (cid.name == "map_new_i32") { return "Map"; } },
+                parser.ExprFieldAccess(fa2) => { if (fa2.field == "set") { return "Map"; } },
+                _ => { }
+            }
+            return "";
+        },
         _ => { return ""; }
     }
 }
@@ -366,6 +378,16 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var isa: i32[] = [iptr, iidx1, ival];
                         return s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: isa, imm: 0, str: "" });
                     }
+                    // Map constructors. The parser desugars a `Map { … }`
+                    // literal to map_new_i32(8)… (integer keys) or map_new(8)…
+                    // (string keys). i32 keys route to the injected helper;
+                    // string-keyed maps aren't in the subset yet, so map_new
+                    // bails (the whole function falls back to the AST emitter).
+                    // map_new_i32 is the FIRST call in the desugar chain, so a
+                    // bail here cleanly rejects the entire map expression.
+                    var callee_name: string = cid.name;
+                    if (callee_name == "map_new") { return s.fail(); }
+                    if (callee_name == "map_new_i32") { callee_name = "__ssa_map_new_i32"; }
                     var argvals: i32[] = [];
                     var i: i32 = 0;
                     while (i < c.args.len()) {
@@ -375,9 +397,37 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         i = i + 1;
                     }
                     s = s.fresh();
-                    return s.emit(SInst { kind: "call", result: s.cur_id(), args: argvals, imm: 0, str: cid.name });
+                    return s.emit(SInst { kind: "call", result: s.cur_id(), args: argvals, imm: 0, str: callee_name });
                 },
                 parser.ExprFieldAccess(fa) => {
+                    // Map methods (i32-keyed maps): set / get_or / has, and
+                    // len on a Map receiver. The parser desugars a `Map { … }`
+                    // literal to map_new_i32(8).set(k0,v0)… and user code calls
+                    // these by name; arrays have none of set/get_or/has, so
+                    // those are unambiguous. They lower to calls into the
+                    // injected association-array helpers (__ssa_map_*), with
+                    // the receiver passed as the first argument. The map handle
+                    // is an i32[] buffer; mutations land in place (fixed
+                    // capacity — see map_helpers_src).
+                    var mname: string = "";
+                    if (fa.field == "set" && c.args.len() == 2) { mname = "__ssa_map_set"; }
+                    else if (fa.field == "get_or" && c.args.len() == 2) { mname = "__ssa_map_get_or"; }
+                    else if (fa.field == "has" && c.args.len() == 1) { mname = "__ssa_map_has"; }
+                    else if (fa.field == "len" && c.args.len() == 0 && type_of_expr(fa.obj, s) == "Map") { mname = "__ssa_map_len"; }
+                    if (mname.len() > 0) {
+                        s = build_expr(fa.obj, s);
+                        if (!s.ok) { return s; }
+                        var margs: i32[] = [s.cur_id()];
+                        var mi: i32 = 0;
+                        while (mi < c.args.len()) {
+                            s = build_expr(c.args[mi], s);
+                            if (!s.ok) { return s; }
+                            margs = margs.push(s.cur_id());
+                            mi = mi + 1;
+                        }
+                        s = s.fresh();
+                        return s.emit(SInst { kind: "call", result: s.cur_id(), args: margs, imm: 0, str: mname });
+                    }
                     // arr.len() → the length stored at element 0.
                     if (fa.field != "len" || c.args.len() != 0) { return s.fail(); }
                     s = build_expr(fa.obj, s);
@@ -547,8 +597,11 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             s = build_expr(v.init, s);
             if (!s.ok) { return s; }
             s = s.set_var(v.name, s.cur_id());
-            // Record the variable's struct / string type (from the init's
-            // type or the declaration) for field-offset / concat resolution.
+            // Record the variable's struct / string / Map type (from the
+            // init's type or the declaration) for field-offset / concat /
+            // map-method resolution. "Map" lets a later `m.len()` dispatch to
+            // the map helper instead of the array length load.
+            if (ity == "Map") { return s.set_var_type(v.name, "Map"); }
             if (is_struct_type(ity, s.structs) || ity == "string") { return s.set_var_type(v.name, ity); }
             if (is_struct_type(v.type_name, s.structs) || v.type_name == "string") { return s.set_var_type(v.name, v.type_name); }
             return s;
@@ -1147,11 +1200,14 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BRes
     var nparams: i32 = fd.params.len();
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
     var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, [], []);
-    // Record struct- / string-typed params' types for field-access and
-    // concat resolution.
+    // Record struct- / string- / Map-typed params' types for field-access,
+    // concat, and map-method (.len) resolution. A map param is spelled
+    // `Map[K, V]`; record it as "Map" so `m.len()` dispatches to the helper.
     var pj: i32 = 0;
     while (pj < fd.params.len()) {
-        if (is_struct_type(fd.params[pj].type_name, structs) || fd.params[pj].type_name == "string") { s = s.set_var_type(fd.params[pj].name, fd.params[pj].type_name); }
+        var ptn: string = fd.params[pj].type_name;
+        if (ptn.len() >= 3 && ptn[0:3] == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
+        else if (is_struct_type(ptn, structs) || ptn == "string") { s = s.set_var_type(fd.params[pj].name, ptn); }
         pj = pj + 1;
     }
 
@@ -2271,4 +2327,63 @@ pub function print_func(f: SFunc): string {
         bi = bi + 1;
     }
     return out + "}\n";
+}
+
+// ---- injected map runtime (i32-keyed maps) -----------------------------
+// map_helpers_src returns Fern source for the association-array helpers the
+// map lowering calls (__ssa_map_new_i32 / _set / _get_or / _has / _len). The
+// emit driver parses this, builds each helper to SSA like any other
+// function, and appends them when a program references a map. The map handle
+// is a length-prefixed i32[] buffer whose logical slots are
+//   m[0]            = entry count
+//   m[1+2i], m[2+2i] = key / value of entry i
+// so set/get_or/has are linear scans and len reads m[0]. Capacity is fixed
+// at 16 pairs (no rehash/growth yet — a later slice adds string keys and
+// dynamic resize); set mutates the buffer in place, so the update is visible
+// through every alias and across calls (the buffer pointer never moves).
+pub function map_helpers_src(): string {
+    var nl: string = "\n";
+    var zeros: string = "[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]";
+    var src: string = "";
+    src = src + "function __ssa_map_new_i32(n: i32): i32[] { return " + zeros + "; }" + nl;
+    src = src + "function __ssa_map_set(m: i32[], k: i32, v: i32): i32[] {" + nl;
+    src = src + "  var n = m[0]; var i = 0;" + nl;
+    src = src + "  while (i < n) { if (m[1 + i * 2] == k) { m[2 + i * 2] = v; return m; } i = i + 1; }" + nl;
+    src = src + "  m[1 + n * 2] = k; m[2 + n * 2] = v; m[0] = n + 1; return m;" + nl;
+    src = src + "}" + nl;
+    src = src + "function __ssa_map_get_or(m: i32[], k: i32, d: i32): i32 {" + nl;
+    src = src + "  var n = m[0]; var i = 0;" + nl;
+    src = src + "  while (i < n) { if (m[1 + i * 2] == k) { return m[2 + i * 2]; } i = i + 1; }" + nl;
+    src = src + "  return d;" + nl;
+    src = src + "}" + nl;
+    src = src + "function __ssa_map_has(m: i32[], k: i32): i32 {" + nl;
+    src = src + "  var n = m[0]; var i = 0;" + nl;
+    src = src + "  while (i < n) { if (m[1 + i * 2] == k) { return 1; } i = i + 1; }" + nl;
+    src = src + "  return 0;" + nl;
+    src = src + "}" + nl;
+    src = src + "function __ssa_map_len(m: i32[]): i32 { return m[0]; }" + nl;
+    return src;
+}
+
+// references_map reports whether any built function calls a map helper
+// (a "call" to an __ssa_map_* symbol) — the signal the emit driver uses to
+// decide whether to inject + emit the map helper bodies. A program that
+// never touches a map carries none of them.
+pub function references_map(funcs: SFunc[]): boolean {
+    var fi: i32 = 0;
+    while (fi < funcs.len()) {
+        var bi: i32 = 0;
+        while (bi < funcs[fi].blocks.len()) {
+            var ki: i32 = 0;
+            var insts: SInst[] = funcs[fi].blocks[bi].insts;
+            while (ki < insts.len()) {
+                var ins: SInst = insts[ki];
+                if (ins.kind == "call" && ins.str.len() >= 9 && ins.str[0:9] == "__ssa_map") { return true; }
+                ki = ki + 1;
+            }
+            bi = bi + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
 }
