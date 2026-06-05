@@ -871,14 +871,29 @@ which `component_full`'s import-free path can't take):
 
    **The full preview1-builtin surface now has an adapter-free preview2 path**
    in the self-host: stdout, `read_file`, `write_file` (+ combined),
-   `random_bytes`, `env`, `args`, and the wall clock. With seven distinct
-   import-set framings now embedded as `\xNN` blobs (and more combinations
-   looming — file+random, env+args, clock+fs, …), the static-blob-per-shape
-   approach has reached the point where a **generative component builder** in
-   the self-host (mirroring `internal/wasm/component/component.go`) is the
-   right next investment: it would compute the lift/lower/instance/canon
-   wiring from the core's actual import set instead of pasting a per-shape
-   constant, collapsing the blob zoo and unlocking arbitrary combinations.
+   `random_bytes`, `env`, `args`, and both clocks. With these single-import
+   framings embedded as `\xNN` blobs, the next step is **combinations** (a real
+   edge handler reads a config file *and* env secrets, etc.).
+10. **Canonical import order → combinations unlocked.** The self-host now emits
+   its preview2 wasi imports in the **native compiler's canonical interface
+   order** — `get-stdout`, `blocking-write-and-flush`, then random, wall-clock,
+   monotonic-clock, args (`get-arguments`), env (`get-environment`), and the
+   filesystem chain (`get-directories`, `open-at`, `read-via-stream`,
+   `blocking-read`, `write-via-stream`). Single-import shapes are unaffected
+   (a lone import still lands right after the stdout pair, so every existing
+   byte-identical framing test still passes), but a *combination* core now
+   wires up byte-identically to native — which means a combination's framing
+   is just native's captured prefix/suffix, exactly like the singles. First
+   combination landed: `read_file` + `env` + stdout
+   (`component_full_io_fs_read_env`) — the canonical edge-handler shape (read a
+   config file, read env secrets, respond). Tests:
+   `TestSelfHostWasmComponentFullIOFSReadEnv` (byte-identical to native) +
+   `TestSelfHostWasmComponentReadEnv` (config + secret; missing-env fallback).
+   Remaining combinations (random+write, args+fs, clock+fs, …) are now each a
+   capture-the-blob-and-test slice; the **generative component builder**
+   (mirroring `internal/wasm/component/component.go`, computing the
+   lift/lower/instance/canon wiring from the import set) remains the eventual
+   collapse of the blob set, but is no longer blocking real edge programs.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
