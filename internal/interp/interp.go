@@ -94,13 +94,15 @@ type Enum struct {
 }
 
 // Map is the interpreter's `Map[K, V]` value. Two parallel slices
-// preserve insertion order — that matches the order the IR /
-// codegen lowering uses for `keys()` / `values()` / iteration,
-// so the differential oracle sees identical output across the
-// interpreter and native backends. A `map[Value]Value` would
-// be faster but Go's map can't key on non-comparable interface
-// values (Array, Struct, *Enum, *Map), and we want any K
-// shape that type-checks to work end-to-end.
+// hold entries in the SAME order the IR / codegen runtime uses, so the
+// differential oracle sees identical `keys()` / `values()` / iteration
+// output across the interpreter and native backends: `set` appends new
+// keys (insertion order) and `delete` swaps the last entry into the
+// removed slot (swap-with-last), exactly mirroring core/map.fern's
+// __map_delete_impl. See docs/ADVERSARIAL-REVIEW-2026-06.md (M3). A
+// `map[Value]Value` would be faster but Go's map can't key on
+// non-comparable interface values (Array, Struct, *Enum, *Map), and we
+// want any K shape that type-checks to work end-to-end.
 type Map struct {
 	keys []Value
 	vals []Value
@@ -820,8 +822,9 @@ func builtinArrayPush(_ *Interp, args []Value) (Value, error) {
 // surface registered in internal/checker/checker.go's
 // registerMapMethod calls — same signatures, same return
 // shapes (Option[V] for get, boolean for has/delete, etc.).
-// Insertion order is preserved across set/delete so keys() /
-// values() round-trip stably across the diff oracle.
+// Entry order matches the runtime exactly — append on set,
+// swap-with-last on delete — so keys() / values() / iteration
+// round-trip identically across the diff oracle.
 func builtinMapNew(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("map_new: expected 1 arg (cap), got %d", len(args))
@@ -905,8 +908,16 @@ func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
 	if idx < 0 {
 		return Array{args[0], Bool(false)}, nil
 	}
-	m.keys = append(m.keys[:idx], m.keys[idx+1:]...)
-	m.vals = append(m.vals[:idx], m.vals[idx+1:]...)
+	// Swap-with-last, mirroring core/map.fern's __map_delete_impl: move
+	// the final entry into the removed slot and truncate. This keeps the
+	// interpreter's iteration order identical to the compiled runtime's
+	// after a delete (the runtime can't cheaply shift-down its open-
+	// addressed entries array). See docs/ADVERSARIAL-REVIEW-2026-06.md (M3).
+	last := len(m.keys) - 1
+	m.keys[idx] = m.keys[last]
+	m.vals[idx] = m.vals[last]
+	m.keys = m.keys[:last]
+	m.vals = m.vals[:last]
 	return Array{args[0], Bool(true)}, nil
 }
 
