@@ -205,6 +205,14 @@ same code(s) the Go checker does — restricted to
   `match_diags` walks each `match` (no types needed): E026 when a wildcard
   `_` arm isn't last, E028 when a variant pattern repeats one an earlier
   arm already covered. Recurses into nested blocks + arm bodies.
+- **Slice 23 (done): generic-struct type-argument arity** (E019).
+  `type_arity_diag` compares the explicit `[...]` argument count on a
+  generic-struct reference against the struct's declared type-parameter
+  count (`count_type_args` + `struct_type_param_count`). Checked at
+  **parameter** and **struct-field** positions — where the Go checker
+  reports E019 on its own; a `var` / return annotation with the wrong
+  arity additionally trips E003 / E002 in Go, so those positions are left
+  out to keep the code sets matching.
 - **Later: pattern matching** (E014 bad-variant-in-match, E023 — both
   need match-scrutinee enum *type* tracking, which the checker's type
   system doesn't model yet), traits (E021), maps (E045), owned-parameter
