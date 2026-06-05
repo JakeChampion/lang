@@ -451,15 +451,11 @@ function component_full_io_random_write(core: i32[]): i32[] {
 // Exports `_lang_run`; no list results, so no cabi_realloc.
 
 
-function io_eprint_suffix(): string {
-    return "\x01\x42\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x08\x01\x60\x04\x7f\x7f\x7f\x7f\x00\x03\x02\x01\x00\x04\x05\x01\x70\x01\x01\x01\x07\x10\x02\x01\x30\x00\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x00\x0a\x11\x01\x0f\x00\x20\x00\x20\x01\x20\x02\x20\x03\x41\x00\x11\x00\x00\x0b\x01\x32\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x08\x01\x60\x04\x7f\x7f\x7f\x7f\x00\x02\x15\x02\x00\x01\x30\x00\x00\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x70\x01\x01\x01\x09\x07\x01\x00\x41\x00\x0b\x01\x00\x02\x04\x01\x00\x01\x00\x06\x07\x01\x00\x00\x01\x00\x01\x30\x06\x0f\x01\x01\x00\x02\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x08\x05\x01\x01\x00\x00\x00\x06\x0f\x01\x01\x00\x03\x0a\x67\x65\x74\x2d\x73\x74\x64\x65\x72\x72\x08\x05\x01\x01\x00\x01\x00\x02\x34\x01\x01\x01\x2e\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x77\x72\x69\x74\x65\x2d\x61\x6e\x64\x2d\x66\x6c\x75\x73\x68\x00\x00\x02\x10\x01\x01\x01\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x00\x01\x02\x10\x01\x01\x01\x0a\x67\x65\x74\x2d\x73\x74\x64\x65\x72\x72\x00\x02\x02\x4c\x01\x00\x00\x03\x15\x77\x61\x73\x69\x3a\x69\x6f\x2f\x73\x74\x72\x65\x61\x6d\x73\x40\x30\x2e\x32\x2e\x30\x12\x01\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x6f\x75\x74\x40\x30\x2e\x32\x2e\x30\x12\x02\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x65\x72\x72\x40\x30\x2e\x32\x2e\x30\x12\x03\x06\x0c\x01\x00\x02\x01\x04\x06\x6d\x65\x6d\x6f\x72\x79\x06\x0e\x01\x00\x01\x01\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x06\x33\x01\x01\x00\x01\x2e\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x77\x72\x69\x74\x65\x2d\x61\x6e\x64\x2d\x66\x6c\x75\x73\x68\x08\x07\x01\x01\x00\x02\x01\x03\x00\x02\x12\x01\x01\x02\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x00\x01\x30\x00\x03\x02\x07\x01\x00\x02\x01\x00\x12\x05\x06\x0f\x01\x00\x00\x01\x04\x09\x5f\x6c\x61\x6e\x67\x5f\x72\x75\x6e\x07\x08\x02\x6a\x00\x00\x40\x00\x00\x06\x08\x06\x01\x00\x00\x04\x00\x07\x05\x0a\x01\x01\x01\x00\x03\x72\x75\x6e\x01\x03\x0b\x18\x01\x00\x12\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x72\x75\x6e\x40\x30\x2e\x32\x2e\x30\x05\x04\x00";
-}
-
 function component_full_io_eprint(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_cli_stderr()));
     o = wcat(o, wsection(1, core));
-    return wcat(o, blob_to_bytes(io_eprint_suffix()));
+    return wcat(o, component_suffix_eprint());
 }
 
 // ---- exit + stdout component framing ------------------------------------
@@ -471,15 +467,11 @@ function component_full_io_eprint(core: i32[]): i32[] {
 // the native compiler's canonical order. No list results, so no cabi_realloc.
 
 
-function io_exit_suffix(): string {
-    return "\x01\x42\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x08\x01\x60\x04\x7f\x7f\x7f\x7f\x00\x03\x02\x01\x00\x04\x05\x01\x70\x01\x01\x01\x07\x10\x02\x01\x30\x00\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x00\x0a\x11\x01\x0f\x00\x20\x00\x20\x01\x20\x02\x20\x03\x41\x00\x11\x00\x00\x0b\x01\x32\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x08\x01\x60\x04\x7f\x7f\x7f\x7f\x00\x02\x15\x02\x00\x01\x30\x00\x00\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x70\x01\x01\x01\x09\x07\x01\x00\x41\x00\x0b\x01\x00\x02\x04\x01\x00\x01\x00\x06\x07\x01\x00\x00\x01\x00\x01\x30\x06\x0f\x01\x01\x00\x02\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x08\x05\x01\x01\x00\x00\x00\x06\x09\x01\x01\x00\x03\x04\x65\x78\x69\x74\x08\x05\x01\x01\x00\x01\x00\x02\x34\x01\x01\x01\x2e\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x77\x72\x69\x74\x65\x2d\x61\x6e\x64\x2d\x66\x6c\x75\x73\x68\x00\x00\x02\x10\x01\x01\x01\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x00\x01\x02\x0a\x01\x01\x01\x04\x65\x78\x69\x74\x00\x02\x02\x4a\x01\x00\x00\x03\x15\x77\x61\x73\x69\x3a\x69\x6f\x2f\x73\x74\x72\x65\x61\x6d\x73\x40\x30\x2e\x32\x2e\x30\x12\x01\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x6f\x75\x74\x40\x30\x2e\x32\x2e\x30\x12\x02\x13\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x78\x69\x74\x40\x30\x2e\x32\x2e\x30\x12\x03\x06\x0c\x01\x00\x02\x01\x04\x06\x6d\x65\x6d\x6f\x72\x79\x06\x0e\x01\x00\x01\x01\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x06\x33\x01\x01\x00\x01\x2e\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x77\x72\x69\x74\x65\x2d\x61\x6e\x64\x2d\x66\x6c\x75\x73\x68\x08\x07\x01\x01\x00\x02\x01\x03\x00\x02\x12\x01\x01\x02\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x00\x01\x30\x00\x03\x02\x07\x01\x00\x02\x01\x00\x12\x05\x06\x0f\x01\x00\x00\x01\x04\x09\x5f\x6c\x61\x6e\x67\x5f\x72\x75\x6e\x07\x08\x02\x6a\x00\x00\x40\x00\x00\x06\x08\x06\x01\x00\x00\x04\x00\x07\x05\x0a\x01\x01\x01\x00\x03\x72\x75\x6e\x01\x03\x0b\x18\x01\x00\x12\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x72\x75\x6e\x40\x30\x2e\x32\x2e\x30\x05\x04\x00";
-}
-
 function component_full_io_exit(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_cli_exit()));
     o = wcat(o, wsection(1, core));
-    return wcat(o, blob_to_bytes(io_exit_suffix()));
+    return wcat(o, component_suffix_exit());
 }
 
 // ---- args + read_file + stdout component framing ------------------------
@@ -725,45 +717,277 @@ function comp_export_one_instance(name: string, inst: i32): i32[] {
     return wsection(11, b);
 }
 
-// component_suffix_stdout regenerates the entire CLI-component suffix for the
-// stdout (write-to-stdout) shape: the import list [blocking-write-and-flush
-// (mem), get-stdout (no-opt)] lowered through lower()'s Phases B-H and the
-// cli/run finish() tail. Reproduces io_suffix() byte-for-byte; the starting
-// index state (component types=5, instances streams=1 / stdout=2, user core
-// module=0) is what Phase A + the user module leave behind for this shape.
-function component_suffix_stdout(): i32[] {
-    var bwf: string = "[method]output-stream.blocking-write-and-flush";
-    var sig: i32[] = [127, 127, 127, 127];
-    var none: i32[] = [];
+// canon resource.drop: a core func that drops a handle of resourceT.
+function comp_canon_resource_drop(rt: i32): i32[] {
+    var b: i32[] = [1, 3];
+    b = leb_u32(b, rt);
+    return wsection(8, b);
+}
+
+// canon lower carrying both `memory` and `realloc` options (for imports whose
+// canonical-ABI shape returns a heap-allocated list/string).
+function comp_canon_lower_mem_realloc(funcidx: i32, memidx: i32, realloc: i32): i32[] {
+    var b: i32[] = [1, 1, 0];
+    b = leb_u32(b, funcidx);
+    b = b.push(2);
+    b = b.push(3);
+    b = leb_u32(b, memidx);
+    b = b.push(4);
+    b = leb_u32(b, realloc);
+    return wsection(8, b);
+}
+
+// suffix_group_find returns the index of `iface` in `order`, or -1.
+function suffix_group_find(order: string[], iface: string): i32 {
+    var i: i32 = 0;
+    while (i < order.len()) {
+        if (order[i] == iface) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// component_suffix is the data-driven CLI-component suffix generator: a port
+// of the native composer's gComposer.lower() Phases B-H + finish()'s cli/run
+// tail (internal/wasm/component/compose_general.go). Given the program's
+// preview-2 import list and the index state Phase A + the user core module
+// leave behind, it regenerates the whole suffix from scratch.
+//
+// Imports are passed as parallel arrays (length = number of imports):
+//   imp_iface     wasi:X interface the user module imports the func from
+//   imp_name      method / func / [resource-drop] name
+//   imp_kind      0 no-opt, 1 memory trampoline, 2 memory+realloc, 3 resource.drop
+//   imp_inst      component-instance index of imp_iface (from Phase A)
+//   imp_params    lowered core signature the trampoline mirrors (kinds 1/2)
+//   imp_resourceT surfaced resource type index (kind 3)
+// n_type0 / n_inst0 are the component type / instance counts after Phase A;
+// user_mod is the user core module index; core_export is the lifted entry.
+function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
+    var n: i32 = imp_iface.len();
     var o: i32[] = [];
-    // Phase B: trampoline + table-fill cores for the one mem import.
-    o = wcat(o, comp_core_module_section(shim_trampoline_core(sig, none)));
-    o = wcat(o, comp_core_module_section(shim_tablefill_core(sig, none)));
-    // Phase C: instantiate the trampoline (core module 1) -> core instance 0.
-    o = wcat(o, comp_core_instance_instantiate(1));
-    // Phase D: bwf placeholder (alias trampoline func "0"); get-stdout no-opt.
-    o = wcat(o, comp_alias_core_func(0, "0"));
-    o = wcat(o, comp_alias_inst_func(2, "get-stdout"));
-    o = wcat(o, comp_canon_lower_noopts(0));
-    // group the lowered funcs by import interface.
-    o = wcat(o, comp_core_instance_from_exports([bwf], [0], [0]));
-    o = wcat(o, comp_core_instance_from_exports(["get-stdout"], [0], [1]));
-    // Phase E: instantiate the user module (core module 0) with both args.
-    o = wcat(o, comp_core_instance_instantiate_args(0, ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"], [1, 2]));
-    // Phase F: alias the user instance's memory + the trampoline's table.
-    o = wcat(o, comp_alias_core_export(2, 3, "memory"));
-    o = wcat(o, comp_alias_core_export(1, 0, "$imports"));
-    // Phase G: lower bwf with the memory option.
-    o = wcat(o, comp_alias_inst_func(1, bwf));
-    o = wcat(o, comp_canon_lower_mem(1, 0));
-    // Phase H: fill the trampoline table with the lowered bwf, instantiate fixup.
-    o = wcat(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [0, 2]));
-    o = wcat(o, comp_core_instance_instantiate_args(2, [""], [4]));
-    // finish (cli/run): lift _lang_run and export the run instance.
-    o = wcat(o, comp_alias_core_func(3, "_lang_run"));
-    o = wcat(o, comp_type_result_unit(5));
-    o = wcat(o, comp_canon_lift_noopts(3, 6));
-    o = wcat(o, comp_instance_one_func("run", 2));
-    o = wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", 3));
-    return o;
+    var none: i32[] = [];
+    // per-import scratch (filled as the phases run).
+    var tramp_mod: i32[] = [];
+    var fixup_mod: i32[] = [];
+    var tramp_inst: i32[] = [];
+    var tbl: i32[] = [];
+    var coref: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        tramp_mod = tramp_mod.push(0);
+        fixup_mod = fixup_mod.push(0);
+        tramp_inst = tramp_inst.push(0);
+        tbl = tbl.push(0);
+        coref = coref.push(0);
+        i = i + 1;
+    }
+    var n_mod: i32 = user_mod + 1;
+    var n_cfunc: i32 = 0;
+    var n_corefunc: i32 = 0;
+    var n_coreinst: i32 = 0;
+    var n_coretab: i32 = 0;
+    var n_inst: i32 = n_inst0;
+    // Phase B: trampoline + table-fill cores per memory import.
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+            tramp_mod[i] = n_mod;
+            n_mod = n_mod + 1;
+            o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], none)));
+            fixup_mod[i] = n_mod;
+            n_mod = n_mod + 1;
+            o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], none)));
+        }
+        i = i + 1;
+    }
+    // Phase C: instantiate the trampolines.
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+            tramp_inst[i] = n_coreinst;
+            n_coreinst = n_coreinst + 1;
+            o = wcat(o, comp_core_instance_instantiate(tramp_mod[i]));
+        }
+        i = i + 1;
+    }
+    // Phase D: no-opt lowers / resource.drops / mem placeholders, grouped by
+    // import interface (first-occurrence order).
+    var order: string[] = [];
+    var group_names: string[][] = [];
+    var group_idxs: i32[][] = [];
+    i = 0;
+    while (i < n) {
+        var k: i32 = imp_kind[i];
+        var idx: i32 = 0;
+        if (k == 0) {
+            o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
+            var cf: i32 = n_cfunc;
+            n_cfunc = n_cfunc + 1;
+            idx = n_corefunc;
+            o = wcat(o, comp_canon_lower_noopts(cf));
+            n_corefunc = n_corefunc + 1;
+        } else if (k == 3) {
+            idx = n_corefunc;
+            o = wcat(o, comp_canon_resource_drop(imp_resourceT[i]));
+            n_corefunc = n_corefunc + 1;
+        } else {
+            idx = n_corefunc;
+            o = wcat(o, comp_alias_core_func(tramp_inst[i], "0"));
+            n_corefunc = n_corefunc + 1;
+        }
+        var gi: i32 = suffix_group_find(order, imp_iface[i]);
+        if (gi < 0) {
+            order = order.push(imp_iface[i]);
+            group_names = group_names.push([imp_name[i]]);
+            group_idxs = group_idxs.push([idx]);
+        } else {
+            group_names[gi] = group_names[gi].push(imp_name[i]);
+            group_idxs[gi] = group_idxs[gi].push(idx);
+        }
+        i = i + 1;
+    }
+    // package each interface's lowered funcs into a core instance.
+    var arg_insts: i32[] = [];
+    var g: i32 = 0;
+    while (g < order.len()) {
+        var gn: string[] = group_names[g];
+        var gx: i32[] = group_idxs[g];
+        var sorts: i32[] = [];
+        var s: i32 = 0;
+        while (s < gn.len()) {
+            sorts = sorts.push(0);
+            s = s + 1;
+        }
+        o = wcat(o, comp_core_instance_from_exports(gn, sorts, gx));
+        arg_insts = arg_insts.push(n_coreinst);
+        n_coreinst = n_coreinst + 1;
+        g = g + 1;
+    }
+    // Phase E: instantiate the user module with the per-interface args.
+    var user_inst: i32 = n_coreinst;
+    o = wcat(o, comp_core_instance_instantiate_args(user_mod, order, arg_insts));
+    n_coreinst = n_coreinst + 1;
+    // Phase F: memory + realloc + trampoline tables.
+    var need_mem: boolean = false;
+    var need_realloc: boolean = false;
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1) { need_mem = true; }
+        if (imp_kind[i] == 2) {
+            need_mem = true;
+            need_realloc = true;
+        }
+        i = i + 1;
+    }
+    if (need_mem) {
+        o = wcat(o, comp_alias_core_export(2, user_inst, "memory"));
+    }
+    var realloc_f: i32 = 0;
+    if (need_realloc) {
+        realloc_f = n_corefunc;
+        o = wcat(o, comp_alias_core_export(0, user_inst, "cabi_realloc"));
+        n_corefunc = n_corefunc + 1;
+    }
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+            tbl[i] = n_coretab;
+            n_coretab = n_coretab + 1;
+            o = wcat(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
+        }
+        i = i + 1;
+    }
+    // Phase G: memory lowers.
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1) {
+            o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
+            var cfg: i32 = n_cfunc;
+            n_cfunc = n_cfunc + 1;
+            coref[i] = n_corefunc;
+            o = wcat(o, comp_canon_lower_mem(cfg, 0));
+            n_corefunc = n_corefunc + 1;
+        } else if (imp_kind[i] == 2) {
+            o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
+            var cfr: i32 = n_cfunc;
+            n_cfunc = n_cfunc + 1;
+            coref[i] = n_corefunc;
+            o = wcat(o, comp_canon_lower_mem_realloc(cfr, 0, realloc_f));
+            n_corefunc = n_corefunc + 1;
+        }
+        i = i + 1;
+    }
+    // Phase H: fill each trampoline table with its lowered func, instantiate fixup.
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+            var arg: i32 = n_coreinst;
+            o = wcat(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [tbl[i], coref[i]]));
+            n_coreinst = n_coreinst + 1;
+            o = wcat(o, comp_core_instance_instantiate_args(fixup_mod[i], [""], [arg]));
+            n_coreinst = n_coreinst + 1;
+        }
+        i = i + 1;
+    }
+    // finish (cli/run): lift core_export and export the run instance.
+    var run_core_f: i32 = n_corefunc;
+    o = wcat(o, comp_alias_core_func(user_inst, core_export));
+    n_corefunc = n_corefunc + 1;
+    o = wcat(o, comp_type_result_unit(n_type0));
+    var lifted: i32 = n_cfunc;
+    o = wcat(o, comp_canon_lift_noopts(run_core_f, n_type0 + 1));
+    n_cfunc = n_cfunc + 1;
+    var run_inst: i32 = n_inst;
+    o = wcat(o, comp_instance_one_func("run", lifted));
+    n_inst = n_inst + 1;
+    return wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
+}
+
+// blocking_write_name / write_sig: the one memory import every write-shape
+// shares (output-stream.blocking-write-and-flush, lowered (i32 i32 i32 i32)).
+function blocking_write_name(): string {
+    return "[method]output-stream.blocking-write-and-flush";
+}
+
+// component_suffix_stdout: write-to-stdout. Imports [blocking-write-and-flush
+// (mem, streams=1), get-stdout (no-opt, cli/stdout=2)]; Phase A leaves
+// component types=5, instances=3.
+function component_suffix_stdout(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
+        [blocking_write_name(), "get-stdout"],
+        [1, 0],
+        [1, 2],
+        [[127, 127, 127, 127], none],
+        [0, 0],
+        5, 3, 0, "_lang_run");
+}
+
+// component_suffix_eprint: stdout + an extra get-stderr no-opt import.
+// Phase A leaves component types=6, instances=4.
+function component_suffix_eprint(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0"],
+        [blocking_write_name(), "get-stdout", "get-stderr"],
+        [1, 0, 0],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, none],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
+}
+
+// component_suffix_exit: stdout + an extra exit no-opt import (cli/exit).
+// Phase A leaves component types=6, instances=4.
+function component_suffix_exit(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/exit@0.2.0"],
+        [blocking_write_name(), "get-stdout", "exit"],
+        [1, 0, 0],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, none],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
 }
