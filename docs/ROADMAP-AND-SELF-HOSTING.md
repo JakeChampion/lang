@@ -899,6 +899,8 @@ which `component_full`'s import-free path can't take):
    (mirroring `internal/wasm/component/component.go`, computing the
    lift/lower/instance/canon wiring from the import set) remains the eventual
    collapse of the blob set, but is no longer blocking real edge programs.
+   It now has a concrete design + phased, byte-identical-validated
+   implementation plan: see `docs/WASM-COMPONENT-GENERATOR.md`.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
