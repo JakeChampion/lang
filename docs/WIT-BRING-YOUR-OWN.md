@@ -156,3 +156,58 @@ cost lives.
 - **`wasm-tools` as a compile-time dependency** is acceptable for early
   phases (the e2e suite already requires it) but should not become a hard
   runtime requirement of the shipped compiler for the common path.
+
+## Appendix: P1 decoder spec (reverse-engineered)
+
+Concrete groundwork so P1 can start clean. The `componenttype/*.bin`
+payload is **an inner component binary** (`\0asm 0d 00 01 00`), not a bare
+type stream. Layout of `fern.bin`:
+
+```
+\0asm 0d 00 01 00                     component header
+custom "wit-component-encoding"       (2-byte payload)
+component type section (id 0x07)      1 entry: type 0 = Component([decls...])
+component export section (id 0x0b)    export "fern" = (type 0)
+custom "producers"                    tooling metadata (ignorable)
+```
+
+The world lives in **type 0** (`Component([...])`). Its declaration vector
+mixes:
+
+- `Type(<deftype>)` where `<deftype>` is one of:
+  - `Component([decls])` — nested (the world itself is `Component(0)`).
+  - `Instance([decls])` — one per imported interface; decls are
+    `Type`/`Alias`/`Export`.
+  - `Func(params, results)` — params are `(name, valtype)*`; results are
+    `Unnamed(valtype)` or `Named([(name,valtype)*])`.
+  - `Defined(<defvaltype>)` — `Record([(name,ty)])`, `Variant([case{name,
+    ty?,refines?}])`, `Enum([name])`, `Flags([name])`, `List(ty)`,
+    `Option(ty)`, `Result{ok?,err?}`, `Tuple([ty])`, `Own(i)`, `Borrow(i)`,
+    or `Primitive(bool/s8../u64/f32/f64/char/string)`.
+- `Import(ComponentImport{ name, ty })` — the world's imports
+  (`name = "wasi:io/streams@0.2.0"`, `ty = Instance(<typeidx>)`). **These are
+  the list Gap A needs.**
+- `Export(ComponentExport{ name, kind, index })` — the world's exports.
+- `Alias(Outer{kind,count,index})` / `Alias(InstanceExport{kind,instance,
+  name})` — type aliasing across scopes (e.g. surfacing `output-stream`
+  from `io/streams` into `cli/stdout`).
+- `CoreType` (not present in these worlds, but part of the grammar).
+
+**No length prefixes.** Component-model types are not size-delimited, so the
+cursor only advances by fully parsing each declaration — there is *no*
+shortcut to "just enumerate import names"; the structural walker is the
+whole job. Resource types appear as `Export{ ty: Type(SubResource) }`.
+
+**Round-trip oracle (the P1 gate):** decode `fern.bin` **and** `http.bin`
+into the structured model, re-encode, and assert byte-equality with the
+input. That proves the decoder lossless without yet wiring it to anything.
+The re-encoder is not throwaway — P2 reuses the same defvaltype/func
+encoders (they overlap with the existing `InnerType*` emitters) to produce
+type-import sections from a decoded world.
+
+**Suggested P1 breakdown (each its own PR):**
+1. LEB/byte reader + component section walker; identify the type/export/
+   custom sections; ignore `wit-component-encoding` + `producers`.
+2. Defvaltype + func-type decoder (the value-type grammar above).
+3. Instance/component type + import/export/alias decoder; assemble the
+   world model; round-trip `fern.bin` / `http.bin` byte-for-byte.
