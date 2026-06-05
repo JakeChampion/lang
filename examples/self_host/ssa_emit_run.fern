@@ -45,12 +45,28 @@ function main(): i32 {
         if (ssa.is_ptr_type(hmod.funcs[hi0].ret_type)) { ptr_ret = ptr_ret.push(hmod.funcs[hi0].name); }
         hi0 = hi0 + 1;
     }
+    // Lambdas bound as `var f = function(...){...}` are lifted to top-level
+    // functions (collect_lambdas); build them like any user function. A
+    // pointer-returning lambda joins ptr_ret before the build loop so callers
+    // mark its result 64-bit.
+    var lifted: parser.FuncDecl[] = ssa.collect_lambdas(mod.funcs);
+    var li0: i32 = 0;
+    while (li0 < lifted.len()) {
+        if (ssa.is_ptr_type(lifted[li0].ret_type) || ssa.is_struct_type(lifted[li0].ret_type, mod.structs)) { ptr_ret = ptr_ret.push(lifted[li0].name); }
+        li0 = li0 + 1;
+    }
     var funcs: ssa.SFunc[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var r: ssa.BResult = ssa.build_func(mod.funcs[i], mod.structs);
         if (r.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret))); }
         i = i + 1;
+    }
+    var li: i32 = 0;
+    while (li < lifted.len()) {
+        var lr: ssa.BResult = ssa.build_func(lifted[li], mod.structs);
+        if (lr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(lr.func, ptr_ret))); }
+        li = li + 1;
     }
     // Inject each runtime helper body only when the program actually calls it
     // (helpers don't call each other, so a single direct-call check suffices —

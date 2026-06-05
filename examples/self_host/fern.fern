@@ -140,24 +140,33 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     if (target != "x86-64" && target != "arm64") { return SsaResult { asm: "", ok: false }; }
     // The set of user-defined function names the SSA backend can `call`, and
     // the subset that return a pointer (so their call results are 64-bit).
+    // Lambda bindings `var f = function(...){...}` lift to top-level functions
+    // (collect_lambdas); they're built like user functions and join the known /
+    // ptr_ret sets. A capturing lambda's lifted body references an enclosing
+    // local and fails to build (or a call lands on an unbuilt name), so the
+    // whole program falls back to the AST emitter.
+    var lifted: parser.FuncDecl[] = ssa.collect_lambdas(funcs);
+    var allfuncs: parser.FuncDecl[] = funcs;
+    var lai: i32 = 0;
+    while (lai < lifted.len()) { allfuncs = allfuncs.push(lifted[lai]); lai = lai + 1; }
     var known: string[] = [];
     var ptr_ret: string[] = [];
     var ni: i32 = 0;
-    while (ni < funcs.len()) {
-        known = known.push(funcs[ni].name);
-        if (ssa.is_ptr_type(funcs[ni].ret_type) || ssa.is_struct_type(funcs[ni].ret_type, structs)) { ptr_ret = ptr_ret.push(funcs[ni].name); }
+    while (ni < allfuncs.len()) {
+        known = known.push(allfuncs[ni].name);
+        if (ssa.is_ptr_type(allfuncs[ni].ret_type) || ssa.is_struct_type(allfuncs[ni].ret_type, structs)) { ptr_ret = ptr_ret.push(allfuncs[ni].name); }
         ni = ni + 1;
     }
     var sfuncs: ssa.SFunc[] = [];
     var has_main: boolean = false;
     var i: i32 = 0;
-    while (i < funcs.len()) {
-        var r: ssa.BResult = ssa.build_func(funcs[i], structs);
+    while (i < allfuncs.len()) {
+        var r: ssa.BResult = ssa.build_func(allfuncs[i], structs);
         if (!r.ok) { return SsaResult { asm: "", ok: false }; }
         // A call to a builtin (print, write, …) or any unknown name can't be
         // lowered — fall back to the AST emitter for the whole program.
         if (!ssa.calls_all_known(r.func, known)) { return SsaResult { asm: "", ok: false }; }
-        if (funcs[i].name == "main") { has_main = true; }
+        if (allfuncs[i].name == "main") { has_main = true; }
         sfuncs = sfuncs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret)));
         i = i + 1;
     }
