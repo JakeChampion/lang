@@ -13,14 +13,27 @@ build is clean (`go build ./...`) and all non-e2e unit packages pass.
 
 ## Status (updated after the fix pass)
 
-15 of the 17 findings are **fixed** (each with a regression test and the
+16 of the 17 findings are **fixed** (each with a regression test and the
 full non-e2e suite + native e2e corpus re-run green): F1, B1, B2, I1, I2,
-F3, M2, L1, L2, L3, L4, L5, B3, I3, F4. The remaining three — **F2**
-(`usize` wormhole), **M1** (Map copy-on-write interp divergence), and
-**M3** (Map delete order) — are **deferred pending a design decision**
-(see "Open design questions" at the end); each changes language
-semantics or the interp-vs-runtime contract, so the right call is the
-maintainer's, not a mechanical fix.
+F3, F4, M2, M3, F2, L1, L2, L3, L4, L5, B3, I3.
+
+The one remaining finding, **M1** (Map copy-on-write interp divergence),
+is **deferred**: a faithful fix requires reference-count tracking in the
+interpreter. The compiled backends' COW is rc-based — they mutate a map
+in place when it is unshared (rc==1) and copy only when aliased (rc>1),
+so a bare `m.set(k,v)` statement mutates in place. The interpreter does
+not track reference counts, and there is no safe approximation: an
+always-copy interp would lose bare-statement mutations (a *new* interp↔
+backend divergence), while never-copying keeps the original bug. Closing
+M1 correctly means giving the interpreter the runtime's Perceus-style RC
+discipline — a substantial, invasive change scoped as its own effort, not
+a point fix. M3 (delete order) was fixed independently of M1.
+
+The fix decisions for the three originally-deferred items were:
+**F2** → require an explicit `as` cast in user code (the implicit usize
+escape hatch is now gated to stdlib context); **M3** → force a single
+stable cross-backend order (interp now mirrors the runtime's
+swap-with-last); **M1** → make the interp match COW (deferred, see above).
 
 ## Summary
 
