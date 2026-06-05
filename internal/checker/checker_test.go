@@ -964,6 +964,10 @@ func TestMissingReturnRejected(t *testing.T) {
 		`function h(b: boolean): i32 {
 			if (b) { return 1; } else { var z = 2; }
 		}`,
+		// switch with no default: an unmatched tag falls through
+		`function sw(n: i32): i32 {
+			switch (n) { case 0: return 0; case 1: return 1; }
+		}`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
@@ -994,6 +998,10 @@ func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 		// infinite loop never falls through
 		`function loops(): i32 {
 			while (true) { var x = 1; }
+		}`,
+		// switch with default, every arm returns
+		`function sw(n: i32): i32 {
+			switch (n) { case 0: return 0; default: return 1; }
 		}`,
 		// void function may fall through
 		`function v(n: i32) { var x = n + 1; }`,

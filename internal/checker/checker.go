@@ -3090,6 +3090,20 @@ func stmtExits(s ast.Stmt) bool {
 			return true
 		}
 		return false
+	case *ast.Switch:
+		// Cases auto-break (no C-style fall-through), so a switch
+		// guarantees an exit only when it has a default arm (otherwise an
+		// unmatched tag leaves the switch) and every arm — cases and
+		// default — exits.
+		if x.Default == nil {
+			return false
+		}
+		for _, c := range x.Cases {
+			if !funcBodyExits(c.Body) {
+				return false
+			}
+		}
+		return funcBodyExits(x.Default)
 	}
 	return false
 }

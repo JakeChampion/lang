@@ -202,8 +202,15 @@ func TestLowerImplicitReturn(t *testing.T) {
 	}
 }
 
+// A value-returning function whose body doesn't end in an explicit
+// return still gets a synthetic trailing pad-const + return at the IR
+// level (defensive — the path past the loop is unreachable). The source
+// uses an infinite `while (true)` loop because a function that simply
+// falls off the end is now a checker error (E052); the infinite loop is
+// the valid shape that still has no explicit trailing return. See
+// docs/ADVERSARIAL-REVIEW-2026-06.md (F4).
 func TestLowerImplicitReturnNumber(t *testing.T) {
-	p := lowerSource(t, `function f(): i32 { var x: i32 = 0; }`)
+	p := lowerSource(t, `function f(): i32 { while (true) { var x: i32 = 0; } }`)
 	ops := p.Funcs[0].Ops
 	if ops[len(ops)-1].Kind != OpReturn {
 		t.Errorf("expected trailing return, got %s", ops[len(ops)-1].Kind)
