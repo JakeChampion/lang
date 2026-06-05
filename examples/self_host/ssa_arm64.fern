@@ -196,6 +196,29 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         if (widths[ins.result] == 64) { rsrc = "x0"; }
         return store_reg(reg_of, ins.result, rsrc, widths[ins.result], out);
     }
+    if (ins.kind == "funcaddr") {
+        // Function address (closure code pointer) via adrp/add; pointer-width.
+        out = out + "    adrp x9, __fn_" + ins.str + "\n";
+        out = out + "    add x9, x9, :lo12:__fn_" + ins.str + "\n";
+        return store_reg(reg_of, ins.result, "x9", 64, out);
+    }
+    if (ins.kind == "call_indirect") {
+        // args[0] = code pointer (→ x9, a scratch outside x12-x15/x0-x7);
+        // args[1..] = call args into x0… ; branch-with-link through x9.
+        if (reg_of[ins.args[0]] >= 0) { out = out + "    mov x9, " + regn(reg_of, ins.args[0], 64) + "\n"; }
+        else { out = out + "    ldr x9, " + slot(ins.args[0]) + "\n"; }
+        var ci: i32 = 1;
+        while (ci < ins.args.len() && ci < 9) {
+            var caw: i32 = widths[ins.args[ci]];
+            if (reg_of[ins.args[ci]] >= 0) { out = out + "    mov " + argreg_w(ci - 1, caw) + ", " + regn(reg_of, ins.args[ci], caw) + "\n"; }
+            else { out = out + "    ldr " + argreg_w(ci - 1, caw) + ", " + slot(ins.args[ci]) + "\n"; }
+            ci = ci + 1;
+        }
+        out = out + "    blr x9\n";
+        var risrc: string = "w0";
+        if (widths[ins.result] == 64) { risrc = "x0"; }
+        return store_reg(reg_of, ins.result, risrc, widths[ins.result], out);
+    }
     if (ins.kind == "alloc") {
         // Bump-allocate 8-byte word slots (a pointer element fits; i32
         // elements use the low 4 bytes); result = old hp. The slot count is

@@ -116,6 +116,10 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"lambda-capture-local", "function main(): i32 { var n = 10; var f = function (x: i32): i32 { return x + n; }; return f(5); }", 15},
 		{"lambda-capture-params", "function add(a: i32, b: i32): i32 { var f = function (x: i32): i32 { return x + a + b; }; return f(100); } function main(): i32 { return add(3, 7); }", 110},
 		{"lambda-capture-string", "function main(): i32 { var prefix = \"hello\"; var f = function (n: i32): i32 { return prefix.len() + n; }; return f(37); }", 42},
+		// Higher-order: no-capture lambda as a `(T)=>R` value, called indirectly.
+		{"lambda-indirect", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var inc = function (n: i32): i32 { return n + 1; }; return apply(inc, 41); }", 42},
+		{"lambda-indirect-dispatch", "function apply2(f: (i32) => i32, x: i32): i32 { return f(x) + f(x + 1); } function main(): i32 { var dbl = function (n: i32): i32 { return n * 2; }; var sq = function (n: i32): i32 { return n * n; }; return apply2(dbl, 10) + apply2(sq, 3); }", 67},
+		{"lambda-indirect-loop", "function run(f: (i32) => i32): i32 { var s = 0; var i = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; } function main(): i32 { var t = function (n: i32): i32 { return n * 10; }; return run(t); }", 60},
 		// __new_array(n): runtime-sized allocation (alloc op size in args[0]).
 		{"new-array-fixed", "function main(): i32 { var b = __new_array(3); b[0] = 10; b[1] = 20; b[2] = 30; return b[0] + b[1] + b[2] + b.len(); }", 63},
 		{"new-array-dynamic", "function main(): i32 { var n = 5; var b = __new_array(n); var i = 0; while (i < n) { b[i] = i * i; i = i + 1; } var s = 0; var j = 0; while (j < b.len()) { s = s + b[j]; j = j + 1; } return s; }", 30},
