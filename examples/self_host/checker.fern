@@ -405,6 +405,13 @@ function is_builtin_variant(name: string): boolean {
         || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other";
 }
 
+// is_reserved_enum_name reports whether `name` is one of the enums the
+// front-end injects as built-ins (see checker.go's builtinEnumDecls). A
+// user `enum` declaration shadowing one of these is E010.
+function is_reserved_enum_name(name: string): boolean {
+    return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue";
+}
+
 // variant_in_unions reports whether `name` is a variant of ANY declared
 // enum/union in scope.
 function variant_in_unions(name: string, unions: UnionSig[]): boolean {
@@ -3087,6 +3094,10 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         if (edup) {
             out = out.push(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
+        }
+        // E010: a user enum shadowing a reserved built-in enum name.
+        if (is_reserved_enum_name(mod.enums[en].name)) {
+            out = out.push(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
         }
         var vn: string[] = mod.enums[en].variant_names;
         var vk: i32 = 0;
