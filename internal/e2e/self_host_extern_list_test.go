@@ -119,3 +119,100 @@ function main(): i32 {
 		t.Fatalf("stdout = %q, want it to contain %q", out, want)
 	}
 }
+
+// TestSelfHostExternU8ArrayResultRunsUnderWasmtime is the u8[] counterpart of
+// the self-host string-result gate (P4c): the same get-random-bytes import,
+// declared as returning u8[], lifts the host bytes into a self-host array
+// (length-prefixed header, 4-byte element slots). The result must have the
+// requested element count.
+func TestSelfHostExternU8ArrayResultRunsUnderWasmtime(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	const driver = `import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./wasm";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
+    return 0;
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "extern_run.fern"), []byte(driver), 0o644); err != nil {
+		t.Fatalf("write driver: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "extern_run.fern", "extern_run")
+
+	const want = "arr-ok"
+	prog := `@import("wasi:random/random@0.2.0", "get-random-bytes")
+function rand_bytes(n: u64): u8[];
+function main(): i32 {
+    var pad: string = string_from_bytes([65 as u8]);
+    var a: u8[] = rand_bytes(16 as u64);
+    if (pad.len() == 1 && a.len() == 16) { write("` + want + `"); } else { write("arr-bad"); }
+    return 0;
+}`
+	watBytes := runCapture(t, gcc, runner, driverBin, []byte(prog))
+	if len(watBytes) == 0 {
+		t.Fatal("self-host wasm emitter produced 0 bytes")
+	}
+	if !bytes.Contains(watBytes, []byte("get-random-bytes")) {
+		t.Errorf("emitted core is missing the extern import")
+	}
+
+	watPath := filepath.Join(dir, "core.wat")
+	if err := os.WriteFile(watPath, watBytes, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	corePath := filepath.Join(dir, "core.wasm")
+	if out, err := exec.Command(wasmtools, "parse", watPath, "-o", corePath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools parse: %v\n%s", err, out)
+	}
+	core, err := os.ReadFile(corePath)
+	if err != nil {
+		t.Fatalf("read core: %v", err)
+	}
+	w, err := componenttype.DecodeWorld("fern")
+	if err != nil {
+		t.Fatalf("DecodeWorld: %v", err)
+	}
+	comp, err := component.ComposeFromWorldAuto(core, w)
+	if err != nil {
+		t.Fatalf("ComposeFromWorldAuto: %v", err)
+	}
+	mine := filepath.Join(dir, "extern-u8arr.component.wasm")
+	if err := os.WriteFile(mine, comp, 0o644); err != nil {
+		t.Fatalf("write component: %v", err)
+	}
+	if out, err := exec.Command(wasmtools, "validate", mine).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
+	}
+	out, err := exec.Command(wasmtime, "run", mine).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run: %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte(want)) {
+		t.Fatalf("stdout = %q, want it to contain %q", out, want)
+	}
+}

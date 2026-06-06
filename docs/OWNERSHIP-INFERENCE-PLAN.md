@@ -337,7 +337,78 @@ analysis, which is independent, pure, and de-risks the design.
   drop (#5), reuse *specialization* (static function cloning for the
   token-available caller).
 
-## Open problem: the O(N²) self-reassign accumulator leak
+## RESOLVED: the O(N²) self-reassign accumulator leak
+
+**Resolution (instrumentation-led, two genuine uncounted-alias bugs).** The
+`RcFreeDebug` + widened-deep-drop driver under gdb pinpointed the failure as
+predicted — not a field-type axis but two specific uncounted aliases, both
+**borrow-inference gaps** exposed only once the deep-drop actually frees the old
+value:
+
+1. **Threaded borrowed param over-released on overwrite.** The self-host
+   accumulators (`BState`, `EmitState`, `CheckCtx`, the SSA `SFunc`) are not
+   *locals* but *parameters* THREADED through their owning function (`s =
+   s.emit(..)`, `ctx = check_stmt(.., ctx)`, `f = SFunc{..}`). Because their
+   string field excludes them from owned-by-default, the borrow model kept them
+   borrowed — yet the reassignment-overwrite *dec'd* the old value with **no
+   caller-side inc**, undercounting it so a later `is_unique`-gated drop freed it
+   while the caller still held it. Fix: `computeConsumedParams` promotes such a
+   reassigned, drop-wired, string/array-bearing struct/tuple param to
+   **callee-owned** — not borrow-tainted (so it becomes `freeEligible` and the
+   overwrite / exit-sweep deep-drop it) plus a single **entry-inc** in
+   `lowerFunc` so the first overwrite-dec balances. Purely callee-internal: the
+   call ABI is unchanged (`calleeParamOwnedByDefault` stays false), so the
+   owned-by-default differential gate is untouched. This is the O(N²)→O(N) fix
+   (verified bounded on x86-64; the `-ssa` emit no longer OOMs).
+
+2. **`push` of a borrowed pointer element stored uncounted.** The SSA optimiser
+   rebuilds blocks by `ninsts.push(ins)` where `ins` reads from the *old*
+   block's `insts`. `emitArrayPush` stored the element pointer without an inc, so
+   the new buffer held an uncounted alias; deep-dropping the old `SFunc` then
+   over-released the shared `SInst`. Fix: `emitArrayPush` inc's an **aliased**
+   pointer element (`needsRcIncOnAlias && !moveSites`), mirroring the
+   array-literal / struct-field element inc — a fresh element is still moved in.
+
+A third, enabling fix: **`genStructDropFn` now dec's native single-word
+(x86-64) string fields** (it previously handled only the two-word wasm/arm64
+ABI), matching the inline exit-sweep and `appendChildDrop`. Without it a
+string-bearing struct routed through the *generated* drop (nested field /
+overwrite / consumed param) leaked its string buffers forever.
+
+Gated on the full self-host suite + the full e2e + the differential gates (all
+green); regression tests in `internal/e2e/rc_self_reassign_field_test.go`
+(`TestX86_64SSAAccumThreadedParam` pins O(N) + underflow-zero for the
+threaded-param shape, plus arm64 / wasm soundness counterparts). The historical
+diagnosis and the two failed type-shape widenings are kept below.
+
+### Known limitation: wasm doesn't *reuse* the threaded-param struct accumulator
+
+The fix restores O(N) on the **native** backends (x86-64 verified; arm64 shares
+the target-agnostic IR). On **wasm** the threaded-PARAM *struct* accumulator
+(`build(s: Bld, n)` with a growing array field) stays O(N²) — `TestWASMSelf...`
+pins only soundness there, not O(N). Characterised (bump high-water, free-on):
+
+| shape | local | param |
+|---|---|---|
+| bare `i32[]` (no struct) | O(N) | **O(N)** |
+| struct, box only (no growing field) | O(N) | **O(N)** |
+| struct, **fixed**-size array field, rebuilt each step | **O(1)** (reused) | **O(N)** (freed, not reused) |
+| struct, **growing** array field | O(N) | **O(N²)** |
+
+It is **pre-existing and independent of this fix** (reproduces with the
+consumed-param entry-inc disabled) and is **not** an over-release — the
+deep-drop *frees* the old box+buffer on wasm (the fixed-array param is linear,
+not quadratic). The gap is purely **reuse**: a struct accumulator threaded
+through a *local* has its freed blocks reused by the wasm freelist (O(1) for the
+fixed shape), but the same accumulator threaded through a *parameter* does not —
+even for identical-size allocations every step. So it is neither a size-class
+mismatch nor an in-place-push issue; it lives in the wasm freelist /
+reclamation path's local-vs-param asymmetry (cf. the documented "an inline
+box_free in a complex function body doesn't return the box to the freelist on
+wasm, but a generated function does"). A real fix needs that wasm-allocator
+investigation; it is out of scope for the `-ssa` OOM, whose target is native.
+
+## Original problem: the O(N²) self-reassign accumulator leak
 
 **Symptom.** `s = s.emit(x)` — self-reassigning an owned struct *local* through
 a method/call — flat-dec's the old value (frees the box, **orphans its nested

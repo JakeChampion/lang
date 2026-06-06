@@ -301,9 +301,28 @@ world-driven composer (P2) wires it.
      list<u8>` → a 16-byte Fern string after a heap-misaligning pre-alloc,
      validated + run), plus the `wasmbin` unit tests `TestEmitExternStringResult`
      / `TestEmitExternCompositeRejected`.
-   - Still rejected (next slices): composite **parameters**, and non-string
-     composite results (arrays/`u8[]`, records, tuples, variants, option,
-     result). Self-host port of the string-result path also still to follow.
+   - **u8[] result — ✅ done (Go + self-host).** The same `list<u8>` return
+     lifted into a Fern `u8[]` instead of a string, for code that wants the
+     bytes typed as an array. Go: a native array is length-prefixed (the value
+     points to the elements, count at `ptr-4`), so `buildExternListU8ResultWrapper`
+     allocates `4+n`, stores the count, and memory.copys the host bytes (u8 =
+     1-byte stride) just past it; `isU8ArrayType` gates it. Self-host: the
+     array uses an 8-byte header (count @0) with 4-byte element slots at +8, so
+     `extern_wrappers` expands each host byte into its slot (the same shape
+     `random_func_p2` builds). Gated by `TestExternU8ArrayResultRunsUnderWasmtime`
+     / `TestSelfHostExternU8ArrayResultRunsUnderWasmtime` +
+     `TestEmitExternU8ArrayResult`.
+   - Still rejected (next slices): composite **parameters**, non-u8 array
+     results (`i32[]` …), and record/tuple/variant/option/result.
+   - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
+     `@import` program end to end: when the legacy composer's `ClassifyCore`
+     reports imports it doesn't recognise and the program declares any extern
+     (`hasExternImports`), `buildPreview2Component` rebuilds the core with
+     `ForceMemorySection` and routes it through `ComposeFromWorldAuto` (the
+     embedded fern world) instead of erroring — so a user gets a runnable
+     component without the test harness. No-extern programs keep the legacy
+     path unchanged. Gated by `TestExternImportViaCLI` (scalar + u8[] externs +
+     a built-in `write`, composed by the CLI binary and run under wasmtime).
 4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
    concept; the largest phase, and the first to exercise the composer's
    `gDrop` path from user code.
