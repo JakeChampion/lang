@@ -64,3 +64,69 @@ func buildExternStringResultWrapper(nparams int, rawImport string) func(map[stri
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
+
+// buildExternListU8ResultWrapper is the u8[] counterpart of the string-result
+// wrapper: it lowers a `list<u8>` result the same way (canonical return area),
+// then materializes a Fern `u8[]` array. A native array is length-prefixed —
+// the value is a pointer to the elements with the count at `ptr-4` — so the
+// wrapper allocates `4 + n`, stores the count, memory.copys the host bytes
+// (u8 = 1-byte stride) just past it, and returns the element pointer. Wrapper
+// type is (scalar params…) -> i32.
+//
+// Locals after the params: 0:$rb (return area) 1:$dp (host data) 2:$n (len)
+// 3:$arr (array block base).
+func buildExternListU8ResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		rb := uint32(nparams)
+		dp := uint32(nparams + 1)
+		n := uint32(nparams + 2)
+		arr := uint32(nparams + 3)
+
+		var body []byte
+		// rb = (__fern_alloc(12) + 3) & ~3 — 4-byte aligned return area.
+		body = inst.InstI32Const(body, 12)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 3)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -4)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, rb)
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		// dp = load(rb+0); n = load(rb+4).
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, dp)
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalSet(body, n)
+		// arr = __fern_alloc(4 + n); store count at arr; copy bytes to arr+4.
+		body = inst.InstI32Const(body, 4)
+		body = inst.InstLocalGet(body, n)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, arr)
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstLocalGet(body, n)
+		body = memory.InstI32Store(body, 2, 0) // count @ arr+0
+		// memory.copy(arr+4, dp, n)
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, dp)
+		body = inst.InstLocalGet(body, n)
+		body = memory.InstMemoryCopy(body)
+		// return arr + 4 (pointer to elements; count lives at ptr-4).
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+
+		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}

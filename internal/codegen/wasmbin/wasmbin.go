@@ -940,6 +940,19 @@ func externScalarType(t ast.Type) bool {
 	return false
 }
 
+// isU8ArrayType reports whether t is `u8[]` — the one composite list shape
+// (P4c) that lifts zero-copy from a canonical `list<u8>` return area, since u8
+// elements are 1-byte stride and so the host's packed bytes are already a valid
+// Fern slice's element data.
+func isU8ArrayType(t ast.Type) bool {
+	at, ok := t.(ast.ArrayType)
+	if !ok {
+		return false
+	}
+	n, ok := at.Elem.(ast.NumberType)
+	return ok && n.NormalWidth() == 8
+}
+
 // localValtypes returns the wasm valtype vector for an IR function's
 // declared locals + scratch slots — exactly what the local-section
 // preamble of the function body needs. String-typed slots fan out

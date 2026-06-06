@@ -811,6 +811,22 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add("__fern_alloc")
 			helpers.add("__bytes_to_lang_string")
 			helpers.add("cabi_realloc")
+		case isU8ArrayType(ret):
+			// list<u8> result lifted into a Fern u8[] (P4c): same canonical
+			// return-area lowering, but a zero-copy __slice_make over the host
+			// bytes (u8 is 1-byte stride) instead of a copying string lift.
+			rawName := ex.Name + "$import"
+			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: []byte{encode.ValtypeI32},
+				body:    buildExternListU8ResultWrapper(len(ex.Params), rawName),
+			}
+			helpers.add(ex.Name)
+			helpers.add("__fern_alloc")
+			helpers.add("cabi_realloc")
 		default:
 			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar and string/list<u8> results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 		}
