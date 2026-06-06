@@ -131,6 +131,13 @@ flow rather than driving manual CI checks after the fact.
   `/tmp/wt/adapter.wasm`; export the binaries onto `PATH` and set
   `FERN_WASI_ADAPTER` so the e2e tests don't SKIP). If a test SKIPs,
   treat that as a missing dependency to fix, not a green light.
+  **Pass `-timeout 30m` when running the *whole* `internal/e2e` package in
+  one `go test` invocation:** the unsharded suite runs ~10+ minutes (incl.
+  arm64/qemu + wasm), just over `go test`'s default 600s `-timeout`, so the
+  default aborts it with a `panic: test timed out` that reads like a failure
+  but is not one. CI doesn't hit this — it shards `internal/e2e` by
+  test-name regex across the `test-e2e-*` workflows, each well under its
+  10-min job timeout.
 - **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
   run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
   the slow part of a local sweep (minutes). Locally, gate on the
