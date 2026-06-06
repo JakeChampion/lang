@@ -283,6 +283,21 @@ world-driven composer (P2) wires it.
    results across the boundary (the canonical-ABI lift/lower the built-ins
    already do, generalised to user signatures). Lifts the P4b scalar-only
    guard as each shape gains real marshalling, in both compilers.
+   - **string / list<u8> result — ✅ done (Go).** A string-typed extern result
+     (which covers a WIT `string` *or* `list<u8>` — identical canonical ABI,
+     `(ptr,len)`) is lowered via the return-area convention: `scanExternImports`
+     emits the raw import with a trailing return-area pointer (no core result)
+     under `<name>$import`, and the Fern name resolves to a generated wrapper
+     (`buildExternStringResultWrapper`, `extern.go`) that allocates the 8-byte
+     return area, calls the raw import, and lifts `(data_ptr, len)` into a Fern
+     string via the existing `__bytes_to_lang_string`. `cabi_realloc` is
+     exported so the host can materialize the bytes. Gated by
+     `TestExternListResultRunsUnderWasmtime` (`get-random-bytes(16) -> list<u8>`
+     → a 16-byte Fern string, validated + run) and the `wasmbin` unit tests
+     `TestEmitExternStringResult` / `TestEmitExternCompositeRejected`.
+   - Still rejected (next slices): composite **parameters**, and non-string
+     composite results (arrays/`u8[]`, records, tuples, variants, option,
+     result). Self-host port of the string-result path also still to follow.
 4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
    concept; the largest phase, and the first to exercise the composer's
    `gDrop` path from user code.
