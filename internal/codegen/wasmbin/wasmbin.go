@@ -204,8 +204,10 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// declaration costs nothing and the component composer isn't asked to wire
 	// it. externSpecs overlays importSpecs in the import-section loop below;
 	// the extern's funcidx (assigned in the import block) is what a call to its
-	// name resolves to.
-	externSpecs, err := scanExternImports(prog, &importNeeds)
+	// name resolves to. A composite-result extern (P4c) instead registers a
+	// generated wrapper helper (externWrappers) under its Fern name and its raw
+	// import under "<name>$import".
+	externSpecs, externWrappers, err := scanExternImports(prog, &importNeeds, &helpers)
 	if err != nil {
 		return nil, err
 	}
@@ -572,12 +574,15 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		}
 	}
 	for _, name := range helpers.order {
-		spec := runtimeHelperSpecs[name]
+		spec, isExtern := externWrappers[name]
+		if !isExtern {
+			spec = runtimeHelperSpecs[name]
+		}
 		params, results := spec.params, spec.results
 		tIdx := addType(params, results)
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
 		bodyFn := spec.body
-		if opts.Preview2WASI {
+		if !isExtern && opts.Preview2WASI {
 			if alt, ok := preview2HelperBodyOverrides[name]; ok {
 				bodyFn = alt
 			}
@@ -600,7 +605,10 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// note above. Any preview-2 component the host wraps wants
 	// to call back for variable-size return materialisation, so
 	// gate on ForceMemorySection just like the helper add does.
-	if opts.ForceMemorySection {
+	// A composite-result `@import` extern (P4c) also needs the host
+	// to call back into cabi_realloc to materialize its returned
+	// bytes, so export it whenever such a wrapper is present.
+	if opts.ForceMemorySection || len(externWrappers) > 0 {
 		if idx, ok := funcIdx["cabi_realloc"]; ok {
 			m.ExportNames = append(m.ExportNames, "cabi_realloc")
 			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)

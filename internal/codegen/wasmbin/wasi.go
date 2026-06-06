@@ -745,10 +745,11 @@ func (in *importNeeds) add(name string) {
 // asked to wire imports the core module really has. Each used extern is added
 // to `in` (so it gets an import funcidx, keyed by its Fern name) and returned
 // in the spec overlay the import-section emitter consults.
-func scanExternImports(prog *ir.Program, in *importNeeds) (map[string]importSpec, error) {
+func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds) (map[string]importSpec, map[string]runtimeHelperSpec, error) {
 	specs := map[string]importSpec{}
+	wrappers := map[string]runtimeHelperSpec{}
 	if len(prog.Externs) == 0 {
-		return specs, nil
+		return specs, wrappers, nil
 	}
 	used := map[string]bool{}
 	for _, fn := range prog.Funcs {
@@ -762,38 +763,59 @@ func scanExternImports(prog *ir.Program, in *importNeeds) (map[string]importSpec
 		if !used[ex.Name] {
 			continue
 		}
-		// P4b supports scalar extern signatures only; composite types
-		// (string / list / record / tuple / variant / option / result) need
-		// the canonical-ABI lift/lower that is P4c. Reject them with a clear
-		// message rather than emitting raw pointer slots that don't match the
-		// host's ABI (a silent miscompile).
+		// Parameters must be scalar. Composite extern *parameters* (lowering a
+		// Fern string/list into the canonical (ptr,len) args) are a later P4c
+		// slice; rejecting them avoids emitting raw pointer slots that don't
+		// match the host's ABI (a silent miscompile).
 		for _, p := range ex.Params {
 			if !externScalarType(p.Type) {
-				return nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar extern types (integer / float / bool) are supported yet — composite types are P4c", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
-			}
-		}
-		if ex.ReturnType != nil {
-			if _, isVoid := ex.ReturnType.(ast.VoidType); !isVoid && !externScalarType(ex.ReturnType) {
-				return nil, fmt.Errorf("@import %q (%s/%s): return type %s is not a scalar; only scalar extern types (integer / float / bool) are supported yet — composite types are P4c", ex.Name, ex.Iface, ex.WITName, ex.ReturnType)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; composite extern parameters are not supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 			}
 		}
 		params, err := paramValtypes(ex.Params)
 		if err != nil {
-			return nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+			return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
 		}
-		results, err := resultValtypes(ex.ReturnType)
-		if err != nil {
-			return nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+
+		ret := ex.ReturnType
+		isVoid := ret == nil
+		if !isVoid {
+			_, isVoid = ret.(ast.VoidType)
 		}
-		specs[ex.Name] = importSpec{
-			module:  ex.Iface,
-			name:    ex.WITName,
-			params:  params,
-			results: results,
+		switch {
+		case isVoid || externScalarType(ret):
+			// Scalar / void result: the Fern name resolves straight to the
+			// import (P4b).
+			results, err := resultValtypes(ret)
+			if err != nil {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+			}
+			specs[ex.Name] = importSpec{module: ex.Iface, name: ex.WITName, params: params, results: results}
+			in.add(ex.Name)
+		case isStringType(ret):
+			// string / list<u8> result (P4c): canonical return-area lowering.
+			// The raw import gains a trailing return-area pointer and returns
+			// nothing; the Fern name resolves to a wrapper that lifts the host
+			// bytes into a Fern string via __bytes_to_lang_string.
+			rawName := ex.Name + "$import"
+			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+				body:    buildExternStringResultWrapper(len(ex.Params), rawName),
+			}
+			helpers.add(ex.Name)
+			// Lift + the canonical allocator the host calls back into.
+			helpers.add("__fern_alloc")
+			helpers.add("__bytes_to_lang_string")
+			helpers.add("cabi_realloc")
+		default:
+			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar and string/list<u8> results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 		}
-		in.add(ex.Name)
 	}
-	return specs, nil
+	return specs, wrappers, nil
 }
 
 // scanImports decides which imports the module needs based on
