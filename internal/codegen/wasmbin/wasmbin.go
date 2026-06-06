@@ -197,6 +197,19 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	}
 	importNeeds := scanImports(prog, helpers, opts)
 
+	// Extern WIT imports (`@import` functions — bring-your-own WIT, P4,
+	// docs/WIT-BRING-YOUR-OWN.md): each referenced extern becomes a core wasm
+	// function import of (Iface, WITName) with a signature derived from its
+	// Fern declaration. Only emit those actually called, so an unused
+	// declaration costs nothing and the component composer isn't asked to wire
+	// it. externSpecs overlays importSpecs in the import-section loop below;
+	// the extern's funcidx (assigned in the import block) is what a call to its
+	// name resolves to.
+	externSpecs, err := scanExternImports(prog, &importNeeds)
+	if err != nil {
+		return nil, err
+	}
+
 	funcIdx := make(map[string]uint32, len(prog.Funcs)+len(helpers.order)+len(importNeeds.order))
 	nextFuncIdx := uint32(0)
 	for _, name := range importNeeds.order {
@@ -421,10 +434,13 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// type-section dedup map up-front so the descriptor's typeidx
 	// is stable.
 	for _, name := range importNeeds.order {
-		spec := importSpecs[name]
-		if opts.Preview2WASI && name == "wasi_proc_exit" {
-			spec.module = "wasi:cli/exit@0.2.0"
-			spec.name = "exit"
+		spec, isExtern := externSpecs[name]
+		if !isExtern {
+			spec = importSpecs[name]
+			if opts.Preview2WASI && name == "wasi_proc_exit" {
+				spec.module = "wasi:cli/exit@0.2.0"
+				spec.name = "exit"
+			}
 		}
 		tIdx := addType(spec.params, spec.results)
 		m.ImportModules = append(m.ImportModules, spec.module)

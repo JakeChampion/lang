@@ -595,9 +595,29 @@ type Func struct {
 	Captures []ast.Param
 }
 
+// ExternFunc is a body-less function bound to a WASM-component import via an
+// `@import("wasi:iface@x.y.z", "wit-func-name")` attribute (bring-your-own
+// WIT, P4 — docs/WIT-BRING-YOUR-OWN.md). It is NOT a defined function: it
+// carries no Ops and is never emitted into the code section. The wasm backend
+// declares it as a core wasm function import of (Iface, WITName) with a
+// signature derived from Params/ReturnType, and a call to Name resolves to
+// that import's funcidx. Other backends ignore it (extern WIT imports are
+// component-model-only).
+type ExternFunc struct {
+	Name       string
+	Iface      string
+	WITName    string
+	Params     []ast.Param
+	ReturnType ast.Type
+}
+
 // Program is the lowered form of an entire ast.Program.
 type Program struct {
 	Funcs []*Func
+	// Externs lists the body-less `@import` functions (extern WASM-component
+	// imports). They are kept out of Funcs so every backend's defined-function
+	// machinery is unaffected; only the wasm backend consults them.
+	Externs []*ExternFunc
 	// PairForm is the set of function names lowered with the
 	// register-based (tag, payload) return ABI. Populated once
 	// per program by findPairFormFuncs during `LowerWith`.
@@ -808,6 +828,20 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// owned-by-default params are kept borrowed.
 	paramEscapes := inferParamEscapes(prog, info)
 	for _, fn := range prog.Funcs {
+		// Body-less `@import` functions are extern WASM-component imports, not
+		// defined functions: record their signature in out.Externs and skip
+		// lowering (there is no body). The wasm backend turns each into a core
+		// import; a call to fn.Name resolves to that import's funcidx.
+		if fn.ImportIface != "" {
+			out.Externs = append(out.Externs, &ExternFunc{
+				Name:       fn.Name,
+				Iface:      fn.ImportIface,
+				WITName:    fn.ImportWITName,
+				Params:     fn.Params,
+				ReturnType: fn.ReturnType,
+			})
+			continue
+		}
 		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes)
 		if err != nil {
 			return nil, err
