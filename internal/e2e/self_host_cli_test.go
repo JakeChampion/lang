@@ -220,6 +220,25 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-selfhost-no-e001", func(t *testing.T) {
+		// The self-host modules are well-typed real code (they compile and
+		// self-host), full of bare-identifier reads — locals, params, loop
+		// variables, match payloads, lambda params, the module's own
+		// functions / consts, enum/union variants, and the builtin Option /
+		// Result / JsonValue / IoError variants. Running the self-host
+		// `-check` over each (which flattens its `./` imports and checks the
+		// whole bundle) must NOT report E001 (undefined name); any E001 here
+		// is a false positive. This is the bundle-wide FP guard the
+		// differential corpus can't express, mirroring the manual
+		// "fern -check over every module" validation prior slices used.
+		for _, m := range []string{"lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "ssa.fern"} {
+			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
+			if strings.Contains(string(combined), "error[E001]") {
+				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)
+			}
+		}
+	})
+
 	t.Run("check-position", func(t *testing.T) {
 		// A diagnostic emitted from an AST node that carries a source
 		// position renders `line:col: error[E0XX]: …`, matching the Go
