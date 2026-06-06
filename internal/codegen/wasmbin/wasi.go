@@ -10,6 +10,8 @@
 package wasmbin
 
 import (
+	"fmt"
+
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
@@ -733,6 +735,49 @@ func (in *importNeeds) add(name string) {
 	}
 	in.set[name] = true
 	in.order = append(in.order, name)
+}
+
+// scanExternImports turns the program's `@import` declarations (extern
+// WASM-component imports, P4 — docs/WIT-BRING-YOUR-OWN.md) into core wasm
+// function imports. Only externs actually referenced by a call are emitted:
+// an unused declaration costs nothing, and the component composer is only
+// asked to wire imports the core module really has. Each used extern is added
+// to `in` (so it gets an import funcidx, keyed by its Fern name) and returned
+// in the spec overlay the import-section emitter consults.
+func scanExternImports(prog *ir.Program, in *importNeeds) (map[string]importSpec, error) {
+	specs := map[string]importSpec{}
+	if len(prog.Externs) == 0 {
+		return specs, nil
+	}
+	used := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		for _, op := range fn.Ops {
+			if op.Str != "" {
+				used[op.Str] = true
+			}
+		}
+	}
+	for _, ex := range prog.Externs {
+		if !used[ex.Name] {
+			continue
+		}
+		params, err := paramValtypes(ex.Params)
+		if err != nil {
+			return nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+		}
+		results, err := resultValtypes(ex.ReturnType)
+		if err != nil {
+			return nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+		}
+		specs[ex.Name] = importSpec{
+			module:  ex.Iface,
+			name:    ex.WITName,
+			params:  params,
+			results: results,
+		}
+		in.add(ex.Name)
+	}
+	return specs, nil
 }
 
 // scanImports decides which imports the module needs based on

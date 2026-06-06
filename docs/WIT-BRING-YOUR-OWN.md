@@ -251,13 +251,20 @@ world-driven composer (P2) wires it.
 
 ### Slice plan
 
-1. **P4a — front end.** Lexer (no new keyword; `@` exists), parser
-   (`@import(...)` + body-less `function`), AST (FuncDecl import binding),
-   checker (register the extern, type-check calls). Parser + checker tests; no
-   codegen yet.
-2. **P4b — scalar codegen + e2e.** Lower a call to a scalar extern (e.g.
-   `get-random-u64`) to a core import + `call`; compose via the world-driven
-   path and run under wasmtime. Native first, then the self-host port.
+1. **P4a — front end. ✅ Done (Go).** Lexer (no new keyword; `@` exists),
+   parser (`@import(...)` + body-less `function`), AST (FuncDecl import
+   binding), checker (register the extern, type-check calls). Parser + checker
+   tests; no codegen.
+2. **P4b — scalar codegen + e2e. ✅ Done (Go).** A body-less `@import`
+   function lowers to `ir.ExternFunc` (kept out of `Program.Funcs` so every
+   backend's defined-function machinery is untouched); the wasm backend turns
+   each *referenced* extern into a core wasm function import of (interface,
+   wit-name) with a signature derived from the Fern declaration, and a call
+   resolves to that import's funcidx. Composed via the world-driven path
+   (`ComposeFromWorldAuto`). Gated by `TestExternImportScalarRunsUnderWasmtime`
+   (`internal/e2e/wit_extern_import_test.go`): `@import` of
+   `wasi:random/random@0.2.0` `get-random-u64` → core import present →
+   validates and runs under wasmtime. Self-host port still to follow.
 3. **P4c — composite types.** Strings / lists / records / variants / options /
    results across the boundary (the canonical-ABI lift/lower the built-ins
    already do, generalised to user signatures).
