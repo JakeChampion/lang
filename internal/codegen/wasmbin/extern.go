@@ -19,6 +19,7 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
+	"github.com/jakechampion/lang/internal/wasm/numeric"
 )
 
 // buildExternStringResultWrapper returns the body builder for the wrapper of a
@@ -33,9 +34,16 @@ func buildExternStringResultWrapper(nparams int, rawImport string) func(map[stri
 		retbuf := uint32(nparams) // first local after the params
 
 		var body []byte
-		// retbuf = __fern_alloc(8)  — canonical return area: data @+0, len @+4.
-		body = inst.InstI32Const(body, 8)
+		// retbuf = (__fern_alloc(12) + 3) & ~3 — the canonical return area
+		// (data @+0, len @+4) must be 4-byte aligned, but __fern_alloc bumps
+		// without aligning (the heap can sit right after odd-length string
+		// data), so over-allocate by 3 bytes of slack and round up.
+		body = inst.InstI32Const(body, 12)
 		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 3)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -4)
+		body = numeric.InstI32And(body)
 		body = inst.InstLocalSet(body, retbuf)
 		// raw import: forward each scalar param, then the return-area pointer.
 		for i := 0; i < nparams; i++ {
