@@ -240,6 +240,45 @@ analysis, which is independent, pure, and de-risks the design.
   drop (#5), reuse *specialization* (static function cloning for the
   token-available caller).
 
+## Open problem: the O(N²) self-reassign accumulator leak
+
+**Symptom.** `s = s.emit(x)` — self-reassigning an owned struct *local* through
+a method/call — flat-dec's the old value (frees the box, **orphans its nested
+array/struct heap**). In the self-host SSA builder
+(`s.cur.insts.push(inst)` threaded through method calls rebuilding the builder
+each step) this leaks the old block's instruction buffer on every `emit` →
+**O(N²) peak memory**, which is what makes the self-host `-ssa` full-program
+emit OOM.
+
+**Shipped (sound, partial).** `selfReassignOwnedLocal` + `typeSelfDropSafe` now
+deep-drop the old value on self-reassign **only when the type is transitively
+string- and Map-free** — turning O(N²)→O(N) for string-free accumulators
+(`St{cur: Blk{insts: i32[]}}`: wasm bump 382→1388→5275 ⇒ 26→50→98). The
+self-host's hot accumulators (`BState`, `EmitState`) carry a `string` field, so
+they're **excluded — the `-ssa` OOM is NOT yet fixed.**
+
+**Two FAILED widening attempts (both unsound, both caught by the self-host
+suite — heed this).**
+1. Bypass `freeEligible` and deep-drop any self-reassigned local → over-released
+   (PR #2159, reverted #2160). The local can be aliased by another live binding.
+2. A string-skipping ("nostr") deep-drop family that reclaims structural heap
+   but never dec's a string → **still** segfaulted the self-host (caught
+   pre-commit). This disproved "strings are the axis": excluding string-bearing
+   structs only *dodges* the failing class; those structs' **non-string** fields
+   (some borrow-derived / uncounted **array or nested-struct** alias) are what's
+   actually over-released.
+
+**The lesson + the next step.** This cannot be fixed by reasoning about which
+field *types* are safe — every synthetic reproduction is correctly counted, yet
+the self-host over-releases at scale. The failing **uncounted alias must be
+pinpointed at runtime**: build the self-host driver with `ast.RcFreeDebug`
+(poison freed blocks, trap on use-after-free) + the widened deep-drop, run a
+self-host test, and read the backtrace to the exact over-released allocation —
+then fix *that* aliasing site (likely a borrowed array/struct flowing into a
+struct field without an inc, i.e. a string-rc / borrow-inference gap), and
+re-gate on the **full self-host suite + e2e** (the gate that caught both
+attempts). Do NOT ship another type-shape-reasoned widening.
+
 ## References
 
 - Reinking, Xie, de Moura, Leijen. *Perceus: Garbage Free Reference
