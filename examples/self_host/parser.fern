@@ -1708,7 +1708,11 @@ function parse_stmt(p: Par): StmtResult {
                 }
                 var fargs: Expr[] = [];
                 fargs = fargs.push(fa.obj);
-                fargs = fargs.push(e_string(fa.field));
+                // Carry the field-access dot position on the field-name
+                // string so the checker can report E048 (assign to an
+                // immutable field) at the dot, matching the Go checker's
+                // FieldAccess position. Codegen ignores the position.
+                fargs = fargs.push(e_string_at(fa.field, fa.line, fa.col));
                 fargs = fargs.push(frhs);
                 return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_field"), fargs)) };
             },

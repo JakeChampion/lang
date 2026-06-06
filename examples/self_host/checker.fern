@@ -2043,6 +2043,23 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             while (i < c.args.len()) { out = append_diags(out, call_diags(c.args[i], s)); i = i + 1; }
             match (c.callee) {
                 parser.ExprIdent(id) => {
+                    // E048: a field assignment `obj.field = v` is desugared
+                    // by the parser to `__set_field(obj, "field", v)`. Fields
+                    // are immutable after construction (the immutable-data
+                    // rule that keeps RC cycle-free), so any such call is
+                    // E048, reported at the object — matching the Go checker,
+                    // which flags the field-access lvalue. No false positives:
+                    // __set_field is a parser-internal builtin that no
+                    // hand-written source names, and the self-host + stdlib
+                    // were migrated off field mutation to functional updates.
+                    if (id.name == "__set_field" && c.args.len() == 3) {
+                        var fld: string = "field";
+                        match (c.args[1]) {
+                            parser.ExprString(fs) => { fld = fs.value; },
+                            _ => { }
+                        }
+                        out = out.push(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
+                    }
                     if (is_unknown(s.lookup(id.name))) {
                         var sig: FuncSig = s.lookup_sig(id.name);
                         if (sig.name.len() > 0) {

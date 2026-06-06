@@ -709,6 +709,27 @@ same code(s) the Go checker does — restricted to
   non-scalar E033 classes Go also catches (struct/array → bool, etc.)
   need the self-host to model the full pointer-hop matrix; the scalar
   matrix is the provably-sound subset.
+- **Slice 59 (done): E048 — assignment to an immutable struct field.**
+  Fern fields are immutable after construction (the immutable-data rule
+  that keeps RC cycle-free — `docs/IMMUTABILITY-MIGRATION-PLAN.md`), so
+  any `obj.field = v` is E048; rebuild with a struct-update literal
+  (`T { ...old, field: v }`). The self-host parser **desugars** a field
+  assignment to `__set_field(obj, "field", v)` (an expression statement),
+  so this is detected in `call_diags` as an `ExprCall` whose callee is the
+  parser-internal builtin `__set_field` — which no hand-written source
+  ever names, and the self-host + stdlib were migrated off field mutation
+  to functional updates, so there are **zero false positives** (verified:
+  no field-assignment statement exists in any self-host or stdlib module).
+  Reported at the field-access **dot**, matching the Go checker's
+  `FieldAccess` position: the parser now carries the dot position on the
+  field-name string arg (`e_string` → `e_string_at`), which the checker
+  reads — `p.x = 5` → `2:48: error[E048]`. parser.fern is in the fixpoint
+  bundle but only the (unused) field-assign desugar branch changed, so the
+  byte-identical fixpoint holds (x86 verified). Compound field assignment
+  (`p.x += 5`) desugars through the same path and is also caught. Gated by
+  new corpus (`field-assign`, `field-compound-assign`, `nested-field-
+  assign`, plus `index-assign-ok` / `local-reassign-ok` / `struct-update-
+  ok` negatives) and a new `check-position-field-assign` CLI case.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
