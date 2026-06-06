@@ -60,6 +60,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E024": true, // tuple destructure of a non-tuple / wrong arity
 	"E033": true, // invalid cast (bool ↔ non-bool scalar)
 	"E048": true, // assignment to an immutable struct field
+	"E001": true, // undefined name (value position)
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -272,7 +273,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"enum-match-non-exhaustive", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { A => { return 1; } } return 0; }\nfunction main(): i32 { return f(A); }\n", []string{"E030"}},
 		{"enum-match-exhaustive-ok", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { A => { return 1; }, B => { return 2; } } return 0; }\nfunction main(): i32 { return f(A); }\n", nil},
 		{"enum-match-payload-exhaustive-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
-		{"union-match-foreign-variant", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, C(c) => { return c.z; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", []string{"E014"}},
+		{"union-match-foreign-variant", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, C(c) => { return c.z; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", []string{"E001", "E014"}},
 		{"match-qualifier-mismatch", "enum E { A, B }\nenum F { C, D }\nfunction f(e: E): i32 { match (e) { F.A => { return 1; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A); }\n", []string{"E029"}},
 		{"match-qualifier-correct-ok", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { E.A => { return 1; }, E.B => { return 2; } } return 0; }\nfunction main(): i32 { return f(A); }\n", nil},
 		{"union-struct-name-collision", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type B = A | C;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
@@ -304,6 +305,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"index-assign-ok", "function main(): i32 { var a = [1, 2, 3]; a[0] = 9; return a[0]; }\n", nil},
 		{"local-reassign-ok", "function main(): i32 { var x: i32 = 1; x = 5; return x; }\n", nil},
 		{"struct-update-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 5 }; return p.x; }\n", nil},
+		{"value-undefined", "function main(): i32 { return z; }\n", []string{"E001"}},
+		{"value-defined-ok", "function main(): i32 { var z: i32 = 5; return z; }\n", nil},
+		{"value-param-ok", "function f(a: i32): i32 { return a; }\nfunction main(): i32 { return f(1); }\n", nil},
+		{"value-function-as-value-ok", "function g(): i32 { return 1; }\nfunction run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(g); }\n", nil},
+		{"value-enum-variant-ok", "enum E { A, B }\nfunction main(): i32 { var e: E = A; return 0; }\n", nil},
+		{"value-builtin-variant-none-ok", "function f(): Option[i32] { return None; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"value-loop-var-ok", "function main(): i32 { var xs = [1, 2, 3]; var t = 0; for x in xs { t = t + x; } return t; }\n", nil},
+		{"value-match-payload-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(v) => { return v; }, Nil => { return 0; } } }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

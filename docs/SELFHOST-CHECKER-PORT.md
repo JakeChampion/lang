@@ -730,6 +730,35 @@ same code(s) the Go checker does — restricted to
   new corpus (`field-assign`, `field-compound-assign`, `nested-field-
   assign`, plus `index-assign-ok` / `local-reassign-ok` / `struct-update-
   ok` negatives) and a new `check-position-field-assign` CLI case.
+- **Slice 60 (done): E001 — undefined name (value position).** The
+  flagship checker code and the key blocker to retiring the Go checker as
+  the strict gate. `call_diags` gained an `ExprIdent` arm: a bare
+  identifier in **value** position that resolves to nothing —
+  `is_resolvable_value` checks a local / param / loop / match binding, a
+  free function or 0-arg const, an enum/union variant (declared or the
+  builtin Option / Result / JsonValue / IoError variants), or a struct
+  name — is E001, at the identifier. **Call callees are skipped** (a
+  bare-ident callee no longer recurses into the value check), so this is
+  the value-read subset; undefined-callee E001 (which needs a builtin-
+  *function* allowlist) is a follow-up. Matching the Go checker also
+  required not binding a **foreign** variant's match payload (so its read
+  is genuinely undefined — Go emits both E014 and E001), and binding the
+  constructs the assign walk previously left unbound: **loop variables**
+  (incl. `for (k, v)` via `bind_names`), **tuple-destructure** names
+  (`var (a, b)` is the single name "a,b" — split and bound for subsequent
+  reads), and **lambda params** (the body sees them). A sharp bug found en
+  route: rebinding a normal `var` after `check_stmt` shadowed its precise
+  type (lookup is newest-first) and silently broke every type-dependent
+  diagnostic (E033/E043/E046/E035/E004-method) — fixed by only splitting
+  comma names. **Zero false positives**, verified two ways: the
+  differential corpus (positive `value-undefined`; negatives for every
+  binding vector — param, loop var, match payload, function-as-value,
+  enum + builtin variant) AND a new bundle-wide guard
+  (`check-selfhost-no-e001`) that runs the self-host `-check` over the real
+  lexer / parser / checker / flatten / interp / printer / ssa modules and
+  asserts no spurious E001. Checker-only (checker.fern isn't in the
+  fixpoint bundle). *Follow-ups:* undefined-callee E001 (builtin-function
+  allowlist), undefined-assignment-target E001, and target-position parity.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

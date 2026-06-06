@@ -352,6 +352,86 @@ function (s: Scope) bind(name: string, t: Type): Scope {
     return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type };
 }
 
+// defines reports whether `name` is bound in scope (param, receiver,
+// local var, loop variable, or match-payload binding) — distinct from
+// `lookup`, which returns the bound type and can't tell "not in scope"
+// apart from "in scope with an unknown type". E001 (undefined name) needs
+// the membership test, not the type.
+function (s: Scope) defines(name: string): boolean {
+    var i: i32 = s.names.len() - 1;
+    while (i >= 0) {
+        if (s.names[i] == name) { return true; }
+        i = i - 1;
+    }
+    return false;
+}
+
+// name_has_comma reports whether a binding name encodes multiple names
+// (a `for (k, v)` loop var or a `var (a, b)` destructure).
+function name_has_comma(name: string): boolean {
+    var i: i32 = 0;
+    while (i < name.len()) { if (name[i] == 44) { return true; } i = i + 1; }
+    return false;
+}
+
+// bind_names binds one or more variable names into the scope. A `for
+// (k, v) in m` loop variable and a `var (a, b) = …` tuple destructure are
+// both encoded by the parser as a single comma-joined name ("k,v" /
+// "a,b"); split on the comma and bind each. Types are unknown here (the
+// E001 membership check only needs the names to be in scope).
+function bind_names(s: Scope, name: string): Scope {
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var out: Scope = s;
+    while (i <= name.len()) {
+        if (i == name.len() || name[i] == 44) {
+            if (i > start) { out = out.bind(name[start:i], t_unknown("binding")); }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// is_builtin_variant reports whether `name` is a variant of an enum the
+// front-end auto-injects (Option / Result, plus JsonValue / IoError via
+// parser.inject_builtin_enums) — these can be referenced bare (e.g.
+// `return None;`) without a local declaration, so E001 must not flag them.
+function is_builtin_variant(name: string): boolean {
+    return name == "Some" || name == "None" || name == "Ok" || name == "Err"
+        || name == "JNull" || name == "JBool" || name == "JNumber" || name == "JString"
+        || name == "JArray" || name == "JObject"
+        || name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists"
+        || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other";
+}
+
+// variant_in_unions reports whether `name` is a variant of ANY declared
+// enum/union in scope.
+function variant_in_unions(name: string, unions: UnionSig[]): boolean {
+    var i: i32 = 0;
+    while (i < unions.len()) {
+        if (name_in(unions[i].variants, name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// is_resolvable_value reports whether a bare identifier in VALUE position
+// resolves to something defined: a local / param / loop / match binding, a
+// free function or 0-arg const (used as a value), an enum/union variant
+// (declared or builtin), or a struct name. Anything else is E001. Builtin
+// FUNCTIONS (print / read_file / …) are only ever called, never read as a
+// bare value, so they don't need to be listed here — call callees are
+// checked separately (and aren't flagged by this value-position pass).
+function is_resolvable_value(name: string, s: Scope): boolean {
+    if (s.defines(name)) { return true; }
+    if (s.lookup_sig(name).name.len() > 0) { return true; }
+    if (variant_in_unions(name, s.unions)) { return true; }
+    if (is_builtin_variant(name)) { return true; }
+    if (s.lookup_struct(name).name.len() > 0) { return true; }
+    return false;
+}
+
 function (s: Scope) enter_loop(): Scope {
     return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type };
 }
@@ -2037,6 +2117,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // the object so it isn't mis-flagged as an unknown field (E043).
             match (c.callee) {
                 parser.ExprFieldAccess(mfa) => { out = call_diags(mfa.obj, s); },
+                parser.ExprIdent(_) => { },
                 _ => { out = call_diags(c.callee, s); }
             }
             var i: i32 = 0;
@@ -2302,7 +2383,30 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 }
             }
         },
-        parser.ExprLambda(lm) => { out = stmts_call_diags(lm.body, s); },
+        parser.ExprLambda(lm) => {
+            // The lambda body sees the enclosing scope (lexical capture)
+            // plus its own params — bind the params so a reference to one
+            // isn't mis-flagged as E001.
+            var lsc: Scope = s;
+            var li: i32 = 0;
+            while (li < lm.params.len()) {
+                lsc = lsc.bind(lm.params[li].name, type_from_name_with_structs_unions(lm.params[li].type_name, s.structs, s.unions));
+                li = li + 1;
+            }
+            out = stmts_call_diags(lm.body, lsc);
+        },
+        parser.ExprIdent(id) => {
+            // E001: a bare identifier in VALUE position that resolves to
+            // nothing — not a local / param / loop / match binding, a free
+            // function or const, an enum/union variant (declared or
+            // builtin), or a struct name. Call callees are handled in the
+            // ExprCall arm (a bare-ident callee is skipped here), so this
+            // fires only on value reads, matching where the Go checker's
+            // errIdent reports E001.
+            if (!is_resolvable_value(id.name, s)) {
+                out = out.push(dg_at("E001", "undefined name \"" + id.name + "\"", id.line, id.col));
+            }
+        },
         _ => { }
     }
     return out;
@@ -2333,7 +2437,9 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
             },
             parser.StmtFor(fr) => {
                 out = append_diags(out, call_diags(fr.iter, cur));
-                out = append_diags(out, stmts_call_diags(fr.body, cur));
+                // Bind the loop variable(s) so a read of one inside the body
+                // isn't mis-flagged as E001.
+                out = append_diags(out, stmts_call_diags(fr.body, bind_names(cur, fr.var_name)));
             },
             parser.StmtMatch(m) => {
                 out = append_diags(out, call_diags(m.scrutinee, cur));
@@ -2434,7 +2540,24 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                     match (m.arms[a].pattern) {
                         parser.PatVariant(apv) => {
                             if (apv.binding.len() > 0 && apv.binding != "_") {
-                                armScope = armScope.bind(apv.binding, t_struct(apv.type_name));
+                                // Don't bind the payload of a FOREIGN variant
+                                // (one not in the scrutinee union) — its read
+                                // is then genuinely undefined (E001), matching
+                                // the Go checker, which reports both E014 (bad
+                                // variant) and E001 (the now-undefined binding).
+                                var foreign: boolean = false;
+                                match (mst) {
+                                    TypeUnion(amu) => {
+                                        var ausig: UnionSig = cur.lookup_union(amu.name);
+                                        if (ausig.name.len() > 0 && !name_in(ausig.variants, apv.type_name)) {
+                                            foreign = true;
+                                        }
+                                    },
+                                    _ => { }
+                                }
+                                if (!foreign) {
+                                    armScope = armScope.bind(apv.binding, t_struct(apv.type_name));
+                                }
                             }
                         },
                         _ => { }
@@ -2450,6 +2573,18 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
             _ => { }
         }
         cur = check_stmt(st, cur).scope;
+        // A `var (a, b) = …` tuple destructure is encoded as the single
+        // name "a,b"; check_stmt binds that literal name, so bind the split
+        // names too for subsequent reads of `a` / `b` (E001). ONLY for a
+        // comma name — rebinding a normal var here would shadow the precise
+        // type check_stmt already gave it (lookup is newest-first) and break
+        // type-dependent diagnostics downstream.
+        match (st) {
+            parser.StmtVar(dv) => {
+                if (name_has_comma(dv.name)) { cur = bind_names(cur, dv.name); }
+            },
+            _ => { }
+        }
         i = i + 1;
     }
     return out;
