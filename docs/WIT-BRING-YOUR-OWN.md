@@ -193,6 +193,83 @@ indexes off the prefix's instance/type counts, a world-driven prefix needs the
 suffix regenerated for its instance layout. These are the next P2 slices, each
 gated by a running component.
 
+## P1–P3 status: done in both compilers
+
+P1 (decode the component-type binary), P2 (drive composition from the decoded
+world), and P3 (accept a user-supplied WIT) are **complete in both the Go and
+the self-hosted compiler**. A user can hand either compiler a Fern program and
+a `.wit` world and get a component scoped to exactly that world (validated by
+`wasm-tools`, run under `wasmtime`, importing only the world's interfaces). The
+import side of bring-your-own-WIT is finished. A self-host backend bug found en
+route — the string-runtime helper-emission gap — was fixed too.
+
+What remains is the **language surface** (P4–P6): letting Fern programs *call*
+arbitrary WIT imports and *implement* arbitrary world exports, rather than
+relying on the built-in capabilities (`write`, `read_file`, …).
+
+## P4 design: `extern` import declarations
+
+**Chosen syntax: an `@import` attribute on a body-less function**, reusing the
+existing `@derive` attribute machinery (the `@` token + `parseDerive`-style
+parse). The WIT function string carries names that aren't valid Fern
+identifiers (dashes, `[method]output-stream.blocking-write-and-flush`); the
+Fern name is a normal identifier the program calls.
+
+```
+@import("wasi:random/random@0.2.0", "get-random-u64")
+function random_u64(): u64;
+
+@import("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush")
+function bwf(self: i32, ptr: i32, len: i32, ret: i32): i32;
+```
+
+A body-less `function` (terminated by `;` instead of a `{ … }` block) is an
+import declaration; the `@import(iface, wit-name)` attribute supplies its
+binding. Calls type-check against the declared signature like any function.
+
+### WIT ↔ Fern type mapping (P4 covers the non-resource types)
+
+| WIT | Fern |
+|-----|------|
+| `bool s8 u8 … s64 u64` | `i32` / `i64` (by width; `bool`→`i32`) |
+| `f32 f64` | `f64` (f32 widened) |
+| `char` | `i32` |
+| `string` | `string` |
+| `list<T>` | `T[]` |
+| `tuple<A,B>` | `(A, B)` |
+| `record` | `struct` (field-wise) |
+| `enum` | C-style `enum` |
+| `variant` | union / payload `enum` |
+| `option<T>` | `Option<T>` |
+| `result<T,E>` | `Result<T,E>` |
+| `own<R>` / `borrow<R>` | **resource handle — P5** |
+
+The canonical-ABI lowering (which params/results need memory/realloc, indirect
+returns) is already computed by the `Classify` work — the extern call site
+lowers to the same core import + `call` the built-ins use today, and the
+world-driven composer (P2) wires it.
+
+### Slice plan
+
+1. **P4a — front end.** Lexer (no new keyword; `@` exists), parser
+   (`@import(...)` + body-less `function`), AST (FuncDecl import binding),
+   checker (register the extern, type-check calls). Parser + checker tests; no
+   codegen yet.
+2. **P4b — scalar codegen + e2e.** Lower a call to a scalar extern (e.g.
+   `get-random-u64`) to a core import + `call`; compose via the world-driven
+   path and run under wasmtime. Native first, then the self-host port.
+3. **P4c — composite types.** Strings / lists / records / variants / options /
+   results across the boundary (the canonical-ABI lift/lower the built-ins
+   already do, generalised to user signatures).
+4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
+   concept; the largest phase, and the first to exercise the composer's
+   `gDrop` path from user code.
+5. **P6 — arbitrary exports**: bind a Fern function to a world export (beyond
+   `cli/run` / `incoming-handler`) and lift it.
+
+Each slice ships in both compilers (the per-phase parity rule above) and is
+gated by a running component.
+
 ## Open decisions (need a steer)
 
 - **How far into the language surface is in scope?** P1–P3 (pluggable WASI
