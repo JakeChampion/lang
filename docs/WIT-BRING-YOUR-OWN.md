@@ -320,7 +320,10 @@ world-driven composer (P2) wires it.
      through. Supported alongside a scalar/void result; gated by
      `TestExternStringParamCustomProvider` (a custom `byte-len: func(s: string)
      -> u32` provider sums the bytes of `"hello"` = 532, exercising both lowered
-     halves) + `TestEmitExternStringParam`. Self-host port to follow.
+     halves) + `TestEmitExternStringParam`. **Self-host port done:** a
+     self-host string is a pointer to `[len][bytes]`, so `extern_wrappers`
+     forwards `(ptr+4, load(ptr))` per string param (no SSO to normalize);
+     gated by `TestSelfHostExternStringParamCustomProvider`.
    - **Composer results-carrying trampoline — ✅ done (Go).** A memory-param
      import that returns a flat scalar (`func(string) -> u32` lowers to
      `(i32,i32) -> i32`) needs a trampoline that *carries the result*; the
