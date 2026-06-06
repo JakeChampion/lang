@@ -1576,6 +1576,15 @@ type FuncDecl struct {
 	Params     []Param
 	ReturnType Type
 	Body       *Block
+	// ImportIface / ImportWITName bind a body-less `function` to a WIT
+	// import via an `@import("wasi:iface@x.y.z", "wit-func-name")` attribute
+	// (bring-your-own WIT, P4 — docs/WIT-BRING-YOUR-OWN.md). ImportIface is
+	// the versioned interface; ImportWITName is the WIT function name (which
+	// may contain dashes / `[method]…` and so can't be a Fern identifier).
+	// Both empty for an ordinary function; when set, Body is nil and a call
+	// lowers to a core wasm import of (ImportIface, ImportWITName).
+	ImportIface   string
+	ImportWITName string
 	// Public marks this declaration as exported from its module.
 	// Set by the parser when the source carries `pub function …`.
 	// Default false (private) — modload rejects cross-module

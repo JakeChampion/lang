@@ -240,8 +240,9 @@ func (p *parser) parseProgram() *ast.Program {
 		// declaration. The checker synthesises a field-wise impl per
 		// derived trait. See docs/TRAITS.md.
 		var derives []string
+		var importIface, importWIT string
 		if p.match(lexer.Punct, "@") {
-			ds, err := p.parseDerive()
+			ds, ifc, wn, err := p.parseAttribute()
 			if err != nil {
 				p.errors = append(p.errors, err)
 				p.syncToTopLevel()
@@ -251,6 +252,8 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			derives = ds
+			importIface = ifc
+			importWIT = wn
 		}
 		// `pub` is an optional prefix on function, struct, enum, or
 		// const decls at the top level. Track it and consume; the
@@ -298,6 +301,18 @@ func (p *parser) parseProgram() *ast.Program {
 			p.tokens[p.i+1].Kind == lexer.Keyword && p.tokens[p.i+1].Text == "struct" {
 			p.advance() // opaque
 			isOpaque = true
+		}
+		// `@import` binds a single body-less function — once the optional
+		// `pub`/`fip` modifiers are consumed, the next token must be
+		// `function`.
+		if importIface != "" && !p.match(lexer.Keyword, "function") {
+			p.errors = append(p.errors, p.errorf(p.peek().Pos,
+				"@import only applies to a function declaration"))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
+			}
+			continue
 		}
 		if p.match(lexer.Keyword, "struct") {
 			sd, err := p.parseStructDecl()
@@ -430,6 +445,17 @@ func (p *parser) parseProgram() *ast.Program {
 		if fn != nil {
 			fn.Public = isPub
 			fn.Fip = isFip
+			if importIface != "" {
+				if fn.Body != nil {
+					p.errors = append(p.errors, p.errorf(fn.P,
+						"@import function %q must be body-less (end with `;`)", fn.Name))
+				}
+				fn.ImportIface = importIface
+				fn.ImportWITName = importWIT
+			} else if fn.Body == nil {
+				p.errors = append(p.errors, p.errorf(fn.P,
+					"function %q has no body (only @import functions may omit a body)", fn.Name))
+			}
 			prog.Funcs = append(prog.Funcs, fn)
 		}
 	}
@@ -700,37 +726,71 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	return id, methods, nil
 }
 
-// parseDerive parses an `@derive(Trait, Trait, …)` attribute (the `@`
-// is at the current position) and returns the (possibly module-
-// qualified) trait names. See docs/TRAITS.md.
-func (p *parser) parseDerive() ([]string, error) {
-	p.advance() // @
-	name, err := p.expect(lexer.Ident, "")
-	if err != nil {
-		return nil, err
+// parseAttribute parses a leading `@…` declaration attribute (the `@` is at
+// the current position):
+//
+//   - `@derive(Trait, …)` returns the (possibly module-qualified) trait names.
+//   - `@import("wasi:iface@x.y.z", "wit-func")` binds the following body-less
+//     function to a WIT import; returns the interface + WIT function strings
+//     (bring-your-own WIT, P4 — docs/WIT-BRING-YOUR-OWN.md).
+//
+// Exactly one of (derives) / (impIface, impName) is set per call.
+func (p *parser) parseAttribute() (derives []string, impIface, impName string, err error) {
+	at := p.advance() // @
+	// The attribute name follows `@`. `import` lexes as a keyword (reused
+	// from the import-statement syntax); `derive` is an ordinary identifier.
+	var attr string
+	if tok, ok := p.accept(lexer.Keyword, "import"); ok {
+		attr = tok.Text
+	} else {
+		tok, e := p.expect(lexer.Ident, "")
+		if e != nil {
+			return nil, "", "", e
+		}
+		attr = tok.Text
 	}
-	if name.Text != "derive" {
-		return nil, p.errorf(name.Pos, "unknown attribute @%s (only @derive is supported)", name.Text)
-	}
-	if _, err := p.expect(lexer.Punct, "("); err != nil {
-		return nil, err
-	}
-	var out []string
-	for {
-		tn, err := p.expect(lexer.Ident, "")
+	switch attr {
+	case "derive":
+		if _, err := p.expect(lexer.Punct, "("); err != nil {
+			return nil, "", "", err
+		}
+		for {
+			tn, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, "", "", err
+			}
+			derives = append(derives, p.maybeQualify(tn.Text))
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			return nil, "", "", err
+		}
+		return derives, "", "", nil
+	case "import":
+		if _, err := p.expect(lexer.Punct, "("); err != nil {
+			return nil, "", "", err
+		}
+		iface, err := p.expect(lexer.String, "")
 		if err != nil {
-			return nil, err
+			return nil, "", "", err
 		}
-		out = append(out, p.maybeQualify(tn.Text))
-		if _, ok := p.accept(lexer.Punct, ","); ok {
-			continue
+		if _, err := p.expect(lexer.Punct, ","); err != nil {
+			return nil, "", "", err
 		}
-		break
+		fn, err := p.expect(lexer.String, "")
+		if err != nil {
+			return nil, "", "", err
+		}
+		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			return nil, "", "", err
+		}
+		return nil, iface.Text, fn.Text, nil
+	default:
+		return nil, "", "", p.errorf(at.Pos, "unknown attribute @%s (only @derive and @import are supported)", attr)
 	}
-	if _, err := p.expect(lexer.Punct, ")"); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // maybeQualify consumes an optional `.ident` suffix and returns the
@@ -921,13 +981,17 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		ret = t
 	}
 
-	// Track the return type so any `use` desugar inside the body
-	// can stamp it onto the synthesised callback's signature.
-	p.returnTypeStack = append(p.returnTypeStack, ret)
-	body, err := p.parseBlock()
-	p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
-	if err != nil {
-		return nil, err
+	// A body-less function (`function f(): T;`) is an import declaration —
+	// the `@import` attribute supplies its WIT binding (validated by the
+	// caller / checker). Otherwise parse the block body.
+	var body *ast.Block
+	if _, ok := p.accept(lexer.Punct, ";"); !ok {
+		p.returnTypeStack = append(p.returnTypeStack, ret)
+		body, err = p.parseBlock()
+		p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &ast.FuncDecl{
 		P:          kw.Pos,

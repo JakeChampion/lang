@@ -2256,3 +2256,45 @@ function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]
 		})
 	}
 }
+
+// A body-less `@import` function (extern WIT binding, P4 —
+// docs/WIT-BRING-YOUR-OWN.md) type-checks: its signature is registered so
+// call sites resolve against it, and its (absent) body is not walked.
+func TestExternImportTypeChecks(t *testing.T) {
+	src := `@import("wasi:random/random@0.2.0", "get-random-u64")
+function get_random(): u64;
+function main(): i32 {
+	var r: u64 = get_random();
+	return 0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Fatalf("extern @import call should type-check: %v", err)
+	}
+}
+
+// Calling an extern @import function with the wrong argument arity is a
+// checker error, exactly like an ordinary function.
+func TestExternImportArityMismatch(t *testing.T) {
+	src := `@import("wasi:foo/bar@0.1.0", "do-thing")
+function do_thing(x: i32): i32;
+function main(): i32 {
+	return do_thing();
+}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("calling extern @import with wrong arity should error")
+	}
+}
+
+// An extern @import call with a type-mismatched argument is rejected.
+func TestExternImportArgTypeMismatch(t *testing.T) {
+	src := `@import("wasi:foo/bar@0.1.0", "do-thing")
+function do_thing(x: i32): i32;
+function main(): i32 {
+	return do_thing(true);
+}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("calling extern @import with a mistyped argument should error")
+	}
+}

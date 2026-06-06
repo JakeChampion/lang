@@ -1440,6 +1440,63 @@ struct Point { x: i32, y: i32 }`)
 	}
 }
 
+// `@import("iface", "wit-func")` on a body-less function records the WIT
+// binding on FuncDecl.ImportIface / ImportWITName (bring-your-own WIT, P4 —
+// docs/WIT-BRING-YOUR-OWN.md).
+func TestImportAttributeParses(t *testing.T) {
+	prog, err := Parse(`@import("wasi:random/random@0.2.0", "get-random-u64")
+function get_random(): u64;`)
+	if err != nil {
+		t.Fatalf("@import should parse: %v", err)
+	}
+	if len(prog.Funcs) != 1 {
+		t.Fatalf("expected one function, got %d", len(prog.Funcs))
+	}
+	fn := prog.Funcs[0]
+	if fn.Body != nil {
+		t.Errorf("@import function should be body-less, got Body=%v", fn.Body)
+	}
+	if fn.ImportIface != "wasi:random/random@0.2.0" {
+		t.Errorf("ImportIface = %q, want wasi:random/random@0.2.0", fn.ImportIface)
+	}
+	if fn.ImportWITName != "get-random-u64" {
+		t.Errorf("ImportWITName = %q, want get-random-u64", fn.ImportWITName)
+	}
+
+	// `@import` before `pub function` works too.
+	prog2, err := Parse(`@import("a:b/c", "d") pub function f(): i32;`)
+	if err != nil {
+		t.Fatalf("@import pub function: %v", err)
+	}
+	if !prog2.Funcs[0].Public || prog2.Funcs[0].ImportIface != "a:b/c" {
+		t.Errorf("expected public @import function, got %+v", prog2.Funcs[0])
+	}
+}
+
+// An @import function that carries a body, an @import on a non-function, and a
+// body-less function without @import are all parse errors.
+func TestImportAttributeErrors(t *testing.T) {
+	// @import function with a body.
+	if _, err := Parse(`@import("a:b/c", "d") function f(): i32 { return 0; }`); err == nil {
+		t.Error("@import function with a body should be a parse error")
+	}
+	// @import on a struct.
+	if _, err := Parse(`@import("a:b/c", "d") struct S { x: i32 }`); err == nil {
+		t.Error("@import on a struct should be a parse error")
+	}
+	// Body-less function without @import.
+	if _, err := Parse(`function f(): i32;`); err == nil {
+		t.Error("body-less function without @import should be a parse error")
+	}
+	// @import needs two string arguments.
+	if _, err := Parse(`@import("a:b/c") function f(): i32;`); err == nil {
+		t.Error("@import with one argument should be a parse error")
+	}
+	if _, err := Parse(`@import(foo, bar) function f(): i32;`); err == nil {
+		t.Error("@import with non-string arguments should be a parse error")
+	}
+}
+
 // @derive applies to enums too.
 func TestDeriveEnumParses(t *testing.T) {
 	prog, err := Parse(`@derive(cmp.Eq, cmp.Display)
