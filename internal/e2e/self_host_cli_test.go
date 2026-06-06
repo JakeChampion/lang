@@ -306,6 +306,22 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-tuple-destructure", func(t *testing.T) {
+		// E024 (destructuring a non-tuple) is reported at the destructure.
+		for _, c := range []struct{ name, src, want string }{
+			{"non_tuple", "function main(): i32 { var n = 5; var (a, b) = n; return a + b; }\n", "1:35: error[E024]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-bad-receiver", func(t *testing.T) {
 		// E021 (method receiver references an unknown type) is reported at
 		// the method declaration.
