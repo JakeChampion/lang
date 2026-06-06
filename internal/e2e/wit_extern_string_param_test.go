@@ -17,13 +17,11 @@ import (
 // `@import` extern. There's no non-resource WASI 0.2 function taking a string,
 // so it's tested against a custom provider (the multi-component harness).
 //
-// The interface is split into `set: func(s: string)` (void) + `get: func() ->
-// u32`: the provider sums the bytes of `set`'s argument into a global and `get`
-// returns it. The split sidesteps a composer limitation — its memory-param
-// trampolines are result-less (built for WASI's retptr-returning imports), so a
-// single `func(string) -> u32` can't be wired yet. `set` still exercises the
-// full string-param lowering: the provider's loop reads the lowered `(ptr,
-// len)`. The Fern side passes "hello" (byte sum 532).
+// The provider exports `byte-len: func(s: string) -> u32` returning the SUM of
+// the string's bytes — a single memory-param function with a flat scalar result,
+// wired by the composer's results-carrying trampoline (P4c). The loop reads the
+// lowered `(ptr, len)`, so both halves are exercised. The Fern side passes
+// "hello" (byte sum 532).
 func TestExternStringParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -47,31 +45,28 @@ func TestExternStringParamCustomProvider(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(provWit, "sink.wit"),
-		[]byte("package local:test@0.1.0;\ninterface sink { set: func(s: string); get: func() -> u32; }\nworld provider { export sink; }\n"), 0o644); err != nil {
+		[]byte("package local:test@0.1.0;\ninterface sink { byte-len: func(s: string) -> u32; }\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// set receives the lowered (ptr, len) — the caller writes the string into
-	// this module's memory via cabi_realloc — and sums the bytes into a global;
-	// get returns it.
+	// byte-len receives the lowered (ptr, len) — the caller writes the string
+	// into this module's memory via cabi_realloc — and returns the byte sum.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))
-  (global $sum (mut i32) (i32.const 0))
   (func (export "cabi_realloc") (param $op i32) (param $os i32) (param $al i32) (param $ns i32) (result i32)
     (local $p i32)
     (local.set $p (global.get $h))
     (global.set $h (i32.add (global.get $h) (local.get $ns)))
     (local.get $p))
-  (func (export "local:test/sink@0.1.0#set") (param $ptr i32) (param $len i32)
-    (local $i i32)
-    (global.set $sum (i32.const 0))
+  (func (export "local:test/sink@0.1.0#byte-len") (param $ptr i32) (param $len i32) (result i32)
+    (local $sum i32) (local $i i32)
     (block $d (loop $c
       (br_if $d (i32.ge_u (local.get $i) (local.get $len)))
-      (global.set $sum (i32.add (global.get $sum) (i32.load8_u (i32.add (local.get $ptr) (local.get $i)))))
+      (local.set $sum (i32.add (local.get $sum) (i32.load8_u (i32.add (local.get $ptr) (local.get $i)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $c))))
-  (func (export "local:test/sink@0.1.0#get") (result i32) (global.get $sum)))`), 0o644); err != nil {
+      (br $c)))
+    (local.get $sum)))`), 0o644); err != nil {
 		t.Fatalf("write provider core: %v", err)
 	}
 	provCore := filepath.Join(dir, "prov_core.wasm")
@@ -92,7 +87,7 @@ func TestExternStringParamCustomProvider(t *testing.T) {
 		t.Fatalf("mkdir deps/test: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "deps", "test", "sink.wit"),
-		[]byte("package local:test@0.1.0;\ninterface sink { set: func(s: string); get: func() -> u32; }\n"), 0o644); err != nil {
+		[]byte("package local:test@0.1.0;\ninterface sink { byte-len: func(s: string) -> u32; }\n"), 0o644); err != nil {
 		t.Fatalf("write user sink dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
@@ -118,15 +113,11 @@ func TestExternStringParamCustomProvider(t *testing.T) {
 
 	// --- User program: pass "hello" (byte sum 532) to the extern. ---
 	const want = "sum-ok"
-	src := `@import("local:test/sink@0.1.0", "set")
-function sink_set(s: string);
-
-@import("local:test/sink@0.1.0", "get")
-function sink_get(): u32;
+	src := `@import("local:test/sink@0.1.0", "byte-len")
+function byte_sum(s: string): u32;
 
 function main(): i32 {
-	sink_set("hello");
-	if (sink_get() == 532) { write("` + want + `"); } else { write("sum-bad"); }
+	if (byte_sum("hello") == 532) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`
 	mainPath := filepath.Join(dir, "main.fern")

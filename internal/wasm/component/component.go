@@ -206,6 +206,71 @@ func TrampolineModuleForParamsNoResult(paramValtypes []byte) []byte {
 	return out
 }
 
+// TrampolineModuleForParamsResults is TrampolineModuleForParamsNoResult with a
+// non-empty result vector: the exported func type is `(paramValtypes...) ->
+// (resultValtypes...)`, and the body forwards every param to the funcref-table
+// call_indirect whose result flows straight through. Used to wire a
+// memory-param import that still returns a flat scalar (P4c — e.g. a custom
+// `func(string) -> u32`); the result-less variant only handled WASI's
+// retptr-returning imports. resultValtypes empty falls back to the NoResult
+// shape (identical bytes).
+func TrampolineModuleForParamsResults(paramValtypes, resultValtypes []byte) []byte {
+	if len(resultValtypes) == 0 {
+		return TrampolineModuleForParamsNoResult(paramValtypes)
+	}
+	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	typeBody := []byte{0x01, 0x60}
+	typeBody = leb128.UlebU64(typeBody, uint64(len(paramValtypes)))
+	typeBody = append(typeBody, paramValtypes...)
+	typeBody = leb128.UlebU64(typeBody, uint64(len(resultValtypes)))
+	typeBody = append(typeBody, resultValtypes...)
+	out = appendCoreSection(out, 0x01, typeBody)
+	out = appendCoreSection(out, 0x03, []byte{0x01, 0x00})
+	out = appendCoreSection(out, 0x04, []byte{0x01, 0x70, 0x01, 0x01, 0x01})
+	exportBody := []byte{
+		0x02,
+		0x01, '0', 0x00, 0x00,
+		0x08, '$', 'i', 'm', 'p', 'o', 'r', 't', 's', 0x01, 0x00,
+	}
+	out = appendCoreSection(out, 0x07, exportBody)
+	funcBody := []byte{0x00}
+	for i := range paramValtypes {
+		funcBody = append(funcBody, 0x20)
+		funcBody = leb128.UlebU64(funcBody, uint64(i))
+	}
+	funcBody = append(funcBody, 0x41, 0x00, 0x11, 0x00, 0x00, 0x0b)
+	codeBody := []byte{0x01}
+	codeBody = leb128.UlebU64(codeBody, uint64(len(funcBody)))
+	codeBody = append(codeBody, funcBody...)
+	out = appendCoreSection(out, 0x0a, codeBody)
+	return out
+}
+
+// FixupModuleForParamsResults is FixupModuleForParamsNoResult with a non-empty
+// result vector — the imported func type matches the results-carrying
+// trampoline. resultValtypes empty falls back to the NoResult shape.
+func FixupModuleForParamsResults(paramValtypes, resultValtypes []byte) []byte {
+	if len(resultValtypes) == 0 {
+		return FixupModuleForParamsNoResult(paramValtypes)
+	}
+	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	typeBody := []byte{0x01, 0x60}
+	typeBody = leb128.UlebU64(typeBody, uint64(len(paramValtypes)))
+	typeBody = append(typeBody, paramValtypes...)
+	typeBody = leb128.UlebU64(typeBody, uint64(len(resultValtypes)))
+	typeBody = append(typeBody, resultValtypes...)
+	out = appendCoreSection(out, 0x01, typeBody)
+	importBody := []byte{
+		0x02,
+		0x00, 0x01, '0', 0x00, 0x00,
+		0x00, 0x08, '$', 'i', 'm', 'p', 'o', 'r', 't', 's', 0x01, 0x70, 0x01, 0x01, 0x01,
+	}
+	out = appendCoreSection(out, 0x02, importBody)
+	elemBody := []byte{0x01, 0x00, 0x41, 0x00, 0x0b, 0x01, 0x00}
+	out = appendCoreSection(out, 0x09, elemBody)
+	return out
+}
+
 // repeatByte returns a slice of n copies of b.
 func repeatByte(b byte, n int) []byte {
 	out := make([]byte, n)
