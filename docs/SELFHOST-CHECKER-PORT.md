@@ -688,11 +688,27 @@ same code(s) the Go checker does — restricted to
   byte-identical fixpoint holds (x86 verified). Gated by new corpus
   (`cast-bool-to-i32`, `cast-i32-to-bool`, `cast-bool-to-string`,
   `cast-string-to-bool`, plus four `cast-*-ok` cases) and a new
-  `check-position-cast` CLI case. *Limitation recorded:* the wider
-  non-bool E033 classes Go also catches (`f64 as string`,
-  `string as f64`, struct/array → bool, …) need the self-host to model
-  each target width and the allowed-hop matrix precisely; the bool
-  discriminator is the provably-sound first cut.
+  `check-position-cast` CLI case.
+- **Slice 58 (done): E033 — full scalar matrix + cast result typing.**
+  Two follow-ups to slice 57. (1) `check_expr` now types an `as_<T>`
+  cast as its **target type** (`type_from_name(T)`) instead of leaking
+  `unknown`, matching the Go checker (which returns `n.Target` even on an
+  invalid cast); unrecognised targets (wider ints `u32` / `i64` / …) stay
+  `unknown` and are conservatively accepted. (2) A new `as_cast_allowed`
+  predicate generalises the slice-57 bool-only check to the **complete
+  sound matrix** over the four scalar types the self-host models (i32 /
+  f64 / bool / string): identity, numeric↔numeric, and the string↔i32
+  data-pointer hop are accepted; any bool↔non-bool **or `f64↔string`** is
+  E033. Both sides are guarded by `is_primitive_type`, so struct / array
+  pointer hops and wider-int targets are still left to the Go checker —
+  verified against the full 16-pair scalar matrix (`f64 as string` /
+  `string as f64` → E033; `f64 as i32` / `i32 as f64` → OK), zero false
+  positives. Checker-only (checker.fern isn't in the fixpoint bundle).
+  Gated by new corpus (`cast-f64-to-string`, `cast-string-to-f64`,
+  `cast-f64-to-i32-ok`, `cast-i32-to-f64-ok`). *Limitation recorded:* the
+  non-scalar E033 classes Go also catches (struct/array → bool, etc.)
+  need the self-host to model the full pointer-hop matrix; the scalar
+  matrix is the provably-sound subset.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
