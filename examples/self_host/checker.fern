@@ -235,6 +235,23 @@ function is_primitive_type(t: Type): boolean {
     return false;
 }
 
+// as_cast_allowed decides whether `src as tgt` is a legal cast for the
+// scalar types the self-host models (i32 / f64 / bool / string), mirroring
+// the Go checker's E033 rule over those types: identity, numeric↔numeric
+// (i32 / f64), and the string↔i32 data-pointer hop (either direction) are
+// allowed; everything else (any bool↔non-bool, f64↔string) is rejected.
+// Callers guard with `is_primitive_type` on both sides, so struct / array
+// pointer hops and wider-int targets are never reached here.
+function as_cast_allowed(src: Type, tgt: Type): boolean {
+    if (type_eq(src, tgt)) { return true; }
+    var src_num: boolean = type_eq(src, t_i32()) || type_eq(src, t_float());
+    var tgt_num: boolean = type_eq(tgt, t_i32()) || type_eq(tgt, t_float());
+    if (src_num && tgt_num) { return true; }
+    if (type_eq(src, t_string()) && type_eq(tgt, t_i32())) { return true; }
+    if (type_eq(src, t_i32()) && type_eq(tgt, t_string())) { return true; }
+    return false;
+}
+
 // type_from_name accepts an optional `[]` suffix on the type
 // name string (the parser currently only captures the first
 // token, but a future extension that captures `i32[]` should
@@ -563,6 +580,14 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             if (u.op == "!") {
                 if (type_eq(ot, t_bool())) { return t_bool(); }
                 return t_unknown("unary `!` requires bool operand");
+            }
+            // `x as T` desugars to the unary op `as_<T>`. The result type
+            // is the target type (matching the Go checker, which returns
+            // n.Target even when the cast is invalid). Unrecognised target
+            // names (wider ints u32 / i64 / …) resolve to unknown, which is
+            // conservatively accepted downstream.
+            if (u.op.len() > 3 && u.op[0:3] == "as_") {
+                return type_from_name(u.op[3:u.op.len()]);
             }
             return t_unknown("unknown unary op:" + u.op);
         },
@@ -2145,20 +2170,20 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // unary op `as_<T>` (operand = x). The Go checker allows
             // numeric↔numeric casts plus the string↔i32 data-pointer
             // hops; everything else is E033. The self-host models a
-            // sound, zero-false-positive subset: a cast between a
-            // `bool` and any other concrete scalar (either direction)
-            // is the unambiguous bug class — numeric/string conversions
-            // (which the self-host source does use) stay accepted, and
-            // the bundle never casts a bool, so no false positives.
-            // Positioned at the `as` keyword to match the Go checker
-            // (whose CastExpr position is the `as` token).
+            // sound, zero-false-positive subset over the scalar types it
+            // knows (i32 / f64 / bool / string): identity, numeric↔numeric
+            // and string↔i32 are accepted (`as_cast_allowed`); any
+            // bool↔non-bool or f64↔string is E033. Both sides are guarded
+            // by `is_primitive_type`, so struct / array / string→i32
+            // pointer hops and wider-int targets (u32 / i64 → unknown)
+            // are left to the Go checker — no false positives. Positioned
+            // at the `as` keyword to match the Go checker (whose CastExpr
+            // position is the `as` token).
             if (u.op.len() > 3 && u.op[0:3] == "as_") {
                 var tgt: Type = type_from_name(u.op[3:u.op.len()]);
                 var cot: Type = check_expr(u.operand, s);
-                if (!is_unknown(tgt) && !is_unknown(cot)) {
-                    var tgt_bool: boolean = type_eq(tgt, t_bool());
-                    var src_bool: boolean = type_eq(cot, t_bool());
-                    if (tgt_bool != src_bool) {
+                if (is_primitive_type(tgt) && is_primitive_type(cot)) {
+                    if (!as_cast_allowed(cot, tgt)) {
                         out = out.push(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
                     }
                 }
