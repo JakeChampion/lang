@@ -2688,6 +2688,25 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         en = en + 1;
     }
+    // E016: a `type X = …` union alias whose name collides with a declared
+    // struct of the same name, reported at the alias's `type` keyword (the
+    // struct wins; the alias is otherwise dropped). A collision with an
+    // enum is the Go checker's E006 (enum redeclared), not E016, so only
+    // the struct case is handled here.
+    var ai016: i32 = 0;
+    while (ai016 < mod.aliases.len()) {
+        var aname: string = mod.aliases[ai016].name;
+        var hit_struct: boolean = false;
+        var si016: i32 = 0;
+        while (si016 < mod.structs.len()) {
+            if (mod.structs[si016].name == aname) { hit_struct = true; }
+            si016 = si016 + 1;
+        }
+        if (hit_struct) {
+            out = out.push(dg_at("E016", "union \"" + aname + "\" collides with a struct of the same name", mod.aliases[ai016].line, mod.aliases[ai016].col));
+        }
+        ai016 = ai016 + 1;
+    }
     return out;
 }
 

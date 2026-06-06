@@ -194,7 +194,7 @@ pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: st
 // optional and currently swallowed without ceremony, since
 // the self-host pipeline doesn't yet distinguish exported
 // from private decls.
-pub struct TypeAlias { name: string, variants: string[] }
+pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32 }
 
 // Top-level import: `import "./path";`. The path is captured
 // verbatim (including the quotes-stripped value). Resolution
@@ -2109,16 +2109,20 @@ function parse_struct_decl(p: Par): StructResult {
 pub struct TypeAliasResult { par: Par, alias: TypeAlias }
 
 function parse_type_alias(p: Par): TypeAliasResult {
+    // E016 (alias name collides with a struct/enum) is reported at the
+    // `type` keyword.
+    var taline: i32 = p.peek_line();
+    var tacol: i32 = p.peek_col();
     p = p.advance();  // consume `type`
     var name: string = p.peek_ident();
     if (name.len() == 0) {
         var empty: string[] = [];
-        return TypeAliasResult { par: p, alias: TypeAlias { name: "", variants: empty } };
+        return TypeAliasResult { par: p, alias: TypeAlias { name: "", variants: empty, line: taline, col: tacol } };
     }
     p = p.advance();
     if (p.peek_punct() != "=") {
         var empty2: string[] = [];
-        return TypeAliasResult { par: p, alias: TypeAlias { name: name, variants: empty2 } };
+        return TypeAliasResult { par: p, alias: TypeAlias { name: name, variants: empty2, line: taline, col: tacol } };
     }
     p = p.advance();  // consume `=`
     var variants: string[] = [];
@@ -2136,7 +2140,7 @@ function parse_type_alias(p: Par): TypeAliasResult {
         break;
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return TypeAliasResult { par: p, alias: TypeAlias { name: name, variants: variants } };
+    return TypeAliasResult { par: p, alias: TypeAlias { name: name, variants: variants, line: taline, col: tacol } };
 }
 
 // parse_enum_decl consumes a Rust-style `enum Name { V1, V2(T), … }`
@@ -4203,7 +4207,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var ai: i32 = 0;
     while (ai < from.aliases.len()) {
         var ad: TypeAlias = from.aliases[ai];
-        naliases = naliases.push(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants });
+        naliases = naliases.push(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants, line: ad.line, col: ad.col });
         ai = ai + 1;
     }
     return Module {
