@@ -62,6 +62,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E048": true, // assignment to an immutable struct field
 	"E001": true, // undefined name (value position)
 	"E042": true, // `?` operator on a non-Option/Result operand
+	"E010": true, // user enum shadowing a reserved built-in name
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -329,6 +330,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"callee-variant-ctor-ok", "function f(): Option[i32] { return Some(1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"callee-closure-ok", "function main(): i32 { var f = function(x: i32): i32 { return x; }; return f(7); }\n", nil},
 		{"value-builtin-as-value-ok", "function main(): i32 { var w = write; return 0; }\n", nil},
+		{"shadow-option", "enum Option { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		{"shadow-result", "enum Result { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		{"shadow-ioerror", "enum IoError { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		{"shadow-jsonvalue", "enum JsonValue { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
