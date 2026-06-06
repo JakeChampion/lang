@@ -323,6 +323,17 @@ world-driven composer (P2) wires it.
      component without the test harness. No-extern programs keep the legacy
      path unchanged. Gated by `TestExternImportViaCLI` (scalar + u8[] externs +
      a built-in `write`, composed by the CLI binary and run under wasmtime).
+   - **Custom (non-WASI) interface + provider — ✅ done (Go).** The headline
+     BYO-WIT capability: a Fern program `@import`s a *fully custom* interface
+     (`local:test/answer@0.1.0`, defined by the user, unknown to the compiler)
+     and the import is satisfied at link time by a separate **provider
+     component** — no built-in knowledge of the interface anywhere. The core is
+     composed against a custom world via `DecodeWorldBytes` (the P3 entry
+     point), then `wasm-tools compose --definitions` plugs the provider's
+     export into the user's import. Gated by `TestExternImportCustomProvider`,
+     which also stands as the **reusable multi-component harness** for the
+     next slices (composite params / records) that have no non-resource WASI
+     0.2 target and so need a custom provider to test against.
 4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
    concept; the largest phase, and the first to exercise the composer's
    `gDrop` path from user code.
