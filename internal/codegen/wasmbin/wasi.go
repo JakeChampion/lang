@@ -12,6 +12,7 @@ package wasmbin
 import (
 	"fmt"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
@@ -760,6 +761,21 @@ func scanExternImports(prog *ir.Program, in *importNeeds) (map[string]importSpec
 	for _, ex := range prog.Externs {
 		if !used[ex.Name] {
 			continue
+		}
+		// P4b supports scalar extern signatures only; composite types
+		// (string / list / record / tuple / variant / option / result) need
+		// the canonical-ABI lift/lower that is P4c. Reject them with a clear
+		// message rather than emitting raw pointer slots that don't match the
+		// host's ABI (a silent miscompile).
+		for _, p := range ex.Params {
+			if !externScalarType(p.Type) {
+				return nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar extern types (integer / float / bool) are supported yet — composite types are P4c", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
+			}
+		}
+		if ex.ReturnType != nil {
+			if _, isVoid := ex.ReturnType.(ast.VoidType); !isVoid && !externScalarType(ex.ReturnType) {
+				return nil, fmt.Errorf("@import %q (%s/%s): return type %s is not a scalar; only scalar extern types (integer / float / bool) are supported yet — composite types are P4c", ex.Name, ex.Iface, ex.WITName, ex.ReturnType)
+			}
 		}
 		params, err := paramValtypes(ex.Params)
 		if err != nil {
