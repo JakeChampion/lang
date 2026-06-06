@@ -1129,6 +1129,43 @@ function wasm_zero(wt: string): string {
     return "(i32.const 0)";
 }
 
+// wat_extern_valtype maps a Fern type spelling to the wasm value type used in
+// an `@import` extern's core signature (bring-your-own WIT, P4 —
+// docs/WIT-BRING-YOUR-OWN.md): 64-bit ints lower to i64, floats to f64, and
+// everything else (i32 / bool / char / handle / heap pointer) to i32.
+function wat_extern_valtype(t: string): string {
+    if (is_float_type(t)) { return "f64"; }
+    if (t == "i64" || t == "u64" || t == "s64") { return "i64"; }
+    return "i32";
+}
+
+// extern_imports emits the core wasm function imports for the module's
+// `@import` extern declarations (P4). A body-less `@import("iface", "wit")`
+// function becomes `(import "iface" "wit" (func $name (param …) (result …)))`;
+// a call to the function resolves to `$name` like any free function. These are
+// preview-2 component imports — the world-driven composer wires them.
+function extern_imports(mod: parser.Module): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var f: parser.FuncDecl = mod.funcs[i];
+        if (f.import_iface.len() > 0) {
+            out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name;
+            var p: i32 = 0;
+            while (p < f.params.len()) {
+                out = out + " (param " + wat_extern_valtype(f.params[p].type_name) + ")";
+                p = p + 1;
+            }
+            if (returns_value(f.ret_type)) {
+                out = out + " (result " + wat_extern_valtype(f.ret_type) + ")";
+            }
+            out = out + "))\n";
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // emit_dyn_dispatch lowers a method call on a `dyn Trait` (trait-object)
 // receiver whose concrete type isn't known statically: it reads the
 // receiver's runtime struct id (the type tag at offset 0, the same one
@@ -6211,6 +6248,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // component-io-fs: the preview2 filesystem imports (read and/or write).
     if (fs) { out = out + fs_imports_p2(has_readfile, has_writefile); }
     if ((has_readfile || has_writefile) && !fs) { out = out + file_imports(); }
+    // `@import` extern declarations (P4): each becomes a core wasm function
+    // import the world-driven composer wires. Empty when the program declares
+    // none, so existing programs are unaffected.
+    out = out + extern_imports(mod);
     // 16 pages (1 MiB) gives the bump heap (string concat) headroom.
     out = out + "  (memory (export \"memory\") 16)\n";
     // Scratch: a "\n" byte at addr 12 (for `print`); the iovec (0,4) and
@@ -6325,6 +6366,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var j: i32 = 0;
     while (j < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[j];
+        // `@import` externs are declared by the import section above, not
+        // defined here — skip their (empty) body.
+        if (f.import_iface.len() > 0) { j = j + 1; continue; }
         // Emit free functions and receiver methods alike; emit_func
         // mangles a method's name to `$<RecvType>__<name>`.
         out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], [], [], []);
