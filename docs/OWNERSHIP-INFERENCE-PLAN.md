@@ -381,32 +381,38 @@ green); regression tests in `internal/e2e/rc_self_reassign_field_test.go`
 threaded-param shape, plus arm64 / wasm soundness counterparts). The historical
 diagnosis and the two failed type-shape widenings are kept below.
 
-### Known limitation: wasm doesn't *reuse* the threaded-param struct accumulator
+### Known limitation: wasm threaded-param struct accumulator is O(N²)
 
 The fix restores O(N) on the **native** backends (x86-64 verified; arm64 shares
 the target-agnostic IR). On **wasm** the threaded-PARAM *struct* accumulator
-(`build(s: Bld, n)` with a growing array field) stays O(N²) — `TestWASMSelf...`
-pins only soundness there, not O(N). Characterised (bump high-water, free-on):
+(`build(s: Bld, n)` with a growing array field) stays O(N²) —
+`TestWASMSelfReassignFieldBounded` pins only soundness there, not O(N).
 
-| shape | local | param |
-|---|---|---|
-| bare `i32[]` (no struct) | O(N) | **O(N)** |
-| struct, box only (no growing field) | O(N) | **O(N)** |
-| struct, **fixed**-size array field, rebuilt each step | **O(1)** (reused) | **O(N)** (freed, not reused) |
-| struct, **growing** array field | O(N) | **O(N²)** |
+**Correct diagnosis (instrumented).** A free-push counter wired into the wasm
+freelist showed the param's old values are **never freed at all** on wasm
+(free-push count 0 over 50 iterations, vs 100 for the LOCAL shape) — this
+corrects an earlier guess that they were "freed but not reused". The threaded
+param `s` **escapes** via `return s`, so the escape analysis re-taints it ⇒
+`freeEligible[s] = false` ⇒ the reassignment-overwrite falls back to the
+non-freeing flat dec and the dead intermediates leak. LOCALS sidestep this
+because `selfReassignOwnedLocal` deep-drops them regardless of `freeEligible`; a
+parameter (excluded from `selfReassign`) has only the `freeEligible` path, which
+the escape taint switches off. Natives hide it because the in-place geometric
+push amortises the buffer (O(N) overall, small box leak); wasm has none.
 
-It is **pre-existing and independent of this fix** (reproduces with the
-consumed-param entry-inc disabled) and is **not** an over-release — the
-deep-drop *frees* the old box+buffer on wasm (the fixed-array param is linear,
-not quadratic). The gap is purely **reuse**: a struct accumulator threaded
-through a *local* has its freed blocks reused by the wasm freelist (O(1) for the
-fixed shape), but the same accumulator threaded through a *parameter* does not —
-even for identical-size allocations every step. So it is neither a size-class
-mismatch nor an in-place-push issue; it lives in the wasm freelist /
-reclamation path's local-vs-param asymmetry (cf. the documented "an inline
-box_free in a complex function body doesn't return the box to the freelist on
-wasm, but a generated function does"). A real fix needs that wasm-allocator
-investigation; it is out of scope for the `-ssa` OOM, whose target is native.
+**Why it is not trivially fixed (a tried-and-reverted attempt).** Letting a
+CONSUMED param stay `freeEligible` despite the escape taint — relying on its
+entry-inc for a reliable rc and the `__fern_rc_is_unique` gate for safety —
+*did* restore O(N) on wasm (bump 1338→5175 ⇒ 51→99) and passed local soundness
++ the full differential x86-64/wasm corpus, **but segfaulted the real self-host
+on arm64** (`sort_wider_test.fern`, `http_response_headers_migrated_test.fern`).
+So the escape taint is **load-bearing**: it protects a consumed param whose
+intermediate is retained by a container store that does *not* inc, where the
+`is_unique` gate then false-positives and over-releases. A sound fix must first
+distinguish return-escape (safe to deep-drop the dead intermediate) from
+container-escape (not), or guarantee every container store inc's its element,
+before the deep-drop can be enabled for escaping consumed params. Until then the
+wasm O(N²) stands — out of scope for the `-ssa` OOM, whose target is native.
 
 ## Original problem: the O(N²) self-reassign accumulator leak
 
