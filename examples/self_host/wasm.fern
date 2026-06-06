@@ -1150,16 +1150,86 @@ function extern_imports(mod: parser.Module): string {
     while (i < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[i];
         if (f.import_iface.len() > 0) {
-            out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name;
+            if (f.ret_type == "string") {
+                // Composite (string / list<u8>) result (P4c): the raw import
+                // gains a trailing canonical return-area pointer and returns
+                // nothing; a generated wrapper ($name, see extern_wrappers)
+                // lifts the host (data,len) into a self-host string.
+                out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name + "__import";
+                var sp: i32 = 0;
+                while (sp < f.params.len()) {
+                    out = out + " (param " + wat_extern_valtype(f.params[sp].type_name) + ")";
+                    sp = sp + 1;
+                }
+                out = out + " (param i32)))\n";
+            } else {
+                out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name;
+                var p: i32 = 0;
+                while (p < f.params.len()) {
+                    out = out + " (param " + wat_extern_valtype(f.params[p].type_name) + ")";
+                    p = p + 1;
+                }
+                if (returns_value(f.ret_type)) {
+                    out = out + " (result " + wat_extern_valtype(f.ret_type) + ")";
+                }
+                out = out + "))\n";
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// module_has_extern_string_result is true when any `@import` extern returns a
+// string / list<u8> — the P4c composite-result shape that needs a wrapper plus
+// the exported cabi_realloc.
+function module_has_extern_string_result(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].import_iface.len() > 0 && mod.funcs[i].ret_type == "string") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// extern_wrappers emits, for each string/list<u8>-returning `@import` extern
+// (P4c), the wrapper the Fern call resolves to. It allocates an 8-byte
+// canonical return area (data @+0, len @+4), calls the raw import
+// ($name__import) with the scalar params + the return-area pointer, then lifts
+// the host (data_ptr, len) bytes into a self-host `[len][bytes]` string.
+function extern_wrappers(mod: parser.Module): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var f: parser.FuncDecl = mod.funcs[i];
+        if (f.import_iface.len() > 0 && f.ret_type == "string") {
+            out = out + "  (func $" + f.name;
+            var args: string = "";
             var p: i32 = 0;
             while (p < f.params.len()) {
-                out = out + " (param " + wat_extern_valtype(f.params[p].type_name) + ")";
+                var pn: string = "$ep" + i32_to_string(p);
+                out = out + " (param " + pn + " " + wat_extern_valtype(f.params[p].type_name) + ")";
+                args = args + " (local.get " + pn + ")";
                 p = p + 1;
             }
-            if (returns_value(f.ret_type)) {
-                out = out + " (result " + wat_extern_valtype(f.ret_type) + ")";
-            }
-            out = out + "))\n";
+            out = out + " (result i32)\n";
+            out = out + "    (local $rb i32) (local $dp i32) (local $ln i32) (local $s i32) (local $i i32)\n";
+            // The canonical return area for a list/string result must be
+            // 4-byte aligned; __fern_alloc bumps without aligning, so over-
+            // allocate and round up. 12 = 8-byte area + 3 bytes of slack.
+            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
+            out = out + "    (call $" + f.name + "__import" + args + " (local.get $rb))\n";
+            out = out + "    (local.set $dp (i32.load (local.get $rb)))\n";
+            out = out + "    (local.set $ln (i32.load offset=4 (local.get $rb)))\n";
+            out = out + "    (local.set $s (call $__fern_alloc (i32.add (i32.const 4) (local.get $ln))))\n";
+            out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
+            out = out + "    (local.set $i (i32.const 0))\n";
+            out = out + "    (block $d (loop $c\n";
+            out = out + "      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n";
+            out = out + "      (i32.store8 (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $dp) (local.get $i))))\n";
+            out = out + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+            out = out + "      (br $c)))\n";
+            out = out + "    (local.get $s))\n";
         }
         i = i + 1;
     }
@@ -6200,6 +6270,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_eprint: boolean = module_calls(mod, "eprint");
     var has_exit: boolean = module_calls(mod, "exit");
     var has_i64: boolean = module_uses_i64(mod);
+    // A string/list<u8>-returning `@import` extern (P4c) needs the heap
+    // allocator, the lift wrapper, and the exported cabi_realloc.
+    var has_extern_str: boolean = module_has_extern_string_result(mod);
 
     var out: string = "(module\n";
     // Component-run cores are import-free (no preview1 entry / output), so
@@ -6295,7 +6368,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_options: boolean = module_uses_options(mod);
     var has_maps: boolean = module_calls(mod, "map_new_i32") || module_calls(mod, "map_new");
     var has_tostring: boolean = module_uses_tostring(mod);
-    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || (component && io)) {
+    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || (component && io)) {
         out = out + heap_alloc_helpers(tab.next + 16 + heap_extra);
     }
     // component-io: the $fd_write shim over the preview2 stdout stream, so
@@ -6353,8 +6426,12 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     if (has_writefile) {
         if (fs) { out = out + writefile_func_p2(); } else { out = out + writefile_func(); }
     }
-    // component-io-fs: the canonical-ABI realloc the fs lists need.
-    if (fs || (io && (has_env || has_args))) { out = out + cabi_realloc_helper(); }
+    // component-io-fs: the canonical-ABI realloc the fs lists need; a
+    // string/list<u8>-returning extern (P4c) needs it too so the host can
+    // materialize the returned bytes.
+    if (fs || (io && (has_env || has_args)) || has_extern_str) { out = out + cabi_realloc_helper(); }
+    // P4c: the lift wrappers for string/list<u8>-returning `@import` externs.
+    if (has_extern_str) { out = out + extern_wrappers(mod); }
 
     // Shared lambda cells (1-element arrays, mutated in place so the index
     // counter + accumulated $__lambda<i> defs persist across every
