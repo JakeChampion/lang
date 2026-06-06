@@ -312,8 +312,32 @@ world-driven composer (P2) wires it.
      `random_func_p2` builds). Gated by `TestExternU8ArrayResultRunsUnderWasmtime`
      / `TestSelfHostExternU8ArrayResultRunsUnderWasmtime` +
      `TestEmitExternU8ArrayResult`.
-   - Still rejected (next slices): composite **parameters**, non-u8 array
-     results (`i32[]` …), and record/tuple/variant/option/result.
+   - **string parameter — ✅ done (Go).** A `string` extern parameter lowers
+     to the canonical `(ptr, len)` of contiguous UTF-8 bytes. A Fern string
+     arrives SSO-encoded (inline strings pack bytes into the `(data, len)`
+     words), so `buildExternStringParamWrapper` normalizes each string arg to a
+     heap buffer (`emitStrNormalize`) before forwarding it, passing scalars
+     through. Supported alongside a scalar/void result; gated by
+     `TestExternStringParamCustomProvider` (a custom `byte-len: func(s: string)
+     -> u32` provider sums the bytes of `"hello"` = 532, exercising both lowered
+     halves) + `TestEmitExternStringParam`. Self-host port to follow.
+   - **Composer results-carrying trampoline — ✅ done (Go).** A memory-param
+     import that returns a flat scalar (`func(string) -> u32` lowers to
+     `(i32,i32) -> i32`) needs a trampoline that *carries the result*; the
+     world-driven composer's mem trampolines were result-less (built for WASI's
+     retptr-returning imports, whose core result is void), which mis-wired such
+     an import as `-> ()`. `TrampolineModuleForParamsResults` /
+     `FixupModuleForParamsResults` (+ `gImport.results`, sourced from the core
+     import's own result valtypes via `coreFuncImports`) fix it. Additive: empty
+     results reproduce the NoResult builders byte-for-byte, so every existing
+     WASI import is unchanged (byte-identity oracle + the full component suite
+     stay green). Gated by `TestTrampolineFixupModuleForParamsResults_Validates`
+     and the now-single-function string-param e2e above. This is also a
+     prerequisite for **P5** resource methods (which return `result<_, error>`).
+   - Still rejected (next slices): non-string composite **parameters**
+     (arrays/records), non-u8 array results (`i32[]` …), and
+     record/tuple/variant/option/result. The multi-component harness
+     (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
@@ -323,6 +347,17 @@ world-driven composer (P2) wires it.
      component without the test harness. No-extern programs keep the legacy
      path unchanged. Gated by `TestExternImportViaCLI` (scalar + u8[] externs +
      a built-in `write`, composed by the CLI binary and run under wasmtime).
+   - **Custom (non-WASI) interface + provider — ✅ done (Go).** The headline
+     BYO-WIT capability: a Fern program `@import`s a *fully custom* interface
+     (`local:test/answer@0.1.0`, defined by the user, unknown to the compiler)
+     and the import is satisfied at link time by a separate **provider
+     component** — no built-in knowledge of the interface anywhere. The core is
+     composed against a custom world via `DecodeWorldBytes` (the P3 entry
+     point), then `wasm-tools compose --definitions` plugs the provider's
+     export into the user's import. Gated by `TestExternImportCustomProvider`,
+     which also stands as the **reusable multi-component harness** for the
+     next slices (composite params / records) that have no non-resource WASI
+     0.2 target and so need a custom provider to test against.
 4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
    concept; the largest phase, and the first to exercise the composer's
    `gDrop` path from user code.

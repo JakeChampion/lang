@@ -39,10 +39,15 @@ const (
 // resource type index; params is unused. For gMem/gMemRealloc, params is
 // the core import signature the trampoline mirrors.
 type gImport struct {
-	iface     string
-	name      string
-	kind      gLowerKind
-	params    []byte
+	iface  string
+	name   string
+	kind   gLowerKind
+	params []byte
+	// results is the core import's result valtypes. Empty for the WASI imports
+	// (memory-param imports return into a retptr → void core result); set for a
+	// memory-param import that still returns a flat scalar (P4c), so its
+	// trampoline carries the result instead of dropping it.
+	results   []byte
 	resourceT uint32
 
 	// filled during finish():
@@ -325,8 +330,11 @@ func (g *gComposer) lower(coreBytes []byte) uint32 {
 	userMod := c.coreModule(coreBytes)
 	for i := range g.imports {
 		if g.imports[i].kind == gMem || g.imports[i].kind == gMemRealloc {
-			g.imports[i].trampMod = c.coreModule(TrampolineModuleForParamsNoResult(g.imports[i].params))
-			g.imports[i].fixupMod = c.coreModule(FixupModuleForParamsNoResult(g.imports[i].params))
+			// results is empty for every WASI import (void core result), so this
+			// is byte-identical to the NoResult builders there; a flat-scalar
+			// memory-param import (P4c) carries its result through instead.
+			g.imports[i].trampMod = c.coreModule(TrampolineModuleForParamsResults(g.imports[i].params, g.imports[i].results))
+			g.imports[i].fixupMod = c.coreModule(FixupModuleForParamsResults(g.imports[i].params, g.imports[i].results))
 		}
 	}
 	// Phase C: instantiate trampolines.

@@ -778,6 +778,45 @@ same code(s) the Go checker does — restricted to
   and the bundle-wide `check-selfhost-no-e001` guard (now exercising the
   assign walk too). Checker-only (fixpoint-safe). *Remaining E001
   follow-up:* undefined-callee E001 (needs a builtin-function allowlist).
+- **Slice 62 (done): E001 — undefined call callee (completes E001).** The
+  last E001 form: a bare-identifier call `foo(...)` whose callee resolves
+  to nothing. `is_resolvable_callee` accepts a local (closure value), a
+  free function, a variant constructor (declared or builtin), a runtime
+  intrinsic (any `__`-prefixed name — these are emitter-internal and
+  numerous, so a prefix test avoids enumerating them), or a builtin
+  function (`is_builtin_function`: the user-facing I/O / fs / clock /
+  random / map / strbuf / net / bit-reinterpret set — a **superset** of
+  the Go checker's `FuncSigs` builtins and the emitter's dispatched names;
+  over-inclusion only suppresses E001, so it's safe). `is_resolvable_value`
+  gained the same builtin / `__` checks, since a builtin may also be
+  referenced as a bare value (`var w = write;`). Completeness is
+  CI-enforced: the bundle-wide `check-selfhost-no-e001` guard now runs the
+  self-host `-check` over **all 13 major modules** (incl. asm / asm_arm64 /
+  wasm / fern, which call the full breadth of builtins) and asserts no
+  spurious E001 — any missing builtin fails the build. Zero false
+  positives. Corpus: `callee-undefined` (positive) + `callee-user-fn` /
+  `callee-builtin` / `callee-variant-ctor` / `callee-closure` /
+  `value-builtin-as-value` negatives. Checker-only (fixpoint-safe). **With
+  reads, assignment targets, and callees all covered, E001 is complete bar
+  source-position parity** (it reports at the identifier; the `=`-token vs
+  target-position nuance for the assignment form is the only remaining
+  follow-up).
+- **Slice 63 (done): E001 assignment-target position parity.** Closes the
+  one source-position gap E001 introduced: the value / callee forms already
+  reported at the identifier (matching Go), but the assignment-target form
+  reported at the `=` token. Go's `errIdent` reports at the **target
+  identifier** (`y = 5` → `1:24`, the `y`, not the `=` at `1:26`). Since the
+  `=` position is still needed for E003-assign, `StmtAssign` gained
+  `target_line` / `target_col` (appended last per the asm positional-field
+  rule), captured from the target `ExprIdent` at the parse site and
+  propagated through the constfold / flatten / ssa-rename rebuilds; synthetic
+  assigns (the ssa for-increment, defer / dfa desugars) carry 0. The E001
+  emission now uses the target position. parser.fern + flatten.fern are in
+  the fixpoint bundle, but the fields are codegen-ignored, so the
+  byte-identical fixpoint holds (x86 verified). Gated by a new
+  `check-position-undefined-assign` CLI case. **With this, every E001 form —
+  read, callee, assignment target — reports at the exact `line:col` the Go
+  checker does**, so E001 is fully complete (codes + positions).
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

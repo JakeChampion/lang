@@ -4597,9 +4597,9 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 		}
 	}
 	cases := map[string]*ir.Program{
-		"string param": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, i32()),
-		"array param":  mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: i32()}}}, i32()),
-		"array result": mk(nil, ast.ArrayType{Elem: i32()}),
+		"array param":               mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: i32()}}}, i32()),
+		"array result":              mk(nil, ast.ArrayType{Elem: i32()}),
+		"string param + str result": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, ast.StringType{}),
 	}
 	for name, prog := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -4611,5 +4611,36 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 				t.Fatalf("error should mention P4c, got: %v", err)
 			}
 		})
+	}
+}
+
+// TestEmitExternStringParam — an extern with a string parameter and a scalar
+// result (P4c) emits the raw import with the string flattened to (ptr,len) and
+// resolves the Fern call to a normalizing wrapper.
+func TestEmitExternStringParam(t *testing.T) {
+	prog := &ir.Program{
+		Externs: []*ir.ExternFunc{{
+			Name:       "sink_set",
+			Iface:      "local:test/sink@0.1.0",
+			WITName:    "set",
+			Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
+			ReturnType: ast.VoidType{},
+		}},
+		Funcs: []*ir.Func{{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstStr, Str: "hi"},
+				{Kind: ir.OpCallDirect, Str: "sink_set"},
+				{Kind: ir.OpConstI32, I32: 0},
+			},
+		}},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !bytes.Contains(bin, []byte("local:test/sink@0.1.0")) || !bytes.Contains(bin, []byte("set")) {
+		t.Fatalf("emitted module missing the string-param extern import")
 	}
 }
