@@ -1,5 +1,0 @@
-struct A { x: i32 }
-struct B { y: i32 }
-pub type U = A | B;
-function f(u: U): i32 { match (u) { A(a) => { return a.x; } } return 0; }
-function main(): i32 { return f(A { x: 1 }); }
