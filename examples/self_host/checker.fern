@@ -2746,10 +2746,22 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                 }
             },
             parser.StmtAssign(a) => {
-                var tt: Type = cur.lookup(a.target);
-                var vt: Type = check_expr(a.value, cur);
-                if (!is_unknown(tt) && !is_unknown(vt) && !type_assignable(vt, tt, unions)) {
-                    out = out.push(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt), a.line, a.col));
+                if (!cur.defines(a.target)) {
+                    // E001: assignment to an undeclared name. An assignment
+                    // LHS can only be a local / param / loop / match binding
+                    // (field & index assignments are desugared to
+                    // __set_field / __set_index calls elsewhere), so a target
+                    // not in scope is unambiguously undefined — no function /
+                    // variant / builtin to confuse it with, hence no
+                    // allowlist needed. Reported at the `=` token (the
+                    // assignment position the parser captured).
+                    out = out.push(dg_at("E001", "undefined name \"" + a.target + "\"", a.line, a.col));
+                } else {
+                    var tt: Type = cur.lookup(a.target);
+                    var vt: Type = check_expr(a.value, cur);
+                    if (!is_unknown(tt) && !is_unknown(vt) && !type_assignable(vt, tt, unions)) {
+                        out = out.push(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt), a.line, a.col));
+                    }
                 }
             },
             parser.StmtIf(f) => {
@@ -2767,10 +2779,34 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                 }
                 out = append_diags(out, stmts_assign_diags(w.body, cur, unions));
             },
-            parser.StmtFor(fr) => { out = append_diags(out, stmts_assign_diags(fr.body, cur, unions)); },
+            parser.StmtFor(fr) => {
+                // Bind the loop variable(s) so an assignment to one inside
+                // the body isn't mis-flagged as E001 (same as the read walk).
+                out = append_diags(out, stmts_assign_diags(fr.body, bind_names(cur, fr.var_name), unions));
+            },
             parser.StmtMatch(m) => {
                 var a2: i32 = 0;
-                while (a2 < m.arms.len()) { out = append_diags(out, stmts_assign_diags(m.arms[a2].body, cur, unions)); a2 = a2 + 1; }
+                while (a2 < m.arms.len()) {
+                    // Bind the arm's payload (if any) so an assignment to it
+                    // inside the body isn't mis-flagged as E001.
+                    var asc: Scope = cur;
+                    match (m.arms[a2].pattern) {
+                        parser.PatVariant(apv) => {
+                            // Bind for membership only (unknown type): a
+                            // scalar-payload variant like `Has(i32)` binds the
+                            // inner value, not the variant struct, so binding
+                            // it as `t_struct(variant)` would mis-type an
+                            // assignment to it (spurious E003). E001 needs only
+                            // that the name is in scope.
+                            if (apv.binding.len() > 0 && apv.binding != "_") {
+                                asc = asc.bind(apv.binding, t_unknown("match payload"));
+                            }
+                        },
+                        _ => { }
+                    }
+                    out = append_diags(out, stmts_assign_diags(m.arms[a2].body, asc, unions));
+                    a2 = a2 + 1;
+                }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
@@ -2779,6 +2815,15 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
             _ => { }
         }
         cur = check_stmt(st, cur).scope;
+        // Bind a `var (a, b) = …` destructure's split names for subsequent
+        // assignments to `a` / `b` (only for comma names — rebinding a normal
+        // var here would shadow its precise type; see the read walk).
+        match (st) {
+            parser.StmtVar(dv) => {
+                if (name_has_comma(dv.name)) { cur = bind_names(cur, dv.name); }
+            },
+            _ => { }
+        }
         i = i + 1;
     }
     return out;

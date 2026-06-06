@@ -759,6 +759,25 @@ same code(s) the Go checker does — restricted to
   asserts no spurious E001. Checker-only (checker.fern isn't in the
   fixpoint bundle). *Follow-ups:* undefined-callee E001 (builtin-function
   allowlist), undefined-assignment-target E001, and target-position parity.
+- **Slice 61 (done): E001 — undefined assignment target.** The
+  allowlist-free companion to slice 60. In `stmts_assign_diags`, an
+  assignment `x = v` whose target isn't in scope is E001 (an assignment
+  LHS can only be a local / param / loop / match binding — field & index
+  assignments desugar to `__set_field` / `__set_index` calls — so there's
+  no function / variant / builtin to confuse it with, hence no allowlist).
+  The same binding fixes the read walk needed were mirrored here: loop
+  variables, match payloads, and tuple-destructure names are bound before
+  walking the relevant body. Match payloads are bound **membership-only**
+  (`t_unknown`), not as the variant struct — a scalar-payload variant
+  (`Has(i32)`) binds the inner value, and typing it as the struct would
+  mis-fire E003 on an assignment to it. Reported at the `=` token (the
+  position the parser already captures); target-position parity is the same
+  follow-up noted for the other E003-family codes. Zero false positives,
+  verified by the differential corpus (positive `assign-undefined-target`;
+  negatives for assign-to param / loop var / match payload / destructure)
+  and the bundle-wide `check-selfhost-no-e001` guard (now exercising the
+  assign walk too). Checker-only (fixpoint-safe). *Remaining E001
+  follow-up:* undefined-callee E001 (needs a builtin-function allowlist).
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
