@@ -335,3 +335,19 @@ func TestRoundtripMethod(t *testing.T) {
 	roundTrip(t, `struct Point { x: i32, y: i32 }
 		function (p: Point) sum(): i32 { return p.x + p.y; }`)
 }
+
+// An `@import` extern (bring-your-own WIT, P4) must survive Print → re-parse
+// with its binding intact and a nil body — and must not panic on the nil body.
+func TestRoundtripExternImport(t *testing.T) {
+	roundTrip(t, `@import("wasi:random/random@0.2.0", "get-random-bytes")
+function rand_bytes(n: u64): u8[];
+function main(): i32 { return 0; }`)
+}
+
+// `@derive(...)` on a struct must survive Print → re-parse with the trait
+// list intact (Print formerly dropped it, losing the derives).
+func TestRoundtripDeriveAttr(t *testing.T) {
+	roundTrip(t, `@derive(Eq, Display)
+struct P { x: i32, y: i32 }
+function main(): i32 { return 0; }`)
+}
