@@ -306,6 +306,23 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-bad-receiver", func(t *testing.T) {
+		// E021 (method receiver references an unknown type) is reported at
+		// the method declaration.
+		for _, c := range []struct{ name, src, want string }{
+			{"unknown_receiver", "function (r: Nope) m(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", "1:1: error[E021]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-missing-return", func(t *testing.T) {
 		// E052 (non-void body can fall off the end) is reported at the
 		// function declaration.
