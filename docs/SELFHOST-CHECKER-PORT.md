@@ -594,6 +594,20 @@ same code(s) the Go checker does — restricted to
   clean. Checker-only (fixpoint-safe). Gated by new corpus
   (`match-qualifier-mismatch`, `match-qualifier-correct-ok`) and
   `check-position-qualifier-mismatch`.
+- **Slice 53 (done): E016 — union alias collides with a struct.**
+  `collect_union_sigs` already detected and silently dropped a `type X =
+  …` whose name shadows a declared struct; now `collect_decl_diags` emits
+  E016 for it, at the alias's `type` keyword. `TypeAlias` gained `line`/
+  `col` (captured in `parse_type_alias`, appended last per the asm
+  positional-field rule, propagated through flatten + mono — fixpoint
+  stays byte-identical). Only the **struct** collision is E016: a name
+  shadowing an *enum* is the Go checker's E006 (enum redeclared), not
+  E016, so that branch is deliberately omitted (verified — Go emits E006
+  there). `type B = A | C` alongside `struct B` → `4:5: error[E016]:
+  union "B" collides with a struct of the same name`, matching Go; a
+  distinct alias name stays clean. Zero false positives across the
+  modules. Gated by new corpus (`union-struct-name-collision`,
+  `union-distinct-name-ok`) and `check-position-union-collision`.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

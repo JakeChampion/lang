@@ -54,6 +54,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E030": true, // non-exhaustive match on a union scrutinee
 	"E014": true, // variant pattern not part of the scrutinee enum/union
 	"E029": true, // variant pattern qualifier names the wrong enum/union
+	"E016": true, // union alias collides with a struct of the same name
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -269,6 +270,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"union-match-foreign-variant", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, C(c) => { return c.z; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", []string{"E014"}},
 		{"match-qualifier-mismatch", "enum E { A, B }\nenum F { C, D }\nfunction f(e: E): i32 { match (e) { F.A => { return 1; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A); }\n", []string{"E029"}},
 		{"match-qualifier-correct-ok", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { E.A => { return 1; }, E.B => { return 2; } } return 0; }\nfunction main(): i32 { return f(A); }\n", nil},
+		{"union-struct-name-collision", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type B = A | C;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-distinct-name-ok", "struct A { x: i32 }\nstruct C { z: i32 }\npub type U = A | C;\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

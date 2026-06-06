@@ -306,6 +306,23 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-union-collision", func(t *testing.T) {
+		// E016 (union alias collides with a struct) is reported at the
+		// alias's `type` keyword.
+		for _, c := range []struct{ name, src, want string }{
+			{"name_collision", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type B = A | C;\nfunction main(): i32 { return 0; }\n", "4:5: error[E016]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-qualifier-mismatch", func(t *testing.T) {
 		// E029 (variant pattern qualified by the wrong enum) is reported
 		// at the arm.
