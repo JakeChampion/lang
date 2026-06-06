@@ -313,6 +313,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"value-builtin-variant-none-ok", "function f(): Option[i32] { return None; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"value-loop-var-ok", "function main(): i32 { var xs = [1, 2, 3]; var t = 0; for x in xs { t = t + x; } return t; }\n", nil},
 		{"value-match-payload-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(v) => { return v; }, Nil => { return 0; } } }\n", nil},
+		{"assign-undefined-target", "function main(): i32 { y = 5; return 0; }\n", []string{"E001"}},
+		{"assign-defined-target-ok", "function main(): i32 { var x: i32 = 1; x = 5; return x; }\n", nil},
+		{"assign-param-target-ok", "function f(a: i32): i32 { a = 9; return a; }\nfunction main(): i32 { return f(1); }\n", nil},
+		{"assign-loop-var-target-ok", "function main(): i32 { var xs = [1, 2, 3]; for x in xs { x = 9; } return 0; }\n", nil},
+		{"assign-match-payload-target-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(v) => { v = 7; }, Nil => { } } return 0; }\n", nil},
+		{"assign-destructure-target-ok", "function main(): i32 { var t = (1, 2); var (a, b) = t; a = 9; return a + b; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
