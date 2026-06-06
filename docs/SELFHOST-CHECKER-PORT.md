@@ -801,6 +801,22 @@ same code(s) the Go checker does — restricted to
   source-position parity** (it reports at the identifier; the `=`-token vs
   target-position nuance for the assignment form is the only remaining
   follow-up).
+- **Slice 63 (done): E001 assignment-target position parity.** Closes the
+  one source-position gap E001 introduced: the value / callee forms already
+  reported at the identifier (matching Go), but the assignment-target form
+  reported at the `=` token. Go's `errIdent` reports at the **target
+  identifier** (`y = 5` → `1:24`, the `y`, not the `=` at `1:26`). Since the
+  `=` position is still needed for E003-assign, `StmtAssign` gained
+  `target_line` / `target_col` (appended last per the asm positional-field
+  rule), captured from the target `ExprIdent` at the parse site and
+  propagated through the constfold / flatten / ssa-rename rebuilds; synthetic
+  assigns (the ssa for-increment, defer / dfa desugars) carry 0. The E001
+  emission now uses the target position. parser.fern + flatten.fern are in
+  the fixpoint bundle, but the fields are codegen-ignored, so the
+  byte-identical fixpoint holds (x86 verified). Gated by a new
+  `check-position-undefined-assign` CLI case. **With this, every E001 form —
+  read, callee, assignment target — reports at the exact `line:col` the Go
+  checker does**, so E001 is fully complete (codes + positions).
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

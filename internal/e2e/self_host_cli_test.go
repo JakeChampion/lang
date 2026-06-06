@@ -239,6 +239,19 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-undefined-assign", func(t *testing.T) {
+		// E001 for an undefined assignment target is reported at the target
+		// identifier (Go's errIdent position), not the `=` token.
+		srcPath := filepath.Join(dir, "undef_assign.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { y = 5; return 0; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+		if !strings.Contains(string(combined), "1:24: error[E001]") {
+			t.Errorf("-check diagnostics = %q, want it to contain \"1:24: error[E001]\"", combined)
+		}
+	})
+
 	t.Run("check-position", func(t *testing.T) {
 		// A diagnostic emitted from an AST node that carries a source
 		// position renders `line:col: error[E0XX]: …`, matching the Go
@@ -621,8 +634,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
-	t.Run("check-position-field-assign", func(t *testing.T) {
-		// E048 (assignment to an immutable field) is reported at the
+	t.Run("check-position-field-assign", func(t *testing.T) { // E048 (assignment to an immutable field) is reported at the
 		// field-access object, matching the Go checker.
 		for _, c := range []struct{ name, src, want string }{
 			{"field_assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", "2:48: error[E048]"},

@@ -117,7 +117,7 @@ pub struct StmtWhile { cond: Expr, body: Stmt[] }
 // index / tuple) is a later port milestone. The checker verifies
 // the target is already bound and that types match; the interp
 // updates the env's slot in place.
-pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32 }
+pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target_line: i32, target_col: i32 }
 // StmtMatch models `match (scrutinee) { Pat => { ... }, ... }`.
 // Arms are walked top-to-bottom; the first pattern that matches
 // runs its body. The checker enforces that the pattern variant
@@ -317,11 +317,13 @@ function s_break_at(line: i32, col: i32): Stmt { return StmtBreak { tag: 0, line
 function s_continue(): Stmt { return StmtContinue { tag: 0, line: 0, col: 0 }; }
 function s_continue_at(line: i32, col: i32): Stmt { return StmtContinue { tag: 0, line: line, col: col }; }
 function s_assign(target: string, value: Expr): Stmt {
-    return StmtAssign { target: target, value: value, line: 0, col: 0 };
+    return StmtAssign { target: target, value: value, line: 0, col: 0, target_line: 0, target_col: 0 };
 }
-// s_assign_at carries the assignment-target position so E003 points at it.
-function s_assign_at(target: string, value: Expr, line: i32, col: i32): Stmt {
-    return StmtAssign { target: target, value: value, line: line, col: col };
+// s_assign_at carries the `=`-token position (line/col, where E003 points)
+// and the target identifier's position (target_line/target_col, where the
+// Go checker reports E001 for an undefined assignment target).
+function s_assign_at(target: string, value: Expr, line: i32, col: i32, target_line: i32, target_col: i32): Stmt {
+    return StmtAssign { target: target, value: value, line: line, col: col, target_line: target_line, target_col: target_col };
 }
 function s_match(scrutinee: Expr, arms: MatchArm[]): Stmt {
     return StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0 };
@@ -1678,7 +1680,7 @@ function parse_stmt(p: Par): StmtResult {
                     var op: string = assign_op[0:assign_op.len() - 1];
                     rhs2 = e_binary(op, e_ident(id.name), rhs);
                 }
-                return StmtResult { par: p, stmt: s_assign_at(id.name, rhs2, aline, acol) };
+                return StmtResult { par: p, stmt: s_assign_at(id.name, rhs2, aline, acol, id.line, id.col) };
             },
             ExprIndex(ix) => {
                 // `arr[idx] = rhs` → __set_index(arr, idx, rhs). A compound
@@ -2779,7 +2781,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
         },
         StmtAssign(a) => {
             var av: RExpr = mono_expr(a.value, env, funcs, ins);
-            return RStmtOne { rstmt: StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col }, renv: env, rins2: av.rins };
+            return RStmtOne { rstmt: StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
         },
         StmtIf(f) => {
             var cv: RExpr = mono_expr(f.cond, env, funcs, ins);
@@ -3246,7 +3248,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         },
         StmtAssign(a) => {
             var av: RExpr = ms_expr(a.value, env, gstructs, funcs, ins);
-            return RStmtOne { rstmt: StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col }, renv: env, rins2: av.rins };
+            return RStmtOne { rstmt: StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
         },
         StmtIf(f) => {
             var cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
