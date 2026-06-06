@@ -4472,3 +4472,72 @@ func TestEmitUnsupportedOpReports(t *testing.T) {
 		t.Fatalf("expected unsupported-op error, got nil")
 	}
 }
+
+// TestEmitExternScalarImport — a scalar `@import` extern (P4b) lowers to a
+// core wasm function import of its (interface, wit-name) and a call resolves
+// there. The emitted module must carry the import.
+func TestEmitExternScalarImport(t *testing.T) {
+	prog := &ir.Program{
+		Externs: []*ir.ExternFunc{{
+			Name:       "random_u64",
+			Iface:      "wasi:random/random@0.2.0",
+			WITName:    "get-random-u64",
+			ReturnType: i64(),
+		}},
+		Funcs: []*ir.Func{{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpCallDirect, Str: "random_u64"},
+				{Kind: ir.OpDrop},
+				{Kind: ir.OpConstI32, I32: 0},
+			},
+		}},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !bytes.Contains(bin, []byte("wasi:random/random@0.2.0")) || !bytes.Contains(bin, []byte("get-random-u64")) {
+		t.Fatalf("emitted module missing the extern import")
+	}
+}
+
+// TestEmitExternCompositeRejected — a composite-typed `@import` extern
+// (string / list / record / …) needs the canonical-ABI lift/lower that is
+// P4c, so P4b rejects it up front with a clear message rather than emitting
+// raw pointer slots that don't match the host's ABI.
+func TestEmitExternCompositeRejected(t *testing.T) {
+	mk := func(params []ast.Param, ret ast.Type) *ir.Program {
+		return &ir.Program{
+			Externs: []*ir.ExternFunc{{
+				Name:       "do_thing",
+				Iface:      "wasi:foo/bar@0.1.0",
+				WITName:    "do-thing",
+				Params:     params,
+				ReturnType: ret,
+			}},
+			Funcs: []*ir.Func{{
+				Name:       "main",
+				ReturnType: i32(),
+				Ops:        []ir.Op{{Kind: ir.OpCallDirect, Str: "do_thing"}},
+			}},
+		}
+	}
+	cases := map[string]*ir.Program{
+		"string param":  mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, i32()),
+		"string result": mk(nil, ast.StringType{}),
+		"array param":    mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: i32()}}}, i32()),
+	}
+	for name, prog := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Emit(prog)
+			if err == nil {
+				t.Fatalf("expected a P4c rejection, got nil")
+			}
+			if !strings.Contains(err.Error(), "P4c") {
+				t.Fatalf("error should mention P4c, got: %v", err)
+			}
+		})
+	}
+}

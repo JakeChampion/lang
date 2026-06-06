@@ -275,9 +275,14 @@ world-driven composer (P2) wires it.
    `$name`. Gated by `TestSelfHostExternImportRunsUnderWasmtime`
    (`internal/e2e/self_host_extern_import_test.go`): the self-host backend
    emits the core, the Go composer wires it, and the component runs.
+   Until P4c lands, a composite-typed extern signature is **rejected** by the
+   Go backend (`externScalarType` in `scanExternImports`) with a "composite
+   types are P4c" message, rather than silently emitting raw pointer slots that
+   don't match the host's canonical ABI — see `TestEmitExternCompositeRejected`.
 3. **P4c — composite types.** Strings / lists / records / variants / options /
    results across the boundary (the canonical-ABI lift/lower the built-ins
-   already do, generalised to user signatures).
+   already do, generalised to user signatures). Lifts the P4b scalar-only
+   guard as each shape gains real marshalling, in both compilers.
 4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
    concept; the largest phase, and the first to exercise the composer's
    `gDrop` path from user code.

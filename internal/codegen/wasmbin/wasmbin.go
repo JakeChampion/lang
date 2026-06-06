@@ -916,6 +916,22 @@ func resultValtypes(t ast.Type) ([]byte, error) {
 	return slotValtypes(t)
 }
 
+// externScalarType reports whether t is a scalar an `@import` extern's
+// signature can carry today (bring-your-own WIT P4b — docs/WIT-BRING-YOUR-OWN.md):
+// integers, floats, and bool, all of which lower to a single i32/i64/f64 slot
+// with no canonical-ABI marshalling. Composite types (string, list, record,
+// tuple, variant, option, result) need the canonical lift/lower that's P4c, so
+// they're rejected up front rather than silently miscompiled into raw pointer
+// slots that don't match the host's ABI. void is allowed only as a return type
+// (handled by the caller).
+func externScalarType(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType:
+		return true
+	}
+	return false
+}
+
 // localValtypes returns the wasm valtype vector for an IR function's
 // declared locals + scratch slots — exactly what the local-section
 // preamble of the function body needs. String-typed slots fan out
