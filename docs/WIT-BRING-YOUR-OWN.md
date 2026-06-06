@@ -268,7 +268,13 @@ world-driven composer (P2) wires it.
    (`ComposeFromWorldAuto`). Gated by `TestExternImportScalarRunsUnderWasmtime`
    (`internal/e2e/wit_extern_import_test.go`): `@import` of
    `wasi:random/random@0.2.0` `get-random-u64` → core import present →
-   validates and runs under wasmtime. Self-host port still to follow.
+   validates and runs under wasmtime. **Self-host port done:** `wasm.fern`
+   `extern_imports` emits each referenced `@import` as a core wasm function
+   import (`wat_extern_valtype` maps the Fern signature; 64-bit ints → i64),
+   skipping its body in the func loop so a call resolves to the import's
+   `$name`. Gated by `TestSelfHostExternImportRunsUnderWasmtime`
+   (`internal/e2e/self_host_extern_import_test.go`): the self-host backend
+   emits the core, the Go composer wires it, and the component runs.
 3. **P4c — composite types.** Strings / lists / records / variants / options /
    results across the boundary (the canonical-ABI lift/lower the built-ins
    already do, generalised to user signatures).
