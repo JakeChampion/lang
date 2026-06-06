@@ -61,6 +61,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E033": true, // invalid cast (bool ↔ non-bool scalar)
 	"E048": true, // assignment to an immutable struct field
 	"E001": true, // undefined name (value position)
+	"E042": true, // `?` operator on a non-Option/Result operand
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -319,6 +320,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"assign-loop-var-target-ok", "function main(): i32 { var xs = [1, 2, 3]; for x in xs { x = 9; } return 0; }\n", nil},
 		{"assign-match-payload-target-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(v) => { v = 7; }, Nil => { } } return 0; }\n", nil},
 		{"assign-destructure-target-ok", "function main(): i32 { var t = (1, 2); var (a, b) = t; a = 9; return a + b; }\n", nil},
+		{"try-on-i32", "function f(): Option[i32] { var x: i32 = 5; return x?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-on-string", "function f(): Option[i32] { var s: string = \"x\"; return s?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-on-option-ok", "function g(): Option[i32] { return Some(1); }\nfunction f(): Option[i32] { var o: Option[i32] = g(); var v: i32 = o?; return Some(v); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},
