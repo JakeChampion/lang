@@ -627,6 +627,32 @@ same code(s) the Go checker does — restricted to
   `return-if-else-ok`) and `check-position-missing-return`. (Corpus uses
   `boolean`, not the self-host-only `bool` alias, so the Go side doesn't
   add a stray E008.)
+- **Slice 55 (done): E021 — method receiver references an unknown type.**
+  The first slice of the broad E021 family (the rest — `impl … for …`
+  conformance / coherence / object-safety — needs trait/impl declarations
+  the self-host grammar doesn't have). A new `receiver_type_ok` validates
+  each method's receiver in `collect_decl_diags`: a primitive, a declared
+  struct / enum / union alias is fine; a generic / `Map` / array (`X[…]`)
+  or `dyn Trait` receiver is skipped conservatively; anything else is
+  E021 at the method declaration. `function (r: Nope) m()` →
+  `1:1: error[E021]: method receiver references unknown struct "Nope"`,
+  matching Go; struct and builtin (`i32`) receivers stay clean. Zero
+  false positives across all fifteen modules (every bundle method's
+  receiver is a declared struct). Checker-only (fixpoint-safe). Gated by
+  new corpus (`method-unknown-receiver`, `method-struct-receiver-ok`,
+  `method-builtin-receiver-ok`) and `check-position-bad-receiver`.
+
+  *Note on the remaining ~16 codes:* E040 was attempted and deliberately
+  **backed out** — accurate call-type-arg arity needs three
+  fixpoint-relevant parser changes (retain call type-args, track a
+  function's TOTAL type-param count since the self-host erases unbounded
+  generics, and position at the `[` not the `(`), and a partial version
+  emits a wrong count/position. The rest (E015 multi-payload patterns,
+  E024 tuple destructure, E025 switch, E027 match guards, E022 let-else,
+  E044 typed closure captures, E050/E051 move checking, E021 impl
+  conformance) each require a language feature the self-host compiler
+  doesn't yet support end-to-end — they're feature work across
+  parser + all backends + checker, not checker-only rules.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

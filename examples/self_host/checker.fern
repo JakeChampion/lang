@@ -2632,6 +2632,27 @@ function dup_name_before(names: string[], idx: i32): boolean {
 // are detectable from the decl tables alone (no positions, no type
 // inference): E007 (a struct field name repeated) and E018 (a function
 // parameter name repeated). These mirror the Go checker's E007 / E018.
+// receiver_type_ok reports whether a method's receiver type names a valid
+// receiver — a primitive, or a declared struct / enum / union (alias). A
+// generic / Map / array receiver (`X[...]`) or a `dyn Trait` object is
+// skipped conservatively (so the E021 check never trips on shapes this
+// port resolves coarsely). The base name is taken modulo `[...]`.
+function receiver_type_ok(rt: string, mod: parser.Module): boolean {
+    if (rt.len() == 0) { return true; }
+    if (rt == "i32" || rt == "bool" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float") { return true; }
+    var bi: i32 = 0;
+    while (bi < rt.len()) { if (rt[bi] == 91) { return true; } bi = bi + 1; }   // '[' → generic/Map/array
+    if (rt.len() >= 4 && rt[0:4] == "dyn ") { return true; }
+    var base: string = strip_generic_args(rt);
+    var i: i32 = 0;
+    while (i < mod.structs.len()) { if (mod.structs[i].name == base) { return true; } i = i + 1; }
+    var j: i32 = 0;
+    while (j < mod.enums.len()) { if (mod.enums[j].name == base) { return true; } j = j + 1; }
+    var k: i32 = 0;
+    while (k < mod.aliases.len()) { if (mod.aliases[k].name == base) { return true; } k = k + 1; }
+    return false;
+}
+
 function collect_decl_diags(mod: parser.Module): Diag[] {
     var out: Diag[] = [];
     // E007: duplicate field within a struct (enum-variant structs carry at
@@ -2696,6 +2717,12 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
             } else {
                 out = out.push(dg_at("E006", "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared", f2.line, f2.col));
             }
+        }
+        // E021: a method whose receiver type isn't a known struct / enum /
+        // union (or a primitive / generic / dyn receiver), reported at the
+        // method declaration.
+        if (f2.receiver_name.len() > 0 && !receiver_type_ok(f2.receiver_type, mod)) {
+            out = out.push(dg_at("E021", "method receiver references unknown struct \"" + strip_generic_args(f2.receiver_type) + "\"", f2.line, f2.col));
         }
         di = di + 1;
     }

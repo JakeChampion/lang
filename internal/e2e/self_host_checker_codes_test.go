@@ -56,6 +56,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E029": true, // variant pattern qualifier names the wrong enum/union
 	"E016": true, // union alias collides with a struct of the same name
 	"E052": true, // missing return (non-void body can fall off the end)
+	"E021": true, // method receiver references an unknown type
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -277,6 +278,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"missing-return-one-armed-if", "function f(c: boolean): i32 { if (c) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"return-while-true-ok", "function f(): i32 { while (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"method-unknown-receiver", "function (r: Nope) m(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"method-struct-receiver-ok", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return p.x; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"method-builtin-receiver-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
