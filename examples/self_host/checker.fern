@@ -2286,6 +2286,19 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     }
                 }
             }
+            // E042: the `?` try operator (parsed as the unary op `try_`)
+            // requires an Option or Result operand. The self-host models a
+            // sound, zero-false-positive subset: when the operand is a known
+            // scalar primitive (i32 / bool / string / f64) it can never be an
+            // Option/Result, so flag it. Option/Result-typed operands type to
+            // struct / union / unknown here (never a primitive), so legal `?`
+            // uses are left untouched — mirroring the E033/E034 conservatism.
+            if (u.op == "try_") {
+                var trt: Type = check_expr(u.operand, s);
+                if (is_primitive_type(trt)) {
+                    out = out.push(dg_at("E042", "`?` operator requires an Option or Result value, got " + type_label(trt), u.line, u.col));
+                }
+            }
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
