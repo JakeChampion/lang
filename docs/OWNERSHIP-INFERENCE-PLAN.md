@@ -381,6 +381,33 @@ green); regression tests in `internal/e2e/rc_self_reassign_field_test.go`
 threaded-param shape, plus arm64 / wasm soundness counterparts). The historical
 diagnosis and the two failed type-shape widenings are kept below.
 
+### Known limitation: wasm doesn't *reuse* the threaded-param struct accumulator
+
+The fix restores O(N) on the **native** backends (x86-64 verified; arm64 shares
+the target-agnostic IR). On **wasm** the threaded-PARAM *struct* accumulator
+(`build(s: Bld, n)` with a growing array field) stays O(N²) — `TestWASMSelf...`
+pins only soundness there, not O(N). Characterised (bump high-water, free-on):
+
+| shape | local | param |
+|---|---|---|
+| bare `i32[]` (no struct) | O(N) | **O(N)** |
+| struct, box only (no growing field) | O(N) | **O(N)** |
+| struct, **fixed**-size array field, rebuilt each step | **O(1)** (reused) | **O(N)** (freed, not reused) |
+| struct, **growing** array field | O(N) | **O(N²)** |
+
+It is **pre-existing and independent of this fix** (reproduces with the
+consumed-param entry-inc disabled) and is **not** an over-release — the
+deep-drop *frees* the old box+buffer on wasm (the fixed-array param is linear,
+not quadratic). The gap is purely **reuse**: a struct accumulator threaded
+through a *local* has its freed blocks reused by the wasm freelist (O(1) for the
+fixed shape), but the same accumulator threaded through a *parameter* does not —
+even for identical-size allocations every step. So it is neither a size-class
+mismatch nor an in-place-push issue; it lives in the wasm freelist /
+reclamation path's local-vs-param asymmetry (cf. the documented "an inline
+box_free in a complex function body doesn't return the box to the freelist on
+wasm, but a generated function does"). A real fix needs that wasm-allocator
+investigation; it is out of scope for the `-ssa` OOM, whose target is native.
+
 ## Original problem: the O(N²) self-reassign accumulator leak
 
 **Symptom.** `s = s.emit(x)` — self-reassigning an owned struct *local* through
