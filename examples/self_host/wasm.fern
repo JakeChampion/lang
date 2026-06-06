@@ -1150,24 +1150,54 @@ function is_extern_composite_ret(t: string): boolean {
     return t == "string" || t == "u8[]";
 }
 
+// has_extern_string_param is true when an `@import` extern takes a `string`
+// parameter (P4c). A string param lowers to the canonical (ptr, len), so the
+// Fern call resolves to a wrapper that splits the self-host string pointer.
+function has_extern_string_param(f: parser.FuncDecl): boolean {
+    var i: i32 = 0;
+    while (i < f.params.len()) {
+        if (f.params[i].type_name == "string") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// extern_needs_wrapper is true when an extern's Fern call must resolve to a
+// generated wrapper rather than straight to the import: a composite result
+// (return-area lift) or a string parameter (canonical (ptr,len) lowering).
+function extern_needs_wrapper(f: parser.FuncDecl): boolean {
+    return is_extern_composite_ret(f.ret_type) || has_extern_string_param(f);
+}
+
 function extern_imports(mod: parser.Module): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[i];
         if (f.import_iface.len() > 0) {
-            if (is_extern_composite_ret(f.ret_type)) {
-                // Composite (string / list<u8>) result (P4c): the raw import
-                // gains a trailing canonical return-area pointer and returns
-                // nothing; a generated wrapper ($name, see extern_wrappers)
-                // lifts the host (data,len) into a self-host string or u8[].
+            if (extern_needs_wrapper(f)) {
+                // The raw import is named $name__import; the Fern $name resolves
+                // to the wrapper (see extern_wrappers). Each string param
+                // lowers to (ptr, len) = 2 i32s.
                 out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name + "__import";
                 var sp: i32 = 0;
                 while (sp < f.params.len()) {
-                    out = out + " (param " + wat_extern_valtype(f.params[sp].type_name) + ")";
+                    if (f.params[sp].type_name == "string") {
+                        out = out + " (param i32) (param i32)";
+                    } else {
+                        out = out + " (param " + wat_extern_valtype(f.params[sp].type_name) + ")";
+                    }
                     sp = sp + 1;
                 }
-                out = out + " (param i32)))\n";
+                if (is_extern_composite_ret(f.ret_type)) {
+                    // Composite result: trailing return-area pointer, no result.
+                    out = out + " (param i32)))\n";
+                } else {
+                    if (returns_value(f.ret_type)) {
+                        out = out + " (result " + wat_extern_valtype(f.ret_type) + ")";
+                    }
+                    out = out + "))\n";
+                }
             } else {
                 out = out + "  (import \"" + f.import_iface + "\" \"" + f.import_wit + "\" (func $" + f.name;
                 var p: i32 = 0;
@@ -1198,6 +1228,17 @@ function module_has_extern_composite_result(mod: parser.Module): boolean {
     return false;
 }
 
+// module_needs_extern_wrappers is true when any `@import` extern needs a
+// generated wrapper (composite result or string parameter).
+function module_needs_extern_wrappers(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].import_iface.len() > 0 && extern_needs_wrapper(mod.funcs[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // extern_wrappers emits, for each string/list<u8>-returning `@import` extern
 // (P4c), the wrapper the Fern call resolves to. It allocates an 8-byte
 // canonical return area (data @+0, len @+4), calls the raw import
@@ -1209,7 +1250,31 @@ function extern_wrappers(mod: parser.Module): string {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[i];
-        if (f.import_iface.len() > 0 && is_extern_composite_ret(f.ret_type)) {
+        if (f.import_iface.len() > 0 && has_extern_string_param(f)) {
+            // string parameter (P4c): the wrapper receives each self-host
+            // string (a pointer to [len][bytes]) and forwards the canonical
+            // (data=ptr+4, len=load(ptr)); scalars pass through. Result is
+            // scalar/void (a composite result alongside a string param is not
+            // supported yet).
+            out = out + "  (func $" + f.name;
+            var pargs: string = "";
+            var pp: i32 = 0;
+            while (pp < f.params.len()) {
+                var ppn: string = "$ep" + i32_to_string(pp);
+                if (f.params[pp].type_name == "string") {
+                    out = out + " (param " + ppn + " i32)";
+                    pargs = pargs + " (i32.add (local.get " + ppn + ") (i32.const 4)) (i32.load (local.get " + ppn + "))";
+                } else {
+                    out = out + " (param " + ppn + " " + wat_extern_valtype(f.params[pp].type_name) + ")";
+                    pargs = pargs + " (local.get " + ppn + ")";
+                }
+                pp = pp + 1;
+            }
+            if (returns_value(f.ret_type)) {
+                out = out + " (result " + wat_extern_valtype(f.ret_type) + ")";
+            }
+            out = out + "\n    (call $" + f.name + "__import" + pargs + "))\n";
+        } else if (f.import_iface.len() > 0 && is_extern_composite_ret(f.ret_type)) {
             out = out + "  (func $" + f.name;
             var args: string = "";
             var p: i32 = 0;
@@ -6294,8 +6359,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_exit: boolean = module_calls(mod, "exit");
     var has_i64: boolean = module_uses_i64(mod);
     // A string/list<u8>-returning `@import` extern (P4c) needs the heap
-    // allocator, the lift wrapper, and the exported cabi_realloc.
+    // allocator and the exported cabi_realloc. A string *parameter* needs a
+    // wrapper too, but no realloc/heap (it forwards the guest's bytes).
     var has_extern_str: boolean = module_has_extern_composite_result(mod);
+    var needs_extern_wrappers: boolean = module_needs_extern_wrappers(mod);
 
     var out: string = "(module\n";
     // Component-run cores are import-free (no preview1 entry / output), so
@@ -6454,7 +6521,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // materialize the returned bytes.
     if (fs || (io && (has_env || has_args)) || has_extern_str) { out = out + cabi_realloc_helper(); }
     // P4c: the lift wrappers for string/list<u8>-returning `@import` externs.
-    if (has_extern_str) { out = out + extern_wrappers(mod); }
+    if (needs_extern_wrappers) { out = out + extern_wrappers(mod); }
 
     // Shared lambda cells (1-element arrays, mutated in place so the index
     // counter + accumulated $__lambda<i> defs persist across every
