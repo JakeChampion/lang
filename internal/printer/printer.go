@@ -42,6 +42,16 @@ func printConstDecl(b *strings.Builder, cd *ast.ConstDecl) {
 }
 
 func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
+	if len(sd.Derives) > 0 {
+		b.WriteString("@derive(")
+		for i, d := range sd.Derives {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(d)
+		}
+		b.WriteString(")\n")
+	}
 	if sd.Public {
 		b.WriteString("pub ")
 	}
