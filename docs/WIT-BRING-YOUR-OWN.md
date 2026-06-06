@@ -318,13 +318,22 @@ world-driven composer (P2) wires it.
      words), so `buildExternStringParamWrapper` normalizes each string arg to a
      heap buffer (`emitStrNormalize`) before forwarding it, passing scalars
      through. Supported alongside a scalar/void result; gated by
-     `TestExternStringParamCustomProvider` (a custom `set: func(s: string)`
-     provider sums the bytes of `"hello"` = 532, exercising both lowered
-     halves) + `TestEmitExternStringParam`. **Composer limitation:** the
-     world-driven composer's memory-param trampolines are result-less (built
-     for WASI's retptr-returning imports), so a single `func(string) -> scalar`
-     can't be wired yet — split into a void setter + a scalar getter, or extend
-     the composer (the trampoline needs a result). Self-host port to follow.
+     `TestExternStringParamCustomProvider` (a custom `byte-len: func(s: string)
+     -> u32` provider sums the bytes of `"hello"` = 532, exercising both lowered
+     halves) + `TestEmitExternStringParam`. Self-host port to follow.
+   - **Composer results-carrying trampoline — ✅ done (Go).** A memory-param
+     import that returns a flat scalar (`func(string) -> u32` lowers to
+     `(i32,i32) -> i32`) needs a trampoline that *carries the result*; the
+     world-driven composer's mem trampolines were result-less (built for WASI's
+     retptr-returning imports, whose core result is void), which mis-wired such
+     an import as `-> ()`. `TrampolineModuleForParamsResults` /
+     `FixupModuleForParamsResults` (+ `gImport.results`, sourced from the core
+     import's own result valtypes via `coreFuncImports`) fix it. Additive: empty
+     results reproduce the NoResult builders byte-for-byte, so every existing
+     WASI import is unchanged (byte-identity oracle + the full component suite
+     stay green). Gated by `TestTrampolineFixupModuleForParamsResults_Validates`
+     and the now-single-function string-param e2e above. This is also a
+     prerequisite for **P5** resource methods (which return `result<_, error>`).
    - Still rejected (next slices): non-string composite **parameters**
      (arrays/records), non-u8 array results (`i32[]` …), and
      record/tuple/variant/option/result. The multi-component harness

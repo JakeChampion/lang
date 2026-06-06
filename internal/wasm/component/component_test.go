@@ -1495,3 +1495,41 @@ func TestWasiIoStreamsReadInstanceTypeBody_Validates(t *testing.T) {
 		}
 	}
 }
+
+// TestTrampolineFixupModuleForParamsResults_Validates checks the
+// results-carrying trampoline + fixup (P4c: a memory-param import that returns
+// a flat scalar, e.g. `func(string) -> u32` lowered to `(i32 i32) -> i32`).
+// Each module must be a standalone valid core wasm binary, and the empty-result
+// case must be byte-identical to the NoResult builder (the byte-identity
+// guarantee for every existing WASI import).
+func TestTrampolineFixupModuleForParamsResults_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	params := []byte{0x7f, 0x7f} // i32 i32 (string ptr, len)
+	results := []byte{0x7f}      // i32 (u32)
+	for _, m := range []struct {
+		name  string
+		bytes []byte
+	}{
+		{"trampoline-result", component.TrampolineModuleForParamsResults(params, results)},
+		{"fixup-result", component.FixupModuleForParamsResults(params, results)},
+	} {
+		dir := t.TempDir()
+		p := filepath.Join(dir, m.name+".wasm")
+		if err := os.WriteFile(p, m.bytes, 0o644); err != nil {
+			t.Fatalf("%s write: %v", m.name, err)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+			t.Fatalf("%s validate failed: %v\n%s", m.name, err, out)
+		}
+	}
+	// Empty results → byte-identical to the NoResult builders (so every WASI
+	// import's bytes are unchanged).
+	if !bytes.Equal(component.TrampolineModuleForParamsResults(params, nil), component.TrampolineModuleForParamsNoResult(params)) {
+		t.Errorf("results=nil trampoline must match the NoResult builder byte-for-byte")
+	}
+	if !bytes.Equal(component.FixupModuleForParamsResults(params, nil), component.FixupModuleForParamsNoResult(params)) {
+		t.Errorf("results=nil fixup must match the NoResult builder byte-for-byte")
+	}
+}

@@ -52,6 +52,7 @@ func ComposeFromWorld(core []byte, w *componenttype.World, coreExportName string
 type coreFuncImport struct {
 	module, name string
 	params       []byte
+	results      []byte
 }
 
 // coreFuncImports parses a core module's type + import sections and returns
@@ -62,8 +63,9 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 	if len(bin) < preambleLen {
 		return nil
 	}
-	// pass 1: functype params from the type section (id 1).
+	// pass 1: functype params + results from the type section (id 1).
 	var typeParams [][]byte
+	var typeResults [][]byte
 	for off := preambleLen; off < len(bin); {
 		id := bin[off]
 		off++
@@ -96,10 +98,13 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 			}
 			rc, rm := readULEB(body)
 			body = body[rm:]
+			results := make([]byte, 0, rc)
 			for j := uint64(0); j < rc && len(body) > 0; j++ {
+				results = append(results, body[0])
 				body = body[1:]
 			}
 			typeParams = append(typeParams, params)
+			typeResults = append(typeResults, results)
 		}
 		break
 	}
@@ -135,11 +140,12 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 			case 0: // func: typeidx
 				ti, ks := readULEB(b3)
 				b3 = b3[ks:]
-				var params []byte
+				var params, results []byte
 				if int(ti) < len(typeParams) {
 					params = typeParams[ti]
+					results = typeResults[ti]
 				}
-				out = append(out, coreFuncImport{module: mod, name: fld, params: params})
+				out = append(out, coreFuncImport{module: mod, name: fld, params: params, results: results})
 			case 1: // table: reftype + limits
 				if len(b3) >= 2 {
 					b3 = b3[2:]
@@ -204,6 +210,11 @@ func ComposeFromWorldAuto(core []byte, w *componenttype.World) ([]byte, error) {
 			name:   imp.name,
 			kind:   gKindFor(wi.Classify(f)),
 			params: imp.params,
+			// The core import already carries the flat-lowered result (e.g. a
+			// memory-param `func(string) -> u32` imports as (i32,i32)->i32); a
+			// memory trampoline must mirror it. Empty for the WASI imports
+			// (results go through a retptr → void), so this is a no-op there.
+			results: imp.results,
 		})
 	}
 	return ComposeFromWorld(core, w, "_lang_run", imports)
