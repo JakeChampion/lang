@@ -608,6 +608,25 @@ same code(s) the Go checker does — restricted to
   distinct alias name stays clean. Zero false positives across the
   modules. Gated by new corpus (`union-struct-name-collision`,
   `union-distinct-name-ok`) and `check-position-union-collision`.
+- **Slice 54 (done): E052 — missing return.** A common, high-value check
+  and a pure checker-side control-flow analysis (no AST change). A new
+  `block_exits(stmts)` mirrors the Go checker's `funcBodyExits`: only the
+  LAST statement matters — `return` exits; an `if` exits iff both arms do
+  (a one-armed `if` falls through); a `while (true)` is divergent (breaks
+  ignored — a breakable loop needing a value keeps a trailing return the
+  surrounding block catches); a `match` exits iff every arm body does.
+  `switch` / `if let` are already desugared to if/else by the parser, so
+  no special case is needed. A non-void function whose body doesn't
+  `block_exits` is E052 at the function declaration. Validated by probe
+  first: **zero** false positives across all fifteen modules (every
+  bundle function ending in `while (true)`, an exhaustive returning
+  `match`, an if/else, or a trailing `return` is recognised as exiting).
+  `function f(): i32 { var x = 1; }` → `1:1: error[E052]`, matching Go's
+  code, position, and message. Gated by new corpus (`missing-return`,
+  `missing-return-one-armed-if`, `return-while-true-ok`,
+  `return-if-else-ok`) and `check-position-missing-return`. (Corpus uses
+  `boolean`, not the self-host-only `bool` alias, so the Go side doesn't
+  add a stray E008.)
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

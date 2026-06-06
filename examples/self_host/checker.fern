@@ -1685,6 +1685,42 @@ function stmts_slit_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
 
 // loop_diags emits E011 for a `break` / `continue` that isn't inside a
 // loop. It's purely structural (no scope): `while` / `for` bodies recurse
+// block_exits reports whether a statement block is guaranteed to leave
+// its function (return) on every path — an under-approximation mirroring
+// the Go checker's funcBodyExits, used by E052. Only the LAST statement
+// matters: a `return`, an `if` whose both arms exit, a `while (true)`
+// (divergent — breaks are ignored, a breakable loop that needs a value
+// keeps a trailing return the surrounding block catches), or a `match`
+// whose every arm body exits. `switch` and `if let` are already desugared
+// to if/else chains by the parser, so they need no special case here.
+function block_exits(stmts: parser.Stmt[]): boolean {
+    if (stmts.len() == 0) { return false; }
+    var last: parser.Stmt = stmts[stmts.len() - 1];
+    match (last) {
+        parser.StmtReturn(_) => { return true; },
+        parser.StmtIf(f) => {
+            return block_exits(f.then_body) && block_exits(f.else_body);
+        },
+        parser.StmtWhile(w) => {
+            match (w.cond) {
+                parser.ExprBool(b) => { return b.value; },
+                _ => { return false; }
+            }
+        },
+        parser.StmtMatch(m) => {
+            if (m.arms.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (!block_exits(m.arms[i].body)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // with in_loop = true, while `if` / `match` / `defer` pass the flag
 // through unchanged — so a `break` in a match arm is legal only when that
 // match is itself inside a loop (matching the Go checker).
@@ -2762,6 +2798,11 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         if (mod.funcs[i].ret_type.len() > 0) {
             var fsc: Scope = build_func_scope(mod.funcs[i], sigs, structs, unions, methods);
             body_diags = append_diags(body_diags, ret_diags(mod.funcs[i].body, fsc, fsc.ret_type, unions));
+            // E052: a non-void function whose body can fall off the end
+            // without returning, reported at the function declaration.
+            if (!block_exits(mod.funcs[i].body)) {
+                body_diags = body_diags.push(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
+            }
         }
         // E005: struct literal missing a declared field (any expression in
         // the body, struct table is module-global so no scope needed).
