@@ -653,3 +653,19 @@ func TestFormatBlankLineAboveComment(t *testing.T) {
 		t.Errorf("got:\n%q\nwant:\n%q", got, want)
 	}
 }
+
+// Format must emit an `@import` extern as the attribute + a body-less `;`
+// signature, not silently rewrite it into an empty-body function (which would
+// drop the binding and change semantics).
+func TestFormatExternImport(t *testing.T) {
+	out := formatSrc(t, `@import("wasi:random/random@0.2.0", "get-random-u64") function r(): u64;`)
+	if !strings.Contains(out, `@import("wasi:random/random@0.2.0", "get-random-u64")`) {
+		t.Errorf("formatted output dropped the @import attribute:\n%s", out)
+	}
+	if !strings.Contains(out, "function r(): u64;") {
+		t.Errorf("formatted output is not a body-less extern:\n%s", out)
+	}
+	if strings.Contains(out, "{}") {
+		t.Errorf("extern must not gain an empty body:\n%s", out)
+	}
+}

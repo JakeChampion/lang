@@ -60,6 +60,15 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 }
 
 func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
+	// A body-less `@import` extern (bring-your-own WIT, P4) renders as the
+	// attribute on its own line; the signature ends with `;` (no block).
+	if fn.ImportIface != "" {
+		b.WriteString("@import(\"")
+		b.WriteString(fn.ImportIface)
+		b.WriteString("\", \"")
+		b.WriteString(fn.ImportWITName)
+		b.WriteString("\")\n")
+	}
 	if fn.Public {
 		b.WriteString("pub ")
 	}
@@ -85,6 +94,10 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 	if fn.ReturnType != nil {
 		b.WriteString(": ")
 		b.WriteString(printType(fn.ReturnType))
+	}
+	if fn.ImportIface != "" {
+		b.WriteString(";\n")
+		return
 	}
 	b.WriteByte(' ')
 	printBlock(b, fn.Body)

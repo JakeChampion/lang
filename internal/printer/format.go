@@ -288,6 +288,18 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 // Receiver clauses go between `function` and the name; the body
 // uses multi-line block formatting at the supplied indent level.
 func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
+	// A body-less `@import` extern (bring-your-own WIT, P4) renders the
+	// attribute on its own line above the signature, which ends with `;`.
+	// Dropping it (the pre-P4 default) silently turned an extern into an
+	// empty-body function — a semantics change.
+	if fn.ImportIface != "" {
+		f.indent(depth)
+		f.b.WriteString("@import(\"")
+		f.b.WriteString(fn.ImportIface)
+		f.b.WriteString("\", \"")
+		f.b.WriteString(fn.ImportWITName)
+		f.b.WriteString("\")\n")
+	}
 	f.indent(depth)
 	if fn.Public {
 		f.b.WriteString("pub ")
@@ -314,6 +326,10 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	if fn.ReturnType != nil {
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(fn.ReturnType))
+	}
+	if fn.ImportIface != "" {
+		f.b.WriteString(";\n")
+		return
 	}
 	f.b.WriteByte(' ')
 	f.formatBlock(fn.Body, depth)
