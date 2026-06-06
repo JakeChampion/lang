@@ -4503,10 +4503,47 @@ func TestEmitExternScalarImport(t *testing.T) {
 	}
 }
 
-// TestEmitExternCompositeRejected — a composite-typed `@import` extern
-// (string / list / record / …) needs the canonical-ABI lift/lower that is
-// P4c, so P4b rejects it up front with a clear message rather than emitting
-// raw pointer slots that don't match the host's ABI.
+// TestEmitExternStringResult — a string/list<u8>-returning `@import` extern
+// (P4c) emits the raw import (with a trailing return-area pointer) and the
+// module exports cabi_realloc so the host can materialize the returned bytes.
+func TestEmitExternStringResult(t *testing.T) {
+	prog := &ir.Program{
+		Externs: []*ir.ExternFunc{{
+			Name:       "random_bytes",
+			Iface:      "wasi:random/random@0.2.0",
+			WITName:    "get-random-bytes",
+			Params:     []ast.Param{{Name: "n", Type: i64()}},
+			ReturnType: ast.StringType{},
+		}},
+		Funcs: []*ir.Func{{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI64, I64: 8},
+				{Kind: ir.OpCallDirect, Str: "random_bytes"},
+				// result is a string pair; drop both halves.
+				{Kind: ir.OpDrop},
+				{Kind: ir.OpDrop},
+				{Kind: ir.OpConstI32, I32: 0},
+			},
+		}},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !bytes.Contains(bin, []byte("wasi:random/random@0.2.0")) || !bytes.Contains(bin, []byte("get-random-bytes")) {
+		t.Fatalf("emitted module missing the extern import")
+	}
+	if !bytes.Contains(bin, []byte("cabi_realloc")) {
+		t.Fatalf("string-result extern must export cabi_realloc for the host to allocate the returned bytes")
+	}
+}
+
+// TestEmitExternCompositeRejected — extern types beyond the supported set
+// (composite parameters, array/record results) need canonical-ABI marshalling
+// that isn't built yet, so they're rejected up front with a clear P4c message
+// rather than emitting slots that don't match the host's ABI.
 func TestEmitExternCompositeRejected(t *testing.T) {
 	mk := func(params []ast.Param, ret ast.Type) *ir.Program {
 		return &ir.Program{
@@ -4525,9 +4562,9 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 		}
 	}
 	cases := map[string]*ir.Program{
-		"string param":  mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, i32()),
-		"string result": mk(nil, ast.StringType{}),
-		"array param":    mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: i32()}}}, i32()),
+		"string param": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, i32()),
+		"array param":  mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: i32()}}}, i32()),
+		"array result": mk(nil, ast.ArrayType{Elem: i32()}),
 	}
 	for name, prog := range cases {
 		t.Run(name, func(t *testing.T) {
