@@ -251,10 +251,14 @@ world-driven composer (P2) wires it.
 
 ### Slice plan
 
-1. **P4a — front end. ✅ Done (Go).** Lexer (no new keyword; `@` exists),
-   parser (`@import(...)` + body-less `function`), AST (FuncDecl import
-   binding), checker (register the extern, type-check calls). Parser + checker
-   tests; no codegen.
+1. **P4a — front end. ✅ Done (Go + self-host).** Lexer (no new keyword; `@`
+   exists), parser (`@import(...)` + body-less `function`), AST (FuncDecl
+   import binding), checker (register the extern, type-check calls). Parser +
+   checker tests; no codegen. Self-host port: `parser.fern`
+   (`parse_import_attr` + body-less `parse_func_decl` + the FuncDecl
+   `import_iface`/`import_wit` fields) and `printer.fern` render + round-trip,
+   gated by the `@import` assertions in the printer self-test
+   (`TestSelfHostPrinterX86_64`).
 2. **P4b — scalar codegen + e2e. ✅ Done (Go).** A body-less `@import`
    function lowers to `ir.ExternFunc` (kept out of `Program.Funcs` so every
    backend's defined-function machinery is untouched); the wasm backend turns

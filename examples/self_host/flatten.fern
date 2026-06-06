@@ -358,7 +358,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             params: rewrite_params(fd.params, ctx),
             ret_type: rewrite_type_name(fd.ret_type, ctx),
             body: rewrite_block(fd.body, ctx),
-            line: fd.line, col: fd.col
+            line: fd.line, col: fd.col,
+            import_iface: fd.import_iface, import_wit: fd.import_wit
         });
         i = i + 1;
     }
