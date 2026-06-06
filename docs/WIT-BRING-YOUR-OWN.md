@@ -312,8 +312,23 @@ world-driven composer (P2) wires it.
      `random_func_p2` builds). Gated by `TestExternU8ArrayResultRunsUnderWasmtime`
      / `TestSelfHostExternU8ArrayResultRunsUnderWasmtime` +
      `TestEmitExternU8ArrayResult`.
-   - Still rejected (next slices): composite **parameters**, non-u8 array
-     results (`i32[]` …), and record/tuple/variant/option/result.
+   - **string parameter — ✅ done (Go).** A `string` extern parameter lowers
+     to the canonical `(ptr, len)` of contiguous UTF-8 bytes. A Fern string
+     arrives SSO-encoded (inline strings pack bytes into the `(data, len)`
+     words), so `buildExternStringParamWrapper` normalizes each string arg to a
+     heap buffer (`emitStrNormalize`) before forwarding it, passing scalars
+     through. Supported alongside a scalar/void result; gated by
+     `TestExternStringParamCustomProvider` (a custom `set: func(s: string)`
+     provider sums the bytes of `"hello"` = 532, exercising both lowered
+     halves) + `TestEmitExternStringParam`. **Composer limitation:** the
+     world-driven composer's memory-param trampolines are result-less (built
+     for WASI's retptr-returning imports), so a single `func(string) -> scalar`
+     can't be wired yet — split into a void setter + a scalar getter, or extend
+     the composer (the trampoline needs a result). Self-host port to follow.
+   - Still rejected (next slices): non-string composite **parameters**
+     (arrays/records), non-u8 array results (`i32[]` …), and
+     record/tuple/variant/option/result. The multi-component harness
+     (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern

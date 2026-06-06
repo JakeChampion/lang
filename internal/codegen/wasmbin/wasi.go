@@ -763,13 +763,18 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		if !used[ex.Name] {
 			continue
 		}
-		// Parameters must be scalar. Composite extern *parameters* (lowering a
-		// Fern string/list into the canonical (ptr,len) args) are a later P4c
-		// slice; rejecting them avoids emitting raw pointer slots that don't
-		// match the host's ABI (a silent miscompile).
+		// Parameters must be scalar or `string` (a string lowers to the
+		// canonical (ptr,len) via the param wrapper below). Other composite
+		// params — arrays, records — aren't lowered yet; reject them rather
+		// than emit slots that don't match the host's ABI.
+		hasStringParam := false
 		for _, p := range ex.Params {
+			if isStringType(p.Type) {
+				hasStringParam = true
+				continue
+			}
 			if !externScalarType(p.Type) {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; composite extern parameters are not supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar and string extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 			}
 		}
 		params, err := paramValtypes(ex.Params)
@@ -782,6 +787,36 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		if !isVoid {
 			_, isVoid = ret.(ast.VoidType)
 		}
+
+		// A `string` parameter (P4c): the Fern string is normalized to the
+		// canonical (ptr,len) by a generated wrapper before the raw import is
+		// called. Only a scalar/void result is supported alongside string
+		// params for now (a composite result there would need both marshalling
+		// directions at once).
+		if hasStringParam {
+			if !(isVoid || externScalarType(ret)) {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): a string parameter with a composite result is not supported yet (P4c)", ex.Name, ex.Iface, ex.WITName)
+			}
+			results, err := resultValtypes(ret)
+			if err != nil {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+			}
+			rawName := ex.Name + "$import"
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: params, results: results}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: results,
+				body:    buildExternStringParamWrapper(ex.Params, rawName),
+			}
+			helpers.add(ex.Name)
+			// emitStrNormalize's dependencies.
+			helpers.add("__fern_alloc")
+			helpers.add("__fern_str_len")
+			helpers.add("__fern_str_byte")
+			continue
+		}
+
 		switch {
 		case isVoid || externScalarType(ret):
 			// Scalar / void result: the Fern name resolves straight to the

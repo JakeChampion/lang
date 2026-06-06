@@ -16,6 +16,7 @@
 package wasmbin
 
 import (
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
@@ -127,6 +128,53 @@ func buildExternListU8ResultWrapper(nparams int, rawImport string) func(map[stri
 		body = numeric.InstI32Add(body)
 
 		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
+// buildExternStringParamWrapper handles an extern with one or more `string`
+// parameters and a scalar (or void) result (P4c). A WIT `string`/`list<u8>`
+// parameter lowers to the canonical `(ptr, len)` of contiguous UTF-8 bytes,
+// but a Fern string arrives as an SSO-encoded `(data, len)` pair whose data is
+// not a raw pointer for inline strings. The wrapper normalizes each string
+// param to a heap buffer (emitStrNormalize) before forwarding it, passing
+// scalar params straight through, then calls the raw import; its scalar result
+// (if any) is left on the stack.
+//
+// The wrapper's params mirror the flattened Fern signature (string → 2 i32
+// slots); 3 i32 scratch locals (buf, byteLen, i), reused across string params,
+// follow the param slots.
+func buildExternStringParamWrapper(params []ast.Param, rawImport string) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		imp := idxs[rawImport]
+		nSlots := uint32(0)
+		for _, p := range params {
+			if isStringType(p.Type) {
+				nSlots += 2
+			} else {
+				nSlots++
+			}
+		}
+		bufL, byteLenL, iL := nSlots, nSlots+1, nSlots+2
+
+		var body []byte
+		slot := uint32(0)
+		for _, p := range params {
+			if isStringType(p.Type) {
+				// (data@slot, len@slot+1) → normalized (bufL, byteLenL).
+				body = emitStrNormalize(body, idxs, slot, slot+1, bufL, byteLenL, iL)
+				body = inst.InstLocalGet(body, bufL)
+				body = inst.InstLocalGet(body, byteLenL)
+				slot += 2
+			} else {
+				body = inst.InstLocalGet(body, slot)
+				slot++
+			}
+		}
+		body = inst.InstCall(body, imp)
+		// A scalar result from the call is the wrapper's result.
+
+		locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // buf, byteLen, i
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
