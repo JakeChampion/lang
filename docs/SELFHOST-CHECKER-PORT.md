@@ -648,11 +648,25 @@ same code(s) the Go checker does — restricted to
   function's TOTAL type-param count since the self-host erases unbounded
   generics, and position at the `[` not the `(`), and a partial version
   emits a wrong count/position. The rest (E015 multi-payload patterns,
-  E024 tuple destructure, E025 switch, E027 match guards, E022 let-else,
-  E044 typed closure captures, E050/E051 move checking, E021 impl
-  conformance) each require a language feature the self-host compiler
-  doesn't yet support end-to-end — they're feature work across
-  parser + all backends + checker, not checker-only rules.
+  E025 switch, E027 match guards, E022 let-else, E044 typed closure
+  captures, E050/E051 move checking, E021 impl conformance) each require
+  a language feature the self-host compiler doesn't yet support end-to-end
+  — they're feature work across parser + all backends + checker, not
+  checker-only rules.
+- **Slice 56 (done): E024 — tuple destructure of a non-tuple / wrong
+  arity.** The parser already lowers `var (a, b) = E` to a `StmtVar` whose
+  `name` is `"a,b"`, so this is checker-only after all (not a missing
+  feature). In the scope-aware var walk, a comma-named `StmtVar` whose
+  init types to a non-tuple is E024 (`tuple destructure needs a tuple
+  expression, got <type>`); a tuple whose element count ≠ the name count
+  is the other E024 (`tuple has N elements, but M names given`). An
+  unresolved (`unknown`) init is skipped. `var (a, b) = n` for `n: i32` →
+  `1:35: error[E024]`, matching Go's code, position, and message; a real
+  `var (a, b) = (1, 2)` stays clean. Zero false positives across all
+  fifteen modules (the bundle only mentions destructuring in comments,
+  never destructures a non-tuple). Checker-only (fixpoint-safe). Gated by
+  new corpus (`tuple-destructure-non-tuple`, `tuple-destructure-ok`) and
+  `check-position-tuple-destructure`.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

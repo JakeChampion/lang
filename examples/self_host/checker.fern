@@ -2524,6 +2524,27 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                         out = out.push(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared), v.line, v.col));
                     }
                 }
+                // E024: a tuple destructure `var (a, b) = E` (the parser
+                // encodes the names as "a,b") requires E to be a tuple whose
+                // element count matches the number of names.
+                var ncommas: i32 = 0;
+                var ci: i32 = 0;
+                while (ci < v.name.len()) { if (v.name[ci] == 44) { ncommas = ncommas + 1; } ci = ci + 1; }
+                if (ncommas > 0) {
+                    var nnames: i32 = ncommas + 1;
+                    var dit: Type = check_expr(v.init, cur);
+                    match (dit) {
+                        TypeTuple(dtt) => {
+                            if (dtt.elements.len() != nnames) {
+                                out = out.push(dg_at("E024", "tuple has " + itoa_nn(dtt.elements.len()) + " elements, but " + itoa_nn(nnames) + " names given", v.line, v.col));
+                            }
+                        },
+                        TypeUnknown(_) => { },
+                        _ => {
+                            out = out.push(dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(dit), v.line, v.col));
+                        }
+                    }
+                }
             },
             parser.StmtAssign(a) => {
                 var tt: Type = cur.lookup(a.target);

@@ -57,6 +57,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E016": true, // union alias collides with a struct of the same name
 	"E052": true, // missing return (non-void body can fall off the end)
 	"E021": true, // method receiver references an unknown type
+	"E024": true, // tuple destructure of a non-tuple / wrong arity
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -281,6 +282,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-unknown-receiver", "function (r: Nope) m(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"method-struct-receiver-ok", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return p.x; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"method-builtin-receiver-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"tuple-destructure-non-tuple", "function main(): i32 { var n = 5; var (a, b) = n; return 0; }\n", []string{"E024"}},
+		{"tuple-destructure-ok", "function main(): i32 { var t = (1, 2); var (a, b) = t; return a + b; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
