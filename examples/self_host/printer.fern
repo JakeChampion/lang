@@ -245,7 +245,13 @@ function print_stmt(st: parser.Stmt, depth: i32): string {
 // =================== MODULE ====================
 
 function print_func_decl(fd: parser.FuncDecl): string {
-    var out: string = "function ";
+    // An `@import` extern (P4 — docs/WIT-BRING-YOUR-OWN.md) renders as the
+    // attribute on its own line followed by a body-less function (`;`).
+    var out: string = "";
+    if (fd.import_iface.len() > 0) {
+        out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
+    }
+    out = out + "function ";
     // Receiver clause: `(recv: RecvType)` after `function` and
     // before the method name. Both fields empty for plain funcs.
     if (fd.receiver_name.len() > 0) {
@@ -265,6 +271,10 @@ function print_func_decl(fd: parser.FuncDecl): string {
     }
     out = out + ")";
     if (fd.ret_type.len() > 0) { out = out + ": " + fd.ret_type; }
+    if (fd.import_iface.len() > 0) {
+        out = out + ";\n";
+        return out;
+    }
     out = out + " " + print_block(fd.body, 0) + "\n";
     return out;
 }
@@ -634,6 +644,24 @@ function main(): i32 {
         },
         _ => { return 176; }
     }
+
+    // @import extern declaration round-trip (P4 — docs/WIT-BRING-YOUR-OWN.md):
+    // a body-less function bound by `@import("iface", "wit")` survives parse →
+    // print → re-parse with both binding strings intact and an empty body.
+    var srcI: string = "@import(\"wasi:random/random@0.2.0\", \"get-random-u64\")\nfunction random_u64(): u64; function main(): i32 { return 0; }";
+    var modI: parser.Module = parser.parse_module(lexer.tokenize(srcI));
+    if (modI.funcs.len() != 2) { return 180; }
+    if (modI.funcs[0].name != "random_u64") { return 181; }
+    if (modI.funcs[0].import_iface != "wasi:random/random@0.2.0") { return 182; }
+    if (modI.funcs[0].import_wit != "get-random-u64") { return 183; }
+    if (modI.funcs[0].body.len() != 0) { return 184; }
+    // Ordinary functions carry empty binding strings.
+    if (modI.funcs[1].import_iface.len() != 0) { return 185; }
+    var rtI: parser.Module = roundtrip_module(srcI);
+    if (rtI.funcs.len() != 2) { return 186; }
+    if (rtI.funcs[0].import_iface != "wasi:random/random@0.2.0") { return 187; }
+    if (rtI.funcs[0].import_wit != "get-random-u64") { return 188; }
+    if (rtI.funcs[0].body.len() != 0) { return 189; }
 
     return 0;
 }

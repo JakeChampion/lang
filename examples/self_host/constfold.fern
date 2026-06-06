@@ -308,7 +308,8 @@ pub function fold_module(mod: parser.Module): parser.Module {
             params: fd.params,
             ret_type: fd.ret_type,
             body: fold_block(fd.body),
-            line: fd.line, col: fd.col
+            line: fd.line, col: fd.col,
+            import_iface: fd.import_iface, import_wit: fd.import_wit
         });
         i = i + 1;
     }
