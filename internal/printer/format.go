@@ -208,6 +208,7 @@ func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
 // form is a follow-up; for now this matches the parser-accepted
 // shape and keeps round-trips byte-stable for short enums.
 func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
+	f.writeDeriveAttr(ed.Derives)
 	if ed.Public {
 		f.b.WriteString("pub ")
 	}
@@ -266,7 +267,25 @@ func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
 	f.b.WriteString(";\n")
 }
 
+// writeDeriveAttr emits `@derive(Trait, …)` on its own line when the decl
+// carries derives. Dropping it (the pre-existing default) silently removed the
+// derived trait impls — a semantics change `fern -fmt` would bake in.
+func (f *formatter) writeDeriveAttr(derives []string) {
+	if len(derives) == 0 {
+		return
+	}
+	f.b.WriteString("@derive(")
+	for i, d := range derives {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		f.b.WriteString(d)
+	}
+	f.b.WriteString(")\n")
+}
+
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
+	f.writeDeriveAttr(sd.Derives)
 	if sd.Public {
 		f.b.WriteString("pub ")
 	}

@@ -669,3 +669,16 @@ func TestFormatExternImport(t *testing.T) {
 		t.Errorf("extern must not gain an empty body:\n%s", out)
 	}
 }
+
+// Format must preserve `@derive(...)` on structs and enums — dropping it
+// silently removed the derived trait impls (a semantics change).
+func TestFormatDeriveAttr(t *testing.T) {
+	out := formatSrc(t, `@derive(Eq, Display) struct P { x: i32, y: i32 } function main(): i32 { return 0; }`)
+	if !strings.Contains(out, "@derive(Eq, Display)") {
+		t.Errorf("formatted output dropped @derive on a struct:\n%s", out)
+	}
+	eout := formatSrc(t, `@derive(Eq) enum Color { Red, Green } function main(): i32 { return 0; }`)
+	if !strings.Contains(eout, "@derive(Eq)") {
+		t.Errorf("formatted output dropped @derive on an enum:\n%s", eout)
+	}
+}

@@ -343,3 +343,11 @@ func TestRoundtripExternImport(t *testing.T) {
 function rand_bytes(n: u64): u8[];
 function main(): i32 { return 0; }`)
 }
+
+// `@derive(...)` on a struct must survive Print → re-parse with the trait
+// list intact (Print formerly dropped it, losing the derives).
+func TestRoundtripDeriveAttr(t *testing.T) {
+	roundTrip(t, `@derive(Eq, Display)
+struct P { x: i32, y: i32 }
+function main(): i32 { return 0; }`)
+}
