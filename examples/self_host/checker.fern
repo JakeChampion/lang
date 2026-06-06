@@ -2824,7 +2824,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                     // variant / builtin to confuse it with, hence no
                     // allowlist needed. Reported at the `=` token (the
                     // assignment position the parser captured).
-                    out = out.push(dg_at("E001", "undefined name \"" + a.target + "\"", a.line, a.col));
+                    out = out.push(dg_at("E001", "undefined name \"" + a.target + "\"", a.target_line, a.target_col));
                 } else {
                     var tt: Type = cur.lookup(a.target);
                     var vt: Type = check_expr(a.value, cur);

@@ -1195,7 +1195,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     var incr: parser.Stmt = parser.StmtAssign { target: i_name,
         value: parser.ExprBinary { line: 0, col: 0, op: "+",
             left: parser.ExprIdent { name: i_name, line: 0, col: 0 },
-            right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0 };
+            right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var wbody: parser.Stmt[] = [incr];
     // `for (k, v) in m` — the parser joins the two names as "k,v". A comma in
     // the loop variable means map iteration: bind each via __ssa_map_key_at /
