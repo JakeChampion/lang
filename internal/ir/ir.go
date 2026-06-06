@@ -2198,6 +2198,22 @@ type builder struct {
 	// dec instead. Computed once by computeFreeEligible. See
 	// docs/RC-PERCEUS-PLAN.md (the borrow⇄free resolution).
 	freeEligible map[string]bool
+	// consumedParams[name] is true for a pointer-shaped struct/tuple/enum
+	// PARAMETER that the borrow model would keep borrowed (its type is not
+	// owned-by-default — e.g. it carries a string field) but that the function
+	// THREADS: it is reassigned in the body (`s = s.emit(..)`, `ctx =
+	// check_stmt(.., ctx)`). The reassignment-overwrite dec's the old value, so
+	// a borrowed such param is over-released (the caller's value dec'd with no
+	// caller-side inc). computeConsumedParams promotes it to callee-owned: it is
+	// NOT borrow-tainted in computeFreeEligible (so it becomes freeEligible and
+	// the overwrite / exit-sweep deep-drop it), and lowerFunc emits a single
+	// entry-inc so the first overwrite-dec balances. This is purely
+	// callee-internal — the call ABI is unchanged (the caller still passes it
+	// borrowed), so no caller-side coordination is needed. It is the
+	// borrow-inference fix for the O(N^2) self-reassign accumulator leak: the
+	// self-host SSA builder / emitter thread their string-bearing accumulators
+	// through such params, which previously could not deep-drop the old value.
+	consumedParams map[string]bool
 	// closureTarget[localName] = the hoisted closure FuncName a
 	// FuncType local was assigned via `var f = MakeClosure{...}`.
 	// Lets emitDec dispatch a closure's drop to the per-closure
@@ -2448,7 +2464,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		// returned-as-alias), so an owned-but-escaping param leaks safely
 		// instead of double-freeing. Move-on-consume (passing it onward to
 		// another `own` param) skips its drop via computeMovedLocals.
-		if !p.Own && !b.paramOwnedByDefault(p.Type, i) {
+		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.consumedParams[p.Name] {
 			tainted[p.Name] = true
 		}
 	}
@@ -2734,8 +2750,10 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// own param that escapes was re-tainted and is skipped here).
 	for i, p := range b.fn.Params {
 		// `own` params and (Slice 2) owned-by-default params are both reclaimed
-		// by the callee; an escaped one was re-tainted and is skipped here.
-		if (!p.Own && !b.paramOwnedByDefault(p.Type, i)) || tainted[p.Name] {
+		// by the callee; a consumed-threaded param (computeConsumedParams) is
+		// promoted to callee-owned the same way. An escaped one was re-tainted
+		// and is skipped here.
+		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.consumedParams[p.Name]) || tainted[p.Name] {
 			continue
 		}
 		switch t := p.Type.(type) {
@@ -4305,7 +4323,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// at the end of the transfer chain; an own param that escaped is not
 	// freeEligible (re-tainted) and is likewise skipped.
 	for i, p := range b.fn.Params {
-		if (!p.Own && !b.paramOwnedByDefault(p.Type, i)) || !rcTracked(p.Type) || seen[p.Name] || !b.freeEligible[p.Name] {
+		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.consumedParams[p.Name]) || !rcTracked(p.Type) || seen[p.Name] || !b.freeEligible[p.Name] {
 			continue
 		}
 		seen[p.Name] = true
@@ -5712,16 +5730,18 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		{Kind: OpIf, I32: BlockTypeVoid},
 	}
 	for _, f := range sd.Fields {
-		_, isStr := f.Type.(ast.StringType)
-		isStr = isStr && ast.UseTwoWordStrings(ptrW)
-		if !arrElemIsRcTracked(f.Type) && !isStr {
+		_, isTwoWordStr := f.Type.(ast.StringType)
+		isTwoWordStr = isTwoWordStr && ast.UseTwoWordStrings(ptrW)
+		_, isNativeStr := f.Type.(ast.StringType)
+		isNativeStr = isNativeStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW)
+		if !arrElemIsRcTracked(f.Type) && !isTwoWordStr && !isNativeStr {
 			continue
 		}
 		ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 		if off := offs[f.Name]; off != 0 {
 			ops = append(ops, Op{Kind: OpConstI32, I32: off}, Op{Kind: OpAdd})
 		}
-		if isStr {
+		if isTwoWordStr {
 			// Two-word string field: load (data, len) and reclaim via
 			// __fern_str_dec at the struct's last reference. Inline and
 			// static-literal strings are no-ops (flag / sentinel); a
@@ -5733,6 +5753,22 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 			ops = append(ops, Op{Kind: OpLoad, Width: WidthString})
 			ops = append(ops,
 				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpDrop})
+			continue
+		}
+		if isNativeStr {
+			// Native single-word string field (x86_64, !TwoWordOverride):
+			// load the single data pointer and reclaim via __fern_rc_dec
+			// (SSO inline-tag low-bit guard + literal sentinel keep all
+			// sources safe). This mirrors the inline exit-sweep struct
+			// branch (emitDec) and appendChildDrop's native-string case;
+			// without it __drop_struct_<N> leaked every native string
+			// field, so a string-bearing struct routed through the
+			// generated drop (nested field / overwrite / consumed param)
+			// over-counted its string buffers forever.
+			ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
+			ops = append(ops,
+				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
 				Op{Kind: OpDrop})
 			continue
 		}
@@ -6030,6 +6066,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		b.locals[v.Name] = int32(len(fn.Params) + i)
 	}
 	b.nextSlot = int32(len(fn.Params) + len(info.Locals[fn]))
+	// Consumed-threaded params (borrow-inference fix): a borrowed struct/tuple/
+	// enum param that the function reassigns is promoted to callee-owned so its
+	// reassignment-overwrite can deep-drop the old value without over-releasing
+	// (paired with the entry-inc emitted below). Computed before freeEligible,
+	// which consults it (a consumed param is not borrow-tainted).
+	b.consumedParams = b.computeConsumedParams()
 	// Borrow-aware free analysis: which array locals are OWNED and
 	// thus safe to return to the freelist at rc==0. Borrowed /
 	// borrowed-derived locals are excluded (only the owner frees).
@@ -6128,6 +6170,29 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		}
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
+	// Consumed-threaded param entry-inc: a promoted consumed param (see
+	// computeConsumedParams) is reclaimed callee-side — its reassignment-
+	// overwrites and the exit sweep deep-drop it — but the caller passes it
+	// BORROWED (no caller-side retain inc). Emit one retain inc at entry so the
+	// callee owns a reference: the first overwrite-dec (or the exit-sweep dec on
+	// a path that never reassigns) balances it, while a still-shared value stays
+	// rc>1 and is only flat-dec'd (never freed out from under the caller). Gated
+	// on freeEligible — if the escape analysis re-tainted the param (it flows
+	// into a retain sink) it is not deep-dropped, so no entry-inc is owed.
+	if ast.RcFreeEnabled {
+		for _, p := range fn.Params {
+			if !b.consumedParams[p.Name] || !b.freeEligible[p.Name] {
+				continue
+			}
+			slot, ok := b.locals[p.Name]
+			if !ok {
+				continue
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
 	}
 	// Perceus precise drops (garbage-free, straight-line subset): drop an
 	// owned rc local right after its last top-level use instead of at the
@@ -14331,6 +14396,134 @@ func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool
 	return false
 }
 
+// computeConsumedParams identifies pointer-shaped struct / tuple / enum
+// PARAMETERS that this function THREADS — reassigns somewhere in its body
+// (`s = s.emit(..)`, `ctx = check_stmt(.., ctx)`) — but that the borrow model
+// would otherwise keep borrowed because their type is not owned-by-default
+// (typically because it carries a string field, which isOwnedByDefaultType
+// excludes). Reassigning such a param dec's the OLD value on the overwrite, so
+// a BORROWED such param is over-released: the caller's value is dec'd with no
+// caller-side retain inc. Promoting it to callee-owned — not borrow-tainted in
+// computeFreeEligible (so it becomes freeEligible and the overwrite / exit
+// sweep deep-drop it) plus one entry-inc in lowerFunc — keeps the rc accurate
+// (a still-shared value stays rc>1 and is only flat-dec'd, never freed) and
+// lets the old value's nested heap be reclaimed. That is the borrow-inference
+// fix for the O(N^2) self-reassign accumulator leak (the self-host SSA builder
+// / emitter thread their string-bearing BState / EmitState through such params).
+//
+// The promotion is purely callee-internal: the call ABI is unchanged (the
+// caller still passes the arg borrowed), so calleeParamOwnedByDefault stays
+// false and no caller-side coordination is needed. TRMC functions are excluded
+// (their exit bypasses the param sweep).
+func (b *builder) computeConsumedParams() map[string]bool {
+	res := map[string]bool{}
+	if !ast.RcFreeEnabled || b.fn.Body == nil || b.trmcFuncs[b.fn.Name] {
+		return res
+	}
+	reassigned := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if id, ok := a.Target.(*ast.Ident); ok {
+				reassigned[id.Name] = true
+			}
+		}
+		return true
+	})
+	for i, p := range b.fn.Params {
+		// Skip params the borrow model already balances: an `own` param (caller
+		// move) or an owned-by-default one (caller inc).
+		if p.Own || b.paramOwnedByDefault(p.Type, i) {
+			continue
+		}
+		if !reassigned[p.Name] {
+			continue
+		}
+		// Structs / tuples only. Enum params are left on the borrow baseline:
+		// the self-host accumulators are all structs, and an array-payload enum
+		// has the deep-drop / self-overwrite-reuse interaction owned-by-default
+		// (sub-slice 2a) deliberately keeps out of scope.
+		switch p.Type.(type) {
+		case ast.StructType, ast.TupleType:
+		default:
+			continue
+		}
+		// Only types owned-by-default EXCLUDES — string/array-bearing ones.
+		// A string/array-free struct is already handled by owned-by-default
+		// (when that flag is on) and must stay on the borrow baseline when it
+		// is off; promoting it here would diverge the OwnedByDefault-vs-borrow
+		// differential gate. consumedDropWired keeps Map / slice / unwired
+		// shapes out (their deep drop is incomplete).
+		if b.typeIsStringArrayFree(p.Type, map[string]bool{}) {
+			continue
+		}
+		if !consumedDropWired(p.Type, b.info, map[string]bool{}) {
+			continue
+		}
+		res[p.Name] = true
+	}
+	return res
+}
+
+// consumedDropWired reports whether a value of type `t` is fully reclaimed by
+// the generated deep-drop machinery (__drop_struct_ / __drop_enum_ /
+// __drop_tuple_ / the array / string helpers) on EVERY backend — the
+// precondition for promoting a threaded param to callee-owned. It allows
+// scalars, strings (the native single-word drop gap in genStructDropFn is now
+// closed), and arrays / structs / enums / tuples of wired types; it rejects Map
+// (its deep drop is incomplete), slices, closures, and unknown / generic /
+// runtime-handle types whose drop is not statically wired.
+func consumedDropWired(t ast.Type, info *checker.Info, seen map[string]bool) bool {
+	switch ty := t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType, ast.StringType:
+		return true
+	case ast.ArrayType:
+		return consumedDropWired(ty.Elem, info, seen)
+	case ast.TupleType:
+		for _, e := range ty.Elems {
+			if !consumedDropWired(e, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if ty.Name == "Map" {
+			return false
+		}
+		if seen["s:"+ty.Name] {
+			return true
+		}
+		seen["s:"+ty.Name] = true
+		sd, ok := info.Structs[ty.Name]
+		if !ok {
+			return false // runtime handle (Reader / Writer / MapIter) / unknown
+		}
+		for _, f := range sd.Fields {
+			if !consumedDropWired(f.Type, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen["e:"+ty.Name] {
+			return true
+		}
+		seen["e:"+ty.Name] = true
+		ed, ok := info.Enums[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, v := range ed.Variants {
+			for _, pl := range v.Payloads {
+				if !consumedDropWired(pl, info, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func structOrEnumTypeOfLocal(name string, b *builder) (ast.Type, bool) {
 	t, ok := b.localDeclType(name)
 	if !ok {
@@ -15504,6 +15697,21 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.scratchType[vSlot] = elemType
 	if err := b.expr(n.Args[1]); err != nil {
 		return err
+	}
+	// Element retain: pushing an ALIASED pointer element (`ninsts.push(ins)`
+	// where ins reads from another array / a field) stores its pointer into the
+	// new buffer, so the buffer now CO-OWNS the reference — inc it, mirroring the
+	// array-literal element inc (needsRcIncOnAlias) and the struct-field-init
+	// inc. Without this the buffer held an uncounted alias: when the source
+	// container was reclaimed (e.g. the self-host SSA optimiser overwrites the
+	// SFunc whose old blocks' insts the new blocks reuse) the buffer's
+	// drop_arr_ptr over-released the shared element. A FRESH element (a call
+	// result / literal) isn't an alias and is moved in as-is; a moved last-use
+	// owned local likewise transfers its single reference (b.moveSites). Reuse
+	// emitAliasInc on the value already on the stack (it returns it for the
+	// store below).
+	if needsRcIncOnAlias(n.Args[1], b) && !b.moveSites[n.Args[1]] {
+		b.emitAliasInc(n.Args[1])
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: vSlot})
 
