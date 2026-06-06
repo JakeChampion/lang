@@ -688,11 +688,13 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             // push position but accepts it as a function argument
             // (cf. e_call(base, …) above). Without this branch the
             // parser would stall on the `as` keyword.
+            var asline: i32 = p.peek_line();
+            var ascol: i32 = p.peek_col();
             p = p.advance();
             var tyname: string = p.peek_ident();
             if (tyname.len() == 0) { tyname = p.peek_keyword(); }
             if (tyname.len() > 0) { p = p.advance(); }
-            base = e_unary("as_" + tyname, base);
+            base = e_unary_at("as_" + tyname, base, asline, ascol);
         } else if (p.peek_punct() == "?") {
             // `expr?` try operator. Desugar to the unary op `try_`
             // (operand = base); the emitter unwraps a Some/Ok payload

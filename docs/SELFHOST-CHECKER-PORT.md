@@ -667,6 +667,32 @@ same code(s) the Go checker does — restricted to
   never destructures a non-tuple). Checker-only (fixpoint-safe). Gated by
   new corpus (`tuple-destructure-non-tuple`, `tuple-destructure-ok`) and
   `check-position-tuple-destructure`.
+- **Slice 57 (done): E033 — invalid `as` cast (bool ↔ non-bool scalar).**
+  `x as T` desugars (parser) to the unary op `as_<T>` (operand = `x`).
+  The Go checker's E033 allows numeric↔numeric casts plus the
+  string↔i32 / struct/array/string→i32 data-pointer hops, and rejects
+  everything else (verified empirically: `bool as i32`, `i32 as bool`,
+  `bool as string`, `string as bool`, … → E033; `i32 as f64`,
+  `string as i32`, `i32 as string`, `bool as bool` → OK). The self-host
+  models a **sound, zero-false-positive subset**: a cast between a `bool`
+  and any other concrete scalar (either direction) — the unambiguous
+  bug class. Numeric/string conversions (which the self-host's own
+  source uses, e.g. `as i32` / `as u32` / `as u8`) stay accepted, and
+  the bundle never casts a `bool`, so there are no false positives
+  (verified: the codes differential + the bundle compile stay green).
+  The cast unary node now carries the **`as` keyword's** position (the
+  parser switched `e_unary` → `e_unary_at`, capturing `peek_line`/`col`
+  before advancing), matching the Go checker's `CastExpr.P`, so E033
+  prints `1:56: error[E033]` for `b as i32`. parser.fern is in the
+  fixpoint bundle, but the new position is codegen-ignored, so the
+  byte-identical fixpoint holds (x86 verified). Gated by new corpus
+  (`cast-bool-to-i32`, `cast-i32-to-bool`, `cast-bool-to-string`,
+  `cast-string-to-bool`, plus four `cast-*-ok` cases) and a new
+  `check-position-cast` CLI case. *Limitation recorded:* the wider
+  non-bool E033 classes Go also catches (`f64 as string`,
+  `string as f64`, struct/array → bool, …) need the self-host to model
+  each target width and the allowed-hop matrix precisely; the bool
+  discriminator is the provably-sound first cut.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

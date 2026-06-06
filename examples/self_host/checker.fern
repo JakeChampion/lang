@@ -2141,6 +2141,28 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     out = out.push(dg_at("E009", "operator \"!\" requires boolean, got " + type_label(ot), u.line, u.col));
                 }
             }
+            // E033: an invalid `as` cast. `x as T` desugars to the
+            // unary op `as_<T>` (operand = x). The Go checker allows
+            // numeric↔numeric casts plus the string↔i32 data-pointer
+            // hops; everything else is E033. The self-host models a
+            // sound, zero-false-positive subset: a cast between a
+            // `bool` and any other concrete scalar (either direction)
+            // is the unambiguous bug class — numeric/string conversions
+            // (which the self-host source does use) stay accepted, and
+            // the bundle never casts a bool, so no false positives.
+            // Positioned at the `as` keyword to match the Go checker
+            // (whose CastExpr position is the `as` token).
+            if (u.op.len() > 3 && u.op[0:3] == "as_") {
+                var tgt: Type = type_from_name(u.op[3:u.op.len()]);
+                var cot: Type = check_expr(u.operand, s);
+                if (!is_unknown(tgt) && !is_unknown(cot)) {
+                    var tgt_bool: boolean = type_eq(tgt, t_bool());
+                    var src_bool: boolean = type_eq(cot, t_bool());
+                    if (tgt_bool != src_bool) {
+                        out = out.push(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
+                    }
+                }
+            }
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;

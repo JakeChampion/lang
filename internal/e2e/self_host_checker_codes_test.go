@@ -58,6 +58,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E052": true, // missing return (non-void body can fall off the end)
 	"E021": true, // method receiver references an unknown type
 	"E024": true, // tuple destructure of a non-tuple / wrong arity
+	"E033": true, // invalid cast (bool ↔ non-bool scalar)
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -284,6 +285,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-builtin-receiver-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"tuple-destructure-non-tuple", "function main(): i32 { var n = 5; var (a, b) = n; return 0; }\n", []string{"E024"}},
 		{"tuple-destructure-ok", "function main(): i32 { var t = (1, 2); var (a, b) = t; return a + b; }\n", nil},
+		{"cast-bool-to-i32", "function main(): i32 { var b: boolean = true; return b as i32; }\n", []string{"E033"}},
+		{"cast-i32-to-bool", "function main(): i32 { var x: i32 = 1; var b: boolean = x as boolean; return 0; }\n", []string{"E033"}},
+		{"cast-bool-to-string", "function main(): i32 { var b: boolean = true; var s: string = b as string; return 0; }\n", []string{"E033"}},
+		{"cast-string-to-bool", "function main(): i32 { var s: string = \"x\"; var b: boolean = s as boolean; return 0; }\n", []string{"E033"}},
+		{"cast-numeric-ok", "function main(): i32 { var x: i32 = 1; var y: f64 = x as f64; return 0; }\n", nil},
+		{"cast-string-to-i32-ok", "function main(): i32 { var s: string = \"x\"; return s as i32; }\n", nil},
+		{"cast-i32-to-string-ok", "function main(): i32 { var x: i32 = 1; var s: string = x as string; return 0; }\n", nil},
+		{"cast-bool-to-bool-ok", "function main(): i32 { var b: boolean = true; var c: boolean = b as boolean; return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
