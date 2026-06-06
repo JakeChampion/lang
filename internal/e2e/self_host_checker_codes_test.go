@@ -319,6 +319,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"assign-loop-var-target-ok", "function main(): i32 { var xs = [1, 2, 3]; for x in xs { x = 9; } return 0; }\n", nil},
 		{"assign-match-payload-target-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(v) => { v = 7; }, Nil => { } } return 0; }\n", nil},
 		{"assign-destructure-target-ok", "function main(): i32 { var t = (1, 2); var (a, b) = t; a = 9; return a + b; }\n", nil},
+		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
+		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
+		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},
+		{"callee-variant-ctor-ok", "function f(): Option[i32] { return Some(1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"callee-closure-ok", "function main(): i32 { var f = function(x: i32): i32 { return x; }; return f(7); }\n", nil},
+		{"value-builtin-as-value-ok", "function main(): i32 { var w = write; return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

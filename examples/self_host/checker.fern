@@ -429,6 +429,66 @@ function is_resolvable_value(name: string, s: Scope): boolean {
     if (variant_in_unions(name, s.unions)) { return true; }
     if (is_builtin_variant(name)) { return true; }
     if (s.lookup_struct(name).name.len() > 0) { return true; }
+    // A function — user or builtin — may also be referenced as a bare
+    // value (e.g. `var w = write;` or passing a function by name).
+    if (name.len() >= 2 && name[0:2] == "__") { return true; }
+    if (is_builtin_function(name)) { return true; }
+    return false;
+}
+
+// is_builtin_function reports whether `name` is a compiler builtin that can
+// be called without a declaration — the front-end's intrinsics + runtime
+// helpers. Used by the call-callee E001 check. Runtime intrinsics are all
+// `__`-prefixed (handled by the caller's prefix test); this is the
+// user-facing / lowered-helper set, a superset of the Go checker's
+// FuncSigs builtins and the self-host emitter's dispatched names.
+// Over-inclusion is safe (it only suppresses E001 for that name), so the
+// list errs toward completeness.
+function is_builtin_function(name: string): boolean {
+    // I/O + process + environment
+    if (name == "print" || name == "write" || name == "eprint"
+        || name == "print_int" || name == "eprint_int" || name == "putchar"
+        || name == "exit" || name == "args" || name == "arg_at"
+        || name == "args_count" || name == "env" || name == "subprocess") { return true; }
+    // stdin / readers
+    if (name == "stdin" || name == "stdout" || name == "stderr"
+        || name == "read_line" || name == "read_int" || name == "read_all_stdin"
+        || name == "open_reader" || name == "open_writer" || name == "open_appender") { return true; }
+    // filesystem
+    if (name == "read_file" || name == "write_file" || name == "read_dir"
+        || name == "remove_dir_all" || name == "remove_file" || name == "stat"
+        || name == "temp_dir") { return true; }
+    // clocks + randomness + sleep
+    if (name == "now_unix_ms" || name == "now_ns" || name == "monotonic_ns"
+        || name == "sleep_ms" || name == "random_bytes" || name == "random_i32") { return true; }
+    // maps + string builder + bytes + the free-function `len(a)` form.
+    // (`len` is a self-host emitter builtin — the self-host accepts both
+    // `a.len()` and `len(a)`. The Go checker only accepts `a.len()` and
+    // reports E001 on `len(a)`, so this is a deliberate leniency vs Go,
+    // like the `bool`/`boolean` one; not differentially tested.)
+    if (name == "map_new" || name == "map_new_i32"
+        || name == "strbuf_append" || name == "strbuf_reset" || name == "strbuf_take"
+        || name == "string_from_bytes" || name == "chr" || name == "len") { return true; }
+    // float / int bit reinterprets
+    if (name == "f64_bits" || name == "f64_from_bits"
+        || name == "f32_bits" || name == "f32_from_bits") { return true; }
+    // networking
+    if (name == "tcp_listen" || name == "tcp_accept" || name == "tcp_recv"
+        || name == "tcp_send" || name == "tcp_close" || name == "udp_send") { return true; }
+    return false;
+}
+
+// is_resolvable_callee reports whether a bare-identifier CALL target
+// resolves: a local (closure value), a free function, a variant
+// constructor (declared or builtin), a runtime intrinsic (`__`-prefixed),
+// or a builtin function. Anything else is an undefined call → E001.
+function is_resolvable_callee(name: string, s: Scope): boolean {
+    if (s.defines(name)) { return true; }
+    if (s.lookup_sig(name).name.len() > 0) { return true; }
+    if (variant_in_unions(name, s.unions)) { return true; }
+    if (is_builtin_variant(name)) { return true; }
+    if (name.len() >= 2 && name[0:2] == "__") { return true; }
+    if (is_builtin_function(name)) { return true; }
     return false;
 }
 
@@ -2117,7 +2177,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // the object so it isn't mis-flagged as an unknown field (E043).
             match (c.callee) {
                 parser.ExprFieldAccess(mfa) => { out = call_diags(mfa.obj, s); },
-                parser.ExprIdent(_) => { },
+                parser.ExprIdent(cid) => {
+                    // E001: a call to an undefined function. A bare-ident
+                    // callee that resolves to nothing — not a local (closure),
+                    // a free function, a variant constructor, a runtime
+                    // intrinsic (`__`-prefixed), or a builtin function — is an
+                    // undefined call, reported at the callee.
+                    if (!is_resolvable_callee(cid.name, s)) {
+                        out = out.push(dg_at("E001", "undefined function \"" + cid.name + "\"", cid.line, cid.col));
+                    }
+                },
                 _ => { out = call_diags(c.callee, s); }
             }
             var i: i32 = 0;

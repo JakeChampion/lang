@@ -231,7 +231,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// is a false positive. This is the bundle-wide FP guard the
 		// differential corpus can't express, mirroring the manual
 		// "fern -check over every module" validation prior slices used.
-		for _, m := range []string{"lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "ssa.fern"} {
+		for _, m := range []string{"lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "asm.fern", "asm_arm64.fern", "wasm.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
 				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)
