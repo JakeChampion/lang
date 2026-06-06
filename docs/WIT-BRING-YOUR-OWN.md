@@ -301,9 +301,16 @@ world-driven composer (P2) wires it.
      list<u8>` → a 16-byte Fern string after a heap-misaligning pre-alloc,
      validated + run), plus the `wasmbin` unit tests `TestEmitExternStringResult`
      / `TestEmitExternCompositeRejected`.
-   - Still rejected (next slices): composite **parameters**, and non-string
-     composite results (arrays/`u8[]`, records, tuples, variants, option,
-     result). Self-host port of the string-result path also still to follow.
+   - **u8[] result — ✅ done (Go).** The same `list<u8>` return lifted into a
+     Fern `u8[]` instead of a string, for code that wants the bytes typed as an
+     array. A native array is length-prefixed (the value points to the
+     elements, count at `ptr-4`), so `buildExternListU8ResultWrapper` allocates
+     `4+n`, stores the count, and memory.copys the host bytes (u8 = 1-byte
+     stride) just past it. `isU8ArrayType` gates it. Gated by
+     `TestExternU8ArrayResultRunsUnderWasmtime` + `TestEmitExternU8ArrayResult`.
+   - Still rejected (next slices): composite **parameters**, non-u8 array
+     results (`i32[]` …), and record/tuple/variant/option/result. Self-host
+     port of the string-result path and the u8[] result also still to follow.
 4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
    concept; the largest phase, and the first to exercise the composer's
    `gDrop` path from user code.

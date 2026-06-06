@@ -4540,6 +4540,41 @@ func TestEmitExternStringResult(t *testing.T) {
 	}
 }
 
+// TestEmitExternU8ArrayResult — a list<u8>-returning extern declared as `u8[]`
+// emits the raw import (trailing return-area pointer) + cabi_realloc export,
+// like the string-result case but lifting into an array.
+func TestEmitExternU8ArrayResult(t *testing.T) {
+	prog := &ir.Program{
+		Externs: []*ir.ExternFunc{{
+			Name:       "rand_bytes",
+			Iface:      "wasi:random/random@0.2.0",
+			WITName:    "get-random-bytes",
+			Params:     []ast.Param{{Name: "n", Type: i64()}},
+			ReturnType: ast.ArrayType{Elem: ast.NumberType{Width: 8}},
+		}},
+		Funcs: []*ir.Func{{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI64, I64: 4},
+				{Kind: ir.OpCallDirect, Str: "rand_bytes"},
+				{Kind: ir.OpDrop},
+				{Kind: ir.OpConstI32, I32: 0},
+			},
+		}},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !bytes.Contains(bin, []byte("get-random-bytes")) {
+		t.Fatalf("emitted module missing the extern import")
+	}
+	if !bytes.Contains(bin, []byte("cabi_realloc")) {
+		t.Fatalf("u8[]-result extern must export cabi_realloc")
+	}
+}
+
 // TestEmitExternCompositeRejected — extern types beyond the supported set
 // (composite parameters, array/record results) need canonical-ABI marshalling
 // that isn't built yet, so they're rejected up front with a clear P4c message
