@@ -2142,7 +2142,9 @@ func (c *checker) validateDynTraitTypes(prog *ast.Program) {
 			visit(p.Type, fn.P)
 		}
 		visit(fn.ReturnType, fn.P)
-		c.walkVarTypes(fn.Body, visit)
+		if fn.Body != nil {
+			c.walkVarTypes(fn.Body, visit)
+		}
 	}
 }
 
@@ -2891,7 +2893,9 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			c.resolveType(&fn.Params[i].Type, params)
 		}
 		c.resolveType(&fn.ReturnType, params)
-		c.resolveTypesInBlock(fn.Body, params)
+		if fn.Body != nil {
+			c.resolveTypesInBlock(fn.Body, params)
+		}
 	}
 	for _, sd := range prog.Structs {
 		// Same as functions / enums: register type params so
@@ -4018,6 +4022,12 @@ func (c *checker) capturedType(name string, s *scope) (ast.Type, bool) {
 func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	c.current = fn
 	defer func() { c.current = nil }()
+
+	// A body-less `@import` function (extern WIT binding) has no body to
+	// check; its signature is still registered so call sites resolve.
+	if fn.Body == nil {
+		return
+	}
 
 	root := newScope(nil)
 	for _, p := range fn.Params {
