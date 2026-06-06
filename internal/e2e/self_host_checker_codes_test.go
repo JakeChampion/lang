@@ -55,6 +55,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E014": true, // variant pattern not part of the scrutinee enum/union
 	"E029": true, // variant pattern qualifier names the wrong enum/union
 	"E016": true, // union alias collides with a struct of the same name
+	"E052": true, // missing return (non-void body can fall off the end)
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -272,6 +273,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-qualifier-correct-ok", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { E.A => { return 1; }, E.B => { return 2; } } return 0; }\nfunction main(): i32 { return f(A); }\n", nil},
 		{"union-struct-name-collision", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type B = A | C;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-distinct-name-ok", "struct A { x: i32 }\nstruct C { z: i32 }\npub type U = A | C;\nfunction main(): i32 { return 0; }\n", nil},
+		{"missing-return", "function f(): i32 { var x = 1; }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-one-armed-if", "function f(c: boolean): i32 { if (c) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"return-while-true-ok", "function f(): i32 { while (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
