@@ -314,6 +314,15 @@ world-driven composer (P2) wires it.
      `TestEmitExternU8ArrayResult`.
    - Still rejected (next slices): composite **parameters**, non-u8 array
      results (`i32[]` …), and record/tuple/variant/option/result.
+   - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
+     `@import` program end to end: when the legacy composer's `ClassifyCore`
+     reports imports it doesn't recognise and the program declares any extern
+     (`hasExternImports`), `buildPreview2Component` rebuilds the core with
+     `ForceMemorySection` and routes it through `ComposeFromWorldAuto` (the
+     embedded fern world) instead of erroring — so a user gets a runnable
+     component without the test harness. No-extern programs keep the legacy
+     path unchanged. Gated by `TestExternImportViaCLI` (scalar + u8[] externs +
+     a built-in `write`, composed by the CLI binary and run under wasmtime).
 4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
    concept; the largest phase, and the first to exercise the composer's
    `gDrop` path from user code.

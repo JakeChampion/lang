@@ -74,6 +74,7 @@ import (
 	"github.com/jakechampion/lang/internal/printer"
 	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/wasm/component"
+	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
 // absPath returns the canonical absolute form of p, or p itself if
@@ -1427,9 +1428,44 @@ func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []b
 // `-component-wrap` shape, callable via `--invoke <name>()`). Both
 // share the composer for every recognised import shape and fall back
 // to the matching import-free builder.
+// hasExternImports reports whether the program declares any `@import` extern
+// (bring-your-own WIT, P4). Such a program's imports go beyond the legacy
+// composer's recognised set, so it composes via the world-driven path.
+func hasExternImports(prog *ast.Program) bool {
+	for _, fn := range prog.Funcs {
+		if fn.ImportIface != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, exportName string) ([]byte, error) {
 	req, unsupported := component.ClassifyCore(bin)
 	if len(unsupported) > 0 {
+		// `@import` extern declarations (bring-your-own WIT, P4) pull in
+		// imports the legacy composer doesn't know. When the program declares
+		// any, route the whole module through the world-driven composer, which
+		// classifies every import (built-in and extern alike) against the
+		// embedded fern world — no hardcoded import set. The cli/run lift is
+		// the only shape it produces, so a named-export wrap can't combine with
+		// externs yet.
+		if exportName == "" && hasExternImports(prog) {
+			rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+				ForceMemorySection: true,
+				Preview2WASI:       true,
+				SynthCliRun:        true,
+				CliRunResult:       true,
+			})
+			if err != nil {
+				return nil, err
+			}
+			w, err := componenttype.DecodeWorld("fern")
+			if err != nil {
+				return nil, err
+			}
+			return component.ComposeFromWorldAuto(rb, w)
+		}
 		return nil, fmt.Errorf("can't wrap a core module with unrecognised imports yet (saw %d): %s. Remove the source that pulls them in.", len(unsupported), strings.Join(unsupported, ", "))
 	}
 	if component.RequestEmpty(req) {
