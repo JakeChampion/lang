@@ -968,8 +968,18 @@ smallest → largest:
     and gated end-to-end by **`TestSelfHostArm64DarwinMachOFrameRuns`**: a
     Fern program assembles a stack-frame round-trip (`sub sp`; `movz`;
     `str x0,[sp,#8]`; clobber; `ldr x0,[sp,#8]`; `add sp`), wraps it with
-    `macho.fern`, and the signed Mach-O exits 42 — no external tool. Next:
-    `@PAGE`/`@PAGEOFF` literal/data addressing, then wiring `asm_arm64` →
+    `macho.fern`, and the signed Mach-O exits 42 — no external tool.
+  - ✅ **slice 3f — @PAGE / @PAGEOFF data addressing**: `adrp Xd,
+    sym@PAGE` + `ldr Xt, [Xn, sym@PAGEOFF]` to reach a `__DATA` constant,
+    the immediates computed from macho.fern's fixed segment addresses
+    (`arm64_page_delta` / `arm64_page_off` over `macho_text_vaddr` /
+    `macho_data_vaddr` — the first use of the `SegmentAddrs` parity), plus
+    `arm64_patch_adrp` / `arm64_patch_ldr_off` splicers. Byte-checked by
+    `TestSelfHostArm64Adrp` and gated end-to-end by
+    **`TestSelfHostArm64DarwinMachODataRuns`** (the arm64 rodata test): a
+    Fern program lays a `.quad 42` in `__DATA`, loads it via `adrp`+`ldr`,
+    and the signed Mach-O exits 42 — no external tool. The encoder now has
+    the addressing the full backend needs; next is wiring `asm_arm64` →
     `macho.fern` → file.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
