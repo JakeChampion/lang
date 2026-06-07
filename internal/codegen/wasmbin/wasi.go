@@ -763,23 +763,31 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		if !used[ex.Name] {
 			continue
 		}
-		// Parameters must be scalar, `string`, or a numeric array — the memory
-		// params a wrapper can lower to the canonical (ptr,len) below. A
-		// `string` normalizes its SSO pair to a heap buffer; a numeric array
-		// (`u8[]`, `i32[]`, `f32[]`, `i64[]`, `f64[]`, …) passes its element
-		// pointer + length-prefix directly (zero-copy, native stride). Other
-		// composite params — bool arrays (stride mismatch), records — aren't
-		// lowered yet; reject them rather than emit slots that don't match the
-		// host's ABI.
+		// Parameters must be scalar, `string`, a numeric array, or a record
+		// (struct) of 32-/64-bit numeric fields — the memory params a wrapper
+		// can lower below. A `string` normalizes its SSO pair to a heap buffer;
+		// a numeric array (`u8[]`, `i32[]`, `f64[]`, …) passes its element
+		// pointer + length-prefix directly (zero-copy, native stride); a record
+		// flattens to its fields (loaded off the struct value). The lowerable
+		// records were resolved to a field layout during IR lowering
+		// (ex.ParamRecords); a struct param without one (sub-word / composite
+		// fields, > 16 fields) is rejected here, as are bool arrays.
 		hasStringParam, hasMemParam := false, false
-		for _, p := range ex.Params {
+		for i, p := range ex.Params {
 			switch {
 			case isStringType(p.Type):
 				hasStringParam, hasMemParam = true, true
 			case isScalarArrayParamType(p.Type):
 				hasMemParam = true
-			case !externScalarType(p.Type):
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, and numeric-array (u8[]/i32[]/f64[]/…) extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
+			case ex.ParamRecords[i] != nil:
+				hasMemParam = true
+			case externScalarType(p.Type):
+				// plain scalar — passes through, no wrapper needed for this param
+			default:
+				if _, isStruct := p.Type.(ast.StructType); isStruct {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): record parameter %q (type %s) is not lowerable yet — every field must be a 32-/64-bit integer or float and there must be at most %d of them (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type, 16)
+				}
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), and record extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 			}
 		}
 		params, err := paramValtypes(ex.Params)
@@ -808,7 +816,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			if err != nil {
 				return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
 			}
-			rawParams, err := canonicalExternParamValtypes(ex.Params)
+			rawParams, err := canonicalExternParamValtypes(ex)
 			if err != nil {
 				return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
 			}
@@ -818,7 +826,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			wrappers[ex.Name] = runtimeHelperSpec{
 				params:  params,
 				results: results,
-				body:    buildExternMemParamWrapper(ex.Params, rawName),
+				body:    buildExternMemParamWrapper(ex, rawName),
 			}
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")

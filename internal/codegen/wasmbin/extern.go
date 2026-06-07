@@ -16,7 +16,7 @@
 package wasmbin
 
 import (
-	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
@@ -162,22 +162,22 @@ func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) 
 // import is called; its scalar result (if any) is left on the stack. The
 // wrapper's params mirror the Fern flattening (string→2, u8[]→1, scalar→1); 3
 // i32 scratch locals (buf, byteLen, i), reused across string params, follow.
-func buildExternMemParamWrapper(params []ast.Param, rawImport string) func(map[string]uint32) []byte {
+func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		imp := idxs[rawImport]
 		nSlots := uint32(0)
-		for _, p := range params {
+		for _, p := range ex.Params {
 			if isStringType(p.Type) {
 				nSlots += 2
 			} else {
-				nSlots++ // u8[] and scalar are each one Fern slot
+				nSlots++ // u8[]/record/scalar are each one Fern slot
 			}
 		}
 		bufL, byteLenL, iL := nSlots, nSlots+1, nSlots+2
 
 		var body []byte
 		slot := uint32(0)
-		for _, p := range params {
+		for i, p := range ex.Params {
 			switch {
 			case isStringType(p.Type):
 				// (data@slot, len@slot+1) → normalized (bufL, byteLenL).
@@ -185,6 +185,26 @@ func buildExternMemParamWrapper(params []ast.Param, rawImport string) func(map[s
 				body = inst.InstLocalGet(body, bufL)
 				body = inst.InstLocalGet(body, byteLenL)
 				slot += 2
+			case ex.ParamRecords[i] != nil:
+				// Record param: flatten to its fields. The Fern slot holds the
+				// struct value; each field is loaded at its (rc-header-inclusive)
+				// offset and pushed in declaration order, matching the canonical
+				// record flattening the raw import expects.
+				for _, f := range ex.ParamRecords[i] {
+					body = inst.InstLocalGet(body, slot)
+					off := uint32(f.Offset)
+					switch externRecordFieldValtype(f.Type) {
+					case encode.ValtypeI64:
+						body = memory.InstI64Load(body, 3, off)
+					case encode.ValtypeF32:
+						body = memory.InstF32Load(body, 2, off)
+					case encode.ValtypeF64:
+						body = memory.InstF64Load(body, 3, off)
+					default:
+						body = memory.InstI32Load(body, 2, off)
+					}
+				}
+				slot++
 			case isScalarArrayParamType(p.Type):
 				// (ptr, len) = (elemPtr, load(elemPtr-4)). The count prefix holds
 				// the element count, which is the canonical list length for any

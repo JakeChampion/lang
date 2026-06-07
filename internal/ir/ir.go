@@ -609,6 +609,79 @@ type ExternFunc struct {
 	WITName    string
 	Params     []ast.Param
 	ReturnType ast.Type
+	// ParamRecords maps a parameter index to the flattened scalar-field layout
+	// of a record (struct) parameter (P4c — docs/WIT-BRING-YOUR-OWN.md). A
+	// record lowers to a canonical `record` whose fields flatten to their core
+	// types, so the wasm backend's param wrapper loads each field from the Fern
+	// struct and pushes it. nil/absent for a non-record param; absent for a
+	// record the layout pass can't flatten (sub-word / composite fields, or
+	// more than maxFlatExternRecordFields fields), which the wasm backend then
+	// rejects with a clear error.
+	ParamRecords map[int][]ExternRecordField
+}
+
+// ExternRecordField is one scalar field of a record `@import` parameter,
+// flattened to the canonical ABI: Offset is the field's byte offset from the
+// struct *value* (the user-visible data pointer, i.e. base + rc header — field
+// reads index straight off it), and Type decides the load op + the flat core
+// valtype the wasm wrapper uses.
+type ExternRecordField struct {
+	Offset int32
+	Type   ast.Type
+}
+
+// maxFlatExternRecordFields caps how many fields a flattened record parameter
+// may have. The canonical ABI passes a record inline only while its flattened
+// core values stay within MAX_FLAT_PARAMS (16); beyond that it goes through
+// memory, which this slice doesn't lower. Each supported field flattens to one
+// core value, so the field count is the flat count.
+const maxFlatExternRecordFields = 16
+
+// externRecordLayout flattens a record (struct) `@import` parameter type to its
+// scalar fields' offsets + types, or returns ok=false if it can't be lowered:
+// the struct must be known, have 1..maxFlatExternRecordFields fields, and every
+// field must be a 32-/64-bit integer or float (sub-word ints, bool, strings,
+// arrays, and nested structs are deferred). Offsets are measured from the
+// struct value (the user-visible data pointer), so the wasm wrapper loads each
+// field straight off it — the same indexing a `p.field` read uses.
+func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bool) {
+	st, ok := t.(ast.StructType)
+	if !ok {
+		return nil, false
+	}
+	sd, ok := info.Structs[st.Name]
+	if !ok || len(sd.Fields) == 0 || len(sd.Fields) > maxFlatExternRecordFields {
+		return nil, false
+	}
+	for _, f := range sd.Fields {
+		if !externRecordFieldSupported(f.Type) {
+			return nil, false
+		}
+	}
+	// 4-byte ptrW: the wasm backend is the only consumer (records aren't an
+	// extern shape on the natives), so the wasm32 struct layout governs offsets.
+	offs, _ := structFieldLayout(sd.Fields, 4)
+	out := make([]ExternRecordField, len(sd.Fields))
+	for i, f := range sd.Fields {
+		out[i] = ExternRecordField{Offset: offs[f.Name], Type: f.Type}
+	}
+	return out, true
+}
+
+// externRecordFieldSupported reports whether a record field type is one this
+// slice flattens: a 32-/64-bit integer or a float. Those load naturally
+// (i32/i64/f32/f64.load) at the field's slot and flatten to a single core
+// value of the matching type. Sub-word ints (s8/s16), bool, and composites are
+// deferred.
+func externRecordFieldSupported(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.NumberType:
+		w := x.NormalWidth()
+		return w == 32 || w == 64
+	case ast.FloatType:
+		return true
+	}
+	return false
 }
 
 // ExternExport binds a defined function (Name) to the WIT world export
@@ -861,13 +934,25 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 		// lowering (there is no body). The wasm backend turns each into a core
 		// import; a call to fn.Name resolves to that import's funcidx.
 		if fn.ImportIface != "" {
-			out.Externs = append(out.Externs, &ExternFunc{
+			ef := &ExternFunc{
 				Name:       fn.Name,
 				Iface:      fn.ImportIface,
 				WITName:    fn.ImportWITName,
 				Params:     fn.Params,
 				ReturnType: fn.ReturnType,
-			})
+			}
+			// Precompute the flattened layout of any record (struct) parameter
+			// while info.Structs is in scope; the wasm backend (which has no
+			// info) reads it to lower the canonical record param (P4c).
+			for i, p := range fn.Params {
+				if layout, ok := externRecordLayout(p.Type, info); ok {
+					if ef.ParamRecords == nil {
+						ef.ParamRecords = map[int][]ExternRecordField{}
+					}
+					ef.ParamRecords[i] = layout
+				}
+			}
+			out.Externs = append(out.Externs, ef)
 			continue
 		}
 		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes)
