@@ -597,6 +597,18 @@ function x86_movsd_load(buf: i32[], xmm: i32, base: i32, has_index: boolean, ind
     return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
 }
 
+// x86_movsd_rr: `movsd <dst>, <src>` reg-reg (F2 0F 10 /r, ModR/M direct).
+function x86_movsd_rr(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.push(242); // 0xF2
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(16); // 0x10
+    return buf.push(x86_modrm(3, dst, src));
+}
+
 // x86_movsd_load_rip_label: `movsd <xmm>, sym(%rip)` (F2 0F 10 /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
 // uses to load a .double constant from .rodata.
@@ -688,6 +700,33 @@ function x86_movabsq(buf: i32[], reg: i32, imm: i64): i32[] {
 // map probing / byte-string scanning, plus cmov for min/max and the
 // sign/zero-extend loads. 32-bit ops carry a REX only when an operand is
 // r8..r15 (no REX.W); the result zero-extends into the full 64-bit reg.
+
+// x86_mov_load_rip_label: `movq sym(%rip), <dst>` (REX.W 8B /r, ModR/M
+// mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
+// uses to load a .bss/.data global (e.g. the heap pointer).
+function x86_mov_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+    a.code = a.code.push(x86_rex(1, dst, 0, 0));
+    a.code = a.code.push(139); // 0x8B
+    a.code = a.code.push(x86_modrm(0, dst, 5)); // RIP-relative
+    a.code = x86_le32(a.code, 0);
+    var patch_off: i32 = a.code.len() - 4;
+    a.fix_offs = a.fix_offs.push(patch_off);
+    a.fix_names = a.fix_names.push(name);
+    return a;
+}
+
+// x86_mov_store_rip_label: `movq <src>, sym(%rip)` (REX.W 89 /r, ModR/M
+// mod=00 rm=101) with a deferred rip-relative fixup.
+function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
+    a.code = a.code.push(x86_rex(1, src, 0, 0));
+    a.code = a.code.push(137); // 0x89
+    a.code = a.code.push(x86_modrm(0, src, 5)); // RIP-relative
+    a.code = x86_le32(a.code, 0);
+    var patch_off: i32 = a.code.len() - 4;
+    a.fix_offs = a.fix_offs.push(patch_off);
+    a.fix_names = a.fix_names.push(name);
+    return a;
+}
 
 // x86_rex_opt pushes a REX byte only if any extension bit is set (w must
 // be 0 here — used for the 32-bit / byte ops whose default size needs no

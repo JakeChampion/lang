@@ -201,6 +201,18 @@ func (a *Assembler) CBNZ(rt uint32, label string) {
 	a.branch(0xB5000000|(rt&regMask), label, branchImm19)
 }
 
+// CBZW emits `cbz Wt, label` — branch if the 32-bit Wt == 0 (sf=0). The
+// 32-bit form compares only the low word, matching GNU as for a `w`
+// operand; the 64-bit CBZ (sf=1) would test all 64 bits.
+func (a *Assembler) CBZW(rt uint32, label string) {
+	a.branch(0x34000000|(rt&regMask), label, branchImm19)
+}
+
+// CBNZW emits `cbnz Wt, label` — branch if the 32-bit Wt != 0 (sf=0).
+func (a *Assembler) CBNZW(rt uint32, label string) {
+	a.branch(0x35000000|(rt&regMask), label, branchImm19)
+}
+
 // TBZ emits `tbz Rt, #bit, label` — branch if bit `bit` of Rt is 0.
 // TBNZ is the branch-if-set form. The 6-bit position splits across
 // bit 31 (b5) and bits 23:19 (b40); the 14-bit offset is filled by the

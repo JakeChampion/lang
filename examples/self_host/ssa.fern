@@ -291,7 +291,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { return cgt[4 : cgt.len()]; }
                 },
                 parser.ExprFieldAccess(fa2) => {
-                    if (fa2.field == "set") { return type_of_expr(fa2.obj, s); }
+                    if (fa2.field == "set" || fa2.field == "insert") { return type_of_expr(fa2.obj, s); }
                     // A user method call → its declared return type (so a
                     // chained `a.m().n()` resolves n's receiver), read from the
                     // "<recv>#<m>" → "m:<sym>:<ret>" seed.
@@ -693,10 +693,10 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var pfx: string = "__ssa_map_";
                     if (mt == "SMap") { pfx = "__ssa_smap_"; }
                     var mname: string = "";
-                    if (fa.field == "set" && c.args.len() == 2) { mname = pfx + "set"; }
+                    if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) { mname = pfx + "set"; }
                     else if (fa.field == "get_or" && c.args.len() == 2) { mname = pfx + "get_or"; }
                     else if (fa.field == "has" && c.args.len() == 1) { mname = pfx + "has"; }
-                    else if (fa.field == "delete" && c.args.len() == 1) { mname = pfx + "delete"; }
+                    else if ((fa.field == "delete" || fa.field == "without") && c.args.len() == 1) { mname = pfx + "delete"; }
                     else if (fa.field == "len" && c.args.len() == 0 && ismap) { mname = "__ssa_map_len"; }
                     else if (fa.field == "keys" && c.args.len() == 0 && ismap) { mname = "__ssa_map_keys"; }
                     else if (fa.field == "values" && c.args.len() == 0 && ismap) { mname = "__ssa_map_values"; }

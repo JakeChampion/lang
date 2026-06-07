@@ -349,6 +349,11 @@ function x86_gas_atoi64(tok: string): i64 {
 // `disp(%base,%index,scale)` / `sym(%rip)`.
 function x86_gas_parse_mem(op: string): GasMem {
     var lp: i32 = op.index_of("(");
+    if (lp < 0) {
+        // Not a memory operand — defensive fallback (avoids an op[0:-1]
+        // corrupt slice); callers gate on `.contains("(")` so this is rare.
+        return GasMem { is_rip: false, label: "", base: x86_gas_reg(op), disp: 0, has_index: false, index: 0, scale: 1 };
+    }
     var disp_str: string = op[0:lp];
     var inner: string = op[lp + 1:op.len() - 1]; // between ( and )
     if (inner == "%rip") {
@@ -393,6 +398,9 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
     }
     if (src_mem && !dst_mem) { // mem -> reg (load)
         var m: GasMem = x86_gas_parse_mem(src);
+        if (m.is_rip) {
+            return x86_mov_load_rip_label(a, x86_gas_reg(dst), m.label);
+        }
         if (m.has_index) {
             a.code = x86_mov_load_r64_idx(a.code, x86_gas_reg(dst), m.base, m.index, m.scale, m.disp);
         } else {
@@ -402,6 +410,9 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
     }
     if (!src_mem && dst_mem) { // reg -> mem (store)
         var m2: GasMem = x86_gas_parse_mem(dst);
+        if (m2.is_rip) {
+            return x86_mov_store_rip_label(a, x86_gas_reg(src), m2.label);
+        }
         if (m2.has_index) {
             a.code = x86_mov_store_r64_idx(a.code, m2.base, m2.index, m2.scale, m2.disp, x86_gas_reg(src));
         } else {
@@ -620,7 +631,11 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
             a.code = x86_movsd_store(a.code, sm.base, sm.has_index, sm.index, sm.scale, sm.disp, x86_gas_xmm(src));
             return a;
         }
-        // load into xmm (dst is xmm)
+        if (!src.contains("(")) { // reg-reg: movsd %xmm, %xmm
+            a.code = x86_movsd_rr(a.code, x86_gas_xmm(dst), x86_gas_xmm(src));
+            return a;
+        }
+        // load into xmm (dst is xmm) from memory / rip
         var lm: GasMem = x86_gas_parse_mem(src);
         if (lm.is_rip) {
             return x86_movsd_load_rip_label(a, x86_gas_xmm(dst), lm.label);
