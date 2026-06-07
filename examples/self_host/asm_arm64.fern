@@ -1922,7 +1922,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (is_map(rt) && fa.field == "get_or") {
                         return map_value_part(rt);
                     }
-                    if (is_map(rt) && fa.field == "set") { return rt; }
+                    if (is_map(rt) && (fa.field == "set" || fa.field == "insert")) { return rt; }
                     if (is_map(rt) && fa.field == "has") { return "bool"; }
                     if (is_map(rt) && fa.field == "len") { return "i32"; }
                     if (is_map(rt) && fa.field == "keys") {
@@ -3173,7 +3173,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Map methods (string-keyed). set → map; get →
                     // Option[V]; has → bool; len → i32. Mirror of
                     // asm.fern's x86-64 dispatch.
-                    if (is_map(prim_recv) && fa.field == "set" && c.args.len() == 2) {
+                    if (is_map(prim_recv) && (fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
                         var kk_set: string = "0";
                         if (map_key_is_i32(prim_recv)) { kk_set = "1"; }
                         s = emit_expr(fa.obj, s);
