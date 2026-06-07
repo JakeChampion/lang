@@ -162,14 +162,18 @@ matching cases in every backend's differential matrix):
     `cvtsi2sd` / `cvttsd2si`); float functions skip register allocation so
     every value is slot-addressable, and float values are 64-bit-wide so
     copy / phi-edge moves carry all 8 bytes. Also fixed a `const_fold` bug
-    it surfaced (it folded `as_f64 k` as `!k`). Float *locals* lower
-    through SSA on x86-64; a float **param / return** (the XMM call ABI)
-    still falls back, and **arm64 / wasm** float programs fall back to the
-    AST emitter (gated by `ssa.any_float` / `ssa_wasm.supported`). Gated by
+    it surfaced (it folded `as_f64 k` as `!k`). Gated by
     `TestSelfHostSSAEmitX86_64` float cases.
-  - **Phase 3b (next):** the XMM/NEON **call ABI** (float params /
-    returns / args), then the **arm64** and **wasm** SSA float paths, to
-    bring f64 to parity across all three backends.
+  - **Phase 3b ✅ (landed — the x86-64 f64 call ABI):** float **params**
+    arrive in xmm0…, float **returns** come back in xmm0, and mixed
+    int/float args fill the two System V register sequences independently
+    (`param str="f64"`; a `mark_float_calls` pass tags f64-returning calls
+    `imm=2` so the result is read from xmm0). Float functions now cross
+    call boundaries on x86-64 — params, returns, recursion, mixed args.
+  - **Phase 3c (next):** the **arm64** (NEON/FP) and **wasm** SSA float
+    paths, to bring f64 to parity across all three backends. Until then
+    arm64 / wasm float programs fall back to the AST emitter (gated by
+    `ssa.any_float` / `ssa_wasm.supported`).
 - **Generics by erasure** in `build_func` (the AST emitters already do
   this).
 - **`...base` struct spread**, remaining **`match` patterns**, **tagged

@@ -174,10 +174,12 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     while (lai < lifted.len()) { allfuncs = allfuncs.push(lifted[lai]); lai = lai + 1; }
     var known: string[] = [];
     var ptr_ret: string[] = [];
+    var float_ret: string[] = [];
     var ni: i32 = 0;
     while (ni < allfuncs.len()) {
         known = known.push(ssa.fn_sym(allfuncs[ni]));
         if (ssa.is_ptr_type(allfuncs[ni].ret_type) || ssa.is_struct_type(allfuncs[ni].ret_type, structs)) { ptr_ret = ptr_ret.push(ssa.fn_sym(allfuncs[ni])); }
+        if (allfuncs[ni].ret_type == "f64") { float_ret = float_ret.push(ssa.fn_sym(allfuncs[ni])); }
         ni = ni + 1;
     }
     // The runtime helpers (map ops / array push / slice, ssa.ssa_helpers_src)
@@ -206,7 +208,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
         // lowered — fall back to the AST emitter for the whole program.
         if (!ssa.calls_all_known(r.func, known)) { return SsaResult { asm: "", ok: false }; }
         if (allfuncs[i].name == "main") { has_main = true; }
-        sfuncs = sfuncs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret)));
+        sfuncs = sfuncs.push(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(r.func, ptr_ret), float_ret)));
         i = i + 1;
     }
     if (!has_main) { return SsaResult { asm: "", ok: false }; }
@@ -215,7 +217,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     while (hj < hmod.funcs.len()) {
         if (ssa.calls_func(sfuncs, hmod.funcs[hj].name)) {
             var hr: ssa.BResult = ssa.build_func_seeded(hmod.funcs[hj], structs, seed);
-            if (hr.ok) { sfuncs = sfuncs.push(ssa.optimize(ssa.mark_ptr_calls(hr.func, ptr_ret))); }
+            if (hr.ok) { sfuncs = sfuncs.push(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(hr.func, ptr_ret), float_ret))); }
         }
         hj = hj + 1;
     }
