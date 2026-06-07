@@ -293,6 +293,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"result-ok", "function run(): Result[i32, i32] { return Ok(40); } function main(): i32 { match (run()) { Ok(v) => { return v + 2; }, Err(e) => { return e; } } return 1; }", 42, ""},
 		{"result-err", "function run(): Result[i32, i32] { return Err(13); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e; } } return 1; }", 13, ""},
 		{"opt-wildcard", "function mk(): Option[i32] { return None; } function main(): i32 { match (mk()) { Some(v) => { return v; }, _ => { return 99; } } return 1; }", 99, ""},
+		// Match-arm guards (`Pat when <expr> =>`): a true guard runs the arm; a
+		// false guard falls through to the next arm (the guard reads the binding).
+		{"match-guard-pass", "function mk(): Option[i32] { return Some(8); } function main(): i32 { match (mk()) { Some(v) when v > 5 => { return 1; }, _ => { return 2; } } return 0; }", 1, ""},
+		{"match-guard-fallthrough", "function mk(): Option[i32] { return Some(3); } function main(): i32 { match (mk()) { Some(v) when v > 5 => { return 1; }, _ => { return 2; } } return 0; }", 2, ""},
 		{"opt-local", "function main(): i32 { var o: Option[i32] = Some(5); match (o) { Some(v) => { return v * 2; }, None => { return 0; } } return 1; }", 10, ""},
 		{"opt-string-write", "function name(): Option[i32] { return Some(0); } function main(): i32 { match (name()) { Some(v) => { write(\"got\"); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "got"},
 		{"opt-in-if", "function lookup(k: i32): Option[i32] { if (k == 1) { return Some(100); } return None; } function main(): i32 { var sum = 0; match (lookup(1)) { Some(v) => { sum = sum + v; }, None => {} } match (lookup(2)) { Some(v) => { sum = sum + v; }, None => { sum = sum + 1; } } return sum; }", 101, ""},

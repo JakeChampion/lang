@@ -5978,6 +5978,15 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     },
                     parser.PatWildcard(_) => { }
                 }
+                // Guard: a `Pat when <expr> =>` arm runs only if the guard is
+                // true. The binding is in scope, so the guard may reference it.
+                // A false guard branches to the next arm (same as a pattern
+                // mismatch); an all-guards-fail match falls through to the end.
+                if (arm.has_guard) {
+                    s = emit_expr(arm.guard, s);
+                    s = s.write("    ldr x0, [sp], #16\n");
+                    s = s.write("    cbz x0, .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
+                }
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) {
                     s = emit_stmt(arm.body[bi], s);
