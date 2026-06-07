@@ -409,6 +409,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// isn't a string literal, so RT mis-tags as "i32") false-positives.
 		{"match-expr-string-arms-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var a: string = \"p\"; var b: string = \"q\"; var o: O = Nil; var s: string = match (o) { Has(n) => a, Nil => b }; return 0; }\n", nil},
 		{"if-expr-string-arms-ok", "function main(): i32 { var a: string = \"p\"; var b: string = \"q\"; var s: string = if (1 < 2) { a } else { b }; return 0; }\n", nil},
+		// A payload-bearing enum variant `V(T)` lowers to a struct `V` with a
+		// marker field `__ev: T`; the pattern `V(n)` binds the PAYLOAD value
+		// (type T), not the wrapper struct. Typing it as the wrapper struct
+		// false-positived E038 when the payload was passed to a typed
+		// function. variant_binding_type reads the real payload type.
+		{"enum-payload-i32-arg-ok", "enum O { Has(i32), Nil }\nfunction f(n: i32): i32 { return n; }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) => { var r: i32 = f(n); }, Nil => { } } return 0; }\n", nil},
+		{"enum-payload-string-arg-ok", "enum S { Tag(string), Non }\nfunction h(s: string): i32 { return 0; }\nfunction main(): i32 { var x: S = Non; match (x) { Tag(t) => { var r: i32 = h(t); }, Non => { } } return 0; }\n", nil},
+		// Regression direction: a real payload-type mismatch still fires E038
+		// (n is i32, passed to a string parameter).
+		{"enum-payload-arg-mismatch", "enum O { Has(i32), Nil }\nfunction g(s: string): i32 { return 0; }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) => { var r: i32 = g(n); }, Nil => { } } return 0; }\n", []string{"E038"}},
+		// A struct-union member still binds the whole struct (no `__ev`), so
+		// field access on it stays clean.
+		{"struct-union-member-field-ok", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, B(b) => { return b.y; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
