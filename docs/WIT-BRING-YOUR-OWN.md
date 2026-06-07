@@ -416,11 +416,23 @@ world-driven composer (P2) wires it.
      width) with a 32-/64-bit numeric/float payload. Gated by
      `TestExternSumTypeParamCustomProvider` (Ok(42)→42, Err(5)→-5, Some(7)→7,
      None→-1 through the multi-component harness under wasmtime).
-   - Still rejected (next slices): sum-type (option/result/variant) *results*;
-     general user `variant` params; single-element records/tuples (direct
-     return); bool arrays; sub-word / nested-composite fields; and the self-host
-     port. The multi-component harness (`TestExternImportCustomProvider`) is the
-     test vehicle for these.
+   - **Sum-type (option / result) results — ✅ done (Go).** An `@import` extern
+     returning `option<T>` / `result<T,E>` lifts into a Fern Option / Result.
+     The canonical variant flattens to (disc, payload) > 1 core value, so it
+     returns indirectly through a return-area pointer (`disc:u8 @0`, payload
+     `@off`); `buildExternEnumResultWrapper` reads them and materializes a Fern
+     enum box exactly like `emitRepackPairAsHeapBox` (alloc `rcHeaderBytes +
+     size`, rc=1, the i32 tag — remapped `1-disc` for option — at
+     base+rcHeaderBytes, payload at +off), returning the box pointer. The layout
+     reuses `externEnumParamLayout` on the return type (`ir.ExternFunc.
+     ResultEnum`). Same scope as the param side. Gated by
+     `TestExternSumTypeResultCustomProvider` (a `div: -> result<s32,s32>` and
+     `half: -> option<s32>`, the Fern side matching Ok/Err/Some/None).
+   - Still rejected (next slices): general user `variant`s (n-arm / payload-less
+     mixes); single-element records/tuples (direct return); bool arrays;
+     sub-word / nested-composite fields; and the self-host port. The
+     multi-component harness (`TestExternImportCustomProvider`) is the test
+     vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern

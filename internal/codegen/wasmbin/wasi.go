@@ -909,12 +909,31 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")
 			helpers.add("cabi_realloc")
+		case ex.ResultEnum != nil:
+			// option/result result (P4c): flattens to (disc, payload) > 1 core
+			// value, so it returns indirectly through a return-area pointer
+			// (disc:u8 @0, payload @off). The wrapper reads them and materializes
+			// a Fern enum box (tag remapped back for option).
+			rawName := ex.Name + "$import"
+			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: []byte{encode.ValtypeI32},
+				body:    buildExternEnumResultWrapper(len(ex.Params), rawName, ex.ResultEnum),
+			}
+			helpers.add(ex.Name)
+			helpers.add("__fern_alloc")
+			helpers.add("cabi_realloc")
 		default:
 			switch ret.(type) {
 			case ast.StructType, ast.TupleType:
 				return nil, nil, fmt.Errorf("@import %q (%s/%s): record/tuple result (type %s) is not lowerable yet — it must have 2..%d fields, each a 32-/64-bit integer or float (P4c)", ex.Name, ex.Iface, ex.WITName, ret, 16)
+			case ast.EnumType:
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): enum result (type %s) is not lowerable yet — only Option[T] / Result[T, E] with a 32-/64-bit numeric/float payload (Result's arms same width) are supported (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 			}
-			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), record, and tuple results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
+			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), record, tuple, and option/result results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 		}
 	}
 	return specs, wrappers, nil
