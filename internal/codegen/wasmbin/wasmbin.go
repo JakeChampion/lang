@@ -968,6 +968,30 @@ func paramValtypes(params []ast.Param) ([]byte, error) {
 	return out, nil
 }
 
+// canonicalExternParamValtypes flattens an `@import` extern's parameters to the
+// core valtypes the *raw* component import carries (the host-facing canonical
+// ABI), as opposed to paramValtypes, which gives the Fern-side flattening that
+// a param wrapper consumes. They differ only for `u8[]`: a Fern array value is
+// a single element pointer (one slot), but a canonical `list<u8>` parameter is
+// `(ptr, len)` — two i32s. A `string` is two slots either way (its Fern
+// (data, len) pair already lines up with ptr+len once normalized).
+func canonicalExternParamValtypes(params []ast.Param) ([]byte, error) {
+	var out []byte
+	for _, p := range params {
+		switch {
+		case isStringType(p.Type) || isScalarArrayParamType(p.Type):
+			out = append(out, encode.ValtypeI32, encode.ValtypeI32)
+		default:
+			vt, err := valtypeFor(p.Type)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, vt)
+		}
+	}
+	return out, nil
+}
+
 // resultValtypes returns the wasm result valtype vector for an IR
 // function's return type. Void → empty; scalar → one slot;
 // string → two slots (multi-value return for the (data, len) pair).
@@ -1008,6 +1032,25 @@ func isU8ArrayType(t ast.Type) bool {
 	}
 	n, ok := at.Elem.(ast.NumberType)
 	return ok && n.NormalWidth() == 8
+}
+
+// isScalarArrayParamType reports whether t is an array of a fixed-width integer
+// element of 32 bits or fewer (`u8[]`, `i16[]`, `i32[]`, …) — the arrays that
+// lower zero-copy to a canonical `list<T>` (ptr, len) as an `@import`
+// parameter. A Fern array value is the element pointer, with the element count
+// in the i32 prefix at `ptr-4` and elements packed at native stride, so it's
+// already a valid canonical payload (the count is the element count, matching
+// the canonical list length). The element pointer sits 4 bytes past the block
+// base, so it's 4-byte aligned — enough for elements ≤ 4 bytes. 64-bit element
+// arrays (8-byte alignment), float arrays, and bool arrays (whose Fern stride
+// differs from the canonical 1-byte `list<bool>`) are left to later slices.
+func isScalarArrayParamType(t ast.Type) bool {
+	at, ok := t.(ast.ArrayType)
+	if !ok {
+		return false
+	}
+	n, ok := at.Elem.(ast.NumberType)
+	return ok && n.NormalWidth() <= 32
 }
 
 // localValtypes returns the wasm valtype vector for an IR function's

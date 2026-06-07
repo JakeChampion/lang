@@ -27,6 +27,12 @@ var recursiveLocalCases = []struct {
 	// the body). A plain var before it, and a capturing closure alongside.
 	{"var-before", "function main(): i32 { var x: i32 = 5; function r(n: i32): i32 { if (n <= 0) { return 0; } return r(n - 1); } return x + r(3); }", 5},
 	{"with-sibling-closure", "function main(): i32 { var base: i32 = 100; var add = function(x: i32): i32 { return x + base; }; function cd(n: i32): i32 { if (n <= 0) { return 0; } return 1 + cd(n - 1); } return add(cd(5) + 17); }", 122},
+	// Capturing recursive locals: lambda-lifted with the captured enclosing
+	// names threaded through as trailing params + at every call site.
+	{"capture-one", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }", 13},
+	{"capture-two", "function main(): i32 { var acc: i32 = 0; var step: i32 = 2; function go(n: i32): i32 { if (n <= 0) { return acc; } return step + go(n - 1); } return go(4); }", 8},
+	{"capture-2calls", "function main(): i32 { var base: i32 = 100; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(2) + f(3); }", 205},
+	{"capture-inferred", "function main(): i32 { var base = 7; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }", 10},
 }
 
 // TestSelfHostRecursiveLocalX86_64 — recursive local hoisting via the

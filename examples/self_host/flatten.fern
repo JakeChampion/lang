@@ -314,7 +314,8 @@ function rewrite_params(params: parser.ParamDecl[], ctx: RewriteCtx): parser.Par
     while (i < params.len()) {
         out = out.push(parser.ParamDecl {
             name: params[i].name,
-            type_name: rewrite_type_name(params[i].type_name, ctx)
+            type_name: rewrite_type_name(params[i].type_name, ctx),
+            own: params[i].own
         });
         i = i + 1;
     }

@@ -4597,7 +4597,10 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 		}
 	}
 	cases := map[string]*ir.Program{
-		"array param":               mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: i32()}}}, i32()),
+		// i64[] is still rejected: only ≤32-bit integer-array params lower yet
+		// (64-bit elements need 8-byte alignment the Fern element pointer
+		// doesn't guarantee). i32[]/u8[] params ARE accepted now (P4c).
+		"i64 array param":           mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: ast.NumberType{Width: 64}}}}, i32()),
 		"array result":              mk(nil, ast.ArrayType{Elem: i32()}),
 		"string param + str result": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, ast.StringType{}),
 	}
@@ -4642,5 +4645,40 @@ func TestEmitExternStringParam(t *testing.T) {
 	}
 	if !bytes.Contains(bin, []byte("local:test/sink@0.1.0")) || !bytes.Contains(bin, []byte("set")) {
 		t.Fatalf("emitted module missing the string-param extern import")
+	}
+}
+
+// TestEmitExternListU8Param — an extern with a `u8[]` parameter and a scalar
+// result (P4c) emits the raw import with the list flattened to the canonical
+// (ptr,len) and resolves the Fern call to a forwarding wrapper. Unlike a
+// string, a Fern `u8[]` is one slot on the Fern side but two on the canonical
+// side, so this exercises canonicalExternParamValtypes.
+func TestEmitExternListU8Param(t *testing.T) {
+	u8arr := ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+	prog := &ir.Program{
+		Externs: []*ir.ExternFunc{{
+			Name:       "sink_sum",
+			Iface:      "local:test/sink@0.1.0",
+			WITName:    "sum-bytes",
+			Params:     []ast.Param{{Name: "data", Type: u8arr}},
+			ReturnType: ast.NumberType{Width: 32},
+		}},
+		Funcs: []*ir.Func{{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 0}, // u8[] element pointer (placeholder arg)
+				{Kind: ir.OpCallDirect, Str: "sink_sum"},
+				{Kind: ir.OpDrop}, // discard the u32 result
+				{Kind: ir.OpConstI32, I32: 0},
+			},
+		}},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !bytes.Contains(bin, []byte("local:test/sink@0.1.0")) || !bytes.Contains(bin, []byte("sum-bytes")) {
+		t.Fatalf("emitted module missing the u8[]-param extern import")
 	}
 }

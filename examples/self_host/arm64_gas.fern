@@ -113,6 +113,20 @@ function arm64_gas_cond(s: string): i32 {
     return 0;
 }
 
+// arm64_gas_is_cond reports whether a 2-letter suffix is a condition code
+// (so `b<cc>` no-dot aliases like bhi/blt/bne can be told from b/bl/br).
+function arm64_gas_is_cond(s: string): boolean {
+    return s == "eq" || s == "ne" || s == "cs" || s == "hs" || s == "cc" || s == "lo"
+        || s == "mi" || s == "pl" || s == "vs" || s == "vc" || s == "hi" || s == "ls"
+        || s == "ge" || s == "lt" || s == "gt" || s == "le" || s == "al";
+}
+
+// arm64_gas_is_w reports whether a register token names a 32-bit w-register.
+function arm64_gas_is_w(tok: string): boolean {
+    var s: string = arm64_gas_trim(tok);
+    return s.len() >= 1 && s[0] == 119; // 'w'
+}
+
 // arm64_gas_operands splits an operand list on top-level commas, ignoring
 // commas inside `[ … ]` (so a memory operand stays one token).
 function arm64_gas_operands(rest: string): string[] {
@@ -209,6 +223,10 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     // b.<cond>
     if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { // 'b' '.'
         return arm64_asm_bcond(a, arm64_gas_cond(mnem[2:mnem.len()]), ops[0]);
+    }
+    // b<cond> (no-dot GAS alias: bhi / blt / bne / …)
+    if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) {
+        return arm64_asm_bcond(a, arm64_gas_cond(mnem[1:3]), ops[0]);
     }
     if (mnem == "mov" || mnem == "movz") {
         var rd: i32 = arm64_gas_reg(ops[0]);
@@ -326,6 +344,28 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a.code = arm64_cset(a.code, arm64_gas_reg(ops[0]), arm64_gas_cond(ops[1]));
         return a;
     }
+    if (mnem == "lsl") {
+        a.code = arm64_lsl_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0]));
+        return a;
+    }
+    if (mnem == "lsr") {
+        a.code = arm64_lsr_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0]));
+        return a;
+    }
+    if (mnem == "cmn") {
+        a.code = arm64_cmn_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]));
+        return a;
+    }
+    if (mnem == "csel") {
+        a.code = arm64_csel(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]));
+        return a;
+    }
+    if (mnem == "and") {
+        // register form only here; `and Xd, Xn, #imm` is handled in the
+        // program loop (it needs the unknown-immediate guard).
+        a.code = arm64_andreg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]));
+        return a;
+    }
     return a; // unknown mnemonic — ignored
 }
 
@@ -371,7 +411,9 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "b" || mnem == "bl" || mnem == "ret" || mnem == "svc") { return true; }
     if (mnem == "cbz" || mnem == "cbnz" || mnem == "tbz" || mnem == "tbnz") { return true; }
     if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp") { return true; }
+    if (mnem == "lsl" || mnem == "lsr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
     if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
+    if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
     return false;
 }
 
@@ -572,6 +614,21 @@ function arm64_gas_program(src: string): Arm64GasProg {
             p.pf_sites = p.pf_sites.push(das.code.len() - 4);
             p.pf_syms = p.pf_syms.push(arm64_gas_strip_at(dops[2]));
             p.pf_kinds = p.pf_kinds.push(2);
+            continue;
+        }
+        // `and Xd, Xn, #imm` (logical immediate) needs a verified bitmask
+        // encoding; an unsupported immediate is recorded (never silently
+        // mis-encoded). Register-form `and` falls through to emit.
+        if (mnem == "and" && rest.index_of("#") >= 0) {
+            var nops: string[] = arm64_gas_operands(rest);
+            var nimm: i32 = arm64_gas_imm(nops[2]);
+            if (arm64_and_imm_ok(nimm)) {
+                var aand: Arm64Asm = p.asm;
+                aand.code = arm64_and_imm(aand.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm);
+                p.asm = aand;
+            } else {
+                p.unknown = p.unknown.push("and#");
+            }
             continue;
         }
         if (!arm64_gas_known(mnem)) {

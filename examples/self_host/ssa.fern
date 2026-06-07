@@ -1940,7 +1940,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var eparams: parser.ParamDecl[] = [];
                                 var ep: i32 = 0;
                                 while (ep < lam.params.len()) { eparams = eparams.push(lam.params[ep]); ep = ep + 1; }
-                                eparams = eparams.push(parser.ParamDecl { name: "__env", type_name: "fn" });
+                                eparams = eparams.push(parser.ParamDecl { name: "__env", type_name: "fn", own: false });
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {

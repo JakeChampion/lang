@@ -132,19 +132,23 @@ func buildExternListU8ResultWrapper(nparams int, rawImport string) func(map[stri
 	}
 }
 
-// buildExternStringParamWrapper handles an extern with one or more `string`
-// parameters and a scalar (or void) result (P4c). A WIT `string`/`list<u8>`
-// parameter lowers to the canonical `(ptr, len)` of contiguous UTF-8 bytes,
-// but a Fern string arrives as an SSO-encoded `(data, len)` pair whose data is
-// not a raw pointer for inline strings. The wrapper normalizes each string
-// param to a heap buffer (emitStrNormalize) before forwarding it, passing
-// scalar params straight through, then calls the raw import; its scalar result
-// (if any) is left on the stack.
+// buildExternMemParamWrapper handles an extern with one or more memory
+// parameters (`string` and/or `u8[]`) and a scalar (or void) result (P4c). Both
+// kinds lower to the canonical `(ptr, len)` of contiguous bytes, but reach the
+// wrapper differently:
 //
-// The wrapper's params mirror the flattened Fern signature (string → 2 i32
-// slots); 3 i32 scratch locals (buf, byteLen, i), reused across string params,
-// follow the param slots.
-func buildExternStringParamWrapper(params []ast.Param, rawImport string) func(map[string]uint32) []byte {
+//   - a `string` arrives as an SSO-encoded `(data, len)` pair (2 Fern slots)
+//     whose data is not a raw pointer for inline strings, so it's normalized to
+//     a heap buffer (emitStrNormalize) first;
+//   - a `u8[]` arrives as a single element pointer (1 Fern slot) with the count
+//     at `ptr-4`, and u8 is 1-byte stride, so its bytes are already a valid
+//     canonical payload — forward `(ptr, load(ptr-4))` directly, no copy.
+//
+// Scalar params pass straight through. After forwarding all params the raw
+// import is called; its scalar result (if any) is left on the stack. The
+// wrapper's params mirror the Fern flattening (string→2, u8[]→1, scalar→1); 3
+// i32 scratch locals (buf, byteLen, i), reused across string params, follow.
+func buildExternMemParamWrapper(params []ast.Param, rawImport string) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		imp := idxs[rawImport]
 		nSlots := uint32(0)
@@ -152,7 +156,7 @@ func buildExternStringParamWrapper(params []ast.Param, rawImport string) func(ma
 			if isStringType(p.Type) {
 				nSlots += 2
 			} else {
-				nSlots++
+				nSlots++ // u8[] and scalar are each one Fern slot
 			}
 		}
 		bufL, byteLenL, iL := nSlots, nSlots+1, nSlots+2
@@ -160,13 +164,24 @@ func buildExternStringParamWrapper(params []ast.Param, rawImport string) func(ma
 		var body []byte
 		slot := uint32(0)
 		for _, p := range params {
-			if isStringType(p.Type) {
+			switch {
+			case isStringType(p.Type):
 				// (data@slot, len@slot+1) → normalized (bufL, byteLenL).
 				body = emitStrNormalize(body, idxs, slot, slot+1, bufL, byteLenL, iL)
 				body = inst.InstLocalGet(body, bufL)
 				body = inst.InstLocalGet(body, byteLenL)
 				slot += 2
-			} else {
+			case isScalarArrayParamType(p.Type):
+				// (ptr, len) = (elemPtr, load(elemPtr-4)). The count prefix holds
+				// the element count, which is the canonical list length for any
+				// element width; the elements are already packed at native stride.
+				body = inst.InstLocalGet(body, slot) // ptr
+				body = inst.InstLocalGet(body, slot)
+				body = inst.InstI32Const(body, 4)
+				body = numeric.InstI32Sub(body)
+				body = memory.InstI32Load(body, 2, 0) // count @ ptr-4
+				slot++
+			default:
 				body = inst.InstLocalGet(body, slot)
 				slot++
 			}

@@ -763,18 +763,22 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		if !used[ex.Name] {
 			continue
 		}
-		// Parameters must be scalar or `string` (a string lowers to the
-		// canonical (ptr,len) via the param wrapper below). Other composite
-		// params — arrays, records — aren't lowered yet; reject them rather
-		// than emit slots that don't match the host's ABI.
-		hasStringParam := false
+		// Parameters must be scalar, `string`, or an integer array of ≤32-bit
+		// elements — the memory params a wrapper can lower to the canonical
+		// (ptr,len) below. A `string` normalizes its SSO pair to a heap buffer;
+		// an integer array (`u8[]`, `i32[]`, …) passes its element pointer +
+		// length-prefix directly (zero-copy, native stride). Other composite
+		// params — 64-bit / float / bool arrays, records — aren't lowered yet;
+		// reject them rather than emit slots that don't match the host's ABI.
+		hasStringParam, hasMemParam := false, false
 		for _, p := range ex.Params {
-			if isStringType(p.Type) {
-				hasStringParam = true
-				continue
-			}
-			if !externScalarType(p.Type) {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar and string extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
+			switch {
+			case isStringType(p.Type):
+				hasStringParam, hasMemParam = true, true
+			case isScalarArrayParamType(p.Type):
+				hasMemParam = true
+			case !externScalarType(p.Type):
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, and integer-array (u8[]/i32[]/…) extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 			}
 		}
 		params, err := paramValtypes(ex.Params)
@@ -788,32 +792,40 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			_, isVoid = ret.(ast.VoidType)
 		}
 
-		// A `string` parameter (P4c): the Fern string is normalized to the
-		// canonical (ptr,len) by a generated wrapper before the raw import is
-		// called. Only a scalar/void result is supported alongside string
-		// params for now (a composite result there would need both marshalling
-		// directions at once).
-		if hasStringParam {
+		// A memory parameter (`string` or `u8[]`, P4c): a generated wrapper
+		// normalizes each to the canonical (ptr,len) before the raw import is
+		// called. The wrapper's signature mirrors the Fern flattening (`params`:
+		// string→2 slots, u8[]→1), while the raw import carries the host-facing
+		// canonical flattening (`rawParams`: string→2, u8[]→2). Only a
+		// scalar/void result is supported alongside memory params for now (a
+		// composite result there would need both marshalling directions at once).
+		if hasMemParam {
 			if !(isVoid || externScalarType(ret)) {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): a string parameter with a composite result is not supported yet (P4c)", ex.Name, ex.Iface, ex.WITName)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): a string/u8[] parameter with a composite result is not supported yet (P4c)", ex.Name, ex.Iface, ex.WITName)
 			}
 			results, err := resultValtypes(ret)
 			if err != nil {
 				return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
 			}
+			rawParams, err := canonicalExternParamValtypes(ex.Params)
+			if err != nil {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+			}
 			rawName := ex.Name + "$import"
-			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: params, results: results}
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: results}
 			in.add(rawName)
 			wrappers[ex.Name] = runtimeHelperSpec{
 				params:  params,
 				results: results,
-				body:    buildExternStringParamWrapper(ex.Params, rawName),
+				body:    buildExternMemParamWrapper(ex.Params, rawName),
 			}
 			helpers.add(ex.Name)
-			// emitStrNormalize's dependencies.
 			helpers.add("__fern_alloc")
-			helpers.add("__fern_str_len")
-			helpers.add("__fern_str_byte")
+			if hasStringParam {
+				// emitStrNormalize's extra dependencies.
+				helpers.add("__fern_str_len")
+				helpers.add("__fern_str_byte")
+			}
 			continue
 		}
 

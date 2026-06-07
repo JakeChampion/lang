@@ -323,11 +323,17 @@ planned order:
   another function. A non-recursive local already desugars to `var f =
   function(…){…}` (a closure); a self-recursive one can't see its own name
   through the closure value. `hoist_local_funcs_module` (a post-parse pass
-  in `module_with_builtins`) lifts a **capture-free** self-recursive local
-  to a top-level function — recursion resolves once it's top-level —
-  reusing all the existing top-level-function machinery (no new AST node,
-  no backend changes). A *capturing* recursive local still errors clearly
-  (lambda-lifting is a follow-up). The pass only rebuilds a body that
+  in `module_with_builtins`) lifts a self-recursive local to a top-level
+  function — recursion resolves once it's top-level — reusing all the
+  existing top-level-function machinery (no new AST node, no backend
+  changes). A **capturing** recursive local is lambda-lifted: the captured
+  enclosing names become trailing parameters (untyped — the self-host's
+  uniform 8-byte slots don't need a parse-time type, which the pre-checker
+  pass couldn't supply), and every call site — the recursive self-calls
+  inside the lifted body and the external calls in the enclosing body — is
+  rewritten to pass them (`rw_call_stmts`/`rw_call_expr`, with the lift
+  list threaded through `HoistResult.lifts`). The pass only rebuilds a body
+  that
   actually contains a recursive local (the `hl_has_rec_local` precheck), so
   the self-host's own sources — which use none — pass through untouched and
   the byte-identical stage-2 fixpoint holds. Surfaced (and required) the
@@ -1064,11 +1070,31 @@ smallest → largest:
     silently-missing ops — `mul` (MADD alias), `ldur`/`stur` (unscaled
     frame load/store), and `cset` (CSINC alias) — now added (pinned vs
     llvm-mc). The arm64-darwin path now assembles real compiler output to a
-    runnable signed binary with no `as`/`clang`/`ld64`. Remaining: wire it
-    into the CLI driver (emit → assemble → write file) behind a flag, and
-    widen coverage as more language features exercise new instructions —
-    the `unknown`-guard makes each gap a hard failure rather than a silent
-    miscompile.
+    runnable signed binary with no `as`/`clang`/`ld64`.
+  - ✅ **slice 3l — coverage widening (strings / structs / arrays /
+    options)**: drove `TestSelfHostArm64DarwinMachORealAsm` with richer
+    real programs — `Option`/`match`, string concat, a struct method, an
+    array sum loop — and added every instruction their real asm needs
+    (each gap surfaced by the `unknown`-guard, then encoded + pinned vs
+    llvm-mc): `lsl`/`lsr` immediate (x + w forms, UBFM aliases), `cmn`
+    (ADDS-to-XZR), `csel`, register `and`, the no-dot branch aliases
+    (`bhi`/`blt`/`bne`/…), and `and Xd, Xn, #imm` for the 16-byte alloc
+    alignment mask (`#-16`, fields verified vs llvm-mc; an unsupported
+    bitmask immediate is recorded by the guard, never mis-encoded — a full
+    AArch64 bitmask-immediate encoder is the follow-up). The capstone now
+    assembles 7 real programs (incl. the heap/alloc prologue) to valid
+    arm64 Mach-O.
+  - ✅ **slice 3m — full AArch64 bitmask-immediate encoder**:
+    `arm64_encode_bitmask` (a faithful port of the Go reference's
+    `encodeBitmask`) replaces the single-mask lookup, so any legal
+    `and Xd, Xn, #imm` logical immediate encodes — not just `#-16`. Needed
+    a few i64 bit primitives Fern lacks natively: a masked logical shift
+    right (`>>` is arithmetic), and ctz/clz via bit-test loops. Byte-checked
+    vs llvm-mc across a spread of masks (`#-16`, `#-256`, `#7`, `#0xff`,
+    `#1`, `#0xf`) plus the legality cases (0 / all-ones / non-bitmask
+    rejected) in `TestSelfHostArm64Bitmask`; the `and #imm` guard now keys
+    on `arm64_and_imm_ok`. Remaining: wire emit → assemble → write-file
+    into the CLI driver behind a flag (the architectural finale).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

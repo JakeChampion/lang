@@ -59,6 +59,10 @@ func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
 		{"return42", `function main(): i32 { return 42; }`, 42},
 		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`, 42},
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(10); }`, 55},
+		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 9; }`, 42},
+		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13},
+		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12},
+		{"array_sum", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
 	}
 
 	for _, c := range cases {
