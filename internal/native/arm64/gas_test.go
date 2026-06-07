@@ -213,6 +213,16 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tadd x0, x1, #0x10000\n\tsub x2, x3, #0x1000\n\tadd x0, x1, #1, lsl #12\n",
 		"scvtf_w_and_mov_zr": "" +
 			"\tscvtf d0, w0\n\tscvtf s0, w1\n\tscvtf d2, x3\n\tmov x0, xzr\n\tmov w1, wzr\n",
+		// w-form ALU ops not otherwise cross-checked, plus cbz/cbnz in
+		// both widths. The sf bit (bit 31) selects 32- vs 64-bit; a
+		// regression that ignores the register width (as cbz/cbnz once
+		// did — it always emitted the 64-bit form) is caught here against
+		// GNU as as the authority.
+		"w_register_alu_extras": "" +
+			"\torr w0, w1, w2\n\teor w0, w1, w2\n\tsdiv w0, w1, w2\n\tlsr w0, w1, w2\n\tasr w0, w1, w2\n" +
+			"\tmsub w0, w1, w2, w3\n\tlsr w0, w1, #3\n\tasr w0, w1, #3\n",
+		"cbz_cbnz_widths": "" +
+			"\tcbz w0, l0\n\tcbz x0, l0\n\tcbnz w1, l0\n\tcbnz x1, l0\n\tcbz w3, l0\nl0:\n\tret\n",
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
