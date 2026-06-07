@@ -726,6 +726,18 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.mark_arr_push();
         return CallOut { state: s, done: true };
     }
+    // cell_new(v) — single-slot box (docs/CELL-TYPE-PLAN.md): alloc 8
+    // bytes, store the value, return the pointer (leak-everything, no RC).
+    if (name == "cell_new" && c.args.len() == 1) {
+        s = emit_expr(c.args[0], s);             // value on the stack
+        s = s.write("    mov x0, #8\n");
+        s = s.write("    bl __fern_alloc\n");     // x0 = cell ptr
+        s = s.write("    ldr x1, [sp], #16\n");   // value
+        s = s.write("    str x1, [x0]\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        return CallOut { state: s, done: true };
+    }
     // random_bytes(n) — string of n random bytes (getrandom).
     if (name == "random_bytes" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1049,6 +1061,25 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // Primitive-receiver fast path: see
     // asm.fern for rationale.
     var prim_recv: asmcore.Ty = asmcore.infer_expr_type(fa.obj, s);
+    // Cell[T] (docs/CELL-TYPE-PLAN.md): get() loads slot 0; set(v) stores
+    // it in place and returns void (dummy pushed for the statement pop).
+    if (asmcore.is_cell(prim_recv) && fa.field == "get" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x0, [x0]\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    if (asmcore.is_cell(prim_recv) && fa.field == "set" && c.args.len() == 1) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");   // value
+        s = s.write("    ldr x0, [sp], #16\n");   // cell ptr
+        s = s.write("    str x1, [x0]\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    str x0, [sp, #-16]!\n");  // void placeholder
+        return s;
+    }
     // Map methods (string-keyed). set → map; get →
     // Option[V]; has → bool; len → i32. Mirror of
     // asm.fern's x86-64 dispatch.

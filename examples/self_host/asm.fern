@@ -680,6 +680,19 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.mark_arr_push();
         return CallOut { state: s, done: true };
     }
+    // cell_new(v) — a single-slot box (docs/CELL-TYPE-PLAN.md): alloc 8
+    // bytes, store the value, return the pointer. Leak-everything heap, so
+    // no header / RC.
+    if (name == "cell_new" && c.args.len() == 1) {
+        s = emit_expr(c.args[0], s);             // value on the stack
+        s = s.write("    movq $8, %rdi\n");
+        s = s.write("    call __fern_alloc\n");   // rax = cell ptr
+        s = s.write("    popq %rcx\n");           // value
+        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    pushq %rax\n");
+        s = s.mark_heap();
+        return CallOut { state: s, done: true };
+    }
     // random_bytes(n) — a string of n cryptographically-random
     // bytes (getrandom). Used by std/math's random_int.
     if (name == "random_bytes" && c.args.len() == 1) {
@@ -1049,6 +1062,26 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // aren't heap-boxed with a shape ptr) and
     // call `__fn_<type>__<method>` directly.
     var prim_recv: asmcore.Ty = asmcore.infer_expr_type(fa.obj, s);
+    // Cell[T] (docs/CELL-TYPE-PLAN.md): a single-slot box.
+    // get() loads slot 0; set(v) stores it in place and returns
+    // void (a dummy is pushed so the surrounding statement pops
+    // something, like __set_index). Leak-everything heap, so no RC.
+    if (asmcore.is_cell(prim_recv) && fa.field == "get" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    popq %rax\n");
+        s = s.write("    movq (%rax), %rax\n");
+        s = s.write("    pushq %rax\n");
+        return s;
+    }
+    if (asmcore.is_cell(prim_recv) && fa.field == "set" && c.args.len() == 1) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    popq %rcx\n");          // value
+        s = s.write("    popq %rax\n");          // cell ptr
+        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    pushq $0\n");           // void result placeholder
+        return s;
+    }
     // Map methods (string-keyed). set returns the
     // (mutated) map; get → Option[V]; has → bool;
     // len → i32.
