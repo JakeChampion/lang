@@ -385,6 +385,25 @@ function main(): i32 {
     var sd: i32[] = x86_mov_store_r64_idx([], 13, x86_rcx(), 1, 0, x86_rax()); // 49 89 44 0D 00
     if (sd.len() != 5 || sd[0] != 73 || sd[1] != 137 || sd[2] != 68 || sd[3] != 13 || sd[4] != 0) { return 55; }
     if (x86_scale_bits(1) != 0 || x86_scale_bits(2) != 1 || x86_scale_bits(4) != 2 || x86_scale_bits(8) != 3) { return 56; }
+    // slice 2k byte ops (verified vs as/objdump):
+    var ba: i32[] = x86_movb_imm_mem([], 6, false, 0, 1, 0, 48); // movb $48,(%rsi) -> C6 06 30
+    if (ba.len() != 3 || ba[0] != 198 || ba[1] != 6 || ba[2] != 48) { return 57; }
+    var bc: i32[] = x86_movb_imm_mem([], 13, false, 0, 1, 2, 105); // movb $105,2(%r13) -> 41 C6 45 02 69
+    if (bc.len() != 5 || bc[0] != 65 || bc[1] != 198 || bc[2] != 69 || bc[3] != 2 || bc[4] != 105) { return 58; }
+    var bd: i32[] = x86_movb_imm_mem([], 12, true, 3, 1, 0, 102); // movb $102,(%r12,%rbx,1) -> 41 C6 04 1C 66
+    if (bd.len() != 5 || bd[0] != 65 || bd[1] != 198 || bd[2] != 4 || bd[3] != 28 || bd[4] != 102) { return 59; }
+    var be: i32[] = x86_movb_reg_mem([], 0, 6, false, 0, 1, 0); // movb %al,(%rsi) -> 88 06
+    if (be.len() != 2 || be[0] != 136 || be[1] != 6) { return 60; }
+    var bf: i32[] = x86_movb_reg_mem([], 0, 11, false, 0, 1, 0); // movb %al,(%r11) -> 41 88 03
+    if (bf.len() != 3 || bf[0] != 65 || bf[1] != 136 || bf[2] != 3) { return 61; }
+    var bg: i32[] = x86_movzbq_mem([], x86_rax(), x86_rax(), false, 0, 1, 0); // movzbq (%rax),%rax -> 48 0F B6 00
+    if (bg.len() != 4 || bg[0] != 72 || bg[1] != 15 || bg[2] != 182 || bg[3] != 0) { return 62; }
+    var bh: i32[] = x86_movzbq_mem([], x86_rdx(), 13, false, 0, 1, 2); // movzbq 2(%r13),%rdx -> 49 0F B6 55 02
+    if (bh.len() != 5 || bh[0] != 73 || bh[1] != 15 || bh[2] != 182 || bh[3] != 85 || bh[4] != 2) { return 63; }
+    var bj: i32[] = x86_movzbq_reg([], x86_rcx(), 0); // movzbq %al,%rcx -> 48 0F B6 C8
+    if (bj.len() != 4 || bj[0] != 72 || bj[1] != 15 || bj[2] != 182 || bj[3] != 200) { return 64; }
+    var bk: i32[] = x86_cmpb_imm_reg8([], 1, 46); // cmpb $46,%cl -> 80 F9 2E
+    if (bk.len() != 3 || bk[0] != 128 || bk[1] != 249 || bk[2] != 46) { return 65; }
     return 0;
 }
 `

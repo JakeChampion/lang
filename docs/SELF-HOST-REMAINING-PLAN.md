@@ -972,12 +972,21 @@ smallest → largest:
     (`x86_gas_top_comma` skips commas inside `(%b,%i,s)`). Byte-checked
     (`TestSelfHostX86Encode`, `TestSelfHostX86Gas`) and a native run
     (`TestSelfHostX86GasIndexRuns`: store 42 at `[rsp+rcx*8]`, reload).
-  - ⬜ remaining: the 8/32-bit ops (`movb`/`movzbq`/`movl`/`cmpb`, `setCC`,
-    `movabsq` with 64-bit/hex immediates, `0x83` imm8 ALU, `movq $imm` `C7`
-    form) and the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
-    `roundsd`, `fldl`/`fstpl`), then wire it into the `fern -target
-    x86-64 -o` driver so a real compiled program becomes an ELF with no
-    external tool.
+  - ✅ **slice 2k — byte / 8-bit ops**: `movb` ($imm/reg8 → mem, mem →
+    reg8; `0xC6`/`0x88`/`0x8A`), `movzbq` (mem/reg8 → r64, REX.W `0F B6`),
+    `movl $imm` (the `0xB8` 32-bit mov), and `cmpb $imm8, %reg8` (`0x80 /7`),
+    plus an 8-bit register parser (`%al`..`%dil`, `%r8b`..`%r15b`). Byte ops
+    reuse the ModR/M+SIB encoders with a W=0 REX emitted only when needed
+    (extended reg/base/index, or spl..dil). Byte-checked
+    (`TestSelfHostX86Encode`, `TestSelfHostX86Gas`) and two native runs:
+    `…GasByteImmRuns` (`movb $42`+`movzbq`) and `…GasByteRegRuns`
+    (`movb %cl`+`movzbq` into `%r8`). With this the integer surface
+    `asm.fern` emits is essentially covered.
+  - ⬜ remaining: the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
+    `roundsd`, `fldl`/`fstpl`) + `movabsq` (64-bit/hex immediates) and the
+    odd `setCC` / `0x83` imm8 forms, then wire the front-end into the
+    `fern -target x86-64 -o` driver so a real compiled program becomes an
+    ELF with no external tool.
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
