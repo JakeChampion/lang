@@ -3172,8 +3172,10 @@ function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32)
 
 function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
     match (stmt) {
-        // StmtDefer is lowered away (parser.lower_defers) before emit; this
-        // arm only satisfies exhaustiveness.
+        // StmtDefer / StmtSwitch are lowered away (lower_defers /
+        // desugar_switches) before emit; these arms only satisfy
+        // exhaustiveness (StmtSwitch defensively emits its lowered form).
+        parser.StmtSwitch(_) => { return emit_stmt(parser.desugar_switch_in_stmt(stmt), s); },
         parser.StmtDefer(_) => { return s.write("    # unsupported: StmtDefer survived lowering\n"); },
         parser.StmtReturn(r) => {
             s = emit_expr(r.value, s);

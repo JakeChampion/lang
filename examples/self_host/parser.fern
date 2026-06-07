@@ -164,9 +164,23 @@ pub struct StmtUnknown { kind: string }
 // never lower one at runtime (their arms are there for exhaustiveness).
 pub struct StmtDefer { action: Stmt }
 
+// StmtSwitch models `switch (scrut) { case v0, v1: …  default: … }`. Like
+// StmtDefer it is a TRANSIENT node: the parser builds it (instead of
+// desugaring inline) so the type checker can see the switch shape and emit
+// E025 (switch-on-float / case value type mismatch); desugar_switches_module
+// (run from module_with_builtins, and from the interp driver) then lowers
+// every StmtSwitch to the nested if/else-if chain the backends already
+// support — so no backend lowers one at runtime (their arms exist only for
+// exhaustiveness, like StmtDefer's). `cases` are the `case` arms in order;
+// each has one-or-more values (a multi-value `case a, b:`) compared with
+// `==`; default_body is the `default:` arm (empty + has_default=false when
+// absent). No fall-through: each case body runs alone.
+pub struct SwitchCase { values: Expr[], body: Stmt[] }
+pub struct StmtSwitch { scrutinee: Expr, cases: SwitchCase[], has_default: boolean, default_body: Stmt[], line: i32, col: i32 }
+
 pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
               | StmtAssign | StmtMatch | StmtFor
-              | StmtBreak | StmtContinue | StmtUnknown | StmtDefer;
+              | StmtBreak | StmtContinue | StmtUnknown | StmtDefer | StmtSwitch;
 
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
@@ -364,6 +378,89 @@ function p_variant(type_name: string, binding: string): Pattern {
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 function s_defer(action: Stmt): Stmt { return StmtDefer { action: action }; }
+
+// desugar_switch lowers a StmtSwitch to the nested if/else-if chain the
+// backends consume — each `case v0, v1: body` becomes
+// `if (scrut == v0 || scrut == v1) { body } else <rest>`, the default arm
+// (or nothing) at the innermost else. Built back-to-front so each case's
+// else is the already-built remainder. With no cases it degenerates to the
+// default body's first statement (or an empty-switch placeholder),
+// preserving the original inline-desugar behaviour.
+function desugar_switch(sw: StmtSwitch): Stmt {
+    if (sw.cases.len() == 0) {
+        if (sw.has_default && sw.default_body.len() >= 1) { return sw.default_body[0]; }
+        return s_unknown("empty switch");
+    }
+    var else_body: Stmt[] = sw.default_body;
+    var i: i32 = sw.cases.len() - 1;
+    while (i >= 0) {
+        var c: SwitchCase = sw.cases[i];
+        var cond: Expr = e_binary("==", sw.scrutinee, c.values[0]);
+        var j: i32 = 1;
+        while (j < c.values.len()) {
+            cond = e_binary("||", cond, e_binary("==", sw.scrutinee, c.values[j]));
+            j = j + 1;
+        }
+        var one: Stmt[] = [s_if(cond, c.body, else_body)];
+        else_body = one;
+        i = i - 1;
+    }
+    return else_body[0];
+}
+
+// desugar_switch_block / desugar_switch_in_stmt / desugar_switches_module
+// lower every StmtSwitch in a module to its if/else-if chain, recursing
+// through all nested bodies (and desugaring switches inside case/default
+// bodies before folding the outer one). Run from module_with_builtins (the
+// emit paths) and the interp driver — AFTER the type checker, which needs
+// the StmtSwitch shape for E025.
+function desugar_switch_block(body: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) { out = out.append(desugar_switch_in_stmt(body[i])); i = i + 1; }
+    return out;
+}
+
+pub function desugar_switch_in_stmt(st: Stmt): Stmt {
+    match (st) {
+        StmtSwitch(sw) => {
+            var cases: SwitchCase[] = [];
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                cases = cases.append(SwitchCase { values: sw.cases[ci].values, body: desugar_switch_block(sw.cases[ci].body) });
+                ci = ci + 1;
+            }
+            var lowered: StmtSwitch = StmtSwitch { scrutinee: sw.scrutinee, cases: cases, has_default: sw.has_default, default_body: desugar_switch_block(sw.default_body), line: sw.line, col: sw.col };
+            return desugar_switch(lowered);
+        },
+        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: desugar_switch_block(f.then_body), else_body: desugar_switch_block(f.else_body) }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: desugar_switch_block(w.body) }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: desugar_switch_block(fr.body) }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var a: i32 = 0;
+            while (a < m.arms.len()) {
+                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_switch_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                a = a + 1;
+            }
+            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col };
+        },
+        StmtDefer(d) => { return StmtDefer { action: desugar_switch_in_stmt(d.action) }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
+pub function desugar_switches_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_switch_block(fd.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_switch_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
 
 // Parser state. `toks` is the lexer's output; `pos` is the
 // current cursor into it. We mutate via value-semantics (return
@@ -1411,54 +1508,61 @@ function parse_match_stmt(p: Par): MatchStmtResult {
     return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, arms, mkline, mkcol) };
 }
 
-// parse_switch_arms consumes the `case` / `default` arms of a switch
-// (the cursor is just past the opening `{`) and folds them into a
-// nested if/else-if chain, returning it as the body (a 1-element
-// Stmt[] holding the head StmtIf, or the default body, or empty).
-// `scrut` is the switch scrutinee, compared with `==` per case value
-// (multi-value cases OR the comparisons). The scrutinee is re-evaluated
-// per case — fine for the var/param scrutinees switch is used on. No
+// SwitchCasesResult carries the flat `case` / `default` arms parsed from a
+// switch body (the cursor is just past the opening `{`).
+pub struct SwitchCasesResult { par: Par, cases: SwitchCase[], has_default: boolean, default_body: Stmt[] }
+
+// parse_switch_cases consumes the `case` / `default` arms of a switch into
+// a flat SwitchCase[] (plus an optional default body), preserving them for
+// the type checker (E025); desugar_switch later folds them into the
+// if/else-if chain. Each `case v0, v1, …:` collects its one-or-more values
+// and the statements up to the next `case` / `default` / `}`. No
 // fall-through: each case body runs alone.
-function parse_switch_arms(p: Par, scrut: Expr): BlockResult {
-    var kw: string = p.peek_keyword();
-    if (kw == "case") {
-        p = p.advance();  // consume `case`
-        var cv: ExprResult = parse_expr(p);
-        p = cv.par;
-        var cond: Expr = e_binary("==", scrut, cv.expr);
-        while (p.peek_punct() == ",") {
-            p = p.advance();
-            var cv2: ExprResult = parse_expr(p);
-            p = cv2.par;
-            cond = e_binary("||", cond, e_binary("==", scrut, cv2.expr));
+function parse_switch_cases(p: Par): SwitchCasesResult {
+    var cases: SwitchCase[] = [];
+    var has_default: boolean = false;
+    var default_body: Stmt[] = [];
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        var kw: string = p.peek_keyword();
+        if (kw == "case") {
+            p = p.advance();  // consume `case`
+            var vals: Expr[] = [];
+            var cv: ExprResult = parse_expr(p);
+            p = cv.par;
+            vals = vals.append(cv.expr);
+            while (p.peek_punct() == ",") {
+                p = p.advance();
+                var cv2: ExprResult = parse_expr(p);
+                p = cv2.par;
+                vals = vals.append(cv2.expr);
+            }
+            if (p.peek_punct() == ":") { p = p.advance(); }
+            var body: Stmt[] = [];
+            while (p.peek_keyword() != "case" && p.peek_keyword() != "default"
+                    && p.peek_punct() != "}" && !p.at_end()) {
+                var st: StmtResult = parse_stmt(p);
+                p = st.par;
+                body = body.append(st.stmt);
+            }
+            cases = cases.append(SwitchCase { values: vals, body: body });
+            continue;
         }
-        if (p.peek_punct() == ":") { p = p.advance(); }
-        var body: Stmt[] = [];
-        while (p.peek_keyword() != "case" && p.peek_keyword() != "default"
-                && p.peek_punct() != "}" && !p.at_end()) {
-            var st: StmtResult = parse_stmt(p);
-            p = st.par;
-            body = body.append(st.stmt);
+        if (kw == "default") {
+            p = p.advance();  // consume `default`
+            if (p.peek_punct() == ":") { p = p.advance(); }
+            has_default = true;
+            while (p.peek_keyword() != "case" && p.peek_keyword() != "default"
+                    && p.peek_punct() != "}" && !p.at_end()) {
+                var ds: StmtResult = parse_stmt(p);
+                p = ds.par;
+                default_body = default_body.append(ds.stmt);
+            }
+            continue;
         }
-        var rest: BlockResult = parse_switch_arms(p, scrut);
-        p = rest.par;
-        var arms: Stmt[] = [];
-        arms = arms.append(s_if(cond, body, rest.body));
-        return BlockResult { par: p, body: arms };
+        // Unexpected token inside switch body — skip to avoid a hang.
+        p = p.advance();
     }
-    if (kw == "default") {
-        p = p.advance();  // consume `default`
-        if (p.peek_punct() == ":") { p = p.advance(); }
-        var dbody: Stmt[] = [];
-        while (p.peek_punct() != "}" && !p.at_end()) {
-            var ds: StmtResult = parse_stmt(p);
-            p = ds.par;
-            dbody = dbody.append(ds.stmt);
-        }
-        return BlockResult { par: p, body: dbody };
-    }
-    var empty: Stmt[] = [];
-    return BlockResult { par: p, body: empty };
+    return SwitchCasesResult { par: p, cases: cases, has_default: has_default, default_body: default_body };
 }
 
 // expr_mentions / stmts_mention report whether `name` appears as an
@@ -1576,17 +1680,18 @@ function parse_stmt(p: Par): StmtResult {
         return StmtResult { par: p, stmt: s_var(fr.func.name, "", lam) };
     }
     if (kw == "switch") {
+        var swline: i32 = p.peek_line();
+        var swcol: i32 = p.peek_col();
         p = p.advance();  // consume `switch`
         if (p.peek_punct() == "(") { p = p.advance(); }
         var se: ExprResult = parse_expr(p);
         p = se.par;
         if (p.peek_punct() == ")") { p = p.advance(); }
         if (p.peek_punct() == "{") { p = p.advance(); }
-        var sarms: BlockResult = parse_switch_arms(p, se.expr);
-        p = sarms.par;
+        var scr: SwitchCasesResult = parse_switch_cases(p);
+        p = scr.par;
         if (p.peek_punct() == "}") { p = p.advance(); }
-        if (sarms.body.len() >= 1) { return StmtResult { par: p, stmt: sarms.body[0] }; }
-        return StmtResult { par: p, stmt: s_unknown("empty switch") };
+        return StmtResult { par: p, stmt: StmtSwitch { scrutinee: se.expr, cases: scr.cases, has_default: scr.has_default, default_body: scr.default_body, line: swline, col: swcol } };
     }
     if (kw == "match") {
         var mr: MatchStmtResult = parse_match_stmt(p);
@@ -4470,7 +4575,10 @@ pub function module_with_builtins(mod: Module): Module {
     // `[resource-drop]` import functions — BEFORE lower_defers_module so the
     // inserted defers expand to drops on every exit path
     // (docs/WIT-BRING-YOUR-OWN.md).
-    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(hoist_local_funcs_module(mod)))));
+    // Lower switches to if/else-if chains first (the type checker has
+    // already run on the StmtSwitch shape for E025), so no later pass or
+    // backend sees a StmtSwitch at runtime.
+    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(hoist_local_funcs_module(desugar_switches_module(mod))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),

@@ -73,6 +73,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E055": true, // discarded result of a value-returning collection mutator
 	"E031": true, // match/if-expression arms have incompatible types
 	"E045": true, // map literal key type must be i32 or string
+	"E025": true, // switch on float / case value type mismatch
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -474,6 +475,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e045-maplit-string-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; return 0; }\n", nil},
 		{"e045-maplit-i32-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: 10, 2: 20 }; return 0; }\n", nil},
 		{"e045-maplit-used-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"a\": 1 }; return m.get_or(\"a\", 0); }\n", nil},
+		// E025: `switch` keeps a real StmtSwitch node through the checker (it
+		// desugars to an if-chain only at emit). A float scrutinee, or a case
+		// value whose type isn't equal to the scrutinee's, is E025.
+		{"e025-switch-float", "function main(): i32 { var f: f64 = 1.0; switch (f) { case 1.0: return 1; default: return 0; } }\n", []string{"E025"}},
+		{"e025-switch-i32-ok", "function main(): i32 { var n: i32 = 1; switch (n) { case 1: return 1; default: return 0; } }\n", nil},
+		{"e025-switch-case-type", "function main(): i32 { var n: i32 = 1; switch (n) { case \"x\": return 1; default: return 0; } }\n", []string{"E025"}},
+		{"e025-switch-string-ok", "function main(): i32 { var s: string = \"a\"; switch (s) { case \"a\": return 1; default: return 0; } }\n", nil},
+		{"e025-switch-multi-ok", "function main(): i32 { var n: i32 = 1; switch (n) { case 1, 2, 3: return 1; default: return 0; } }\n", nil},
+		// E052 interaction: a switch exits only with a default whose arms all
+		// return; without a default the function can fall through.
+		{"e025-switch-no-default-e052", "function f(x: i32): i32 { switch (x) { case 1: return 1; } }\nfunction main(): i32 { return f(1); }\n", []string{"E052"}},
+		{"e025-switch-all-return-ok", "function f(x: i32): i32 { switch (x) { case 1: return 1; default: return 0; } }\nfunction main(): i32 { return f(1); }\n", nil},
+		// Switch-body diagnostics must still be caught (the body-walking passes
+		// recurse into case / default bodies).
+		{"e025-switch-body-undefined", "function main(): i32 { var n: i32 = 1; switch (n) { case 1: return undef; default: return 0; } }\n", []string{"E001"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
