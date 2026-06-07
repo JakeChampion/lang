@@ -401,7 +401,7 @@ function __json_p_object(p0: __JsonParser): (JsonValue, __JsonParser) {
         var (val, pv) = __json_p_value(p);
         p = pv;
         if (p.error != 0) { return (JNull, p); }
-        m.set(key, val);
+        m = m.insert(key, val);
         p = __json_p_skip_ws(p);
         var b: i32 = __json_p_byte(p);
         if (b == 44) {                                  // ','
