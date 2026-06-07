@@ -1129,11 +1129,19 @@ smallest → largest:
     the **integer / load-store / system batch** — `orr`, `subs` (reg/imm),
     `udiv`/`sdiv`/`msub`, `rev16`, `ldrb`/`strb`/`ldrh`/`strh`/`ldrsw`, and
     `mrs` of the clock sysregs (`cntvct_el0`/`cntfrq_el0`, unknown sysregs
-    guarded). **Remaining:** the f64 family (`fadd`/`fsub`/`fmul`/`fdiv`/
-    `fneg`/`fcmp`/`fmov`/`fcvtzs`/`scvtf`/`frinta` — needs d-register
-    parsing). Once that lands, `arm64_native` assembles `asm_arm64`'s real
-    darwin output and `-target arm64-darwin` can flip to the in-Fern path
-    (+ flagship-test rework) without regressing the `clang` path.
+    guarded); then the **f64 family** (`fadd`/`fsub`/`fmul`/`fdiv`/`fneg`/
+    `fcmp`/`fmov` ×3 forms/`fcvtzs`/`scvtf`/`frinta`, with d-register
+    parsing) byte-checked by `TestSelfHostArm64Float`. **Coverage is now
+    complete** for the base runtime: **`TestSelfHostArm64DarwinAssembles‑
+    RealRuntime`** feeds `asm_arm64`'s *actual* darwin output for `return 42`
+    / `6*7` / `fib(10)` through `arm64_native` and gets a valid arm64 Mach-O
+    with **zero** unknown mnemonics. So the in-Fern path assembles real
+    compiler output end-to-end. **Next:** flip `fern.fern`'s
+    `-target arm64-darwin` to emit → `arm64_gas` → `macho` (drop the `.s` +
+    `clang`/`ld64` path) + rework the flagship `TestSelfHostArm64DarwinBuilds`
+    to the no-clang flow; cover any feature-specific instructions the wider
+    case list surfaces (the `unknown`-guard makes each a hard failure); and,
+    separately, fix the Go x86 param-spread backend miscompile.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
