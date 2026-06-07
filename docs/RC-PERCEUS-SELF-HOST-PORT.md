@@ -338,4 +338,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 (Updated as slices land.)
 
 - 2026-06-07: design doc created; native + self-host fully mapped
-  (this document). Next: Phase 0a — offset-helper refactor.
+  (this document).
+- 2026-06-07: **Phase 0c (runtime layer), x86-64 — SHIPPED.** Replaced
+  the no-op RC stubs in `asm.fern` with real bodies ported from the
+  native x86_64 backend (`emitRcIncRuntime` / `emitRcDecRuntime` /
+  `emitRcIsUniqueRuntime`): `__fern_rc_inc`, `__fern_rc_dec`,
+  `__fern_rc_is_unique`, `__fern_rc_underflow_count`, plus the
+  `__fern_rc_underflow` BSS counter. Guard chain adapted to the
+  self-host BSS heap (null → SSO inline-tag → low-address `<0x10000` →
+  static sentinel), replacing the native mmap-heap `<0x10000000`
+  guard. No free path yet (safe-leak); `__fern_arr_dec` /
+  `__fern_drop_arr_ptr` stay no-ops until the array layout migration.
+  These are not yet wired into real allocations — they're exercised
+  directly via `__alloc` + `__store_i32`/`__load_i32`. Tests:
+  `TestSelfHostAsmRunX86_64/rc-*` (inc/dec arithmetic, is_unique
+  true/false, underflow detected/clean, null-safe). Byte-identical
+  self-bootstrap (`TestSelfHostStage2FixedPoint`,
+  `TestSelfHostBootstrapsItself`, `TestSelfHostFixpoint`) stays green.
+  Next: mirror to `asm_arm64.fern` + `wasm.fern`; then Phase 0b — the
+  array rc-header layout migration that wires these in.
