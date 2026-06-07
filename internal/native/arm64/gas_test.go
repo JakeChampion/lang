@@ -57,6 +57,40 @@ func TestFcvtToIntDestWidth(t *testing.T) {
 	}
 }
 
+// TestCBZWidth pins the sf bit on cbz/cbnz to the operand register's
+// width: a `w` operand is the 32-bit (sf=0) compare, an `x` operand the
+// 64-bit (sf=1) compare — matching GNU as. A regression here silently
+// compared the wrong number of bytes (the assembler had ignored the
+// prefix and always emitted the 64-bit form), so a `cbz w0` testing a
+// value with non-zero high bits would branch wrong vs an external
+// toolchain. imm19 is +0 here (label on the next line is one ahead, so
+// offset 1): keep the cases single-instruction by branching to a label
+// right after, giving offset 1 (imm19=1 -> bits[23:5] = 0x20).
+func TestCBZWidth(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		{"\tcbz w0, .L\n.L:\n", 0x34000020},  // sf=0 (32-bit)
+		{"\tcbz x0, .L\n.L:\n", 0xb4000020},  // sf=1 (64-bit)
+		{"\tcbnz w0, .L\n.L:\n", 0x35000020}, // sf=0
+		{"\tcbnz x0, .L\n.L:\n", 0xb5000020}, // sf=1
+		{"\tcbz w3, .L\n.L:\n", 0x34000023},  // register field carries through
+		{"\tcbz x3, .L\n.L:\n", 0xb4000023},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		// The instruction is the first 4 bytes (the label adds none).
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got[:4], want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got[:4], want)
+		}
+	}
+}
+
 // TestAssembleBasic checks Assemble without external tools: a tiny
 // exit(42) snippet must produce the known movz/movz/svc bytes, and
 // labels + a comment must be handled.
