@@ -4601,7 +4601,7 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 		// (64-bit elements need 8-byte alignment the Fern element pointer
 		// doesn't guarantee). i32[]/u8[] params ARE accepted now (P4c).
 		"i64 array param":           mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: ast.NumberType{Width: 64}}}}, i32()),
-		"array result":              mk(nil, ast.ArrayType{Elem: i32()}),
+		"i64 array result":          mk(nil, ast.ArrayType{Elem: ast.NumberType{Width: 64}}),
 		"string param + str result": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, ast.StringType{}),
 	}
 	for name, prog := range cases {

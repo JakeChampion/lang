@@ -1021,19 +1021,6 @@ func externScalarType(t ast.Type) bool {
 	return false
 }
 
-// isU8ArrayType reports whether t is `u8[]` — the one composite list shape
-// (P4c) that lifts zero-copy from a canonical `list<u8>` return area, since u8
-// elements are 1-byte stride and so the host's packed bytes are already a valid
-// Fern slice's element data.
-func isU8ArrayType(t ast.Type) bool {
-	at, ok := t.(ast.ArrayType)
-	if !ok {
-		return false
-	}
-	n, ok := at.Elem.(ast.NumberType)
-	return ok && n.NormalWidth() == 8
-}
-
 // isScalarArrayParamType reports whether t is an array of a fixed-width integer
 // element of 32 bits or fewer (`u8[]`, `i16[]`, `i32[]`, …) — the arrays that
 // lower zero-copy to a canonical `list<T>` (ptr, len) as an `@import`
@@ -1051,6 +1038,22 @@ func isScalarArrayParamType(t ast.Type) bool {
 	}
 	n, ok := at.Elem.(ast.NumberType)
 	return ok && n.NormalWidth() <= 32
+}
+
+// scalarArrayElemStride returns the element size in bytes of a scalar array
+// type accepted by isScalarArrayParamType (1 for u8/i8, 2 for i16/u16, 4 for
+// i32/u32). Used to size the materialized Fern array and the host-byte copy for
+// a `list<T>` result.
+func scalarArrayElemStride(t ast.Type) uint32 {
+	at, ok := t.(ast.ArrayType)
+	if !ok {
+		return 1
+	}
+	n, ok := at.Elem.(ast.NumberType)
+	if !ok {
+		return 1
+	}
+	return uint32(n.NormalWidth() / 8)
 }
 
 // localValtypes returns the wasm valtype vector for an IR function's
