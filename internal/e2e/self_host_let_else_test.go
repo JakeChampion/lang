@@ -10,7 +10,9 @@ import (
 // letElseCases cover `let PAT = EXPR else { divergent };`, which the
 // parser desugars by folding the rest of the enclosing block into the
 // success arm of a statement-match:
-//   match (EXPR) { PAT => { <rest of block> }, _ => { divergent } }
+//
+//	match (EXPR) { PAT => { <rest of block> }, _ => { divergent } }
+//
 // Covers the matched arm, the else (diverging) arm, a built-in Option
 // scrutinee both ways, and a multi-statement success body that uses the
 // binding. Exit codes cross-checked vs the Go backend.
