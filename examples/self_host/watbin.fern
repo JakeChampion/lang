@@ -1388,7 +1388,7 @@ pub function component_full_io(core: i32[]): i32[] {
 // so it is embedded verbatim as \xNN blobs around the core.
 
 
-function component_full_io_fs(core: i32[]): i32[] {
+pub function component_full_io_fs(core: i32[]): i32[] {
     var o: i32[] = io_fs_read_head();
     o = wcat(o, wsection(1, core));
     return wcat(o, component_suffix_fs_read());
@@ -1405,7 +1405,7 @@ function component_full_io_fs(core: i32[]): i32[] {
 // blobs around the core.
 
 
-function component_full_io_fs_write(core: i32[]): i32[] {
+pub function component_full_io_fs_write(core: i32[]): i32[] {
     var o: i32[] = io_fs_write_head();
     o = wcat(o, wsection(1, core));
     return wcat(o, component_suffix_fs_write());
@@ -1423,7 +1423,7 @@ function component_full_io_fs_write(core: i32[]): i32[] {
 // so it carries its own constant \xNN blobs.
 
 
-function component_full_io_fs_rw(core: i32[]): i32[] {
+pub function component_full_io_fs_rw(core: i32[]): i32[] {
     var o: i32[] = io_fs_rw_head();
     o = wcat(o, wsection(1, core));
     return wcat(o, component_suffix_fs_rw());

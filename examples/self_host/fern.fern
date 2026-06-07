@@ -425,23 +425,28 @@ function main(): i32 {
         out_asm = string_from_bytes(to_u8(watbin.wat_to_binary(wasm.emit_module(full))));
     } else if (target == "wasm-component") {
         // A Component-Model `wasi:cli/run` component. Pick the framing from
-        // the program's WASI usage: no-I/O (component_full) or stdout/exit
-        // (component_full_io). Programs using WASI the self-host component
-        // path doesn't wrap yet (fs / random / env / args / clock / stderr)
-        // are rejected rather than emitting a broken component.
+        // the program's WASI usage: no-I/O (component_full), stdout/exit
+        // (component_full_io), or filesystem read / write / read+write over
+        // stdout (component_full_io_fs / _fs_write / _fs_rw). Programs using
+        // WASI the self-host component path doesn't wrap yet (random / env /
+        // args / clock / stderr) are rejected rather than emitting a broken
+        // component.
         var shape: i32 = wasm.component_shape(full);
         if (shape < 0) {
-            eprint("fern: -target wasm-component: program uses WASI imports not yet supported (only no-I/O and stdout are wrapped so far)\n");
+            eprint("fern: -target wasm-component: program uses WASI imports not yet supported (no-I/O, stdout, and filesystem are wrapped so far)\n");
             return 2;
         }
-        var run_wat: string = "";
         var comp: i32[] = [];
         if (shape == 1) {
-            run_wat = wasm.emit_module_run_io(full);
-            comp = watbin.component_full_io(watbin.wat_to_binary(run_wat));
+            comp = watbin.component_full_io(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+        } else if (shape == 2) {
+            comp = watbin.component_full_io_fs(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+        } else if (shape == 3) {
+            comp = watbin.component_full_io_fs_write(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+        } else if (shape == 4) {
+            comp = watbin.component_full_io_fs_rw(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
         } else {
-            run_wat = wasm.emit_module_run(full);
-            comp = watbin.component_full(watbin.wat_to_binary(run_wat));
+            comp = watbin.component_full(watbin.wat_to_binary(wasm.emit_module_run(full)));
         }
         out_asm = string_from_bytes(to_u8(comp));
     } else {
