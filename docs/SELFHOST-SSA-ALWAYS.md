@@ -198,6 +198,28 @@ through SSA rather than the AST fallback. Requires Phase 3, since the
 compiler sources use floats and generics. Success = the fixpoint is
 byte-stable with SSA as the lowering path on x86-64 and arm64.
 
+Because `try_ssa` is all-or-nothing per program, *every* function the
+compiler defines must be in the `build_func` subset before the whole
+compiler self-compiles through SSA. The per-module coverage is now
+effectively 100% — the holdouts surfaced while measuring it:
+
+- **`const_str` for string literals** (landed, #2323) — fixed the
+  per-function OOM from byte-by-byte literal lowering.
+- **Open-ended slice `x[lo:]`** (this slice) — the self-host parser stored
+  the omitted high bound as an `ExprUnknown` placeholder, which *every*
+  backend mistranslated (asm / asm_arm64 push `$0`, so the slice length
+  became `0 - lo`; build_func `s.fail()`d on the unknown). This was a
+  latent **correctness bug** masked only because the full self-compile
+  hadn't run — `cast_target`'s `op[3:]` (the sole open-ended slice in the
+  sources) would have returned garbage. Fixed at the parser, mirroring the
+  Go compiler's nil-`High` → length default: the omitted bound desugars to
+  `base.len()`, so the checker, all three AST emitters, and SSA
+  `build_func` uniformly see a real i32 end. Validated end-to-end on the
+  self-host x86-64 CLI through both the SSA and `-no-ssa` (AST) paths
+  (`"as_f64"[3:]` → `"f64"`). Gated by a parser self-test (desugar shape)
+  and open-ended-slice cases in the x86-64 / arm64 / wasm SSA emit
+  matrices.
+
 ### Phase 5 — retire the AST emitters
 
 Once SSA is at full parity and the fixpoint is SSA-clean, remove the AST

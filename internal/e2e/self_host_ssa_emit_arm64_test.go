@@ -153,6 +153,9 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"slice-array", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[1] + b[2] + b.len(); }", 93},
 		{"slice-for", "function main(): i32 { var a = [1, 2, 3, 4, 5, 6]; var sum = 0; var b = a[2:5]; for x in b { sum = sum + x; } return sum; }", 12},
 		{"slice-string-eq", "function main(): i32 { var s = \"hello\"; if (s[1:4] == \"ell\") { return 7; } return 0; }", 7},
+		// Open-ended high bound `x[lo:]` (parser desugars to `x.len()`).
+		{"slice-open-array", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[2:]; return b[0] + b[1] + b[2] + b.len(); }", 123},
+		{"slice-open-string-eq", "function main(): i32 { var s = \"as_f64\"; if (s[3:] == \"f64\") { return 7; } return 0; }", 7},
 		// Indexed assignment `arr[i] = v` (→ __set_index → store_elem):
 		// constant index, loop-fill, swap, compound, and cross-call mutation
 		// through a shared array param.
