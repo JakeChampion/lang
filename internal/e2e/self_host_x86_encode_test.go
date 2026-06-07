@@ -330,6 +330,31 @@ function main(): i32 {
     if (y.len() != 7 || y[0] != 72 || y[1] != 139 || y[2] != 129 || y[3] != 0 || y[4] != 2 || y[5] != 0 || y[6] != 0) { return 28; }
     // sib byte for [rsp]: scale=0,index=4,base=4 -> 0x24 (36)
     if (x86_sib(0, 4, 4) != 36) { return 29; }
+    // slice 2h integer ops (verified vs as/objdump):
+    var aa: i32[] = x86_inc_r64([], x86_rax());   // 48 FF C0
+    if (aa.len() != 3 || aa[0] != 72 || aa[1] != 255 || aa[2] != 192) { return 30; }
+    var bb: i32[] = x86_dec_r64([], x86_rcx());   // 48 FF C9
+    if (bb[2] != 201) { return 31; }
+    var cc2: i32[] = x86_neg_r64([], x86_rax());  // 48 F7 D8
+    if (cc2[1] != 247 || cc2[2] != 216) { return 32; }
+    var dd: i32[] = x86_test_r64_r64([], x86_rax(), x86_rax()); // 48 85 C0
+    if (dd[1] != 133 || dd[2] != 192) { return 33; }
+    var ee: i32[] = x86_and_r64_r64([], x86_rax(), x86_rcx());  // 48 21 C8
+    if (ee[1] != 33 || ee[2] != 200) { return 34; }
+    var ff: i32[] = x86_or_r64_r64([], x86_rax(), x86_rcx());   // 48 09 C8
+    if (ff[1] != 9 || ff[2] != 200) { return 35; }
+    var gg: i32[] = x86_xor_r64_r64([], x86_rax(), x86_rcx());  // 48 31 C8
+    if (gg[1] != 49 || gg[2] != 200) { return 36; }
+    var hh: i32[] = x86_imul_r64_r64([], x86_rax(), x86_rcx()); // 48 0F AF C1
+    if (hh.len() != 4 || hh[1] != 15 || hh[2] != 175 || hh[3] != 193) { return 37; }
+    var ii: i32[] = x86_idiv_r64([], x86_rcx());  // 48 F7 F9
+    if (ii[1] != 247 || ii[2] != 249) { return 38; }
+    var jj: i32[] = x86_div_r64([], x86_rcx());   // 48 F7 F1
+    if (jj[2] != 241) { return 39; }
+    var kk: i32[] = x86_cqo([]);                  // 48 99
+    if (kk.len() != 2 || kk[0] != 72 || kk[1] != 153) { return 40; }
+    var ll: i32[] = x86_shl_r64_imm8([], x86_rax(), 3); // 48 C1 E0 03
+    if (ll.len() != 4 || ll[1] != 193 || ll[2] != 224 || ll[3] != 3) { return 41; }
     return 0;
 }
 `

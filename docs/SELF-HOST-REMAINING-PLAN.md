@@ -931,10 +931,34 @@ smallest → largest:
     and run end-to-end (`TestSelfHostX86RodataRuns`: `lea rax,[rip+answer]`;
     `rax=[rax]`; exit — a `.quad 42` in `.rodata`, R+W+X data ELF, runs
     natively exiting 42).
-  - ⬜ remaining: SSE + x87 floats (`movsd`/`movq` xmm, the float-math
-    instructions), and the text parser (`asm.fern` GAS text → these
-    encoders + the label/rodata API) — the final wiring slice that makes
-    `fern -target x86-64 -o` emit an ELF with no external tool.
+  - ✅ **slice 2g — GAS-text front-end**: `examples/self_host/x86_gas.fern`
+    parses the AT&T assembly `asm.fern` emits and drives the encoders +
+    label/`.rodata` API. Covers the core integer/pointer subset — directives
+    `.text` / `.section .rodata` / `.globl` / `.quad`, labels, and `movq`
+    (imm/reg/reg-reg/load/store), `leaq sym(%rip)`, `addq`/`subq`/`cmpq`,
+    `pushq`/`popq`, `jmp`/`jCC`, `call`, `ret`, `syscall`, `leave` — with
+    operand forms `%reg` / `$imm` / `disp(%base)` / `sym(%rip)` / bare
+    label, in AT&T `src, dst` order. Operand parsers byte-checked
+    (`TestSelfHostX86Gas`); two end-to-end native runs assemble hand-written
+    GAS **text** → machine code → ELF → run on x86-64 exiting 42:
+    `TestSelfHostX86GasLoopRuns` (a loop) and `TestSelfHostX86GasRodataRuns`
+    (a `.section .rodata` `.quad` loaded via `leaq sym(%rip)`). *Found on
+    the way:* the self-host string `trim` strips only spaces, not tabs, so
+    the front-end carries its own tab-aware `x86_gas_trim` (asm.fern indents
+    with tabs).
+  - ✅ **slice 2h — integer mnemonic coverage**: added the high-frequency
+    64-bit ops `incq`/`decq`/`negq` (`0xFF`/`0xF7` group), `testq`,
+    `andq`/`orq`/`xorq` (reg-reg `0x21`/`09`/`31` + the `$imm` group-1
+    forms), `imulq` (`0F AF`), `idivq`/`divq` + `cqto`, and `shlq $imm8`.
+    Byte-checked vs `as`/objdump (`TestSelfHostX86Encode`) and three native
+    runs through the GAS front-end: `TestSelfHostX86GasMulRuns` (`imulq`,
+    6·7), `…IncShlRuns` (`incq`+`shlq`), `…DivRuns` (`cqto`+`idivq`, 84/2).
+  - ⬜ remaining: the 8/32-bit + misc ops (`movb`/`movzbq`/`movl`/`cmpb`,
+    `setCC`, `movabsq`, `0x83` imm8 ALU, `movq $imm` sign-extended `C7`
+    form) and the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
+    `roundsd`, `fldl`/`fstpl`), then wire the front-end into the
+    `fern -target x86-64 -o` driver so a real compiled program becomes an
+    ELF with no external tool.
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

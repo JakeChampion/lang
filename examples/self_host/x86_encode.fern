@@ -111,6 +111,80 @@ function x86_ret(buf: i32[]): i32[] {
     return buf.push(195); // 0xC3
 }
 
+// x86_leave: `leave` (0xC9) — mov rsp, rbp ; pop rbp, the standard frame
+// teardown asm.fern emits.
+function x86_leave(buf: i32[]): i32[] {
+    return buf.push(201); // 0xC9
+}
+
+// ---- more integer ops (slice 2h) ----
+
+// x86_unary_r64 encodes a single-register group op: REX.W + opcode +
+// ModR/M(3, slash, reg). inc/dec use 0xFF (slash 0/1); neg/div/idiv use
+// 0xF7 (slash 3/6/7).
+function x86_unary_r64(buf: i32[], opcode: i32, slash: i32, reg: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(opcode);
+    buf = buf.push(x86_modrm(3, slash, reg));
+    return buf;
+}
+
+// x86_inc_r64 / x86_dec_r64 / x86_neg_r64 / x86_div_r64 / x86_idiv_r64.
+function x86_inc_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 255, 0, reg); }
+function x86_dec_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 255, 1, reg); }
+function x86_neg_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 3, reg); }
+function x86_div_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 6, reg); }
+function x86_idiv_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 7, reg); }
+
+// x86_cqo: `cqo` (0x48 0x99) — sign-extend rax into rdx:rax before idiv.
+function x86_cqo(buf: i32[]): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(153); // 0x99
+    return buf;
+}
+
+// x86_binop_r64_r64 encodes a `<op> <dst>, <src>` reg-reg form: REX.W +
+// opcode + ModR/M(3, src, dst). Used by and (0x21) / or (0x09) / xor
+// (0x31), matching add (0x01) / sub (0x29)'s shape.
+function x86_binop_r64_r64(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(opcode);
+    buf = buf.push(x86_modrm(3, src, dst));
+    return buf;
+}
+
+function x86_and_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 33, dst, src); }
+function x86_or_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 9, dst, src); }
+function x86_xor_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 49, dst, src); }
+
+// x86_test_r64_r64: `test <a>, <b>` (REX.W + 0x85 /r). TEST is symmetric;
+// the reg field is `b`, r/m is `a`.
+function x86_test_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(133); // 0x85
+    buf = buf.push(x86_modrm(3, b, a));
+    return buf;
+}
+
+// x86_imul_r64_r64: `imul <dst>, <src>` (REX.W + 0x0F 0xAF /r). Note the
+// operand convention is reg=dst, r/m=src — the reverse of add/and.
+function x86_imul_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(15);  // 0x0F
+    buf = buf.push(175); // 0xAF
+    buf = buf.push(x86_modrm(3, dst, src));
+    return buf;
+}
+
+// x86_shl_r64_imm8: `shl <reg>, imm8` (REX.W + 0xC1 /4 ib).
+function x86_shl_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(193); // 0xC1
+    buf = buf.push(x86_modrm(3, 4, reg));
+    buf = buf.push(imm & 255);
+    return buf;
+}
+
 // ---- memory operands (slice 2e) ----
 //
 // A memory operand `[base + disp]` is encoded by the ModR/M byte's mod/rm
