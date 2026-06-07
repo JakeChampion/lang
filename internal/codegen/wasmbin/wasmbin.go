@@ -986,6 +986,9 @@ func canonicalExternParamValtypes(ex *ir.ExternFunc) ([]byte, error) {
 			for _, f := range ex.ParamRecords[i] {
 				out = append(out, externRecordFieldValtype(f.Type))
 			}
+		case ex.ParamEnums[i] != nil:
+			// option/result flattens to (disc:i32, payload).
+			out = append(out, encode.ValtypeI32, externRecordFieldValtype(ex.ParamEnums[i].PayloadType))
 		default:
 			vt, err := valtypeFor(p.Type)
 			if err != nil {
