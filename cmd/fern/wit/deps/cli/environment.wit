@@ -1,0 +1,14 @@
+package wasi:cli@0.2.0;
+
+// Vendored subset of wasi:cli/environment@0.2.0 — the two
+// list-returning accessors the wasm backend imports for `args()`
+// and `env()`. `get-arguments` hands back the program's argv as a
+// `list<string>`; `get-environment` hands back the environment as
+// a `list<tuple<string, string>>`. (The upstream interface also
+// has `initial-cwd`, which the backend never calls, so it is
+// omitted — a narrower import the host still satisfies.)
+// Source: https://github.com/WebAssembly/wasi-cli
+interface environment {
+    get-arguments: func() -> list<string>;
+    get-environment: func() -> list<tuple<string, string>>;
+}

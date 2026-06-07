@@ -1,0 +1,10 @@
+package wasi:cli@0.2.0;
+
+// Vendored subset of wasi:cli/exit@0.2.0 — just `exit`, which the
+// wasm backend imports to terminate the process with success or
+// failure. `status` is a `result<_, _>` (the ok arm exits 0, the
+// err arm exits 1); neither arm carries a payload.
+// Source: https://github.com/WebAssembly/wasi-cli
+interface exit {
+    exit: func(status: result);
+}

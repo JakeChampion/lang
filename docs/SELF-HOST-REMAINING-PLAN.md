@@ -979,8 +979,25 @@ smallest → largest:
     **`TestSelfHostArm64DarwinMachODataRuns`** (the arm64 rodata test): a
     Fern program lays a `.quad 42` in `__DATA`, loads it via `adrp`+`ldr`,
     and the signed Mach-O exits 42 — no external tool. The encoder now has
-    the addressing the full backend needs; next is wiring `asm_arm64` →
-    `macho.fern` → file.
+    the addressing the full backend needs.
+  - ✅ **slice 3g — GAS-text assembler**: `examples/self_host/arm64_gas.fern`,
+    the arm64 counterpart of `x86_gas.fern` — it parses an AArch64
+    assembly-text subset (the canonical GAS spellings: `mov`/`movz`/`movk`,
+    `add`/`sub` imm+reg, `cmp`, `ldr`/`str [Xn,#off]`, `b`/`bl`/`b.<cond>`/
+    `cbz`/`cbnz` by label, `svc`, `ret`; `name:` labels; `//` comments;
+    directives ignored) into machine code via the `arm64_encode` encoders +
+    `Arm64Asm` label machinery (bracket-aware operand split, `#imm`/`0x`
+    parsing, register aliases `sp`/`lr`/`xzr`). Byte-checked by
+    `TestSelfHostArm64Gas` and gated end-to-end by
+    **`TestSelfHostArm64DarwinMachOGasRuns`**: a Fern program feeds an
+    assembly-text program (subroutine call + backward loop by label) to
+    `arm64_gas_assemble`, wraps the bytes with `macho.fern`, and the signed
+    Mach-O exits 42 — the first time the arm64-darwin path goes from
+    **assembly text → runnable signed binary** with no external
+    `as`/`clang`/`ld64`. Next: feed `asm_arm64`'s actual emitted text
+    through this assembler and write the file from the driver (replacing the
+    `clang`/`ld64` shell-out), widening the parsed instruction surface to
+    whatever `asm_arm64` emits.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
