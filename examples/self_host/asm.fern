@@ -3278,10 +3278,21 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             if (v.type_name.len() > 0) {
                 ity = asmcore.ty_from_name(v.type_name);
             }
+            // Perceus inc (Phase 1d): binding `var y = x` where x is an
+            // rc-tracked array creates a second reference, so retain the
+            // buffer. A fresh literal / call result is already owned and
+            // is not re-incremented (needs_rc_inc_on_alias gates this).
+            var alias_inc: boolean = asmcore.needs_rc_inc_on_alias(v.init, s);
             s = emit_expr(v.init, s);
             s = s.bind_local_typed(v.name, ity);
             var off: i32 = s.lookup_local(v.name);
             s = s.write("    popq %rax\n");
+            if (alias_inc) {
+                s = s.mark_heap();                          // __fern_rc_inc lives in the heap runtime block
+                s = s.write("    pushq %rax\n");            // arg for __fern_rc_inc (frameless: param[0] at 8(%rsp))
+                s = s.write("    call __fn___fern_rc_inc\n"); // returns the ptr in %rax
+                s = s.write("    addq $8, %rsp\n");
+            }
             s = s.write("    movq %rax, " + asmcore.i32_to_string(off) + "(%rbp)\n");
             return s;
         },

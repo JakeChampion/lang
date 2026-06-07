@@ -397,3 +397,26 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `__fern_rc_dec` at scope/exit + overwrite (porting
   `needs_rc_inc_on_alias` + the exit-dec sweep). Then mirror 0a/0b/1d to
   arm64 + wasm.
+- 2026-06-07: **Phase 1d-i (array alias-inc on var-decl), x86-64 —
+  SHIPPED.** First RC counting wired into real allocations. Added the
+  shared `needs_rc_inc_on_alias` + `ty_is_array_like` predicates to
+  `asmcore.fern` (ported from native `needsRcIncOnAlias`, scoped to
+  arrays), and emit `__fern_rc_inc` in `asm.fern`'s `StmtVar` general
+  path when `var y = x` binds an array-typed ident alias (a fresh
+  literal / call result is already owned at rc=1 and is NOT
+  re-incremented). This is the first time the Phase-0c helpers run on
+  the Phase-0b rc-headered arrays — proving the three layers integrate.
+  Inc-only (no dec sites yet), so it's safe-leak + over-release-detector
+  clean (rc only grows). Tests: `TestSelfHostRcAliasIncX86_64`
+  (aliasing value-correctness, detector == 0, and an emission assertion
+  that the retain is actually emitted at the alias). Byte-identical
+  self-bootstrap + fixpoint stay green (the fixpoint executes the
+  self-host's own array code with the new inc emission). NOTE: the
+  user-level `xs = xs.push(v)` form on `i32[]` is a *pre-existing*
+  self-host limitation (segfaults on origin/main too — `.push`
+  reassignment lowers to a `-1` fallback), independent of this work; the
+  self-host's internal push (validated via fixpoint) is unaffected.
+  Next sub-slices: the remaining inc sites (reassign / call-arg /
+  field+index alias / literal element / closure capture) and the dec
+  sites (function-exit sweep + dec-on-overwrite) — together they
+  balance the counts; then arm64 + wasm mirrors.

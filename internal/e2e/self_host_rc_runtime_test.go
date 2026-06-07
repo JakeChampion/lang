@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,4 +103,68 @@ func TestSelfHostRcRuntimeArm64(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Phase 1d: the self-host x86-64 backend retains (inc) an rc-tracked
+// array buffer when a `var y = x` binding creates a second reference to
+// it. With free off (safe-leak) the inc has no observable effect on
+// values, so these tests check (1) aliasing programs still compute the
+// right result, (2) the over-release detector stays 0 (inc-only never
+// drives an rc <= 0), and (3) the emitter actually emits the retain at
+// the alias site. Mirrors docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 1d.
+func TestSelfHostRcAliasIncX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Aliasing an array stays value-correct: ys and xs see the same
+		// buffer; the retain doesn't disturb the contents.
+		{"alias-read-both", "function main(): i32 { var xs: i32[] = [10, 20, 30]; var ys = xs; return ys[1] + xs[0]; }", 30},
+		// Multiple aliases of the same buffer all read correctly.
+		{"alias-chain", "function main(): i32 { var xs: i32[] = [4, 5, 6]; var ys = xs; var zs = ys; return zs[0] + ys[1] + xs[2]; }", 15},
+		// An aliasing program leaves the over-release detector at 0
+		// (inc-only: rc only grows, never crosses 0).
+		{"alias-no-underflow", "function main(): i32 { var xs: i32[] = [5, 6, 7]; var ys = xs; var zs = ys; return __fern_rc_underflow_count(); }", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+
+	// Emission: the `var ys = xs` alias must emit a retain on the array
+	// buffer. A fresh literal binding (`var xs = [...]`) must NOT.
+	t.Run("emits-retain-at-alias", func(t *testing.T) {
+		asm := runCapture(t, gcc, runner, driverBin,
+			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; }"))
+		if !strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+			t.Errorf("expected a retain (__fern_rc_inc) at the array alias; not found in emitted asm")
+		}
+	})
 }

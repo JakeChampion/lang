@@ -907,6 +907,40 @@ pub function is_unsigned_int_array_tag(t: Ty): boolean {
     return false;
 }
 
+// ty_is_array_like reports whether t is any array type. All arrays now
+// carry the Perceus rc header at [data-8] (see __fern_arr_box in the
+// backends), so an alias of one is a reference-creation site that must
+// retain (inc) the buffer.
+pub function ty_is_array_like(t: Ty): boolean {
+    match (t) {
+        TyArray(_) => { return true; },
+        TyArrayI32(_) => { return true; },
+        TyArrayU32(_) => { return true; },
+        TyArrayU64(_) => { return true; },
+        TyArrayI64(_) => { return true; },
+        TyArrayString(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// needs_rc_inc_on_alias reports whether binding/passing `e` creates a
+// new reference to an rc-tracked heap value that must be retained
+// (the Perceus inc site). Ported from the native compiler's
+// needsRcIncOnAlias (internal/ir/ir.go), scoped to arrays for Phase 1d
+// — strings / structs / enums / closures / tuples join in Phase 1e.
+// Fires only for an Ident READ of an array-typed local (a fresh array
+// literal or a call result is already uniquely owned at rc=1 and is NOT
+// re-incremented). FieldAccess / Index aliases (var y = h.items / m[i])
+// are a later sub-slice.
+pub function needs_rc_inc_on_alias(e: parser.Expr, s: EmitState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return ty_is_array_like(s.local_type_of(id.name)); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function is_map(t: Ty): boolean {
     match (t) {
         TyMapAny(_) => { return true; },
