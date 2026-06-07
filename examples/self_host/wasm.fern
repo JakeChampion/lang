@@ -2623,6 +2623,18 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         }
                         return "(call $__fern_arr_push " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + ")";
                     }
+                    // `.with(i, v)` — value-returning element set (replacing
+                    // `arr[i] = v`). i64[]/f64[] use the 8-byte-slot variants.
+                    if (fa.field == "with" && c.args.len() == 2) {
+                        var wk: string = array_elem_kind(fa.obj, cx);
+                        if (wk == "i64") {
+                            return "(call $__fern_arr_with_i64 " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + " " + emit_i64(c.args[1], cx, depth) + ")";
+                        }
+                        if (wk == "f64") {
+                            return "(call $__fern_arr_with_f64 " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + " " + emit_f64(c.args[1], cx, depth) + ")";
+                        }
+                        return "(call $__fern_arr_with " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + " " + emit_expr(c.args[1], cx, depth) + ")";
+                    }
                     // `.join(sep)` is the array→string method (string[]
                     // receiver); no string-receiver gate.
                     if (fa.field == "join" && c.args.len() == 1) {
@@ -3919,6 +3931,19 @@ function arr_helpers(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (local.get $na))\n";
+    // $__fern_arr_with(a, i, v) → a: in-place element store returning the
+    // (same) array — the value-returning `arr.with(i, v)` replacing the
+    // removed `arr[i] = v` statement. 4-byte i32 slot; _i64/_f64 are the
+    // 8-byte-slot variants for i64[] / f64[].
+    o = o + "  (func $__fern_arr_with (param $a i32) (param $i i32) (param $v i32) (result i32)\n";
+    o = o + "    (i32.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $v))\n";
+    o = o + "    (local.get $a))\n";
+    o = o + "  (func $__fern_arr_with_i64 (param $a i32) (param $i i32) (param $v i64) (result i32)\n";
+    o = o + "    (i64.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (local.get $v))\n";
+    o = o + "    (local.get $a))\n";
+    o = o + "  (func $__fern_arr_with_f64 (param $a i32) (param $i i32) (param $v f64) (result i32)\n";
+    o = o + "    (f64.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (local.get $v))\n";
+    o = o + "    (local.get $a))\n";
     return o;
 }
 

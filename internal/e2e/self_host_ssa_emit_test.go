@@ -78,6 +78,8 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }", 75},
 		{"arr-two", "function main(): i32 { var a = [1, 2]; var b = [100, 200]; return a[1] + b[0]; }", 102},
 		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3},
+		{"arr-with", "function main(): i32 { var a = [1, 2, 3]; a = a.with(1, 20); return a[0] + a[1] + a[2]; }", 24},
+		{"arr-with-chain", "function main(): i32 { var a = [0, 0, 0]; a = a.with(0, 5); a = a.with(2, 7); return a[0] * 10 + a[2]; }", 57},
 		{"arr-len-loop", "function main(): i32 { var a = [4, 8, 12, 16]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 40},
 		// for-in loops (build_for desugar → counted while). Index advance at
 		// the top of the body so `continue` still steps; nested loops phi a

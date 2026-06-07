@@ -1626,6 +1626,24 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.mark_arr_push();
         return s;
     }
+    // Built-in `.with(i, v)` on arrays — the value-returning element set
+    // (`arr = arr.with(i, v)`, the replacement for the removed `arr[i] = v`
+    // statement). The leak-everything heap has no aliasing, so this is an
+    // in-place store that yields the same array — mirrors __set_index but
+    // pushes the array instead of a dummy.
+    if (fa.field == "with" && c.args.len() == 2
+            && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    popq %rdx\n");   // val
+        s = s.write("    popq %rcx\n");   // idx
+        s = s.write("    popq %rax\n");   // arr
+        s = s.write("    incq %rcx\n");   // skip len prefix
+        s = s.write("    movq %rdx, (%rax,%rcx,8)\n");
+        s = s.write("    pushq %rax\n");  // value-returning: the (same) array
+        return s;
+    }
     // Built-in `.reverse()` on arrays — fresh
     // array with elements in opposite order.
     if (fa.field == "reverse" && c.args.len() == 0
