@@ -337,6 +337,8 @@ function arm64_asm_fixup_or_patch(a: Arm64Asm, name: string, kind: i32): Arm64As
     if (target >= 0) {
         if (kind == 1) {
             a.code = arm64_patch_b19(a.code, at, target - at);
+        } else if (kind == 2) {
+            a.code = arm64_patch_b14(a.code, at, target - at);
         } else {
             a.code = arm64_patch_b(a.code, at, target - at);
         }
@@ -384,6 +386,8 @@ function arm64_asm_resolve(a: Arm64Asm): Arm64Asm {
         var target: i32 = arm64_asm_label_off(a, a.fix_names[i]);
         if (a.fix_kinds[i] == 1) {
             a.code = arm64_patch_b19(a.code, at, target - at);
+        } else if (a.fix_kinds[i] == 2) {
+            a.code = arm64_patch_b14(a.code, at, target - at);
         } else {
             a.code = arm64_patch_b(a.code, at, target - at);
         }
@@ -530,4 +534,64 @@ function arm64_ldr_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 function arm64_patch_addimm_off(buf: i32[], at: i32, off: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xffc003ff) | (((off & 0xfff) as i64) << 10);
     return arm64_write_word(buf, at, w);
+}
+
+// ---- bitfield extract + negate + test-bit branch ----
+
+// arm64_ubfx_word encodes `ubfx Xd, Xn, #lsb, #width` (unsigned bitfield
+// extract) — the UBFM alias with immr=lsb, imms=lsb+width-1.
+//   0xD3400000 | immr<<16 | imms<<10 | Rn<<5 | Rd
+function arm64_ubfx_word(rd: i32, rn: i32, lsb: i32, width: i32): i64 {
+    var immr: i64 = (lsb & 63) as i64;
+    var imms: i64 = ((lsb + width - 1) & 63) as i64;
+    return 0xd3400000 | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+function arm64_ubfx(buf: i32[], rd: i32, rn: i32, lsb: i32, width: i32): i32[] {
+    return arm64_le32(buf, arm64_ubfx_word(rd, rn, lsb, width));
+}
+
+// arm64_neg emits `neg Xd, Xm` — the `sub Xd, XZR, Xm` alias.
+function arm64_neg(buf: i32[], rd: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_subreg_word(rd, 31, rm));
+}
+
+// arm64_tbz_word / arm64_tbnz_word encode `tbz/tbnz Xt, #bit, <rel>` —
+// test bit `bit` and branch if zero / nonzero. rel is a PC-relative byte
+// delta (÷4 -> signed imm14 at bits 18:5). The tested bit splits into b5
+// (bit 31) and b40 (bits 23:19).
+//   tbz base 0x36000000, tbnz base 0x37000000.
+function arm64_tbz_word(rt: i32, bit: i32, rel: i32): i64 {
+    var b5: i64 = ((bit >> 5) & 1) as i64;
+    var b40: i64 = (bit & 31) as i64;
+    return 0x36000000 | (b5 << 31) | (b40 << 19) | ((((rel >> 2) & 0x3fff) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_tbnz_word(rt: i32, bit: i32, rel: i32): i64 {
+    var b5: i64 = ((bit >> 5) & 1) as i64;
+    var b40: i64 = (bit & 31) as i64;
+    return 0x37000000 | (b5 << 31) | (b40 << 19) | ((((rel >> 2) & 0x3fff) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_tbz(buf: i32[], rt: i32, bit: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_tbz_word(rt, bit, rel));
+}
+function arm64_tbnz(buf: i32[], rt: i32, bit: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_tbnz_word(rt, bit, rel));
+}
+
+// arm64_patch_b14 splices a rel into the imm14 field (bits 18:5) of a
+// `tbz`/`tbnz` placeholder, preserving the opcode + b5/b40/Rt (mask
+// 0xfff8001f).
+function arm64_patch_b14(buf: i32[], at: i32, rel: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xfff8001f) | ((((rel >> 2) & 0x3fff) as i64) << 5);
+    return arm64_write_word(buf, at, w);
+}
+
+// arm64_asm_tbz / arm64_asm_tbnz emit a test-bit branch to a (possibly
+// forward) label (fixup kind 2 = imm14).
+function arm64_asm_tbz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
+    a.code = arm64_tbz(a.code, rt, bit, 0);
+    return arm64_asm_fixup_or_patch(a, name, 2);
+}
+function arm64_asm_tbnz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
+    a.code = arm64_tbnz(a.code, rt, bit, 0);
+    return arm64_asm_fixup_or_patch(a, name, 2);
 }

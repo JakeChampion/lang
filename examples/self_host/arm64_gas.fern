@@ -97,10 +97,19 @@ function arm64_gas_reg(tok: string): i32 {
 function arm64_gas_cond(s: string): i32 {
     if (s == "eq") { return 0; }
     if (s == "ne") { return 1; }
+    if (s == "cs" || s == "hs") { return 2; }  // carry set / unsigned >=
+    if (s == "cc" || s == "lo") { return 3; }  // carry clear / unsigned <
+    if (s == "mi") { return 4; }               // negative
+    if (s == "pl") { return 5; }               // non-negative
+    if (s == "vs") { return 6; }               // overflow set
+    if (s == "vc") { return 7; }               // overflow clear
+    if (s == "hi") { return 8; }               // unsigned >
+    if (s == "ls") { return 9; }               // unsigned <=
     if (s == "ge") { return 10; }
     if (s == "lt") { return 11; }
     if (s == "gt") { return 12; }
     if (s == "le") { return 13; }
+    if (s == "al") { return 14; }              // always
     return 0;
 }
 
@@ -284,6 +293,20 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var lo: i32 = arm64_gas_imm(ops[3]);
         a.code = arm64_ldp_post(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), lb, lo);
         return a;
+    }
+    if (mnem == "neg") {
+        a.code = arm64_neg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]));
+        return a;
+    }
+    if (mnem == "ubfx") {
+        a.code = arm64_ubfx(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_imm(ops[3]));
+        return a;
+    }
+    if (mnem == "tbnz") {
+        return arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
+    }
+    if (mnem == "tbz") {
+        return arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
     }
     return a; // unknown mnemonic — ignored
 }
