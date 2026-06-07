@@ -763,22 +763,22 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		if !used[ex.Name] {
 			continue
 		}
-		// Parameters must be scalar, `string`, or `u8[]` — the memory params a
-		// wrapper can lower to the canonical (ptr,len) below. A `string`
-		// normalizes its SSO pair to a heap buffer; a `u8[]` passes its element
-		// pointer + length-prefix directly (zero-copy, since u8 is 1-byte
-		// stride). Other composite params — non-u8 arrays, records — aren't
-		// lowered yet; reject them rather than emit slots that don't match the
-		// host's ABI.
+		// Parameters must be scalar, `string`, or an integer array of ≤32-bit
+		// elements — the memory params a wrapper can lower to the canonical
+		// (ptr,len) below. A `string` normalizes its SSO pair to a heap buffer;
+		// an integer array (`u8[]`, `i32[]`, …) passes its element pointer +
+		// length-prefix directly (zero-copy, native stride). Other composite
+		// params — 64-bit / float / bool arrays, records — aren't lowered yet;
+		// reject them rather than emit slots that don't match the host's ABI.
 		hasStringParam, hasMemParam := false, false
 		for _, p := range ex.Params {
 			switch {
 			case isStringType(p.Type):
 				hasStringParam, hasMemParam = true, true
-			case isU8ArrayType(p.Type):
+			case isScalarArrayParamType(p.Type):
 				hasMemParam = true
 			case !externScalarType(p.Type):
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, and u8[] extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, and integer-array (u8[]/i32[]/…) extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 			}
 		}
 		params, err := paramValtypes(ex.Params)
