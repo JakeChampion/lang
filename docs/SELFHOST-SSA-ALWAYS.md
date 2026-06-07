@@ -259,20 +259,43 @@ bytes the bump allocator touches):
   is left at 16 MiB — it is not a self-host target and that suits ordinary
   wasm programs. Gated by a `heap-beyond-16mib` emit case.
 
-What this does *not* fix: measuring with a stage-1 CLI (`cmd/fern`-built,
-so RC, won't OOM-from-leaks) showed the full unified `fern.fern` (~14
-modules, ~30 K lines) exhausts **>15 GB** compiling itself through **either**
-path — a super-linear blowup in the compiler's *own* memory processing the
-whole multi-module source, distinct from the emitted heap. By contrast the
-SSA pipeline alone (`ssa_emit_run`, ~12 K lines) compiles in ~108 MB. So a
-*scoped* SSA self-host (the SSA pipeline compiling itself) is within reach
-now; the full kitchen-sink CLI additionally needs that frontend blowup
-chased down.
+- **Bootstrap heap 512 MiB → 1 GiB** (landed) — `cmd/fern`'s emitted
+  runtime (`internal/codegen/{x86_64,arm64}`) `mmap`s a single fixed
+  `heapBytes` arena and cleanly traps (exit 137) on overflow. It was
+  512 MiB — enough for `lexer.fern` but **not** for a `cmd/fern`-built
+  self-host compiler to bootstrap-compile the *whole* self-host source in
+  one process. Raised to 1 GiB (lazy-mapped, free until touched; kept
+  ≤ INT32_MAX so the `lea`/`mov esi` size operands stay valid). With it,
+  `cli` compiles the entire unified `fern.fern` (+ all modules + stdlib)
+  end-to-end at **~0.75 GiB**. (Unrelated to the self-host `__fern_heap`
+  the `alloc-trap` test exercises — that stays 1 GiB.)
+
+### What actually blocks SSA self-hosting (measured)
+
+An earlier note here mis-read a `cmd/fern` exit-137 (the 512 MiB trap
+above) as a ">15 GB blowup". Corrected: with the 1 GiB bootstrap heap,
+`cli` compiles the whole `fern.fern` fine — but the **default path falls
+back to the AST emitter** (the output is byte-identical to `-no-ssa`).
+`try_ssa` is all-or-nothing, and on the full compiler it bails on a small,
+*enumerated* set of gaps (not generics, not memory):
+
+- **Unknown callees** (emitted by `build_func` but absent from the SSA
+  `known` set, and not provided by the SSA backends' runtime):
+  `strbuf_reset` / `strbuf_append` / `strbuf_take` (the amortised
+  string-builder the AST backends use for output), `exit`, `f64_bits`,
+  and bare receiver-method calls `cur_id` / `w`.
+- **`build_func` failures** in exactly two functions: `main` (the CLI
+  driver) and `wasm__build_ctx`.
+
+So scoped SSA self-hosting needs: teach the SSA backends the `strbuf_*` /
+`exit` / `f64_bits` runtime (+ add to `known`), resolve the bare
+method-call names (`cur_id` / `w`), and close the two `build_func` gaps.
+Each is a discrete follow-up.
 
 Still open: the *linear* per-function retention (build + emit, freed by
 nothing) — Perceus RC (the native backend already has it; the self-host
 runtime stubs it to no-ops — `asm.fern`: "leak-everything bump heap") or a
-streaming/arena scheme; and the frontend memory blowup on the full CLI.
+streaming/arena scheme; plus the enumerated SSA-fallback gaps above.
 
 ### Phase 5 — retire the AST emitters
 

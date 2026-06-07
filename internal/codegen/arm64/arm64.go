@@ -717,7 +717,11 @@ func (g *generator) emitAllocRuntime() {
 	// space is reserved up front but pages only commit as
 	// they're touched, so the wider window costs nothing on
 	// programs that don't grow into it.
-	const heapBytes = 512 * 1024 * 1024
+	// 1 GiB (was 512 MiB) so a cmd/fern-built self-host compiler can
+	// bootstrap-compile the whole self-host source (unified fern.fern + all
+	// modules) in one process — that needs ~0.75 GiB live. Lazy-mapped, so
+	// it costs nothing until touched.
+	const heapBytes = 1024 * 1024 * 1024
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
