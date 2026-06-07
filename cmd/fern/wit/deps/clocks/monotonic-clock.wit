@@ -1,11 +1,14 @@
 package wasi:clocks@0.2.0;
 
-// Vendored subset of wasi:clocks/monotonic-clock@0.2.0. We don't
-// emit any clock calls ourselves but `wasi:http/types` references
-// `duration` (an alias for `u64` ns since some monotonic epoch),
-// so the WIT toolchain has to be able to resolve the package.
+// Vendored subset of wasi:clocks/monotonic-clock@0.2.0. The backend
+// imports `now` (a `u64` of ns since some monotonic epoch) for
+// monotonic timing; `wasi:http/types` also references `duration`
+// (an alias for `u64`), so the WIT toolchain has to be able to
+// resolve the package either way.
 // Source: https://github.com/WebAssembly/wasi-clocks
 interface monotonic-clock {
     type instant = u64;
     type duration = u64;
+
+    now: func() -> instant;
 }

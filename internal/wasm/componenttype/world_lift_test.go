@@ -21,7 +21,8 @@ func TestWorldInterfaces(t *testing.T) {
 
 	wantOrder := []string{
 		"wasi:io/error@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdin@0.2.0",
-		"wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:io/poll@0.2.0",
+		"wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:cli/environment@0.2.0",
+		"wasi:cli/exit@0.2.0", "wasi:io/poll@0.2.0", "wasi:clocks/monotonic-clock@0.2.0",
 		"wasi:clocks/wall-clock@0.2.0", "wasi:filesystem/types@0.2.0",
 		"wasi:filesystem/preopens@0.2.0", "wasi:sockets/network@0.2.0",
 		"wasi:sockets/instance-network@0.2.0", "wasi:sockets/tcp@0.2.0",
@@ -49,6 +50,9 @@ func TestWorldInterfaces(t *testing.T) {
 	checkInv(t, byName, "wasi:io/poll@0.2.0", []string{"[method]pollable.block"}, []string{"pollable"})
 	checkInv(t, byName, "wasi:filesystem/preopens@0.2.0", []string{"get-directories"}, nil)
 	checkInv(t, byName, "wasi:random/random@0.2.0", []string{"get-random-bytes", "get-random-u64"}, nil)
+	checkInv(t, byName, "wasi:cli/environment@0.2.0", []string{"get-arguments", "get-environment"}, nil)
+	checkInv(t, byName, "wasi:cli/exit@0.2.0", []string{"exit"}, nil)
+	checkInv(t, byName, "wasi:clocks/monotonic-clock@0.2.0", []string{"now"}, nil)
 }
 
 func checkInv(t *testing.T, by map[string]WorldInterface, name string, funcs, resources []string) {
