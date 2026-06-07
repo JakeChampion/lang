@@ -275,7 +275,7 @@ function main(): i32 {
 
 // TestSelfHostWitWorldLift gates the self-host P2 lift: extracting the world's
 // imported interface names from the decoded fern world, run through the
-// self-host under wasmtime, must match the 14 fern imports in order. Returns
+// self-host under wasmtime, must match the 19 fern imports in order. Returns
 // 0 on success, else the 1-based index of the first mismatch (or 99 for a
 // count mismatch).
 func TestSelfHostWitWorldLift(t *testing.T) {
@@ -331,11 +331,13 @@ function wit_lift_bytes(s: string): i32[] {
 function main(): i32 {
     var want: string[] = [
         "wasi:io/error@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdin@0.2.0",
-        "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:io/poll@0.2.0",
+        "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:cli/environment@0.2.0",
+        "wasi:cli/exit@0.2.0", "wasi:io/poll@0.2.0", "wasi:clocks/monotonic-clock@0.2.0",
         "wasi:clocks/wall-clock@0.2.0", "wasi:filesystem/types@0.2.0",
         "wasi:filesystem/preopens@0.2.0", "wasi:sockets/network@0.2.0",
         "wasi:sockets/instance-network@0.2.0", "wasi:sockets/tcp@0.2.0",
-        "wasi:sockets/tcp-create-socket@0.2.0", "wasi:random/random@0.2.0"
+        "wasi:sockets/tcp-create-socket@0.2.0", "wasi:sockets/udp@0.2.0",
+        "wasi:sockets/udp-create-socket@0.2.0", "wasi:random/random@0.2.0"
     ];
     var got: string[] = wit_world_import_names(wit_section_body(wit_lift_bytes(FERN_BIN()), 7));
     if (got.len() != want.len()) { return 99; }
@@ -571,12 +573,12 @@ function wit_ly_bytes(s: string): i32[] {
 function main(): i32 {
     var tb: i32[] = wit_section_body(wit_ly_bytes(FERN_BIN()), 7);
     var pl: WitPrefixLayout = wit_prefix_layout(tb);
-    if (pl.types != 26) { return 1; }
-    if (pl.instances != 14) { return 2; }
+    if (pl.types != 32) { return 1; }
+    if (pl.instances != 19) { return 2; }
     if (wit_import_instance_index(tb, "wasi:io/error@0.2.0") != 0) { return 3; }
     if (wit_import_instance_index(tb, "wasi:io/streams@0.2.0") != 1) { return 4; }
     if (wit_import_instance_index(tb, "wasi:cli/stdout@0.2.0") != 3) { return 5; }
-    if (wit_import_instance_index(tb, "wasi:random/random@0.2.0") != 13) { return 6; }
+    if (wit_import_instance_index(tb, "wasi:random/random@0.2.0") != 18) { return 6; }
     if (wit_import_instance_index(tb, "wasi:not/here@0.2.0") != (0 - 1)) { return 7; }
     return 0;
 }
