@@ -69,6 +69,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E054": true, // @export function cannot be generic / a method
 	"E050": true, // use of an owned parameter after it was consumed (move)
 	"E051": true, // argument to an owned parameter must be an owned value
+	"E049": true, // assignment to a reference-typed closure capture
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -377,6 +378,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-arg-plain-local", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { var xs: i32[] = [1, 2]; return consume(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-fresh-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { return consume([1, 2]); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-arg-forward-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own ys: i32[]): i32 { return consume(ys); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E049: assigning to a reference-typed variable captured by a closure.
+		{"cap-assign-string", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-array", "function main(): i32 { var a: i32[] = [1]; var f = function(): i32 { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-struct", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; var f = function(): i32 { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
+		{"cap-assign-param", "function g(s: string): i32 { var f = function(): i32 { s = \"y\"; return 0; }; return f(); }\nfunction main(): i32 { return 0; }\n", []string{"E049"}},
+		{"cap-assign-scalar-ok", "function main(): i32 { var n: i32 = 1; var f = function(): i32 { n = 2; return n; }; return f(); }\n", nil},
+		{"cap-read-ref-ok", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { return s.len(); }; return f(); }\n", nil},
+		{"cap-assign-local-ok", "function main(): i32 { var f = function(): i32 { var t: string = \"a\"; t = \"b\"; return 0; }; return f(); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

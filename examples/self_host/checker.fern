@@ -3572,6 +3572,185 @@ pub function own_diags(mod: parser.Module): Diag[] {
     return out;
 }
 
+// ===================== captured reference reassignment (E049) ============
+// Assigning to a reference-typed (pointer) variable that a closure
+// captures from an enclosing scope is E049: such a capture is read-only
+// (rebinding it inside the closure could close a reference cycle and never
+// takes effect in the outer scope) — return the new value instead. Scalar
+// captures (i32 / bool / f64 …) live in the env block and may be
+// reassigned freely, so they are exempt. The classification is by the
+// declared type-name; an unannotated capture is conservatively skipped.
+struct NameTy { nm: string, ty: string }
+
+function e049_append_nt(a: NameTy[], b: NameTy[]): NameTy[] {
+    var out: NameTy[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.push(b[i]); i = i + 1; }
+    return out;
+}
+
+function e049_is_ref(tn: string): boolean {
+    if (tn.len() == 0) { return false; }
+    if (tn == "i32" || tn == "i64" || tn == "bool" || tn == "boolean" || tn == "f64" || tn == "f32") { return false; }
+    return true;
+}
+
+// e049_ref_capture reports whether `name` names a reference-typed variable
+// in the enclosing scope (so assigning it inside a closure is E049).
+function e049_ref_capture(enclosing: NameTy[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < enclosing.len()) {
+        if (enclosing[i].nm == name) { return e049_is_ref(enclosing[i].ty); }
+        i = i + 1;
+    }
+    return false;
+}
+
+// e049_scope collects (name, type) for every `var` declared in stmts,
+// descending into control blocks but NOT into lambda bodies — the
+// function-level scope a directly-nested closure captures from.
+function e049_scope(stmts: parser.Stmt[]): NameTy[] {
+    var out: NameTy[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { out = out.push(NameTy { nm: v.name, ty: v.type_name }); },
+            parser.StmtIf(f) => { out = e049_append_nt(out, e049_scope(f.then_body)); out = e049_append_nt(out, e049_scope(f.else_body)); },
+            parser.StmtWhile(w) => { out = e049_append_nt(out, e049_scope(w.body)); },
+            parser.StmtFor(fr) => { out = e049_append_nt(out, e049_scope(fr.body)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = e049_append_nt(out, e049_scope(m.arms[a].body)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => { var one: parser.Stmt[] = [d.action]; out = e049_append_nt(out, e049_scope(one)); },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// e049_lambda_locals collects a lambda's own bound names (params + body
+// var decls, not descending into nested lambdas) — names that shadow an
+// enclosing capture.
+function e049_lambda_locals(lm: parser.ExprLambda): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < lm.params.len()) { out = out.push(lm.params[i].name); i = i + 1; }
+    var sv: NameTy[] = e049_scope(lm.body);
+    var j: i32 = 0;
+    while (j < sv.len()) { out = out.push(sv[j].nm); j = j + 1; }
+    return out;
+}
+
+// e049_check_assigns flags assignments inside a lambda body whose target
+// is a reference-typed enclosing capture not shadowed by a lambda local.
+// Descends into control blocks but not nested lambdas (those are checked
+// separately from the enclosing function's scope).
+function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: string[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (!name_in(locals, a.target) && e049_ref_capture(enclosing, a.target)) {
+                    out = out.push(dg_at("E049", "cannot assign to captured \"" + a.target + "\": a reference-typed closure capture is read-only (return the new value from the closure instead)", a.target_line, a.target_col));
+                }
+            },
+            parser.StmtIf(f) => { out = append_diags(out, e049_check_assigns(f.then_body, enclosing, locals)); out = append_diags(out, e049_check_assigns(f.else_body, enclosing, locals)); },
+            parser.StmtWhile(w) => { out = append_diags(out, e049_check_assigns(w.body, enclosing, locals)); },
+            parser.StmtFor(fr) => { out = append_diags(out, e049_check_assigns(fr.body, enclosing, locals)); },
+            parser.StmtMatch(m) => {
+                var a2: i32 = 0;
+                while (a2 < m.arms.len()) { out = append_diags(out, e049_check_assigns(m.arms[a2].body, enclosing, locals)); a2 = a2 + 1; }
+            },
+            parser.StmtDefer(d) => { var one: parser.Stmt[] = [d.action]; out = append_diags(out, e049_check_assigns(one, enclosing, locals)); },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// e049_expr_lambdas finds lambdas in an expression and checks each one's
+// body for captured-reference assignments.
+function e049_expr_lambdas(e: parser.Expr, enclosing: NameTy[]): Diag[] {
+    match (e) {
+        parser.ExprLambda(lm) => { return e049_check_assigns(lm.body, enclosing, e049_lambda_locals(lm)); },
+        parser.ExprCall(c) => {
+            var out: Diag[] = e049_expr_lambdas(c.callee, enclosing);
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = append_diags(out, e049_expr_lambdas(c.args[i], enclosing)); i = i + 1; }
+            return out;
+        },
+        parser.ExprBinary(b) => { return append_diags(e049_expr_lambdas(b.left, enclosing), e049_expr_lambdas(b.right, enclosing)); },
+        parser.ExprUnary(u) => { return e049_expr_lambdas(u.operand, enclosing); },
+        parser.ExprArray(a) => {
+            var out: Diag[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, e049_expr_lambdas(a.elements[i], enclosing)); i = i + 1; }
+            return out;
+        },
+        parser.ExprTuple(t) => {
+            var out: Diag[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, e049_expr_lambdas(t.elements[i], enclosing)); i = i + 1; }
+            return out;
+        },
+        parser.ExprIndex(ix) => { return append_diags(e049_expr_lambdas(ix.array, enclosing), e049_expr_lambdas(ix.index, enclosing)); },
+        parser.ExprFieldAccess(fa) => { return e049_expr_lambdas(fa.obj, enclosing); },
+        parser.ExprStructLit(s) => {
+            var out: Diag[] = [];
+            var i: i32 = 0;
+            while (i < s.field_values.len()) { out = append_diags(out, e049_expr_lambdas(s.field_values[i], enclosing)); i = i + 1; }
+            return out;
+        },
+        _ => { var none: Diag[] = []; return none; }
+    }
+}
+
+// e049_find walks a statement list for lambda-bearing expressions (var
+// inits, returns, expr/assign values) and control blocks, checking each
+// lambda against the function-level enclosing scope.
+function e049_find(stmts: parser.Stmt[], enclosing: NameTy[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { out = append_diags(out, e049_expr_lambdas(v.init, enclosing)); },
+            parser.StmtReturn(r) => { out = append_diags(out, e049_expr_lambdas(r.value, enclosing)); },
+            parser.StmtExpr(e) => { out = append_diags(out, e049_expr_lambdas(e.value, enclosing)); },
+            parser.StmtAssign(a) => { out = append_diags(out, e049_expr_lambdas(a.value, enclosing)); },
+            parser.StmtIf(f) => { out = append_diags(out, e049_find(f.then_body, enclosing)); out = append_diags(out, e049_find(f.else_body, enclosing)); },
+            parser.StmtWhile(w) => { out = append_diags(out, e049_find(w.body, enclosing)); },
+            parser.StmtFor(fr) => { out = append_diags(out, e049_find(fr.body, enclosing)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, e049_find(m.arms[a].body, enclosing)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => { var one: parser.Stmt[] = [d.action]; out = append_diags(out, e049_find(one, enclosing)); },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function e049_diags(mod: parser.Module): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fn: parser.FuncDecl = mod.funcs[i];
+        var encl: NameTy[] = [];
+        var p: i32 = 0;
+        while (p < fn.params.len()) { encl = encl.push(NameTy { nm: fn.params[p].name, ty: fn.params[p].type_name }); p = p + 1; }
+        encl = e049_append_nt(encl, e049_scope(fn.body));
+        out = append_diags(out, e049_find(fn.body, encl));
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
     // both use them to resolve names. Union aliases come next
@@ -3675,7 +3854,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         }
         sfi = sfi + 1;
     }
-    var dd: Diag[] = append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod));
+    var dd: Diag[] = append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }
