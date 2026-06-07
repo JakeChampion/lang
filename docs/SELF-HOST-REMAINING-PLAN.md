@@ -308,6 +308,17 @@ planned order:
 - ✅ **`if let`** pattern sugar — `if let PAT = E { … } else { … }`
   desugars in the parser to `match (E) { PAT => …, _ => … }`
   (`self_host_if_let_test.go`).
+- ✅ **`let else`** — `let PAT = E else { divergent };` desugars in the
+  parser by folding the *rest of the enclosing block* into the success
+  arm of a statement-match: `match (E) { PAT => { <rest> }, _ => {
+  divergent } }`. Reuses the existing match binding + codegen — no new
+  AST node, all backends inherit it (`self_host_let_else_test.go` on
+  x86-64 + arm64, plus wasm cases in `self_host_wasm_emit_test.go`). The
+  success bindings live for the rest of the block; the else branch is
+  expected to diverge. Diagnostic gap: the reference checker's dedicated
+  E022 ("let-else source must be an enum value") surfaces here as E035
+  (match-on-non-enum) via the desugar — a follow-up, matching the
+  if-let / match-guard precedent.
 - ✅ **`switch` / `case`** — desugars in the parser to a nested
   if/else-if chain (multi-value cases OR their `==` comparisons; no
   fall-through) (`self_host_switch_test.go`).
