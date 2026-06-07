@@ -383,7 +383,7 @@ pub struct EmitState {
     // in ExprCall(ExprFieldAccess(...), args).
     funcs: parser.FuncDecl[],
     // local_types: parallel to local_names. See asm.fern.
-    local_types: string[]
+    local_types: Ty[]
 }
 
 function new_state(): EmitState {
@@ -392,7 +392,7 @@ function new_state(): EmitState {
     var lex: string[] = [];
     var lcn: string[] = [];
     var fns: parser.FuncDecl[] = [];
-    var lts: string[] = [];
+    var lts: Ty[] = [];
     var nd: string[] = [];
     return EmitState {
         out: "",
@@ -421,22 +421,22 @@ function (s: EmitState) write(text: string): EmitState {
 }
 
 function (s: EmitState) bind_local(name: string): EmitState {
-    return s.bind_local_typed(name, "unknown");
+    return s.bind_local_typed(name, ty_unknown());
 }
 
-function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
+function (s: EmitState) bind_local_typed(name: string, ty: Ty): EmitState {
     var ln: string[] = s.local_names.push(name);
-    var lts: string[] = s.local_types.push(ty);
+    var lts: Ty[] = s.local_types.push(ty);
     return EmitState { ...s, local_names: ln, local_types: lts };
 }
 
-function (s: EmitState) local_type_of(name: string): string {
+function (s: EmitState) local_type_of(name: string): Ty {
     var i: i32 = s.local_names.len() - 1;
     while (i >= 0) {
         if (s.local_names[i] == name) { return s.local_types[i]; }
         i = i - 1;
     }
-    return "unknown";
+    return ty_unknown();
 }
 
 function (s: EmitState) mark_str_concat(): EmitState {
@@ -538,17 +538,17 @@ function (s: EmitState) mark_i32_pow(): EmitState {
 // match_payload_type — see asm.fern. Infers an Option/Result payload
 // binding's type from the match scrutinee so an i32 payload isn't
 // wrongly typed "string".
-function match_payload_type(scrut: parser.Expr, s: EmitState): string {
+function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
     match (scrut) {
         parser.ExprIdent(id) => {
             // Scrutinee is a local — recover the wrapped payload tag
             // from its declared/inferred type.
             if (s.has_local(id.name)) {
-                var lt: string = s.local_type_of(id.name);
-                if (lt.len() >= 7 && lt[0:7] == "option:") { return lt[7 : lt.len()]; }
-                if (lt.len() >= 7 && lt[0:7] == "result:") { return lt[7 : lt.len()]; }
+                var lt: Ty = s.local_type_of(id.name);
+                if (is_option(lt)) { return option_inner(lt); }
+                if (is_result(lt)) { return result_inner(lt); }
             }
-            return "unknown";
+            return ty_unknown();
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -556,10 +556,10 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                     if ((id.name == "Some" || id.name == "Ok") && c.args.len() == 1) {
                         return infer_expr_type(c.args[0], s);
                     }
-                    if (id.name == "read_file" || id.name == "read_all_stdin") { return "string"; }
-                    if (id.name == "tcp_recv") { return "string"; }
-                    if (id.name == "temp_dir") { return "string"; }
-                    if (id.name == "read_dir") { return "array_string"; }
+                    if (id.name == "read_file" || id.name == "read_all_stdin") { return ty_string(); }
+                    if (id.name == "tcp_recv") { return ty_string(); }
+                    if (id.name == "temp_dir") { return ty_string(); }
+                    if (id.name == "read_dir") { return ty_array_string(); }
                     // Arbitrary free / module function returning
                     // Option[T] or Result[T, …] — see asm.fern.
                     var fi: i32 = 0;
@@ -567,131 +567,54 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                         if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
                             var rt: string = s.funcs[fi].ret_type;
                             if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == 93) {
-                                return ret_tag_of(rt[7 : rt.len() - 1]);
+                                return ty_from_name(rt[7 : rt.len() - 1]);
                             }
                             if (rt.len() >= 8 && rt[0:7] == "Result[") {
                                 var inner: string = "(" + rt[7 : rt.len() - 1] + ")";
                                 return split_tuple_ret(inner).a;
                             }
-                            return "unknown";
+                            return ty_unknown();
                         }
                         fi = fi + 1;
                     }
-                    return "unknown";
+                    return ty_unknown();
                 },
                 parser.ExprFieldAccess(fa) => {
-                    if (fa.field == "read_chunk") { return "string"; }
+                    if (fa.field == "read_chunk") { return ty_string(); }
                     if (fa.field == "get") {
-                        var rt: string = infer_expr_type(fa.obj, s);
-                        if (is_map(rt)) { return map_value_part(rt); }
+                        var rt: Ty = infer_expr_type(fa.obj, s);
+                        if (is_map(rt)) { return map_val(rt); }
                     }
                     if (fa.field == "min" || fa.field == "max") {
-                        if (infer_expr_type(fa.obj, s) == "array_i32") { return "i32"; }
+                        if (ty_is_array_i32(infer_expr_type(fa.obj, s))) { return ty_i32(); }
                     }
                     // Receiver method call. See asm.fern.
-                    var rcv: string = infer_expr_type(fa.obj, s);
-                    if (rcv.len() > 0) {
+                    var rcv: Ty = infer_expr_type(fa.obj, s);
+                    if (!ty_is_unknown(rcv)) {
                         var fi: i32 = 0;
                         while (fi < s.funcs.len()) {
-                            if (s.funcs[fi].name == fa.field && s.funcs[fi].receiver_type == rcv) {
+                            if (s.funcs[fi].name == fa.field && ty_eq(ty_from_name(s.funcs[fi].receiver_type), rcv)) {
                                 var rt: string = s.funcs[fi].ret_type;
                                 if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == 93) {
-                                    return ret_tag_of(rt[7 : rt.len() - 1]);
+                                    return ty_from_name(rt[7 : rt.len() - 1]);
                                 }
                                 if (rt.len() >= 8 && rt[0:7] == "Result[") {
                                     var inner: string = "(" + rt[7 : rt.len() - 1] + ")";
                                     return split_tuple_ret(inner).a;
                                 }
-                                return "unknown";
+                                return ty_unknown();
                             }
                             fi = fi + 1;
                         }
                     }
-                    return "unknown";
+                    return ty_unknown();
                 },
-                _ => { return "unknown"; }
+                _ => { return ty_unknown(); }
             }
         },
-        _ => { return "unknown"; }
+        _ => { return ty_unknown(); }
     }
-    return "unknown";
-}
-
-function ret_tag_of(name: string): string {
-    if (name == "i32") { return "i32"; }
-    // See asm.fern: wider / unsigned integer scalars get their own
-    // tags so the compare emit can pick signed vs unsigned cset
-    // (lo/ls/hi/hs instead of lt/le/gt/ge) — values near u64::MAX
-    // sort by unsigned order. Method dispatch (.to_string / .len /
-    // .push / etc.) accepts every is_int_tag / is_int_array_tag.
-    if (name == "u32") { return "u32"; }
-    if (name == "u64") { return "u64"; }
-    if (name == "i64") { return "i64"; }
-    if (name == "usize") { return "usize"; }
-    if (name == "isize") { return "isize"; }
-    if (name == "u32[]") { return "array_u32"; }
-    if (name == "u64[]") { return "array_u64"; }
-    if (name == "i64[]") { return "array_i64"; }
-    if (name == "f64" || name == "f32" || name == "float") { return "f64"; }
-    if (name == "bool" || name == "boolean") { return "bool"; }
-    if (name == "string") { return "string"; }
-    if (name == "string[]") { return "array_string"; }
-    if (name == "i32[]") { return "array_i32"; }
-    if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
-    if (name.len() >= 8 && name[0:8] == "MapIter[") {
-        return "mapiter:" + generic_value_tag(name, 8);
-    }
-    if (name.len() >= 4 && name[0:4] == "Map[") {
-        // i32-keyed maps tag as "mapI:<V>" (integer key comparison);
-        // otherwise "map:<V>". See asm.fern.
-        if (generic_key_tag(name, 4) == "i32") {
-            return "mapI:" + generic_value_tag(name, 4);
-        }
-        return "map:" + generic_value_tag(name, 4);
-    }
-    if (name.len() >= 3 && name[0:3] == "Map") { return "map:unknown"; }
-    // Option[T] / Result[T, E] → first-class wrapper tags. Must precede
-    // the trailing-`]` → "array" fallback below (both end in `]`). The
-    // payload of Result is left "unknown" — the checker only compares the
-    // wrapper-ness, never the error arm.
-    if (name.len() >= 8 && name[0:7] == "Option[") {
-        return "option:" + ret_tag_of(name[7:name.len() - 1]);
-    }
-    if (name.len() >= 8 && name[0:7] == "Result[") {
-        // Result[T, E] — preserve the Ok payload tag. See asm.fern.
-        var inner: string = "(" + name[7 : name.len() - 1] + ")";
-        return "result:" + split_tuple_ret(inner).a;
-    }
-    if (name.len() > 0 && name[name.len() - 1] == 93) { return "array"; }
-    return "unknown";
-}
-
-// TwoTags / split_tuple_ret / tuple_destructure_tags — see asm.fern
-// for the full rationale. They recover the element type tags of a
-// `var (a, b) = init` binding so a struct-typed element's receiver
-// methods dispatch through the runtime shape-pointer path rather than
-// mis-mangling as `__fn_i32__<method>`.
-struct TwoTags { a: string, b: string }
-
-function split_tuple_ret(tt: string): TwoTags {
-    if (tt.len() < 3 || tt[0] != 40) { return TwoTags { a: "i32", b: "i32" }; }
-    var inner: string = tt[1 : tt.len() - 1];
-    var depth: i32 = 0;
-    var i: i32 = 0;
-    var split_at: i32 = 0 - 1;
-    while (i < inner.len()) {
-        var ch: i32 = inner[i];
-        if (ch == 91 || ch == 40) { depth = depth + 1; }
-        else if (ch == 93 || ch == 41) { depth = depth - 1; }
-        else if (ch == 44 && depth == 0 && split_at < 0) { split_at = i; }
-        i = i + 1;
-    }
-    if (split_at < 0) { return TwoTags { a: "i32", b: "i32" }; }
-    var a: string = inner[0 : split_at];
-    var bstart: i32 = split_at + 1;
-    if (bstart < inner.len() && inner[bstart] == 32) { bstart = bstart + 1; }
-    var b: string = inner[bstart : inner.len()];
-    return TwoTags { a: ret_tag_of(a), b: ret_tag_of(b) };
+    return ty_unknown();
 }
 
 function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
@@ -721,14 +644,14 @@ function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
                     // i32-shaped. A user receiver method that returns a tuple is
                     // split from its declared return type, mirroring the
                     // free-function case above.
-                    var rcv: string = infer_expr_type(fa.obj, s);
+                    var rcv: Ty = infer_expr_type(fa.obj, s);
                     if ((fa.field == "delete" || fa.field == "without") && is_map(rcv)) {
-                        return TwoTags { a: rcv, b: "i32" };
+                        return TwoTags { a: rcv, b: ty_i32() };
                     }
-                    if (rcv.len() > 0) {
+                    if (!ty_is_unknown(rcv)) {
                         var mfi: i32 = 0;
                         while (mfi < s.funcs.len()) {
-                            if (s.funcs[mfi].name == fa.field && s.funcs[mfi].receiver_type == rcv) {
+                            if (s.funcs[mfi].name == fa.field && ty_eq(ty_from_name(s.funcs[mfi].receiver_type), rcv)) {
                                 return split_tuple_ret(s.funcs[mfi].ret_type);
                             }
                             mfi = mfi + 1;
@@ -740,69 +663,7 @@ function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
         },
         _ => { }
     }
-    return TwoTags { a: "i32", b: "i32" };
-}
-
-// is_int_tag accepts every integer-shaped type tag — i32 / i64 /
-// u32 / u64 / usize / isize — so method-dispatch sites that used
-// to check `tag == "i32"` keep accepting wider/unsigned values.
-function is_int_tag(t: string): boolean {
-    return t == "i32" || t == "u32" || t == "u64" || t == "i64"
-        || t == "usize" || t == "isize";
-}
-
-// is_int_array_tag — same idea for arrays of integers.
-function is_int_array_tag(t: string): boolean {
-    return t == "array_i32" || t == "array_u32" || t == "array_u64"
-        || t == "array_i64";
-}
-
-// is_unsigned_tag picks out the tags whose values need unsigned
-// compare semantics (lo / ls / hi / hs instead of lt / le / gt / ge
-// on arm64; setb / setbe / seta / setae on x86).
-function is_unsigned_tag(t: string): boolean {
-    return t == "u32" || t == "u64" || t == "usize";
-}
-
-// is_unsigned_int_array_tag — array element type is unsigned.
-function is_unsigned_int_array_tag(t: string): boolean {
-    return t == "array_u32" || t == "array_u64";
-}
-
-// generic_key_tag — see asm.fern. Key type from a `Map[K, V]` name.
-function generic_key_tag(name: string, start: i32): string {
-    if (name.len() <= start + 1) { return "unknown"; }
-    var inner: string = name[start : name.len() - 1];
-    var i: i32 = 0;
-    while (i + 1 < inner.len()) {
-        if (inner[i] == 44 && inner[i + 1] == 32) {
-            return ret_tag_of(inner[0 : i]);
-        }
-        i = i + 1;
-    }
-    return "unknown";
-}
-
-// is_map — see asm.fern. "map", "map:<V>", or "mapI:<V>".
-function is_map(t: string): boolean {
-    return t == "map" || (t.len() >= 4 && t[0:4] == "map:")
-        || (t.len() >= 5 && t[0:5] == "mapI:");
-}
-
-// map_key_is_i32 / map_value_part — see asm.fern.
-function map_key_is_i32(t: string): boolean {
-    return t.len() >= 5 && t[0:5] == "mapI:";
-}
-
-function map_value_part(t: string): string {
-    if (t.len() >= 5 && t[0:5] == "mapI:") { return t[5 : t.len()]; }
-    if (t.len() >= 4 && t[0:4] == "map:") { return t[4 : t.len()]; }
-    return "unknown";
-}
-
-// is_mapiter — see asm.fern.
-function is_mapiter(t: string): boolean {
-    return t.len() >= 8 && t[0:8] == "mapiter:";
+    return TwoTags { a: ty_i32(), b: ty_i32() };
 }
 
 // is_enum_variant / is_unit_variant — see asm.fern. A payload-bearing
@@ -855,25 +716,10 @@ function is_struct_decl_name(name: string, s: EmitState): boolean {
 // enum-method fallback).
 function is_enum_recv(name: string, s: EmitState): boolean {
     if (is_struct_decl_name(name, s)) { return false; }
-    if (is_int_tag(name)) { return false; }
+    if (is_int_tag(ty_from_name(name))) { return false; }
     if (name == "string" || name == "bool" || name == "boolean") { return false; }
     if (name == "f64" || name == "f32" || name == "float") { return false; }
     return true;
-}
-
-// generic_value_tag — see asm.fern. Extracts the value-type tag from a
-// `Map[K, V]` / `MapIter[K, V]` type name; `start` is past the `[`.
-function generic_value_tag(name: string, start: i32): string {
-    if (name.len() <= start + 1) { return "unknown"; }
-    var inner: string = name[start : name.len() - 1];
-    var i: i32 = 0;
-    while (i + 1 < inner.len()) {
-        if (inner[i] == 44 && inner[i + 1] == 32) {
-            return ret_tag_of(inner[i + 2 : inner.len()]);
-        }
-        i = i + 1;
-    }
-    return "unknown";
 }
 
 // field_type_tag infers the type tag of a struct-field read (`x.s`)
@@ -881,7 +727,7 @@ function generic_value_tag(name: string, start: i32): string {
 // mapping its declared type. Mirrors the x86-64 emitter (asm.fern).
 // field_type_tag_in — see asm.fern. Resolves a field within a named
 // struct (used when the receiver's struct type is known).
-function field_type_tag_in(struct_name: string, field: string, s: EmitState): string {
+function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
     var di: i32 = 0;
     while (di < s.struct_decls.len()) {
         if (s.struct_decls[di].name == struct_name) {
@@ -889,31 +735,31 @@ function field_type_tag_in(struct_name: string, field: string, s: EmitState): st
             var fi: i32 = 0;
             while (fi < sd.fields.len()) {
                 if (sd.fields[fi].name == field) {
-                    return ret_tag_of(sd.fields[fi].type_name);
+                    return ty_from_name(sd.fields[fi].type_name);
                 }
                 fi = fi + 1;
             }
-            return "unknown";
+            return ty_unknown();
         }
         di = di + 1;
     }
-    return "unknown";
+    return ty_unknown();
 }
 
-function field_type_tag(field: string, s: EmitState): string {
+function field_type_tag(field: string, s: EmitState): Ty {
     var di: i32 = 0;
     while (di < s.struct_decls.len()) {
         var sd: parser.StructDecl = s.struct_decls[di];
         var fi: i32 = 0;
         while (fi < sd.fields.len()) {
             if (sd.fields[fi].name == field) {
-                return ret_tag_of(sd.fields[fi].type_name);
+                return ty_from_name(sd.fields[fi].type_name);
             }
             fi = fi + 1;
         }
         di = di + 1;
     }
-    return "unknown";
+    return ty_unknown();
 }
 
 // struct_local_tag types a receiver / parameter local by its struct NAME
@@ -924,34 +770,567 @@ function field_type_tag(field: string, s: EmitState): string {
 // name dispatch `self.v.to_string()` to the right helper. A bracketed
 // type (`FuncDecl[]`, `Map[K, V]`, `Option[i32]`) keeps its coarse
 // ret_tag_of tag — structifying it would mis-type arrays/maps/options.
-function struct_local_tag(type_name: string, s: EmitState): string {
+function struct_local_tag(type_name: string, s: EmitState): Ty {
     var bi: i32 = 0;
     while (bi < type_name.len()) {
-        if (type_name[bi] == 91) { return ret_tag_of(type_name); }
+        if (type_name[bi] == 91) { return ty_from_name(type_name); }
         bi = bi + 1;
     }
     var di: i32 = 0;
     while (di < s.struct_decls.len()) {
-        if (s.struct_decls[di].name == type_name) { return type_name; }
+        if (s.struct_decls[di].name == type_name) { return ty_named(type_name); }
         di = di + 1;
     }
-    return ret_tag_of(type_name);
+    return ty_from_name(type_name);
 }
 
-function infer_expr_type(e: parser.Expr, s: EmitState): string {
+// =================== TYPE TAGS (Ty) ====================
+// Ty is the self-host compiler's internal notion of an expression's
+// type, produced by infer_expr_type and threaded through EmitState's
+// local_types. It replaces the older ad-hoc string tags ("i32",
+// "option:string", "mapI:<V>", "fn_<ret>", …) that were built by
+// string concatenation and re-parsed by hand at dozens of sites — a
+// silent-typo surface. Parametric variants carry their inner Ty
+// directly (recursive, like parser.Expr); compare with ty_eq.
+// Scalar variants carry a dummy `tag` field because the self-host
+// codegen avoids zero-field union members (cf. parser.PatWildcard).
+pub struct TyI32 { tag: i32 }
+pub struct TyU32 { tag: i32 }
+pub struct TyU64 { tag: i32 }
+pub struct TyI64 { tag: i32 }
+pub struct TyUsize { tag: i32 }
+pub struct TyIsize { tag: i32 }
+pub struct TyBool { tag: i32 }
+pub struct TyString { tag: i32 }
+pub struct TyF64 { tag: i32 }
+pub struct TyStruct { tag: i32 }
+pub struct TyTuple { tag: i32 }
+pub struct TyUnknown { tag: i32 }
+pub struct TyArray { tag: i32 }
+pub struct TyArrayI32 { tag: i32 }
+pub struct TyArrayU32 { tag: i32 }
+pub struct TyArrayU64 { tag: i32 }
+pub struct TyArrayI64 { tag: i32 }
+pub struct TyArrayString { tag: i32 }
+pub struct TyFnAny { tag: i32 }
+pub struct TyMapAny { tag: i32 }
+pub struct TyOption { inner: Ty }
+pub struct TyResult { inner: Ty }
+pub struct TyFn { ret: Ty }
+pub struct TyMapStr { val: Ty }
+pub struct TyMapI32 { val: Ty }
+pub struct TyMapIter { val: Ty }
+// TyStructNamed carries a struct/enum-variant name (e.g. "VString").
+// The old string-tag system used the bare name as the tag in a few
+// places (a match-bound variant payload, struct_local_tag); this
+// variant preserves that so field-within-named-struct resolution and
+// struct-method label emission keep working. ty_tag renders it back
+// to the bare name.
+pub struct TyStructNamed { name: string }
+pub type Ty = TyI32 | TyU32 | TyU64 | TyI64 | TyUsize | TyIsize | TyBool
+            | TyString | TyF64 | TyStruct | TyTuple | TyUnknown |
+            TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
+            | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult |
+            TyFn | TyMapStr | TyMapI32 | TyMapIter | TyStructNamed;
+
+// ty_named builds a named-struct type from a spelling; ty_struct_name
+// recovers the name ("" if not a TyStructNamed).
+function ty_named(name: string): Ty { return TyStructNamed { name: name }; }
+function ty_struct_name(t: Ty): string {
+    match (t) {
+        TyStructNamed(x) => { return x.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// Constructors — the single source of each variant; call sites build
+// types through these instead of string literals.
+function ty_i32(): Ty { return TyI32 { tag: 0 }; }
+function ty_u32(): Ty { return TyU32 { tag: 0 }; }
+function ty_u64(): Ty { return TyU64 { tag: 0 }; }
+function ty_i64(): Ty { return TyI64 { tag: 0 }; }
+function ty_usize(): Ty { return TyUsize { tag: 0 }; }
+function ty_isize(): Ty { return TyIsize { tag: 0 }; }
+function ty_bool(): Ty { return TyBool { tag: 0 }; }
+function ty_string(): Ty { return TyString { tag: 0 }; }
+function ty_f64(): Ty { return TyF64 { tag: 0 }; }
+function ty_struct(): Ty { return TyStruct { tag: 0 }; }
+function ty_tuple(): Ty { return TyTuple { tag: 0 }; }
+function ty_unknown(): Ty { return TyUnknown { tag: 0 }; }
+function ty_array(): Ty { return TyArray { tag: 0 }; }
+function ty_array_i32(): Ty { return TyArrayI32 { tag: 0 }; }
+function ty_array_u32(): Ty { return TyArrayU32 { tag: 0 }; }
+function ty_array_u64(): Ty { return TyArrayU64 { tag: 0 }; }
+function ty_array_i64(): Ty { return TyArrayI64 { tag: 0 }; }
+function ty_array_string(): Ty { return TyArrayString { tag: 0 }; }
+function ty_fn_any(): Ty { return TyFnAny { tag: 0 }; }
+function ty_map_any(): Ty { return TyMapAny { tag: 0 }; }
+function ty_option(x: Ty): Ty { return TyOption { inner: x }; }
+function ty_result(x: Ty): Ty { return TyResult { inner: x }; }
+function ty_fn(x: Ty): Ty { return TyFn { ret: x }; }
+function ty_map_str(x: Ty): Ty { return TyMapStr { val: x }; }
+function ty_map_i32(x: Ty): Ty { return TyMapI32 { val: x }; }
+function ty_mapiter(x: Ty): Ty { return TyMapIter { val: x }; }
+
+// ty_ord gives each variant a distinct discriminant — used by ty_eq
+// for the unit variants (parametric variants compare structurally).
+function ty_ord(t: Ty): i32 {
+    match (t) {
+        TyI32(_) => { return 0; },
+        TyU32(_) => { return 1; },
+        TyU64(_) => { return 2; },
+        TyI64(_) => { return 3; },
+        TyUsize(_) => { return 4; },
+        TyIsize(_) => { return 5; },
+        TyBool(_) => { return 6; },
+        TyString(_) => { return 7; },
+        TyF64(_) => { return 8; },
+        TyStruct(_) => { return 9; },
+        TyTuple(_) => { return 10; },
+        TyUnknown(_) => { return 11; },
+        TyArray(_) => { return 12; },
+        TyArrayI32(_) => { return 13; },
+        TyArrayU32(_) => { return 14; },
+        TyArrayU64(_) => { return 15; },
+        TyArrayI64(_) => { return 16; },
+        TyArrayString(_) => { return 17; },
+        TyFnAny(_) => { return 18; },
+        TyMapAny(_) => { return 19; },
+        TyOption(_) => { return 20; },
+        TyResult(_) => { return 21; },
+        TyFn(_) => { return 22; },
+        TyMapStr(_) => { return 23; },
+        TyMapI32(_) => { return 24; },
+        TyMapIter(_) => { return 25; },
+        TyStructNamed(_) => { return 26; },
+        _ => { return -1; }
+    }
+    return -1;
+}
+
+function is_int_tag(t: Ty): boolean {
+    match (t) {
+        TyI32(_) => { return true; },
+        TyU32(_) => { return true; },
+        TyU64(_) => { return true; },
+        TyI64(_) => { return true; },
+        TyUsize(_) => { return true; },
+        TyIsize(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function is_int_array_tag(t: Ty): boolean {
+    match (t) {
+        TyArrayI32(_) => { return true; },
+        TyArrayU32(_) => { return true; },
+        TyArrayU64(_) => { return true; },
+        TyArrayI64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function is_unsigned_tag(t: Ty): boolean {
+    match (t) {
+        TyU32(_) => { return true; },
+        TyU64(_) => { return true; },
+        TyUsize(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function is_unsigned_int_array_tag(t: Ty): boolean {
+    match (t) {
+        TyArrayU32(_) => { return true; },
+        TyArrayU64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function is_map(t: Ty): boolean {
+    match (t) {
+        TyMapAny(_) => { return true; },
+        TyMapStr(_) => { return true; },
+        TyMapI32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function is_mapiter(t: Ty): boolean {
+    match (t) {
+        TyMapIter(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function map_key_is_i32(t: Ty): boolean {
+    match (t) {
+        TyMapI32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function is_option(t: Ty): boolean {
+    match (t) {
+        TyOption(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function is_result(t: Ty): boolean {
+    match (t) {
+        TyResult(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function is_fn(t: Ty): boolean {
+    match (t) {
+        TyFn(_) => { return true; },
+        TyFnAny(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_i32(t: Ty): boolean {
+    match (t) {
+        TyI32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_u32(t: Ty): boolean {
+    match (t) {
+        TyU32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_u64(t: Ty): boolean {
+    match (t) {
+        TyU64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_i64(t: Ty): boolean {
+    match (t) {
+        TyI64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_usize(t: Ty): boolean {
+    match (t) {
+        TyUsize(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_isize(t: Ty): boolean {
+    match (t) {
+        TyIsize(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_bool(t: Ty): boolean {
+    match (t) {
+        TyBool(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_string(t: Ty): boolean {
+    match (t) {
+        TyString(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_f64(t: Ty): boolean {
+    match (t) {
+        TyF64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_struct(t: Ty): boolean {
+    match (t) {
+        TyStruct(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_tuple(t: Ty): boolean {
+    match (t) {
+        TyTuple(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_unknown(t: Ty): boolean {
+    match (t) {
+        TyUnknown(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_array(t: Ty): boolean {
+    match (t) {
+        TyArray(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_array_i32(t: Ty): boolean {
+    match (t) {
+        TyArrayI32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_array_u32(t: Ty): boolean {
+    match (t) {
+        TyArrayU32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_array_u64(t: Ty): boolean {
+    match (t) {
+        TyArrayU64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_array_i64(t: Ty): boolean {
+    match (t) {
+        TyArrayI64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function ty_is_array_string(t: Ty): boolean {
+    match (t) {
+        TyArrayString(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+function option_inner(t: Ty): Ty {
+    match (t) {
+        TyOption(x) => { return x.inner; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+function result_inner(t: Ty): Ty {
+    match (t) {
+        TyResult(x) => { return x.inner; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+function fn_ret(t: Ty): Ty {
+    match (t) {
+        TyFn(x) => { return x.ret; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+function mapiter_val(t: Ty): Ty {
+    match (t) {
+        TyMapIter(x) => { return x.val; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+function map_val(t: Ty): Ty {
+    match (t) {
+        TyMapStr(x) => { return x.val; },
+        TyMapI32(x) => { return x.val; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+// ty_tag renders a Ty back to its canonical string form — only for
+// diagnostics (ty_friendly) and any remaining string-keyed lookup.
+function ty_tag(t: Ty): string {
+    match (t) {
+        TyI32(_) => { return "i32"; },
+        TyU32(_) => { return "u32"; },
+        TyU64(_) => { return "u64"; },
+        TyI64(_) => { return "i64"; },
+        TyUsize(_) => { return "usize"; },
+        TyIsize(_) => { return "isize"; },
+        TyBool(_) => { return "bool"; },
+        TyString(_) => { return "string"; },
+        TyF64(_) => { return "f64"; },
+        TyStruct(_) => { return "struct"; },
+        TyTuple(_) => { return "tuple"; },
+        TyUnknown(_) => { return "unknown"; },
+        TyArray(_) => { return "array"; },
+        TyArrayI32(_) => { return "array_i32"; },
+        TyArrayU32(_) => { return "array_u32"; },
+        TyArrayU64(_) => { return "array_u64"; },
+        TyArrayI64(_) => { return "array_i64"; },
+        TyArrayString(_) => { return "array_string"; },
+        TyFnAny(_) => { return "fn"; },
+        TyMapAny(_) => { return "map"; },
+        TyOption(x) => { return "option:" + ty_tag(x.inner); },
+        TyResult(x) => { return "result:" + ty_tag(x.inner); },
+        TyFn(x) => { return "fn_" + ty_tag(x.ret); },
+        TyMapStr(x) => { return "map:" + ty_tag(x.val); },
+        TyMapI32(x) => { return "mapI:" + ty_tag(x.val); },
+        TyMapIter(x) => { return "mapiter:" + ty_tag(x.val); },
+        TyStructNamed(x) => { return x.name; }
+    }
+    return "unknown";
+}
+// ty_eq — structural equality. Unit variants compare by discriminant;
+// the parametric variants recurse on their payload (mirrors the old
+// full-string `==` on tags like "option:string").
+function ty_eq(a: Ty, b: Ty): boolean {
+    match (a) {
+        TyOption(x) => { match (b) { TyOption(y) => { return ty_eq(x.inner, y.inner); }, _ => { return false; } } },
+        TyResult(x) => { match (b) { TyResult(y) => { return ty_eq(x.inner, y.inner); }, _ => { return false; } } },
+        TyFn(x) => { match (b) { TyFn(y) => { return ty_eq(x.ret, y.ret); }, _ => { return false; } } },
+        TyMapStr(x) => { match (b) { TyMapStr(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
+        TyMapI32(x) => { match (b) { TyMapI32(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
+        TyMapIter(x) => { match (b) { TyMapIter(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
+        TyStructNamed(x) => { match (b) { TyStructNamed(y) => { return x.name == y.name; }, _ => { return false; } } },
+        _ => { return ty_ord(a) == ty_ord(b); }
+    }
+    return false;
+}
+
+// generic_value_ty extracts the value-type from a `Map[K, V]` /
+// `MapIter[K, V]` spelling (the part after the top-level ", ").
+// `start` is the index past the opening `[`.
+function generic_value_ty(name: string, start: i32): Ty {
+    if (name.len() <= start + 1) { return ty_unknown(); }
+    var inner: string = name[start : name.len() - 1];
+    var i: i32 = 0;
+    while (i + 1 < inner.len()) {
+        if (inner[i] == 44 && inner[i + 1] == 32) {
+            return ty_from_name(inner[i + 2 : inner.len()]);
+        }
+        i = i + 1;
+    }
+    return ty_unknown();
+}
+
+// generic_key_is_i32 reports whether a `Map[K, V]` spelling has an
+// i32 key (selects the integer-keyed map representation).
+function generic_key_is_i32(name: string, start: i32): boolean {
+    if (name.len() <= start + 1) { return false; }
+    var inner: string = name[start : name.len() - 1];
+    var i: i32 = 0;
+    while (i + 1 < inner.len()) {
+        if (inner[i] == 44 && inner[i + 1] == 32) {
+            return ty_is_i32(ty_from_name(inner[0 : i]));
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ty_from_name parses an AST type spelling (FuncDecl.ret_type,
+// field/param types) into a Ty. Replaces the old ret_tag_of.
+function ty_from_name(name: string): Ty {
+    if (name == "i32") { return ty_i32(); }
+    if (name == "u32") { return ty_u32(); }
+    if (name == "u64") { return ty_u64(); }
+    if (name == "i64") { return ty_i64(); }
+    if (name == "usize") { return ty_usize(); }
+    if (name == "isize") { return ty_isize(); }
+    if (name == "u32[]") { return ty_array_u32(); }
+    if (name == "u64[]") { return ty_array_u64(); }
+    if (name == "i64[]") { return ty_array_i64(); }
+    if (name == "f64" || name == "f32" || name == "float") { return ty_f64(); }
+    if (name == "bool" || name == "boolean") { return ty_bool(); }
+    if (name == "string") { return ty_string(); }
+    if (name == "string[]") { return ty_array_string(); }
+    if (name == "i32[]") { return ty_array_i32(); }
+    if (name == "bool[]" || name == "boolean[]") { return ty_array_i32(); }
+    if (name.len() >= 8 && name[0:8] == "MapIter[") {
+        return ty_mapiter(generic_value_ty(name, 8));
+    }
+    if (name.len() >= 4 && name[0:4] == "Map[") {
+        if (generic_key_is_i32(name, 4)) { return ty_map_i32(generic_value_ty(name, 4)); }
+        return ty_map_str(generic_value_ty(name, 4));
+    }
+    if (name.len() >= 3 && name[0:3] == "Map") { return ty_map_str(ty_unknown()); }
+    if (name.len() >= 8 && name[0:7] == "Option[") {
+        return ty_option(ty_from_name(name[7:name.len() - 1]));
+    }
+    if (name.len() >= 8 && name[0:7] == "Result[") {
+        var inner: string = "(" + name[7 : name.len() - 1] + ")";
+        return ty_result(split_tuple_ret(inner).a);
+    }
+    if (name.len() > 0 && name[name.len() - 1] == 93) { return ty_array(); }
+    return ty_unknown();
+}
+
+// TwoTags carries the inferred element types of a two-element
+// tuple-destructure binding.
+struct TwoTags { a: Ty, b: Ty }
+
+// split_tuple_ret splits a reconstructed tuple spelling "(A, B)" into
+// the Ty of its first two elements, tracking bracket/paren depth so a
+// comma inside Map[K, V] / a nested tuple doesn't split early.
+function split_tuple_ret(tt: string): TwoTags {
+    if (tt.len() < 3 || tt[0] != 40) { return TwoTags { a: ty_i32(), b: ty_i32() }; }
+    var inner: string = tt[1 : tt.len() - 1];
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var split_at: i32 = 0 - 1;
+    while (i < inner.len()) {
+        var ch: i32 = inner[i];
+        if (ch == 91 || ch == 40) { depth = depth + 1; }
+        else if (ch == 93 || ch == 41) { depth = depth - 1; }
+        else if (ch == 44 && depth == 0 && split_at < 0) { split_at = i; }
+        i = i + 1;
+    }
+    if (split_at < 0) { return TwoTags { a: ty_i32(), b: ty_i32() }; }
+    var a: string = inner[0 : split_at];
+    var bstart: i32 = split_at + 1;
+    if (bstart < inner.len() && inner[bstart] == 32) { bstart = bstart + 1; }
+    var b: string = inner[bstart : inner.len()];
+    return TwoTags { a: ty_from_name(a), b: ty_from_name(b) };
+}
+
+// ty_friendly renders a Ty to source-like syntax for diagnostics.
+function ty_friendly(t: Ty): string {
+    match (t) {
+        TyOption(x) => { return "Option[" + ty_friendly(x.inner) + "]"; },
+        TyResult(x) => { return "Result[" + ty_friendly(x.inner) + ", _]"; },
+        TyArrayI32(_) => { return "i32[]"; },
+        TyArrayU32(_) => { return "u32[]"; },
+        TyArrayU64(_) => { return "u64[]"; },
+        TyArrayI64(_) => { return "i64[]"; },
+        TyArrayString(_) => { return "string[]"; },
+        _ => { return ty_tag(t); }
+    }
+    return ty_tag(t);
+}
+
+function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
     match (e) {
-        parser.ExprNumber(n) => { if (n.is_float) { return "f64"; } return "i32"; },
-        parser.ExprBool(_) => { return "bool"; },
-        parser.ExprString(_) => { return "string"; },
+        parser.ExprNumber(n) => { if (n.is_float) { return ty_f64(); } return ty_i32(); },
+        parser.ExprBool(_) => { return ty_bool(); },
+        parser.ExprString(_) => { return ty_string(); },
         parser.ExprArray(a) => {
-            if (a.elements.len() == 0) { return "array"; }
-            var et: string = infer_expr_type(a.elements[0], s);
-            if (et == "string") { return "array_string"; }
-            if (et == "i32" || et == "bool") { return "array_i32"; }
-            return "array";
+            if (a.elements.len() == 0) { return ty_array(); }
+            var et: Ty = infer_expr_type(a.elements[0], s);
+            if (ty_is_string(et)) { return ty_array_string(); }
+            if (ty_is_i32(et) || ty_is_bool(et)) { return ty_array_i32(); }
+            return ty_array();
         },
-        parser.ExprTuple(_) => { return "tuple"; },
-        parser.ExprStructLit(_) => { return "struct"; },
+        parser.ExprTuple(_) => { return ty_tuple(); },
+        parser.ExprStructLit(_) => { return ty_struct(); },
         parser.ExprLambda(lm) => {
             // Encode the return type in the tag so a later
             // `f()` call site can recover it from the local's
@@ -961,16 +1340,16 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             // purely for the type-aware dispatch on the result
             // (e.g. `print(f())` needs to know the result is a
             // string to route through `__fern_print_str`).
-            return "fn_" + ret_tag_of(lm.ret_type);
+            return ty_fn(ty_from_name(lm.ret_type));
         },
         parser.ExprIdent(id) => {
-            if (id.name == "None") { return "option:unknown"; }
+            if (id.name == "None") { return ty_option(ty_unknown()); }
             if (s.has_local(id.name)) { return s.local_type_of(id.name); }
             // A bare ident may name a zero-arg function (a `const`).
             var cfi: i32 = 0;
             while (cfi < s.funcs.len()) {
                 if (s.funcs[cfi].name == id.name && s.funcs[cfi].receiver_type.len() == 0 && s.funcs[cfi].params.len() == 0) {
-                    return ret_tag_of(s.funcs[cfi].ret_type);
+                    return ty_from_name(s.funcs[cfi].ret_type);
                 }
                 cfi = cfi + 1;
             }
@@ -979,97 +1358,97 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
         parser.ExprBinary(b) => {
             if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
                     || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
-                return "bool";
+                return ty_bool();
             }
             if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-                var lt: string = infer_expr_type(b.left, s);
-                var rt: string = infer_expr_type(b.right, s);
-                if (lt == "string" || rt == "string") { return "string"; }
-                if (lt == "f64" || rt == "f64") { return "f64"; }
-                return "i32";
+                var lt: Ty = infer_expr_type(b.left, s);
+                var rt: Ty = infer_expr_type(b.right, s);
+                if (ty_is_string(lt) || ty_is_string(rt)) { return ty_string(); }
+                if (ty_is_f64(lt) || ty_is_f64(rt)) { return ty_f64(); }
+                return ty_i32();
             }
-            return "i32";
+            return ty_i32();
         },
         parser.ExprUnary(u) => {
-            if (u.op == "!") { return "bool"; }
+            if (u.op == "!") { return ty_bool(); }
             if (u.op == "-") { return infer_expr_type(u.operand, s); }
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
                 var ct: string = u.op[3:u.op.len()];
-                if (ct == "f64" || ct == "f32" || ct == "float") { return "f64"; }
-                return "i32";
+                if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
+                return ty_i32();
             }
-            return "i32";
+            return ty_i32();
         },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     if (id.name == "Some" && c.args.len() == 1) {
-                        return "option:" + infer_expr_type(c.args[0], s);
+                        return ty_option(infer_expr_type(c.args[0], s));
                     }
                     if (id.name == "Ok" && c.args.len() == 1) {
-                        return "result:" + infer_expr_type(c.args[0], s);
+                        return ty_result(infer_expr_type(c.args[0], s));
                     }
-                    if (id.name == "Err" && c.args.len() == 1) { return "result:unknown"; }
-                    if (id.name == "read_file") { return "result:string"; }
-                    if (id.name == "write_file") { return "option:unknown"; }
+                    if (id.name == "Err" && c.args.len() == 1) { return ty_result(ty_unknown()); }
+                    if (id.name == "read_file") { return ty_result(ty_string()); }
+                    if (id.name == "write_file") { return ty_option(ty_unknown()); }
                     // now_unix_ms / monotonic_ns return i64. The self-host
                     // has no distinct i64 tag — integers live in 64-bit x0
                     // slots and compare via cmp — so "i32" routes them
                     // through the integer path without truncation.
-                    if (id.name == "now_unix_ms") { return "i32"; }
-                    if (id.name == "monotonic_ns") { return "i32"; }
+                    if (id.name == "now_unix_ms") { return ty_i32(); }
+                    if (id.name == "monotonic_ns") { return ty_i32(); }
                     // See asm.fern for rationale.
-                    if (id.name == "sleep_ms") { return "i32"; }
-                    if (id.name == "remove_file") { return "option:unknown"; }
+                    if (id.name == "sleep_ms") { return ty_i32(); }
+                    if (id.name == "remove_file") { return ty_option(ty_unknown()); }
                     // subprocess(cmd, args, stdin) → ProcessResult struct.
                     // See asm.fern: returns "unknown" because the struct's
                     // fields resolve through the shape-pointer dispatch path
                     // (parser.inject_builtin_enums injects the decl).
-                    if (id.name == "subprocess") { return "unknown"; }
-                    if (id.name == "temp_dir") { return "result:string"; }
-                    if (id.name == "read_dir") { return "result:array_string"; }
-                    if (id.name == "stat") { return "result:unknown"; }
-                    if (id.name == "remove_dir_all") { return "option:unknown"; }
-                    if (id.name == "f64_bits" || id.name == "f32_bits") { return "i32"; }
-                    if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return "f64"; }
+                    if (id.name == "subprocess") { return ty_unknown(); }
+                    if (id.name == "temp_dir") { return ty_result(ty_string()); }
+                    if (id.name == "read_dir") { return ty_result(ty_array_string()); }
+                    if (id.name == "stat") { return ty_result(ty_unknown()); }
+                    if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
+                    if (id.name == "f64_bits" || id.name == "f32_bits") { return ty_i32(); }
+                    if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
                     // env(name): Option[string] — Some(value) if the
                     // variable is set (including empty), None otherwise.
-                    if (id.name == "env") { return "option:string"; }
-                    if (id.name == "len") { return "i32"; }
-                    if (id.name == "read_int") { return "i32"; }
-                    if (id.name == "read_line") { return "string"; }
-                    if (id.name == "read_all_stdin") { return "string"; }
-                    if (id.name == "i32_to_string") { return "string"; }
-                    if (id.name == "int__int_to_string") { return "string"; }
-                    if (id.name == "str_to_i32") { return "i32"; }
-                    if (id.name == "str_starts_with") { return "bool"; }
-                    if (id.name == "str_ends_with") { return "bool"; }
-                    if (id.name == "str_contains") { return "bool"; }
-                    if (id.name == "str_index_of") { return "i32"; }
-                    if (id.name == "str_trim") { return "string"; }
-                    if (id.name == "str_to_upper") { return "string"; }
-                    if (id.name == "str_to_lower") { return "string"; }
-                    if (id.name == "str_repeat") { return "string"; }
-                    if (id.name == "str_replace") { return "string"; }
-                    if (id.name == "chr") { return "string"; }
-                    if (id.name == "exit") { return "i32"; }
-                    if (id.name == "args_count") { return "i32"; }
-                    if (id.name == "arg_at") { return "string"; }
-                    if (id.name == "args") { return "array_string"; }
-                    if (id.name == "__alloc_u8") { return "array_i32"; }
-                    if (id.name == "string_from_bytes") { return "string"; }
-                    if (id.name == "random_bytes") { return "string"; }
-                    if (id.name == "map_new") { return "map:unknown"; }
-                    if (id.name == "map_new_i32") { return "mapI:unknown"; }
+                    if (id.name == "env") { return ty_option(ty_string()); }
+                    if (id.name == "len") { return ty_i32(); }
+                    if (id.name == "read_int") { return ty_i32(); }
+                    if (id.name == "read_line") { return ty_string(); }
+                    if (id.name == "read_all_stdin") { return ty_string(); }
+                    if (id.name == "i32_to_string") { return ty_string(); }
+                    if (id.name == "int__int_to_string") { return ty_string(); }
+                    if (id.name == "str_to_i32") { return ty_i32(); }
+                    if (id.name == "str_starts_with") { return ty_bool(); }
+                    if (id.name == "str_ends_with") { return ty_bool(); }
+                    if (id.name == "str_contains") { return ty_bool(); }
+                    if (id.name == "str_index_of") { return ty_i32(); }
+                    if (id.name == "str_trim") { return ty_string(); }
+                    if (id.name == "str_to_upper") { return ty_string(); }
+                    if (id.name == "str_to_lower") { return ty_string(); }
+                    if (id.name == "str_repeat") { return ty_string(); }
+                    if (id.name == "str_replace") { return ty_string(); }
+                    if (id.name == "chr") { return ty_string(); }
+                    if (id.name == "exit") { return ty_i32(); }
+                    if (id.name == "args_count") { return ty_i32(); }
+                    if (id.name == "arg_at") { return ty_string(); }
+                    if (id.name == "args") { return ty_array_string(); }
+                    if (id.name == "__alloc_u8") { return ty_array_i32(); }
+                    if (id.name == "string_from_bytes") { return ty_string(); }
+                    if (id.name == "random_bytes") { return ty_string(); }
+                    if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
+                    if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }
                     if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
                             || id.name == "__floor_f64" || id.name == "__ceil_f64"
                             || id.name == "__trunc_f64" || id.name == "__round_f64"
                             || id.name == "__sin_f64" || id.name == "__cos_f64"
                             || id.name == "__exp_f64" || id.name == "__log_f64"
                             || id.name == "__pow_f64") {
-                        return "f64";
+                        return ty_f64();
                     }
-                    if (id.name == "str_split") { return "array_string"; }
+                    if (id.name == "str_split") { return ty_array_string(); }
                     // Local-callee path: when `f()` invokes a
                     // local var that was bound to a lambda, its
                     // recorded type is `fn_<ret>` (see the
@@ -1078,128 +1457,124 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // string concat, etc.) sees the actual return
                     // type rather than `"unknown"`.
                     if (s.has_local(id.name)) {
-                        var lt: string = s.local_type_of(id.name);
-                        if (lt == "fn_string") { return "string"; }
-                        if (lt == "fn_i32") { return "i32"; }
-                        if (lt == "fn_bool") { return "bool"; }
-                        if (lt == "fn_array_string") { return "array_string"; }
-                        if (lt == "fn_array_i32") { return "array_i32"; }
+                        var lt: Ty = s.local_type_of(id.name);
+                        if (is_fn(lt)) { return fn_ret(lt); }
                     }
                     var fi: i32 = 0;
                     while (fi < s.funcs.len()) {
                         if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
-                            return ret_tag_of(s.funcs[fi].ret_type);
+                            return ty_from_name(s.funcs[fi].ret_type);
                         }
                         fi = fi + 1;
                     }
-                    return "unknown";
+                    return ty_unknown();
                 },
                 parser.ExprFieldAccess(fa) => {
-                    var rt: string = infer_expr_type(fa.obj, s);
-                    if (fa.field == "read_chunk") { return "option:string"; }
+                    var rt: Ty = infer_expr_type(fa.obj, s);
+                    if (fa.field == "read_chunk") { return ty_option(ty_string()); }
                     if (is_map(rt) && fa.field == "get") {
-                        return "option:" + map_value_part(rt);
+                        return ty_option(map_val(rt));
                     }
                     if (is_map(rt) && fa.field == "get_or") {
-                        return map_value_part(rt);
+                        return map_val(rt);
                     }
                     if (is_map(rt) && (fa.field == "set" || fa.field == "insert")) { return rt; }
-                    if (is_map(rt) && fa.field == "has") { return "bool"; }
-                    if (is_map(rt) && fa.field == "len") { return "i32"; }
+                    if (is_map(rt) && fa.field == "has") { return ty_bool(); }
+                    if (is_map(rt) && fa.field == "len") { return ty_i32(); }
                     if (is_map(rt) && fa.field == "keys") {
-                        if (map_key_is_i32(rt)) { return "array_i32"; }
-                        return "array_string";
+                        if (map_key_is_i32(rt)) { return ty_array_i32(); }
+                        return ty_array_string();
                     }
                     if (is_map(rt) && fa.field == "values") {
-                        var vt: string = map_value_part(rt);
-                        if (vt == "i32") { return "array_i32"; }
-                        if (vt == "string") { return "array_string"; }
-                        return "array";
+                        var vt: Ty = map_val(rt);
+                        if (ty_is_i32(vt)) { return ty_array_i32(); }
+                        if (ty_is_string(vt)) { return ty_array_string(); }
+                        return ty_array();
                     }
                     if (is_map(rt) && fa.field == "iter") {
-                        return "mapiter:" + map_value_part(rt);
+                        return ty_mapiter(map_val(rt));
                     }
-                    if (is_mapiter(rt) && fa.field == "has_next") { return "bool"; }
-                    if (is_mapiter(rt) && fa.field == "key") { return "string"; }
-                    if (is_mapiter(rt) && fa.field == "value") { return rt[8:rt.len()]; }
-                    if ((is_int_tag(rt) || rt == "string") && fa.field == "to_string") {
-                        return "string";
+                    if (is_mapiter(rt) && fa.field == "has_next") { return ty_bool(); }
+                    if (is_mapiter(rt) && fa.field == "key") { return ty_string(); }
+                    if (is_mapiter(rt) && fa.field == "value") { return mapiter_val(rt); }
+                    if ((is_int_tag(rt) || ty_is_string(rt)) && fa.field == "to_string") {
+                        return ty_string();
                     }
-                    if ((rt == "f64" || rt == "f32" || rt == "float") && fa.field == "to_string") {
-                        return "string";
+                    if (ty_is_f64(rt) && fa.field == "to_string") {
+                        return ty_string();
                     }
-                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "to_lower" || fa.field == "to_upper" || fa.field == "gcd" || fa.field == "lcm")) {
-                        return "i32";
+                    if (ty_is_i32(rt) && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "to_lower" || fa.field == "to_upper" || fa.field == "gcd" || fa.field == "lcm")) {
+                        return ty_i32();
                     }
-                    if (rt == "i32" && fa.field == "to_ascii_string") {
-                        return "string";
+                    if (ty_is_i32(rt) && fa.field == "to_ascii_string") {
+                        return ty_string();
                     }
-                    if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative" || fa.field == "is_digit" || fa.field == "is_alpha" || fa.field == "is_letter" || fa.field == "is_alnum" || fa.field == "is_lower" || fa.field == "is_upper" || fa.field == "is_hex_digit")) {
-                        return "bool";
+                    if (ty_is_i32(rt) && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative" || fa.field == "is_digit" || fa.field == "is_alpha" || fa.field == "is_letter" || fa.field == "is_alnum" || fa.field == "is_lower" || fa.field == "is_upper" || fa.field == "is_hex_digit")) {
+                        return ty_bool();
                     }
                     if (fa.field == "len"
-                            && (rt == "string" || is_int_array_tag(rt) || rt == "array_string" || rt == "array")) {
-                        return "i32";
+                            && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
+                        return ty_i32();
                     }
                     if (fa.field == "is_empty"
-                            && (rt == "string" || is_int_array_tag(rt) || rt == "array_string" || rt == "array")) {
-                        return "bool";
+                            && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
+                        return ty_bool();
                     }
                     // `.push(x)` / `.reverse()` / `.concat(b)` return the same array type.
                     if ((fa.field == "push" || fa.field == "reverse" || fa.field == "concat")
-                            && (is_int_array_tag(rt) || rt == "array_string" || rt == "array")) {
+                            && (is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
                         return rt;
                     }
                     // `.first()` / `.last()` return the element type.
                     if ((fa.field == "first" || fa.field == "last")
-                            && (is_int_array_tag(rt) || rt == "array_string")) {
-                        if (rt == "array_i32") { return "i32"; }
-                        if (rt == "array_u32") { return "u32"; }
-                        if (rt == "array_u64") { return "u64"; }
-                        if (rt == "array_i64") { return "i64"; }
-                        return "string";
+                            && (is_int_array_tag(rt) || ty_is_array_string(rt))) {
+                        if (ty_is_array_i32(rt)) { return ty_i32(); }
+                        if (ty_is_array_u32(rt)) { return ty_u32(); }
+                        if (ty_is_array_u64(rt)) { return ty_u64(); }
+                        if (ty_is_array_i64(rt)) { return ty_i64(); }
+                        return ty_string();
                     }
                     // i32/string-array search methods.
-                    if (rt == "array_i32" || rt == "array_string") {
-                        if (fa.field == "index_of") { return "i32"; }
-                        if (fa.field == "contains") { return "bool"; }
+                    if (ty_is_array_i32(rt) || ty_is_array_string(rt)) {
+                        if (fa.field == "index_of") { return ty_i32(); }
+                        if (fa.field == "contains") { return ty_bool(); }
                     }
-                    if (rt == "array_i32"
+                    if (ty_is_array_i32(rt)
                             && (fa.field == "sum" || fa.field == "product")) {
-                        return "i32";
+                        return ty_i32();
                     }
                     // .min()/.max() on an i32 array → Option[i32] (None on
                     // empty); the Some payload is i32 (match_payload_type).
-                    if (rt == "array_i32" && (fa.field == "min" || fa.field == "max")) {
-                        return "option:i32";
+                    if (ty_is_array_i32(rt) && (fa.field == "min" || fa.field == "max")) {
+                        return ty_option(ty_i32());
                     }
-                    if (rt == "array_string" && fa.field == "join") {
-                        return "string";
+                    if (ty_is_array_string(rt) && fa.field == "join") {
+                        return ty_string();
                     }
                     // String methods that mirror existing builtins.
-                    if (rt == "string") {
-                        if (fa.field == "split") { return "array_string"; }
-                        if (fa.field == "chars") { return "array_string"; }
-                        if (fa.field == "lines") { return "array_string"; }
-                        if (fa.field == "bytes") { return "array_i32"; }
-                        if (fa.field == "as_bytes") { return "array_i32"; }
-                        if (fa.field == "reverse") { return "string"; }
-                        if (fa.field == "first_byte" || fa.field == "last_byte") { return "i32"; }
-                        if (fa.field == "contains") { return "bool"; }
-                        if (fa.field == "starts_with") { return "bool"; }
-                        if (fa.field == "ends_with") { return "bool"; }
-                        if (fa.field == "index_of") { return "i32"; }
-                        if (fa.field == "trim") { return "string"; }
-                        if (fa.field == "to_upper") { return "string"; }
-                        if (fa.field == "to_lower") { return "string"; }
-                        if (fa.field == "repeat") { return "string"; }
-                        if (fa.field == "replace") { return "string"; }
+                    if (ty_is_string(rt)) {
+                        if (fa.field == "split") { return ty_array_string(); }
+                        if (fa.field == "chars") { return ty_array_string(); }
+                        if (fa.field == "lines") { return ty_array_string(); }
+                        if (fa.field == "bytes") { return ty_array_i32(); }
+                        if (fa.field == "as_bytes") { return ty_array_i32(); }
+                        if (fa.field == "reverse") { return ty_string(); }
+                        if (fa.field == "first_byte" || fa.field == "last_byte") { return ty_i32(); }
+                        if (fa.field == "contains") { return ty_bool(); }
+                        if (fa.field == "starts_with") { return ty_bool(); }
+                        if (fa.field == "ends_with") { return ty_bool(); }
+                        if (fa.field == "index_of") { return ty_i32(); }
+                        if (fa.field == "trim") { return ty_string(); }
+                        if (fa.field == "to_upper") { return ty_string(); }
+                        if (fa.field == "to_lower") { return ty_string(); }
+                        if (fa.field == "repeat") { return ty_string(); }
+                        if (fa.field == "replace") { return ty_string(); }
                     }
-                    if (rt == "string" || rt == "i32" || rt == "bool" || rt == "f64") {
+                    if (ty_is_string(rt) || ty_is_i32(rt) || ty_is_bool(rt) || ty_is_f64(rt)) {
                         var mi: i32 = 0;
                         while (mi < s.funcs.len()) {
-                            if (s.funcs[mi].name == fa.field && s.funcs[mi].receiver_type == rt) {
-                                return ret_tag_of(s.funcs[mi].ret_type);
+                            if (s.funcs[mi].name == fa.field && ty_eq(ty_from_name(s.funcs[mi].receiver_type), rt)) {
+                                return ty_from_name(s.funcs[mi].ret_type);
                             }
                             mi = mi + 1;
                         }
@@ -1210,15 +1585,15 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     var mj: i32 = 0;
                     while (mj < s.funcs.len()) {
                         if (s.funcs[mj].name == fa.field && s.funcs[mj].receiver_type.len() > 0) {
-                            return ret_tag_of(s.funcs[mj].ret_type);
+                            return ty_from_name(s.funcs[mj].ret_type);
                         }
                         mj = mj + 1;
                     }
-                    return "unknown";
+                    return ty_unknown();
                 },
-                _ => { return "unknown"; }
+                _ => { return ty_unknown(); }
             }
-            return "unknown";
+            return ty_unknown();
         },
         parser.ExprIndex(x) => {
             // Container type drives element type:
@@ -1226,37 +1601,37 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             //   array_string → "string"
             //   array_u64 → "u64" (so element compares pick unsigned)
             //   array_u32 → "u32"; array_i64 → "i64"; else → "i32"
-            var at: string = infer_expr_type(x.array, s);
-            if (at == "string") { return "i32"; }
-            if (at == "array_string") { return "string"; }
-            if (at == "array_u64") { return "u64"; }
-            if (at == "array_u32") { return "u32"; }
-            if (at == "array_i64") { return "i64"; }
-            return "i32";
+            var at: Ty = infer_expr_type(x.array, s);
+            if (ty_is_string(at)) { return ty_i32(); }
+            if (ty_is_array_string(at)) { return ty_string(); }
+            if (ty_is_array_u64(at)) { return ty_u64(); }
+            if (ty_is_array_u32(at)) { return ty_u32(); }
+            if (ty_is_array_i64(at)) { return ty_i64(); }
+            return ty_i32();
         },
         parser.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
         parser.ExprFieldAccess(fa) => {
             // Resolve within the receiver's struct when its type is a
             // known struct name (match-bound variant payloads); else
             // fall back to the first-match field scan. See asm.fern.
-            var frt: string = infer_expr_type(fa.obj, s);
+            var frt: Ty = infer_expr_type(fa.obj, s);
             var di: i32 = 0;
             while (di < s.struct_decls.len()) {
-                if (s.struct_decls[di].name == frt) {
-                    return field_type_tag_in(frt, fa.field, s);
+                if (s.struct_decls[di].name == ty_struct_name(frt)) {
+                    return field_type_tag_in(ty_struct_name(frt), fa.field, s);
                 }
                 di = di + 1;
             }
             return field_type_tag(fa.field, s);
         },
-        parser.ExprUnknown(_) => { return "unknown"; }
+        parser.ExprUnknown(_) => { return ty_unknown(); }
     }
-    return "unknown";
+    return ty_unknown();
 }
 
 function (s: EmitState) reset_locals(): EmitState {
     var ln: string[] = [];
-    var lts: string[] = [];
+    var lts: Ty[] = [];
     return EmitState { ...s, local_names: ln, local_types: lts };
 }
 
@@ -1622,7 +1997,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             }
             // Primitive-receiver fast path: see
             // asm.fern for rationale.
-            var prim_recv: string = infer_expr_type(fa.obj, s);
+            var prim_recv: Ty = infer_expr_type(fa.obj, s);
             // Map methods (string-keyed). set → map; get →
             // Option[V]; has → bool; len → i32. Mirror of
             // asm.fern's x86-64 dispatch.
@@ -1795,7 +2170,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // `__fn_i32.to_string` symbol that no FuncDecl
             // emits, producing a link error.
             if (fa.field == "to_string" && c.args.len() == 0
-                    && (is_int_tag(prim_recv) || prim_recv == "string")) {
+                    && (is_int_tag(prim_recv) || ty_is_string(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 if (is_int_tag(prim_recv)) {
                     s = s.write("    ldr x0, [sp], #16\n");
@@ -1810,7 +2185,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // trimmed fractional digits, matching std/float).
             // mark_heap because the helper allocates.
             if (fa.field == "to_string" && c.args.len() == 0
-                    && (prim_recv == "f64" || prim_recv == "f32" || prim_recv == "float")) {
+                    && ty_is_f64(prim_recv)) {
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __fern_f64_to_string\n");
@@ -1822,13 +2197,13 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // strings and arrays. Inline — they read
             // the length word directly.
             if (fa.field == "len" && c.args.len() == 0
-                    && (prim_recv == "string"
+                    && (ty_is_string(prim_recv)
                         || is_int_array_tag(prim_recv)
-                        || prim_recv == "array_string"
-                        || prim_recv == "array")) {
+                        || ty_is_array_string(prim_recv)
+                        || ty_is_array(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                if (prim_recv == "string") {
+                if (ty_is_string(prim_recv)) {
                     s = s.write("    ldr x0, [x0, #8]\n");
                 } else {
                     s = s.write("    ldr x0, [x0]\n");
@@ -1837,13 +2212,13 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
                 return s;
             }
             if (fa.field == "is_empty" && c.args.len() == 0
-                    && (prim_recv == "string"
+                    && (ty_is_string(prim_recv)
                         || is_int_array_tag(prim_recv)
-                        || prim_recv == "array_string"
-                        || prim_recv == "array")) {
+                        || ty_is_array_string(prim_recv)
+                        || ty_is_array(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                if (prim_recv == "string") {
+                if (ty_is_string(prim_recv)) {
                     s = s.write("    ldr x0, [x0, #8]\n");
                 } else {
                     s = s.write("    ldr x0, [x0]\n");
@@ -1855,7 +2230,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             }
             // Built-in i32 numeric methods. Inline — no
             // runtime helper needed.
-            if (prim_recv == "i32") {
+            if (ty_is_i32(prim_recv)) {
                 if (fa.field == "abs" && c.args.len() == 0) {
                     s = emit_expr(fa.obj, s);
                     s = s.write("    ldr x0, [sp], #16\n");
@@ -2106,7 +2481,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // ptr; both are 8 bytes in the operand-stack
             // representation). Returns a fresh array.
             if (fa.field == "push" && c.args.len() == 1
-                    && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
+                    && (is_int_array_tag(prim_recv) || ty_is_array_string(prim_recv) || ty_is_array(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2122,7 +2497,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // `.push` / `.slice`; works for both i32[]
             // and string[].
             if (fa.field == "reverse" && c.args.len() == 0
-                    && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
+                    && (is_int_array_tag(prim_recv) || ty_is_array_string(prim_recv) || ty_is_array(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __fern_arr_reverse\n");
@@ -2137,7 +2512,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // payloads, so layout-compatible types — i32[]
             // and string[] — both work).
             if (fa.field == "concat" && c.args.len() == 1
-                    && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
+                    && (is_int_array_tag(prim_recv) || ty_is_array_string(prim_recv) || ty_is_array(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2150,7 +2525,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // Built-in `.first()` / `.last()` on arrays —
             // O(1) element access. UB on empty arrays.
             if (fa.field == "first" && c.args.len() == 0
-                    && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
+                    && (is_int_array_tag(prim_recv) || ty_is_array_string(prim_recv) || ty_is_array(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    ldr x0, [x0, #8]\n");
@@ -2158,7 +2533,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
                 return s;
             }
             if (fa.field == "last" && c.args.len() == 0
-                    && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
+                    && (is_int_array_tag(prim_recv) || ty_is_array_string(prim_recv) || ty_is_array(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    ldr x1, [x0]\n");
@@ -2171,7 +2546,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // them. Empty array → empty string. Single
             // element → that element.
             if (fa.field == "join" && c.args.len() == 1
-                    && prim_recv == "array_string") {
+                    && ty_is_array_string(prim_recv)) {
                 s = emit_expr(fa.obj, s);
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2186,7 +2561,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // element so content equality matches even
             // when the .rodata slots differ.
             if ((fa.field == "index_of" || fa.field == "contains")
-                    && c.args.len() == 1 && prim_recv == "array_string") {
+                    && c.args.len() == 1 && ty_is_array_string(prim_recv)) {
                 s = emit_expr(fa.obj, s);
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2203,7 +2578,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // Built-in `.sum()` on i32 arrays — returns
             // the sum of all elements (0 if empty).
             if (fa.field == "sum" && c.args.len() == 0
-                    && prim_recv == "array_i32") {
+                    && ty_is_array_i32(prim_recv)) {
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __fern_arr_i32_sum\n");
@@ -2215,7 +2590,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // returns the product of all elements (1 if
             // empty, matching the empty-product identity).
             if (fa.field == "product" && c.args.len() == 0
-                    && prim_recv == "array_i32") {
+                    && ty_is_array_i32(prim_recv)) {
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __fern_arr_i32_product\n");
@@ -2227,7 +2602,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // Option[i32]: Some(extremum) when non-empty, None on
             // an empty array. Mirror of asm.fern.
             if ((fa.field == "min" || fa.field == "max")
-                    && c.args.len() == 0 && prim_recv == "array_i32") {
+                    && c.args.len() == 0 && ty_is_array_i32(prim_recv)) {
                 s = emit_expr(fa.obj, s);
                 var mm_none: LabelOut = fresh_label(s);
                 s = mm_none.state;
@@ -2267,7 +2642,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // (above) that calls `__fern_str_eq`; i32
             // just uses register compare.
             if ((fa.field == "index_of" || fa.field == "contains")
-                    && c.args.len() == 1 && prim_recv == "array_i32") {
+                    && c.args.len() == 1 && ty_is_array_i32(prim_recv)) {
                 s = emit_expr(fa.obj, s);
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2287,7 +2662,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // — we just route receiver-first form into
             // the same emit shape so users can write
             // `s.split(",")` instead of `str_split(s, ",")`.
-            if (prim_recv == "string") {
+            if (ty_is_string(prim_recv)) {
                 if (fa.field == "chars" && c.args.len() == 0) {
                     s = emit_expr(fa.obj, s);
                     s = s.write("    ldr x0, [sp], #16\n");
@@ -2490,14 +2865,14 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
                     return s;
                 }
             }
-            if (prim_recv == "string" || is_int_tag(prim_recv) || prim_recv == "bool" || prim_recv == "f64" || prim_recv == "f32") {
+            if (ty_is_string(prim_recv) || is_int_tag(prim_recv) || ty_is_bool(prim_recv) || ty_is_f64(prim_recv)) {
                 var pmi: i32 = c.args.len() - 1;
                 while (pmi >= 0) {
                     s = emit_expr(c.args[pmi], s);
                     pmi = pmi - 1;
                 }
                 s = emit_expr(fa.obj, s);
-                s = s.write("    bl __fn_" + sanitize_label(prim_recv + "." + fa.field) + "\n");
+                s = s.write("    bl __fn_" + sanitize_label(ty_tag(prim_recv) + "." + fa.field) + "\n");
                 s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
@@ -2589,10 +2964,10 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
     if (name == "len" && c.args.len() == 1) {
         // Dispatch on operand type: string box → load
         // len at +8; array box → load len at +0.
-        var lt: string = infer_expr_type(c.args[0], s);
+        var lt: Ty = infer_expr_type(c.args[0], s);
         s = emit_expr(c.args[0], s);
         s = s.write("    ldr x0, [sp], #16\n");
-        if (lt == "string") {
+        if (ty_is_string(lt)) {
             s = s.write("    ldr x0, [x0, #8]\n");
         } else {
             s = s.write("    ldr x0, [x0]\n");
@@ -2628,8 +3003,8 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             _ => { }
         }
         // Non-literal string argument → __fern_print_str.
-        var at: string = infer_expr_type(arg, s);
-        if (at == "string") {
+        var at: Ty = infer_expr_type(arg, s);
+        if (ty_is_string(at)) {
             s = emit_expr(arg, s);
             s = s.write("    ldr x0, [sp], #16\n");
             s = s.write("    bl __fern_print_str\n");
@@ -2671,8 +3046,8 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             },
             _ => { }
         }
-        var eat: string = infer_expr_type(earg, s);
-        if (eat == "string") {
+        var eat: Ty = infer_expr_type(earg, s);
+        if (ty_is_string(eat)) {
             s = emit_expr(earg, s);
             s = s.write("    ldr x0, [sp], #16\n");
             s = s.write("    bl __fern_eprint_str\n");
@@ -3485,9 +3860,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         },
         parser.ExprBinary(b) => {
             if (b.op == "+") {
-                var lt: string = infer_expr_type(b.left, s);
-                var rt: string = infer_expr_type(b.right, s);
-                if (lt == "string" || rt == "string") {
+                var lt: Ty = infer_expr_type(b.left, s);
+                var rt: Ty = infer_expr_type(b.right, s);
+                if (ty_is_string(lt) || ty_is_string(rt)) {
                     s = emit_expr(b.left, s);
                     s = emit_expr(b.right, s);
                     s = s.write("    ldr x1, [sp], #16\n");
@@ -3499,9 +3874,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
             }
             if (b.op == "==" || b.op == "!=") {
-                var elt: string = infer_expr_type(b.left, s);
-                var ert: string = infer_expr_type(b.right, s);
-                if (elt == "string" || ert == "string") {
+                var elt: Ty = infer_expr_type(b.left, s);
+                var ert: Ty = infer_expr_type(b.right, s);
+                if (ty_is_string(elt) || ty_is_string(ert)) {
                     s = emit_expr(b.left, s);
                     s = emit_expr(b.right, s);
                     s = s.write("    ldr x1, [sp], #16\n");
@@ -3518,9 +3893,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // String ordering: < / <= / > / >= → __fern_str_cmp
             // and compare its signed result against zero.
             if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-                var olt: string = infer_expr_type(b.left, s);
-                var ort: string = infer_expr_type(b.right, s);
-                if (olt == "string" || ort == "string") {
+                var olt: Ty = infer_expr_type(b.left, s);
+                var ort: Ty = infer_expr_type(b.right, s);
+                if (ty_is_string(olt) || ty_is_string(ort)) {
                     s = emit_expr(b.left, s);
                     s = emit_expr(b.right, s);
                     s = s.write("    ldr x1, [sp], #16\n");
@@ -3570,7 +3945,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // Float (f64) arithmetic + comparison. Operands flow as
             // 8-byte bit patterns; fmov into d-regs and operate.
-            var is_flt: boolean = infer_expr_type(b.left, s) == "f64" || infer_expr_type(b.right, s) == "f64";
+            var is_flt: boolean = ty_is_f64(infer_expr_type(b.left, s)) || ty_is_f64(infer_expr_type(b.right, s));
             if (is_flt && (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/")) {
                 s = emit_expr(b.left, s);
                 s = emit_expr(b.right, s);
@@ -3679,7 +4054,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (u.op == "-") {
                 s = emit_expr(u.operand, s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                if (infer_expr_type(u.operand, s) == "f64") {
+                if (ty_is_f64(infer_expr_type(u.operand, s))) {
                     s = s.write("    fmov d0, x0\n");
                     s = s.write("    fneg d0, d0\n");
                     s = s.write("    fmov x0, d0\n");
@@ -3707,17 +4082,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // and anything else are no-ops.
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
                 var ty: string = u.op[3:u.op.len()];
-                var src_ty: string = infer_expr_type(u.operand, s);
+                var src_ty: Ty = infer_expr_type(u.operand, s);
                 var to_float: boolean = ty == "f64" || ty == "f32" || ty == "float";
                 s = emit_expr(u.operand, s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 if (to_float) {
                     // → float. From int: scvtf. From float: no-op.
-                    if (src_ty != "f64") {
+                    if (!ty_is_f64(src_ty)) {
                         s = s.write("    scvtf d0, x0\n");
                         s = s.write("    fmov x0, d0\n");
                     }
-                } else if (src_ty == "f64") {
+                } else if (ty_is_f64(src_ty)) {
                     // float → int: truncate toward zero, then width-mask.
                     s = s.write("    fmov d0, x0\n");
                     s = s.write("    fcvtzs x0, d0\n");
@@ -3889,12 +4264,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         parser.ExprIndex(x) => {
             // Dispatch on container type: string → byte load
             // at box.data + i; array → 8-byte slot at +(i+1)*8.
-            var ct: string = infer_expr_type(x.array, s);
+            var ct: Ty = infer_expr_type(x.array, s);
             s = emit_expr(x.array, s);
             s = emit_expr(x.index, s);
             s = s.write("    ldr x1, [sp], #16\n");
             s = s.write("    ldr x0, [sp], #16\n");
-            if (ct == "string") {
+            if (ty_is_string(ct)) {
                 s = s.write("    ldr x0, [x0]\n");
                 s = s.write("    ldrb w0, [x0, x1]\n");
             } else {
@@ -3907,8 +4282,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         parser.ExprSlice(sl) => {
             // String slice: allocate new 16-byte box with
             // data_ptr = src.data_ptr + start, len = end-start.
-            var st: string = infer_expr_type(sl.array, s);
-            if (st == "string") {
+            var st: Ty = infer_expr_type(sl.array, s);
+            if (ty_is_string(st)) {
                 s = emit_expr(sl.array, s);
                 s = emit_expr(sl.start, s);
                 s = emit_expr(sl.end, s);
@@ -3937,7 +4312,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
-            if (is_int_array_tag(st) || st == "array_string" || st == "array") {
+            if (is_int_array_tag(st) || ty_is_array_string(st) || ty_is_array(st)) {
                 s = emit_expr(sl.array, s);
                 s = emit_expr(sl.start, s);
                 s = emit_expr(sl.end, s);
@@ -4114,7 +4489,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    stp x29, x30, [sp, #-16]!\n");
             s = s.write("    mov x29, sp\n");
             var saved_locals: string[] = s.local_names;
-            var saved_local_types: string[] = s.local_types;
+            var saved_local_types: Ty[] = s.local_types;
             var saved_in_function: boolean = s.in_function;
             var argc_l: i32 = lm.params.len();
             var n_body_locals_l: i32 = count_locals(lm.body);
@@ -4142,7 +4517,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // to the i32 path.
             var ci: i32 = 0;
             while (ci < n_caps) {
-                var cap_ty: string = "unknown";
+                var cap_ty: Ty = ty_unknown();
                 var li: i32 = 0;
                 while (li < saved_locals.len()) {
                     if (saved_locals[li] == caps[ci]) {
@@ -4163,7 +4538,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // call, because the box now arrives in x9, not on the stack.
             var pi2: i32 = 0;
             while (pi2 < argc_l) {
-                s = s.bind_local_typed(lm.params[pi2].name, ret_tag_of(lm.params[pi2].type_name));
+                s = s.bind_local_typed(lm.params[pi2].name, ty_from_name(lm.params[pi2].type_name));
                 var p_off: i32 = s.lookup_local(lm.params[pi2].name);
                 var a_off: i32 = 16 + pi2 * 16;
                 s = s.frame_ldr("x0", a_off);
@@ -4224,12 +4599,12 @@ function emit_block(body: parser.Stmt[], s: EmitState): EmitState {
 // emit_map_kv_for — see asm.fern. `for (k, v) in m`, separate function
 // so the StmtFor arm stays small.
 function emit_map_kv_for(s: EmitState, f: parser.StmtFor, kv_comma: i32): EmitState {
-    var iter_ty: string = infer_expr_type(f.iter, s);
+    var iter_ty: Ty = infer_expr_type(f.iter, s);
     var kvk: string = f.var_name[0 : kv_comma];
     var kvv: string = f.var_name[kv_comma + 1 : f.var_name.len()];
-    var kvk_ty: string = "string";
-    if (map_key_is_i32(iter_ty)) { kvk_ty = "i32"; }
-    var kvv_ty: string = map_value_part(iter_ty);
+    var kvk_ty: Ty = ty_string();
+    if (map_key_is_i32(iter_ty)) { kvk_ty = ty_i32(); }
+    var kvv_ty: Ty = map_val(iter_ty);
     s = emit_expr(f.iter, s);
     var kvm_name: string = "__forkv_map_" + i32_to_string(s.label_n);
     s = s.bind_local(kvm_name);
@@ -4384,9 +4759,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             }
             // Infer init type for string-aware dispatch.
             // Explicit annotation overrides inference.
-            var ity: string = infer_expr_type(v.init, s);
+            var ity: Ty = infer_expr_type(v.init, s);
             if (v.type_name.len() > 0) {
-                ity = ret_tag_of(v.type_name);
+                ity = ty_from_name(v.type_name);
             }
             s = emit_expr(v.init, s);
             s = s.bind_local_typed(v.name, ity);
@@ -4487,7 +4862,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                             } else {
                                 // `type X = A|B` member: bind whole struct,
                                 // typed so a field read resolves within it.
-                                s = s.bind_local_typed(pv.binding, pv.type_name);
+                                s = s.bind_local_typed(pv.binding, ty_named(pv.type_name));
                                 var bind_off: i32 = s.lookup_local(pv.binding);
                                 s = s.frame_str("x0", bind_off);
                             }
@@ -4525,7 +4900,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             //       x = __for_arr_N[__for_i_N]; body;
             //       __for_i_N = __for_i_N + 1;
             //   }
-            var iter_ty: string = infer_expr_type(f.iter, s);
+            var iter_ty: Ty = infer_expr_type(f.iter, s);
             // `for (k, v) in m` — see emit_map_kv_for.
             var kv_comma: i32 = 0 - 1;
             var kvci: i32 = 0;
@@ -4536,16 +4911,16 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             if (is_map(iter_ty) && kv_comma >= 0) {
                 return emit_map_kv_for(s, f, kv_comma);
             }
-            var elem_ty: string = "i32";
-            if (iter_ty == "array_string") { elem_ty = "string"; }
-            if (iter_ty == "array_u32") { elem_ty = "u32"; }
-            if (iter_ty == "array_u64") { elem_ty = "u64"; }
-            if (iter_ty == "array_i64") { elem_ty = "i64"; }
+            var elem_ty: Ty = ty_i32();
+            if (ty_is_array_string(iter_ty)) { elem_ty = ty_string(); }
+            if (ty_is_array_u32(iter_ty)) { elem_ty = ty_u32(); }
+            if (ty_is_array_u64(iter_ty)) { elem_ty = ty_u64(); }
+            if (ty_is_array_i64(iter_ty)) { elem_ty = ty_i64(); }
             // Generic `array` tag (struct / `dyn Trait` / otherwise
             // non-primitive elements): bind the loop var "unknown" so a
             // method call on it dispatches by runtime shape, not the
             // primitive path. See the x86-64 backend for the rationale.
-            if (iter_ty == "array") { elem_ty = "unknown"; }
+            if (ty_is_array(iter_ty)) { elem_ty = ty_unknown(); }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + i32_to_string(s.label_n);
             s = s.bind_local(arr_name);
@@ -4702,29 +5077,27 @@ function has_main(mod: parser.Module): boolean {
 
 struct CheckCtx { st: EmitState, errs: string }
 
-function is_wrapper(tag: string): boolean {
-    if (tag.len() >= 7 && tag[0:7] == "option:") { return true; }
-    if (tag.len() >= 7 && tag[0:7] == "result:") { return true; }
-    return false;
+function is_wrapper(tag: Ty): boolean {
+    return is_option(tag) || is_result(tag);
 }
 
-function is_concrete(tag: string): boolean {
-    return is_int_tag(tag) || tag == "string" || tag == "bool" || tag == "f64"
-        || is_int_array_tag(tag) || tag == "array_string" || tag == "array";
+function is_concrete(tag: Ty): boolean {
+    return is_int_tag(tag) || ty_is_string(tag) || ty_is_bool(tag) || ty_is_f64(tag)
+        || is_int_array_tag(tag) || ty_is_array_string(tag) || ty_is_array(tag);
 }
 
 // Conservative: reject ONLY when exactly one side is an Option/Result
 // wrapper and the other is a confidently-inferred concrete type. Both
 // wrappers (payload inference is too coarse to compare), any "unknown",
 // and scalar-vs-scalar are all accepted.
-function assignable(want: string, got: string): boolean {
-    if (want == got) { return true; }
-    if (want == "unknown" || got == "unknown") { return true; }
+function assignable(want: Ty, got: Ty): boolean {
+    if (ty_eq(want, got)) { return true; }
+    if (ty_is_unknown(want) || ty_is_unknown(got)) { return true; }
     var ww: boolean = is_wrapper(want);
     var gw: boolean = is_wrapper(got);
     if (ww && gw) { return true; }
     if (ww || gw) {
-        var other: string = want;
+        var other: Ty = want;
         if (ww) { other = got; }
         if (is_concrete(other)) { return false; }
         return true;
@@ -4732,64 +5105,48 @@ function assignable(want: string, got: string): boolean {
     return true;
 }
 
-// Render an internal tag back to source-like syntax for diagnostics.
-function friendly_type(tag: string): string {
-    if (tag.len() >= 7 && tag[0:7] == "option:") {
-        return "Option[" + friendly_type(tag[7:tag.len()]) + "]";
-    }
-    if (tag.len() >= 7 && tag[0:7] == "result:") {
-        return "Result[" + friendly_type(tag[7:tag.len()]) + ", _]";
-    }
-    if (tag == "array_i32") { return "i32[]"; }
-    if (tag == "array_u32") { return "u32[]"; }
-    if (tag == "array_u64") { return "u64[]"; }
-    if (tag == "array_i64") { return "i64[]"; }
-    if (tag == "array_string") { return "string[]"; }
-    return tag;
-}
-
-function check_stmt(st: parser.Stmt, want: string, fname: string, ctx: CheckCtx): CheckCtx {
+function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
     match (st) {
         parser.StmtReturn(r) => {
-            var got: string = infer_expr_type(r.value, ctx.st);
+            var got: Ty = infer_expr_type(r.value, ctx.st);
             if (!assignable(want, got)) {
                 return CheckCtx {
                     st: ctx.st,
                     errs: ctx.errs + "error[E002]: in fn '" + fname
-                        + "': returns " + friendly_type(want)
-                        + " but expression has type " + friendly_type(got) + "\n"
+                        + "': returns " + ty_friendly(want)
+                        + " but expression has type " + ty_friendly(got) + "\n"
                 };
             }
             return ctx;
         },
         parser.StmtVar(v) => {
-            var got: string = infer_expr_type(v.init, ctx.st);
-            var bind_ty: string = got;
+            var got: Ty = infer_expr_type(v.init, ctx.st);
+            var bind_ty: Ty = got;
             if (v.type_name.len() > 0) {
-                var declared: string = ret_tag_of(v.type_name);
+                var declared: Ty = ty_from_name(v.type_name);
                 bind_ty = declared;
                 if (!assignable(declared, got)) {
                     ctx = CheckCtx {
                         st: ctx.st,
                         errs: ctx.errs + "error[E003]: in fn '" + fname
                             + "': variable '" + v.name + "' declared "
-                            + friendly_type(declared) + " but initializer has type "
-                            + friendly_type(got) + "\n"
+                            + ty_friendly(declared) + " but initializer has type "
+                            + ty_friendly(got) + "\n"
                     };
                 }
             }
             return CheckCtx { st: ctx.st.bind_local_typed(v.name, bind_ty), errs: ctx.errs };
         },
         parser.StmtAssign(a) => {
-            var got: string = infer_expr_type(a.value, ctx.st);
-            var tt: string = ctx.st.local_type_of(a.target);
+            var got: Ty = infer_expr_type(a.value, ctx.st);
+            var tt: Ty = ctx.st.local_type_of(a.target);
             if (!assignable(tt, got)) {
                 return CheckCtx {
                     st: ctx.st,
                     errs: ctx.errs + "error[E004]: in fn '" + fname
                         + "': assignment to '" + a.target + "' of type "
-                        + friendly_type(tt) + " from expression of type "
-                        + friendly_type(got) + "\n"
+                        + ty_friendly(tt) + " from expression of type "
+                        + ty_friendly(got) + "\n"
                 };
             }
             return ctx;
@@ -4802,13 +5159,13 @@ function check_stmt(st: parser.Stmt, want: string, fname: string, ctx: CheckCtx)
             return check_stmts(w.body, want, fname, ctx);
         },
         parser.StmtFor(fo) => {
-            var it: string = infer_expr_type(fo.iter, ctx.st);
-            var elem: string = "unknown";
-            if (it == "array_i32") { elem = "i32"; }
-            if (it == "array_u32") { elem = "u32"; }
-            if (it == "array_u64") { elem = "u64"; }
-            if (it == "array_i64") { elem = "i64"; }
-            if (it == "array_string") { elem = "string"; }
+            var it: Ty = infer_expr_type(fo.iter, ctx.st);
+            var elem: Ty = ty_unknown();
+            if (ty_is_array_i32(it)) { elem = ty_i32(); }
+            if (ty_is_array_u32(it)) { elem = ty_u32(); }
+            if (ty_is_array_u64(it)) { elem = ty_u64(); }
+            if (ty_is_array_i64(it)) { elem = ty_i64(); }
+            if (ty_is_array_string(it)) { elem = ty_string(); }
             ctx = CheckCtx { st: ctx.st.bind_local_typed(fo.var_name, elem), errs: ctx.errs };
             return check_stmts(fo.body, want, fname, ctx);
         },
@@ -4841,7 +5198,7 @@ function check_stmt(st: parser.Stmt, want: string, fname: string, ctx: CheckCtx)
     return ctx;
 }
 
-function check_stmts(stmts: parser.Stmt[], want: string, fname: string, ctx: CheckCtx): CheckCtx {
+function check_stmts(stmts: parser.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
     var i: i32 = 0;
     while (i < stmts.len()) {
         ctx = check_stmt(stmts[i], want, fname, ctx);
@@ -4851,7 +5208,7 @@ function check_stmts(stmts: parser.Stmt[], want: string, fname: string, ctx: Che
 }
 
 function check_func(fd: parser.FuncDecl, s: EmitState): string {
-    var want: string = ret_tag_of(fd.ret_type);
+    var want: Ty = ty_from_name(fd.ret_type);
     var s2: EmitState = s.reset_locals();
     if (fd.receiver_type.len() > 0) {
         s2 = s2.bind_local_typed(fd.receiver_name, struct_local_tag(fd.receiver_type, s2));
