@@ -1,0 +1,294 @@
+// examples/self_host/ssa_wasm.fern — an SSA → WebAssembly text (WAT) code
+// generator, the third consumer of the shared SSA IR (after ssa_x86.fern
+// and ssa_arm64.fern). Where those emit flat label + jump assembly, WAT
+// has no arbitrary jumps, so the SSA control-flow graph is lowered with
+// the standard *dispatch-loop* shape:
+//
+//     (block $exit (loop $L
+//        (block $blkN-1 … (block $blk0
+//           (br_table $blk0 … $blkN-1 (local.get $pc)))  ;; dispatch on $pc
+//        … block 0 body + terminator …)
+//        … block 1 …) … ))
+//
+// Each terminator sets $pc to its successor's dispatch index and `br $L`s
+// back to the dispatch (or `return`s). SSA values become wasm locals —
+// on wasm32 every value (i32 and pointer alike) is a 32-bit local, so the
+// width bookkeeping the native backends need disappears here.
+//
+// Strategy (Phase 2 of docs/SELFHOST-SSA-ALWAYS.md): the core integer
+// subset — const / copy / binary / unary / call / param / phi over
+// ret / br / brif. `supported()` lets the caller (fern.try_ssa) fall back
+// to the AST emitter (wasm.fern) for any program that uses an instruction
+// this backend doesn't lower yet (alloc / load_elem / store_elem / concat
+// / streq / print / funcaddr / call_indirect), so output is never wrong.
+// Heap-backed values (arrays / strings / structs / closures / maps) are a
+// later slice that adds a linear-memory runtime mirroring ssa_x86's.
+
+import "core/no_prelude";
+import "./ssa";
+
+function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
+// str_join_range / str_join_chunks: balanced divide-and-conquer concat, so
+// emitting a large module is O(total·log n) rather than the O(total²) of a
+// left fold (string concat copies the whole accumulator). Mirrors ssa_x86.
+function str_join_range(parts: string[], lo: i32, hi: i32): string {
+    var n: i32 = hi - lo;
+    if (n <= 0) { return ""; }
+    if (n == 1) { return parts[lo]; }
+    var mid: i32 = lo + n / 2;
+    return str_join_range(parts, lo, mid) + str_join_range(parts, mid, hi);
+}
+function str_join_chunks(parts: string[]): string {
+    return str_join_range(parts, 0, parts.len());
+}
+
+// loc returns the WAT operand that reads SSA value v (a wasm local read).
+// SSA value ids are dense 0..nvals-1 and map 1:1 to wasm local indices:
+// params occupy 0..nparams-1 (wasm function params) and the rest are the
+// declared locals, in id order.
+function loc(v: i32): string {
+    return "(local.get " + i32_to_string(v) + ")";
+}
+
+// block_index maps a block id to its position in f.blocks (its dispatch
+// index), or -1. pred_slot finds prev's position in blk.preds (the phi
+// operand slot for the edge prev → blk).
+function block_index(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) {
+        if (f.blocks[i].id == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+function pred_slot(blk: ssa.SBlock, prev: i32): i32 {
+    var i: i32 = 0;
+    while (i < blk.preds.len()) {
+        if (blk.preds[i] == prev) { return i; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// wasm_binop maps a binary operator to its WAT s-expression over the two
+// operand reads a and b. Fern i32 is signed, so comparisons / div / rem
+// use the signed (_s) variants. && / || normalise each side to 0/1 then
+// bit-combine (both operands are already-evaluated SSA values, matching
+// the native backends' non-short-circuit lowering).
+function wasm_binop(op: string, a: string, b: string): string {
+    if (op == "+") { return "(i32.add " + a + " " + b + ")"; }
+    if (op == "-") { return "(i32.sub " + a + " " + b + ")"; }
+    if (op == "*") { return "(i32.mul " + a + " " + b + ")"; }
+    if (op == "/") { return "(i32.div_s " + a + " " + b + ")"; }
+    if (op == "%") { return "(i32.rem_s " + a + " " + b + ")"; }
+    if (op == "&") { return "(i32.and " + a + " " + b + ")"; }
+    if (op == "|") { return "(i32.or " + a + " " + b + ")"; }
+    if (op == "^") { return "(i32.xor " + a + " " + b + ")"; }
+    if (op == "<<") { return "(i32.shl " + a + " " + b + ")"; }
+    if (op == ">>") { return "(i32.shr_s " + a + " " + b + ")"; }
+    if (op == "==") { return "(i32.eq " + a + " " + b + ")"; }
+    if (op == "!=") { return "(i32.ne " + a + " " + b + ")"; }
+    if (op == "<") { return "(i32.lt_s " + a + " " + b + ")"; }
+    if (op == "<=") { return "(i32.le_s " + a + " " + b + ")"; }
+    if (op == ">") { return "(i32.gt_s " + a + " " + b + ")"; }
+    if (op == ">=") { return "(i32.ge_s " + a + " " + b + ")"; }
+    if (op == "&&") { return "(i32.and (i32.ne " + a + " (i32.const 0)) (i32.ne " + b + " (i32.const 0)))"; }
+    if (op == "||") { return "(i32.or (i32.ne " + a + " (i32.const 0)) (i32.ne " + b + " (i32.const 0)))"; }
+    return "(i32.const 0)";
+}
+
+// emit_inst lowers one value-defining instruction to a `(local.set …)`.
+// param and phi are handled elsewhere (wasm params / predecessor edges).
+function emit_inst(ins: ssa.SInst): string {
+    if (ins.kind == "const_int" || ins.kind == "const_bool") {
+        return "    (local.set " + i32_to_string(ins.result) + " (i32.const " + i32_to_string(ins.imm) + "))\n";
+    }
+    if (ins.kind == "copy") {
+        return "    (local.set " + i32_to_string(ins.result) + " " + loc(ins.args[0]) + ")\n";
+    }
+    if (ins.kind == "binary") {
+        return "    (local.set " + i32_to_string(ins.result) + " " + wasm_binop(ins.str, loc(ins.args[0]), loc(ins.args[1])) + ")\n";
+    }
+    if (ins.kind == "unary") {
+        if (ins.str == "-") {
+            return "    (local.set " + i32_to_string(ins.result) + " (i32.sub (i32.const 0) " + loc(ins.args[0]) + "))\n";
+        }
+        return "    (local.set " + i32_to_string(ins.result) + " (i32.eqz " + loc(ins.args[0]) + "))\n";
+    }
+    if (ins.kind == "call") {
+        var expr: string = "(call $__fn_" + ins.str;
+        var i: i32 = 0;
+        while (i < ins.args.len()) { expr = expr + " " + loc(ins.args[i]); i = i + 1; }
+        expr = expr + ")";
+        return "    (local.set " + i32_to_string(ins.result) + " " + expr + ")\n";
+    }
+    return "";
+}
+
+// emit_phi_moves copies the phi operands flowing along the edge pred → tgt
+// into the phi result locals (out-of-SSA on this edge). In our construction
+// only `br` targets carry phis (brif targets never do), so this is called
+// only from the `br` terminator. Sequential copies mirror the native
+// backends.
+function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32): string {
+    var ti: i32 = block_index(f, tgt);
+    if (ti < 0) { return ""; }
+    var tb: ssa.SBlock = f.blocks[ti];
+    var sl: i32 = pred_slot(tb, pred);
+    var out: string = "";
+    var k: i32 = 0;
+    while (k < tb.insts.len()) {
+        var ins: ssa.SInst = tb.insts[k];
+        if (ins.kind == "phi") {
+            out = out + "    (local.set " + i32_to_string(ins.result) + " " + loc(ins.args[sl]) + ")\n";
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// emit_term lowers a block's terminator. `pc` is the dispatch-state local
+// index; `ret` exits the function, `br` / `brif` set $pc and loop back.
+function emit_term(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
+    var t: ssa.STerm = blk.term;
+    if (t.kind == "ret") {
+        return "    (return " + loc(t.value) + ")\n";
+    }
+    if (t.kind == "br") {
+        var out: string = emit_phi_moves(f, blk.id, t.target);
+        out = out + "    (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, t.target)) + "))\n";
+        return out + "    (br $L)\n";
+    }
+    if (t.kind == "brif") {
+        var out2: string = "    (if " + loc(t.cond) + "\n";
+        out2 = out2 + "      (then (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, t.t)) + ")))\n";
+        out2 = out2 + "      (else (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, t.f)) + "))))\n";
+        return out2 + "    (br $L)\n";
+    }
+    return "";
+}
+
+// emit_block emits one block's value instructions then its terminator.
+function emit_block(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
+    var out: string = "";
+    var k: i32 = 0;
+    while (k < blk.insts.len()) {
+        var ins: ssa.SInst = blk.insts[k];
+        if (ins.kind != "param" && ins.kind != "phi") {
+            out = out + emit_inst(ins);
+        }
+        k = k + 1;
+    }
+    return out + emit_term(f, blk, pc);
+}
+
+// emit_func lowers one SSA function to a `$__fn_<name>` wasm function.
+pub function emit_func(f: ssa.SFunc): string {
+    var chunks: string[] = [];
+    var sig: string = "  (func $__fn_" + f.name;
+    var p: i32 = 0;
+    while (p < f.nparams) { sig = sig + " (param i32)"; p = p + 1; }
+    sig = sig + " (result i32)\n";
+    chunks = chunks.push(sig);
+    // Locals: SSA value ids nparams..nvals-1, then the dispatch state $pc at
+    // index nvals.
+    var v: i32 = f.nparams;
+    while (v < f.nvals) { chunks = chunks.push("    (local i32)\n"); v = v + 1; }
+    chunks = chunks.push("    (local i32) ;; $pc\n");
+    var pc: i32 = f.nvals;
+    var nb: i32 = f.blocks.len();
+    // Initialise $pc to the entry block's dispatch index.
+    chunks = chunks.push("    (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, f.entry)) + "))\n");
+    chunks = chunks.push("    (block $exit (loop $L\n");
+    // Open the nested dispatch blocks, outermost ($blk nb-1) to innermost
+    // ($blk0), then the br_table that branches to each by dispatch index.
+    var bo: i32 = nb - 1;
+    while (bo >= 0) { chunks = chunks.push("    (block $blk" + i32_to_string(bo) + "\n"); bo = bo - 1; }
+    var brt: string = "    (br_table";
+    var bi: i32 = 0;
+    while (bi < nb) { brt = brt + " $blk" + i32_to_string(bi); bi = bi + 1; }
+    brt = brt + " (local.get " + i32_to_string(pc) + "))\n";
+    chunks = chunks.push(brt);
+    // Close $blk0 then emit block 0's code, close $blk1 then block 1, … —
+    // a br_table jump to $blkK lands right after $blkK's close, i.e. at
+    // block K's code.
+    bi = 0;
+    while (bi < nb) {
+        chunks = chunks.push("    ) ;; blk" + i32_to_string(bi) + "\n");
+        chunks = chunks.push(emit_block(f, f.blocks[bi], pc));
+        bi = bi + 1;
+    }
+    chunks = chunks.push("    ))\n");           // close loop + exit
+    chunks = chunks.push("    (unreachable))\n"); // every path returns / loops
+    return str_join_chunks(chunks);
+}
+
+// inst_supported reports whether this backend can lower an instruction
+// kind. param / phi are structural (handled outside emit_inst) and count
+// as supported.
+function inst_supported(kind: string): boolean {
+    return kind == "const_int" || kind == "const_bool" || kind == "binary"
+        || kind == "unary" || kind == "call" || kind == "param" || kind == "copy"
+        || kind == "phi";
+}
+
+// supported reports whether every instruction in every function is in the
+// subset this backend lowers — the caller (fern.try_ssa) uses it to fall
+// back to the AST wasm emitter for programs that need heap-backed ops.
+pub function supported(funcs: ssa.SFunc[]): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var f: ssa.SFunc = funcs[i];
+        var b: i32 = 0;
+        while (b < f.blocks.len()) {
+            var blk: ssa.SBlock = f.blocks[b];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                if (!inst_supported(blk.insts[k].kind)) { return false; }
+                k = k + 1;
+            }
+            b = b + 1;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// emit_program frames the whole module: the WASI proc_exit import, an
+// exported linear memory (WASI command modules require one), each function
+// body, then a `_start` that exits with main()'s value.
+pub function emit_program(funcs: ssa.SFunc[]): string {
+    var out: string = "(module\n";
+    out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+    out = out + "  (memory (export \"memory\") 1)\n";
+    var chunks: string[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        chunks = chunks.push(emit_func(funcs[i]));
+        i = i + 1;
+    }
+    out = out + str_join_chunks(chunks);
+    out = out + "  (func $_start (call $proc_exit (call $__fn_main)))\n";
+    out = out + "  (export \"_start\" (func $_start))\n";
+    out = out + ")\n";
+    return out;
+}
