@@ -178,3 +178,55 @@ func buildExternStringParamWrapper(params []ast.Param, rawImport string) func(ma
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
+
+// buildExportStringResultWrapper builds the core wrapper for a string-returning
+// `@export` function (P6 — docs/WIT-BRING-YOUR-OWN.md). The Fern function
+// compiles to a core func returning the two-word `(data, len)` pair; the
+// canonical ABI for a `func(...) -> string` export instead returns a single i32
+// pointer to a `[data, len]` return area (the memory lift reads it). The
+// wrapper forwards the scalar params, calls the user func, normalizes the
+// returned string, and writes the canonical 4-byte-aligned return area.
+//
+// A Fern string is SSO-encoded — short strings pack their bytes inline into the
+// (data, len) words, so the words are NOT a raw (ptr, byte_len). The wrapper
+// normalizes the pair into a heap buffer (emitStrNormalize, the seam the
+// string-param wrapper uses) before writing the [ptr, len] return area.
+//
+// Locals after the params: 0:$data 1:$len 2:$buf 3:$byteLen 4:$i 5:$ra (i32).
+func buildExportStringResultWrapper(idxs map[string]uint32, userFuncIdx uint32, nparams int) (body []byte, locals []byte) {
+	data := uint32(nparams)
+	lenL := uint32(nparams + 1)
+	buf := uint32(nparams + 2)
+	byteLen := uint32(nparams + 3)
+	iL := uint32(nparams + 4)
+	ra := uint32(nparams + 5)
+	// Forward each scalar param, then call the user function -> (data, len).
+	for i := 0; i < nparams; i++ {
+		body = inst.InstLocalGet(body, uint32(i))
+	}
+	body = inst.InstCall(body, userFuncIdx)
+	body = inst.InstLocalSet(body, lenL) // len is on top
+	body = inst.InstLocalSet(body, data) // then data
+	// Normalize the SSO pair into a heap buffer (buf, byteLen).
+	body = emitStrNormalize(body, idxs, data, lenL, buf, byteLen, iL)
+	// ra = (__fern_alloc(12) + 3) & ~3 — the [ptr,len] return area must be
+	// 4-byte aligned, but the bump allocator doesn't align.
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, -4)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalSet(body, ra)
+	// ra[0] = buf; ra[4] = byteLen.
+	body = inst.InstLocalGet(body, ra)
+	body = inst.InstLocalGet(body, buf)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, ra)
+	body = inst.InstLocalGet(body, byteLen)
+	body = memory.InstI32Store(body, 2, 4)
+	// Return the return-area pointer.
+	body = inst.InstLocalGet(body, ra)
+	locals = inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	return body, locals
+}
