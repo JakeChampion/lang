@@ -642,17 +642,17 @@ same code(s) the Go checker does — restricted to
   new corpus (`method-unknown-receiver`, `method-struct-receiver-ok`,
   `method-builtin-receiver-ok`) and `check-position-bad-receiver`.
 
-  *Note on the remaining ~16 codes:* E040 was attempted and deliberately
-  **backed out** — accurate call-type-arg arity needs three
-  fixpoint-relevant parser changes (retain call type-args, track a
-  function's TOTAL type-param count since the self-host erases unbounded
-  generics, and position at the `[` not the `(`), and a partial version
-  emits a wrong count/position. The rest (E015 multi-payload patterns,
-  E025 switch, E027 match guards, E022 let-else, E044 typed closure
-  captures, E050/E051 move checking, E021 impl conformance) each require
-  a language feature the self-host compiler doesn't yet support end-to-end
-  — they're feature work across parser + all backends + checker, not
-  checker-only rules.
+  *Note on the remaining codes:* this note originally listed E040, E015
+  multi-payload patterns, E027 match guards, and E022 let-else as blocked
+  on missing language features — all four have since shipped (E040 via the
+  `type_param_count` / call-type-arg parser work; E015/E027 with the
+  multi-binding + `when`-guard parser support; E022's `let else` as a
+  parser desugar surfacing E035 today). The genuinely-remaining codes are
+  E025 (switch-on-float — the parser desugars `switch` to if/else, so the
+  float-scrutinee shape is lost), E044 (typed closure captures), E050/E051
+  (owned-parameter move checking), E023 (unknown-enum scrutinee), and
+  E031/E032/E045/E049/E053 — each needing a language feature or analysis
+  the self-host doesn't yet model end-to-end, not a checker-only rule.
 - **Slice 56 (done): E024 — tuple destructure of a non-tuple / wrong
   arity.** The parser already lowers `var (a, b) = E` to a `StmtVar` whose
   `name` is `"a,b"`, so this is checker-only after all (not a missing
@@ -817,6 +817,17 @@ same code(s) the Go checker does — restricted to
   `check-position-undefined-assign` CLI case. **With this, every E001 form —
   read, callee, assignment target — reports at the exact `line:col` the Go
   checker does**, so E001 is fully complete (codes + positions).
+- **Slice 64 (done): E054 — `@export` world-export constraints.** An
+  `@export(...)` function bound to a WIT world export cannot be generic (a
+  world export is lifted with a single concrete canonical ABI) and cannot
+  be a method (the export surface is top-level functions). The self-host
+  already records the binding on `Module.exports` (P6) and each `FuncDecl`
+  carries `type_param_count` (added for E040) + `receiver_name`, so this is
+  a checker-only rule: `collect_decl_diags` looks each export's function up
+  by name and flags `type_param_count > 0` / a non-empty receiver. Both Go
+  sub-messages map to E054 (the differential gate compares codes).
+  Checker-only, fixpoint-safe (x86 + arm64 verified). Gated by new corpus
+  cases `export-generic`, `export-method`, `export-plain-ok`.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
