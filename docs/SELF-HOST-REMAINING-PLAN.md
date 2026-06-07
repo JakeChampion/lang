@@ -1176,6 +1176,34 @@ smallest → largest:
     the in-Fern assembler now produces a valid Mach-O for the real
     `asm_arm64` output of every program in the sweep under the CLI's Go x86
     backend, with zero unknowns and no bounds aborts.
+  - ✅ **slice 3q — the flip: `fern.fern -target arm64-darwin` emits the
+    Mach-O binary in-process**: `fern.fern` now `import`s `arm64_native` and
+    its `arm64-darwin` branch runs `asm_arm64.darwinize(...)` →
+    `arm64_gas_program` (unknown-instruction guard → `eprint` + exit 2) →
+    `macho_text_vaddr`/`macho_data_vaddr` → `arm64_gas_link` →
+    `macho_static_executable`, packing the signed Mach-O bytes into the
+    output string written verbatim by `write_file`. **The `.s` + `clang`/
+    `ld64` path is gone** — `-target arm64-darwin` produces a runnable,
+    ad-hoc-signed arm64 executable with no external toolchain, matching the
+    Go native backend's container exactly (`__PAGEZERO`/`__TEXT`/`__DATA`/
+    `__LINKEDIT` + `LC_UNIXTHREAD` + `LC_CODE_SIGNATURE`; verified by
+    disassembling fib/concat — every instruction decodes, branch + @PAGE
+    relocations resolve to the right addresses). A pre-flip sweep through a
+    dedicated `asm_arm64_darwin_run.fern` emitter found and closed the last
+    instruction gap, `eor` (register 64/32-bit + the `#imm` boolean-not
+    idiom, byte-pinned in `TestSelfHostArm64OffsetPairGas`); the collector
+    confirmed **zero** unknown mnemonics across all 24 flagship programs
+    (incl. the fs-builtins lifecycle, subprocess, and socket cases). Test
+    rework: the flagship **`TestSelfHostArm64DarwinBuilds`** now emits the
+    binary directly (no clang link) — structural Mach-O check on Linux,
+    chmod + execute + exit-code check on the macOS arm64 runner;
+    **`TestSelfHostArm64NativeViaGoBackend`** drives the flipped CLI under
+    the Go x86 backend (Linux) over the new-instruction programs; and
+    **`TestSelfHostArm64DarwinAssemblesRealRuntime`** sources its darwin text
+    from the new emitter (the CLI no longer emits `.s`) to keep the
+    wasm-backend coverage of `arm64_native`. The decisive runtime check
+    (binaries actually execute on Apple Silicon) runs on the `macos-latest`
+    CI runner — the one place arm64-darwin execution can be verified.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

@@ -17,23 +17,25 @@ import (
 
 // TestSelfHostArm64DarwinBuilds exercises the self-hosted compiler's
 // arm64-darwin (Mach-O) target — examples/self_host/fern.fern's
-// `-target arm64-darwin`, backed by asm_arm64.darwinize.
+// `-target arm64-darwin`. Since the flip (slice 3q) this path is fully
+// in-process: asm_arm64.darwinize emits the GAS text, and arm64_native
+// assembles + links + signs the Mach-O binary directly — no `.s`, no
+// clang/ld64.
 //
 // Two host modes:
 //
-//   - Off Apple Silicon (the Linux CI box): the driver is built with the
-//     Go x86-64 backend so it runs on the host; its OUTPUT is
-//     arm64-apple-darwin assembly, which we cross-link with clang + lld's
-//     Mach-O backend and assert is a well-formed arm64 Mach-O executable.
-//     qemu-aarch64 only speaks the Linux ABI, so we can't run the result.
+//   - Off Apple Silicon (the Linux CI box): the CLI is built with the Go
+//     x86-64 backend so it runs on the host; we assert each emitted file is
+//     a well-formed arm64 Mach-O executable. qemu-aarch64 only speaks the
+//     Linux ABI, so we can't run the result.
 //
-//   - On the macOS arm64 CI runner: the driver is built FOR arm64-darwin
-//     (Go arm64 backend + clang/ld64) so it runs natively, then we run it
-//     to emit each program's asm, link with native clang, and EXECUTE the
-//     Mach-O, checking exit codes. This is the decisive runtime check of
-//     the self-host Darwin path. Launch failures (kernel rejects the
-//     binary) are reported as skips with diagnostics, not hard failures —
-//     a wrong exit code (ran but misbehaved) is a hard failure.
+//   - On the macOS arm64 CI runner: the CLI is built FOR arm64-darwin (Go
+//     arm64 backend + clang/ld64 to link the CLI itself) so it runs
+//     natively, then we run it to emit each program's binary and EXECUTE
+//     it, checking exit codes. This is the decisive runtime check of the
+//     self-host Darwin path. Launch failures (kernel rejects the binary)
+//     are reported as skips with diagnostics, not hard failures — a wrong
+//     exit code (ran but misbehaved) is a hard failure.
 //
 // darwinize() reuses asm_arm64.fern's instruction selection and only
 // reskins the assembler dialect (@PAGE/@PAGEOFF addressing, Mach-O
@@ -43,9 +45,6 @@ import (
 // syscalls (clock_gettime/getrandom/fstat/subprocess) are out of scope —
 // see the darwinize doc comment.
 func TestSelfHostArm64DarwinBuilds(t *testing.T) {
-	if _, err := exec.LookPath("clang"); err != nil {
-		t.Skip("clang not on PATH; skipping arm64-darwin self-host e2e")
-	}
 	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 
 	// Stage the full self-host project (lexer/parser/asm via the helper,
@@ -53,9 +52,9 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	// fern.fern's full transitive import closure beyond what
 	// writeSelfHostAsmProject stages (asm / lexer / parser). The ssa* modules
-	// were added by the self-host SSA pipeline; without them modload fails to
-	// resolve `import "./ssa"` from fern.fern.
-	for _, name := range []string{"asmcore.fern", "flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_arm64.fern", "ssa_x86.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "fern.fern"} {
+	// were added by the self-host SSA pipeline; arm64_native.fern is the
+	// in-process arm64-darwin assembler/linker the flipped path imports.
+	for _, name := range []string{"asmcore.fern", "flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_arm64.fern", "ssa_x86.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "arm64_native.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -65,34 +64,26 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		}
 	}
 
-	// Build the self-host CLI for the host so it runs natively, and pick
-	// the clang link flags for each emitted program.
+	// Build the self-host CLI for the host so it runs natively. No linker
+	// flags for emitted programs anymore — the CLI writes the Mach-O binary
+	// directly. (clang is still needed on macOS only to link the *CLI*.)
 	var fernBin string
-	var linkArgs func(asm, out string) []string
 	if native {
 		// Native macOS arm64: build the CLI FOR arm64-darwin (Go arm64
-		// backend + clang/ld64) so it runs on the runner; link emitted
-		// programs with the default clang + ld64. -nostdlib drops
-		// crt0/libc; -lSystem restores dyld-stub linkage (newer ld64
-		// rejects dynamic execs without it), matching TestArm64DarwinBuilds.
-		fernBin = buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
-		linkArgs = func(asm, out string) []string {
-			return []string{"-nostdlib", "-lSystem", asm, "-o", out}
+		// backend + clang/ld64) so it runs on the runner.
+		if _, err := exec.LookPath("clang"); err != nil {
+			t.Skip("clang not on PATH; skipping arm64-darwin self-host e2e (needed to link the CLI)")
 		}
+		fernBin = buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
 	} else {
-		// Cross from Linux: the CLI is an x86-64 host binary; emitted
-		// programs are cross-linked with lld's Mach-O backend.
+		// Cross from Linux: the CLI is an x86-64 host binary; its emitted
+		// arm64-darwin binaries are checked structurally (qemu can't run
+		// Mach-O).
 		gcc, runner := x86_64Tooling(t)
 		if len(runner) != 0 {
 			t.Skip("self-host CLI driver runs only natively (argv paths)")
 		}
-		if _, err := exec.LookPath("ld.lld"); err != nil {
-			t.Skip("lld not on PATH; skipping arm64-darwin self-host e2e")
-		}
 		fernBin = buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-		linkArgs = func(asm, out string) []string {
-			return []string{"--target=arm64-apple-darwin", "-fuse-ld=lld", "-nostdlib", "-Wl,-arch,arm64", asm, "-o", out}
-		}
 	}
 
 	cases := []struct {
@@ -128,17 +119,17 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		{"random_bytes", `function main(): i32 { var b: string = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
 	}
 
-	// runCase: emit `src` via the self-host CLI for arm64-darwin, link it,
-	// assert it's a valid arm64 Mach-O, and (on Apple Silicon) execute it
-	// and check the exit code.
+	// runCase: emit `src` via the self-host CLI for arm64-darwin straight to
+	// a Mach-O binary, assert it's a valid arm64 Mach-O, and (on Apple
+	// Silicon) execute it and check the exit code.
 	runCase := func(name, src string, wantExit int) {
 		t.Run(name, func(t *testing.T) {
 			srcPath := filepath.Join(dir, name+".fern")
 			if err := os.WriteFile(srcPath, []byte(src+"\n"), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
-			asmPath := filepath.Join(dir, name+".s")
-			out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", asmPath, srcPath).CombinedOutput()
+			binPath := filepath.Join(dir, name+".bin")
+			out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", binPath, srcPath).CombinedOutput()
 			if err != nil {
 				if native {
 					// The self-host CLI is itself a fresh Mach-O the kernel
@@ -148,11 +139,6 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 					t.Skipf("self-host CLI did not emit (err=%v):\n%s", err, out)
 				}
 				t.Fatalf("self-host emit failed: %v\n%s", err, out)
-			}
-
-			binPath := filepath.Join(dir, name+".bin")
-			if out, err := exec.Command("clang", linkArgs(asmPath, binPath)...).CombinedOutput(); err != nil {
-				t.Fatalf("clang Mach-O link failed: %v\n%s", err, out)
 			}
 
 			// Structural validation (runs on every host).
@@ -170,6 +156,9 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 
 			if !native {
 				return // structural-only off Apple Silicon
+			}
+			if err := os.Chmod(binPath, 0o755); err != nil {
+				t.Fatalf("chmod: %v", err)
 			}
 			cmd := exec.Command(binPath)
 			runErr := cmd.Run()
