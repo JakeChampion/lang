@@ -3834,7 +3834,23 @@ function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
     }
 }
 
-pub struct HoistResult { stmts: Stmt[], hoisted: FuncDecl[] }
+pub struct HoistResult { stmts: Stmt[], hoisted: FuncDecl[], lifts: CapLift[] }
+
+// CapLift records a capturing recursive local that was lambda-lifted: its
+// (now top-level) name and the ordered list of enclosing names it
+// captured. hoist_local_funcs_module uses it to rewrite the *enclosing*
+// body's calls `f(args)` → `f(args, cap1, …)`; the recursive calls inside
+// the lifted body are rewritten at lift time.
+pub struct CapLift { name: string, caps: string[] }
+
+function hl_no_lifts(): CapLift[] { var e: CapLift[] = []; return e; }
+
+function hl_append_lifts(a: CapLift[], b: CapLift[]): CapLift[] {
+    var out: CapLift[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.push(b[i]); i = i + 1; }
+    return out;
+}
 
 function hl_param_names(params: ParamDecl[]): string[] {
     var out: string[] = [];
@@ -3911,40 +3927,141 @@ function hl_has_rec_local(stmts: Stmt[]): boolean {
     return false;
 }
 
-function hl_captures(lam: ExprLambda, own_name: string, enclosing: string[]): boolean {
+// hl_capture_list returns the ordered, de-duplicated list of enclosing
+// names a recursive lambda captures (the same predicate as hl_captures,
+// but collecting the names instead of a boolean) — the extra parameters
+// the lambda-lift appends.
+function hl_capture_list(lam: ExprLambda, own_name: string, enclosing: string[]): string[] {
     var shadow: string[] = hl_param_names(lam.params);
     shadow = hl_append_str(shadow, hl_collect_var_names(lam.body));
+    var caps: string[] = [];
     var i: i32 = 0;
     while (i < enclosing.len()) {
         var e: string = enclosing[i];
-        if (e != own_name && !name_in_list(shadow, e)) {
-            if (stmts_mention(lam.body, e)) { return true; }
+        if (e != own_name && !name_in_list(shadow, e) && !name_in_list(caps, e)) {
+            if (stmts_mention(lam.body, e)) { caps = caps.push(e); }
         }
         i = i + 1;
     }
-    return false;
+    return caps;
+}
+
+// rw_call_expr appends `caps` (as ident arguments) to every call of
+// `fname` in an expression, recursing through the whole tree. Used by the
+// lambda-lift to thread a lifted function's captured variables through its
+// call sites. ExprCall is the only node it changes; the rest are rebuilt
+// verbatim around their rewritten children.
+function rw_call_expr(e: Expr, fname: string, caps: string[]): Expr {
+    match (e) {
+        ExprCall(c) => {
+            var new_callee: Expr = rw_call_expr(c.callee, fname, caps);
+            var new_args: Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { new_args = new_args.push(rw_call_expr(c.args[i], fname, caps)); i = i + 1; }
+            // If this is a call of the lifted function, append the captures.
+            var is_target: boolean = false;
+            match (c.callee) {
+                ExprIdent(id) => { if (id.name == fname) { is_target = true; } },
+                _ => { }
+            }
+            if (is_target) {
+                var k: i32 = 0;
+                while (k < caps.len()) { new_args = new_args.push(e_ident(caps[k])); k = k + 1; }
+            }
+            return ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        ExprBinary(b) => { return e_binary(b.op, rw_call_expr(b.left, fname, caps), rw_call_expr(b.right, fname, caps)); },
+        ExprUnary(u) => { return e_unary(u.op, rw_call_expr(u.operand, fname, caps)); },
+        ExprArray(a) => {
+            var els: Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { els = els.push(rw_call_expr(a.elements[i], fname, caps)); i = i + 1; }
+            return e_array(els);
+        },
+        ExprTuple(t) => {
+            var els: Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { els = els.push(rw_call_expr(t.elements[i], fname, caps)); i = i + 1; }
+            return e_tuple(els);
+        },
+        ExprIndex(ix) => { return e_index(rw_call_expr(ix.array, fname, caps), rw_call_expr(ix.index, fname, caps)); },
+        ExprSlice(sl) => { return e_slice(rw_call_expr(sl.array, fname, caps), rw_call_expr(sl.start, fname, caps), rw_call_expr(sl.end, fname, caps)); },
+        ExprFieldAccess(fa) => { return e_field_access(rw_call_expr(fa.obj, fname, caps), fa.field); },
+        ExprStructLit(s) => {
+            var vals: Expr[] = [];
+            var i: i32 = 0;
+            while (i < s.field_values.len()) { vals = vals.push(rw_call_expr(s.field_values[i], fname, caps)); i = i + 1; }
+            var nb: Expr = s.base;
+            if (s.has_base) { nb = rw_call_expr(s.base, fname, caps); }
+            return ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: nb, line: s.line, col: s.col };
+        },
+        ExprLambda(lm) => {
+            // A nested lambda can call the lifted function too; rewrite its body.
+            return e_lambda(lm.params, lm.ret_type, rw_call_stmts(lm.body, fname, caps));
+        },
+        _ => { return e; }
+    }
+}
+
+// rw_call_stmts applies rw_call_expr to every expression in a statement
+// list (descending into nested blocks), rebuilding the statements around
+// the rewritten expressions.
+function rw_call_stmts(stmts: Stmt[], fname: string, caps: string[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtVar(v) => { out = out.push(s_var_at(v.name, v.type_name, rw_call_expr(v.init, fname, caps), v.line, v.col)); },
+            StmtReturn(r) => { out = out.push(s_return_at(rw_call_expr(r.value, fname, caps), r.line, r.col)); },
+            StmtExpr(e) => { out = out.push(s_expr(rw_call_expr(e.value, fname, caps))); },
+            StmtAssign(a) => { out = out.push(s_assign_at(a.target, rw_call_expr(a.value, fname, caps), a.line, a.col, a.target_line, a.target_col)); },
+            StmtIf(f) => { out = out.push(s_if(rw_call_expr(f.cond, fname, caps), rw_call_stmts(f.then_body, fname, caps), rw_call_stmts(f.else_body, fname, caps))); },
+            StmtWhile(w) => { out = out.push(s_while(rw_call_expr(w.cond, fname, caps), rw_call_stmts(w.body, fname, caps))); },
+            StmtFor(fr) => { out = out.push(s_for(fr.var_name, rw_call_expr(fr.iter, fname, caps), rw_call_stmts(fr.body, fname, caps))); },
+            StmtMatch(m) => {
+                var arms: MatchArm[] = [];
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    arms = arms.push(MatchArm { pattern: m.arms[a].pattern, body: rw_call_stmts(m.arms[a].body, fname, caps), line: m.arms[a].line, col: m.arms[a].col, guard: rw_call_expr(m.arms[a].guard, fname, caps), has_guard: m.arms[a].has_guard });
+                    a = a + 1;
+                }
+                out = out.push(s_match_at(rw_call_expr(m.scrutinee, fname, caps), arms, m.line, m.col));
+            },
+            StmtDefer(d) => {
+                var one: Stmt[] = [d.action];
+                var rd: Stmt[] = rw_call_stmts(one, fname, caps);
+                if (rd.len() >= 1) { out = out.push(s_defer(rd[0])); }
+            },
+            _ => { out = out.push(stmts[i]); },
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 function hl_rewrite_match(m: StmtMatch, enclosing: string[], hoisted: FuncDecl[]): HoistResult {
     var arms: MatchArm[] = [];
     var acc: FuncDecl[] = hoisted;
+    var acc_lifts: CapLift[] = hl_no_lifts();
     var a: i32 = 0;
     while (a < m.arms.len()) {
         var ar: HoistResult = hl_rewrite(m.arms[a].body, enclosing, acc);
         acc = ar.hoisted;
+        acc_lifts = hl_append_lifts(acc_lifts, ar.lifts);
         arms = arms.push(MatchArm { pattern: m.arms[a].pattern, body: ar.stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
         a = a + 1;
     }
-    return HoistResult { stmts: [s_match_at(m.scrutinee, arms, m.line, m.col)], hoisted: acc };
+    return HoistResult { stmts: [s_match_at(m.scrutinee, arms, m.line, m.col)], hoisted: acc, lifts: acc_lifts };
 }
 
 // hl_rewrite lifts self-recursive local functions out of a statement
 // list. A body with none is returned verbatim (the precheck) — so only
 // functions that actually use the feature are ever rebuilt.
 function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): HoistResult {
-    if (!hl_has_rec_local(stmts)) { return HoistResult { stmts: stmts, hoisted: hoisted }; }
+    if (!hl_has_rec_local(stmts)) { return HoistResult { stmts: stmts, hoisted: hoisted, lifts: hl_no_lifts() }; }
     var out: Stmt[] = [];
     var acc: FuncDecl[] = hoisted;
+    var acc_lifts: CapLift[] = hl_no_lifts();
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -3958,20 +4075,31 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
                     ExprLambda(lam) => {
                         if (stmts_mention(lam.body, v.name)) {
                             did_lift = true;
-                            if (hl_captures(lam, v.name, enclosing)) {
-                                out = out.push(s_unknown("recursive local function with captures is not yet supported: " + v.name));
-                            } else {
-                                var inner_encl: string[] = hl_param_names(lam.params);
-                                inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
-                                var ir: HoistResult = hl_rewrite(lam.body, inner_encl, acc);
-                                var notp: string[] = [];
-                                acc = ir.hoisted.push(FuncDecl {
-                                    name: v.name, receiver_name: "", receiver_type: "",
-                                    type_params: notp, params: lam.params, ret_type: lam.ret_type,
-                                    body: ir.stmts, line: v.line, col: v.col,
-                                    import_iface: "", import_wit: "", type_param_count: 0
-                                });
-                            }
+                            // Captured enclosing names become trailing
+                            // parameters (lambda-lifting); a capture-free
+                            // local just keeps its parameter list.
+                            var caps: string[] = hl_capture_list(lam, v.name, enclosing);
+                            var new_params: ParamDecl[] = lam.params;
+                            var ci: i32 = 0;
+                            while (ci < caps.len()) { new_params = new_params.push(ParamDecl { name: caps[ci], type_name: "" }); ci = ci + 1; }
+                            // Hoist nested recursive locals first; inside the
+                            // lifted function the captures are in scope as params.
+                            var inner_encl: string[] = hl_param_names(new_params);
+                            inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
+                            var ir: HoistResult = hl_rewrite(lam.body, inner_encl, acc);
+                            acc = ir.hoisted;
+                            acc_lifts = hl_append_lifts(acc_lifts, ir.lifts);
+                            // Thread the captures through the recursive self-calls.
+                            var lifted_body: Stmt[] = ir.stmts;
+                            if (caps.len() > 0) { lifted_body = rw_call_stmts(lifted_body, v.name, caps); }
+                            var notp: string[] = [];
+                            acc = acc.push(FuncDecl {
+                                name: v.name, receiver_name: "", receiver_type: "",
+                                type_params: notp, params: new_params, ret_type: lam.ret_type,
+                                body: lifted_body, line: v.line, col: v.col,
+                                import_iface: "", import_wit: "", type_param_count: 0
+                            });
+                            if (caps.len() > 0) { acc_lifts = acc_lifts.push(CapLift { name: v.name, caps: caps }); }
                         }
                     },
                     _ => { }
@@ -3981,23 +4109,28 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
             StmtIf(f) => {
                 var tr: HoistResult = hl_rewrite(f.then_body, enclosing, acc);
                 acc = tr.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, tr.lifts);
                 var er: HoistResult = hl_rewrite(f.else_body, enclosing, acc);
                 acc = er.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, er.lifts);
                 out = out.push(s_if(f.cond, tr.stmts, er.stmts));
             },
             StmtWhile(w) => {
                 var wr: HoistResult = hl_rewrite(w.body, enclosing, acc);
                 acc = wr.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, wr.lifts);
                 out = out.push(s_while(w.cond, wr.stmts));
             },
             StmtFor(fr) => {
                 var fr2: HoistResult = hl_rewrite(fr.body, enclosing, acc);
                 acc = fr2.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, fr2.lifts);
                 out = out.push(s_for(fr.var_name, fr.iter, fr2.stmts));
             },
             StmtMatch(m) => {
                 var mr: HoistResult = hl_rewrite_match(m, enclosing, acc);
                 acc = mr.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, mr.lifts);
                 var km: i32 = 0;
                 while (km < mr.stmts.len()) { out = out.push(mr.stmts[km]); km = km + 1; }
             },
@@ -4005,13 +4138,28 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
                 var one: Stmt[] = [d.action];
                 var dr: HoistResult = hl_rewrite(one, enclosing, acc);
                 acc = dr.hoisted;
+                acc_lifts = hl_append_lifts(acc_lifts, dr.lifts);
                 if (dr.stmts.len() >= 1) { out = out.push(s_defer(dr.stmts[0])); }
             },
             _ => { out = out.push(stmts[i]); },
         }
         i = i + 1;
     }
-    return HoistResult { stmts: out, hoisted: acc };
+    return HoistResult { stmts: out, hoisted: acc, lifts: acc_lifts };
+}
+
+// hl_apply_lifts rewrites a (host) statement list's calls to each
+// lambda-lifted function, appending that function's captured names as
+// trailing arguments — the external counterpart to the recursive-call
+// rewrite done at lift time.
+function hl_apply_lifts(stmts: Stmt[], lifts: CapLift[]): Stmt[] {
+    var out: Stmt[] = stmts;
+    var i: i32 = 0;
+    while (i < lifts.len()) {
+        if (lifts[i].caps.len() > 0) { out = rw_call_stmts(out, lifts[i].name, lifts[i].caps); }
+        i = i + 1;
+    }
+    return out;
 }
 
 pub function hoist_local_funcs_module(mod: Module): Module {
@@ -4024,9 +4172,12 @@ pub function hoist_local_funcs_module(mod: Module): Module {
         encl = hl_append_str(encl, hl_collect_var_names(fn.body));
         var r: HoistResult = hl_rewrite(fn.body, encl, hoisted);
         hoisted = r.hoisted;
+        // Rewrite this body's calls to any lambda-lifted function so the
+        // captures are passed at the (now top-level) call sites.
+        var fn_body: Stmt[] = hl_apply_lifts(r.stmts, r.lifts);
         funcs = funcs.push(FuncDecl {
             name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
-            type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: r.stmts,
+            type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: fn_body,
             line: fn.line, col: fn.col, import_iface: fn.import_iface, import_wit: fn.import_wit,
             type_param_count: fn.type_param_count
         });
@@ -4035,9 +4186,10 @@ pub function hoist_local_funcs_module(mod: Module): Module {
     var tencl: string[] = hl_collect_var_names(mod.top_stmts);
     var tr: HoistResult = hl_rewrite(mod.top_stmts, tencl, hoisted);
     hoisted = tr.hoisted;
+    var top_body: Stmt[] = hl_apply_lifts(tr.stmts, tr.lifts);
     var j: i32 = 0;
     while (j < hoisted.len()) { funcs = funcs.push(hoisted[j]); j = j + 1; }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: tr.stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: top_body, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
 function lower_defers_func(fn: FuncDecl): FuncDecl {

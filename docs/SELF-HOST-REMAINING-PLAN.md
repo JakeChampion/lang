@@ -323,11 +323,17 @@ planned order:
   another function. A non-recursive local already desugars to `var f =
   function(…){…}` (a closure); a self-recursive one can't see its own name
   through the closure value. `hoist_local_funcs_module` (a post-parse pass
-  in `module_with_builtins`) lifts a **capture-free** self-recursive local
-  to a top-level function — recursion resolves once it's top-level —
-  reusing all the existing top-level-function machinery (no new AST node,
-  no backend changes). A *capturing* recursive local still errors clearly
-  (lambda-lifting is a follow-up). The pass only rebuilds a body that
+  in `module_with_builtins`) lifts a self-recursive local to a top-level
+  function — recursion resolves once it's top-level — reusing all the
+  existing top-level-function machinery (no new AST node, no backend
+  changes). A **capturing** recursive local is lambda-lifted: the captured
+  enclosing names become trailing parameters (untyped — the self-host's
+  uniform 8-byte slots don't need a parse-time type, which the pre-checker
+  pass couldn't supply), and every call site — the recursive self-calls
+  inside the lifted body and the external calls in the enclosing body — is
+  rewritten to pass them (`rw_call_stmts`/`rw_call_expr`, with the lift
+  list threaded through `HoistResult.lifts`). The pass only rebuilds a body
+  that
   actually contains a recursive local (the `hl_has_rec_local` precheck), so
   the self-host's own sources — which use none — pass through untouched and
   the byte-identical stage-2 fixpoint holds. Surfaced (and required) the
