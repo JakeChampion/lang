@@ -715,6 +715,13 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 var qlook: Par = p.advance();
                 if (qlook.peek_punct() == "}") {
                     qstruct_ok = true;
+                } else if (qlook.peek_punct() == "...") {
+                    // Struct-update spread: `pkg.Type { ...base, f: v }`.
+                    // Mirrors the bare-ident look-ahead below; without
+                    // this the `...` falls through to a field access and
+                    // the `{ … }` is mis-parsed (a qualified-type spread
+                    // such as `asmcore.EmitState { ...s, … }`).
+                    qstruct_ok = true;
                 } else if ((qlook.peek_ident()).len() > 0) {
                     var qlook2: Par = qlook.advance();
                     if (qlook2.peek_punct() == ":") { qstruct_ok = true; }
