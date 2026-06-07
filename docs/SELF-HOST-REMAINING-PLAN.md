@@ -1105,8 +1105,31 @@ smallest → largest:
     `arm64_gas_link` / `macho_static_executable` / `macho_text_vaddr` /
     `macho_data_vaddr` + the `Arm64Asm` / `Arm64GasProg` structs). The
     e2e self-tests now concatenate the one module via an `arm64NativeSrc`
-    helper; behaviour-preserving (all arm64/Mach-O tests stay green). Next:
-    wire `fern.fern`'s `-target arm64-darwin` to emit → assemble → Mach-O.
+    helper; behaviour-preserving (all arm64/Mach-O tests stay green).
+  - 🔧 **slice 3o — `fern.fern` arm64-darwin wiring (in progress)**: making
+    `arm64_native.fern` compile through the **Go front-end** (so the CLI can
+    `import` it) surfaced several gaps the self-host wasm pipeline had
+    tolerated, now fixed in the module: struct fields are immutable in the
+    Go checker (every `x.f = v` rewritten to a `{ ...x, f: v }` rebuild);
+    the Go checker has no string `index_of`/`contains`/`starts_with`/`split`
+    *methods* (added portable helpers over `.len()` / `s[i]` / `s[a:b]`);
+    i64-typed shifts/literals must be explicit (`(1 as i64) << k`); and i32
+    literals that exceed the signed range (the Mach-O magics `0xfeedfacf` /
+    `0xfade0cc0`, the `__text` flags) need i64-arg emitters (`macho_le32w` /
+    `macho_be32w`).
+    **Blocker A — Go x86 backend bug.** A struct **spread-update of a
+    function *parameter*** miscompiles (segfault) under the Go x86 reference
+    backend; spreading a *local* is fine. Worked around by binding a local
+    copy in the 14 affected `arm64_native` functions; the backend bug itself
+    wants a dedicated fix.
+    **Blocker B — instruction coverage.** The self-host `asm_arm64` emitter's
+    *actual* darwin output uses runtime instructions `arm64_native` doesn't
+    encode yet (`udiv`, …) — the `unknown`-guard reports them cleanly. So
+    flipping `-target arm64-darwin` to the in-Fern path is deferred until
+    that coverage lands (otherwise it would regress programs the `clang`
+    path compiles). The Go-front-end-compat module + workaround land first;
+    the branch flip + flagship-test rework follow once `asm_arm64`'s darwin
+    surface is fully covered.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
