@@ -72,6 +72,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E049": true, // assignment to a reference-typed closure capture
 	"E055": true, // discarded result of a value-returning collection mutator
 	"E031": true, // match/if-expression arms have incompatible types
+	"E045": true, // map literal key type must be i32 or string
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -464,6 +465,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-union-members-mismatch", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction main(): i32 { var c = true; var r = if (c) { A { x: 1 } } else { B { y: 2 } }; return 0; }\n", []string{"E031"}},
 		{"e031-same-enum-diff-payload-ok", "enum E { A(i32), B(string) }\nfunction main(): i32 { var c = true; var r = if (c) { A(1) } else { B(\"y\") }; return 0; }\n", nil},
 		{"e031-tuple-elems-ok", "function main(): i32 { var c = true; var r = if (c) { (1, \"x\") } else { (2, \"y\") }; return r.0; }\n", nil},
+		// E045: a map literal's first key fixes the key type, which must be
+		// i32 or string (the only key kinds the runtime hash/compare
+		// supports). Map programs need `import "core/map";` (Go reports E001
+		// otherwise — a Go-only rule the self-host doesn't model, so kept out
+		// of the corpus). Cross-checked against the Go checker.
+		{"e045-maplit-float-key", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1.0: 10 }; return 0; }\n", []string{"E045"}},
+		{"e045-maplit-string-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; return 0; }\n", nil},
+		{"e045-maplit-i32-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: 10, 2: 20 }; return 0; }\n", nil},
+		{"e045-maplit-used-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"a\": 1 }; return m.get_or(\"a\", 0); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

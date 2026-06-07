@@ -650,17 +650,45 @@ same code(s) the Go checker does — restricted to
   parser desugar surfacing E035 today). E031 (match/if-expression arm-type
   unification) has also since shipped — see Slice 70 below: the value
   match/if desugars to an IIFE, but the checker now recognises that shape
-  and unifies the arm types. The genuinely-remaining codes are E025
-  (switch-on-float — the parser desugars `switch` to if/else, so the
-  float-scrutinee shape is lost), E044 (typed closure captures — Go only
-  emits it for a captured `void`/generic-placeholder value, near-
-  unreachable), E023 (unknown-enum scrutinee — already surfaces as E035
-  here), E045 (map literal key/value types — the literal desugars to
-  `map_new().set()` calls, losing the shape, like E025), and E032 (`use`
-  binding inference) / E053 (`fip` allocation analysis) — each needing a
-  language feature or analysis the self-host doesn't yet model end-to-end,
-  not a checker-only rule. (E050/E051 owned-parameter move checking and
-  E049 captured-reference reassignment are now done — see below.)
+  and unifies the arm types. E045 (map literal key type) shipped too — see
+  Slice 71: the literal desugars to a `map_new[_i32]().insert()` chain, and
+  the checker recognises that chain to check the first key's type. The
+  genuinely-remaining codes are E025 (switch-on-float / case-type — the
+  parser desugars `switch` to an if/else chain, so the shape is lost and,
+  unlike map literals, the desugared `==` comparisons can't be told apart
+  from a hand-written if-chain; needs a real `StmtSwitch` node + a desugar
+  relocated after checking), E044 (typed closure captures — Go only emits
+  it for a captured `void`/generic-placeholder value, near-unreachable),
+  E023 (unknown-enum scrutinee — already surfaces as E035 here), and E032
+  (`use` binding inference) / E053 (`fip` allocation analysis) — each
+  needing a language feature or analysis the self-host doesn't yet model
+  end-to-end. (E050/E051 owned-parameter move checking and E049
+  captured-reference reassignment are now done — see below.)
+- **Slice 71 (done): E045 — map literal key type.** A map literal
+  `Map { k: v, … }` is desugared by the parser to
+  `map_new[_i32](n).insert(k0, v0).insert(…)…`; the FIRST key fixes the
+  map's key type, which must be **i32 or string** (the only key kinds the
+  runtime's FNV-hash / open-addressing compare supports). The check folds
+  into the existing scope-threaded `call_diags` pass (no new wiring): when a
+  call's callee is `<base>.insert(...)` whose `<base>` is the literal's base
+  constructor (`mlit_is_base` — a bare `map_new` / `map_new_i32` call), that
+  first `insert`'s key argument is typed and, if it isn't i32/string, E045
+  is reported at the key — matching the Go checker, which checks
+  `MapLit.Entries[0].Key`. Recognising the desugared chain (rather than a
+  preserved literal node) means a hand-written `map_new(n).insert(floatKey,
+  …)` would also be flagged, but that's pathological (the runtime can't key
+  on a float anyway) and never appears in real code; for actual map
+  literals the check is faithful. Map programs need `import "core/map";`
+  (Go reports its own E001 "Map operations require import" otherwise — a
+  Go-only rule the self-host doesn't model, so such cases stay out of the
+  corpus). Reachable Go contract note: the mixed-key / mixed-value E045
+  paths the Go source suggests don't actually fire (polymorphic-numeric
+  settling), so the implemented + tested surface is the unsupported-first-
+  key-type case. Gated by 4 corpus cases (float key → E045; string-key,
+  i32-key, used-map → clean), cross-checked against Go. Checker-only;
+  checker.fern isn't in the fixpoint bundle. (Found on the way, left for a
+  follow-up: `var m: Map[K,V] = Map {}` false-positives E003 because
+  `type_assignable` has no Map arm — independent of E045.)
 - **Slice 70 (done): E031 — match/if-expression arm-type unification.** A
   `match` / `if` used in VALUE position is desugared by the parser into an
   immediately-invoked closure — `(function(): RT { <match|if with

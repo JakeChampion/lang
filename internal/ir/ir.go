@@ -12760,6 +12760,16 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	if !ok {
 		return false, nil
 	}
+	// Struct-update spread `p = T{ ...base, field: v }`: this fast path only
+	// knows how to place the *explicitly listed* fields (sl.Fields) — the
+	// un-overridden fields live in sl.Base and are never copied here. On the
+	// reuse (rc==1) branch the kept box happens to still hold them, but on the
+	// fresh-alloc (rc>1) branch the new box's un-listed fields are left
+	// uninitialised (read back as 0). Defer the whole spread form to the
+	// general StructLit lowering, which copies the base's fields correctly.
+	if sl.Base != nil {
+		return false, nil
+	}
 	st, ok := b.exprStaticType(t).(ast.StructType)
 	if !ok || st.Name != sl.TypeName {
 		return false, nil

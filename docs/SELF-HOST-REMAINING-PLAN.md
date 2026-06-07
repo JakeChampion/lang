@@ -1117,12 +1117,23 @@ smallest → largest:
     literals that exceed the signed range (the Mach-O magics `0xfeedfacf` /
     `0xfade0cc0`, the `__text` flags) need i64-arg emitters (`macho_le32w` /
     `macho_be32w`).
-    **Blocker A — Go x86 backend bug.** A struct **spread-update of a
-    function *parameter*** miscompiles (segfault) under the Go x86 reference
-    backend; spreading a *local* is fine. Worked around by binding a local
-    copy in every such `arm64_native` function (incl. `arm64_gas_link`,
-    found last). `TestSelfHostArm64NativeViaGoBackend` now assembles real
-    darwin asm for `return 42` / `fib` / `print` through arm64_native
+    **Blocker A — struct-update FBIP-reuse miscompile (FIXED, slice 3r).**
+    Originally filed as a "Go x86 backend bug": a struct **spread-update of a
+    function *parameter*** (`p = T { ...p, field: v }` where the value flows
+    through `p`) miscompiled, worked around at the time by binding a local
+    copy in every such `arm64_native` function. It turned out NOT to be x86-
+    specific — it was a bug in the **shared IR lowering** affecting all three
+    compiled backends (x86-64, arm64, wasm; the AST interpreter was correct):
+    `tryStructReuseOverwrite` (the FBIP self-overwrite reuse fast path) only
+    placed the explicitly-listed `sl.Fields`, so for the spread form the un-
+    overridden `sl.Base` fields were left uninitialised on the fresh-alloc
+    (rc>1) branch (read back as 0 — nondeterministic, correct only when `p`
+    was unique). Fixed in `internal/ir` by deferring the spread form to the
+    general StructLit lowering; guarded by `TestStructUpdateParamSpreadReuse`
+    (all three backends). The `arm64_native` local-copy workarounds are now
+    unnecessary (harmless; can be removed as cleanup).
+    `TestSelfHostArm64NativeViaGoBackend` assembles real
+    darwin asm through arm64_native
     compiled by the **Go x86 backend** (the CLI's backend) into valid
     Mach-O — it segfaults without the local-copy fixes, so it guards the
     class. The backend bug itself still wants a dedicated fix. **The
@@ -1148,8 +1159,8 @@ smallest → largest:
     `-target arm64-darwin` to emit → `arm64_gas` → `macho` (drop the `.s` +
     `clang`/`ld64` path) + rework the flagship `TestSelfHostArm64DarwinBuilds`
     to the no-clang flow; cover any feature-specific instructions the wider
-    case list surfaces (the `unknown`-guard makes each a hard failure); and,
-    separately, fix the Go x86 param-spread backend miscompile.
+    case list surfaces (the `unknown`-guard makes each a hard failure). (The
+    param-spread miscompile is fixed — see Blocker A / slice 3r.)
   - ✅ **slice 3p — large-frame pair forms + register shifts + `sxtw`
     (flip blocker removed)**: the `concat` exit-134 abort previously
     attributed to a "second Go-x86 miscompile" was bisected (gdb
@@ -1204,6 +1215,20 @@ smallest → largest:
     wasm-backend coverage of `arm64_native`. The decisive runtime check
     (binaries actually execute on Apple Silicon) runs on the `macos-latest`
     CI runner — the one place arm64-darwin execution can be verified.
+  - ✅ **slice 3r — fix the struct-update FBIP-reuse miscompile (Blocker A)**:
+    the param-spread bug the arm64_native local-copy workarounds were papering
+    over turned out to be a **shared `internal/ir` lowering bug**, not an x86
+    backend bug — it hit x86-64, arm64, AND wasm (the AST interp was correct).
+    `tryStructReuseOverwrite` (FBIP self-overwrite reuse) only placed the
+    explicitly-listed `sl.Fields`; for the spread form `p = T { ...p, f: v }`
+    the un-overridden `sl.Base` fields were left uninitialised on the fresh-
+    alloc (rc>1) branch — read back as 0, nondeterministically (correct only
+    when `p` was uniquely owned and the reuse branch fired). Fixed by bailing
+    out of the reuse fast path for spread literals so they take the general
+    StructLit lowering (which copies the base's fields correctly). Guarded by
+    `TestStructUpdateParamSpreadReuse` across all three compiled backends
+    (fails 30/35 + 21/22 without the fix). The arm64_native local-copy
+    workarounds are now redundant (left in place; safe to remove as cleanup).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
