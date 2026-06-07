@@ -1131,8 +1131,8 @@ smallest → largest:
     was unique). Fixed in `internal/ir` by deferring the spread form to the
     general StructLit lowering; guarded by `TestStructUpdateParamSpreadReuse`
     (all three backends). The `arm64_native` local-copy workarounds are now
-    unnecessary (harmless; can be removed as cleanup).
-    `TestSelfHostArm64NativeViaGoBackend` assembles real
+    removed (slice 3s) — the 15 functions take their struct parameter directly
+    again. `TestSelfHostArm64NativeViaGoBackend` assembles real
     darwin asm through arm64_native
     compiled by the **Go x86 backend** (the CLI's backend) into valid
     Mach-O — it segfaults without the local-copy fixes, so it guards the
@@ -1228,7 +1228,15 @@ smallest → largest:
     StructLit lowering (which copies the base's fields correctly). Guarded by
     `TestStructUpdateParamSpreadReuse` across all three compiled backends
     (fails 30/35 + 21/22 without the fix). The arm64_native local-copy
-    workarounds are now redundant (left in place; safe to remove as cleanup).
+    workarounds are now redundant (removed in slice 3s).
+  - ✅ **slice 3s — remove the redundant local-copy workarounds**: with the
+    FBIP-reuse miscompile fixed (3r), the 15 `arm64_native` functions that
+    bound `var a = a0;` / `var p = p0;` to dodge the param-spread bug now take
+    their `Arm64Asm` / `Arm64GasProg` parameter directly again (and spread-
+    update it in place). No behaviour change — guarded unchanged by
+    `TestSelfHostArm64NativeViaGoBackend` (Go x86 backend),
+    `TestSelfHostArm64DarwinAssemblesRealRuntime` (wasm), the byte-pinned
+    `*Gas` tests, and the flagship `TestSelfHostArm64DarwinBuilds`.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
