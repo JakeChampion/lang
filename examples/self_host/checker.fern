@@ -1911,6 +1911,326 @@ function lret_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Diag[] 
     return out;
 }
 
+// ============ E031: match/if-expression arm-type unification ============
+//
+// A `match` / `if` used in VALUE position is desugared by the parser into
+// an immediately-invoked closure — (function(): RT { <match|if with
+// returning arms> })() — so the type system never sees a real
+// match/if-expression node and the arm-type consistency check the Go
+// checker performs (E031) was missing. These passes recognise that IIFE
+// shape, type each arm's result expression, and emit E031 when the arms
+// aren't all mutually compatible.
+//
+// The compatibility predicate (`mx_arm_compatible`) mirrors the Go
+// checker's `unifyIfArms`: two arms coexist when they're equal
+// (`type_eq`), assignable either way (covers an empty-array literal vs a
+// typed array, and a struct that's a member of a union arm), both numeric
+// (i32/f64 mix freely — the self-host analogue of Go's polymorphic-numeric
+// widening), element-wise-compatible tuples / arrays / maps, or two struct
+// values of the SAME enum family. The enum-family rule is the subtle one:
+// the Go checker types an enum variant constructor as its ENUM type, so
+// `A(1)` and `B("y")` of one `enum E` unify, whereas the members of a
+// struct-union (`type U = A | B`) keep their distinct struct types and do
+// NOT unify (Go reports E031). The self-host types BOTH as `t_struct(name)`,
+// so the names are mapped back to their family via the user `enum` decls
+// (`mx_enum_of`) and the built-in enums (`mx_builtin_enum_of`, Option /
+// Result / JsonValue / IoError) — but NOT via union aliases, so union
+// members correctly stay incompatible. Bare no-payload variants (`None`,
+// `Empty`) resolve to `unknown` in the self-host and so are handled by the
+// unknown-skip below (matching Go, which sees them as the compatible enum
+// type). If ANY arm types to `unknown` the check is skipped entirely (a bad
+// arm is its own error — Go reports E001 there, not E031).
+
+// mx_is_numeric reports whether a type is one of the numeric scalars
+// (i32 / f64), which mix freely as match/if-expression arms.
+function mx_is_numeric(t: Type): boolean {
+    match (t) {
+        TypeI32(_) => { return true; },
+        TypeFloat(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// mx_builtin_enum_of returns the built-in enum a variant name belongs to
+// (Option / Result / JsonValue / IoError), or "" if it isn't a built-in
+// variant. Two struct arms in the same non-empty family unify.
+function mx_builtin_enum_of(name: string): string {
+    if (name == "Some" || name == "None") { return "Option"; }
+    if (name == "Ok" || name == "Err") { return "Result"; }
+    if (name == "JNull" || name == "JBool" || name == "JNumber" || name == "JString" || name == "JArray" || name == "JObject") { return "JsonValue"; }
+    if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") { return "IoError"; }
+    return "";
+}
+
+// mx_enum_of returns the user `enum` whose variant list contains `name`, or
+// "" if none. Used to recognise that two distinct variant structs of one
+// enum unify. NOT consulted for union aliases (`type U = A | B`): union
+// members keep their distinct struct types and do not unify (Go E031).
+function mx_enum_of(name: string, enums: parser.EnumDecl[]): string {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        if (name_in(enums[i].variant_names, name)) { return enums[i].name; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// mx_same_enum_family reports whether two struct names are variant
+// constructors of the same enum (built-in or user-declared).
+function mx_same_enum_family(an: string, bn: string, enums: parser.EnumDecl[]): boolean {
+    if (an == bn) { return true; }
+    var ab: string = mx_builtin_enum_of(an);
+    if (ab.len() > 0 && ab == mx_builtin_enum_of(bn)) { return true; }
+    var au: string = mx_enum_of(an, enums);
+    if (au.len() > 0 && au == mx_enum_of(bn, enums)) { return true; }
+    return false;
+}
+
+// mx_arm_compatible reports whether two arm result types may coexist,
+// mirroring the Go checker's unifyIfArms (see the section header).
+function mx_arm_compatible(a: Type, b: Type, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
+    if (type_eq(a, b)) { return true; }
+    if (type_assignable(a, b, unions) || type_assignable(b, a, unions)) { return true; }
+    if (mx_is_numeric(a) && mx_is_numeric(b)) { return true; }
+    match (a) {
+        TypeTuple(ta) => {
+            match (b) {
+                TypeTuple(tb) => {
+                    if (ta.elements.len() != tb.elements.len()) { return false; }
+                    var i: i32 = 0;
+                    while (i < ta.elements.len()) {
+                        if (!mx_arm_compatible(ta.elements[i], tb.elements[i], unions, enums)) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        TypeArray(aa) => {
+            match (b) {
+                TypeArray(ba) => { return mx_arm_compatible(aa.elem, ba.elem, unions, enums); },
+                _ => { return false; }
+            }
+        },
+        TypeMap(ma) => {
+            match (b) {
+                TypeMap(mb) => { return mx_arm_compatible(ma.key, mb.key, unions, enums) && mx_arm_compatible(ma.value, mb.value, unions, enums); },
+                _ => { return false; }
+            }
+        },
+        TypeStruct(sa) => {
+            match (b) {
+                TypeStruct(sb) => { return mx_same_enum_family(sa.name, sb.name, enums); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// mx_e031 emits one E031 if the collected arm types aren't all mutually
+// compatible. Skips when fewer than two arms or any arm is `unknown`.
+function mx_e031(types: Type[], unions: UnionSig[], enums: parser.EnumDecl[], line: i32, col: i32): Diag[] {
+    var out: Diag[] = [];
+    if (types.len() < 2) { return out; }
+    var i: i32 = 0;
+    while (i < types.len()) {
+        if (is_unknown(types[i])) { return out; }
+        i = i + 1;
+    }
+    var t0: Type = types[0];
+    var j: i32 = 1;
+    while (j < types.len()) {
+        if (!mx_arm_compatible(t0, types[j], unions, enums)) {
+            out = out.append(dg_at("E031", "match/if-expression arms have incompatible types: " + type_label(t0) + " vs " + type_label(types[j]), line, col));
+            return out;
+        }
+        j = j + 1;
+    }
+    return out;
+}
+
+// mx_match_arm_types types each arm's result expression of a value
+// match-expression (whose arms are single `return E` statements), binding
+// each variant pattern's payload in the arm scope so the result resolves.
+function mx_match_arm_types(m: parser.StmtMatch, s: Scope): Type[] {
+    var out: Type[] = [];
+    var a: i32 = 0;
+    while (a < m.arms.len()) {
+        var armScope: Scope = s;
+        match (m.arms[a].pattern) {
+            parser.PatVariant(pv) => {
+                if (pv.binding.len() > 0 && pv.binding != "_") {
+                    armScope = armScope.bind(pv.binding, variant_binding_type(s, pv.type_name));
+                }
+            },
+            _ => { }
+        }
+        if (m.arms[a].body.len() == 1) {
+            match (m.arms[a].body[0]) {
+                parser.StmtReturn(r) => { out = out.append(check_expr(r.value, armScope)); },
+                _ => { }
+            }
+        }
+        a = a + 1;
+    }
+    return out;
+}
+
+// mx_if_branch_types collects an if-expression's branch result types,
+// recursing through an `else if` chain (the else arm is itself a StmtIf).
+function mx_if_branch_types(f: parser.StmtIf, s: Scope): Type[] {
+    var out: Type[] = [];
+    if (f.then_body.len() == 1) {
+        match (f.then_body[0]) {
+            parser.StmtReturn(r) => { out = out.append(check_expr(r.value, s)); },
+            _ => { }
+        }
+    }
+    if (f.else_body.len() == 1) {
+        match (f.else_body[0]) {
+            parser.StmtReturn(r) => { out = out.append(check_expr(r.value, s)); },
+            parser.StmtIf(nf) => {
+                var nested: Type[] = mx_if_branch_types(nf, s);
+                var k: i32 = 0;
+                while (k < nested.len()) { out = out.append(nested[k]); k = k + 1; }
+            },
+            _ => { }
+        }
+    }
+    return out;
+}
+
+// mx_expr walks an expression, emitting E031 for any value match/if-
+// expression IIFE it finds and recursing into sub-expressions (so nested
+// match/if-expressions, and ones inside calls / operators / literals, are
+// all covered).
+function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): Diag[] {
+    var out: Diag[] = [];
+    match (e) {
+        parser.ExprCall(c) => {
+            // Recognise the desugared value match/if-expression: a 0-arg
+            // call of a 0-param lambda whose body is a single StmtMatch or
+            // StmtIf (arms/branches return their value).
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprLambda(lm) => {
+                        if (lm.params.len() == 0 && lm.body.len() == 1) {
+                            match (lm.body[0]) {
+                                parser.StmtMatch(m) => {
+                                    out = append_diags(out, mx_e031(mx_match_arm_types(m, s), unions, enums, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                                },
+                                parser.StmtIf(f) => {
+                                    out = append_diags(out, mx_e031(mx_if_branch_types(f, s), unions, enums, expr_line(f.cond), expr_col(f.cond)));
+                                },
+                                _ => { }
+                            }
+                        }
+                    },
+                    _ => { }
+                }
+            }
+            out = append_diags(out, mx_expr(c.callee, s, unions, enums));
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = append_diags(out, mx_expr(c.args[i], s, unions, enums)); i = i + 1; }
+        },
+        parser.ExprLambda(lm) => {
+            var lsc: Scope = s;
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) {
+                lsc = lsc.bind(lm.params[pi].name, type_from_name_with_structs_unions(lm.params[pi].type_name, s.structs, s.unions));
+                pi = pi + 1;
+            }
+            out = append_diags(out, mx_stmts(lm.body, lsc, unions, enums));
+        },
+        parser.ExprBinary(b) => {
+            out = append_diags(mx_expr(b.left, s, unions, enums), mx_expr(b.right, s, unions, enums));
+        },
+        parser.ExprUnary(u) => { out = mx_expr(u.operand, s, unions, enums); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, mx_expr(a.elements[i], s, unions, enums)); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, mx_expr(t.elements[i], s, unions, enums)); i = i + 1; }
+        },
+        parser.ExprIndex(ix) => {
+            out = append_diags(mx_expr(ix.array, s, unions, enums), mx_expr(ix.index, s, unions, enums));
+        },
+        parser.ExprSlice(s2) => {
+            out = append_diags(mx_expr(s2.array, s, unions, enums), append_diags(mx_expr(s2.start, s, unions, enums), mx_expr(s2.end, s, unions, enums)));
+        },
+        parser.ExprFieldAccess(fa) => { out = mx_expr(fa.obj, s, unions, enums); },
+        parser.ExprStructLit(sl) => {
+            var fv: i32 = 0;
+            while (fv < sl.field_values.len()) { out = append_diags(out, mx_expr(sl.field_values[fv], s, unions, enums)); fv = fv + 1; }
+            if (sl.has_base) { out = append_diags(out, mx_expr(sl.base, s, unions, enums)); }
+        },
+        _ => { }
+    }
+    return out;
+}
+
+// mx_stmts walks a statement list, threading scope (so a match/if-
+// expression sees earlier locals and a match arm sees its payload binding)
+// and dispatching every contained expression through mx_expr.
+function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => { out = append_diags(out, mx_expr(v.init, cur, unions, enums)); },
+            parser.StmtReturn(r) => { out = append_diags(out, mx_expr(r.value, cur, unions, enums)); },
+            parser.StmtExpr(x) => { out = append_diags(out, mx_expr(x.value, cur, unions, enums)); },
+            parser.StmtAssign(a) => { out = append_diags(out, mx_expr(a.value, cur, unions, enums)); },
+            parser.StmtIf(f) => {
+                out = append_diags(out, mx_expr(f.cond, cur, unions, enums));
+                out = append_diags(out, mx_stmts(f.then_body, cur, unions, enums));
+                out = append_diags(out, mx_stmts(f.else_body, cur, unions, enums));
+            },
+            parser.StmtWhile(w) => {
+                out = append_diags(out, mx_expr(w.cond, cur, unions, enums));
+                out = append_diags(out, mx_stmts(w.body, cur, unions, enums));
+            },
+            parser.StmtFor(fr) => {
+                out = append_diags(out, mx_expr(fr.iter, cur, unions, enums));
+                out = append_diags(out, mx_stmts(fr.body, cur, unions, enums));
+            },
+            parser.StmtMatch(m) => {
+                out = append_diags(out, mx_expr(m.scrutinee, cur, unions, enums));
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    var armScope: Scope = cur;
+                    match (m.arms[a].pattern) {
+                        parser.PatVariant(pv) => {
+                            if (pv.binding.len() > 0 && pv.binding != "_") {
+                                armScope = armScope.bind(pv.binding, variant_binding_type(cur, pv.type_name));
+                            }
+                        },
+                        _ => { }
+                    }
+                    out = append_diags(out, mx_stmts(m.arms[a].body, armScope, unions, enums));
+                    a = a + 1;
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, mx_stmts(one, cur, unions, enums));
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
 // name_in reports whether `n` is one of `names`.
 function name_in(names: string[], n: string): boolean {
     var i: i32 = 0;
@@ -4048,6 +4368,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         // a lambda can be declared anywhere), scope-threaded so a lambda
         // sees earlier locals.
         body_diags = append_diags(body_diags, lret_stmts(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
+        // E031: match/if-expression arms must have compatible types
+        // (scope-threaded so an arm sees earlier locals + its payload).
+        body_diags = append_diags(body_diags, mx_stmts(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions, mod.enums));
         // E005: struct literal missing a declared field (any expression in
         // the body, struct table is module-global so no scope needed).
         body_diags = append_diags(body_diags, stmts_slit_diags(mod.funcs[i].body, structs));
@@ -4087,6 +4410,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         j = j + 1;
     }
     body_diags = append_diags(body_diags, lret_stmts(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));
+    body_diags = append_diags(body_diags, mx_stmts(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions, mod.enums));
     body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));
     body_diags = append_diags(body_diags, stmts_call_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
     body_diags = append_diags(body_diags, stmts_assign_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));

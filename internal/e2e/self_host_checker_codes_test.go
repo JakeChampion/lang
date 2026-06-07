@@ -71,6 +71,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E051": true, // argument to an owned parameter must be an owned value
 	"E049": true, // assignment to a reference-typed closure capture
 	"E055": true, // discarded result of a value-returning collection mutator
+	"E031": true, // match/if-expression arms have incompatible types
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -423,11 +424,46 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A struct-union member still binds the whole struct (no `__ev`), so
 		// field access on it stays clean.
 		{"struct-union-member-field-ok", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, B(b) => { return b.y; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", nil},
-
 		// E055: a bare value-returning collection mutator discards its result.
 		{"unused-append-result", "function main(): i32 { var a: i32[] = [1]; a.append(2); return a[0]; }\n", []string{"E055"}},
 		{"append-reassigned-ok", "function main(): i32 { var a: i32[] = [1]; a = a.append(2); return a[0]; }\n", nil},
 		{"append-result-used-ok", "function main(): i32 { var a: i32[] = [1]; return a.append(2)[0]; }\n", nil},
+		// E031: a `match` / `if` used in value position desugars to an IIFE,
+		// so its arms' result types must be mutually compatible. The predicate
+		// mirrors the Go checker's unifyIfArms — clear scalar mismatches fire;
+		// numeric (f64/i32) widen; tuples/arrays unify element-wise; two
+		// structs of the SAME enum family are compatible (but struct-union
+		// members and unrelated structs are NOT); an unknown arm skips E031
+		// (E001 owns it). Cross-checked against the Go checker.
+		{"e031-if-i32-string", "function main(): i32 { var r = if (1 < 2) { 1 } else { \"x\" }; return 0; }\n", []string{"E031"}},
+		{"e031-if-i32-i32-ok", "function main(): i32 { var r = if (1 < 2) { 1 } else { 2 }; return r; }\n", nil},
+		{"e031-if-call-mismatch", "function a(): i32 { return 1; }\nfunction b(): string { return \"x\"; }\nfunction main(): i32 { var r = if (1 < 2) { a() } else { b() }; return 0; }\n", []string{"E031"}},
+		{"e031-if-elseif-mismatch", "function main(): i32 { var r = if (1 < 2) { 1 } else if (2 < 3) { 2 } else { \"x\" }; return 0; }\n", []string{"E031"}},
+		{"e031-if-f64-i32-ok", "function main(): i32 { var r = if (1 < 2) { 1.0 } else { 2 }; return 0; }\n", nil},
+		{"e031-if-bool-arms-ok", "function main(): i32 { var r = if (1 < 2) { true } else { false }; return 0; }\n", nil},
+		{"e031-if-struct-i32-mismatch", "struct P { x: i32 }\nfunction main(): i32 { var r = if (1 < 2) { P { x: 1 } } else { 2 }; return 0; }\n", []string{"E031"}},
+		{"e031-if-struct-arms-ok", "struct P { x: i32 }\nfunction main(): i32 { var r = if (1 < 2) { P { x: 1 } } else { P { x: 2 } }; return r.x; }\n", nil},
+		{"e031-if-arm-undefined", "function main(): i32 { var r = if (1 < 2) { undef } else { 1 }; return 0; }\n", []string{"E001"}},
+		{"e031-match-i32-string", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => 1, B => \"x\" }; return 0; }\n", []string{"E031"}},
+		{"e031-match-i32-i32-ok", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => 1, B => 2 }; return r; }\n", nil},
+		{"e031-match-bool-i32", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => true, B => 1 }; return 0; }\n", []string{"E031"}},
+		{"e031-match-payload-arm-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; var r = match (o) { Has(n) => n, Nil => 0 }; return r; }\n", nil},
+		{"e031-match-three-arms-last-bad", "enum O { A, B, C }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => 1, B => 2, C => \"x\" }; return 0; }\n", []string{"E031"}},
+		// Same-enum-family / element-wise compatible arms are NOT flagged (Go
+		// also reports nothing): Option Some/None, enum variants, a nested
+		// if-expression arm, tuple arms with matching element types.
+		{"e031-match-option-arms-ok", "enum O { A, B }\nfunction f(o: O): Option[i32] { var r = match (o) { A => Some(1), B => None }; return r; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e031-if-enum-variant-arms-ok", "enum Sh { Circle(i32), Empty }\nfunction main(): i32 { var c = true; var r = if (c) { Circle(1) } else { Empty }; return 0; }\n", nil},
+		{"e031-match-nested-if-arm-ok", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => if (1<2) { 1 } else { 2 }, B => 3 }; return r; }\n", nil},
+		{"e031-match-tuple-arms-ok", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => (1,2), B => (3,4) }; return r.0; }\n", nil},
+		// Faithful-precision cases (previously missed by the conservative
+		// "all aggregates compatible" predicate; now match the Go checker):
+		{"e031-two-unrelated-structs", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { var c = true; var r = if (c) { P { x: 1 } } else { Q { y: 2 } }; return 0; }\n", []string{"E031"}},
+		{"e031-tuple-elem-mismatch", "function main(): i32 { var c = true; var r = if (c) { (1, \"x\") } else { (1, 2) }; return 0; }\n", []string{"E031"}},
+		{"e031-array-elem-mismatch", "function main(): i32 { var c = true; var r = if (c) { [\"x\"] } else { [1] }; return 0; }\n", []string{"E031"}},
+		{"e031-union-members-mismatch", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction main(): i32 { var c = true; var r = if (c) { A { x: 1 } } else { B { y: 2 } }; return 0; }\n", []string{"E031"}},
+		{"e031-same-enum-diff-payload-ok", "enum E { A(i32), B(string) }\nfunction main(): i32 { var c = true; var r = if (c) { A(1) } else { B(\"y\") }; return 0; }\n", nil},
+		{"e031-tuple-elems-ok", "function main(): i32 { var c = true; var r = if (c) { (1, \"x\") } else { (2, \"y\") }; return r.0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
