@@ -2228,7 +2228,12 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 var ai: i32 = 0;
                                 while (ai < c.args.len()) {
                                     var at: Type = check_expr(c.args[ai], s);
-                                    if (!is_unknown(at) && !type_assignable(at, sig.param_types[ai], s.unions)) {
+                                    // An unknown PARAM type is an opaque generic
+                                    // parameter (`f[T](x: T)`, where T erases to
+                                    // unknown) — the arg can't be checked against
+                                    // it, so skip rather than mis-flag E038. (An
+                                    // unknown ARG is already skipped above.)
+                                    if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !type_assignable(at, sig.param_types[ai], s.unions)) {
                                         out = out.push(dg_at("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
                                     }
                                     ai = ai + 1;
@@ -2265,7 +2270,9 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                     var mi: i32 = 0;
                                     while (mi < c.args.len()) {
                                         var mat: Type = check_expr(c.args[mi], s);
-                                        if (!is_unknown(mat) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
+                                        // Skip an opaque generic param type (see
+                                        // the free-function E038 note above).
+                                        if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
                                             out = out.push(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                                         }
                                         mi = mi + 1;
