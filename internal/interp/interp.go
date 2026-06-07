@@ -53,6 +53,14 @@ type Void struct{}
 type Array []Value
 type Func struct{ Decl *ast.FuncDecl }
 
+// Cell is the runtime value of Cell[T] (docs/CELL-TYPE-PLAN.md): a
+// single-slot mutable box held by pointer, so `set` mutates the shared
+// box in place (the deliberate, RC-safe-because-cycle-free escape from
+// value semantics). No CoW — a cell mutates in place by design.
+type Cell struct{ V Value }
+
+func (*Cell) String() string { return "<cell>" }
+
 // Float carries f32 / f64 IEEE-754 values for the interp. The
 // width tag is preserved because the language distinguishes f32
 // from f64 in type errors and `to_string` rendering (std/float
@@ -437,6 +445,10 @@ func New() *Interp {
 	// through the interp see the same API as the native /
 	// wasm backends.
 	i.Builtins["map_new"] = &Builtin{Fn: builtinMapNew}
+	// Cell[T] (docs/CELL-TYPE-PLAN.md).
+	i.Builtins["cell_new"] = &Builtin{Fn: builtinCellNew}
+	i.Builtins["__method_Cell_get"] = &Builtin{Fn: builtinCellGet}
+	i.Builtins["__method_Cell_set"] = &Builtin{Fn: builtinCellSet}
 	i.Builtins["__method_Map_len"] = &Builtin{Fn: builtinMapLen}
 	i.Builtins["__method_Map_has"] = &Builtin{Fn: builtinMapHas}
 	i.Builtins["__method_Map_get"] = &Builtin{Fn: builtinMapGet}
@@ -917,6 +929,46 @@ func builtinMapNew(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("map_new: expected 1 arg (cap), got %d", len(args))
 	}
 	return &Map{}, nil
+}
+
+// Cell[T] builtins — a single-slot mutable box. `set` mutates the shared
+// *Cell in place and returns Void (it's the sanctioned in-place mutation).
+func builtinCellNew(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("cell_new: expected 1 arg, got %d", len(args))
+	}
+	return &Cell{V: args[0]}, nil
+}
+
+func cellReceiver(name string, args []Value) (*Cell, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("%s: expected at least 1 arg (receiver)", name)
+	}
+	c, ok := args[0].(*Cell)
+	if !ok {
+		return nil, fmt.Errorf("%s: receiver must be Cell, got %T", name, args[0])
+	}
+	return c, nil
+}
+
+func builtinCellGet(_ *Interp, args []Value) (Value, error) {
+	c, err := cellReceiver("Cell.get", args)
+	if err != nil {
+		return nil, err
+	}
+	return c.V, nil
+}
+
+func builtinCellSet(_ *Interp, args []Value) (Value, error) {
+	c, err := cellReceiver("Cell.set", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Cell.set: expected 2 args, got %d", len(args))
+	}
+	c.V = args[1]
+	return Void{}, nil
 }
 
 func mapReceiver(name string, args []Value) (*Map, error) {

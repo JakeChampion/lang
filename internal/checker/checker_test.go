@@ -2419,6 +2419,36 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 	}
 }
 
+// E057: Cell[T] is only allowed for a cycle-free T (v1: scalars). A
+// reference element type could reconstruct a reference cycle, which the
+// immutable-data model forbids (docs/CELL-TYPE-PLAN.md).
+func TestCellElemTypeE057(t *testing.T) {
+	// Cell[i32] — scalar, fine. cell_new infers T; get/set type-check.
+	if err := checkSource(t, `function main(): i32 {
+	var c: Cell[i32] = cell_new(0);
+	c.set(c.get() + 1);
+	return c.get();
+}`); err != nil {
+		t.Errorf("Cell[i32] should check, got %v", err)
+	}
+	// Cell[string] (reference type) — rejected.
+	err := checkSource(t, `function main(): i32 { var c: Cell[string] = cell_new("x"); return c.get().len(); }`)
+	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
+		t.Errorf("Cell[string] should be E057, got %v", err)
+	}
+	// Inferred from a reference-typed cell_new arg — also rejected.
+	err = checkSource(t, `function main(): i32 { var c = cell_new("x"); return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
+		t.Errorf("inferred Cell[string] should be E057, got %v", err)
+	}
+	// Cell[Point] (struct) — rejected.
+	err = checkSource(t, `struct Point { x: i32 }
+function main(): i32 { var c: Cell[Point] = cell_new(Point { x: 1 }); return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
+		t.Errorf("Cell[Point] should be E057, got %v", err)
+	}
+}
+
 // An extern @import call with a type-mismatched argument is rejected.
 func TestExternImportArgTypeMismatch(t *testing.T) {
 	src := `@import("wasi:foo/bar@0.1.0", "do-thing")

@@ -11356,6 +11356,22 @@ func (b *builder) callBody(n *ast.Call) error {
 	if id.Name == "__method_Array_set" && len(n.Args) == 3 && len(n.TypeArgs) == 1 {
 		return b.emitArraySet(n)
 	}
+	// Cell[T] (docs/CELL-TYPE-PLAN.md): a single-slot mutable heap box,
+	// lowered as a one-element array box so Perceus RCs the box with no
+	// per-slot RC (v1 holds scalars only — E057). `cell_new(v)` allocs +
+	// stores; `get` loads slot 0; `set` stores slot 0 in place (no CoW —
+	// a cell mutates in place by design) and returns void.
+	if id.Name == "cell_new" && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			return b.emitCellNew(n)
+		}
+	}
+	if id.Name == "__method_Cell_get" && len(n.Args) == 1 {
+		return b.emitCellGet(n)
+	}
+	if id.Name == "__method_Cell_set" && len(n.Args) == 2 {
+		return b.emitCellSet(n)
+	}
 	// f32_bits / f32_from_bits: bit-level reinterpret between
 	// i32 and f32. On native backends the bits stay put on the
 	// operand stack so OpReinterpret* compiles to zero
@@ -15946,6 +15962,91 @@ func arraySetStoreOp(t ast.Type, ptrW int) (OpKind, int) {
 		storeWidth = WidthString
 	}
 	return storeOp, storeWidth
+}
+
+// cellElemType returns the cell's element type from the stamped TypeArgs
+// (i32 fallback when absent). v1 cells hold scalars (E057), so a default
+// i32 width is safe.
+func (b *builder) cellElemType(n *ast.Call) ast.Type {
+	if len(n.TypeArgs) == 1 {
+		return n.TypeArgs[0]
+	}
+	return ast.NumberType{}
+}
+
+// emitCellNew lowers `cell_new(v)` to a one-element heap box (the same
+// layout as a 1-element array literal: [cap|rc|len|slot]), so Perceus RCs
+// the box itself via the standard rc word at data-8. Returns the data
+// pointer. See docs/CELL-TYPE-PLAN.md.
+func (b *builder) emitCellNew(n *ast.Call) error {
+	elemType := b.cellElemType(n)
+	stride := int32(ast.ElemSizeBytesFor(elemType, b.ptrW))
+	if stride == 0 {
+		stride = 4
+	}
+	headerBytes := int32(16)
+	if stride > 16 {
+		headerBytes = stride
+	}
+	storeOp := arrayElemStoreOpFor(elemType, b.ptrW)
+	b.emit(Op{Kind: OpConstI32, I32: headerBytes + stride})
+	b.emit(Op{Kind: OpAlloc})
+	baseSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__cell_new_%d", baseSlot)] = baseSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+	// Header words at data-12 (cap), data-8 (rc), data-4 (len) — all 1,
+	// exactly like a uniquely-owned 1-element array.
+	writeHeader := func(off, val int32) {
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		if headerBytes != off {
+			b.emit(Op{Kind: OpConstI32, I32: headerBytes - off})
+			b.emit(Op{Kind: OpAdd})
+		}
+		b.emit(Op{Kind: OpConstI32, I32: val})
+		b.emit(Op{Kind: OpStore})
+	}
+	writeHeader(12, 1) // cap
+	writeHeader(8, 1)  // rc
+	writeHeader(4, 1)  // len
+	// Slot value at data (base + headerBytes).
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: headerBytes})
+	b.emit(Op{Kind: OpAdd})
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	b.emit(storeOp)
+	// Result: the data pointer.
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: headerBytes})
+	b.emit(Op{Kind: OpAdd})
+	return nil
+}
+
+// emitCellGet lowers `c.get()` to a load of slot 0 (the data pointer is
+// the slot address).
+func (b *builder) emitCellGet(n *ast.Call) error {
+	elemType := b.cellElemType(n)
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	b.emit(payloadLoadOpFor(elemType, b.ptrW))
+	return nil
+}
+
+// emitCellSet lowers `c.set(v)` to an in-place store of slot 0 — no CoW
+// (a cell mutates in place by design) — and leaves nothing on the stack
+// (the method returns void).
+func (b *builder) emitCellSet(n *ast.Call) error {
+	elemType := b.cellElemType(n)
+	if err := b.expr(n.Args[0]); err != nil { // cell data ptr = slot address
+		return err
+	}
+	if err := b.expr(n.Args[1]); err != nil { // value
+		return err
+	}
+	b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
+	return nil
 }
 
 func (b *builder) emitArrayPush(n *ast.Call) error {

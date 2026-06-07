@@ -62,19 +62,30 @@ single-pass IDs), bounded so it can never break the RC invariant.
 `Cell[T]` is well-typed only when `T` is **cycle-free**: a value of `T`
 transitively contains no heap reference that could point back at the cell.
 
-**v1 scope — start narrow (mirrors how E048/E049/E055 shipped):**
+**v1 scope — scalars only (start narrow, mirrors how E048/E049/E055
+shipped):**
 
 | `T` | allowed | why |
 |---|---|---|
-| `i32`, `i64`, `f64`, `bool`, `usize`, … (scalars) | ✅ | hold no pointer |
-| `string` | ✅ | a flat length-prefixed byte buffer; no internal heap refs |
-| everything else (`struct`, `enum`, `T[]`, tuple, `Cell`, fn) | ❌ (for now) | can transitively hold a reference → cycle-capable |
+| `i32`, `i64`, `f64`, `bool`, `usize`, … (scalars) | ✅ **shipped** | hold no pointer; the slot needs no RC |
+| `string` | ⏳ deferred | cycle-free, but the slot *owns* a reference — needs the owning-slot RC below before it's memory-safe |
+| everything else (`struct`, `enum`, `T[]`, tuple, `Cell`, fn) | ❌ | can transitively hold a reference → cycle-capable |
 
-This covers both idioms that block §3a (`i32` counter, `string`
-accumulator). The predicate can widen later to "transitively cycle-free"
-(e.g. `i32[]`, or a struct of only-scalar fields) with a proper recursive
-check — deferred until a use case needs it. A new checker rule **E057**
-rejects `Cell[T]` for a non-cycle-free `T`, reported at the annotation.
+The two idioms that block §3a are an `i32` counter (`lam_ctr`, covered
+now) and a `string` accumulator (`lamdefs`, waiting on `string` support).
+`string` is cycle-free in principle, but a `Cell[string]` slot *owns* a
+string reference: without the release-old/retain-new RC below, Perceus
+would free the string while the cell still points at it (use-after-free),
+so it is **gated on the owning-slot RC integration**, which is itself an
+in-progress area (the `__rc_inc`/`__rc_dec` helpers cover `u8[]` today,
+strings next). The predicate can widen further to "transitively
+cycle-free" (e.g. `i32[]`) once a use case needs it. A checker rule
+**E057** rejects `Cell[T]` for any not-yet-allowed `T`.
+
+The v1 implementation lowers `Cell` as a one-element heap box (same layout
+as a 1-element array literal), so Perceus RCs the **box** via the standard
+rc word at `data-8` with **no per-slot RC** — exactly why scalars are safe
+and references wait.
 
 ## 3. Surface
 
