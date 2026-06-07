@@ -388,9 +388,14 @@ pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
 // inst_supported reports whether this backend can lower an instruction
 // kind. param / phi are structural (handled outside emit_inst) and count
 // as supported.
-function inst_supported(kind: string): boolean {
+function inst_supported(ins: ssa.SInst): boolean {
+    var kind: string = ins.kind;
+    // f64_bits / f64_from_bits reinterprets produce / consume a 64-bit i64
+    // pattern, which doesn't fit wasm32's i32 value model — fall back to the
+    // AST wasm emitter for programs that use them.
+    if (kind == "unary") { return ins.str != "f64_bits" && ins.str != "f64_from_bits"; }
     return kind == "const_int" || kind == "const_bool" || kind == "binary"
-        || kind == "unary" || kind == "call" || kind == "param" || kind == "copy"
+        || kind == "call" || kind == "param" || kind == "copy"
         || kind == "phi" || kind == "alloc" || kind == "load_elem"
         || kind == "store_elem" || kind == "concat" || kind == "streq"
         || kind == "print" || kind == "funcaddr" || kind == "call_indirect"
@@ -409,7 +414,7 @@ pub function supported(funcs: ssa.SFunc[]): boolean {
             var blk: ssa.SBlock = f.blocks[b];
             var k: i32 = 0;
             while (k < blk.insts.len()) {
-                if (!inst_supported(blk.insts[k].kind)) { return false; }
+                if (!inst_supported(blk.insts[k])) { return false; }
                 k = k + 1;
             }
             b = b + 1;

@@ -67,6 +67,8 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"exit-code", "function main(): i32 { exit(7); return 0; }", 7},
 		{"exit-conditional", "function main(): i32 { var x = 5; if (x > 3) { exit(9); } return 0; }", 9},
 		{"exit-computed", "function main(): i32 { var n = 3 + 4; exit(n); return 1; }", 7},
+		// f64_bits / f64_from_bits — bit reinterpret f64<->i64 (8-byte pass-through).
+		{"f64-bits-roundtrip", "function main(): i32 { var x = 3.5; var b = f64_bits(x); var y = f64_from_bits(b); if (y == 3.5) { return 7; } return 0; }", 7},
 		{"arith", "function main(): i32 { return 2 + 3 * 4; }", 14},
 		{"locals", "function main(): i32 { var x = 10; var y = x - 3; return y * 2; }", 14},
 		{"division", "function main(): i32 { return 84 / 2; }", 42},
