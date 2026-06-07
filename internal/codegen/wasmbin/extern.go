@@ -232,6 +232,94 @@ func buildExternRecordResultWrapper(nparams int, rawImport string, rr *ir.Extern
 	}
 }
 
+// buildExternEnumResultWrapper builds the wrapper for an `@import` extern
+// returning an option/result (P4c). The canonical variant flattens to
+// (disc, payload) > 1 core value, so it returns indirectly: the raw import
+// takes a trailing return-area pointer and writes `disc:u8 @0` + `payload @off`
+// (the canonical variant memory layout — for these the payload offset matches
+// the Fern box's). The wrapper reads them and materializes a Fern enum box
+// like emitRepackPairAsHeapBox: alloc `rcHeaderBytes + size`, rc=1, the i32 tag
+// at base+rcHeaderBytes (remapped 1-disc for option, since canonical
+// none=0/some=1 is the reverse of Fern's Some=0/None=1), and the payload at
+// base+rcHeaderBytes+off, returning base+rcHeaderBytes. Wrapper type is
+// (scalar params…) -> i32.
+//
+// Locals after the params: 0:$rb (return area) 1:$base (box) 2:$disc.
+func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEnumParam) func(map[string]uint32) []byte {
+	const rcHeaderBytes = 8
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		rb := uint32(nparams)
+		base := uint32(nparams + 1)
+		disc := uint32(nparams + 2)
+		poff := uint32(ep.PayloadOffset)
+		payVT := externRecordFieldValtype(ep.PayloadType)
+		psize := int32(4)
+		if payVT == encode.ValtypeI64 || payVT == encode.ValtypeF64 {
+			psize = 8
+		}
+		size := ep.PayloadOffset + psize // return-area + box field-area size
+
+		var body []byte
+		// rb = __fern_alloc(size) — 8-aligned canonical return area.
+		body = inst.InstI32Const(body, size)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, rb)
+		// call import(params…, rb).
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		// disc = load8_u @ rb+0.
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstLocalSet(body, disc)
+		// base = __fern_alloc(rcHeaderBytes + size); rc = 1 at base+0.
+		body = inst.InstI32Const(body, rcHeaderBytes+size)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, base)
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		// tag (i32) @ base+rcHeaderBytes: remap 1-disc for option, else disc.
+		body = inst.InstLocalGet(body, base)
+		if ep.RemapDisc {
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalGet(body, disc)
+			body = numeric.InstI32Sub(body)
+		} else {
+			body = inst.InstLocalGet(body, disc)
+		}
+		body = memory.InstI32Store(body, 2, rcHeaderBytes)
+		// payload @ base+rcHeaderBytes+off = load(rb+off).
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstLocalGet(body, rb)
+		switch payVT {
+		case encode.ValtypeI64:
+			body = memory.InstI64Load(body, 3, poff)
+			body = memory.InstI64Store(body, 3, uint32(rcHeaderBytes)+poff)
+		case encode.ValtypeF32:
+			body = memory.InstF32Load(body, 2, poff)
+			body = memory.InstF32Store(body, 2, uint32(rcHeaderBytes)+poff)
+		case encode.ValtypeF64:
+			body = memory.InstF64Load(body, 3, poff)
+			body = memory.InstF64Store(body, 3, uint32(rcHeaderBytes)+poff)
+		default:
+			body = memory.InstI32Load(body, 2, poff)
+			body = memory.InstI32Store(body, 2, uint32(rcHeaderBytes)+poff)
+		}
+		// return base + rcHeaderBytes (user-visible enum pointer).
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstI32Const(body, rcHeaderBytes)
+		body = numeric.InstI32Add(body)
+
+		locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // rb, base, disc
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
 func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		imp := idxs[rawImport]

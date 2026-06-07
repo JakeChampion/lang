@@ -629,6 +629,11 @@ type ExternFunc struct {
 	// `[tag:i32 @0][payload @off]`; the canonical option/result flattens to
 	// (disc:i32, payload). nil/absent for a non-enum (or unlowerable) param.
 	ParamEnums map[int]*ExternEnumParam
+	// ResultEnum is the option/result layout of an enum RESULT (P4c), or nil.
+	// A multi-arm variant flattens to > 1 core value, so it returns indirectly
+	// through a return-area pointer (disc + payload); the wasm result wrapper
+	// reads them and materializes a Fern enum box (remapping the discriminant).
+	ResultEnum *ExternEnumParam
 }
 
 // ExternEnumParam describes a flattened option/result `@import` parameter
@@ -1082,6 +1087,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			}
 			if rr, ok := externRecordResultLayout(fn.ReturnType, info); ok {
 				ef.ResultRecord = rr
+			} else if re, ok := externEnumParamLayout(fn.ReturnType, info, ptrW); ok {
+				ef.ResultEnum = re
 			}
 			out.Externs = append(out.Externs, ef)
 			continue
