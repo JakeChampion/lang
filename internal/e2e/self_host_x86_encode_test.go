@@ -154,6 +154,16 @@ func TestSelfHostX86FrameRuns(t *testing.T) {
 	runX86NativeDriver(t, "frame42", x86ElfFrameDriverMain, 42)
 }
 
+// TestSelfHostX86RodataRuns is the end-to-end proof of rip-relative
+// addressing + a .rodata section (slice 2f): a Fern program interns a
+// `.quad 42` in .rodata, loads its address via `lea rax, [rip+answer]`,
+// dereferences it, and exits with the value — wrapped in an R+W+X ELF via
+// elf_static_executable_data_x86. A wrong rip displacement or .rodata base
+// would not exit 42.
+func TestSelfHostX86RodataRuns(t *testing.T) {
+	runX86NativeDriver(t, "rodata42", x86ElfRodataDriverMain, 42)
+}
+
 // runX86NativeDriver compiles x86_encode.fern + elf.fern + driverMain
 // through the self-host wasm emitter, runs the resulting WAT under
 // wasmtime to obtain the raw ELF the Fern program assembled and wrote to
@@ -458,6 +468,22 @@ function main(): i32 {
     // label lookup: defined vs missing.
     if (x86_label_off(c, "sub") != 6) { return 6; }
     if (x86_label_off(c, "nope") != (0 - 1)) { return 7; }
+
+    // rip-relative lea placeholder: lea rax, [rip+0] -> 48 8D 05 00*4.
+    var d: X86Asm = x86_asm_new();
+    d = x86_lea_rip_label(d, x86_rax(), "S0");
+    if (d.code.len() != 7 || d.code[0] != 72 || d.code[1] != 141 || d.code[2] != 5) { return 8; }
+    if (d.code[3] != 0 || d.code[4] != 0 || d.code[5] != 0 || d.code[6] != 0) { return 9; }
+    // resolve a rip ref to a .rodata quad: lea(7)+mov(3)=10 text, padded 16,
+    // S0 at 16; disp32 = 16 - (3+4) = 9.
+    d.code = x86_mov_load_r64(d.code, x86_rax(), x86_rax(), 0);
+    d = x86_rodata_label(d, "S0");
+    d = x86_rodata_quad(d, 42, 0);
+    d = x86_resolve(d);
+    if (d.code.len() != 10 || d.code[3] != 9 || d.code[4] != 0 || d.code[5] != 0 || d.code[6] != 0) { return 10; }
+    if (d.rodata.len() != 8 || d.rodata[0] != 42 || d.rodata[1] != 0 || d.rodata[7] != 0) { return 11; }
+    // x86_align8 rounds up to the .text/.rodata boundary.
+    if (x86_align8(10) != 16 || x86_align8(16) != 16 || x86_align8(0) != 0) { return 12; }
     return 0;
 }
 `
@@ -513,6 +539,30 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfRodataDriverMain assembles a program that reads a .rodata constant
+// via rip-relative addressing:
+//
+//	lea rax, [rip+answer] ; rax = [rax] ; exit(rax) ; .rodata answer: .quad 42
+//
+// The rip displacement and the .rodata base (padded .text length) are
+// resolved by x86_resolve, and the image is built with the R+W+X data ELF.
+const x86ElfRodataDriverMain = `
+function main(): i32 {
+    var a: X86Asm = x86_asm_new();
+    a = x86_lea_rip_label(a, x86_rax(), "answer");          // rax = &answer
+    a.code = x86_mov_load_r64(a.code, x86_rax(), x86_rax(), 0); // rax = *answer
+    a.code = x86_mov_r64_r64(a.code, x86_rdi(), x86_rax());  // exit code = answer
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 60);
+    a.code = x86_syscall(a.code);
+    a = x86_rodata_label(a, "answer");
+    a = x86_rodata_quad(a, 42, 0);                          // .quad 42
+    a = x86_resolve(a);
+    var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
     write(string_from_bytes(bin));
     return 0;
 }
