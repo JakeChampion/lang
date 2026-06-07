@@ -1439,23 +1439,12 @@ func asmTestBranch(a *Assembler, ops []string, f func(rt, bit uint32, label stri
 	return nil
 }
 
-func regLabel(a *Assembler, ops []string, f func(uint32, string)) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("expects a register and a label")
-	}
-	r, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	f(r, ops[1])
-	return nil
-}
-
-// regLabelWidth is regLabel for the cbz/cbnz family, where the operand
-// register's `w`/`x` prefix selects the 32-bit (sf=0) vs 64-bit (sf=1)
-// compare — GNU as honours this, and a wrong sf bit silently compares the
-// wrong number of bytes. parseReg drops the prefix, so we look at it here
-// and dispatch to the 32-bit (`w`) or 64-bit (`x`) emitter accordingly.
+// regLabelWidth assembles a register + label operand pair for the
+// cbz/cbnz family, where the operand register's `w`/`x` prefix selects
+// the 32-bit (sf=0) vs 64-bit (sf=1) compare — GNU as honours this, and a
+// wrong sf bit silently compares the wrong number of bytes. parseReg
+// drops the prefix, so we look at it here and dispatch to the 32-bit
+// (`w`) or 64-bit (`x`) emitter accordingly.
 func regLabelWidth(a *Assembler, ops []string, f64, f32 func(uint32, string)) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("expects a register and a label")
