@@ -7,10 +7,18 @@
 //     fern -target arm64 <entry.fern>      emit arm64 (Linux ELF) asm
 //     fern -target arm64-darwin <e.fern>   emit arm64 (macOS Mach-O) asm
 //     fern -target wasm <entry.fern>       emit a WASI WAT module
+//     fern -no-ssa <entry.fern>            force the AST emitter (no SSA)
 //     fern -o OUT <entry.fern>             emit asm to OUT
 //     fern -check <entry.fern>             type-check; exit 0 ok / 1 bad
 //     fern -interp <entry.fern>            evaluate; exit = program result
 //     fern -fmt <entry.fern>               format the entry file to stdout
+//
+// Codegen routes through the SSA pipeline (AST → SSA → optimise →
+// regalloc → emit) by DEFAULT for the x86-64 / arm64 targets; programs
+// the SSA subset can't yet lower fall back transparently to the AST
+// emitter (so output is never wrong). `-no-ssa` forces the AST emitter;
+// `-ssa` is accepted but a no-op (SSA is the default). See
+// docs/SELFHOST-SSA-ALWAYS.md for the roadmap to every backend on the IR.
 //
 // It is a drop-in-shaped replacement for cmd/fern: one binary hosting
 // both the x86-64 (asm.fern) and arm64 (asm_arm64.fern) emitters,
@@ -136,7 +144,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt] [-target x86-64|arm64|arm64-darwin|wasm] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt] [-no-ssa] [-target x86-64|arm64|arm64-darwin|wasm] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
@@ -225,7 +233,7 @@ function main(): i32 {
     var mode_check: boolean = false;
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
-    var use_ssa: boolean = false;
+    var no_ssa: boolean = false;
     var optimize: boolean = false;
     var have_entry: boolean = false;
 
@@ -239,7 +247,9 @@ function main(): i32 {
         } else if (a == "-fmt") {
             mode_fmt = true;
         } else if (a == "-ssa") {
-            use_ssa = true;
+            // SSA is the default now; accept -ssa as a no-op for back-compat.
+        } else if (a == "-no-ssa") {
+            no_ssa = true;
         } else if (a == "-O") {
             optimize = true;
         } else if (a == "-target") {
@@ -390,12 +400,14 @@ function main(): i32 {
         merged = constfold.fold_module(merged);
     }
 
-    // Opt-in SSA backend: when -ssa is given, try the AST → SSA → optimise
-    // → regalloc → emit pipeline for the whole program. It applies only if
-    // every function is in the SSA subset (else we fall through to the AST
-    // emitter below), so it never changes the output of programs it can't
-    // yet handle.
-    if (use_ssa) {
+    // Default SSA backend: route through the AST → SSA → optimise →
+    // regalloc → emit pipeline for the x86-64 / arm64 targets unless
+    // -no-ssa was given. try_ssa applies only if every function is in the
+    // SSA subset (else we fall through to the AST emitter below), so it
+    // never changes the output of programs it can't yet handle. -no-ssa
+    // forces the AST emitter; other targets (arm64-darwin, wasm*) have no
+    // SSA consumer yet and always use the AST emitter.
+    if (!no_ssa) {
         var sr: SsaResult = try_ssa(merged.funcs, merged.structs, target);
         if (sr.ok) {
             if (out_path.len() > 0) {
