@@ -727,6 +727,8 @@ function x86_gas_assemble(src: string): X86Asm {
             if (before.index_of(" ") < 0 && before.index_of("(") < 0 && x86_gas_top_comma(before) < 0) {
                 if (section == 1) {
                     a = x86_rodata_label(a, before);
+                } else if (section == 2) {
+                    a = x86_bss_label(a, before);
                 } else {
                     a = x86_label(a, before);
                 }
@@ -741,29 +743,40 @@ function x86_gas_assemble(src: string): X86Asm {
             if (line.starts_with(".section")) {
                 if (line.contains(".rodata")) {
                     section = 1;
+                } else if (line.contains(".bss")) {
+                    section = 2;
+                } else if (line.contains(".data")) {
+                    section = 1; // initialised data -> emit bytes like rodata
                 } else {
                     section = 0;
                 }
-            } else {
-                if (line == ".text") {
-                    section = 0;
+            } else if (line == ".text") {
+                section = 0;
+            } else if (line.starts_with(".quad")) {
+                if (section == 2) {
+                    a = x86_bss_skip(a, 8); // zero-init quad reserves 8 bytes
                 } else {
-                    if (line.starts_with(".quad")) {
-                        var qv: i32 = x86_gas_atoi(x86_gas_trim(line[6:line.len()]));
-                        a = x86_rodata_quad(a, qv, 0);
-                    } else {
-                        if (line.starts_with(".double")) {
-                            var fv: f64 = x86_gas_parse_f64(x86_gas_trim(line[8:line.len()]));
-                            a.rodata = x86_le64_i64(a.rodata, f64_bits(fv));
-                        } else {
-                            if (line.starts_with(".ascii")) {
-                                a.rodata = x86_gas_ascii(a.rodata, line);
-                            }
-                        }
-                        // .globl / .type / .size: ignored
+                    a = x86_rodata_quad(a, x86_gas_atoi(x86_gas_trim(line[6:line.len()])), 0);
+                }
+            } else if (line.starts_with(".double")) {
+                a.rodata = x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(line[8:line.len()]))));
+            } else if (line.starts_with(".ascii")) {
+                a.rodata = x86_gas_ascii(a.rodata, line);
+            } else if (line.starts_with(".skip")) {
+                if (section == 2) {
+                    a = x86_bss_skip(a, x86_gas_atoi(x86_gas_trim(line[5:line.len()])));
+                }
+            } else if (line.starts_with(".align")) {
+                var an: i32 = x86_gas_atoi(x86_gas_trim(line[6:line.len()]));
+                if (an > 0) {
+                    if (section == 2) {
+                        while ((a.bss_size % an) != 0) { a = x86_bss_skip(a, 1); }
+                    } else if (section == 1) {
+                        while ((a.rodata.len() % an) != 0) { a.rodata = a.rodata.push(0); }
                     }
                 }
             }
+            // .globl / .type / .size and text-section .align: ignored
             continue;
         }
         // instruction: mnemonic + operand text

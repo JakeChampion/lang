@@ -958,6 +958,7 @@ function x86_rel_to(target_off: i32, patch_off: i32): i32 {
 struct X86Asm {
     code: i32[],
     rodata: i32[],
+    bss_size: i32,
     lab_names: string[],
     lab_secs: i32[],
     lab_offs: i32[],
@@ -967,7 +968,7 @@ struct X86Asm {
 
 // x86_asm_new returns an empty assembler state.
 function x86_asm_new(): X86Asm {
-    return X86Asm { code: [], rodata: [], lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [] };
+    return X86Asm { code: [], rodata: [], bss_size: 0, lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [] };
 }
 
 // x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
@@ -1006,6 +1007,23 @@ function x86_rodata_quad(a: X86Asm, lo: i32, hi: i32): X86Asm {
     return a;
 }
 
+// x86_bss_label records `name` at the current .bss offset (section 2).
+// .bss is zero-init memory not present in the file: only the running size
+// advances (x86_bss_skip), and the ELF sets p_memsz > p_filesz.
+function x86_bss_label(a: X86Asm, name: string): X86Asm {
+    a.lab_names = a.lab_names.push(name);
+    a.lab_secs = a.lab_secs.push(2);
+    a.lab_offs = a.lab_offs.push(a.bss_size);
+    return a;
+}
+
+// x86_bss_skip advances the .bss size by `n` bytes (a `.skip`/`.quad`/
+// `.align` reservation in the .bss section).
+function x86_bss_skip(a: X86Asm, n: i32): X86Asm {
+    a.bss_size = a.bss_size + n;
+    return a;
+}
+
 // x86_label_idx returns the index of `name` in the label table, or -1.
 function x86_label_idx(a: X86Asm, name: string): i32 {
     var i: i32 = 0;
@@ -1029,9 +1047,12 @@ function x86_label_off(a: X86Asm, name: string): i32 {
     return a.lab_offs[i];
 }
 
-// x86_final_off resolves `name` to its offset in the final image, given
-// the padded .text length (the .rodata base). .text labels keep their
-// offset; .rodata labels sit at padded_text + their .rodata offset.
+// x86_final_off resolves `name` to its offset (from .text start) in the
+// final image, given the padded .text length (the .rodata base). .text
+// labels keep their offset; .rodata labels sit at padded_text + their
+// .rodata offset; .bss labels sit just past .rodata (padded_text +
+// rodata_len + their .bss offset), matching the ELF's in-memory layout
+// (.bss is the zero-init region after the file content).
 function x86_final_off(a: X86Asm, name: string, padded_text: i32): i32 {
     var i: i32 = x86_label_idx(a, name);
     if (i < 0) {
@@ -1039,6 +1060,9 @@ function x86_final_off(a: X86Asm, name: string, padded_text: i32): i32 {
     }
     if (a.lab_secs[i] == 1) {
         return padded_text + a.lab_offs[i];
+    }
+    if (a.lab_secs[i] == 2) {
+        return padded_text + a.rodata.len() + a.lab_offs[i];
     }
     return a.lab_offs[i];
 }
