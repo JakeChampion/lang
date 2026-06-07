@@ -445,6 +445,16 @@ world-driven composer (P2) wires it.
      list<s32>) -> s32`, run through the self-hosted backend under wasmtime);
      the self-host string-param + list-result tests and the self-compile oracles
      stay green.
+   - **Self-host port — numeric array results — ✅ done.** The symmetric
+     counterpart: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
+     *result* lifts into a self-host array. It generalises the existing
+     u8[]-result wrapper — for a numeric element the self-host slot size equals
+     the canonical element size, so the wrapper copies each element straight
+     into its slot at +8 (no byte-expansion). `is_extern_composite_ret` now also
+     matches `extern_array_param_supported`, which auto-exports the canonical
+     `cabi_realloc` (the host lifts the list into the self-host memory). Gated by
+     `TestSelfHostExternArrayResultCustomProvider` (an `iota: func(n: u32) ->
+     list<s32>`, lifted to `i32[]` and indexed).
    - Still rejected (next slices): the rest of the self-host port (u8[] params
      with repacking, records/tuples/sum-types — flatten to values, no alignment
      wall); general user `variant`s; single-element records/tuples (direct

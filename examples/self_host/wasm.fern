@@ -1145,9 +1145,10 @@ function wat_extern_valtype(t: string): string {
 // a call to the function resolves to `$name` like any free function. These are
 // preview-2 component imports — the world-driven composer wires them.
 // is_extern_composite_ret is true for the `@import` extern result types that
-// use the canonical return-area lowering (P4c): a string or a u8[] (list<u8>).
+// use the canonical return-area lowering (P4c): a string, a u8[] (list<u8>),
+// or a numeric array (list<T> with T's slot == canonical size).
 function is_extern_composite_ret(t: string): boolean {
-    return t == "string" || t == "u8[]";
+    return t == "string" || t == "u8[]" || extern_array_param_supported(t);
 }
 
 // extern_array_param_supported is true for an `@import` array parameter whose
@@ -1537,6 +1538,21 @@ function extern_wrappers(mod: parser.Module): string {
                 out = out + "    (block $d (loop $c\n";
                 out = out + "      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n";
                 out = out + "      (i32.store (i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $dp) (local.get $i))))\n";
+                out = out + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+                out = out + "      (br $c)))\n";
+                out = out + "    (local.get $s))\n";
+            } else if (extern_array_param_supported(f.ret_type)) {
+                // numeric array list<T>: the slot size equals the canonical
+                // element size, so copy each element straight into its slot at
+                // +8 (no byte-expansion as for u8[]).
+                var rk: string = f.ret_type[0:f.ret_type.len() - 2];
+                var rss: string = i32_to_string(elem_slot_size(rk));
+                out = out + "    (local.set $s (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $ln) (i32.const " + rss + ")))))\n";
+                out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
+                out = out + "    (local.set $i (i32.const 0))\n";
+                out = out + "    (block $d (loop $c\n";
+                out = out + "      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n";
+                out = out + "      (" + elem_store_op(rk) + " (i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const " + rss + "))) (" + elem_load_op(rk) + " (i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + rss + ")))))\n";
                 out = out + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
                 out = out + "      (br $c)))\n";
                 out = out + "    (local.get $s))\n";
