@@ -130,7 +130,11 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // default catch-all. The body is a stmt list, mirroring
 // StmtIf / StmtWhile; expression-position match lives in a
 // later slice (ExprMatch).
-pub struct PatVariant { type_name: string, binding: string }
+// binding is the first payload binding (or "" / "_"); extra_bindings holds any
+// further bindings written in `Variant(a, b, …)`. The self-host's variants are
+// single-payload, so a multi-binding pattern is a payload-arity error (E015) —
+// extra_bindings lets the checker count them; codegen still uses `binding`.
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[] }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
@@ -346,7 +350,8 @@ function s_match_at(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32): Stm
     return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col };
 }
 function p_variant(type_name: string, binding: string): Pattern {
-    return PatVariant { type_name: type_name, binding: binding };
+    var no_extra: string[] = [];
+    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra };
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
@@ -1240,16 +1245,28 @@ function parse_pattern(p: Par): PatternResult {
         p = p.advance();
     }
     var binding: string = "";
+    var extra_bindings: string[] = [];
     if (p.peek_punct() == "(") {
         p = p.advance();
-        var inner: string = p.peek_ident();
-        if (inner.len() > 0) {
-            binding = inner;
-            p = p.advance();
+        // Parse comma-separated payload bindings: `Variant(a, b, …)`. The
+        // first is `binding`; the rest go to `extra_bindings` so the checker
+        // can flag a payload-arity mismatch (E015). Single-payload variants
+        // (all the self-host supports) use only `binding`.
+        var bn: i32 = 0;
+        while (p.peek_punct() != ")" && !p.at_end()) {
+            var inner: string = p.peek_ident();
+            if (inner.len() > 0) {
+                if (bn == 0) { binding = inner; } else { extra_bindings = extra_bindings.push(inner); }
+                bn = bn + 1;
+                p = p.advance();
+            } else {
+                p = p.advance();
+            }
+            if (p.peek_punct() == ",") { p = p.advance(); }
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return PatternResult { par: p, pattern: p_variant(name, binding) };
+    return PatternResult { par: p, pattern: PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings } };
 }
 
 // parse_match_stmt consumes `match (scrutinee) { arm, arm, … }`
