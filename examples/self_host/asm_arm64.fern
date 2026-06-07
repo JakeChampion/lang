@@ -368,9 +368,12 @@ pub struct EmitState {
     local_names: string[],
     in_function: boolean,
     string_lits: string[],
-    needs_print_int: boolean,
-    needs_read_int: boolean,
-    needs_heap: boolean,
+    // needed: the set of runtime-library helpers this module
+    // requests, by name. Populated via need() / the mark_*
+    // wrappers; emit_module consults has_need() to decide which
+    // helper bodies to append. Replaces ~26 parallel needs_*
+    // booleans — see asm.fern for the rationale.
+    needed: string[],
     struct_decls: parser.StructDecl[],
     // loop_exit_labels / loop_cont_labels: see asm.fern for
     // semantics. break / continue use the top of each stack.
@@ -380,31 +383,7 @@ pub struct EmitState {
     // in ExprCall(ExprFieldAccess(...), args).
     funcs: parser.FuncDecl[],
     // local_types: parallel to local_names. See asm.fern.
-    local_types: string[],
-    needs_str_concat: boolean,
-    needs_str_eq: boolean,
-    needs_str_print: boolean,
-    needs_str_cmp: boolean,
-    needs_str_read_line: boolean,
-    needs_i32_to_string: boolean,
-    needs_str_to_i32: boolean,
-    needs_eprint: boolean,
-    needs_str_search: boolean,
-    needs_args: boolean,
-    needs_arr_push: boolean,
-    needs_arr_slice: boolean,
-    needs_arr_i32_index_of: boolean,
-    needs_arr_reverse: boolean,
-    needs_arr_concat: boolean,
-    needs_arr_str_index_of: boolean,
-    needs_arr_str_join: boolean,
-    needs_arr_i32_sum: boolean,
-    needs_arr_i32_min_max: boolean,
-    needs_arr_i32_product: boolean,
-    needs_str_chars: boolean,
-    needs_str_bytes: boolean,
-    needs_str_reverse: boolean,
-    needs_i32_pow: boolean
+    local_types: string[]
 }
 
 function new_state(): EmitState {
@@ -414,44 +393,19 @@ function new_state(): EmitState {
     var lcn: string[] = [];
     var fns: parser.FuncDecl[] = [];
     var lts: string[] = [];
+    var nd: string[] = [];
     return EmitState {
         out: "",
         label_n: 0,
         local_names: ns,
         in_function: false,
         string_lits: sl,
-        needs_print_int: false,
-        needs_read_int: false,
-        needs_heap: false,
+        needed: nd,
         struct_decls: [],
         loop_exit_labels: lex,
         loop_cont_labels: lcn,
         funcs: fns,
-        local_types: lts,
-        needs_str_concat: false,
-        needs_str_eq: false,
-        needs_str_print: false,
-        needs_str_cmp: false,
-        needs_str_read_line: false,
-        needs_i32_to_string: false,
-        needs_str_to_i32: false,
-        needs_eprint: false,
-        needs_str_search: false,
-        needs_args: false,
-        needs_arr_push: false,
-        needs_arr_slice: false,
-        needs_arr_i32_index_of: false,
-        needs_arr_reverse: false,
-        needs_arr_concat: false,
-        needs_arr_str_index_of: false,
-        needs_arr_str_join: false,
-        needs_arr_i32_sum: false,
-        needs_arr_i32_min_max: false,
-        needs_arr_i32_product: false,
-        needs_str_chars: false,
-        needs_str_bytes: false,
-        needs_str_reverse: false,
-        needs_i32_pow: false
+        local_types: lts
     };
 }
 
@@ -486,99 +440,99 @@ function (s: EmitState) local_type_of(name: string): string {
 }
 
 function (s: EmitState) mark_str_concat(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_concat: true };
+    return s.need("heap").need("str_concat");
 }
 
 function (s: EmitState) mark_str_eq(): EmitState {
-    return EmitState { ...s, needs_str_eq: true };
+    return s.need("str_eq");
 }
 
 function (s: EmitState) mark_str_print(): EmitState {
-    return EmitState { ...s, needs_str_print: true };
+    return s.need("str_print");
 }
 
 function (s: EmitState) mark_str_cmp(): EmitState {
-    return EmitState { ...s, needs_str_cmp: true };
+    return s.need("str_cmp");
 }
 
 function (s: EmitState) mark_str_read_line(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_read_line: true };
+    return s.need("heap").need("str_read_line");
 }
 
 function (s: EmitState) mark_i32_to_string(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_i32_to_string: true };
+    return s.need("heap").need("i32_to_string");
 }
 
 function (s: EmitState) mark_str_to_i32(): EmitState {
-    return EmitState { ...s, needs_str_to_i32: true };
+    return s.need("str_to_i32");
 }
 
 function (s: EmitState) mark_eprint(): EmitState {
-    return EmitState { ...s, needs_eprint: true };
+    return s.need("eprint");
 }
 
 function (s: EmitState) mark_str_search(): EmitState {
-    return EmitState { ...s, needs_str_search: true };
+    return s.need("str_search");
 }
 
 function (s: EmitState) mark_args(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_args: true };
+    return s.need("heap").need("args");
 }
 
 function (s: EmitState) mark_arr_push(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_arr_push: true };
+    return s.need("heap").need("arr_push");
 }
 
 function (s: EmitState) mark_arr_slice(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_arr_slice: true };
+    return s.need("heap").need("arr_slice");
 }
 
 function (s: EmitState) mark_arr_i32_index_of(): EmitState {
-    return EmitState { ...s, needs_arr_i32_index_of: true };
+    return s.need("arr_i32_index_of");
 }
 
 function (s: EmitState) mark_arr_reverse(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_arr_reverse: true };
+    return s.need("heap").need("arr_reverse");
 }
 
 function (s: EmitState) mark_arr_concat(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_arr_concat: true };
+    return s.need("heap").need("arr_concat");
 }
 
 function (s: EmitState) mark_arr_str_index_of(): EmitState {
-    return EmitState { ...s, needs_str_eq: true, needs_arr_str_index_of: true };
+    return s.need("str_eq").need("arr_str_index_of");
 }
 
 function (s: EmitState) mark_arr_str_join(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_concat: true, needs_arr_str_join: true };
+    return s.need("heap").need("str_concat").need("arr_str_join");
 }
 
 function (s: EmitState) mark_arr_i32_sum(): EmitState {
-    return EmitState { ...s, needs_arr_i32_sum: true };
+    return s.need("arr_i32_sum");
 }
 
 function (s: EmitState) mark_arr_i32_min_max(): EmitState {
-    return EmitState { ...s, needs_arr_i32_min_max: true };
+    return s.need("arr_i32_min_max");
 }
 
 function (s: EmitState) mark_arr_i32_product(): EmitState {
-    return EmitState { ...s, needs_arr_i32_product: true };
+    return s.need("arr_i32_product");
 }
 
 function (s: EmitState) mark_str_chars(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_chars: true };
+    return s.need("heap").need("str_chars");
 }
 
 function (s: EmitState) mark_str_bytes(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_bytes: true };
+    return s.need("heap").need("str_bytes");
 }
 
 function (s: EmitState) mark_str_reverse(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_reverse: true };
+    return s.need("heap").need("str_reverse");
 }
 
 function (s: EmitState) mark_i32_pow(): EmitState {
-    return EmitState { ...s, needs_i32_pow: true };
+    return s.need("i32_pow");
 }
 
 // match_payload_type — see asm.fern. Infers an Option/Result payload
@@ -1465,16 +1419,33 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
     return StringLitOut { state: ns, idx: idx };
 }
 
+// need / has_need: the runtime-helper registry. See asm.fern for
+// the rationale; the mark_* wrappers below are thin aliases that
+// also pull in a helper's dependencies (heap, str_concat, …).
+function (s: EmitState) need(name: string): EmitState {
+    if (s.has_need(name)) { return s; }
+    return EmitState { ...s, needed: s.needed.push(name) };
+}
+
+function (s: EmitState) has_need(name: string): boolean {
+    var i: i32 = 0;
+    while (i < s.needed.len()) {
+        if (s.needed[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function (s: EmitState) mark_print_int(): EmitState {
-    return EmitState { ...s, needs_print_int: true };
+    return s.need("print_int");
 }
 
 function (s: EmitState) mark_heap(): EmitState {
-    return EmitState { ...s, needs_heap: true };
+    return s.need("heap");
 }
 
 function (s: EmitState) mark_read_int(): EmitState {
-    return EmitState { ...s, needs_read_int: true };
+    return s.need("read_int");
 }
 
 // escape_for_ascii rewrites a string for `.ascii "…"` syntax:
@@ -4908,7 +4879,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // sp+8. Darwin (Mach-O, _start->_main via dyld/LC_MAIN): the entry is
     // a C-ABI `main(argc, argv, envp, apple)`, so argc=x0, argv=x1,
     // envp=x2 arrive in registers, not on the stack.
-    if (s.needs_args) {
+    if (s.has_need("args")) {
         if (darwin) {
             s = s.write("    adrp x9, __fern_argc\n");
             s = s.write("    add x9, x9, :lo12:__fern_argc\n");
@@ -4932,7 +4903,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // (env()/subprocess allocate, so they only link with the heap
     // present, and any caller marks the heap). x2 survives the needs_args
     // block above (which only touches x0/x1/x9).
-    if (s.needs_heap) {
+    if (s.has_need("heap")) {
         if (darwin) {
             s = s.write("    adrp x9, __fern_envp\n");
             s = s.write("    add x9, x9, :lo12:__fern_envp\n");
@@ -4972,7 +4943,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     }
     // __fern_print_int helper: converts the i64 in x0 to
     // decimal text in a stack buffer and writes to stdout.
-    if (s.needs_print_int) {
+    if (s.has_need("print_int")) {
         s = s.write("__fern_print_int:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -5147,7 +5118,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, parses an optional leading `-`
     // followed by decimal digits, returns the value in x0.
-    if (s.needs_read_int) {
+    if (s.has_need("read_int")) {
         s = s.write("__fern_read_int:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -5194,7 +5165,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ret\n");
     }
     // __fern_print_str: x0 = box ptr. write(1, box.data, box.len).
-    if (s.needs_str_print) {
+    if (s.has_need("str_print")) {
         s = s.write("__fern_print_str:\n");
         s = s.write("    ldr x1, [x0]\n");      // data ptr
         s = s.write("    ldr x2, [x0, #8]\n");  // len
@@ -5204,7 +5175,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ret\n");
     }
     // __fern_str_concat: x0 = box A, x1 = box B → x0 = new box.
-    if (s.needs_str_concat) {
+    if (s.has_need("str_concat")) {
         s = s.write("__fern_str_concat:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -5253,7 +5224,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ret\n");
     }
     // __fern_str_eq: x0 = box A, x1 = box B → x0 = 1 / 0.
-    if (s.needs_str_eq) {
+    if (s.has_need("str_eq")) {
         s = s.write("__fern_str_eq:\n");
         s = s.write("    ldr x2, [x0, #8]\n");
         s = s.write("    ldr x3, [x1, #8]\n");
@@ -5278,7 +5249,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     }
     // __fern_str_cmp: x0 = box A, x1 = box B → x0 = signed
     // lexicographic compare (<0 / 0 / >0).
-    if (s.needs_str_cmp) {
+    if (s.has_need("str_cmp")) {
         s = s.write("__fern_str_cmp:\n");
         s = s.write("    ldr x2, [x0, #8]\n");   // lenA
         s = s.write("    ldr x3, [x1, #8]\n");   // lenB
@@ -5309,7 +5280,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // __fern_read_line: no args. Reads up to 256 bytes from
     // stdin, scans for '\n', returns a 16-byte box ptr. Linux
     // syscall sys_read (#63 on aarch64).
-    if (s.needs_str_read_line) {
+    if (s.has_need("str_read_line")) {
         s = s.write("__fern_read_line:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -5390,7 +5361,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // Convert decimal digits MSB-first into a 32-byte scratch
     // buffer, then allocate a 16-byte box pointing at the
     // first char.
-    if (s.needs_i32_to_string) {
+    if (s.has_need("i32_to_string")) {
         s = s.write("__fern_i32_to_string:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -5449,7 +5420,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // __fern_str_to_i32: x0 = string box → x0 = parsed i32.
     // Optional leading '-', decimal digits, stops at first
     // non-digit (incl. newline). Empty box → 0.
-    if (s.needs_str_to_i32) {
+    if (s.has_need("str_to_i32")) {
         s = s.write("__fern_str_to_i32:\n");
         s = s.write("    ldr x1, [x0]\n");           // data ptr
         s = s.write("    ldr x2, [x0, #8]\n");       // len
@@ -5484,7 +5455,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ret\n");
     }
     // __fern_eprint_str: x0 = string box. write(2, data, len).
-    if (s.needs_eprint) {
+    if (s.has_need("eprint")) {
         s = s.write("__fern_eprint_str:\n");
         s = s.write("    ldr x1, [x0]\n");
         s = s.write("    ldr x2, [x0, #8]\n");
@@ -5494,7 +5465,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ret\n");
     }
     // String search helpers. See asm.fern.
-    if (s.needs_str_search) {
+    if (s.has_need("str_search")) {
         s = s.write("__fern_str_starts_with:\n");
         s = s.write("    ldr x2, [x1, #8]\n");        // lenP
         s = s.write("    ldr x3, [x0, #8]\n");        // lenS
@@ -6059,7 +6030,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // slot; without the early intern the label would be undefined for
     // programs that never mention stat() themselves. Same for the
     // __fern_subprocess helper's "ProcessResult" shape name.
-    if (s.needs_heap) {
+    if (s.has_need("heap")) {
         var fsPre: StringLitOut = add_string_lit(s, "FileStat");
         s = fsPre.state;
         var prPre: StringLitOut = add_string_lit(s, "ProcessResult");
@@ -6082,7 +6053,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // Same shape as the x86-64 backend; instructions translated
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
-    if (s.needs_heap) {
+    if (s.has_need("heap")) {
         var heap_size: string = "1073741824";   // 1 GiB
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
@@ -8269,7 +8240,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // values: T[] @8]; linear scan + str_eq; set/get grow via
     // __fern_arr_push. Gated on (arr_push && str_eq), both marked at
     // every map op.
-    if (s.needs_arr_push && s.needs_str_eq) {
+    if (s.has_need("arr_push") && s.has_need("str_eq")) {
         // __fern_map_new(x0 = capacity hint, ignored) → empty map box.
         s = s.write(".globl __fern_map_new\n");
         s = s.write(".type __fern_map_new, %function\n");
@@ -8706,7 +8677,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
 
     // Command-line args. Mirror of asm.fern.
-    if (s.needs_args) {
+    if (s.has_need("args")) {
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_argc: .quad 0\n");
@@ -8778,7 +8749,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // len < cap, else alloc a doubled buffer ([cap, len, …] at base
     // B, returned B+8), copy, return the new pointer. Mirrors the
     // x86-64 emitter; replaces the old O(N²) fresh-copy-every-push.
-    if (s.needs_arr_push) {
+    if (s.has_need("arr_push")) {
         s = s.write("__fern_arr_push:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -8838,7 +8809,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // x1 = start, x2 = end. Source array layout matches the
     // ExprArray emit: [len: 8, e0: 8, …]. Each element is an
     // 8-byte payload — i32 zero-extended or string-box ptr.
-    if (s.needs_arr_slice) {
+    if (s.has_need("arr_slice")) {
         s = s.write("__fern_arr_slice:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -8877,7 +8848,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // __fern_arr_concat: x0 = arr A, x1 = arr B. Returns a fresh
     // array containing A's elements followed by B's. Works on
     // any 8-byte-payload array.
-    if (s.needs_arr_concat) {
+    if (s.has_need("arr_concat")) {
         s = s.write("__fern_arr_concat:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -8928,7 +8899,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // __fern_arr_reverse: x0 = src arr ptr. Returns a fresh
     // array with elements in opposite order. Works on any
     // 8-byte-payload array (i32[] or string[]).
-    if (s.needs_arr_reverse) {
+    if (s.has_need("arr_reverse")) {
         s = s.write("__fern_arr_reverse:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -8963,7 +8934,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // = arr[0] + sep + arr[1] + sep + … + arr[n-1]. Empty
     // array → empty string box. Uses repeated __fern_str_concat
     // — O(n * total_len) but small + correct.
-    if (s.needs_arr_str_join) {
+    if (s.has_need("arr_str_join")) {
         s = s.write("__fern_arr_str_join:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -9014,7 +8985,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // Returns x0 = smallest element.
     // __fern_arr_i32_max: same but largest. Both are leaf
     // helpers — no frame. UB if arr is empty.
-    if (s.needs_arr_i32_min_max) {
+    if (s.has_need("arr_i32_min_max")) {
         s = s.write("__fern_arr_i32_min:\n");
         s = s.write("    ldr x1, [x0]\n");          // len
         s = s.write("    ldr x2, [x0, #8]\n");      // best = arr[0]
@@ -9052,7 +9023,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // x0 = base^exp. Negative exp returns 1 (UB-ish, but
     // matches the language's no-runtime-check stance —
     // integer pow with negative exp is undefined for i32).
-    if (s.needs_i32_pow) {
+    if (s.has_need("i32_pow")) {
         s = s.write("__fern_i32_pow:\n");
         s = s.write("    mov x2, #1\n");          // result
         s = s.write(".Lpow_loop:\n");
@@ -9067,7 +9038,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     }
     // __fern_str_reverse: x0 = src box. Returns x0 = new
     // string box with bytes in reverse order.
-    if (s.needs_str_reverse) {
+    if (s.has_need("str_reverse")) {
         s = s.write("__fern_str_reverse:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -9104,7 +9075,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // __fern_str_bytes: x0 = source string box. Returns
     // x0 = i32[] of byte values (each zero-extended to 8
     // bytes in the array's uniform 8-byte slot).
-    if (s.needs_str_bytes) {
+    if (s.has_need("str_bytes")) {
         s = s.write("__fern_str_bytes:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -9141,7 +9112,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // x0 = string[] of 1-byte string boxes. Each box reuses
     // the source's data pointer at the appropriate offset
     // (no per-char byte alloc) and length 1.
-    if (s.needs_str_chars) {
+    if (s.has_need("str_chars")) {
         s = s.write("__fern_str_chars:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -9188,7 +9159,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // __fern_arr_i32_product: x0 = i32-array ptr. Returns
     // x0 = product of all elements (1 if empty — matches the
     // empty-product mathematical identity). Leaf — no frame.
-    if (s.needs_arr_i32_product) {
+    if (s.has_need("arr_i32_product")) {
         s = s.write("__fern_arr_i32_product:\n");
         s = s.write("    ldr x1, [x0]\n");          // len
         s = s.write("    mov x2, #1\n");            // product
@@ -9207,7 +9178,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     }
     // __fern_arr_i32_sum: x0 = i32-array ptr. Returns x0 =
     // sum of all elements (0 if empty). Leaf — no frame needed.
-    if (s.needs_arr_i32_sum) {
+    if (s.has_need("arr_i32_sum")) {
         s = s.write("__fern_arr_i32_sum:\n");
         s = s.write("    ldr x1, [x0]\n");          // len
         s = s.write("    mov x2, #0\n");            // sum
@@ -9229,7 +9200,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // where __fern_str_eq(arr[i], target) is true, or -1 if
     // none. Uses content equality so two strings with the
     // same bytes but different .rodata slots still match.
-    if (s.needs_arr_str_index_of) {
+    if (s.has_need("arr_str_index_of")) {
         s = s.write("__fern_arr_str_index_of:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -9264,7 +9235,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     }
     // __fern_arr_i32_index_of: x0 = i32-array ptr, x1 = target val.
     // Returns x0 = first index where arr[i] == val, or -1 if none.
-    if (s.needs_arr_i32_index_of) {
+    if (s.has_need("arr_i32_index_of")) {
         s = s.write("__fern_arr_i32_index_of:\n");
         s = s.write("    ldr x2, [x0]\n");          // len
         s = s.write("    mov x3, #0\n");            // i

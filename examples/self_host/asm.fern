@@ -1198,9 +1198,15 @@ pub struct EmitState {
     local_names: string[],
     in_function: boolean,
     string_lits: string[],
-    needs_print_int: boolean,
-    needs_read_int: boolean,
-    needs_heap: boolean,
+    // needed: the set of runtime-library helpers this module
+    // requests, by name (e.g. "heap", "print_int", "str_concat").
+    // Populated lazily via need() / the mark_* wrappers as
+    // emit_expr references each helper; emit_module consults
+    // has_need() to decide which helper bodies to append. This one
+    // field replaces ~26 parallel needs_* booleans, so adding a
+    // helper no longer means touching the struct, new_state, and a
+    // bespoke mark_ rebuild.
+    needed: string[],
     // struct_decls: the module's struct decls — used by
     // ExprStructLit + ExprFieldAccess to look up field
     // layout. Seeded from mod.structs at the start of
@@ -1226,34 +1232,7 @@ pub struct EmitState {
     // / `len()` etc. to dispatch on operand types (string vs
     // i32 vs array). Tag values: "i32", "bool", "string",
     // "array", "tuple", "struct", "fn", "unknown".
-    local_types: string[],
-    // needs_str_*: lazy-emit flags for the string runtime
-    // helpers (set by emit_expr when the helpers are
-    // referenced; checked at the end of emit_module).
-    needs_str_concat: boolean,
-    needs_str_eq: boolean,
-    needs_str_print: boolean,
-    needs_str_cmp: boolean,
-    needs_str_read_line: boolean,
-    needs_i32_to_string: boolean,
-    needs_str_to_i32: boolean,
-    needs_eprint: boolean,
-    needs_str_search: boolean,
-    needs_args: boolean,
-    needs_arr_push: boolean,
-    needs_arr_slice: boolean,
-    needs_arr_i32_index_of: boolean,
-    needs_arr_reverse: boolean,
-    needs_arr_concat: boolean,
-    needs_arr_str_index_of: boolean,
-    needs_arr_str_join: boolean,
-    needs_arr_i32_sum: boolean,
-    needs_arr_i32_min_max: boolean,
-    needs_arr_i32_product: boolean,
-    needs_str_chars: boolean,
-    needs_str_bytes: boolean,
-    needs_str_reverse: boolean,
-    needs_i32_pow: boolean
+    local_types: string[]
 }
 
 function new_state(): EmitState {
@@ -1263,44 +1242,19 @@ function new_state(): EmitState {
     var lcn: string[] = [];
     var fns: parser.FuncDecl[] = [];
     var lts: string[] = [];
+    var nd: string[] = [];
     return EmitState {
         out: "",
         label_n: 0,
         local_names: ns,
         in_function: false,
         string_lits: sl,
-        needs_print_int: false,
-        needs_read_int: false,
-        needs_heap: false,
+        needed: nd,
         struct_decls: [],
         loop_exit_labels: lex,
         loop_cont_labels: lcn,
         funcs: fns,
-        local_types: lts,
-        needs_str_concat: false,
-        needs_str_eq: false,
-        needs_str_print: false,
-        needs_str_cmp: false,
-        needs_str_read_line: false,
-        needs_i32_to_string: false,
-        needs_str_to_i32: false,
-        needs_eprint: false,
-        needs_str_search: false,
-        needs_args: false,
-        needs_arr_push: false,
-        needs_arr_slice: false,
-        needs_arr_i32_index_of: false,
-        needs_arr_reverse: false,
-        needs_arr_concat: false,
-        needs_arr_str_index_of: false,
-        needs_arr_str_join: false,
-        needs_arr_i32_sum: false,
-        needs_arr_i32_min_max: false,
-        needs_arr_i32_product: false,
-        needs_str_chars: false,
-        needs_str_bytes: false,
-        needs_str_reverse: false,
-        needs_i32_pow: false
+        local_types: lts
     };
 }
 
@@ -1375,11 +1329,31 @@ function (s: EmitState) leave_function(): EmitState {
     return EmitState { ...s, in_function: false };
 }
 
-// mark_print_int flips the "this module needs the print_int
-// helper" flag. emit_module checks it after the body emit and
-// appends the __fern_print_int label + body if true.
+// need records that this module references the named runtime
+// helper, so emit_module appends its body. Idempotent — the
+// `needed` set carries each name once. The mark_* wrappers below
+// are thin aliases that also pull in a helper's dependencies
+// (e.g. anything heap-backed also needs "heap").
+function (s: EmitState) need(name: string): EmitState {
+    if (s.has_need(name)) { return s; }
+    return EmitState { ...s, needed: s.needed.push(name) };
+}
+
+// has_need reports whether need(name) was called — the gate
+// emit_module uses to decide which helper bodies to append.
+function (s: EmitState) has_need(name: string): boolean {
+    var i: i32 = 0;
+    while (i < s.needed.len()) {
+        if (s.needed[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// mark_print_int records that this module needs the print_int
+// helper. emit_module appends the __fern_print_int body when set.
 function (s: EmitState) mark_print_int(): EmitState {
-    return EmitState { ...s, needs_print_int: true };
+    return s.need("print_int");
 }
 
 // mark_heap flips the "this module needs the heap allocator"
@@ -1388,111 +1362,111 @@ function (s: EmitState) mark_print_int(): EmitState {
 // when true. Used by struct literals + array literals once the
 // asm backend grows real heap-backed value codegen.
 function (s: EmitState) mark_heap(): EmitState {
-    return EmitState { ...s, needs_heap: true };
+    return s.need("heap");
 }
 
 function (s: EmitState) mark_str_concat(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_concat: true };
+    return s.need("heap").need("str_concat");
 }
 
 function (s: EmitState) mark_str_eq(): EmitState {
-    return EmitState { ...s, needs_str_eq: true };
+    return s.need("str_eq");
 }
 
 function (s: EmitState) mark_str_print(): EmitState {
-    return EmitState { ...s, needs_str_print: true };
+    return s.need("str_print");
 }
 
 function (s: EmitState) mark_str_cmp(): EmitState {
-    return EmitState { ...s, needs_str_cmp: true };
+    return s.need("str_cmp");
 }
 
 function (s: EmitState) mark_str_read_line(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_read_line: true };
+    return s.need("heap").need("str_read_line");
 }
 
 function (s: EmitState) mark_i32_to_string(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_i32_to_string: true };
+    return s.need("heap").need("i32_to_string");
 }
 
 function (s: EmitState) mark_str_to_i32(): EmitState {
-    return EmitState { ...s, needs_str_to_i32: true };
+    return s.need("str_to_i32");
 }
 
 function (s: EmitState) mark_eprint(): EmitState {
-    return EmitState { ...s, needs_eprint: true };
+    return s.need("eprint");
 }
 
 function (s: EmitState) mark_str_search(): EmitState {
-    return EmitState { ...s, needs_str_search: true };
+    return s.need("str_search");
 }
 
 function (s: EmitState) mark_args(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_args: true };
+    return s.need("heap").need("args");
 }
 
 // mark_arr_push: signals that the module needs the
 // __fern_arr_push runtime helper.
 function (s: EmitState) mark_arr_push(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_arr_push: true };
+    return s.need("heap").need("arr_push");
 }
 
 function (s: EmitState) mark_arr_slice(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_arr_slice: true };
+    return s.need("heap").need("arr_slice");
 }
 
 function (s: EmitState) mark_arr_i32_index_of(): EmitState {
-    return EmitState { ...s, needs_arr_i32_index_of: true };
+    return s.need("arr_i32_index_of");
 }
 
 function (s: EmitState) mark_arr_reverse(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_arr_reverse: true };
+    return s.need("heap").need("arr_reverse");
 }
 
 function (s: EmitState) mark_arr_concat(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_arr_concat: true };
+    return s.need("heap").need("arr_concat");
 }
 
 function (s: EmitState) mark_arr_str_index_of(): EmitState {
-    return EmitState { ...s, needs_str_eq: true, needs_arr_str_index_of: true };
+    return s.need("str_eq").need("arr_str_index_of");
 }
 
 function (s: EmitState) mark_arr_str_join(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_concat: true, needs_arr_str_join: true };
+    return s.need("heap").need("str_concat").need("arr_str_join");
 }
 
 function (s: EmitState) mark_arr_i32_sum(): EmitState {
-    return EmitState { ...s, needs_arr_i32_sum: true };
+    return s.need("arr_i32_sum");
 }
 
 function (s: EmitState) mark_arr_i32_min_max(): EmitState {
-    return EmitState { ...s, needs_arr_i32_min_max: true };
+    return s.need("arr_i32_min_max");
 }
 
 function (s: EmitState) mark_arr_i32_product(): EmitState {
-    return EmitState { ...s, needs_arr_i32_product: true };
+    return s.need("arr_i32_product");
 }
 
 function (s: EmitState) mark_str_chars(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_chars: true };
+    return s.need("heap").need("str_chars");
 }
 
 function (s: EmitState) mark_str_bytes(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_bytes: true };
+    return s.need("heap").need("str_bytes");
 }
 
 function (s: EmitState) mark_str_reverse(): EmitState {
-    return EmitState { ...s, needs_heap: true, needs_str_reverse: true };
+    return s.need("heap").need("str_reverse");
 }
 
 function (s: EmitState) mark_i32_pow(): EmitState {
-    return EmitState { ...s, needs_i32_pow: true };
+    return s.need("i32_pow");
 }
 
 // mark_read_int flips the "this module needs the read_int
 // helper" flag. Companion to mark_print_int.
 function (s: EmitState) mark_read_int(): EmitState {
-    return EmitState { ...s, needs_read_int: true };
+    return s.need("read_int");
 }
 
 // add_string_lit appends the literal to the pool and returns
@@ -5356,7 +5330,7 @@ pub function emit_module(mod: parser.Module): string {
     // If args_count() / arg_at() were used, save argc + argv
     // from the initial stack BEFORE any push (the kernel
     // places argc at the top of the stack on entry).
-    if (s.needs_args) {
+    if (s.has_need("args")) {
         s = s.write("    movq (%rsp), %rax\n");
         s = s.write("    movq %rax, __fern_argc(%rip)\n");
         s = s.write("    leaq 8(%rsp), %rax\n");
@@ -5367,7 +5341,7 @@ pub function emit_module(mod: parser.Module): string {
     // rsp+8 with argc+1 slots incl. the NULL). Gated on needs_heap —
     // the env() runtime helper allocates, so it only links when the
     // heap is present, and any program calling env() marks the heap.
-    if (s.needs_heap) {
+    if (s.has_need("heap")) {
         s = s.write("    movq (%rsp), %rax\n");            // argc
         s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");   // envp base
         s = s.write("    movq %rax, __fern_envp(%rip)\n");
@@ -5402,7 +5376,7 @@ pub function emit_module(mod: parser.Module): string {
     // Converts the i64 in %rdi to decimal text in a stack buffer
     // and writes it to stdout. Handles zero, positive, and
     // negative values (prepending `-`).
-    if (s.needs_print_int) {
+    if (s.has_need("print_int")) {
         s = s.write("__fern_print_int:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -5523,7 +5497,7 @@ pub function emit_module(mod: parser.Module): string {
     // %rax. Stops at the first non-digit (including newline /
     // EOF). Skips leading whitespace not implemented — input
     // is expected to start with the digits / minus.
-    if (s.needs_read_int) {
+    if (s.has_need("read_int")) {
         s = s.write("__fern_read_int:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -5572,7 +5546,7 @@ pub function emit_module(mod: parser.Module): string {
     // newline — `write` is the no-newline output builtin; the Go
     // backend's `print` does add one, so the bootstrap driver uses
     // `write` to keep the self-hosted output byte-identical.)
-    if (s.needs_str_print) {
+    if (s.has_need("str_print")) {
         s = s.write("__fern_print_str:\n");
         s = s.write("    movq (%rdi), %rsi\n");
         s = s.write("    movq 8(%rdi), %rdx\n");
@@ -5586,7 +5560,7 @@ pub function emit_module(mod: parser.Module): string {
     // then allocates a 16-byte box pointing at it. Returns
     // box ptr in %rax. Uses callee-saved registers to survive
     // the alloc calls.
-    if (s.needs_str_concat) {
+    if (s.has_need("str_concat")) {
         s = s.write("__fern_str_concat:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -5646,7 +5620,7 @@ pub function emit_module(mod: parser.Module): string {
     }
     // __fern_str_eq: %rdi = box A, %rsi = box B. Returns 1 in
     // %rax if both have the same length and bytes, else 0.
-    if (s.needs_str_eq) {
+    if (s.has_need("str_eq")) {
         s = s.write("__fern_str_eq:\n");
         s = s.write("    movq 8(%rdi), %rcx\n");
         s = s.write("    cmpq 8(%rsi), %rcx\n");
@@ -5674,7 +5648,7 @@ pub function emit_module(mod: parser.Module): string {
     // __fern_str_cmp: %rdi = box A, %rsi = box B. Returns
     // signed i64 in %rax: <0 if A < B, 0 if equal, >0 if A > B.
     // Lexicographic byte compare with length tiebreak.
-    if (s.needs_str_cmp) {
+    if (s.has_need("str_cmp")) {
         s = s.write("__fern_str_cmp:\n");
         s = s.write("    movq 8(%rdi), %rcx\n");    // lenA
         s = s.write("    movq 8(%rsi), %rdx\n");    // lenB
@@ -5712,7 +5686,7 @@ pub function emit_module(mod: parser.Module): string {
     // returns the box ptr in %rax. The data_ptr points at the
     // same heap region (the buf bytes up to the newline). On
     // EOF the box has len = bytes_read with no '\n' adjustment.
-    if (s.needs_str_read_line) {
+    if (s.has_need("str_read_line")) {
         s = s.write("__fern_read_line:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -5803,7 +5777,7 @@ pub function emit_module(mod: parser.Module): string {
     // (with a leading `-`). Mirrors __fern_print_int's digit
     // emission but writes into a heap buffer instead of
     // syscalling write.
-    if (s.needs_i32_to_string) {
+    if (s.has_need("i32_to_string")) {
         s = s.write("__fern_i32_to_string:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -5866,7 +5840,7 @@ pub function emit_module(mod: parser.Module): string {
     // in %rax. Handles optional leading '-', then decimal
     // digits; stops at first non-digit (including newline).
     // Empty box → 0.
-    if (s.needs_str_to_i32) {
+    if (s.has_need("str_to_i32")) {
         s = s.write("__fern_str_to_i32:\n");
         s = s.write("    movq (%rdi), %rcx\n");      // data ptr
         s = s.write("    movq 8(%rdi), %r8\n");      // len
@@ -5903,7 +5877,7 @@ pub function emit_module(mod: parser.Module): string {
     }
     // __fern_eprint_str: %rdi = string box ptr. Loads box.data
     // + box.len, issues a write(2, ptr, len) — stderr.
-    if (s.needs_eprint) {
+    if (s.has_need("eprint")) {
         s = s.write("__fern_eprint_str:\n");
         s = s.write("    movq (%rdi), %rsi\n");
         s = s.write("    movq 8(%rdi), %rdx\n");
@@ -5918,7 +5892,7 @@ pub function emit_module(mod: parser.Module): string {
     // __fern_str_index_of: %rdi = haystack box, %rsi = needle.
     // Returns the first byte offset where needle matches, or
     // -1 if not found. Empty needle returns 0.
-    if (s.needs_str_search) {
+    if (s.has_need("str_search")) {
         s = s.write("__fern_str_starts_with:\n");
         s = s.write("    movq 8(%rsi), %rcx\n");      // lenP
         s = s.write("    movq 8(%rdi), %rax\n");      // lenS
@@ -6585,7 +6559,7 @@ pub function emit_module(mod: parser.Module): string {
     // shape-name label. The helper's own add_string_lit dedups to this
     // slot; without the early intern the label would be undefined for
     // programs that never mention stat() themselves.
-    if (s.needs_heap) {
+    if (s.has_need("heap")) {
         var fsPre: StringLitOut = add_string_lit(s, "FileStat");
         s = fsPre.state;
         var prPre: StringLitOut = add_string_lit(s, "ProcessResult");
@@ -6608,7 +6582,7 @@ pub function emit_module(mod: parser.Module): string {
     // pointer starts at `__fern_heap` and advances by `size`
     // each `__fern_alloc(size)` call. No deallocation — fine
     // for the small validation programs that exercise structs.
-    if (s.needs_heap) {
+    if (s.has_need("heap")) {
         var heap_size: string = "1073741824";   // 1 GiB
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
@@ -8303,7 +8277,7 @@ pub function emit_module(mod: parser.Module): string {
         // Gated on (arr_push && str_eq) — both are marked at every map
         // op, so the gate is true exactly when maps (or both helpers)
         // are used; the runtimes' deps are then guaranteed present.
-        if (s.needs_arr_push && s.needs_str_eq) {
+        if (s.has_need("arr_push") && s.has_need("str_eq")) {
 
         // __fern_map_new(%rdi = capacity hint, ignored) → empty map box.
         s = s.write(".globl __fern_map_new\n");
@@ -8599,7 +8573,7 @@ pub function emit_module(mod: parser.Module): string {
     // Command-line args. Saved by _start before %rbp push.
     // __fern_arg_at: %rdi = i32 index → string box of argv[i].
     // Strlen-walks the C-style null-terminated argv entry.
-    if (s.needs_args) {
+    if (s.has_need("args")) {
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_argc: .quad 0\n");
@@ -8675,7 +8649,7 @@ pub function emit_module(mod: parser.Module): string {
     // and return the new pointer. Replaces the old fresh-copy-every-
     // push runtime, which was O(N²) and exhausted the heap when the
     // self-hosted compiler tokenised its own ~100k-token source.
-    if (s.needs_arr_push) {
+    if (s.has_need("arr_push")) {
         s = s.write("__fern_arr_push:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -8745,7 +8719,7 @@ pub function emit_module(mod: parser.Module): string {
     // the ExprArray emit: [len: 8, e0: 8, …]. Each element
     // is an 8-byte payload — i32 zero-extended or string-
     // box ptr.
-    if (s.needs_arr_slice) {
+    if (s.has_need("arr_slice")) {
         s = s.write("__fern_arr_slice:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -8792,7 +8766,7 @@ pub function emit_module(mod: parser.Module): string {
     // __fern_arr_concat: %rdi = arr A, %rsi = arr B. Returns a
     // fresh array containing A's elements followed by B's. Works
     // on any 8-byte-payload array.
-    if (s.needs_arr_concat) {
+    if (s.has_need("arr_concat")) {
         s = s.write("__fern_arr_concat:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -8852,7 +8826,7 @@ pub function emit_module(mod: parser.Module): string {
     // __fern_arr_reverse: %rdi = src arr ptr. Returns fresh
     // array with elements in opposite order. Works on any
     // 8-byte-payload array (i32[] or string[]).
-    if (s.needs_arr_reverse) {
+    if (s.has_need("arr_reverse")) {
         s = s.write("__fern_arr_reverse:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -8894,7 +8868,7 @@ pub function emit_module(mod: parser.Module): string {
     // scratch without saving), so the loop counter `i` lives
     // in a stack slot at -8(%rbp) and gets reloaded around
     // each concat call.
-    if (s.needs_arr_str_join) {
+    if (s.has_need("arr_str_join")) {
         s = s.write("__fern_arr_str_join:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -8950,7 +8924,7 @@ pub function emit_module(mod: parser.Module): string {
     // Returns %rax = smallest element.
     // __fern_arr_i32_max: same but largest. Both leaf helpers.
     // UB if arr is empty.
-    if (s.needs_arr_i32_min_max) {
+    if (s.has_need("arr_i32_min_max")) {
         s = s.write("__fern_arr_i32_min:\n");
         s = s.write("    movq (%rdi), %rcx\n");      // len
         s = s.write("    movq 8(%rdi), %rax\n");     // best = arr[0]
@@ -8988,7 +8962,7 @@ pub function emit_module(mod: parser.Module): string {
     // %rax = base^exp. Negative exp returns 1 (UB-ish, but
     // matches the language's no-runtime-check stance —
     // integer pow with negative exp is undefined for i32).
-    if (s.needs_i32_pow) {
+    if (s.has_need("i32_pow")) {
         s = s.write("__fern_i32_pow:\n");
         s = s.write("    movq $1, %rax\n");        // result
         s = s.write(".Lpow_loop:\n");
@@ -9002,7 +8976,7 @@ pub function emit_module(mod: parser.Module): string {
     }
     // __fern_str_reverse: %rdi = src box. Returns %rax =
     // new string box with bytes in reverse order.
-    if (s.needs_str_reverse) {
+    if (s.has_need("str_reverse")) {
         s = s.write("__fern_str_reverse:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -9044,7 +9018,7 @@ pub function emit_module(mod: parser.Module): string {
     // __fern_str_bytes: %rdi = source string box. Returns
     // %rax = i32[] of byte values (each zero-extended to 8
     // bytes in the array's uniform 8-byte slot).
-    if (s.needs_str_bytes) {
+    if (s.has_need("str_bytes")) {
         s = s.write("__fern_str_bytes:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -9086,7 +9060,7 @@ pub function emit_module(mod: parser.Module): string {
     // %rax = string[] of 1-byte string boxes. Each box reuses
     // the source's data pointer at the appropriate offset
     // (no per-char byte alloc) and length 1.
-    if (s.needs_str_chars) {
+    if (s.has_need("str_chars")) {
         s = s.write("__fern_str_chars:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -9141,7 +9115,7 @@ pub function emit_module(mod: parser.Module): string {
     // __fern_arr_i32_product: %rdi = i32-array ptr. Returns
     // %rax = product of all elements (1 if empty — matches
     // the mathematical empty-product identity). Leaf.
-    if (s.needs_arr_i32_product) {
+    if (s.has_need("arr_i32_product")) {
         s = s.write("__fern_arr_i32_product:\n");
         s = s.write("    movq (%rdi), %rcx\n");      // len
         s = s.write("    movq $1, %rax\n");          // product
@@ -9159,7 +9133,7 @@ pub function emit_module(mod: parser.Module): string {
     }
     // __fern_arr_i32_sum: %rdi = i32-array ptr. Returns %rax
     // = sum of all elements (0 if empty). Leaf — no frame.
-    if (s.needs_arr_i32_sum) {
+    if (s.has_need("arr_i32_sum")) {
         s = s.write("__fern_arr_i32_sum:\n");
         s = s.write("    movq (%rdi), %rcx\n");      // len
         s = s.write("    movq $0, %rax\n");          // sum
@@ -9178,7 +9152,7 @@ pub function emit_module(mod: parser.Module): string {
     // __fern_arr_str_index_of: %rdi = string-array ptr,
     // %rsi = target string-box ptr. Returns %rax = first index
     // where __fern_str_eq(arr[i], target) is true, or -1.
-    if (s.needs_arr_str_index_of) {
+    if (s.has_need("arr_str_index_of")) {
         s = s.write("__fern_arr_str_index_of:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -9221,7 +9195,7 @@ pub function emit_module(mod: parser.Module): string {
     }
     // __fern_arr_i32_index_of: %rdi = arr ptr, %rsi = target val.
     // Returns %rax = first index where arr[i] == val, or -1.
-    if (s.needs_arr_i32_index_of) {
+    if (s.has_need("arr_i32_index_of")) {
         s = s.write("__fern_arr_i32_index_of:\n");
         s = s.write("    movq (%rdi), %rdx\n");      // len
         s = s.write("    movq $0, %rcx\n");          // i
