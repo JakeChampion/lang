@@ -647,13 +647,58 @@ same code(s) the Go checker does — restricted to
   on missing language features — all four have since shipped (E040 via the
   `type_param_count` / call-type-arg parser work; E015/E027 with the
   multi-binding + `when`-guard parser support; E022's `let else` as a
-  parser desugar surfacing E035 today). The genuinely-remaining codes are
-  E025 (switch-on-float — the parser desugars `switch` to if/else, so the
-  float-scrutinee shape is lost), E044 (typed closure captures), E023
-  (unknown-enum scrutinee), and E031/E032/E045/E053 — each needing a
+  parser desugar surfacing E035 today). E031 (match/if-expression arm-type
+  unification) has also since shipped — see Slice 70 below: the value
+  match/if desugars to an IIFE, but the checker now recognises that shape
+  and unifies the arm types. The genuinely-remaining codes are E025
+  (switch-on-float — the parser desugars `switch` to if/else, so the
+  float-scrutinee shape is lost), E044 (typed closure captures — Go only
+  emits it for a captured `void`/generic-placeholder value, near-
+  unreachable), E023 (unknown-enum scrutinee — already surfaces as E035
+  here), E045 (map literal key/value types — the literal desugars to
+  `map_new().set()` calls, losing the shape, like E025), and E032 (`use`
+  binding inference) / E053 (`fip` allocation analysis) — each needing a
   language feature or analysis the self-host doesn't yet model end-to-end,
   not a checker-only rule. (E050/E051 owned-parameter move checking and
   E049 captured-reference reassignment are now done — see below.)
+- **Slice 70 (done): E031 — match/if-expression arm-type unification.** A
+  `match` / `if` used in VALUE position is desugared by the parser into an
+  immediately-invoked closure — `(function(): RT { <match|if with
+  returning arms> })()` — so the type system never saw a real
+  match/if-expression node and the arm-type consistency check (E031) was
+  missing. New passes (`mx_stmts` / `mx_expr`, scope-threaded like
+  `ret_diags`) recognise that IIFE shape (a 0-arg call of a 0-param lambda
+  whose body is a single `StmtMatch` / `StmtIf`), type each arm's result
+  expression — binding match-payload names via `variant_binding_type`, and
+  recursing an `else if` chain — and emit E031 when the arms aren't
+  mutually compatible. The compatibility predicate (`mx_arm_compatible`)
+  mirrors the Go checker's `unifyIfArms`: arms coexist when they're equal
+  (`type_eq`), assignable either way (empty-array vs typed array; a struct
+  that's a union member arm), both numeric (i32/f64 — the self-host
+  analogue of Go's polymorphic-numeric widening), element-wise-compatible
+  **tuples / arrays / maps** (recursive), or two struct values of the SAME
+  **enum** family. The enum-family rule is the subtle one and the reason it
+  isn't a trivial port: the Go checker types an enum variant constructor as
+  its ENUM type, so `A(1)` / `B("y")` of one `enum E` unify, whereas the
+  members of a struct-union (`type U = A | B`) keep their distinct struct
+  types and do NOT unify (Go E031). The self-host types BOTH as
+  `t_struct(name)`, so names are mapped back to their family via the user
+  `enum` decls (`mx_enum_of`) and the built-in enums (`mx_builtin_enum_of`
+  — Option / Result / JsonValue / IoError) but NOT via union aliases, so
+  union members correctly stay incompatible. Bare no-payload variants
+  (`None`, `Empty`) resolve to `unknown` here and are handled by the
+  unknown-skip (matching Go, which sees the compatible enum type); if any
+  arm types to `unknown` the whole check is skipped (a bad arm is its own
+  error — Go reports E001 there, not E031). This matches the native
+  checker on the discriminating cases — two unrelated structs, struct-union
+  members, and element-wise tuple/array mismatches all now fire E031, while
+  same-enum payload variants and Option/Result arms stay clean. Gated by 20
+  corpus cases (if/match scalar mismatches, else-if chains; numeric + bool
+  + same-struct + Option + enum-variant + nested-if + tuple compatible arms;
+  unrelated-struct / union-member / tuple-elem / array-elem mismatches;
+  same-enum-different-payload OK; an undefined arm → E001), all
+  cross-checked against the Go checker, plus an 18-shape false-positive
+  audit. Checker-only; checker.fern isn't in the fixpoint bundle.
 - **Slice 69 (done): enum variant payload bindings get their payload type
   (fixes an E038/E003 false positive).** A payload-bearing enum variant
   `V(T)` is lowered by the parser to a struct `V` carrying a single marker
