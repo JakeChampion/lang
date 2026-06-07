@@ -211,8 +211,11 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"concat-len", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; var c = a + b; return c.len(); }", 6},
 		{"concat-index", "function main(): i32 { var a = \"X\"; var b = \"YZ\"; var c = a + b; return c[2]; }", 90},
 		{"concat-chained", "function main(): i32 { var s = \"a\" + \"bc\" + \"def\"; return s.len(); }", 6},
-		// Still outside the subset → build_func bails (200).
-		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
+		// Still outside the subset → build_func bails (200). (Float locals now
+		// build through SSA — see TestSelfHostSSAEmitX86_64 — so a struct spread
+		// `...base`, which build_func still declines, is the out-of-subset case
+		// here; the i32 SSA interpreter only evals the integer/heap subset.)
+		{"spread-bails", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = P { ...p }; return q.x; }", 200},
 	}
 
 	run := func(t *testing.T, src string, args ...string) int {

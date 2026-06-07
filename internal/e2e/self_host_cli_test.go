@@ -198,12 +198,14 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	})
 
 	t.Run("ssa-fallback", func(t *testing.T) {
-		// A program outside the SSA subset (a float local) falls back to the
-		// AST emitter transparently: the default output is byte-identical to
-		// the -no-ssa (AST) output, so the default never emits wrong code for
-		// programs SSA can't yet lower.
+		// A program outside the SSA subset falls back to the AST emitter
+		// transparently: the default output is byte-identical to the -no-ssa
+		// (AST) output, so the default never emits wrong code for programs SSA
+		// can't yet lower. A float *return* crosses a call boundary (the XMM
+		// ABI isn't wired into the SSA backends), so build_func declines it —
+		// unlike a float *local*, which now lowers through SSA on x86-64.
 		srcPath := filepath.Join(dir, "fallback.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var x = 1.5; return 5; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("function half(x: i32): f64 { return (x as f64) / 2.0; }\nfunction main(): i32 { return 5; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		def, code1 := runDriver(t, srcPath)
