@@ -404,6 +404,11 @@ function main(): i32 {
     if (bj.len() != 4 || bj[0] != 72 || bj[1] != 15 || bj[2] != 182 || bj[3] != 200) { return 64; }
     var bk: i32[] = x86_cmpb_imm_reg8([], 1, 46); // cmpb $46,%cl -> 80 F9 2E
     if (bk.len() != 3 || bk[0] != 128 || bk[1] != 249 || bk[2] != 46) { return 65; }
+    // setCC (slice 2m): setl %al -> 0F 9C C0; setge %al -> 0F 9D C0.
+    var bl: i32[] = x86_setcc_reg8([], 156, 0);
+    if (bl.len() != 3 || bl[0] != 15 || bl[1] != 156 || bl[2] != 192) { return 66; }
+    var bm: i32[] = x86_setcc_reg8([], 157, 1); // setge %cl -> 0F 9D C1
+    if (bm[1] != 157 || bm[2] != 193) { return 67; }
     return 0;
 }
 `

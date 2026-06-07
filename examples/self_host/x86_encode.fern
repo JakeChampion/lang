@@ -445,6 +445,21 @@ function x86_imul_r64_r64_imm32(buf: i32[], dst: i32, src: i32, imm: i32): i32[]
     return x86_le32(buf, imm);
 }
 
+// x86_setcc_reg8: `set<cc> <reg8>` (0F 90+cc /0) — store the condition
+// flag as a 0/1 byte. `op` is the second opcode byte (e.g. 0x9C setl).
+// reg8 spl..dil (4..7) need a REX to disambiguate from ah..bh.
+function x86_setcc_reg8(buf: i32[], op: i32, reg8: i32): i32[] {
+    var rex: i32 = x86_rex(0, 0, 0, reg8);
+    var force: boolean = (reg8 >= 4 && reg8 <= 7);
+    if (rex != 64 || force) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(op);
+    buf = buf.push(x86_modrm(3, 0, reg8));
+    return buf;
+}
+
 // x86_alu_load_r64: `<op> <dst>, mem` with a memory *source* — the
 // load-form ALU (add 0x03, sub 0x2B, cmp 0x3B; reg=dst, r/m=mem).
 function x86_alu_load_r64(buf: i32[], opcode: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
