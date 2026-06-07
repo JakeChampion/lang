@@ -556,7 +556,7 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
     while (i < len_) {
         var cellPtr: usize = __load_ptr(entriesBase + i * entryStride + kvOffset);
         var s: string = cellPtr as string;
-        out = out.push(s);
+        out = out.append(s);
         i = i + 1;
     }
     // `out as usize` severs the escape analysis, so the rc pass drops

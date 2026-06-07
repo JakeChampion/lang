@@ -46,7 +46,7 @@ pub function mock_platform_new(): MockPlatform {
 // (immutable data structures): rebind the result —
 // `m = m.record(...)`.
 pub function (m: MockPlatform) record(name: string, args: string): MockPlatform {
-    return MockPlatform { ...m, calls: m.calls.push(MockCall { name: name, args: args }) };
+    return MockPlatform { ...m, calls: m.calls.append(MockCall { name: name, args: args }) };
 }
 
 // `(m: MockPlatform).call_count()` — number of calls

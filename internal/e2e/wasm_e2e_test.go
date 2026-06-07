@@ -3741,7 +3741,7 @@ func TestWASMClosureInLoopCapturesIterVar(t *testing.T) {
     while (i < 3) {
         var ic: i32 = i;
         function f(x: i32): i32 { return x + ic; }
-        arr = arr.push(f);
+        arr = arr.append(f);
         i = i + 1;
     }
     return arr[0](10) + arr[1](10) + arr[2](10);
@@ -4211,13 +4211,13 @@ function main(): i32 {
 	}
 }
 
-// `arr.push(v)` is a generic method on T[] that lowers to the
+// `arr.append(v)` is a generic method on T[] that lowers to the
 // per-stride append helper. For 4-byte-stride T (i32, f32, all
 // pointer / heap-ref types: string, struct, enum, T[]) it routes
 // to `__array_append_string` at codegen — identical wat shape as
 // the older `__array_append_*` direct calls, just without users
 // having to know the per-T helper name.
-// 8-byte int stride: arr.push(v) on i64[] / u64[] routes to the
+// 8-byte int stride: arr.append(v) on i64[] / u64[] routes to the
 // wat-side __array_append_i64 helper. The header layout is
 // length-prefix (4 bytes) + 8-byte elements, which means
 // elements are 4-byte-aligned but not 8-byte-aligned — wasm
@@ -4226,8 +4226,8 @@ function main(): i32 {
 func TestWASMArrayPushI64(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i64[] = [10i64, 20i64];
-    xs = xs.push(30i64);
-    xs = xs.push(40i64);
+    xs = xs.append(30i64);
+    xs = xs.append(40i64);
     if (xs[0] != 10i64) { return 1; }
     if (xs[3] != 40i64) { return 2; }
     if ((xs.len() as i64) != 4i64) { return 3; }
@@ -4238,15 +4238,15 @@ func TestWASMArrayPushI64(t *testing.T) {
 	}
 }
 
-// 8-byte float stride: arr.push(v) on f64[] mirrors the i64
+// 8-byte float stride: arr.append(v) on f64[] mirrors the i64
 // path, calling __array_append_f64 with f64.store under the
 // hood. Confirms the f64 lang-prelude helper composes the same
 // way the i64 sibling does.
 func TestWASMArrayPushF64(t *testing.T) {
 	src := `function main(): i32 {
     var xs: f64[] = [1.5f64, 2.5f64];
-    xs = xs.push(3.5f64);
-    xs = xs.push(4.5f64);
+    xs = xs.append(3.5f64);
+    xs = xs.append(4.5f64);
     if (xs[3] != 4.5f64) { return 1; }
     if (xs.len() != 4) { return 2; }
     return 0;
@@ -4256,15 +4256,15 @@ func TestWASMArrayPushF64(t *testing.T) {
 	}
 }
 
-// 1-byte stride: u8[].push(v) routes to __array_append_u8.
+// 1-byte stride: u8[].append(v) routes to __array_append_u8.
 // Verifies bytes are stored back-to-back (no padding) and read
 // back via the array indexer with the right zero-extension.
 func TestWASMArrayPushU8(t *testing.T) {
 	src := `function main(): i32 {
     var xs: u8[] = [];
-    xs = xs.push(10u8);
-    xs = xs.push(20u8);
-    xs = xs.push(255u8);
+    xs = xs.append(10u8);
+    xs = xs.append(20u8);
+    xs = xs.append(255u8);
     if (xs[0] != 10u8) { return 1; }
     if (xs[2] != 255u8) { return 2; }
     return xs.len();
@@ -4274,14 +4274,14 @@ func TestWASMArrayPushU8(t *testing.T) {
 	}
 }
 
-// 2-byte stride: u16[].push(v) routes to __array_append_u16.
+// 2-byte stride: u16[].append(v) routes to __array_append_u16.
 // Tests a value that requires more than 8 bits (300) to confirm
 // the 16-bit store path actually preserves the high bits.
 func TestWASMArrayPushU16(t *testing.T) {
 	src := `function main(): i32 {
     var xs: u16[] = [];
-    xs = xs.push(300u16);
-    xs = xs.push(65535u16);
+    xs = xs.append(300u16);
+    xs = xs.append(65535u16);
     if (xs[0] != 300u16) { return 1; }
     if (xs[1] != 65535u16) { return 2; }
     return xs.len();
@@ -4296,7 +4296,7 @@ func TestWASMArrayPushU16(t *testing.T) {
 func TestWASMArrayPushI64EmptyStart(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i64[] = [];
-    xs = xs.push(7i64);
+    xs = xs.append(7i64);
     if (xs[0] != 7i64) { return 1; }
     return xs.len();
 }`
@@ -4308,8 +4308,8 @@ func TestWASMArrayPushI64EmptyStart(t *testing.T) {
 func TestWASMArrayPushI32(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [1, 2];
-    xs = xs.push(3);
-    xs = xs.push(4);
+    xs = xs.append(3);
+    xs = xs.append(4);
     if (xs[0] != 1) { return 1; }
     if (xs[3] != 4) { return 2; }
     return xs.len();
@@ -4325,8 +4325,8 @@ func TestWASMArrayPushEnum(t *testing.T) {
 	// push round-trip.
 	src := `function main(): i32 {
     var xs: JsonValue[] = [];
-    xs = xs.push(JString("a"));
-    xs = xs.push(JString("bb"));
+    xs = xs.append(JString("a"));
+    xs = xs.append(JString("bb"));
     return match (xs[1]) {
         JString(s) => s.len(),
         _          => 0 - 1
@@ -4340,8 +4340,8 @@ func TestWASMArrayPushEnum(t *testing.T) {
 func TestWASMArrayPushString(t *testing.T) {
 	src := `function main(): i32 {
     var xs: string[] = ["a", "b"];
-    xs = xs.push("c");
-    xs = xs.push("d");
+    xs = xs.append("c");
+    xs = xs.append("d");
     return xs.len();
 }`
 	if got := runWasm(t, src); got != 4 {
@@ -4354,8 +4354,8 @@ func TestWASMArrayPushString(t *testing.T) {
 func TestWASMArrayPushStringValuesPreserved(t *testing.T) {
 	src := `function main(): i32 {
     var xs: string[] = [];
-    xs = xs.push("hello");
-    xs = xs.push("world");
+    xs = xs.append("hello");
+    xs = xs.append("world");
     if (xs[0] != "hello") { return 1; }
     if (xs[1] != "world") { return 2; }
     return 0;
@@ -12289,10 +12289,10 @@ function main(): i32 {
     // parse the inside of a component-type custom section so
     // anything goes for this structural test.
     var payload: u8[] = [];
-    payload = payload.push(116u8);   // 't' = 0x74
-    payload = payload.push(101u8);   // 'e' = 0x65
-    payload = payload.push(115u8);   // 's' = 0x73
-    payload = payload.push(116u8);   // 't' = 0x74
+    payload = payload.append(116u8);   // 't' = 0x74
+    payload = payload.append(101u8);   // 'e' = 0x65
+    payload = payload.append(115u8);   // 's' = 0x73
+    payload = payload.append(116u8);   // 't' = 0x74
 
     var comp: u8[] = component.put_component_header([]);
     comp = component.put_component_type_section(comp, payload);
@@ -16720,9 +16720,9 @@ func TestWASMRcDecOnOverwrite(t *testing.T) {
 func TestWASMArrayPushInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20];
-    xs = xs.push(30);
+    xs = xs.append(30);
     var addr_before: usize = xs as usize;
-    xs = xs.push(40);
+    xs = xs.append(40);
     var addr_after: usize = xs as usize;
     if (addr_before != addr_after) { return 1; }
     if (xs.len() != 4) { return 2; }
@@ -16740,9 +16740,9 @@ func TestWASMArrayPushInPlaceFastPath(t *testing.T) {
 func TestWASMArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20];
-    xs = xs.push(30);
+    xs = xs.append(30);
     var ys = xs;
-    ys = ys.push(40);
+    ys = ys.append(40);
     if (xs.len() != 3) { return 1; }
     if (xs[0] != 10) { return 2; }
     if (ys.len() != 4) { return 3; }

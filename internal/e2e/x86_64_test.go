@@ -3363,9 +3363,9 @@ function main(): i32 {
 func TestX86_64ArrayPushInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20];
-    xs = xs.push(30);
+    xs = xs.append(30);
     var addr_before: usize = xs as usize;
-    xs = xs.push(40);
+    xs = xs.append(40);
     var addr_after: usize = xs as usize;
     if (addr_before != addr_after) { return 1; }
     if (xs.len() != 4) { return 2; }
@@ -3383,9 +3383,9 @@ func TestX86_64ArrayPushInPlaceFastPath(t *testing.T) {
 func TestX86_64ArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20];
-    xs = xs.push(30);
+    xs = xs.append(30);
     var ys = xs;
-    ys = ys.push(40);
+    ys = ys.append(40);
     if (xs.len() != 3) { return 1; }
     if (xs[0] != 10) { return 2; }
     if (ys.len() != 4) { return 3; }

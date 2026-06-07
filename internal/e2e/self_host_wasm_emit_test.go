@@ -229,11 +229,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"arr-for-nested", "function main(): i32 { var a = [1, 2]; var b = [10, 20]; var s = 0; for x in a { for y in b { s = s + x * y; } } return s; }", 90, ""},
 		{"arr-index-assign", "function main(): i32 { var a = [1, 2, 3]; a[1] = 99; return a[1]; }", 99, ""},
 		{"arr-index-assign-sum", "function main(): i32 { var a = [0, 0, 0]; a[0] = 10; a[1] = 20; a[2] = 12; return a[0] + a[1] + a[2]; }", 42, ""},
-		{"arr-push-len", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.push(4); return a.len(); }", 4, ""},
-		{"arr-push-last", "function main(): i32 { var a: i32[] = [10, 20]; a = a.push(99); return a[2]; }", 99, ""},
-		{"arr-push-empty", "function main(): i32 { var a: i32[] = []; a = a.push(42); return a[0]; }", 42, ""},
-		{"arr-push-chain", "function main(): i32 { var a: i32[] = []; a = a.push(1); a = a.push(2); a = a.push(3); return a[0] + a[1] + a[2]; }", 6, ""},
-		{"arr-push-grow", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 10) { a = a.push(i); i = i + 1; } var s = 0; for x in a { s = s + x; } return s; }", 45, ""},
+		{"arr-push-len", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.append(4); return a.len(); }", 4, ""},
+		{"arr-push-last", "function main(): i32 { var a: i32[] = [10, 20]; a = a.append(99); return a[2]; }", 99, ""},
+		{"arr-push-empty", "function main(): i32 { var a: i32[] = []; a = a.append(42); return a[0]; }", 42, ""},
+		{"arr-push-chain", "function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return a[0] + a[1] + a[2]; }", 6, ""},
+		{"arr-push-grow", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 10) { a = a.append(i); i = i + 1; } var s = 0; for x in a { s = s + x; } return s; }", 45, ""},
 		// 64-bit-element arrays (i64[] / f64[]) use 8-byte element slots +
 		// i64/f64 load/store, so values above 2^31 round-trip (the 4-byte
 		// i32 slot would emit an out-of-range (i32.const …) and truncate).
@@ -242,12 +242,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"i64arr-literal-index-large", "function main(): i32 { var xs: i64[] = [5000000000, 42]; if (xs[0] == 5000000000) { return xs[1] as i32; } return 0; }", 42, ""},
 		{"i64arr-for-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98, ""},
 		{"i64arr-set-index-large", "function main(): i32 { var xs: i64[] = [1, 2, 3]; xs[1] = 5000000000; if (xs[1] == 5000000000) { return 7; } return 0; }", 7, ""},
-		{"i64arr-push-grow", "function main(): i32 { var xs: i64[] = [10]; xs = xs.push(20); xs = xs.push(30); var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 60, ""},
+		{"i64arr-push-grow", "function main(): i32 { var xs: i64[] = [10]; xs = xs.append(20); xs = xs.append(30); var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 60, ""},
 		{"i64arr-slice", "function main(): i32 { var xs: i64[] = [10, 20, 30, 40]; var ys = xs[1:3]; return (ys[0] + ys[1]) as i32; }", 50, ""},
 		{"i64arr-param", "function sum(xs: i64[]): i64 { var s: i64 = 0; for v in xs { s = s + v; } return s; } function main(): i32 { var xs: i64[] = [10, 20, 30]; return sum(xs) as i32; }", 60, ""},
 		{"f64arr-for-sum", "function main(): i32 { var xs: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; for v in xs { s = s + v; } return s as i32; }", 7, ""},
 		// i32 arrays must be unaffected by the wide-slot machinery.
-		{"i32arr-noregress-mix", "function main(): i32 { var xs: i32[] = [3, 5, 9]; xs = xs.push(11); var s = 0; for v in xs { s = s + v; } var ys = xs[1:3]; return s + ys[0]; }", 33, ""},
+		{"i32arr-noregress-mix", "function main(): i32 { var xs: i32[] = [3, 5, 9]; xs = xs.append(11); var s = 0; for v in xs { s = s + v; } var ys = xs[1:3]; return s + ys[0]; }", 33, ""},
 		// String arrays (string[]): literal, index, for-in, push, and
 		// element used in string contexts (needs element typing).
 		{"sarr-for-write", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; for s in xs { write(s); } return 0; }", 0, "abc"},
@@ -257,7 +257,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"sarr-elem-concat", "function main(): i32 { var xs = [\"foo\", \"bar\"]; write(xs[0] + xs[1]); return 0; }", 0, "foobar"},
 		{"sarr-for-concat", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; var acc = \"\"; for s in xs { acc = acc + s; } write(acc); return 0; }", 0, "abc"},
 		{"sarr-for-eq", "function main(): i32 { var xs = [\"x\", \"y\", \"z\"]; var n = 0; for s in xs { if (s == \"y\") { n = n + 1; } } return n; }", 1, ""},
-		{"sarr-push", "function main(): i32 { var xs: string[] = [\"a\"]; xs = xs.push(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
+		{"sarr-push", "function main(): i32 { var xs: string[] = [\"a\"]; xs = xs.append(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
 		{"sarr-param", "function first(xs: string[]): string { return xs[0]; } function main(): i32 { write(first([\"hello\", \"world\"])); return 0; }", 0, "hello"},
 		{"sarr-elem-method", "function main(): i32 { var xs = [\"abc\"]; write(xs[0].to_upper()); return 0; }", 0, "ABC"},
 		{"sarr-for-var-method", "function main(): i32 { var xs = [\"ab\", \"cd\"]; for s in xs { write(s.to_upper()); } return 0; }", 0, "ABCD"},
@@ -784,7 +784,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"const-shadowed-by-local", "const X: i32 = 5; function main(): i32 { var X: i32 = 99; print_int(X); return 0; }", 0, "99"},
 		// More combinations (all already worked; locked in as regressions).
 		{"continue-while", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 10) { i = i + 1; if (i % 2 == 0) { continue; } s = s + i; } print_int(s); return 0; }", 0, "25"},
-		{"push-loop", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 5) { xs = xs.push(i * i); i = i + 1; } var s: i32 = 0; for v in xs { s = s + v; } print_int(s); return 0; }", 0, "30"},
+		{"push-loop", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 5) { xs = xs.append(i * i); i = i + 1; } var s: i32 = 0; for v in xs { s = s + v; } print_int(s); return 0; }", 0, "30"},
 		{"nested-struct-method", "struct Inner { v: i32 } function (n: Inner) dbl(): i32 { return n.v * 2; } struct Outer { inner: Inner } function main(): i32 { var o = Outer { inner: Inner { v: 7 } }; print_int(o.inner.dbl()); return 0; }", 0, "14"},
 		{"wildcard-match", "function main(): i32 { var m = Map { 1: 10 }; match (m.get(2)) { Some(v) => { print_int(v); }, _ => { print_int(99); } } return 0; }", 0, "99"},
 		{"string-compare", "function main(): i32 { if (\"apple\" < \"banana\") { print_int(1); } if (\"zebra\" > \"ant\") { print_int(2); } return 0; }", 0, "12"},

@@ -1426,12 +1426,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// __method_Array_set) stay — the aliases resolve to them — so this
 	// only deletes the user-facing names, with zero IR change. `arr[i] = v`
 	// still lowers through __method_Array_set via the desugar; only the
-	// `arr.set(i, v)` *method* spelling is withdrawn (use `arr.with`).
-	// (`Array.push` is withdrawn in a follow-up slice.)
+	// `arr.set(i, v)` *method* spelling is withdrawn (use `arr.with`);
+	// `arr.push(x)` is withdrawn (use `arr.append`).
 	delete(c.info.Methods, "Map.set")
 	delete(c.info.Methods, "Map.delete")
 	delete(c.info.Methods, "Map.clear")
 	delete(c.info.Methods, "Array.set")
+	delete(c.info.Methods, "Array.push")
 	// `arr.len()` — like push, the IR intercepts the rewritten
 	// `__method_Array_len(arr)` call and inlines the [ptr - 4]
 	// length-prefix load. One generic signature covers every

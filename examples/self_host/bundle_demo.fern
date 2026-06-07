@@ -29,7 +29,7 @@ function main(): i32 {
     var emod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
 
     var loaded: flatten.LoadedModule[] = [];
-    loaded = loaded.push(flatten.LoadedModule { name: "a", mod: amod });
+    loaded = loaded.append(flatten.LoadedModule { name: "a", mod: amod });
 
     var merged: parser.Module = flatten.bundle(emod, loaded);
     print(asm.emit_module(merged));

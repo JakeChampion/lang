@@ -124,7 +124,7 @@ function main(): i32 {
 // rejects the concrete element type against the abstract `T[]`.
 //
 // The bug surfaced because `substituteExpr` had no `*ast.Assign`
-// case, so the `push` call inside `out = out.push(x)` (and the
+// case, so the `push` call inside `out = out.append(x)` (and the
 // whole RHS of any reassignment, e.g. inside a `for-in` loop body)
 // was never walked. Before the fix, monomorph.Run returned
 // "re-check failed (compiler bug): … expected T[], got i32[]".
@@ -137,7 +137,7 @@ func TestRunSubstitutesMethodCallTypeArgsInGenericBody(t *testing.T) {
 			name: "push on T[] inside for-in (map)",
 			src: `function map_arr[T, U](xs: T[], f: (T) => U): U[] {
     var out: U[] = [];
-    for x in xs { out = out.push(f(x)); }
+    for x in xs { out = out.append(f(x)); }
     return out;
 }
 function main(): i32 {
@@ -150,7 +150,7 @@ function main(): i32 {
 			name: "push-only generic body",
 			src: `function dup[T](xs: T[]): T[] {
     var out: T[] = [];
-    for x in xs { out = out.push(x); }
+    for x in xs { out = out.append(x); }
     return out;
 }
 function main(): i32 {

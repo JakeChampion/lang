@@ -98,13 +98,13 @@ function vm_map_method(m: VMap, name: string, argc: i32, stack: Value[], recv_id
             var nvs: Value[] = [];
             var nj: i32 = 0;
             while (nj < m.values.len()) {
-                if (nj == found_i) { nvs = nvs.push(sv); }
-                else { nvs = nvs.push(m.values[nj]); }
+                if (nj == found_i) { nvs = nvs.append(sv); }
+                else { nvs = nvs.append(m.values[nj]); }
                 nj = nj + 1;
             }
             result = VMap { keys: m.keys, values: nvs };
         } else {
-            result = VMap { keys: m.keys.push(sk), values: m.values.push(sv) };
+            result = VMap { keys: m.keys.append(sk), values: m.values.append(sv) };
         }
         did_handle = true;
     }
@@ -140,8 +140,8 @@ function vm_map_method(m: VMap, name: string, argc: i32, stack: Value[], recv_id
     }
     var ns: Value[] = [];
     var nsi: i32 = 0;
-    while (nsi < recv_idx) { ns = ns.push(stack[nsi]); nsi = nsi + 1; }
-    ns = ns.push(result);
+    while (nsi < recv_idx) { ns = ns.append(stack[nsi]); nsi = nsi + 1; }
+    ns = ns.append(result);
     return VMapMethodResult { stack: ns, handled: true };
 }
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
@@ -340,12 +340,12 @@ function (lt: LocalsTable) capture_idx_of(name: string): i32 {
 }
 
 function (lt: LocalsTable) bind(name: string): LocalsTable {
-    var ns: string[] = lt.names.push(name);
+    var ns: string[] = lt.names.append(name);
     return LocalsTable { names: ns, captures: lt.captures };
 }
 
 function (lt: LocalsTable) bind_capture(name: string): LocalsTable {
-    var cs: string[] = lt.captures.push(name);
+    var cs: string[] = lt.captures.append(name);
     return LocalsTable { names: lt.names, captures: cs };
 }
 
@@ -442,7 +442,7 @@ pub struct CompileResult { ops: Op[], lt: LocalsTable }
 // the stmt walker — they're not reads.
 function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { return acc.push(id.name); },
+        parser.ExprIdent(id) => { return acc.append(id.name); },
         parser.ExprNumber(_) => { return acc; },
         parser.ExprString(_) => { return acc; },
         parser.ExprBool(_) => { return acc; },
@@ -585,7 +585,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return acc.push(v.name); },
+        parser.StmtVar(v) => { return acc.append(v.name); },
         parser.StmtReturn(_) => { return acc; },
         parser.StmtExpr(_) => { return acc; },
         parser.StmtIf(i) => {
@@ -615,7 +615,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
             while (ai < m.arms.len()) {
                 match (m.arms[ai].pattern) {
                     parser.PatVariant(pv) => {
-                        if (pv.binding.len() > 0) { acc = acc.push(pv.binding); }
+                        if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
                     },
                     parser.PatWildcard(_) => { }
                 }
@@ -629,7 +629,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
             return acc;
         },
         parser.StmtFor(f) => {
-            acc = acc.push(f.var_name);
+            acc = acc.append(f.var_name);
             var i: i32 = 0;
             while (i < f.body.len()) {
                 acc = collect_bound_stmt(f.body[i], acc);
@@ -659,18 +659,18 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
     match (e) {
         parser.ExprNumber(n) => {
             if (n.is_float) {
-                ops = ops.push(op_push_float(digits_to_f64(n.text)));
+                ops = ops.append(op_push_float(digits_to_f64(n.text)));
             } else {
-                ops = ops.push(op_push_int(digits_to_i32(n.text)));
+                ops = ops.append(op_push_int(digits_to_i32(n.text)));
             }
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprBool(b) => {
-            ops = ops.push(op_push_bool(b.value));
+            ops = ops.append(op_push_bool(b.value));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprString(s) => {
-            ops = ops.push(op_push_str(s.value));
+            ops = ops.append(op_push_str(s.value));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprIdent(id) => {
@@ -680,18 +680,18 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             // through to the outer-scope read.
             var li: i32 = lt.idx_of(id.name);
             if (li >= 0) {
-                ops = ops.push(op_load(li));
+                ops = ops.append(op_load(li));
                 return CompileResult { ops: ops, lt: lt };
             }
             var ci: i32 = lt.capture_idx_of(id.name);
             if (ci >= 0) {
-                ops = ops.push(op_load_capture(ci));
+                ops = ops.append(op_load_capture(ci));
                 return CompileResult { ops: ops, lt: lt };
             }
             // Emit a sentinel push that the VM turns into a
             // VErr at runtime. Lower-cost than a separate
             // "compile error" channel.
-            ops = ops.push(op_push_str("__undef:" + id.name));
+            ops = ops.append(op_push_str("__undef:" + id.name));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprBinary(b) => {
@@ -699,13 +699,13 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = lr.ops; lt = lr.lt;
             var rr: CompileResult = compile_expr(b.right, ops, lt);
             ops = rr.ops; lt = rr.lt;
-            ops = ops.push(op_binary(b.op));
+            ops = ops.append(op_binary(b.op));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprUnary(u) => {
             var orr: CompileResult = compile_expr(u.operand, ops, lt);
             ops = orr.ops; lt = orr.lt;
-            ops = ops.push(op_unary(u.op));
+            ops = ops.append(op_unary(u.op));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprCall(c) => {
@@ -720,7 +720,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     if (id.name == "len" && c.args.len() == 1) {
                         var lar: CompileResult = compile_expr(c.args[0], ops, lt);
                         ops = lar.ops; lt = lar.lt;
-                        ops = ops.push(op_len());
+                        ops = ops.append(op_len());
                         return CompileResult { ops: ops, lt: lt };
                     }
                     // If the ident is a local var (idx_of >= 0)
@@ -728,25 +728,25 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     // call: load the value (VFunc), then args,
                     // then OpCallClosure.
                     if (lt.idx_of(id.name) >= 0) {
-                        ops = ops.push(op_load(lt.idx_of(id.name)));
+                        ops = ops.append(op_load(lt.idx_of(id.name)));
                         var cai: i32 = 0;
                         while (cai < c.args.len()) {
                             var car: CompileResult = compile_expr(c.args[cai], ops, lt);
                             ops = car.ops; lt = car.lt;
                             cai = cai + 1;
                         }
-                        ops = ops.push(op_call_closure(c.args.len()));
+                        ops = ops.append(op_call_closure(c.args.len()));
                         return CompileResult { ops: ops, lt: lt };
                     }
                     if (lt.capture_idx_of(id.name) >= 0) {
-                        ops = ops.push(op_load_capture(lt.capture_idx_of(id.name)));
+                        ops = ops.append(op_load_capture(lt.capture_idx_of(id.name)));
                         var cpai: i32 = 0;
                         while (cpai < c.args.len()) {
                             var cpar: CompileResult = compile_expr(c.args[cpai], ops, lt);
                             ops = cpar.ops; lt = cpar.lt;
                             cpai = cpai + 1;
                         }
-                        ops = ops.push(op_call_closure(c.args.len()));
+                        ops = ops.append(op_call_closure(c.args.len()));
                         return CompileResult { ops: ops, lt: lt };
                     }
                     var ai: i32 = 0;
@@ -755,7 +755,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                         ops = ar.ops; lt = ar.lt;
                         ai = ai + 1;
                     }
-                    ops = ops.push(op_call(id.name, c.args.len()));
+                    ops = ops.append(op_call(id.name, c.args.len()));
                     return CompileResult { ops: ops, lt: lt };
                 },
                 parser.ExprFieldAccess(fa) => {
@@ -783,7 +783,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                             ops = qcar.ops; lt = qcar.lt;
                             qcai = qcai + 1;
                         }
-                        ops = ops.push(op_call(ns_hint + "." + fa.field, c.args.len()));
+                        ops = ops.append(op_call(ns_hint + "." + fa.field, c.args.len()));
                         return CompileResult { ops: ops, lt: lt };
                     }
                     // Receiver onto stack first, then args.
@@ -795,7 +795,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                         ops = mr.ops; lt = mr.lt;
                         mi = mi + 1;
                     }
-                    ops = ops.push(op_call_method(fa.field, c.args.len()));
+                    ops = ops.append(op_call_method(fa.field, c.args.len()));
                     return CompileResult { ops: ops, lt: lt };
                 },
                 _ => {
@@ -810,7 +810,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                         ops = car2.ops; lt = car2.lt;
                         cai2 = cai2 + 1;
                     }
-                    ops = ops.push(op_call_closure(c.args.len()));
+                    ops = ops.append(op_call_closure(c.args.len()));
                     return CompileResult { ops: ops, lt: lt };
                 }
             }
@@ -823,7 +823,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                 ops = tr.ops; lt = tr.lt;
                 ti = ti + 1;
             }
-            ops = ops.push(op_make_tuple(t.elements.len()));
+            ops = ops.append(op_make_tuple(t.elements.len()));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprArray(a) => {
@@ -833,7 +833,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                 ops = er.ops; lt = er.lt;
                 i = i + 1;
             }
-            ops = ops.push(op_make_array(a.elements.len()));
+            ops = ops.append(op_make_array(a.elements.len()));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprIndex(x) => {
@@ -841,7 +841,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = ar.ops; lt = ar.lt;
             var ir: CompileResult = compile_expr(x.index, ops, lt);
             ops = ir.ops; lt = ir.lt;
-            ops = ops.push(op_index());
+            ops = ops.append(op_index());
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprSlice(sl) => {
@@ -853,7 +853,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             ops = sr.ops; lt = sr.lt;
             var er: CompileResult = compile_expr(sl.end, ops, lt);
             ops = er.ops; lt = er.lt;
-            ops = ops.push(op_slice());
+            ops = ops.append(op_slice());
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprStructLit(sl) => {
@@ -870,7 +870,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     ops = ur.ops; lt = ur.lt;
                     ui = ui + 1;
                 }
-                ops = ops.push(op_struct_update(sl.type_name, sl.field_names));
+                ops = ops.append(op_struct_update(sl.type_name, sl.field_names));
                 return CompileResult { ops: ops, lt: lt };
             }
             // Compile each field value (in source order); the
@@ -882,13 +882,13 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                 ops = fr.ops; lt = fr.lt;
                 i = i + 1;
             }
-            ops = ops.push(op_make_struct(sl.type_name, sl.field_names));
+            ops = ops.append(op_make_struct(sl.type_name, sl.field_names));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprFieldAccess(fa) => {
             var or: CompileResult = compile_expr(fa.obj, ops, lt);
             ops = or.ops; lt = or.lt;
-            ops = ops.push(op_field_get(fa.field));
+            ops = ops.append(op_field_get(fa.field));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprLambda(lm) => {
@@ -915,7 +915,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             var bound: string[] = [];
             var bpi: i32 = 0;
             while (bpi < lm.params.len()) {
-                bound = bound.push(lm.params[bpi].name);
+                bound = bound.append(lm.params[bpi].name);
                 bpi = bpi + 1;
             }
             var bsi: i32 = 0;
@@ -932,14 +932,14 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                 var nm: string = refs[rri];
                 if (!has_str(bound, nm) && !has_str(captures, nm)) {
                     if (lt.idx_of(nm) >= 0 || lt.capture_idx_of(nm) >= 0) {
-                        captures = captures.push(nm);
+                        captures = captures.append(nm);
                     }
                 }
                 rri = rri + 1;
             }
             // Emit JUMP-skip + body.
             var skip_idx: i32 = ops.len();
-            ops = ops.push(op_jump(0 - 1));
+            ops = ops.append(op_jump(0 - 1));
             var entry: i32 = ops.len();
             // Build inner lt: empty locals + the capture list.
             // Params + inner var-decls bind into `names` via the
@@ -957,38 +957,38 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             }
             var bj: i32 = lm.params.len() - 1;
             while (bj >= 0) {
-                ops = ops.push(op_store(bj));
+                ops = ops.append(op_store(bj));
                 bj = bj - 1;
             }
             var br: CompileResult = compile_block(lm.body, ops, ltc);
             ops = br.ops;
             // Implicit return-0 if the body falls off the end.
-            ops = ops.push(op_push_int(0));
-            ops = ops.push(op_return());
+            ops = ops.append(op_push_int(0));
+            ops = ops.append(op_return());
             var body_locals: i32 = br.lt.names.len();
             ops = patch_jump(ops, skip_idx, ops.len());
             // After the body, push captures (resolved against
             // the OUTER lt — could be locals or, when this
             // lambda is itself nested, captures of the parent).
             if (captures.len() == 0) {
-                ops = ops.push(op_make_func(entry, body_locals));
+                ops = ops.append(op_make_func(entry, body_locals));
                 return CompileResult { ops: ops, lt: lt };
             }
             var cpi: i32 = 0;
             while (cpi < captures.len()) {
                 var oi: i32 = lt.idx_of(captures[cpi]);
                 if (oi >= 0) {
-                    ops = ops.push(op_load(oi));
+                    ops = ops.append(op_load(oi));
                 } else {
-                    ops = ops.push(op_load_capture(lt.capture_idx_of(captures[cpi])));
+                    ops = ops.append(op_load_capture(lt.capture_idx_of(captures[cpi])));
                 }
                 cpi = cpi + 1;
             }
-            ops = ops.push(op_make_closure(entry, body_locals, captures.len()));
+            ops = ops.append(op_make_closure(entry, body_locals, captures.len()));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprUnknown(_) => {
-            ops = ops.push(op_push_str("__exprunknown__"));
+            ops = ops.append(op_push_str("__exprunknown__"));
             return CompileResult { ops: ops, lt: lt };
         }
     }
@@ -1005,12 +1005,12 @@ function patch_jump(ops: Op[], idx: i32, target: i32): Op[] {
     while (i < ops.len()) {
         if (i == idx) {
             match (ops[i]) {
-                OpJump(_) => { out = out.push(op_jump(target)); },
-                OpJumpIfFalse(_) => { out = out.push(op_jump_if_false(target)); },
-                _ => { out = out.push(ops[i]); }
+                OpJump(_) => { out = out.append(op_jump(target)); },
+                OpJumpIfFalse(_) => { out = out.append(op_jump_if_false(target)); },
+                _ => { out = out.append(ops[i]); }
             }
         } else {
-            out = out.push(ops[i]);
+            out = out.append(ops[i]);
         }
         i = i + 1;
     }
@@ -1029,17 +1029,17 @@ function patch_loop_sentinels(ops: Op[], start: i32, exit_target: i32, continue_
             match (ops[i]) {
                 OpJump(o) => {
                     if (o.target == 0 - 1001) {
-                        out = out.push(op_jump(exit_target));
+                        out = out.append(op_jump(exit_target));
                     } else if (o.target == 0 - 1002) {
-                        out = out.push(op_jump(continue_target));
+                        out = out.append(op_jump(continue_target));
                     } else {
-                        out = out.push(ops[i]);
+                        out = out.append(ops[i]);
                     }
                 },
-                _ => { out = out.push(ops[i]); }
+                _ => { out = out.append(ops[i]); }
             }
         } else {
-            out = out.push(ops[i]);
+            out = out.append(ops[i]);
         }
         i = i + 1;
     }
@@ -1056,31 +1056,31 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             ops = ir.ops; lt = ir.lt;
             lt = lt.bind(v.name);
             // The just-bound local sits at index len(lt.names) - 1.
-            ops = ops.push(op_store(lt.names.len() - 1));
+            ops = ops.append(op_store(lt.names.len() - 1));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.StmtReturn(r) => {
             var ir: CompileResult = compile_expr(r.value, ops, lt);
             ops = ir.ops; lt = ir.lt;
-            ops = ops.push(op_return());
+            ops = ops.append(op_return());
             return CompileResult { ops: ops, lt: lt };
         },
         parser.StmtExpr(x) => {
             var ir: CompileResult = compile_expr(x.value, ops, lt);
             ops = ir.ops; lt = ir.lt;
-            ops = ops.push(op_pop());
+            ops = ops.append(op_pop());
             return CompileResult { ops: ops, lt: lt };
         },
         parser.StmtAssign(a) => {
             var i: i32 = lt.idx_of(a.target);
             if (i < 0) {
-                ops = ops.push(op_push_str("__assign-undef:" + a.target));
-                ops = ops.push(op_return());
+                ops = ops.append(op_push_str("__assign-undef:" + a.target));
+                ops = ops.append(op_return());
                 return CompileResult { ops: ops, lt: lt };
             }
             var ir: CompileResult = compile_expr(a.value, ops, lt);
             ops = ir.ops; lt = ir.lt;
-            ops = ops.push(op_store(i));
+            ops = ops.append(op_store(i));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.StmtIf(ifs) => {
@@ -1088,13 +1088,13 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             var cr: CompileResult = compile_expr(ifs.cond, ops, lt);
             ops = cr.ops; lt = cr.lt;
             var jif_idx: i32 = ops.len();
-            ops = ops.push(op_jump_if_false(0 - 1));
+            ops = ops.append(op_jump_if_false(0 - 1));
             // then body
             var tr: CompileResult = compile_block(ifs.then_body, ops, lt);
             ops = tr.ops; lt = tr.lt;
             if (ifs.else_body.len() > 0) {
                 var jump_end_idx: i32 = ops.len();
-                ops = ops.push(op_jump(0 - 1));
+                ops = ops.append(op_jump(0 - 1));
                 var else_target: i32 = ops.len();
                 ops = patch_jump(ops, jif_idx, else_target);
                 var er: CompileResult = compile_block(ifs.else_body, ops, lt);
@@ -1110,13 +1110,13 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             var cr: CompileResult = compile_expr(w.cond, ops, lt);
             ops = cr.ops; lt = cr.lt;
             var exit_idx: i32 = ops.len();
-            ops = ops.push(op_jump_if_false(0 - 1));
+            ops = ops.append(op_jump_if_false(0 - 1));
             // Record where the body starts so patch_loop_
             // sentinels only touches ops emitted by THIS loop.
             var body_start: i32 = ops.len();
             var br: CompileResult = compile_block(w.body, ops, lt);
             ops = br.ops; lt = br.lt;
-            ops = ops.push(op_jump(loop_top));
+            ops = ops.append(op_jump(loop_top));
             ops = patch_jump(ops, exit_idx, ops.len());
             // Patch break / continue sentinels emitted in the
             // body: break → exit (current len(ops)), continue
@@ -1142,27 +1142,27 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
                 var jif_idx: i32 = 0 - 1;
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
-                        ops = ops.push(op_dup());
-                        ops = ops.push(op_type_name_eq(pv.type_name));
+                        ops = ops.append(op_dup());
+                        ops = ops.append(op_type_name_eq(pv.type_name));
                         jif_idx = ops.len();
-                        ops = ops.push(op_jump_if_false(0 - 1));
+                        ops = ops.append(op_jump_if_false(0 - 1));
                         if (pv.binding.len() > 0 && pv.binding != "_") {
                             lt = lt.bind(pv.binding);
                             var bidx: i32 = lt.idx_of(pv.binding);
-                            ops = ops.push(op_store(bidx));
+                            ops = ops.append(op_store(bidx));
                         } else {
-                            ops = ops.push(op_pop());
+                            ops = ops.append(op_pop());
                         }
                     },
                     parser.PatWildcard(_) => {
-                        ops = ops.push(op_pop());
+                        ops = ops.append(op_pop());
                     }
                 }
                 var br: CompileResult = compile_block(arm.body, ops, lt);
                 ops = br.ops; lt = br.lt;
                 var je_idx: i32 = ops.len();
-                ops = ops.push(op_jump(0 - 1));
-                end_idxs = end_idxs.push(je_idx);
+                ops = ops.append(op_jump(0 - 1));
+                end_idxs = end_idxs.append(je_idx);
                 if (jif_idx >= 0) {
                     ops = patch_jump(ops, jif_idx, ops.len());
                 }
@@ -1170,7 +1170,7 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             }
             // Fall-through cleanup — only reached if no PatVariant
             // arm matched AND no wildcard caught.
-            ops = ops.push(op_pop());
+            ops = ops.append(op_pop());
             // Patch every arm's `jump to end` to land here.
             var e: i32 = 0;
             while (e < end_idxs.len()) {
@@ -1189,11 +1189,11 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             // inner loop's sweep patches its own break /
             // continue first, leaving outer-loop sentinels
             // for the outer sweep to find.
-            ops = ops.push(op_jump(0 - 1001));
+            ops = ops.append(op_jump(0 - 1001));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.StmtContinue(_) => {
-            ops = ops.push(op_jump(0 - 1002));
+            ops = ops.append(op_jump(0 - 1002));
             return CompileResult { ops: ops, lt: lt };
         },
         parser.StmtFor(f) => {
@@ -1216,13 +1216,13 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             ops = cr.ops; lt = cr.lt;
             lt = lt.bind(iter_name);
             var iter_idx: i32 = lt.idx_of(iter_name);
-            ops = ops.push(op_store(iter_idx));
+            ops = ops.append(op_store(iter_idx));
 
             // Index = 0.
-            ops = ops.push(op_push_int(0));
+            ops = ops.append(op_push_int(0));
             lt = lt.bind(idx_name);
             var idx_local: i32 = lt.idx_of(idx_name);
-            ops = ops.push(op_store(idx_local));
+            ops = ops.append(op_store(idx_local));
 
             // Allocate var_name as a real local (post-loop the
             // binding stays in scope; OK because loop var is
@@ -1236,18 +1236,18 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
 
             // index < len(iter): load index, load iter, OpLen,
             // OpBinary("<"), OpJumpIfFalse to exit.
-            ops = ops.push(op_load(idx_local));
-            ops = ops.push(op_load(iter_idx));
-            ops = ops.push(op_len());
-            ops = ops.push(op_binary("<"));
+            ops = ops.append(op_load(idx_local));
+            ops = ops.append(op_load(iter_idx));
+            ops = ops.append(op_len());
+            ops = ops.append(op_binary("<"));
             var exit_idx: i32 = ops.len();
-            ops = ops.push(op_jump_if_false(0 - 1));
+            ops = ops.append(op_jump_if_false(0 - 1));
 
             // var_name = iter[index].
-            ops = ops.push(op_load(iter_idx));
-            ops = ops.push(op_load(idx_local));
-            ops = ops.push(op_index());
-            ops = ops.push(op_store(var_idx));
+            ops = ops.append(op_load(iter_idx));
+            ops = ops.append(op_load(idx_local));
+            ops = ops.append(op_index());
+            ops = ops.append(op_store(var_idx));
 
             // Body. Track body_start so loop-sentinel patching
             // only touches break/continue from this loop's body
@@ -1261,13 +1261,13 @@ function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResul
             // exit lives.
             var continue_target: i32 = ops.len();
             // index = index + 1.
-            ops = ops.push(op_load(idx_local));
-            ops = ops.push(op_push_int(1));
-            ops = ops.push(op_binary("+"));
-            ops = ops.push(op_store(idx_local));
+            ops = ops.append(op_load(idx_local));
+            ops = ops.append(op_push_int(1));
+            ops = ops.append(op_binary("+"));
+            ops = ops.append(op_store(idx_local));
 
             // Jump back to top, patch exit to here.
-            ops = ops.push(op_jump(loop_top));
+            ops = ops.append(op_jump(loop_top));
             ops = patch_jump(ops, exit_idx, ops.len());
             ops = patch_loop_sentinels(ops, body_start, ops.len(), continue_target);
             return CompileResult { ops: ops, lt: lt };
@@ -1336,14 +1336,14 @@ function compile_func(fd: parser.FuncDecl, ops: Op[]): CompileResult {
     if (has_recv) { total = total + 1; }
     var j: i32 = total - 1;
     while (j >= 0) {
-        ops = ops.push(op_store(j));
+        ops = ops.append(op_store(j));
         j = j - 1;
     }
     var r: CompileResult = compile_block(fd.body, ops, lt);
     // Implicit return-0 in case the body falls off the end.
     ops = r.ops;
-    ops = ops.push(op_push_int(0));
-    ops = ops.push(op_return());
+    ops = ops.append(op_push_int(0));
+    ops = ops.append(op_return());
     return CompileResult { ops: ops, lt: r.lt };
 }
 
@@ -1352,7 +1352,7 @@ pub function compile_program(mod: parser.Module): CompiledProgram {
     // First op: a jump over the function bodies. We patch the
     // target after we know where top-level stmts start.
     var jump_idx: i32 = ops.len();
-    ops = ops.push(op_jump(0 - 1));
+    ops = ops.append(op_jump(0 - 1));
     // Emit each function body and record its entry IP.
     var fn_names: string[] = [];
     var fn_entries: i32[] = [];
@@ -1361,12 +1361,12 @@ pub function compile_program(mod: parser.Module): CompiledProgram {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
-        fn_names = fn_names.push(fd.name);
-        fn_entries = fn_entries.push(ops.len());
-        fn_recv_types = fn_recv_types.push(fd.receiver_type);
+        fn_names = fn_names.append(fd.name);
+        fn_entries = fn_entries.append(ops.len());
+        fn_recv_types = fn_recv_types.append(fd.receiver_type);
         var fr: CompileResult = compile_func(fd, ops);
         ops = fr.ops;
-        fn_locals = fn_locals.push(fr.lt.names.len());
+        fn_locals = fn_locals.append(fr.lt.names.len());
         i = i + 1;
     }
     // Patch the leading JUMP to point at where top-level
@@ -1390,13 +1390,13 @@ pub function compile_program(mod: parser.Module): CompiledProgram {
             mi = mi + 1;
         }
         if (has_main) {
-            ops = ops.push(op_call("main", 0));
-            ops = ops.push(op_return());
+            ops = ops.append(op_call("main", 0));
+            ops = ops.append(op_return());
         }
     }
     // Trailing return-0 so falling off top-level halts cleanly.
-    ops = ops.push(op_push_int(0));
-    ops = ops.push(op_return());
+    ops = ops.append(op_push_int(0));
+    ops = ops.append(op_return());
     return CompiledProgram {
         ops: ops,
         funcs: FuncTable { names: fn_names, entries: fn_entries, locals_counts: fn_locals, receiver_types: fn_recv_types },
@@ -1422,7 +1422,7 @@ struct VMLocals { values: Value[] }
 function new_vm_locals(n: i32): VMLocals {
     var vs: Value[] = [];
     var i: i32 = 0;
-    while (i < n) { vs = vs.push(v_err("__uninit__")); i = i + 1; }
+    while (i < n) { vs = vs.append(v_err("__uninit__")); i = i + 1; }
     return VMLocals { values: vs };
 }
 
@@ -1436,7 +1436,7 @@ function (l: VMLocals) set(i: i32, v: Value): VMLocals {
     var vs: Value[] = [];
     var j: i32 = 0;
     while (j < l.values.len()) {
-        if (j == i) { vs = vs.push(v); } else { vs = vs.push(l.values[j]); }
+        if (j == i) { vs = vs.append(v); } else { vs = vs.append(l.values[j]); }
         j = j + 1;
     }
     return VMLocals { values: vs };
@@ -1676,7 +1676,7 @@ function apply_unary(op: string, v: Value): Value {
 // rebuild it. Cost is O(n) per op but the validation programs
 // are tiny — same trade the rest of the port makes.
 function stack_push(stack: Value[], v: Value): Value[] {
-    return stack.push(v);
+    return stack.append(v);
 }
 
 struct PopResult { stack: Value[], v: Value }
@@ -1686,7 +1686,7 @@ function stack_pop(stack: Value[]): PopResult {
     var top: Value = stack[stack.len() - 1];
     var ns: Value[] = [];
     var i: i32 = 0;
-    while (i < stack.len() - 1) { ns = ns.push(stack[i]); i = i + 1; }
+    while (i < stack.len() - 1) { ns = ns.append(stack[i]); i = i + 1; }
     return PopResult { stack: ns, v: top };
 }
 
@@ -1842,7 +1842,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                 // OpStoreLocal sequence at function entry pops
                 // them in reverse). Save current frame, allocate
                 // a new locals vector sized to the callee.
-                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
+                frames = frames.append(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
                 locals = new_vm_locals(fl.locals_count);
                 var empty_caps_c: Value[] = [];
                 cur_captures = empty_caps_c;
@@ -1893,7 +1893,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                 // OpStoreLocal pops the last arg into the highest
                 // local index, walking down to the receiver at
                 // local 0).
-                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
+                frames = frames.append(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
                 locals = new_vm_locals(ml.locals_count);
                 var empty_caps_m: Value[] = [];
                 cur_captures = empty_caps_m;
@@ -1915,12 +1915,12 @@ pub function exec_program(prog: CompiledProgram): Value {
                 var caps: Value[] = [];
                 var cki: i32 = 0;
                 while (cki < o.capture_count) {
-                    caps = caps.push(stack[cap_start + cki]);
+                    caps = caps.append(stack[cap_start + cki]);
                     cki = cki + 1;
                 }
                 var nstk: Value[] = [];
                 var nsi2: i32 = 0;
-                while (nsi2 < cap_start) { nstk = nstk.push(stack[nsi2]); nsi2 = nsi2 + 1; }
+                while (nsi2 < cap_start) { nstk = nstk.append(stack[nsi2]); nsi2 = nsi2 + 1; }
                 stack = nstk;
                 stack = stack_push(stack, VFunc { entry: o.entry, locals_count: o.locals_count, captures: caps });
                 ip = ip + 1;
@@ -1958,11 +1958,11 @@ pub function exec_program(prog: CompiledProgram): Value {
                 // the args behind for the callee prologue.
                 var ns: Value[] = [];
                 var nsi: i32 = 0;
-                while (nsi < fn_idx) { ns = ns.push(stack[nsi]); nsi = nsi + 1; }
+                while (nsi < fn_idx) { ns = ns.append(stack[nsi]); nsi = nsi + 1; }
                 var nsj: i32 = fn_idx + 1;
-                while (nsj < stack.len()) { ns = ns.push(stack[nsj]); nsj = nsj + 1; }
+                while (nsj < stack.len()) { ns = ns.append(stack[nsj]); nsj = nsj + 1; }
                 stack = ns;
-                frames = frames.push(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
+                frames = frames.append(Frame { saved_ip: ip + 1, saved_locals: locals, saved_captures: cur_captures });
                 locals = new_vm_locals(fn_locals_count);
                 cur_captures = fn_caps;
                 ip = fn_entry;
@@ -1977,13 +1977,13 @@ pub function exec_program(prog: CompiledProgram): Value {
                 var start: i32 = stack.len() - o.n;
                 var i: i32 = 0;
                 while (i < o.n) {
-                    elems = elems.push(stack[start + i]);
+                    elems = elems.append(stack[start + i]);
                     i = i + 1;
                 }
                 // Trim the popped values off the stack.
                 var ns: Value[] = [];
                 var j: i32 = 0;
-                while (j < start) { ns = ns.push(stack[j]); j = j + 1; }
+                while (j < start) { ns = ns.append(stack[j]); j = j + 1; }
                 stack = ns;
                 stack = stack_push(stack, v_arr(elems));
                 ip = ip + 1;
@@ -1994,12 +1994,12 @@ pub function exec_program(prog: CompiledProgram): Value {
                 var start: i32 = stack.len() - o.n;
                 var i: i32 = 0;
                 while (i < o.n) {
-                    elems = elems.push(stack[start + i]);
+                    elems = elems.append(stack[start + i]);
                     i = i + 1;
                 }
                 var ns: Value[] = [];
                 var j: i32 = 0;
-                while (j < start) { ns = ns.push(stack[j]); j = j + 1; }
+                while (j < start) { ns = ns.append(stack[j]); j = j + 1; }
                 stack = ns;
                 stack = stack_push(stack, v_tuple(elems));
                 ip = ip + 1;
@@ -2077,7 +2077,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                         } else {
                             var out: Value[] = [];
                             var i: i32 = sb;
-                            while (i < eb) { out = out.push(arr.elements[i]); i = i + 1; }
+                            while (i < eb) { out = out.append(arr.elements[i]); i = i + 1; }
                             stack = stack_push(stack, v_arr(out));
                         }
                     },
@@ -2106,12 +2106,12 @@ pub function exec_program(prog: CompiledProgram): Value {
                 var start: i32 = stack.len() - nf;
                 var fi: i32 = 0;
                 while (fi < nf) {
-                    fvs = fvs.push(stack[start + fi]);
+                    fvs = fvs.append(stack[start + fi]);
                     fi = fi + 1;
                 }
                 var ns: Value[] = [];
                 var sj: i32 = 0;
-                while (sj < start) { ns = ns.push(stack[sj]); sj = sj + 1; }
+                while (sj < start) { ns = ns.append(stack[sj]); sj = sj + 1; }
                 stack = ns;
                 stack = stack_push(stack, v_struct(o.type_name, o.field_names, fvs));
                 ip = ip + 1;
@@ -2146,21 +2146,21 @@ pub function exec_program(prog: CompiledProgram): Value {
                                 bi = bi + 1;
                             }
                             if (!replaced) {
-                                unames = unames.push(oname);
-                                uvals = uvals.push(oval);
+                                unames = unames.append(oname);
+                                uvals = uvals.append(oval);
                             }
                             oi = oi + 1;
                         }
                         var ns2: Value[] = [];
                         var sj2: i32 = 0;
-                        while (sj2 < base_idx) { ns2 = ns2.push(stack[sj2]); sj2 = sj2 + 1; }
+                        while (sj2 < base_idx) { ns2 = ns2.append(stack[sj2]); sj2 = sj2 + 1; }
                         stack = ns2;
                         stack = stack_push(stack, v_struct(o.type_name, unames, uvals));
                     },
                     _ => {
                         var ns3: Value[] = [];
                         var sj3: i32 = 0;
-                        while (sj3 < base_idx) { ns3 = ns3.push(stack[sj3]); sj3 = sj3 + 1; }
+                        while (sj3 < base_idx) { ns3 = ns3.append(stack[sj3]); sj3 = sj3 + 1; }
                         stack = ns3;
                         stack = stack_push(stack, v_err("struct_update: base is not a struct"));
                     }
@@ -2230,7 +2230,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                 var top_frame: Frame = frames[frames.len() - 1];
                 var nf: Frame[] = [];
                 var fi: i32 = 0;
-                while (fi < frames.len() - 1) { nf = nf.push(frames[fi]); fi = fi + 1; }
+                while (fi < frames.len() - 1) { nf = nf.append(frames[fi]); fi = fi + 1; }
                 frames = nf;
                 // stack: we want to discard everything below
                 // the return value that was left behind by the

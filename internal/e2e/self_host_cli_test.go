@@ -153,7 +153,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// Asserting the default (SSA) output differs from -no-ssa (AST) proves
 		// the SSA path (with injected helpers) was taken.
 		srcPath := filepath.Join(dir, "ssa_helpers.fern")
-		src := "function main(): i32 { var a = [1, 2]; a = a.push(3); var b = a[1:3]; return b[0] + b[1] + b.len() + a.len(); }\n"
+		src := "function main(): i32 { var a = [1, 2]; a = a.append(3); var b = a[1:3]; return b[0] + b[1] + b.len() + a.len(); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}

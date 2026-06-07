@@ -56,10 +56,10 @@ function x86_rex(w: i32, reg: i32, index: i32, base: i32): i32 {
 // `>>` is arithmetic; the `& 255` after each shift discards sign-extended
 // high bits, so the result is correct for any 32-bit value.
 function x86_le32(buf: i32[], v: i32): i32[] {
-    buf = buf.push(v & 255);
-    buf = buf.push((v >> 8) & 255);
-    buf = buf.push((v >> 16) & 255);
-    buf = buf.push((v >> 24) & 255);
+    buf = buf.append(v & 255);
+    buf = buf.append((v >> 8) & 255);
+    buf = buf.append((v >> 16) & 255);
+    buf = buf.append((v >> 24) & 255);
     return buf;
 }
 
@@ -78,34 +78,34 @@ function x86_modrm(md: i32, reg: i32, rm: i32): i32 {
 // r8..r15 a REX.B prefix (no W) extends the embedded register.
 function x86_mov_r32_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
     if (reg >= 8) {
-        buf = buf.push(x86_rex(0, 0, 0, reg)); // REX.B
+        buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B
     }
-    buf = buf.push(184 + (reg & 7)); // 0xB8 + rd
+    buf = buf.append(184 + (reg & 7)); // 0xB8 + rd
     return x86_le32(buf, imm);
 }
 
 // x86_mov_r64_r64: `mov <dst>, <src>` (64-bit) — REX.W + 0x89 /r, where
 // the ModR/M reg field is the source and r/m is the destination.
 function x86_mov_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, src, 0, dst));
-    buf = buf.push(137); // 0x89
-    buf = buf.push(x86_modrm(3, src, dst));
+    buf = buf.append(x86_rex(1, src, 0, dst));
+    buf = buf.append(137); // 0x89
+    buf = buf.append(x86_modrm(3, src, dst));
     return buf;
 }
 
 // x86_add_r64_r64: `add <dst>, <src>` (64-bit) — REX.W + 0x01 /r.
 function x86_add_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, src, 0, dst));
-    buf = buf.push(1); // 0x01
-    buf = buf.push(x86_modrm(3, src, dst));
+    buf = buf.append(x86_rex(1, src, 0, dst));
+    buf = buf.append(1); // 0x01
+    buf = buf.append(x86_modrm(3, src, dst));
     return buf;
 }
 
 // x86_sub_r64_r64: `sub <dst>, <src>` (64-bit) — REX.W + 0x29 /r.
 function x86_sub_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, src, 0, dst));
-    buf = buf.push(41); // 0x29
-    buf = buf.push(x86_modrm(3, src, dst));
+    buf = buf.append(x86_rex(1, src, 0, dst));
+    buf = buf.append(41); // 0x29
+    buf = buf.append(x86_modrm(3, src, dst));
     return buf;
 }
 
@@ -113,41 +113,41 @@ function x86_sub_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
 // push defaults to 64-bit, so no REX.W).
 function x86_push_r64(buf: i32[], reg: i32): i32[] {
     if (reg >= 8) {
-        buf = buf.push(x86_rex(0, 0, 0, reg)); // REX.B = 0x41
+        buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B = 0x41
     }
-    return buf.push(80 + (reg & 7)); // 0x50 + rd
+    return buf.append(80 + (reg & 7)); // 0x50 + rd
 }
 
 // x86_push_imm32: `push $imm` (0x68 id) — push a sign-extended imm32.
 function x86_push_imm32(buf: i32[], imm: i32): i32[] {
-    buf = buf.push(104); // 0x68
+    buf = buf.append(104); // 0x68
     return x86_le32(buf, imm);
 }
 
 // x86_pop_r64: `pop <reg>` — 0x58+rd (REX.B for r8..r15).
 function x86_pop_r64(buf: i32[], reg: i32): i32[] {
     if (reg >= 8) {
-        buf = buf.push(x86_rex(0, 0, 0, reg)); // REX.B
+        buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B
     }
-    return buf.push(88 + (reg & 7)); // 0x58 + rd
+    return buf.append(88 + (reg & 7)); // 0x58 + rd
 }
 
 // x86_syscall: the 2-byte `syscall` instruction (0x0F 0x05).
 function x86_syscall(buf: i32[]): i32[] {
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(5);  // 0x05
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(5);  // 0x05
     return buf;
 }
 
 // x86_ret: `ret` (0xC3).
 function x86_ret(buf: i32[]): i32[] {
-    return buf.push(195); // 0xC3
+    return buf.append(195); // 0xC3
 }
 
 // x86_leave: `leave` (0xC9) — mov rsp, rbp ; pop rbp, the standard frame
 // teardown asm.fern emits.
 function x86_leave(buf: i32[]): i32[] {
-    return buf.push(201); // 0xC9
+    return buf.append(201); // 0xC9
 }
 
 // ---- more integer ops (slice 2h) ----
@@ -156,9 +156,9 @@ function x86_leave(buf: i32[]): i32[] {
 // ModR/M(3, slash, reg). inc/dec use 0xFF (slash 0/1); neg/div/idiv use
 // 0xF7 (slash 3/6/7).
 function x86_unary_r64(buf: i32[], opcode: i32, slash: i32, reg: i32): i32[] {
-    buf = buf.push(x86_rex(1, 0, 0, reg)); // reg in rm field
-    buf = buf.push(opcode);
-    buf = buf.push(x86_modrm(3, slash, reg));
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(opcode);
+    buf = buf.append(x86_modrm(3, slash, reg));
     return buf;
 }
 
@@ -171,8 +171,8 @@ function x86_idiv_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 2
 
 // x86_cqo: `cqo` (0x48 0x99) — sign-extend rax into rdx:rax before idiv.
 function x86_cqo(buf: i32[]): i32[] {
-    buf = buf.push(x86_rex_w());
-    buf = buf.push(153); // 0x99
+    buf = buf.append(x86_rex_w());
+    buf = buf.append(153); // 0x99
     return buf;
 }
 
@@ -180,9 +180,9 @@ function x86_cqo(buf: i32[]): i32[] {
 // opcode + ModR/M(3, src, dst). Used by and (0x21) / or (0x09) / xor
 // (0x31), matching add (0x01) / sub (0x29)'s shape.
 function x86_binop_r64_r64(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, src, 0, dst));
-    buf = buf.push(opcode);
-    buf = buf.push(x86_modrm(3, src, dst));
+    buf = buf.append(x86_rex(1, src, 0, dst));
+    buf = buf.append(opcode);
+    buf = buf.append(x86_modrm(3, src, dst));
     return buf;
 }
 
@@ -193,28 +193,28 @@ function x86_xor_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_bin
 // x86_test_r64_r64: `test <a>, <b>` (REX.W + 0x85 /r). TEST is symmetric;
 // the reg field is `b`, r/m is `a`.
 function x86_test_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
-    buf = buf.push(x86_rex(1, b, 0, a));
-    buf = buf.push(133); // 0x85
-    buf = buf.push(x86_modrm(3, b, a));
+    buf = buf.append(x86_rex(1, b, 0, a));
+    buf = buf.append(133); // 0x85
+    buf = buf.append(x86_modrm(3, b, a));
     return buf;
 }
 
 // x86_imul_r64_r64: `imul <dst>, <src>` (REX.W + 0x0F 0xAF /r). Note the
 // operand convention is reg=dst, r/m=src — the reverse of add/and.
 function x86_imul_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, dst, 0, src));
-    buf = buf.push(15);  // 0x0F
-    buf = buf.push(175); // 0xAF
-    buf = buf.push(x86_modrm(3, dst, src));
+    buf = buf.append(x86_rex(1, dst, 0, src));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(175); // 0xAF
+    buf = buf.append(x86_modrm(3, dst, src));
     return buf;
 }
 
 // x86_shl_r64_imm8: `shl <reg>, imm8` (REX.W + 0xC1 /4 ib).
 function x86_shl_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
-    buf = buf.push(x86_rex(1, 0, 0, reg)); // reg in rm field
-    buf = buf.push(193); // 0xC1
-    buf = buf.push(x86_modrm(3, 4, reg));
-    buf = buf.push(imm & 255);
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(193); // 0xC1
+    buf = buf.append(x86_modrm(3, 4, reg));
+    buf = buf.append(imm & 255);
     return buf;
 }
 
@@ -253,12 +253,12 @@ function x86_emit_mem(buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
         has_disp8 = true;
     }
 
-    buf = buf.push(x86_modrm(md, reg, b));
+    buf = buf.append(x86_modrm(md, reg, b));
     if (is_rsp) {
-        buf = buf.push(x86_sib(0, 4, 4)); // [rsp], no index
+        buf = buf.append(x86_sib(0, 4, 4)); // [rsp], no index
     }
     if (has_disp8) {
-        buf = buf.push(disp & 255);
+        buf = buf.append(disp & 255);
     } else {
         if (md == 2) {
             buf = x86_le32(buf, disp);
@@ -269,15 +269,15 @@ function x86_emit_mem(buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
 
 // x86_mov_load_r64: `mov <dst>, [base + disp]` — REX.W + 0x8B /r.
 function x86_mov_load_r64(buf: i32[], dst: i32, base: i32, disp: i32): i32[] {
-    buf = buf.push(x86_rex(1, dst, 0, base));
-    buf = buf.push(139); // 0x8B
+    buf = buf.append(x86_rex(1, dst, 0, base));
+    buf = buf.append(139); // 0x8B
     return x86_emit_mem(buf, dst, base, disp);
 }
 
 // x86_mov_store_r64: `mov [base + disp], <src>` — REX.W + 0x89 /r.
 function x86_mov_store_r64(buf: i32[], base: i32, disp: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, src, 0, base));
-    buf = buf.push(137); // 0x89
+    buf = buf.append(x86_rex(1, src, 0, base));
+    buf = buf.append(137); // 0x89
     return x86_emit_mem(buf, src, base, disp);
 }
 
@@ -310,10 +310,10 @@ function x86_emit_mem_idx(buf: i32[], reg: i32, base: i32, index: i32, scale: i3
             has_disp8 = true;
         }
     }
-    buf = buf.push(x86_modrm(md, reg, 4)); // rm = 100 -> SIB
-    buf = buf.push(x86_sib(x86_scale_bits(scale), index, base));
+    buf = buf.append(x86_modrm(md, reg, 4)); // rm = 100 -> SIB
+    buf = buf.append(x86_sib(x86_scale_bits(scale), index, base));
     if (has_disp8) {
-        buf = buf.push(disp & 255);
+        buf = buf.append(disp & 255);
     } else {
         if (md == 2) {
             buf = x86_le32(buf, disp);
@@ -324,15 +324,15 @@ function x86_emit_mem_idx(buf: i32[], reg: i32, base: i32, index: i32, scale: i3
 
 // x86_mov_load_r64_idx: `mov <dst>, [base + index*scale + disp]`.
 function x86_mov_load_r64_idx(buf: i32[], dst: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
-    buf = buf.push(x86_rex(1, dst, index, base));
-    buf = buf.push(139); // 0x8B
+    buf = buf.append(x86_rex(1, dst, index, base));
+    buf = buf.append(139); // 0x8B
     return x86_emit_mem_idx(buf, dst, base, index, scale, disp);
 }
 
 // x86_mov_store_r64_idx: `mov [base + index*scale + disp], <src>`.
 function x86_mov_store_r64_idx(buf: i32[], base: i32, index: i32, scale: i32, disp: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, src, index, base));
-    buf = buf.push(137); // 0x89
+    buf = buf.append(x86_rex(1, src, index, base));
+    buf = buf.append(137); // 0x89
     return x86_emit_mem_idx(buf, src, base, index, scale, disp);
 }
 
@@ -351,7 +351,7 @@ function x86_byte_mem_rex(buf: i32[], w: i32, reg: i32, has_index: boolean, inde
     var rex: i32 = x86_rex(w, reg, ix, base);
     var force: boolean = (w == 0 && reg >= 4 && reg <= 7); // spl..dil
     if (rex != 64 || force) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
     return buf;
 }
@@ -367,22 +367,22 @@ function x86_byte_mem_operand(buf: i32[], reg: i32, base: i32, has_index: boolea
 // x86_movb_imm_mem: `movb $imm8, mem` (0xC6 /0 ib).
 function x86_movb_imm_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
     buf = x86_byte_mem_rex(buf, 0, 0, has_index, index, base);
-    buf = buf.push(198); // 0xC6
+    buf = buf.append(198); // 0xC6
     buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
-    return buf.push(imm & 255);
+    return buf.append(imm & 255);
 }
 
 // x86_movb_reg_mem: `movb <reg8>, mem` (0x88 /r) — byte store.
 function x86_movb_reg_mem(buf: i32[], reg8: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     buf = x86_byte_mem_rex(buf, 0, reg8, has_index, index, base);
-    buf = buf.push(136); // 0x88
+    buf = buf.append(136); // 0x88
     return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
 }
 
 // x86_movb_mem_reg: `movb mem, <reg8>` (0x8A /r) — byte load.
 function x86_movb_mem_reg(buf: i32[], reg8: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     buf = x86_byte_mem_rex(buf, 0, reg8, has_index, index, base);
-    buf = buf.push(138); // 0x8A
+    buf = buf.append(138); // 0x8A
     return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
 }
 
@@ -390,17 +390,17 @@ function x86_movb_mem_reg(buf: i32[], reg8: i32, base: i32, has_index: boolean, 
 // byte load into a 64-bit register.
 function x86_movzbq_mem(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     buf = x86_byte_mem_rex(buf, 1, dst, has_index, index, base);
-    buf = buf.push(15);  // 0x0F
-    buf = buf.push(182); // 0xB6
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(182); // 0xB6
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
 // x86_movzbq_reg: `movzbq <src8>, <dst64>` (REX.W 0F B6 /r, reg-direct).
 function x86_movzbq_reg(buf: i32[], dst: i32, src8: i32): i32[] {
-    buf = buf.push(x86_rex(1, dst, 0, src8));
-    buf = buf.push(15);  // 0x0F
-    buf = buf.push(182); // 0xB6
-    buf = buf.push(x86_modrm(3, dst, src8));
+    buf = buf.append(x86_rex(1, dst, 0, src8));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(182); // 0xB6
+    buf = buf.append(x86_modrm(3, dst, src8));
     return buf;
 }
 
@@ -409,11 +409,11 @@ function x86_cmpb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
     var rex: i32 = x86_rex(0, 0, 0, reg8);
     var force: boolean = (reg8 >= 4 && reg8 <= 7);
     if (rex != 64 || force) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(128); // 0x80
-    buf = buf.push(x86_modrm(3, 7, reg8));
-    return buf.push(imm & 255);
+    buf = buf.append(128); // 0x80
+    buf = buf.append(x86_modrm(3, 7, reg8));
+    return buf.append(imm & 255);
 }
 
 // ---- push/pop memory + 3-operand imul (slice 2l) ----
@@ -424,9 +424,9 @@ function x86_push_mem(buf: i32[], base: i32, has_index: boolean, index: i32, sca
     if (has_index) { ix = index; }
     var rex: i32 = x86_rex(0, 0, ix, base);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(255); // 0xFF
+    buf = buf.append(255); // 0xFF
     return x86_byte_mem_operand(buf, 6, base, has_index, index, scale, disp);
 }
 
@@ -436,18 +436,18 @@ function x86_pop_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scal
     if (has_index) { ix = index; }
     var rex: i32 = x86_rex(0, 0, ix, base);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(143); // 0x8F
+    buf = buf.append(143); // 0x8F
     return x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
 }
 
 // x86_imul_r64_r64_imm32: `imul <dst>, <src>, imm32` (0x69 /r id) — the
 // three-operand form (reg=dst, r/m=src, then imm32).
 function x86_imul_r64_r64_imm32(buf: i32[], dst: i32, src: i32, imm: i32): i32[] {
-    buf = buf.push(x86_rex(1, dst, 0, src));
-    buf = buf.push(105); // 0x69
-    buf = buf.push(x86_modrm(3, dst, src));
+    buf = buf.append(x86_rex(1, dst, 0, src));
+    buf = buf.append(105); // 0x69
+    buf = buf.append(x86_modrm(3, dst, src));
     return x86_le32(buf, imm);
 }
 
@@ -458,11 +458,11 @@ function x86_setcc_reg8(buf: i32[], op: i32, reg8: i32): i32[] {
     var rex: i32 = x86_rex(0, 0, 0, reg8);
     var force: boolean = (reg8 >= 4 && reg8 <= 7);
     if (rex != 64 || force) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(op);
-    buf = buf.push(x86_modrm(3, 0, reg8));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(op);
+    buf = buf.append(x86_modrm(3, 0, reg8));
     return buf;
 }
 
@@ -471,8 +471,8 @@ function x86_setcc_reg8(buf: i32[], op: i32, reg8: i32): i32[] {
 function x86_alu_load_r64(buf: i32[], opcode: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     var ix: i32 = 0;
     if (has_index) { ix = index; }
-    buf = buf.push(x86_rex(1, dst, ix, base));
-    buf = buf.push(opcode);
+    buf = buf.append(x86_rex(1, dst, ix, base));
+    buf = buf.append(opcode);
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
@@ -487,85 +487,85 @@ function x86_alu_load_r64(buf: i32[], opcode: i32, dst: i32, base: i32, has_inde
 // x86_le64_i64 appends the 8 little-endian bytes of an i64 (e.g. the
 // IEEE-754 bits of a .double constant).
 function x86_le64_i64(buf: i32[], v: i64): i32[] {
-    buf = buf.push((v & 255) as i32);
-    buf = buf.push(((v >> 8) & 255) as i32);
-    buf = buf.push(((v >> 16) & 255) as i32);
-    buf = buf.push(((v >> 24) & 255) as i32);
-    buf = buf.push(((v >> 32) & 255) as i32);
-    buf = buf.push(((v >> 40) & 255) as i32);
-    buf = buf.push(((v >> 48) & 255) as i32);
-    buf = buf.push(((v >> 56) & 255) as i32);
+    buf = buf.append((v & 255) as i32);
+    buf = buf.append(((v >> 8) & 255) as i32);
+    buf = buf.append(((v >> 16) & 255) as i32);
+    buf = buf.append(((v >> 24) & 255) as i32);
+    buf = buf.append(((v >> 32) & 255) as i32);
+    buf = buf.append(((v >> 40) & 255) as i32);
+    buf = buf.append(((v >> 48) & 255) as i32);
+    buf = buf.append(((v >> 56) & 255) as i32);
     return buf;
 }
 
 // x86_movq_gpr_to_xmm: `movq <gpr>, <xmm>` (66 REX.W 0F 6E /r) — move the
 // raw 64 bits from a GPR into an xmm (reg=xmm, r/m=gpr).
 function x86_movq_gpr_to_xmm(buf: i32[], xmm: i32, gpr: i32): i32[] {
-    buf = buf.push(102); // 0x66
-    buf = buf.push(x86_rex(1, xmm, 0, gpr));
-    buf = buf.push(15);  // 0x0F
-    buf = buf.push(110); // 0x6E
-    buf = buf.push(x86_modrm(3, xmm, gpr));
+    buf = buf.append(102); // 0x66
+    buf = buf.append(x86_rex(1, xmm, 0, gpr));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(110); // 0x6E
+    buf = buf.append(x86_modrm(3, xmm, gpr));
     return buf;
 }
 
 // x86_movq_xmm_to_gpr: `movq <xmm>, <gpr>` (66 REX.W 0F 7E /r).
 function x86_movq_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
-    buf = buf.push(102); // 0x66
-    buf = buf.push(x86_rex(1, xmm, 0, gpr));
-    buf = buf.push(15);  // 0x0F
-    buf = buf.push(126); // 0x7E
-    buf = buf.push(x86_modrm(3, xmm, gpr));
+    buf = buf.append(102); // 0x66
+    buf = buf.append(x86_rex(1, xmm, 0, gpr));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(126); // 0x7E
+    buf = buf.append(x86_modrm(3, xmm, gpr));
     return buf;
 }
 
 // x86_sse_rr: a scalar-double reg-reg op `<op> <dst>, <src>` (F2 0F op /r;
 // addsd 0x58, subsd 0x5C, mulsd 0x59, divsd 0x5E). REX only for xmm8..15.
 function x86_sse_rr(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
-    buf = buf.push(242); // 0xF2
+    buf = buf.append(242); // 0xF2
     var rex: i32 = x86_rex(0, dst, 0, src);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(opcode);
-    buf = buf.push(x86_modrm(3, dst, src));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(opcode);
+    buf = buf.append(x86_modrm(3, dst, src));
     return buf;
 }
 
 // x86_cvttsd2si: `cvttsd2si <gpr>, <xmm>` (F2 REX.W 0F 2C /r) — truncate a
 // double to a signed 64-bit integer.
 function x86_cvttsd2si(buf: i32[], gpr: i32, xmm: i32): i32[] {
-    buf = buf.push(242); // 0xF2
-    buf = buf.push(x86_rex(1, gpr, 0, xmm));
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(44); // 0x2C
-    buf = buf.push(x86_modrm(3, gpr, xmm));
+    buf = buf.append(242); // 0xF2
+    buf = buf.append(x86_rex(1, gpr, 0, xmm));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(44); // 0x2C
+    buf = buf.append(x86_modrm(3, gpr, xmm));
     return buf;
 }
 
 // x86_cvtsi2sd: `cvtsi2sd <xmm>, <gpr>` (F2 REX.W 0F 2A /r) — convert a
 // signed 64-bit integer to a double.
 function x86_cvtsi2sd(buf: i32[], xmm: i32, gpr: i32): i32[] {
-    buf = buf.push(242); // 0xF2
-    buf = buf.push(x86_rex(1, xmm, 0, gpr));
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(42); // 0x2A
-    buf = buf.push(x86_modrm(3, xmm, gpr));
+    buf = buf.append(242); // 0xF2
+    buf = buf.append(x86_rex(1, xmm, 0, gpr));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(42); // 0x2A
+    buf = buf.append(x86_modrm(3, xmm, gpr));
     return buf;
 }
 
 // x86_ucomisd: `ucomisd <a>, <b>` (66 0F 2E /r) — ordered double compare,
 // setting EFLAGS for the setCC / jCC that follow.
 function x86_ucomisd(buf: i32[], a: i32, b: i32): i32[] {
-    buf = buf.push(102); // 0x66
+    buf = buf.append(102); // 0x66
     var rex: i32 = x86_rex(0, a, 0, b);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(46); // 0x2E
-    buf = buf.push(x86_modrm(3, a, b));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(46); // 0x2E
+    buf = buf.append(x86_modrm(3, a, b));
     return buf;
 }
 
@@ -573,13 +573,13 @@ function x86_ucomisd(buf: i32[], a: i32, b: i32): i32[] {
 function x86_movsd_store(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, xmm: i32): i32[] {
     var ix: i32 = 0;
     if (has_index) { ix = index; }
-    buf = buf.push(242); // 0xF2
+    buf = buf.append(242); // 0xF2
     var rex: i32 = x86_rex(0, xmm, ix, base);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(17); // 0x11
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(17); // 0x11
     return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
 }
 
@@ -587,43 +587,43 @@ function x86_movsd_store(buf: i32[], base: i32, has_index: boolean, index: i32, 
 function x86_movsd_load(buf: i32[], xmm: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     var ix: i32 = 0;
     if (has_index) { ix = index; }
-    buf = buf.push(242); // 0xF2
+    buf = buf.append(242); // 0xF2
     var rex: i32 = x86_rex(0, xmm, ix, base);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(16); // 0x10
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(16); // 0x10
     return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
 }
 
 // x86_movsd_rr: `movsd <dst>, <src>` reg-reg (F2 0F 10 /r, ModR/M direct).
 function x86_movsd_rr(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.push(242); // 0xF2
+    buf = buf.append(242); // 0xF2
     var rex: i32 = x86_rex(0, dst, 0, src);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(16); // 0x10
-    return buf.push(x86_modrm(3, dst, src));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(16); // 0x10
+    return buf.append(x86_modrm(3, dst, src));
 }
 
 // x86_movsd_load_rip_label: `movsd <xmm>, sym(%rip)` (F2 0F 10 /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
 // uses to load a .double constant from .rodata.
 function x86_movsd_load_rip_label(a: X86Asm, xmm: i32, name: string): X86Asm {
-    a.code = a.code.push(242); // 0xF2
+    a.code = a.code.append(242); // 0xF2
     if (xmm >= 8) {
-        a.code = a.code.push(x86_rex(0, xmm, 0, 0)); // REX.R
+        a.code = a.code.append(x86_rex(0, xmm, 0, 0)); // REX.R
     }
-    a.code = a.code.push(15); // 0x0F
-    a.code = a.code.push(16); // 0x10
-    a.code = a.code.push(x86_modrm(0, xmm, 5)); // RIP-relative
+    a.code = a.code.append(15); // 0x0F
+    a.code = a.code.append(16); // 0x10
+    a.code = a.code.append(x86_modrm(0, xmm, 5)); // RIP-relative
     a.code = x86_le32(a.code, 0); // placeholder disp32
     var patch_off: i32 = a.code.len() - 4;
-    a.fix_offs = a.fix_offs.push(patch_off);
-    a.fix_names = a.fix_names.push(name);
+    a.fix_offs = a.fix_offs.append(patch_off);
+    a.fix_names = a.fix_names.append(name);
     return a;
 }
 
@@ -635,9 +635,9 @@ function x86_movsd_load_rip_label(a: X86Asm, xmm: i32, name: string): X86Asm {
 // The full imm32 form (vs the compact 0x83 /digit imm8) keeps the
 // encoder uniform for any constant.
 function x86_alu_r64_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
-    buf = buf.push(x86_rex(1, 0, 0, reg)); // reg in rm field
-    buf = buf.push(129); // 0x81
-    buf = buf.push(x86_modrm(3, slash, reg));
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(129); // 0x81
+    buf = buf.append(x86_modrm(3, slash, reg));
     return x86_le32(buf, imm);
 }
 
@@ -658,9 +658,9 @@ function x86_cmp_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
 
 // x86_cmp_r64_r64: `cmp <a>, <b>` (64-bit) — REX.W + 0x39 /r.
 function x86_cmp_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
-    buf = buf.push(x86_rex(1, b, 0, a));
-    buf = buf.push(57); // 0x39
-    buf = buf.push(x86_modrm(3, b, a));
+    buf = buf.append(x86_rex(1, b, 0, a));
+    buf = buf.append(57); // 0x39
+    buf = buf.append(x86_modrm(3, b, a));
     return buf;
 }
 
@@ -689,8 +689,8 @@ function x86_cc_p(): i32 { return 10; }  // jp  (parity, NaN tests)
 // x86_movabsq: `movabs <reg>, imm64` (REX.W 0xB8+rd io) — load a full
 // 64-bit immediate (heap addresses, IEEE-754 bit patterns, wide masks).
 function x86_movabsq(buf: i32[], reg: i32, imm: i64): i32[] {
-    buf = buf.push(x86_rex(1, 0, 0, reg)); // REX.W (+ REX.B for r8..r15)
-    buf = buf.push(184 + (reg & 7));       // 0xB8 + rd
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // REX.W (+ REX.B for r8..r15)
+    buf = buf.append(184 + (reg & 7));       // 0xB8 + rd
     return x86_le64_i64(buf, imm);
 }
 
@@ -705,26 +705,26 @@ function x86_movabsq(buf: i32[], reg: i32, imm: i64): i32[] {
 // mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
 // uses to load a .bss/.data global (e.g. the heap pointer).
 function x86_mov_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
-    a.code = a.code.push(x86_rex(1, dst, 0, 0));
-    a.code = a.code.push(139); // 0x8B
-    a.code = a.code.push(x86_modrm(0, dst, 5)); // RIP-relative
+    a.code = a.code.append(x86_rex(1, dst, 0, 0));
+    a.code = a.code.append(139); // 0x8B
+    a.code = a.code.append(x86_modrm(0, dst, 5)); // RIP-relative
     a.code = x86_le32(a.code, 0);
     var patch_off: i32 = a.code.len() - 4;
-    a.fix_offs = a.fix_offs.push(patch_off);
-    a.fix_names = a.fix_names.push(name);
+    a.fix_offs = a.fix_offs.append(patch_off);
+    a.fix_names = a.fix_names.append(name);
     return a;
 }
 
 // x86_mov_store_rip_label: `movq <src>, sym(%rip)` (REX.W 89 /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup.
 function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
-    a.code = a.code.push(x86_rex(1, src, 0, 0));
-    a.code = a.code.push(137); // 0x89
-    a.code = a.code.push(x86_modrm(0, src, 5)); // RIP-relative
+    a.code = a.code.append(x86_rex(1, src, 0, 0));
+    a.code = a.code.append(137); // 0x89
+    a.code = a.code.append(x86_modrm(0, src, 5)); // RIP-relative
     a.code = x86_le32(a.code, 0);
     var patch_off: i32 = a.code.len() - 4;
-    a.fix_offs = a.fix_offs.push(patch_off);
-    a.fix_names = a.fix_names.push(name);
+    a.fix_offs = a.fix_offs.append(patch_off);
+    a.fix_names = a.fix_names.append(name);
     return a;
 }
 
@@ -734,7 +734,7 @@ function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
 function x86_rex_opt(buf: i32[], reg: i32, index: i32, base: i32): i32[] {
     var rex: i32 = x86_rex(0, reg, index, base);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
     return buf;
 }
@@ -743,8 +743,8 @@ function x86_rex_opt(buf: i32[], reg: i32, index: i32, base: i32): i32[] {
 // add /0, and /4, sub /5, cmp /7.
 function x86_alu_r32_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
     buf = x86_rex_opt(buf, 0, 0, reg);
-    buf = buf.push(129); // 0x81
-    buf = buf.push(x86_modrm(3, slash, reg));
+    buf = buf.append(129); // 0x81
+    buf = buf.append(x86_modrm(3, slash, reg));
     return x86_le32(buf, imm);
 }
 
@@ -752,23 +752,23 @@ function x86_alu_r32_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
 // sub 0x29, and 0x21, or 0x09, xor 0x31, cmp 0x39 (reg=src, r/m=dst).
 function x86_binop_r32_r32(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
     buf = x86_rex_opt(buf, src, 0, dst);
-    buf = buf.push(opcode);
-    return buf.push(x86_modrm(3, src, dst));
+    buf = buf.append(opcode);
+    return buf.append(x86_modrm(3, src, dst));
 }
 
 // x86_shr_r32_imm8: `shrl $imm8, <reg32>` (0xC1 /5 ib).
 function x86_shr_r32_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
     buf = x86_rex_opt(buf, 0, 0, reg);
-    buf = buf.push(193); // 0xC1
-    buf = buf.push(x86_modrm(3, 5, reg));
-    return buf.push(imm & 255);
+    buf = buf.append(193); // 0xC1
+    buf = buf.append(x86_modrm(3, 5, reg));
+    return buf.append(imm & 255);
 }
 
 // x86_mov_r32_r32: `movl <src>, <dst>` (0x89 /r, 32-bit).
 function x86_mov_r32_r32(buf: i32[], dst: i32, src: i32): i32[] {
     buf = x86_rex_opt(buf, src, 0, dst);
-    buf = buf.push(137); // 0x89
-    return buf.push(x86_modrm(3, src, dst));
+    buf = buf.append(137); // 0x89
+    return buf.append(x86_modrm(3, src, dst));
 }
 
 // x86_movl_store: `movl <src>, mem` (0x89 /r) — 32-bit store.
@@ -776,7 +776,7 @@ function x86_movl_store(buf: i32[], base: i32, has_index: boolean, index: i32, s
     var ix: i32 = 0;
     if (has_index) { ix = index; }
     buf = x86_rex_opt(buf, src, ix, base);
-    buf = buf.push(137); // 0x89
+    buf = buf.append(137); // 0x89
     return x86_byte_mem_operand(buf, src, base, has_index, index, scale, disp);
 }
 
@@ -785,7 +785,7 @@ function x86_movl_load(buf: i32[], dst: i32, base: i32, has_index: boolean, inde
     var ix: i32 = 0;
     if (has_index) { ix = index; }
     buf = x86_rex_opt(buf, dst, ix, base);
-    buf = buf.push(139); // 0x8B
+    buf = buf.append(139); // 0x8B
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
@@ -794,11 +794,11 @@ function x86_testb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
     var rex: i32 = x86_rex(0, 0, 0, reg8);
     var force: boolean = (reg8 >= 4 && reg8 <= 7);
     if (rex != 64 || force) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(246); // 0xF6
-    buf = buf.push(x86_modrm(3, 0, reg8));
-    return buf.push(imm & 255);
+    buf = buf.append(246); // 0xF6
+    buf = buf.append(x86_modrm(3, 0, reg8));
+    return buf.append(imm & 255);
 }
 
 // x86_testb_reg8_reg8: `testb <a>, <b>` (0x84 /r).
@@ -806,18 +806,18 @@ function x86_testb_reg8_reg8(buf: i32[], a: i32, b: i32): i32[] {
     var rex: i32 = x86_rex(0, b, 0, a);
     var force: boolean = (a >= 4 && a <= 7) || (b >= 4 && b <= 7);
     if (rex != 64 || force) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(132); // 0x84
-    return buf.push(x86_modrm(3, b, a));
+    buf = buf.append(132); // 0x84
+    return buf.append(x86_modrm(3, b, a));
 }
 
 // x86_cmovcc_r64_r64: `cmov<cc> <dst>, <src>` (REX.W 0F 40+cc /r).
 function x86_cmovcc_r64_r64(buf: i32[], cc: i32, dst: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, dst, 0, src));
-    buf = buf.push(15);           // 0x0F
-    buf = buf.push(64 + (cc & 15)); // 0x40 + cc
-    return buf.push(x86_modrm(3, dst, src));
+    buf = buf.append(x86_rex(1, dst, 0, src));
+    buf = buf.append(15);           // 0x0F
+    buf = buf.append(64 + (cc & 15)); // 0x40 + cc
+    return buf.append(x86_modrm(3, dst, src));
 }
 
 // x86_movslq_load: `movslq mem, <dst>` (REX.W 0x63 /r) — sign-extend a
@@ -825,8 +825,8 @@ function x86_cmovcc_r64_r64(buf: i32[], cc: i32, dst: i32, src: i32): i32[] {
 function x86_movslq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     var ix: i32 = 0;
     if (has_index) { ix = index; }
-    buf = buf.push(x86_rex(1, dst, ix, base));
-    buf = buf.push(99); // 0x63
+    buf = buf.append(x86_rex(1, dst, ix, base));
+    buf = buf.append(99); // 0x63
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
@@ -834,9 +834,9 @@ function x86_movslq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, in
 // sign-extend a 32-bit register into a 64-bit one (asm.fern widens the
 // i32 `.len()` result with `movslq %eax, %rax`).
 function x86_movslq_rr(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.push(x86_rex(1, dst, 0, src));
-    buf = buf.push(99); // 0x63
-    return buf.push(x86_modrm(3, dst, src));
+    buf = buf.append(x86_rex(1, dst, 0, src));
+    buf = buf.append(99); // 0x63
+    return buf.append(x86_modrm(3, dst, src));
 }
 
 // x86_movzwq_load: `movzwq mem, <dst>` (REX.W 0F B7 /r) — zero-extend a
@@ -844,9 +844,9 @@ function x86_movslq_rr(buf: i32[], dst: i32, src: i32): i32[] {
 function x86_movzwq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     var ix: i32 = 0;
     if (has_index) { ix = index; }
-    buf = buf.push(x86_rex(1, dst, ix, base));
-    buf = buf.push(15);  // 0x0F
-    buf = buf.push(183); // 0xB7
+    buf = buf.append(x86_rex(1, dst, ix, base));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(183); // 0xB7
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
@@ -854,69 +854,69 @@ function x86_movzwq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, in
 
 // x86_cld: `cld` (0xFC) — clear the direction flag before a rep move.
 function x86_cld(buf: i32[]): i32[] {
-    return buf.push(252); // 0xFC
+    return buf.append(252); // 0xFC
 }
 
 // x86_rep_stosb: `rep stosb` (0xF3 0xAA) — fill rcx bytes at [rdi] with al
 // (memset); the runtime zeroes allocations with it.
 function x86_rep_stosb(buf: i32[]): i32[] {
-    buf = buf.push(243); // 0xF3
-    return buf.push(170); // 0xAA
+    buf = buf.append(243); // 0xF3
+    return buf.append(170); // 0xAA
 }
 
 // x86_rep_movsb: `rep movsb` (0xF3 0xA4) — copy rcx bytes [rsi]->[rdi]
 // (memcpy).
 function x86_rep_movsb(buf: i32[]): i32[] {
-    buf = buf.push(243); // 0xF3
-    return buf.push(164); // 0xA4
+    buf = buf.append(243); // 0xF3
+    return buf.append(164); // 0xA4
 }
 
 // x86_sqrtsd: `sqrtsd <src>, <dst>` (F2 0F 51 /r) — scalar-double sqrt
 // (reg=dst, r/m=src).
 function x86_sqrtsd(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.push(242); // 0xF2
+    buf = buf.append(242); // 0xF2
     var rex: i32 = x86_rex(0, dst, 0, src);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(81); // 0x51
-    return buf.push(x86_modrm(3, dst, src));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(81); // 0x51
+    return buf.append(x86_modrm(3, dst, src));
 }
 
 // x86_roundsd: `roundsd $mode, <src>, <dst>` (66 0F 3A 0B /r ib) — round a
 // double per `mode` (1 floor, 2 ceil, 3 trunc). SSE4.1.
 function x86_roundsd(buf: i32[], dst: i32, src: i32, mode: i32): i32[] {
-    buf = buf.push(102); // 0x66
+    buf = buf.append(102); // 0x66
     var rex: i32 = x86_rex(0, dst, 0, src);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(58); // 0x3A
-    buf = buf.push(11); // 0x0B
-    buf = buf.push(x86_modrm(3, dst, src));
-    return buf.push(mode & 255);
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(58); // 0x3A
+    buf = buf.append(11); // 0x0B
+    buf = buf.append(x86_modrm(3, dst, src));
+    return buf.append(mode & 255);
 }
 
 // x86_xorpd: `xorpd <dst>, <src>` (66 0F 57 /r) — xor packed doubles;
 // `xorpd %x,%x` zeroes an xmm register.
 function x86_xorpd(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.push(102); // 0x66
+    buf = buf.append(102); // 0x66
     var rex: i32 = x86_rex(0, dst, 0, src);
     if (rex != 64) {
-        buf = buf.push(rex);
+        buf = buf.append(rex);
     }
-    buf = buf.push(15); // 0x0F
-    buf = buf.push(87); // 0x57
-    return buf.push(x86_modrm(3, dst, src));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(87); // 0x57
+    return buf.append(x86_modrm(3, dst, src));
 }
 
 // x86_jcc_rel32: a near conditional jump (0F 80+cc) with a 32-bit
 // signed displacement. 6 bytes total.
 function x86_jcc_rel32(buf: i32[], cc: i32, rel: i32): i32[] {
-    buf = buf.push(15);             // 0x0F
-    buf = buf.push(128 + (cc & 15)); // 0x80 + cc
+    buf = buf.append(15);             // 0x0F
+    buf = buf.append(128 + (cc & 15)); // 0x80 + cc
     return x86_le32(buf, rel);
 }
 
@@ -930,7 +930,7 @@ function x86_jne_rel32(buf: i32[], rel: i32): i32[] {
 
 // x86_jmp_rel32: an unconditional near jump (0xE9 cd). 5 bytes total.
 function x86_jmp_rel32(buf: i32[], rel: i32): i32[] {
-    buf = buf.push(233); // 0xE9
+    buf = buf.append(233); // 0xE9
     return x86_le32(buf, rel);
 }
 
@@ -952,7 +952,7 @@ function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 
 // x86_call_rel32: a near `call` (0xE8 cd) with a 32-bit signed
 // displacement. 5 bytes total — same rel math as jmp.
 function x86_call_rel32(buf: i32[], rel: i32): i32[] {
-    buf = buf.push(232); // 0xE8
+    buf = buf.append(232); // 0xE8
     return x86_le32(buf, rel);
 }
 
@@ -1021,18 +1021,18 @@ function x86_align8(n: i32): i32 {
 
 // x86_label records `name` at the current .text offset (section 0).
 function x86_label(a: X86Asm, name: string): X86Asm {
-    a.lab_names = a.lab_names.push(name);
-    a.lab_secs = a.lab_secs.push(0);
-    a.lab_offs = a.lab_offs.push(a.code.len());
+    a.lab_names = a.lab_names.append(name);
+    a.lab_secs = a.lab_secs.append(0);
+    a.lab_offs = a.lab_offs.append(a.code.len());
     return a;
 }
 
 // x86_rodata_label records `name` at the current .rodata offset (section
 // 1); follow it with bytes pushed onto a.rodata (e.g. via x86_rodata_quad).
 function x86_rodata_label(a: X86Asm, name: string): X86Asm {
-    a.lab_names = a.lab_names.push(name);
-    a.lab_secs = a.lab_secs.push(1);
-    a.lab_offs = a.lab_offs.push(a.rodata.len());
+    a.lab_names = a.lab_names.append(name);
+    a.lab_secs = a.lab_secs.append(1);
+    a.lab_offs = a.lab_offs.append(a.rodata.len());
     return a;
 }
 
@@ -1048,9 +1048,9 @@ function x86_rodata_quad(a: X86Asm, lo: i32, hi: i32): X86Asm {
 // .bss is zero-init memory not present in the file: only the running size
 // advances (x86_bss_skip), and the ELF sets p_memsz > p_filesz.
 function x86_bss_label(a: X86Asm, name: string): X86Asm {
-    a.lab_names = a.lab_names.push(name);
-    a.lab_secs = a.lab_secs.push(2);
-    a.lab_offs = a.lab_offs.push(a.bss_size);
+    a.lab_names = a.lab_names.append(name);
+    a.lab_secs = a.lab_secs.append(2);
+    a.lab_offs = a.lab_offs.append(a.bss_size);
     return a;
 }
 
@@ -1114,8 +1114,8 @@ function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
     if (target >= 0) {
         a.code = x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off));
     } else {
-        a.fix_offs = a.fix_offs.push(patch_off);
-        a.fix_names = a.fix_names.push(name);
+        a.fix_offs = a.fix_offs.append(patch_off);
+        a.fix_names = a.fix_names.append(name);
     }
     return a;
 }
@@ -1127,13 +1127,13 @@ function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
 // Always deferred: a .rodata target's final offset isn't known until the
 // whole .text is emitted.
 function x86_lea_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
-    a.code = a.code.push(x86_rex(1, dst, 0, 0));
-    a.code = a.code.push(141); // 0x8D
-    a.code = a.code.push(x86_modrm(0, dst, 5)); // RIP-relative
+    a.code = a.code.append(x86_rex(1, dst, 0, 0));
+    a.code = a.code.append(141); // 0x8D
+    a.code = a.code.append(x86_modrm(0, dst, 5)); // RIP-relative
     a.code = x86_le32(a.code, 0); // placeholder disp32
     var patch_off: i32 = a.code.len() - 4;
-    a.fix_offs = a.fix_offs.push(patch_off);
-    a.fix_names = a.fix_names.push(name);
+    a.fix_offs = a.fix_offs.append(patch_off);
+    a.fix_names = a.fix_names.append(name);
     return a;
 }
 

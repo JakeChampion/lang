@@ -97,7 +97,7 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		{"set-index-swap", "function main(): i32 { var a = [7, 3]; var t = a[0]; a[0] = a[1]; a[1] = t; return a[0] * 10 + a[1]; }", 37},
 		{"set-index-compound", "function main(): i32 { var a = [10, 20, 30]; a[0] += 5; a[1] -= 4; a[2] *= 2; return a[0] + a[1] + a[2]; }", 91},
 		{"new-array-fixed", "function main(): i32 { var b = __new_array(3); b[0] = 10; b[1] = 20; b[2] = 30; return b[0] + b[1] + b[2] + b.len(); }", 63},
-		{"array-push", "function main(): i32 { var a = [1, 2]; a = a.push(3); a = a.push(4); return a[0] + a[1] + a[2] + a[3] + a.len(); }", 14},
+		{"array-push", "function main(): i32 { var a = [1, 2]; a = a.append(3); a = a.append(4); return a[0] + a[1] + a[2] + a[3] + a.len(); }", 14},
 		{"slice-array", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[1] + b[2] + b.len(); }", 93},
 		{"slice-empty", "function main(): i32 { var a = [7, 8, 9]; var b = a[0:0]; return b.len() + a[1]; }", 8},
 		// Arrays across calls; returning arrays.

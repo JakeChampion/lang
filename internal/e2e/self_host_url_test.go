@@ -11,7 +11,7 @@ import (
 // relies only on prelude built-ins: Option, structs, string methods,
 // and the string-keyed Map runtime) plus a main, and check the exit
 // code. query_parse exercises Map[string, string[]] with the get →
-// Option[string[]] → .len() / .push() path that depends on the Map
+// Option[string[]] → .len() / .append() path that depends on the Map
 // value-type inference. Exit codes cross-checked vs the Go backend.
 var urlCases = []struct {
 	name string

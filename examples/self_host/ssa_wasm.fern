@@ -332,40 +332,40 @@ pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
         p = p + 1;
     }
     if (returns_float) { sig = sig + " (result f64)\n"; } else { sig = sig + " (result i32)\n"; }
-    chunks = chunks.push(sig);
+    chunks = chunks.append(sig);
     // Locals: SSA value ids nparams..nvals-1, then the dispatch state $pc at
     // index nvals.
     var v: i32 = f.nparams;
     while (v < f.nvals) {
-        if (isfloat[v] == 1) { chunks = chunks.push("    (local f64)\n"); } else { chunks = chunks.push("    (local i32)\n"); }
+        if (isfloat[v] == 1) { chunks = chunks.append("    (local f64)\n"); } else { chunks = chunks.append("    (local i32)\n"); }
         v = v + 1;
     }
-    chunks = chunks.push("    (local i32) ;; $pc\n");
+    chunks = chunks.append("    (local i32) ;; $pc\n");
     var pc: i32 = f.nvals;
     var nb: i32 = f.blocks.len();
     // Initialise $pc to the entry block's dispatch index.
-    chunks = chunks.push("    (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, f.entry)) + "))\n");
-    chunks = chunks.push("    (block $exit (loop $L\n");
+    chunks = chunks.append("    (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, f.entry)) + "))\n");
+    chunks = chunks.append("    (block $exit (loop $L\n");
     // Open the nested dispatch blocks, outermost ($blk nb-1) to innermost
     // ($blk0), then the br_table that branches to each by dispatch index.
     var bo: i32 = nb - 1;
-    while (bo >= 0) { chunks = chunks.push("    (block $blk" + i32_to_string(bo) + "\n"); bo = bo - 1; }
+    while (bo >= 0) { chunks = chunks.append("    (block $blk" + i32_to_string(bo) + "\n"); bo = bo - 1; }
     var brt: string = "    (br_table";
     var bi: i32 = 0;
     while (bi < nb) { brt = brt + " $blk" + i32_to_string(bi); bi = bi + 1; }
     brt = brt + " (local.get " + i32_to_string(pc) + "))\n";
-    chunks = chunks.push(brt);
+    chunks = chunks.append(brt);
     // Close $blk0 then emit block 0's code, close $blk1 then block 1, … —
     // a br_table jump to $blkK lands right after $blkK's close, i.e. at
     // block K's code.
     bi = 0;
     while (bi < nb) {
-        chunks = chunks.push("    ) ;; blk" + i32_to_string(bi) + "\n");
-        chunks = chunks.push(emit_block(f, f.blocks[bi], pc, fnnames, isfloat));
+        chunks = chunks.append("    ) ;; blk" + i32_to_string(bi) + "\n");
+        chunks = chunks.append(emit_block(f, f.blocks[bi], pc, fnnames, isfloat));
         bi = bi + 1;
     }
-    chunks = chunks.push("    ))\n");           // close loop + exit
-    chunks = chunks.push("    (unreachable))\n"); // every path returns / loops
+    chunks = chunks.append("    ))\n");           // close loop + exit
+    chunks = chunks.append("    (unreachable))\n"); // every path returns / loops
     return str_join_chunks(chunks);
 }
 
@@ -573,7 +573,7 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
     // it takes __env, else an env-dropping wrapper), and the wrappers.
     var fnnames: string[] = [];
     var ni: i32 = 0;
-    while (ni < funcs.len()) { fnnames = fnnames.push(funcs[ni].name); ni = ni + 1; }
+    while (ni < funcs.len()) { fnnames = fnnames.append(funcs[ni].name); ni = ni + 1; }
     var has_clos: boolean = uses_kind(funcs, "funcaddr") || uses_kind(funcs, "call_indirect");
     if (has_clos) {
         var maxa: i32 = max_indirect_arity(funcs);
@@ -611,7 +611,7 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
     var chunks: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        chunks = chunks.push(emit_func(funcs[i], fnnames));
+        chunks = chunks.append(emit_func(funcs[i], fnnames));
         i = i + 1;
     }
     out = out + str_join_chunks(chunks);

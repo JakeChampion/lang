@@ -37,12 +37,12 @@ function main(): i32 {
     var ptr_ret: string[] = [];
     var pi: i32 = 0;
     while (pi < mod.funcs.len()) {
-        if (ssa.is_ptr_type(mod.funcs[pi].ret_type) || ssa.is_struct_type(mod.funcs[pi].ret_type, mod.structs)) { ptr_ret = ptr_ret.push(ssa.fn_sym(mod.funcs[pi])); }
+        if (ssa.is_ptr_type(mod.funcs[pi].ret_type) || ssa.is_struct_type(mod.funcs[pi].ret_type, mod.structs)) { ptr_ret = ptr_ret.append(ssa.fn_sym(mod.funcs[pi])); }
         pi = pi + 1;
     }
     var hi0: i32 = 0;
     while (hi0 < hmod.funcs.len()) {
-        if (ssa.is_ptr_type(hmod.funcs[hi0].ret_type)) { ptr_ret = ptr_ret.push(hmod.funcs[hi0].name); }
+        if (ssa.is_ptr_type(hmod.funcs[hi0].ret_type)) { ptr_ret = ptr_ret.append(hmod.funcs[hi0].name); }
         hi0 = hi0 + 1;
     }
     // Lambdas bound as `var f = function(...){...}` are lifted to top-level
@@ -52,7 +52,7 @@ function main(): i32 {
     var lifted: parser.FuncDecl[] = ssa.collect_lambdas(mod.funcs);
     var li0: i32 = 0;
     while (li0 < lifted.len()) {
-        if (ssa.is_ptr_type(lifted[li0].ret_type) || ssa.is_struct_type(lifted[li0].ret_type, mod.structs)) { ptr_ret = ptr_ret.push(lifted[li0].name); }
+        if (ssa.is_ptr_type(lifted[li0].ret_type) || ssa.is_struct_type(lifted[li0].ret_type, mod.structs)) { ptr_ret = ptr_ret.append(lifted[li0].name); }
         li0 = li0 + 1;
     }
     // f64-returning functions: their call results are returned in xmm0, so
@@ -60,12 +60,12 @@ function main(): i32 {
     var float_ret: string[] = [];
     var fri: i32 = 0;
     while (fri < mod.funcs.len()) {
-        if (mod.funcs[fri].ret_type == "f64") { float_ret = float_ret.push(ssa.fn_sym(mod.funcs[fri])); }
+        if (mod.funcs[fri].ret_type == "f64") { float_ret = float_ret.append(ssa.fn_sym(mod.funcs[fri])); }
         fri = fri + 1;
     }
     var frl: i32 = 0;
     while (frl < lifted.len()) {
-        if (lifted[frl].ret_type == "f64") { float_ret = float_ret.push(lifted[frl].name); }
+        if (lifted[frl].ret_type == "f64") { float_ret = float_ret.append(lifted[frl].name); }
         frl = frl + 1;
     }
     // The module seed (global function + receiver-method signatures) is the
@@ -76,13 +76,13 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var r: ssa.BResult = ssa.build_func_seeded(mod.funcs[i], mod.structs, seed);
-        if (r.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(r.func, ptr_ret), float_ret))); }
+        if (r.ok) { funcs = funcs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(r.func, ptr_ret), float_ret))); }
         i = i + 1;
     }
     var li: i32 = 0;
     while (li < lifted.len()) {
         var lr: ssa.BResult = ssa.build_func_seeded(lifted[li], mod.structs, seed);
-        if (lr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(lr.func, ptr_ret), float_ret))); }
+        if (lr.ok) { funcs = funcs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(lr.func, ptr_ret), float_ret))); }
         li = li + 1;
     }
     // Inject each runtime helper body only when the program actually calls it
@@ -92,7 +92,7 @@ function main(): i32 {
     while (hi < hmod.funcs.len()) {
         if (ssa.calls_func(funcs, hmod.funcs[hi].name)) {
             var hr: ssa.BResult = ssa.build_func_seeded(hmod.funcs[hi], mod.structs, seed);
-            if (hr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(hr.func, ptr_ret), float_ret))); }
+            if (hr.ok) { funcs = funcs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(hr.func, ptr_ret), float_ret))); }
         }
         hi = hi + 1;
     }
