@@ -1738,7 +1738,8 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
 // final __TEXT / __DATA segment addresses are known (the caller supplies
 // them from macho.fern's macho_text_vaddr / macho_data_vaddr). After this,
 // p.asm.code + p.data are the final sections.
-pub function arm64_gas_link(p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
+pub function arm64_gas_link(p0: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
+    var p: Arm64GasProg = p0; // local copy (see arm64_asm_label note)
     var aw: Arm64Asm = p.asm;
     var i: i32 = 0;
     while (i < p.pf_sites.len()) {
