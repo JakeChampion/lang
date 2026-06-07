@@ -622,7 +622,7 @@ function arm64_gas_program(src: string): Arm64GasProg {
         if (mnem == "and" && rest.index_of("#") >= 0) {
             var nops: string[] = arm64_gas_operands(rest);
             var nimm: i32 = arm64_gas_imm(nops[2]);
-            if (arm64_and_imm_fields(nimm) >= 0) {
+            if (arm64_and_imm_ok(nimm)) {
                 var aand: Arm64Asm = p.asm;
                 aand.code = arm64_and_imm(aand.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm);
                 p.asm = aand;

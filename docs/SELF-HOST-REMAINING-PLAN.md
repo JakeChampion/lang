@@ -1083,8 +1083,18 @@ smallest → largest:
     bitmask immediate is recorded by the guard, never mis-encoded — a full
     AArch64 bitmask-immediate encoder is the follow-up). The capstone now
     assembles 7 real programs (incl. the heap/alloc prologue) to valid
-    arm64 Mach-O. Remaining: the full bitmask-immediate encoder; then wire
-    emit → assemble → write-file into the CLI driver behind a flag.
+    arm64 Mach-O.
+  - ✅ **slice 3m — full AArch64 bitmask-immediate encoder**:
+    `arm64_encode_bitmask` (a faithful port of the Go reference's
+    `encodeBitmask`) replaces the single-mask lookup, so any legal
+    `and Xd, Xn, #imm` logical immediate encodes — not just `#-16`. Needed
+    a few i64 bit primitives Fern lacks natively: a masked logical shift
+    right (`>>` is arithmetic), and ctz/clz via bit-test loops. Byte-checked
+    vs llvm-mc across a spread of masks (`#-16`, `#-256`, `#7`, `#0xff`,
+    `#1`, `#0xf`) plus the legality cases (0 / all-ones / non-bitmask
+    rejected) in `TestSelfHostArm64Bitmask`; the `and #imm` guard now keys
+    on `arm64_and_imm_ok`. Remaining: wire emit → assemble → write-file
+    into the CLI driver behind a flag (the architectural finale).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
