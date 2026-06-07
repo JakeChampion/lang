@@ -4597,13 +4597,11 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 		}
 	}
 	cases := map[string]*ir.Program{
-		// i64[] is still rejected: only ≤32-bit integer-array params lower yet
-		// (64-bit elements need 8-byte alignment the Fern element pointer
-		// doesn't guarantee). i32[]/u8[] params ARE accepted now (P4c).
-		"i64 array param":           mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: ast.NumberType{Width: 64}}}}, i32()),
-		"i64 array result":          mk(nil, ast.ArrayType{Elem: ast.NumberType{Width: 64}}),
-		"f64 array param":           mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: ast.FloatType{Width: 64}}}}, i32()),
-		"f64 array result":          mk(nil, ast.ArrayType{Elem: ast.FloatType{Width: 64}}),
+		// Numeric arrays of any width (u8[]…i64[]/f64[]) ARE accepted now (P4c).
+		// bool[] stays rejected: a Fern bool is 4 bytes but the canonical
+		// list<bool> element is 1 byte, so the stride differs.
+		"bool array param":          mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: ast.BoolType{}}}}, i32()),
+		"bool array result":         mk(nil, ast.ArrayType{Elem: ast.BoolType{}}),
 		"string param + str result": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, ast.StringType{}),
 	}
 	for name, prog := range cases {

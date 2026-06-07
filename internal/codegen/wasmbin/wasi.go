@@ -763,14 +763,14 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		if !used[ex.Name] {
 			continue
 		}
-		// Parameters must be scalar, `string`, or a numeric array of ≤4-byte
-		// elements — the memory params a wrapper can lower to the canonical
-		// (ptr,len) below. A `string` normalizes its SSO pair to a heap buffer;
-		// a numeric array (`u8[]`, `i32[]`, `f32[]`, …) passes its element
+		// Parameters must be scalar, `string`, or a numeric array — the memory
+		// params a wrapper can lower to the canonical (ptr,len) below. A
+		// `string` normalizes its SSO pair to a heap buffer; a numeric array
+		// (`u8[]`, `i32[]`, `f32[]`, `i64[]`, `f64[]`, …) passes its element
 		// pointer + length-prefix directly (zero-copy, native stride). Other
-		// composite params — 8-byte-element (i64/f64) / bool arrays, records —
-		// aren't lowered yet; reject them rather than emit slots that don't
-		// match the host's ABI.
+		// composite params — bool arrays (stride mismatch), records — aren't
+		// lowered yet; reject them rather than emit slots that don't match the
+		// host's ABI.
 		hasStringParam, hasMemParam := false, false
 		for _, p := range ex.Params {
 			switch {
@@ -779,7 +779,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			case isScalarArrayParamType(p.Type):
 				hasMemParam = true
 			case !externScalarType(p.Type):
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, and ≤4-byte numeric-array (u8[]/i32[]/f32[]/…) extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, and numeric-array (u8[]/i32[]/f64[]/…) extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 			}
 		}
 		params, err := paramValtypes(ex.Params)
@@ -860,11 +860,11 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add("__bytes_to_lang_string")
 			helpers.add("cabi_realloc")
 		case isScalarArrayParamType(ret):
-			// list<T> result (≤4-byte numeric element) lifted into a Fern T[]
-			// (P4c): canonical return-area lowering, then the result wrapper
-			// allocates the length-prefixed array and copies the host bytes
-			// (count*stride) past the prefix. u8[] (stride 1) is the original
-			// case; i32[]/f32[] etc. copy wider elements at native stride.
+			// list<T> result (numeric element) lifted into a Fern T[] (P4c):
+			// canonical return-area lowering, then the result wrapper allocates
+			// the length-prefixed array and copies the host bytes (count*stride)
+			// past the prefix. u8[] (stride 1) is the original case; i32[]/f64[]
+			// etc. copy wider elements at native stride.
 			rawName := ex.Name + "$import"
 			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
 			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
@@ -878,7 +878,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add("__fern_alloc")
 			helpers.add("cabi_realloc")
 		default:
-			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, and ≤4-byte numeric-array (u8[]/i32[]/f32[]/…) results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
+			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, and numeric-array (u8[]/i32[]/f64[]/…) results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 		}
 	}
 	return specs, wrappers, nil
