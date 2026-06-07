@@ -182,6 +182,11 @@ function store_reg(reg_of: i32[], v: i32, src: string, width: i32, out: string):
 function fconst_label(fname: string, result: i32): string {
     return ".LCf_" + fname + "_" + i32_to_string(result);
 }
+// sconst_label is the .data label for a const_str (static [len, b0, …] string,
+// one 8-byte word per element — the heap string layout the helpers read).
+function sconst_label(fname: string, result: i32): string {
+    return ".LCs_" + fname + "_" + i32_to_string(result);
+}
 function f_arith(op: string): string {
     if (op == "+") { return "fadd"; }
     if (op == "-") { return "fsub"; }
@@ -198,6 +203,13 @@ function f_cc(op: string): string {
 }
 
 function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[], fname: string, out: string): string {
+    if (ins.kind == "const_str") {
+        // Pointer to the static [len, bytes…] string constant (64-bit; stored
+        // via store_reg so it honours the value's register/slot home).
+        out = out + "    adrp x9, " + sconst_label(fname, ins.result) + "\n";
+        out = out + "    add x9, x9, :lo12:" + sconst_label(fname, ins.result) + "\n";
+        return store_reg(reg_of, ins.result, "x9", 64, out);
+    }
     if (ins.kind == "const_float") {
         out = out + "    adrp x9, " + fconst_label(fname, ins.result) + "\n";
         out = out + "    ldr d0, [x9, :lo12:" + fconst_label(fname, ins.result) + "]\n";
@@ -508,11 +520,43 @@ function emit_float_consts(funcs: ssa.SFunc[]): string {
     return out;
 }
 
+// emit_str_consts emits a static [len, b0, b1, …] string (one 8-byte .quad
+// per element) for every const_str across all functions, labelled by
+// sconst_label — matching the runtime string layout the helpers read.
+function emit_str_consts(funcs: ssa.SFunc[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var bi: i32 = 0;
+        while (bi < funcs[i].blocks.len()) {
+            var blk: ssa.SBlock = funcs[i].blocks[bi];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: ssa.SInst = blk.insts[k];
+                if (ins.kind == "const_str") {
+                    var sv: string = ins.str;
+                    var parts: string[] = [];
+                    parts = parts.append("    .align 8\n" + sconst_label(funcs[i].name, ins.result) + ":\n    .quad " + i32_to_string(sv.len()) + "\n");
+                    var ci: i32 = 0;
+                    while (ci < sv.len()) { parts = parts.append("    .quad " + i32_to_string(sv[ci]) + "\n"); ci = ci + 1; }
+                    out = out + str_join_chunks(parts);
+                }
+                k = k + 1;
+            }
+            bi = bi + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var out: string = "    .globl _start\n";
     // Heap: a 16 MiB zero-initialised arena and an 8-byte bump pointer.
     out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 16777216\n";
     out = out + "    .data\n__fern_ssa_hp:\n    .quad 0\n";
+    // String literals as static [len, bytes…] .data constants.
+    out = out + emit_str_consts(funcs);
     // f64 literals as .rodata .double constants (the assembler computes bits).
     var fconsts: string = emit_float_consts(funcs);
     if (fconsts.len() > 0) { out = out + "    .section .rodata\n" + fconsts; }

@@ -844,36 +844,16 @@ function build_expr(e: parser.Expr, s: BState): BState {
             return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: ola, imm: fw2, str: "" });
         },
         parser.ExprString(strlit) => {
-            // A string is a byte sequence; lower it to the same length-
-            // prefixed array as ExprArray, one i32 per byte. s.len() and
-            // s[i] (a byte) then reuse the array path with no new ops.
-            var bytes: string = strlit.value;
-            var bn: i32 = bytes.len();
+            // A string literal is a static [len, b0, b1, …] constant: emit a
+            // single const_str (the backend materialises it in a data section)
+            // rather than alloc + a store_elem per byte, which exploded the IR
+            // for string-heavy functions (asm.emit_runtime is ~4000 literals →
+            // hundreds of thousands of SInsts → OOM). The result is a string
+            // pointer like any other, so len / index / concat / streq reuse the
+            // existing paths.
             s = s.fresh();
-            var bhandle: i32 = s.cur_id();
-            var bna: i32[] = [];
-            s = s.emit(SInst { kind: "alloc", result: bhandle, args: bna, imm: bn + 1, str: "" });
-            s = s.kconst(0);
-            var blenidx: i32 = s.cur_id();
-            s = s.kconst(bn);
-            var blenval: i32 = s.cur_id();
-            s = s.fresh();
-            var bla0: i32[] = [bhandle, blenidx, blenval];
-            s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: bla0, imm: 0, str: "" });
-            var bi: i32 = 0;
-            while (bi < bn) {
-                s = s.kconst(bi + 1);
-                var bidx: i32 = s.cur_id();
-                s = s.kconst(bytes[bi]);
-                var bval: i32 = s.cur_id();
-                s = s.fresh();
-                var bsa: i32[] = [bhandle, bidx, bval];
-                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: bsa, imm: 0, str: "" });
-                bi = bi + 1;
-            }
-            s = s.fresh();
-            var bha: i32[] = [bhandle];
-            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: bha, imm: 0, str: "" });
+            var sca: i32[] = [];
+            return s.emit(SInst { kind: "const_str", result: s.cur_id(), args: sca, imm: 0, str: strlit.value });
         },
         parser.ExprArray(arr) => {
             // Heap-allocate a length-prefixed i32 array: element 0 holds the
@@ -2736,6 +2716,7 @@ pub function compute_widths(f: SFunc): i32[] {
                 var ins: SInst = blk.insts[k];
                 var make64: boolean = false;
                 if (ins.kind == "alloc") { make64 = true; }
+                else if (ins.kind == "const_str") { make64 = true; }   // a string pointer
                 else if (ins.kind == "funcaddr") { make64 = true; }   // a code pointer
                 else if (ins.kind == "param" && ins.str == "ptr") { make64 = true; }
                 else if (ins.kind == "param" && ins.str == "f64") { make64 = true; }   // f64 param (8-byte)
@@ -3337,6 +3318,15 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                     while (qi < mem[sa]) { if (mem[sa + 1 + qi] != mem[sb + 1 + qi]) { eq = 0; } qi = qi + 1; }
                 }
                 tab = vtab_set(tab, inst.result, eq);
+            } else if (inst.kind == "const_str") {
+                // Materialise the literal as [len, b0, b1, …] in mem.
+                var cs: string = inst.str;
+                var csl: i32 = cs.len();
+                var csbase: i32 = mem.len();
+                mem = mem.append(csl);
+                var csi: i32 = 0;
+                while (csi < csl) { mem = mem.append(cs[csi]); csi = csi + 1; }
+                tab = vtab_set(tab, inst.result, csbase);
             }
             k = k + 1;
         }
