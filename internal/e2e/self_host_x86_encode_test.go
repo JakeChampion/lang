@@ -79,6 +79,20 @@ func TestSelfHostX86LoopRuns(t *testing.T) {
 	runX86NativeDriver(t, "loop42", x86ElfLoopDriverMain, 42)
 }
 
+// TestSelfHostX86MaxRuns exercises a *forward* conditional branch (jge
+// over the else-arm), resolved via the placeholder + x86_patch_rel32
+// path: max(42, 17) exits 42.
+func TestSelfHostX86MaxRuns(t *testing.T) {
+	runX86NativeDriver(t, "max42", x86ElfMaxDriverMain, 42)
+}
+
+// TestSelfHostX86CallRuns exercises a forward `call` + `ret`: main calls a
+// subroutine (defined after the call site, so the rel32 is patched) that
+// sets the result to 42 and returns; main exits with it.
+func TestSelfHostX86CallRuns(t *testing.T) {
+	runX86NativeDriver(t, "call42", x86ElfCallDriverMain, 42)
+}
+
 // runX86NativeDriver compiles x86_encode.fern + elf.fern + driverMain
 // through the self-host wasm emitter, runs the resulting WAT under
 // wasmtime to obtain the raw ELF the Fern program assembled and wrote to
@@ -212,6 +226,19 @@ function main(): i32 {
     if (pp.len() != 5 || pp[0] != 233 || pp[1] != 0) { return 17; }
     // rel math: branch at 31, len 6, target 10 -> -27.
     if (x86_branch_rel(10, 31, 6) != (0 - 27)) { return 18; }
+    // call rel=10 -> E8 0A 00 00 00
+    var q: i32[] = x86_call_rel32([], 10);
+    if (q.len() != 5 || q[0] != 232 || q[1] != 10 || q[2] != 0 || q[3] != 0 || q[4] != 0) { return 19; }
+    // forward-ref rel: target 22, rel32 field at 15 -> 3.
+    if (x86_rel_to(22, 15) != 3) { return 20; }
+    // patch a placeholder: jne rel=0 then patch its rel32 (offset 2) to 3.
+    var r: i32[] = x86_jne_rel32([], 0);
+    r = x86_patch_rel32(r, 2, 3);
+    if (r.len() != 6 || r[0] != 15 || r[1] != 133 || r[2] != 3 || r[3] != 0 || r[4] != 0 || r[5] != 0) { return 21; }
+    // patch a negative rel (-27) -> E5 FF FF FF.
+    var s: i32[] = x86_jmp_rel32([], 0);
+    s = x86_patch_rel32(s, 1, 0 - 27);
+    if (s.len() != 5 || s[0] != 233 || s[1] != 229 || s[2] != 255 || s[3] != 255 || s[4] != 255) { return 22; }
     return 0;
 }
 `
@@ -251,6 +278,60 @@ function main(): i32 {
     code = x86_mov_r64_r64(code, x86_rdi(), x86_rax()); // exit code = acc
     code = x86_mov_r32_imm32(code, x86_rax(), 60);  // __NR_exit
     code = x86_syscall(code);
+    var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfMaxDriverMain assembles max(42, 17) using a FORWARD conditional
+// branch (jge skips the else-arm), resolved via a placeholder + patch:
+//
+//	eax = 42 ; ecx = 17 ; cmp eax, ecx ; jge done ; eax = ecx ; done:
+//	exit(eax)
+//
+// The jge's rel32 is emitted as 0, its field offset recorded, then patched
+// to reach `done` once that offset is known.
+const x86ElfMaxDriverMain = `
+function main(): i32 {
+    var code: i32[] = [];
+    code = x86_mov_r32_imm32(code, x86_rax(), 42); // a
+    code = x86_mov_r32_imm32(code, x86_rcx(), 17); // b
+    code = x86_cmp_r64_r64(code, x86_rax(), x86_rcx());
+    var jge_off: i32 = code.len();                 // branch opcode offset
+    code = x86_jcc_rel32(code, x86_cc_ge(), 0);    // placeholder rel32
+    var patch_off: i32 = jge_off + 2;              // rel32 field (after 0F 8D)
+    code = x86_mov_r64_r64(code, x86_rax(), x86_rcx()); // else: a = b
+    var done_off: i32 = code.len();                // forward-branch target
+    code = x86_patch_rel32(code, patch_off, x86_rel_to(done_off, patch_off));
+    code = x86_mov_r64_r64(code, x86_rdi(), x86_rax()); // exit code = max
+    code = x86_mov_r32_imm32(code, x86_rax(), 60);
+    code = x86_syscall(code);
+    var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfCallDriverMain assembles a forward call + ret:
+//
+//	call setval ; mov rdi, rax ; exit ; setval: mov eax, 42 ; ret
+//
+// The call targets a subroutine defined after the call site, so its rel32
+// is a patched forward reference.
+const x86ElfCallDriverMain = `
+function main(): i32 {
+    var code: i32[] = [];
+    var call_off: i32 = code.len();
+    code = x86_call_rel32(code, 0);               // placeholder -> setval
+    var patch_off: i32 = call_off + 1;            // rel32 field (after E8)
+    code = x86_mov_r64_r64(code, x86_rdi(), x86_rax()); // exit code = result
+    code = x86_mov_r32_imm32(code, x86_rax(), 60);
+    code = x86_syscall(code);
+    var setval_off: i32 = code.len();             // subroutine entry
+    code = x86_patch_rel32(code, patch_off, x86_rel_to(setval_off, patch_off));
+    code = x86_mov_r32_imm32(code, x86_rax(), 42); // setval: result = 42
+    code = x86_ret(code);
     var bin: i32[] = elf_static_executable_x86(code);
     write(string_from_bytes(bin));
     return 0;

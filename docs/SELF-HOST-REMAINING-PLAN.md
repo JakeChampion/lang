@@ -874,10 +874,21 @@ smallest → largest:
     the binary **runs natively** exiting 42. Backward branches resolve
     directly (target known); forward branches still await the label
     table (next slice).
-  - ⬜ remaining: a **label/fixup table** (forward-reference resolution +
-    `call rel32`), memory operands (ModR/M memory forms, SIB, disp8/32),
-    SSE + x87 floats, `.rodata` + rip-relative symbol addressing, and the
-    text parser (`asm.fern` GAS text → these encoders).
+  - ✅ **slice 2c — forward references + `call`**: `call rel32` (`0xE8`)
+    and `x86_patch_rel32` — emit a branch with a placeholder rel32, record
+    its field offset, and patch it once the target is known (`x86_rel_to`
+    does the `target - (patch_off + 4)` math). Built on the self-host's
+    array element-assignment (`buf[i] = v`); this is the mechanism the
+    text assembler's label table will sit on. Byte-checked
+    (`TestSelfHostX86Encode`) plus two end-to-end native runs:
+    `TestSelfHostX86MaxRuns` (forward `jge` over an else-arm → max(42,17))
+    and `TestSelfHostX86CallRuns` (forward `call` to a later subroutine +
+    `ret`).
+  - ⬜ remaining: a **named-label table** over the patch primitive (string
+    label → offset + a deferred-fixup list, for the text parser), memory
+    operands (ModR/M memory forms, SIB, disp8/32), SSE + x87 floats,
+    `.rodata` + rip-relative symbol addressing, and the text parser
+    (`asm.fern` GAS text → these encoders).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

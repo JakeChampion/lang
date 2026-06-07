@@ -187,7 +187,43 @@ function x86_jmp_rel32(buf: i32[], rel: i32): i32[] {
 
 // x86_branch_rel computes the rel32 a branch at `branch_off` (the offset
 // of its first opcode byte) needs to reach `target_off`, given the
-// branch's total encoded length `branch_len` (6 for jcc, 5 for jmp).
+// branch's total encoded length `branch_len` (6 for jcc, 5 for jmp/call).
 function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 {
     return target_off - (branch_off + branch_len);
+}
+
+// ---- forward references (slice 2c) ----
+//
+// A forward branch can't know its rel32 when emitted (the target isn't
+// laid down yet). The standard fix: emit a placeholder rel32 (zeros),
+// remember where the rel32 field starts, and patch it once the target
+// offset is known. x86_patch_rel32 is that patch; the label/fixup table a
+// text assembler needs is built on top of it.
+
+// x86_call_rel32: a near `call` (0xE8 cd) with a 32-bit signed
+// displacement. 5 bytes total — same rel math as jmp.
+function x86_call_rel32(buf: i32[], rel: i32): i32[] {
+    buf = buf.push(232); // 0xE8
+    return x86_le32(buf, rel);
+}
+
+// x86_patch_rel32 overwrites the 4 little-endian rel32 bytes already in
+// `buf` starting at offset `at` (the rel32 field of a previously-emitted
+// branch placeholder). Used to resolve a forward reference once its
+// target offset is known.
+function x86_patch_rel32(buf: i32[], at: i32, rel: i32): i32[] {
+    buf[at] = rel & 255;
+    buf[at + 1] = (rel >> 8) & 255;
+    buf[at + 2] = (rel >> 16) & 255;
+    buf[at + 3] = (rel >> 24) & 255;
+    return buf;
+}
+
+// x86_rel_to computes the rel32 to patch into a placeholder whose rel32
+// field starts at `patch_off`, to reach `target_off`. The branch's next
+// instruction is 4 bytes past the rel32 field, so
+// rel = target_off - (patch_off + 4) — independent of opcode length, so
+// it works for jcc / jmp / call alike given that branch's rel32 offset.
+function x86_rel_to(target_off: i32, patch_off: i32): i32 {
+    return target_off - (patch_off + 4);
 }
