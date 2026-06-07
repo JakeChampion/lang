@@ -379,3 +379,21 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the rc-header migration (0b) into a ~2-line change to the helper +
   the single `cap` reader in `__fern_arr_push`. Clobbers only
   rax/rdi (matches `__fern_alloc`'s contract → drop-in at every site).
+- 2026-06-07: **Phase 0b (array rc-header layout), x86-64 — SHIPPED.**
+  Flipped `__fern_arr_box` to the rc layout: base = `[cap, rc, len,
+  e…]`, data = base+16, so **rc sits at `[data-8]`** (the uniform offset
+  the generic `__fern_rc_*` helpers read), cap at `[data-16]`, and every
+  element/`len` offset relative to `data` is **unchanged** (array
+  readers index off `data`, so only the alloc side moved). Allocs init
+  `rc = 1`. The only non-helper edit was the single `cap` reader in
+  `__fern_arr_push` (`-8`→`-16`). x86-64 arrays now carry live rc
+  headers, ready for inc/dec wiring (Phase 1d). inc/dec are not emitted
+  yet, so behaviour is unchanged (+8 bytes/array, underflow detector
+  stays 0). Verified green: full asm-run + array / array-method /
+  string / map / json / bytes / charmethods / map-iter/keys/literal
+  self-host suites + the RC runtime tests + the byte-identical
+  self-bootstrap (BootstrapsItself / Fixpoint / Stage2FixedPoint).
+  Next: Phase 1d — emit `__fern_rc_inc` at array alias sites +
+  `__fern_rc_dec` at scope/exit + overwrite (porting
+  `needs_rc_inc_on_alias` + the exit-dec sweep). Then mirror 0a/0b/1d to
+  arm64 + wasm.

@@ -2700,7 +2700,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // Layout with a hidden capacity word: alloc
             // [cap, len, e0, …] at base B and return B+8, so readers
             // see the classic [len@0, e_i@(i+1)*8] layout while
-            // __fern_arr_push finds cap at -8 and can grow
+            // __fern_arr_push finds cap at -16 (rc at -8) and can grow
             // geometrically. cap = len for a literal (first push
             // reallocs, then doubles).
             s = s.write("    movq $" + asmcore.i32_to_string(n_elems) + ", %rdi\n");   // cap = element count
@@ -4887,12 +4887,15 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // pointer. Centralises the array box layout so every array
         // allocation site (literal / push-grow / slice / concat /
         // reverse / split / str_bytes / str_chars / args / u8) shares
-        // ONE layout definition — the prerequisite for the Perceus
-        // rc-header migration (docs/RC-PERCEUS-SELF-HOST-PORT.md Phase
-        // 0a/0b). Today's layout (no rc word yet): base = [cap, len,
-        // e0, e1, ...]; the returned data pointer is base+8 (at the len
-        // slot), cap is hidden at [data-8], element i is at
-        // [data+(i+1)*8]. The helper writes cap and len = cap; callers
+        // ONE layout definition (docs/RC-PERCEUS-SELF-HOST-PORT.md Phase
+        // 0a/0b). Perceus rc-header layout: base = [cap, rc, len, e0,
+        // e1, ...]; the returned data pointer is base+16 (at the len
+        // slot), so rc is at [data-8] (the uniform offset the generic
+        // __fern_rc_inc / __fern_rc_dec / __fern_rc_is_unique helpers
+        // read), cap is at [data-16], and element i stays at
+        // [data+(i+1)*8] — UNCHANGED from the pre-rc layout, since array
+        // readers index relative to data; only the alloc side moves. The
+        // helper inits rc = 1 and writes cap and len = cap; callers
         // overwrite len when it differs (push) and fill the elements.
         // Clobbers only %rax + %rdi (matching __fern_alloc's contract,
         // so it is a drop-in replacement at every call site — callers
@@ -4901,13 +4904,14 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %rdi\n");             // save cap (also keeps 16B align)
-        s = s.write("    addq $2, %rdi\n");          // cap + 2 header words (cap, len)
+        s = s.write("    addq $3, %rdi\n");          // cap + 3 header words (cap, rc, len)
         s = s.write("    shlq $3, %rdi\n");          // * 8 bytes
         s = s.write("    call __fern_alloc\n");      // base in %rax
         s = s.write("    movq -8(%rbp), %rdi\n");    // reload cap
-        s = s.write("    movq %rdi, (%rax)\n");      // cap at base
-        s = s.write("    movq %rdi, 8(%rax)\n");     // len = cap at base+8
-        s = s.write("    addq $8, %rax\n");          // data ptr = base+8
+        s = s.write("    movq %rdi, (%rax)\n");      // cap at base+0   (= data-16)
+        s = s.write("    movq $1, 8(%rax)\n");       // rc = 1 at base+8 (= data-8)
+        s = s.write("    movq %rdi, 16(%rax)\n");    // len = cap at base+16 (= data)
+        s = s.write("    addq $16, %rax\n");         // data ptr = base+16
         s = s.write("    leave\n");
         s = s.write("    ret\n");
 
@@ -7094,10 +7098,10 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ret\n");
     }
     // __fern_arr_push: append an 8-byte payload to an array.
-    // %rdi = arr ptr (returned form, [len@0, e_i@(i+1)*8]; capacity
-    // hidden at -8), %rsi = value. Amortised O(1): if len < cap,
+    // %rdi = arr ptr (returned form, [len@0, e_i@(i+1)*8]; rc hidden at
+    // -8, capacity at -16), %rsi = value. Amortised O(1): if len < cap,
     // mutate in place and return the same pointer; otherwise alloc a
-    // doubled buffer ([cap, len, …] at base B, returned B+8), copy,
+    // doubled buffer (via __fern_arr_box, returned at data ptr), copy,
     // and return the new pointer. Replaces the old fresh-copy-every-
     // push runtime, which was O(N²) and exhausted the heap when the
     // self-hosted compiler tokenised its own ~100k-token source.
@@ -7112,7 +7116,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rdi, %r12\n");        // arr ptr
         s = s.write("    movq %rsi, %r13\n");        // value
         s = s.write("    movq (%r12), %r14\n");      // len
-        s = s.write("    movq -8(%r12), %r15\n");    // cap (hidden at -8)
+        s = s.write("    movq -16(%r12), %r15\n");   // cap (hidden at -16; rc at -8)
         s = s.write("    cmpq %r15, %r14\n");
         s = s.write("    jge .Larr_push_grow\n");    // len >= cap → grow
         // In place: store value at slot (len+1), bump len, return arr.
