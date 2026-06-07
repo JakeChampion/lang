@@ -2702,6 +2702,25 @@ pub function itoa_nn(n: i32): string {
 // conservative — a callee name that's a local binding (parameter, `var`,
 // or closure) is skipped, so only a real module function sig is checked
 // (method / closure arity + argument types are left to later slices).
+// mlit_is_base reports whether an expression is the base constructor call
+// of a desugared map literal — `map_new(n)` (string keys) or
+// `map_new_i32(n)` (integer keys), which the parser's parse_map_lit emits
+// before chaining `.insert(k, v)` per entry. Used to find a map literal's
+// FIRST `.insert` (whose object is this base) so its key type can be
+// checked (E045).
+function mlit_is_base(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(bc) => {
+            match (bc.callee) {
+                parser.ExprIdent(bid) => { return bid.name == "map_new" || bid.name == "map_new_i32"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function call_diags(e: parser.Expr, s: Scope): Diag[] {
     var out: Diag[] = [];
     match (e) {
@@ -2710,7 +2729,22 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // whose field names a METHOD, not a field — recurse only into
             // the object so it isn't mis-flagged as an unknown field (E043).
             match (c.callee) {
-                parser.ExprFieldAccess(mfa) => { out = call_diags(mfa.obj, s); },
+                parser.ExprFieldAccess(mfa) => {
+                    out = call_diags(mfa.obj, s);
+                    // E045: a map literal `Map { k: v, … }` desugars to
+                    // `map_new[_i32](n).insert(k0, v0).insert(…)…`. The FIRST
+                    // insert (its object is the base constructor) carries the
+                    // literal's first key, which fixes the map's key type — it
+                    // must be i32 or string (the only key kinds the runtime's
+                    // hash/compare supports). Reported at the key, matching the
+                    // Go checker, which checks `MapLit.Entries[0].Key`.
+                    if (mfa.field == "insert" && mlit_is_base(mfa.obj) && c.args.len() >= 1) {
+                        var kt: Type = check_expr(c.args[0], s);
+                        if (!is_unknown(kt) && !type_eq(kt, t_i32()) && !type_eq(kt, t_string())) {
+                            out = out.append(dg_at("E045", "map key type " + type_label(kt) + " is not yet supported (use i32 or string)", expr_line(c.args[0]), expr_col(c.args[0])));
+                        }
+                    }
+                },
                 parser.ExprIdent(cid) => {
                     // E001: a call to an undefined function. A bare-ident
                     // callee that resolves to nothing — not a local (closure),
