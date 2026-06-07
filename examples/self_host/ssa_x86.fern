@@ -265,13 +265,25 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "call") {
+        // System V: integer/pointer args fill rdi,rsi,… ; f64 args fill
+        // xmm0,xmm1,… — two independent register sequences.
+        var ii: i32 = 0;
+        var fi: i32 = 0;
         var i: i32 = 0;
-        while (i < ins.args.len() && i < 6) {
-            var aw: i32 = widths[ins.args[i]];
-            out = out + "    " + w_mov(aw) + " " + regn(reg_of, ins.args[i], aw) + ", " + argreg_w(i, aw) + "\n";
+        while (i < ins.args.len()) {
+            if (isfloat[ins.args[i]] == 1) {
+                out = out + "    movsd " + slot(ins.args[i]) + ", %xmm" + i32_to_string(fi) + "\n";
+                fi = fi + 1;
+            } else {
+                var aw: i32 = widths[ins.args[i]];
+                out = out + "    " + w_mov(aw) + " " + regn(reg_of, ins.args[i], aw) + ", " + argreg_w(ii, aw) + "\n";
+                ii = ii + 1;
+            }
             i = i + 1;
         }
         out = out + "    call __fn_" + ins.str + "\n";
+        // f64-returning call (imm=2) → result in xmm0; else eax/rax.
+        if (isfloat[ins.result] == 1) { return out + "    movsd %xmm0, " + slot(ins.result) + "\n"; }
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "funcaddr") {
@@ -379,9 +391,11 @@ function blk_label(name: string, id: i32): string {
     return ".L_" + name + "_" + i32_to_string(id);
 }
 
-function emit_term(f: ssa.SFunc, name: string, reg_of: i32[], widths: i32[], blk: ssa.SBlock, out: string): string {
+function emit_term(f: ssa.SFunc, name: string, reg_of: i32[], widths: i32[], isfloat: i32[], blk: ssa.SBlock, out: string): string {
     var t: ssa.STerm = blk.term;
     if (t.kind == "ret") {
+        // An f64 return goes in xmm0; otherwise eax/rax.
+        if (isfloat[t.value] == 1) { out = out + "    movsd " + slot(t.value) + ", %xmm0\n"; return out + "    leave\n    ret\n"; }
         out = load_op(reg_of, widths, t.value, "a", out);
         return out + "    leave\n    ret\n";
     }
@@ -422,12 +436,21 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { chunks = chunks.push("    subq $" + i32_to_string(frame) + ", %rsp\n"); }
-    // Spill incoming arguments to their locations, at each param's width
-    // (a pointer / array param is 64-bit).
+    // Spill incoming arguments to their slots. f64 params arrive in xmm0,…
+    // (a separate sequence from the integer/pointer argregs), matching the
+    // System V split the call site uses.
     var p: i32 = 0;
+    var iip: i32 = 0;
+    var fip: i32 = 0;
     while (p < f.nparams) {
-        var pw: i32 = widths[p];
-        chunks = chunks.push("    " + w_mov(pw) + " " + argreg_w(p, pw) + ", " + regn(reg_of, p, pw) + "\n");
+        if (isfloat[p] == 1) {
+            chunks = chunks.push("    movsd %xmm" + i32_to_string(fip) + ", " + slot(p) + "\n");
+            fip = fip + 1;
+        } else {
+            var pw: i32 = widths[p];
+            chunks = chunks.push("    " + w_mov(pw) + " " + argreg_w(iip, pw) + ", " + regn(reg_of, p, pw) + "\n");
+            iip = iip + 1;
+        }
         p = p + 1;
     }
     // Emit each block: label, instructions, terminator.
@@ -443,7 +466,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
             }
             k = k + 1;
         }
-        chunks = chunks.push(emit_term(f, f.name, reg_of, widths, blk, ""));
+        chunks = chunks.push(emit_term(f, f.name, reg_of, widths, isfloat, blk, ""));
         bi = bi + 1;
     }
     return str_join_chunks(chunks);

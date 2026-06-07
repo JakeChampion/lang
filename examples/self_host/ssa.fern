@@ -2050,15 +2050,6 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs
 pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[], seed: Seed): BResult {
     var sym: string = fn_sym(fd);
     var f0: SFunc = SFunc { name: sym, nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    // f64 across a call boundary (a float param / return) needs the XMM
-    // argument/return ABI, not wired into the SSA backends yet — fall back to
-    // the AST emitter for those. Float *locals* within a function are fine.
-    if (fd.ret_type == "f64") { return BResult { func: f0, ok: false }; }
-    var fpi: i32 = 0;
-    while (fpi < fd.params.len()) {
-        if (fd.params[fpi].type_name == "f64") { return BResult { func: f0, ok: false }; }
-        fpi = fpi + 1;
-    }
     // Params occupy value ids 0..nparams-1, defined by "param" insts in the
     // entry block (block id 0). A pointer-shaped param — array / string / struct
     // / enum — is marked str="ptr" so compute_widths gives it 64-bit width.
@@ -2081,6 +2072,7 @@ pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[]
         var noargs: i32[] = [];
         var pmark: string = "";
         if (is_ptr_type(fd.params[i].type_name) || is_struct_type(fd.params[i].type_name, structs)) { pmark = "ptr"; }
+        else if (fd.params[i].type_name == "f64") { pmark = "f64"; }   // an f64 param (XMM-passed)
         insts0 = insts0.push(SInst { kind: "param", result: pidx, args: noargs, imm: pidx, str: pmark });
         pnames = pnames.push(fd.params[i].name);
         pvals = pvals.push(pidx);
@@ -2107,6 +2099,7 @@ pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[]
         if (ptn.len() >= 10 && ptn[0:10] == "Map[string") { s = s.set_var_type(fd.params[pj].name, "SMap"); }
         else if (ptn.len() >= 3 && ptn[0:3] == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
         else if (ptn == "fn") { s = s.set_var_type(fd.params[pj].name, "fnval"); }
+        else if (ptn == "f64") { s = s.set_var_type(fd.params[pj].name, "f64"); }
         else if (ends_with_brackets(ptn)) { s = s.set_var_type(fd.params[pj].name, ptn); }
         else if (is_struct_type(ptn, structs) || ptn == "string") { s = s.set_var_type(fd.params[pj].name, ptn); }
         pj = pj + 1;
@@ -2726,7 +2719,9 @@ pub function compute_widths(f: SFunc): i32[] {
                 if (ins.kind == "alloc") { make64 = true; }
                 else if (ins.kind == "funcaddr") { make64 = true; }   // a code pointer
                 else if (ins.kind == "param" && ins.str == "ptr") { make64 = true; }
+                else if (ins.kind == "param" && ins.str == "f64") { make64 = true; }   // f64 param (8-byte)
                 else if (ins.kind == "call" && ins.imm == 1) { make64 = true; }   // pointer-returning call
+                else if (ins.kind == "call" && ins.imm == 2) { make64 = true; }   // f64-returning call (8-byte)
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
                 else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
@@ -2770,6 +2765,8 @@ pub function compute_isfloat(f: SFunc): i32[] {
                 var ins: SInst = blk.insts[k];
                 var isf: boolean = false;
                 if (ins.kind == "const_float") { isf = true; }
+                else if (ins.kind == "param" && ins.str == "f64") { isf = true; }   // an f64 param
+                else if (ins.kind == "call" && ins.imm == 2) { isf = true; }   // f64-returning call
                 else if (ins.kind == "unary") {
                     if (ins.str == "as_f64") { isf = true; }
                     else if (ins.str == "-" && fl[ins.args[0]] == 1) { isf = true; }
@@ -2823,6 +2820,31 @@ pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
             var ins: SInst = blk.insts[k];
             if (ins.kind == "call" && index_of_str(ptr_ret, ins.str) >= 0) {
                 ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 1, str: ins.str };
+            }
+            ninsts = ninsts.push(ins);
+            k = k + 1;
+        }
+        nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+        bi = bi + 1;
+    }
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+}
+
+// mark_float_calls tags (imm=2) every call whose callee returns an f64 (its
+// name is in float_ret), so compute_isfloat / compute_widths treat the call
+// result as a 64-bit float (returned in xmm0). Run after mark_ptr_calls
+// (float and pointer returns are disjoint, so the marks don't collide).
+pub function mark_float_calls(f: SFunc, float_ret: string[]): SFunc {
+    var nblocks: SBlock[] = [];
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var ninsts: SInst[] = [];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            if (ins.kind == "call" && index_of_str(float_ret, ins.str) >= 0) {
+                ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 2, str: ins.str };
             }
             ninsts = ninsts.push(ins);
             k = k + 1;

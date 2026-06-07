@@ -201,11 +201,11 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// A program outside the SSA subset falls back to the AST emitter
 		// transparently: the default output is byte-identical to the -no-ssa
 		// (AST) output, so the default never emits wrong code for programs SSA
-		// can't yet lower. A float *return* crosses a call boundary (the XMM
-		// ABI isn't wired into the SSA backends), so build_func declines it —
-		// unlike a float *local*, which now lowers through SSA on x86-64.
+		// can't yet lower. A struct spread (`...base`) is one such construct
+		// build_func still declines (floats — locals, params, and returns —
+		// now lower through SSA on x86-64).
 		srcPath := filepath.Join(dir, "fallback.fern")
-		if err := os.WriteFile(srcPath, []byte("function half(x: i32): f64 { return (x as f64) / 2.0; }\nfunction main(): i32 { return 5; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, x: 5 }; return q.x + q.y; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		def, code1 := runDriver(t, srcPath)

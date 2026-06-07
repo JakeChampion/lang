@@ -266,6 +266,14 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"float-reassign", "function main(): i32 { var a = 1.0; a = a * 3.0; return a as i32; }", 3},
 		{"float-loop-accumulate", "function main(): i32 { var sum = 0.0; var i = 0; while (i < 4) { sum = sum + 1.5; i = i + 1; } return sum as i32; }", 6},
 		{"float-if-phi", "function main(): i32 { var x = 0.0; if (3 > 1) { x = 5.5; } else { x = 1.0; } return x as i32; }", 5},
+		// f64 call ABI: float params arrive in xmm0…, float returns come back
+		// in xmm0, mixed int/float args fill the two register sequences
+		// independently (System V).
+		{"float-param", "function half(x: f64): f64 { return x / 2.0; } function main(): i32 { return half(9.0) as i32; }", 4},
+		{"float-two-args", "function add(a: f64, b: f64): f64 { return a + b; } function main(): i32 { return add(3.5, 3.5) as i32; }", 7},
+		{"float-ret-used", "function mk(): f64 { return 5.0; } function main(): i32 { var x = mk(); var y = x * 2.0; return y as i32; }", 10},
+		{"float-recursion", "function pow2(n: i32): f64 { if (n <= 0) { return 1.0; } return pow2(n - 1) * 2.0; } function main(): i32 { return (pow2(3) - 2.0) as i32; }", 6},
+		{"float-mixed-args", "function f(a: i32, b: f64, c: i32): f64 { return (a as f64) + b + (c as f64); } function main(): i32 { var r = f(3, 2.5, 5); return (r as i32) + 1; }", 11},
 	}
 
 	// run assembles `asm` and asserts the program exits with tc.want.
