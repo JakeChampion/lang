@@ -34,6 +34,7 @@ import "./ssa";
 import "./ssa_x86";
 import "./ssa_arm64";
 import "./watbin";
+import "./constfold";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes can pack it into a
@@ -225,6 +226,7 @@ function main(): i32 {
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
     var use_ssa: boolean = false;
+    var optimize: boolean = false;
     var have_entry: boolean = false;
 
     var i: i32 = 1;
@@ -238,6 +240,8 @@ function main(): i32 {
             mode_fmt = true;
         } else if (a == "-ssa") {
             use_ssa = true;
+        } else if (a == "-O") {
+            optimize = true;
         } else if (a == "-target") {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
@@ -374,6 +378,16 @@ function main(): i32 {
             _ => { return 254; },
         }
         return 254;
+    }
+
+    // -O: constant-fold the program before codegen (constfold.fold_module),
+    // matching the native compiler's constant folding. Compile-only — applied
+    // after -check / -interp / -fmt (which return above and want the original
+    // AST), ahead of both the SSA and AST emit paths. Folding is
+    // behaviour-preserving (it skips `/`/`%` by zero, leaving the runtime
+    // error intact), so it changes only the shape of the emitted code.
+    if (optimize) {
+        merged = constfold.fold_module(merged);
     }
 
     // Opt-in SSA backend: when -ssa is given, try the AST → SSA → optimise

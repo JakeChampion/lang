@@ -30,7 +30,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "watbin.fern", "fern.fern"} {
+	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "watbin.fern", "constfold.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -186,6 +186,30 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 		if string(withSSA) != string(astOnly) {
 			t.Errorf("-ssa did not fall back cleanly for an out-of-subset program (output differs from AST)")
+		}
+	})
+
+	t.Run("opt-folds-constants", func(t *testing.T) {
+		// -O constant-folds before codegen (constfold.fold_module). For a
+		// const-only program the emitted asm must differ from the default
+		// (the fold collapsed the arithmetic) and still run to the same value.
+		srcPath := filepath.Join(dir, "fold.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 2 * 3 + 1; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		optAsm, code := runDriver(t, "-O", srcPath)
+		if code != 0 {
+			t.Fatalf("-O emit exited %d, want 0", code)
+		}
+		astAsm, _ := runDriver(t, srcPath)
+		if string(optAsm) == string(astAsm) {
+			t.Error("-O did not change the emitted code (constant folding not applied)")
+		}
+		progBin := buildBin(t, gcc, dir, "fold", string(optAsm))
+		cmd := exec.Command(progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 7 {
+			t.Errorf("-O folded program exited %d, want 7", c)
 		}
 	})
 
