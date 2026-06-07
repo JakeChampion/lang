@@ -1082,7 +1082,28 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
         // StmtDefer is lowered away before emit; check its action.
         parser.StmtDefer(d) => { return check_stmt(d.action, s); },
         parser.StmtVar(v) => {
-            var t: Type = check_expr(v.init, s);
+            // A local function `function f(...) { ... }` desugars to
+            // `var f = function(...) { ... }`; its own name must be in
+            // scope within the body so a recursive self-call resolves
+            // (matching the Go checker's recursive-local handling, and the
+            // hoist pass that lifts it). Bind f to its function type before
+            // checking the init. (For a plain non-recursive lambda the
+            // binding is simply unused.)
+            var init_scope: Scope = s;
+            match (v.init) {
+                parser.ExprLambda(lm) => {
+                    var lpts: Type[] = [];
+                    var lpi: i32 = 0;
+                    while (lpi < lm.params.len()) {
+                        lpts = lpts.append(type_from_name_with_structs_unions(lm.params[lpi].type_name, s.structs, s.unions));
+                        lpi = lpi + 1;
+                    }
+                    var lrt: Type = type_from_name_with_structs_unions(lm.ret_type, s.structs, s.unions);
+                    init_scope = s.bind(v.name, t_func(lpts, lrt));
+                },
+                _ => { }
+            }
+            var t: Type = check_expr(v.init, init_scope);
             // If the source carries a `: Type` annotation,
             // resolve it via the scope's struct + union tables
             // and use it as the binding's type. The init type
@@ -2558,7 +2579,29 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
     while (i < stmts.len()) {
         var st: parser.Stmt = stmts[i];
         match (st) {
-            parser.StmtVar(v) => { out = append_diags(out, call_diags(v.init, cur)); },
+            parser.StmtVar(v) => {
+                // A function-valued local (`var f = function(...) {...}`,
+                // including a desugared local function declaration) must be
+                // in scope inside its own body — so a recursive self-call
+                // resolves rather than reporting E001 — and for the
+                // statements that follow it. Bind it to its function type
+                // before walking the init.
+                var vsc: Scope = cur;
+                match (v.init) {
+                    parser.ExprLambda(lm) => {
+                        var fpts: Type[] = [];
+                        var fpi: i32 = 0;
+                        while (fpi < lm.params.len()) {
+                            fpts = fpts.append(type_from_name_with_structs_unions(lm.params[fpi].type_name, cur.structs, cur.unions));
+                            fpi = fpi + 1;
+                        }
+                        vsc = cur.bind(v.name, t_func(fpts, type_from_name_with_structs_unions(lm.ret_type, cur.structs, cur.unions)));
+                        cur = vsc;
+                    },
+                    _ => { }
+                }
+                out = append_diags(out, call_diags(v.init, vsc));
+            },
             parser.StmtReturn(r) => { out = append_diags(out, call_diags(r.value, cur)); },
             parser.StmtExpr(x) => { out = append_diags(out, call_diags(x.value, cur)); },
             parser.StmtAssign(a) => { out = append_diags(out, call_diags(a.value, cur)); },
