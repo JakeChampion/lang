@@ -1167,3 +1167,1110 @@ function emit_binary(mod: SExpr): i32[] {
 pub function wat_to_binary(wat: string): i32[] {
     return emit_binary(wat_parse(wat_tokenize(wat)));
 }
+
+// === component framing (merged from wat_component.fern) ===
+// examples/self_host/wat_component.fern — Component-Model wrapping for the
+// self-hosted binary wasm backend. The core-module encoder (wat_emit_bin)
+// produces a WASI-preview1 core module; this wraps it in the binary
+// Component-Model envelope. First slice: the component preamble + embedding
+// the core module as a component core-module section, which `wasm-tools`
+// validates as a `(component (core module …))`.
+//
+// A component's preamble is the wasm magic followed by `0d 00 01 00`
+// (version 13, layer 1) — distinct from a core module's `01 00 00 00` —
+// and its sections use the component section ids (1 = an embedded core
+// module, whose body is that module's own bytes).
+//
+// Later slices add the core-instance, the `canon lift`, and the
+// `wasi:cli/run` instance export. Depends on leb128.fern + wat_encode.fern
+// (wcat / wsection) but is otherwise import-free.
+
+// component_preamble: "\0asm" + component version (13) / layer (1).
+function component_preamble(): i32[] {
+    var o: i32[] = [];
+    o = o.push(0);
+    o = o.push(97);
+    o = o.push(115);
+    o = o.push(109);
+    o = o.push(13);
+    o = o.push(0);
+    o = o.push(1);
+    o = o.push(0);
+    return o;
+}
+
+// component_wrap embeds a core module's bytes in a component as a
+// core-module section (component section id 1), returning the component
+// binary. This is the structural envelope the canon / wasi layers build on.
+function component_wrap(core: i32[]): i32[] {
+    var o: i32[] = component_preamble();
+    return wcat(o, wsection(1, core));
+}
+
+// component_full wraps a core module that exports `_lang_run` (the
+// component entry: `() -> i32`, 0 = ok) into a complete `wasi:cli/run@0.2.0`
+// component. Beyond the embedded core (section 1) the framing is constant
+// for this fixed shape, so the six trailing sections are emitted verbatim
+// (decoded from the reference component):
+//   2  core-instance   — instantiate module 0, no args
+//   6  alias           — core-instance 0 export "_lang_run" as a core func
+//   7  component type  — `(result)` and `(func (result 0))`
+//   8  canon           — lift core func 0 to the component func, type 1
+//   5  instance        — an instance exporting "run" = func 0
+//  11  export          — that instance as "wasi:cli/run@0.2.0"
+pub function component_full(core: i32[]): i32[] {
+    var o: i32[] = component_preamble();
+    o = wcat(o, wsection(1, core));
+
+    // 2 core-instance: vec(1)[ instantiate(0x00) module 0, 0 args ]
+    o = wcat(o, wsection(2, [1, 0, 0, 0]));
+
+    // 6 alias: vec(1)[ core(0) func(0) core-export(1) instance 0, name ]
+    var al: i32[] = [1, 0, 0, 1, 0];
+    al = wname(al, "_lang_run");
+    o = wcat(o, wsection(6, al));
+
+    // 7 component type: the two types `run` lifts to.
+    o = wcat(o, wsection(7, [2, 106, 0, 0, 64, 0, 0, 0]));
+
+    // 8 canon: vec(1)[ lift core func 0, no opts, type 1 ]
+    o = wcat(o, wsection(8, [1, 0, 0, 0, 0, 1]));
+
+    // 5 instance: vec(1)[ inline exports: "run" = func 0 ]
+    var inst: i32[] = [1, 1, 1, 0];
+    inst = wname(inst, "run");
+    inst = inst.push(1);
+    inst = inst.push(0);
+    o = wcat(o, wsection(5, inst));
+
+    // 11 export: vec(1)[ name "wasi:cli/run@0.2.0" = instance 0 ]
+    var ex: i32[] = [1, 0];
+    ex = wname(ex, "wasi:cli/run@0.2.0");
+    ex = ex.push(5);
+    ex = ex.push(0);
+    ex = ex.push(0);
+    o = wcat(o, wsection(11, ex));
+
+    return o;
+}
+
+// ---- I/O (stdout) component framing -------------------------------------
+//
+// component_full_io wraps a core module that uses the preview2 stdout
+// imports (wasi:cli/stdout/get-stdout + wasi:io/streams/
+// [method]output-stream.blocking-write-and-flush) and exports `_lang_run`
+// into a full wasi:cli/run component. The wasi type imports, the two
+// canon-lower shim core modules, and the canon-lift/instance/export
+// framing are constant for this fixed stdout shape, so — like the native
+// compiler's precomputed component-type blob — they are embedded verbatim
+// (as \xNN byte strings) around the core, which is spliced into the
+// core-module section slot. (stdout only; file I/O would need more
+// framing.)
+
+// ---- per-interface component type-import blocks --------------------------
+//
+// Phase 1 of the generative component builder (docs/WASM-COMPONENT-GENERATOR.md):
+// the I/O component prefix decomposes into one constant block per wasi
+// interface, emitted in canonical order. Because canonical order fixes each
+// block's type/instance indices, these blocks are reusable across shapes
+// (e.g. tb_io_error is byte-identical at the head of every prefix). The
+// component preamble is component_preamble(); these are the post-preamble
+// type/import/alias sections.
+
+// tb_io_error: the wasi:io/error interface (the `error` resource). Always the
+// first type import (io/streams depends on it).
+function tb_io_error(): string {
+    return "\x07\x0d\x01\x42\x01\x04\x00\x05\x65\x72\x72\x6f\x72\x03\x01\x0a\x18\x01\x00\x13\x77\x61\x73\x69\x3a\x69\x6f\x2f\x65\x72\x72\x6f\x72\x40\x30\x2e\x32\x2e\x30\x05\x00\x06\x0a\x01\x03\x00\x00\x05\x65\x72\x72\x6f\x72";
+}
+
+// tb_io_streams_out: the wasi:io/streams interface exposing output-stream +
+// blocking-write-and-flush + the stream-error variant (the output-only shape;
+// the fs-read shapes additionally define input-stream).
+function tb_io_streams_out(): string {
+    return "\x07\xb2\x01\x01\x42\x0b\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x01\x02\x03\x02\x01\x01\x04\x00\x05\x65\x72\x72\x6f\x72\x03\x00\x01\x01\x69\x02\x01\x71\x02\x15\x6c\x61\x73\x74\x2d\x6f\x70\x65\x72\x61\x74\x69\x6f\x6e\x2d\x66\x61\x69\x6c\x65\x64\x01\x03\x00\x06\x63\x6c\x6f\x73\x65\x64\x00\x00\x04\x00\x0c\x73\x74\x72\x65\x61\x6d\x2d\x65\x72\x72\x6f\x72\x03\x00\x04\x01\x68\x00\x01\x70\x7d\x01\x6a\x00\x01\x05\x01\x40\x02\x04\x73\x65\x6c\x66\x06\x08\x63\x6f\x6e\x74\x65\x6e\x74\x73\x07\x00\x08\x04\x00\x2e\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x77\x72\x69\x74\x65\x2d\x61\x6e\x64\x2d\x66\x6c\x75\x73\x68\x01\x09\x0a\x1a\x01\x00\x15\x77\x61\x73\x69\x3a\x69\x6f\x2f\x73\x74\x72\x65\x61\x6d\x73\x40\x30\x2e\x32\x2e\x30\x05\x02\x06\x12\x01\x03\x00\x01\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d";
+}
+
+// tb_io_streams_inout: the wasi:io/streams interface exposing BOTH output- and
+// input-stream (+ blocking-write-and-flush / the stream-error variant) -- the
+// shape the fs-read prefixes use (vs tb_io_streams_out for write/stdout only).
+function tb_io_streams_inout(): string { return "\x07\x83\x02\x01\x42\x10\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x01\x04\x00\x0c\x69\x6e\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x01\x02\x03\x02\x01\x01\x04\x00\x05\x65\x72\x72\x6f\x72\x03\x00\x02\x01\x69\x03\x01\x71\x02\x15\x6c\x61\x73\x74\x2d\x6f\x70\x65\x72\x61\x74\x69\x6f\x6e\x2d\x66\x61\x69\x6c\x65\x64\x01\x04\x00\x06\x63\x6c\x6f\x73\x65\x64\x00\x00\x04\x00\x0c\x73\x74\x72\x65\x61\x6d\x2d\x65\x72\x72\x6f\x72\x03\x00\x05\x01\x68\x00\x01\x68\x01\x01\x70\x7d\x01\x6a\x00\x01\x06\x01\x6a\x01\x09\x01\x06\x01\x40\x02\x04\x73\x65\x6c\x66\x07\x08\x63\x6f\x6e\x74\x65\x6e\x74\x73\x09\x00\x0a\x04\x00\x2e\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x77\x72\x69\x74\x65\x2d\x61\x6e\x64\x2d\x66\x6c\x75\x73\x68\x01\x0c\x01\x40\x02\x04\x73\x65\x6c\x66\x08\x03\x6c\x65\x6e\x77\x00\x0b\x04\x00\x22\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x69\x6e\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x72\x65\x61\x64\x01\x0d\x0a\x1a\x01\x00\x15\x77\x61\x73\x69\x3a\x69\x6f\x2f\x73\x74\x72\x65\x61\x6d\x73\x40\x30\x2e\x32\x2e\x30\x05\x02\x06\x12\x01\x03\x00\x01\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x06\x11\x01\x03\x00\x01\x0c\x69\x6e\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d"; }
+
+// fs prefix tails: the filesystem/types + filesystem/preopens + cli/stdout
+// blocks specific to each fs shape (index-shifted, so per-shape), appended to
+// the shared io/error + io/streams head.
+function fs_read_tail(): string { return "\x07\xc8\x06\x01\x42\x14\x04\x00\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x03\x01\x02\x03\x02\x01\x04\x04\x00\x0c\x69\x6e\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x01\x01\x6d\x25\x06\x61\x63\x63\x65\x73\x73\x0b\x77\x6f\x75\x6c\x64\x2d\x62\x6c\x6f\x63\x6b\x07\x61\x6c\x72\x65\x61\x64\x79\x0e\x62\x61\x64\x2d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x04\x62\x75\x73\x79\x08\x64\x65\x61\x64\x6c\x6f\x63\x6b\x05\x71\x75\x6f\x74\x61\x05\x65\x78\x69\x73\x74\x0e\x66\x69\x6c\x65\x2d\x74\x6f\x6f\x2d\x6c\x61\x72\x67\x65\x15\x69\x6c\x6c\x65\x67\x61\x6c\x2d\x62\x79\x74\x65\x2d\x73\x65\x71\x75\x65\x6e\x63\x65\x0b\x69\x6e\x2d\x70\x72\x6f\x67\x72\x65\x73\x73\x0b\x69\x6e\x74\x65\x72\x72\x75\x70\x74\x65\x64\x07\x69\x6e\x76\x61\x6c\x69\x64\x02\x69\x6f\x0c\x69\x73\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x04\x6c\x6f\x6f\x70\x0e\x74\x6f\x6f\x2d\x6d\x61\x6e\x79\x2d\x6c\x69\x6e\x6b\x73\x0c\x6d\x65\x73\x73\x61\x67\x65\x2d\x73\x69\x7a\x65\x0d\x6e\x61\x6d\x65\x2d\x74\x6f\x6f\x2d\x6c\x6f\x6e\x67\x09\x6e\x6f\x2d\x64\x65\x76\x69\x63\x65\x08\x6e\x6f\x2d\x65\x6e\x74\x72\x79\x07\x6e\x6f\x2d\x6c\x6f\x63\x6b\x13\x69\x6e\x73\x75\x66\x66\x69\x63\x69\x65\x6e\x74\x2d\x6d\x65\x6d\x6f\x72\x79\x12\x69\x6e\x73\x75\x66\x66\x69\x63\x69\x65\x6e\x74\x2d\x73\x70\x61\x63\x65\x0d\x6e\x6f\x74\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x09\x6e\x6f\x74\x2d\x65\x6d\x70\x74\x79\x0f\x6e\x6f\x74\x2d\x72\x65\x63\x6f\x76\x65\x72\x61\x62\x6c\x65\x0b\x75\x6e\x73\x75\x70\x70\x6f\x72\x74\x65\x64\x06\x6e\x6f\x2d\x74\x74\x79\x0e\x6e\x6f\x2d\x73\x75\x63\x68\x2d\x64\x65\x76\x69\x63\x65\x08\x6f\x76\x65\x72\x66\x6c\x6f\x77\x0d\x6e\x6f\x74\x2d\x70\x65\x72\x6d\x69\x74\x74\x65\x64\x04\x70\x69\x70\x65\x09\x72\x65\x61\x64\x2d\x6f\x6e\x6c\x79\x0c\x69\x6e\x76\x61\x6c\x69\x64\x2d\x73\x65\x65\x6b\x0e\x74\x65\x78\x74\x2d\x66\x69\x6c\x65\x2d\x62\x75\x73\x79\x0c\x63\x72\x6f\x73\x73\x2d\x64\x65\x76\x69\x63\x65\x04\x00\x0a\x65\x72\x72\x6f\x72\x2d\x63\x6f\x64\x65\x03\x00\x03\x01\x6e\x01\x0e\x73\x79\x6d\x6c\x69\x6e\x6b\x2d\x66\x6f\x6c\x6c\x6f\x77\x04\x00\x0a\x70\x61\x74\x68\x2d\x66\x6c\x61\x67\x73\x03\x00\x05\x01\x6e\x04\x06\x63\x72\x65\x61\x74\x65\x09\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x09\x65\x78\x63\x6c\x75\x73\x69\x76\x65\x08\x74\x72\x75\x6e\x63\x61\x74\x65\x04\x00\x0a\x6f\x70\x65\x6e\x2d\x66\x6c\x61\x67\x73\x03\x00\x07\x01\x6e\x06\x04\x72\x65\x61\x64\x05\x77\x72\x69\x74\x65\x13\x66\x69\x6c\x65\x2d\x69\x6e\x74\x65\x67\x72\x69\x74\x79\x2d\x73\x79\x6e\x63\x13\x64\x61\x74\x61\x2d\x69\x6e\x74\x65\x67\x72\x69\x74\x79\x2d\x73\x79\x6e\x63\x14\x72\x65\x71\x75\x65\x73\x74\x65\x64\x2d\x77\x72\x69\x74\x65\x2d\x73\x79\x6e\x63\x10\x6d\x75\x74\x61\x74\x65\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x04\x00\x10\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2d\x66\x6c\x61\x67\x73\x03\x00\x09\x01\x69\x00\x01\x69\x02\x01\x68\x00\x01\x6a\x01\x0b\x01\x04\x01\x6a\x01\x0c\x01\x04\x01\x40\x05\x04\x73\x65\x6c\x66\x0d\x0a\x70\x61\x74\x68\x2d\x66\x6c\x61\x67\x73\x06\x04\x70\x61\x74\x68\x73\x0a\x6f\x70\x65\x6e\x2d\x66\x6c\x61\x67\x73\x08\x05\x66\x6c\x61\x67\x73\x0a\x00\x0e\x04\x00\x1a\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2e\x6f\x70\x65\x6e\x2d\x61\x74\x01\x10\x01\x40\x02\x04\x73\x65\x6c\x66\x0d\x06\x6f\x66\x66\x73\x65\x74\x77\x00\x0f\x04\x00\x22\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2e\x72\x65\x61\x64\x2d\x76\x69\x61\x2d\x73\x74\x72\x65\x61\x6d\x01\x11\x0a\x20\x01\x00\x1b\x77\x61\x73\x69\x3a\x66\x69\x6c\x65\x73\x79\x73\x74\x65\x6d\x2f\x74\x79\x70\x65\x73\x40\x30\x2e\x32\x2e\x30\x05\x05\x06\x0f\x01\x03\x00\x02\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x07\x3c\x01\x42\x07\x02\x03\x02\x01\x06\x04\x00\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x03\x00\x00\x01\x69\x01\x01\x6f\x02\x02\x73\x01\x70\x03\x01\x40\x00\x00\x04\x04\x00\x0f\x67\x65\x74\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x69\x65\x73\x01\x05\x0a\x23\x01\x00\x1e\x77\x61\x73\x69\x3a\x66\x69\x6c\x65\x73\x79\x73\x74\x65\x6d\x2f\x70\x72\x65\x6f\x70\x65\x6e\x73\x40\x30\x2e\x32\x2e\x30\x05\x07\x07\x32\x01\x42\x05\x02\x03\x02\x01\x03\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x00\x01\x69\x01\x01\x40\x00\x00\x02\x04\x00\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x01\x03\x0a\x1a\x01\x00\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x6f\x75\x74\x40\x30\x2e\x32\x2e\x30\x05\x08"; }
+function fs_rw_tail(): string { return "\x07\xa4\x07\x01\x42\x1a\x04\x00\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x03\x01\x02\x03\x02\x01\x04\x04\x00\x0c\x69\x6e\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x01\x02\x03\x02\x01\x03\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x03\x01\x6d\x25\x06\x61\x63\x63\x65\x73\x73\x0b\x77\x6f\x75\x6c\x64\x2d\x62\x6c\x6f\x63\x6b\x07\x61\x6c\x72\x65\x61\x64\x79\x0e\x62\x61\x64\x2d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x04\x62\x75\x73\x79\x08\x64\x65\x61\x64\x6c\x6f\x63\x6b\x05\x71\x75\x6f\x74\x61\x05\x65\x78\x69\x73\x74\x0e\x66\x69\x6c\x65\x2d\x74\x6f\x6f\x2d\x6c\x61\x72\x67\x65\x15\x69\x6c\x6c\x65\x67\x61\x6c\x2d\x62\x79\x74\x65\x2d\x73\x65\x71\x75\x65\x6e\x63\x65\x0b\x69\x6e\x2d\x70\x72\x6f\x67\x72\x65\x73\x73\x0b\x69\x6e\x74\x65\x72\x72\x75\x70\x74\x65\x64\x07\x69\x6e\x76\x61\x6c\x69\x64\x02\x69\x6f\x0c\x69\x73\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x04\x6c\x6f\x6f\x70\x0e\x74\x6f\x6f\x2d\x6d\x61\x6e\x79\x2d\x6c\x69\x6e\x6b\x73\x0c\x6d\x65\x73\x73\x61\x67\x65\x2d\x73\x69\x7a\x65\x0d\x6e\x61\x6d\x65\x2d\x74\x6f\x6f\x2d\x6c\x6f\x6e\x67\x09\x6e\x6f\x2d\x64\x65\x76\x69\x63\x65\x08\x6e\x6f\x2d\x65\x6e\x74\x72\x79\x07\x6e\x6f\x2d\x6c\x6f\x63\x6b\x13\x69\x6e\x73\x75\x66\x66\x69\x63\x69\x65\x6e\x74\x2d\x6d\x65\x6d\x6f\x72\x79\x12\x69\x6e\x73\x75\x66\x66\x69\x63\x69\x65\x6e\x74\x2d\x73\x70\x61\x63\x65\x0d\x6e\x6f\x74\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x09\x6e\x6f\x74\x2d\x65\x6d\x70\x74\x79\x0f\x6e\x6f\x74\x2d\x72\x65\x63\x6f\x76\x65\x72\x61\x62\x6c\x65\x0b\x75\x6e\x73\x75\x70\x70\x6f\x72\x74\x65\x64\x06\x6e\x6f\x2d\x74\x74\x79\x0e\x6e\x6f\x2d\x73\x75\x63\x68\x2d\x64\x65\x76\x69\x63\x65\x08\x6f\x76\x65\x72\x66\x6c\x6f\x77\x0d\x6e\x6f\x74\x2d\x70\x65\x72\x6d\x69\x74\x74\x65\x64\x04\x70\x69\x70\x65\x09\x72\x65\x61\x64\x2d\x6f\x6e\x6c\x79\x0c\x69\x6e\x76\x61\x6c\x69\x64\x2d\x73\x65\x65\x6b\x0e\x74\x65\x78\x74\x2d\x66\x69\x6c\x65\x2d\x62\x75\x73\x79\x0c\x63\x72\x6f\x73\x73\x2d\x64\x65\x76\x69\x63\x65\x04\x00\x0a\x65\x72\x72\x6f\x72\x2d\x63\x6f\x64\x65\x03\x00\x05\x01\x6e\x01\x0e\x73\x79\x6d\x6c\x69\x6e\x6b\x2d\x66\x6f\x6c\x6c\x6f\x77\x04\x00\x0a\x70\x61\x74\x68\x2d\x66\x6c\x61\x67\x73\x03\x00\x07\x01\x6e\x04\x06\x63\x72\x65\x61\x74\x65\x09\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x09\x65\x78\x63\x6c\x75\x73\x69\x76\x65\x08\x74\x72\x75\x6e\x63\x61\x74\x65\x04\x00\x0a\x6f\x70\x65\x6e\x2d\x66\x6c\x61\x67\x73\x03\x00\x09\x01\x6e\x06\x04\x72\x65\x61\x64\x05\x77\x72\x69\x74\x65\x13\x66\x69\x6c\x65\x2d\x69\x6e\x74\x65\x67\x72\x69\x74\x79\x2d\x73\x79\x6e\x63\x13\x64\x61\x74\x61\x2d\x69\x6e\x74\x65\x67\x72\x69\x74\x79\x2d\x73\x79\x6e\x63\x14\x72\x65\x71\x75\x65\x73\x74\x65\x64\x2d\x77\x72\x69\x74\x65\x2d\x73\x79\x6e\x63\x10\x6d\x75\x74\x61\x74\x65\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x04\x00\x10\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2d\x66\x6c\x61\x67\x73\x03\x00\x0b\x01\x69\x00\x01\x69\x02\x01\x69\x04\x01\x68\x00\x01\x6a\x01\x0d\x01\x06\x01\x6a\x01\x0e\x01\x06\x01\x6a\x01\x0f\x01\x06\x01\x40\x05\x04\x73\x65\x6c\x66\x10\x0a\x70\x61\x74\x68\x2d\x66\x6c\x61\x67\x73\x08\x04\x70\x61\x74\x68\x73\x0a\x6f\x70\x65\x6e\x2d\x66\x6c\x61\x67\x73\x0a\x05\x66\x6c\x61\x67\x73\x0c\x00\x11\x04\x00\x1a\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2e\x6f\x70\x65\x6e\x2d\x61\x74\x01\x14\x01\x40\x02\x04\x73\x65\x6c\x66\x10\x06\x6f\x66\x66\x73\x65\x74\x77\x00\x12\x04\x00\x22\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2e\x72\x65\x61\x64\x2d\x76\x69\x61\x2d\x73\x74\x72\x65\x61\x6d\x01\x15\x01\x40\x02\x04\x73\x65\x6c\x66\x10\x06\x6f\x66\x66\x73\x65\x74\x77\x00\x13\x04\x00\x23\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2e\x77\x72\x69\x74\x65\x2d\x76\x69\x61\x2d\x73\x74\x72\x65\x61\x6d\x01\x16\x0a\x20\x01\x00\x1b\x77\x61\x73\x69\x3a\x66\x69\x6c\x65\x73\x79\x73\x74\x65\x6d\x2f\x74\x79\x70\x65\x73\x40\x30\x2e\x32\x2e\x30\x05\x05\x06\x0f\x01\x03\x00\x02\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x07\x3c\x01\x42\x07\x02\x03\x02\x01\x06\x04\x00\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x03\x00\x00\x01\x69\x01\x01\x6f\x02\x02\x73\x01\x70\x03\x01\x40\x00\x00\x04\x04\x00\x0f\x67\x65\x74\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x69\x65\x73\x01\x05\x0a\x23\x01\x00\x1e\x77\x61\x73\x69\x3a\x66\x69\x6c\x65\x73\x79\x73\x74\x65\x6d\x2f\x70\x72\x65\x6f\x70\x65\x6e\x73\x40\x30\x2e\x32\x2e\x30\x05\x07\x07\x32\x01\x42\x05\x02\x03\x02\x01\x03\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x00\x01\x69\x01\x01\x40\x00\x00\x02\x04\x00\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x01\x03\x0a\x1a\x01\x00\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x6f\x75\x74\x40\x30\x2e\x32\x2e\x30\x05\x08"; }
+function fs_write_tail(): string { return "\x07\xca\x06\x01\x42\x14\x04\x00\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x03\x01\x02\x03\x02\x01\x03\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x01\x01\x6d\x25\x06\x61\x63\x63\x65\x73\x73\x0b\x77\x6f\x75\x6c\x64\x2d\x62\x6c\x6f\x63\x6b\x07\x61\x6c\x72\x65\x61\x64\x79\x0e\x62\x61\x64\x2d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x04\x62\x75\x73\x79\x08\x64\x65\x61\x64\x6c\x6f\x63\x6b\x05\x71\x75\x6f\x74\x61\x05\x65\x78\x69\x73\x74\x0e\x66\x69\x6c\x65\x2d\x74\x6f\x6f\x2d\x6c\x61\x72\x67\x65\x15\x69\x6c\x6c\x65\x67\x61\x6c\x2d\x62\x79\x74\x65\x2d\x73\x65\x71\x75\x65\x6e\x63\x65\x0b\x69\x6e\x2d\x70\x72\x6f\x67\x72\x65\x73\x73\x0b\x69\x6e\x74\x65\x72\x72\x75\x70\x74\x65\x64\x07\x69\x6e\x76\x61\x6c\x69\x64\x02\x69\x6f\x0c\x69\x73\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x04\x6c\x6f\x6f\x70\x0e\x74\x6f\x6f\x2d\x6d\x61\x6e\x79\x2d\x6c\x69\x6e\x6b\x73\x0c\x6d\x65\x73\x73\x61\x67\x65\x2d\x73\x69\x7a\x65\x0d\x6e\x61\x6d\x65\x2d\x74\x6f\x6f\x2d\x6c\x6f\x6e\x67\x09\x6e\x6f\x2d\x64\x65\x76\x69\x63\x65\x08\x6e\x6f\x2d\x65\x6e\x74\x72\x79\x07\x6e\x6f\x2d\x6c\x6f\x63\x6b\x13\x69\x6e\x73\x75\x66\x66\x69\x63\x69\x65\x6e\x74\x2d\x6d\x65\x6d\x6f\x72\x79\x12\x69\x6e\x73\x75\x66\x66\x69\x63\x69\x65\x6e\x74\x2d\x73\x70\x61\x63\x65\x0d\x6e\x6f\x74\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x09\x6e\x6f\x74\x2d\x65\x6d\x70\x74\x79\x0f\x6e\x6f\x74\x2d\x72\x65\x63\x6f\x76\x65\x72\x61\x62\x6c\x65\x0b\x75\x6e\x73\x75\x70\x70\x6f\x72\x74\x65\x64\x06\x6e\x6f\x2d\x74\x74\x79\x0e\x6e\x6f\x2d\x73\x75\x63\x68\x2d\x64\x65\x76\x69\x63\x65\x08\x6f\x76\x65\x72\x66\x6c\x6f\x77\x0d\x6e\x6f\x74\x2d\x70\x65\x72\x6d\x69\x74\x74\x65\x64\x04\x70\x69\x70\x65\x09\x72\x65\x61\x64\x2d\x6f\x6e\x6c\x79\x0c\x69\x6e\x76\x61\x6c\x69\x64\x2d\x73\x65\x65\x6b\x0e\x74\x65\x78\x74\x2d\x66\x69\x6c\x65\x2d\x62\x75\x73\x79\x0c\x63\x72\x6f\x73\x73\x2d\x64\x65\x76\x69\x63\x65\x04\x00\x0a\x65\x72\x72\x6f\x72\x2d\x63\x6f\x64\x65\x03\x00\x03\x01\x6e\x01\x0e\x73\x79\x6d\x6c\x69\x6e\x6b\x2d\x66\x6f\x6c\x6c\x6f\x77\x04\x00\x0a\x70\x61\x74\x68\x2d\x66\x6c\x61\x67\x73\x03\x00\x05\x01\x6e\x04\x06\x63\x72\x65\x61\x74\x65\x09\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x09\x65\x78\x63\x6c\x75\x73\x69\x76\x65\x08\x74\x72\x75\x6e\x63\x61\x74\x65\x04\x00\x0a\x6f\x70\x65\x6e\x2d\x66\x6c\x61\x67\x73\x03\x00\x07\x01\x6e\x06\x04\x72\x65\x61\x64\x05\x77\x72\x69\x74\x65\x13\x66\x69\x6c\x65\x2d\x69\x6e\x74\x65\x67\x72\x69\x74\x79\x2d\x73\x79\x6e\x63\x13\x64\x61\x74\x61\x2d\x69\x6e\x74\x65\x67\x72\x69\x74\x79\x2d\x73\x79\x6e\x63\x14\x72\x65\x71\x75\x65\x73\x74\x65\x64\x2d\x77\x72\x69\x74\x65\x2d\x73\x79\x6e\x63\x10\x6d\x75\x74\x61\x74\x65\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x79\x04\x00\x10\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2d\x66\x6c\x61\x67\x73\x03\x00\x09\x01\x69\x00\x01\x69\x02\x01\x68\x00\x01\x6a\x01\x0b\x01\x04\x01\x6a\x01\x0c\x01\x04\x01\x40\x05\x04\x73\x65\x6c\x66\x0d\x0a\x70\x61\x74\x68\x2d\x66\x6c\x61\x67\x73\x06\x04\x70\x61\x74\x68\x73\x0a\x6f\x70\x65\x6e\x2d\x66\x6c\x61\x67\x73\x08\x05\x66\x6c\x61\x67\x73\x0a\x00\x0e\x04\x00\x1a\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2e\x6f\x70\x65\x6e\x2d\x61\x74\x01\x10\x01\x40\x02\x04\x73\x65\x6c\x66\x0d\x06\x6f\x66\x66\x73\x65\x74\x77\x00\x0f\x04\x00\x23\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x2e\x77\x72\x69\x74\x65\x2d\x76\x69\x61\x2d\x73\x74\x72\x65\x61\x6d\x01\x11\x0a\x20\x01\x00\x1b\x77\x61\x73\x69\x3a\x66\x69\x6c\x65\x73\x79\x73\x74\x65\x6d\x2f\x74\x79\x70\x65\x73\x40\x30\x2e\x32\x2e\x30\x05\x04\x06\x0f\x01\x03\x00\x02\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x07\x3c\x01\x42\x07\x02\x03\x02\x01\x05\x04\x00\x0a\x64\x65\x73\x63\x72\x69\x70\x74\x6f\x72\x03\x00\x00\x01\x69\x01\x01\x6f\x02\x02\x73\x01\x70\x03\x01\x40\x00\x00\x04\x04\x00\x0f\x67\x65\x74\x2d\x64\x69\x72\x65\x63\x74\x6f\x72\x69\x65\x73\x01\x05\x0a\x23\x01\x00\x1e\x77\x61\x73\x69\x3a\x66\x69\x6c\x65\x73\x79\x73\x74\x65\x6d\x2f\x70\x72\x65\x6f\x70\x65\x6e\x73\x40\x30\x2e\x32\x2e\x30\x05\x06\x07\x32\x01\x42\x05\x02\x03\x02\x01\x03\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x00\x01\x69\x01\x01\x40\x00\x00\x02\x04\x00\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x01\x03\x0a\x1a\x01\x00\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x6f\x75\x74\x40\x30\x2e\x32\x2e\x30\x05\x07"; }
+
+// Composed fs prefixes (preamble + io/error + io/streams + fs tail), replacing
+// the former io_fs_*_prefix blobs.
+function io_fs_read_head(): i32[] {
+    var o: i32[] = component_preamble();
+    o = wcat(o, blob_to_bytes(tb_io_error()));
+    o = wcat(o, blob_to_bytes(tb_io_streams_inout()));
+    return wcat(o, blob_to_bytes(fs_read_tail()));
+}
+function io_fs_rw_head(): i32[] {
+    var o: i32[] = component_preamble();
+    o = wcat(o, blob_to_bytes(tb_io_error()));
+    o = wcat(o, blob_to_bytes(tb_io_streams_inout()));
+    return wcat(o, blob_to_bytes(fs_rw_tail()));
+}
+function io_fs_write_head(): i32[] {
+    var o: i32[] = component_preamble();
+    o = wcat(o, blob_to_bytes(tb_io_error()));
+    o = wcat(o, blob_to_bytes(tb_io_streams_out()));
+    return wcat(o, blob_to_bytes(fs_write_tail()));
+}
+
+// tb_cli_stdout: the wasi:cli/stdout interface (get-stdout).
+function tb_cli_stdout(): string {
+    return "\x07\x32\x01\x42\x05\x02\x03\x02\x01\x03\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x00\x01\x69\x01\x01\x40\x00\x00\x02\x04\x00\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x01\x03\x0a\x1a\x01\x00\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x6f\x75\x74\x40\x30\x2e\x32\x2e\x30\x05\x04";
+}
+
+// io_stdout_head: preamble + io/error + io/streams(out) + cli/stdout -- the
+// component prefix shared by every stdout-writing single-import shape, composed
+// from the per-interface type blocks.
+function io_stdout_head(): i32[] {
+    var o: i32[] = component_preamble();
+    o = wcat(o, blob_to_bytes(tb_io_error()));
+    o = wcat(o, blob_to_bytes(tb_io_streams_out()));
+    return wcat(o, blob_to_bytes(tb_cli_stdout()));
+}
+
+// Per-interface type blocks appended after the stdout head (canonical order).
+function tb_random(): string { return "\x07\x1b\x01\x42\x02\x01\x40\x00\x00\x77\x04\x00\x0e\x67\x65\x74\x2d\x72\x61\x6e\x64\x6f\x6d\x2d\x75\x36\x34\x01\x00\x0a\x1d\x01\x00\x18\x77\x61\x73\x69\x3a\x72\x61\x6e\x64\x6f\x6d\x2f\x72\x61\x6e\x64\x6f\x6d\x40\x30\x2e\x32\x2e\x30\x05\x05"; }
+function tb_cli_environment_env(): string { return "\x07\x24\x01\x42\x04\x01\x6f\x02\x73\x73\x01\x70\x00\x01\x40\x00\x00\x01\x04\x00\x0f\x67\x65\x74\x2d\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x01\x02\x0a\x1f\x01\x00\x1a\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x40\x30\x2e\x32\x2e\x30\x05\x05"; }
+function tb_cli_environment_args(): string { return "\x07\x1d\x01\x42\x03\x01\x70\x73\x01\x40\x00\x00\x00\x04\x00\x0d\x67\x65\x74\x2d\x61\x72\x67\x75\x6d\x65\x6e\x74\x73\x01\x01\x0a\x1f\x01\x00\x1a\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x40\x30\x2e\x32\x2e\x30\x05\x05"; }
+function tb_wall_clock(): string { return "\x07\x37\x01\x42\x04\x01\x72\x02\x07\x73\x65\x63\x6f\x6e\x64\x73\x77\x0b\x6e\x61\x6e\x6f\x73\x65\x63\x6f\x6e\x64\x73\x79\x04\x00\x08\x64\x61\x74\x65\x74\x69\x6d\x65\x03\x00\x00\x01\x40\x00\x00\x01\x04\x00\x03\x6e\x6f\x77\x01\x02\x0a\x21\x01\x00\x1c\x77\x61\x73\x69\x3a\x63\x6c\x6f\x63\x6b\x73\x2f\x77\x61\x6c\x6c\x2d\x63\x6c\x6f\x63\x6b\x40\x30\x2e\x32\x2e\x30\x05\x05"; }
+function tb_monotonic_clock(): string { return "\x07\x10\x01\x42\x02\x01\x40\x00\x00\x77\x04\x00\x03\x6e\x6f\x77\x01\x00\x0a\x26\x01\x00\x21\x77\x61\x73\x69\x3a\x63\x6c\x6f\x63\x6b\x73\x2f\x6d\x6f\x6e\x6f\x74\x6f\x6e\x69\x63\x2d\x63\x6c\x6f\x63\x6b\x40\x30\x2e\x32\x2e\x30\x05\x05"; }
+function tb_cli_exit(): string { return "\x07\x1d\x01\x42\x03\x01\x6a\x00\x00\x01\x40\x01\x06\x73\x74\x61\x74\x75\x73\x00\x01\x00\x04\x00\x04\x65\x78\x69\x74\x01\x01\x0a\x18\x01\x00\x13\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x78\x69\x74\x40\x30\x2e\x32\x2e\x30\x05\x05"; }
+// tb_cli_stderr: the wasi:cli/stderr interface (get-stderr); in the type
+// section it follows cli/stdout (independent of the stderr-first function order).
+function tb_cli_stderr(): string { return "\x07\x32\x01\x42\x05\x02\x03\x02\x01\x03\x04\x00\x0d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x03\x00\x00\x01\x69\x01\x01\x40\x00\x00\x02\x04\x00\x0a\x67\x65\x74\x2d\x73\x74\x64\x65\x72\x72\x01\x03\x0a\x1a\x01\x00\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x65\x72\x72\x40\x30\x2e\x32\x2e\x30\x05\x05"; }
+
+// Combination tails: the trailing interface block in fs context (index-
+// shifted from the stdout-family tails, so distinct), appended to a base fs
+// prefix to form a combination prefix.
+function tb_fsread_env_tail(): string { return "\x07\x24\x01\x42\x04\x01\x6f\x02\x73\x73\x01\x70\x00\x01\x40\x00\x00\x01\x04\x00\x0f\x67\x65\x74\x2d\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x01\x02\x0a\x1f\x01\x00\x1a\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x40\x30\x2e\x32\x2e\x30\x05\x09"; }
+function tb_fsread_args_tail(): string { return "\x07\x1d\x01\x42\x03\x01\x70\x73\x01\x40\x00\x00\x00\x04\x00\x0d\x67\x65\x74\x2d\x61\x72\x67\x75\x6d\x65\x6e\x74\x73\x01\x01\x0a\x1f\x01\x00\x1a\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x40\x30\x2e\x32\x2e\x30\x05\x09"; }
+function tb_fsrw_env_tail(): string { return "\x07\x24\x01\x42\x04\x01\x6f\x02\x73\x73\x01\x70\x00\x01\x40\x00\x00\x01\x04\x00\x0f\x67\x65\x74\x2d\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x01\x02\x0a\x1f\x01\x00\x1a\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x40\x30\x2e\x32\x2e\x30\x05\x09"; }
+function tb_fswrite_random_tail(): string { return "\x07\x1b\x01\x42\x02\x01\x40\x00\x00\x77\x04\x00\x0e\x67\x65\x74\x2d\x72\x61\x6e\x64\x6f\x6d\x2d\x75\x36\x34\x01\x00\x0a\x1d\x01\x00\x18\x77\x61\x73\x69\x3a\x72\x61\x6e\x64\x6f\x6d\x2f\x72\x61\x6e\x64\x6f\x6d\x40\x30\x2e\x32\x2e\x30\x05\x08"; }
+
+// blob_to_bytes unpacks an embedded byte-string into an i32[] buffer.
+function blob_to_bytes(s: string): i32[] {
+    var o: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    return o;
+}
+
+pub function component_full_io(core: i32[]): i32[] {
+    // The stdout prefix, composed from the per-interface type blocks in
+    // canonical order (preamble, io/error, io/streams, cli/stdout) rather than
+    // one opaque blob — byte-identical to the old io_prefix, and the first step
+    // of the generative builder (the blocks are reused by other shapes).
+    var o: i32[] = io_stdout_head();
+    o = wcat(o, wsection(1, core));
+    // The suffix (shim cores + lower/finish wiring) is now generated from the
+    // import list rather than emitted as one opaque blob.
+    return wcat(o, component_suffix_stdout());
+}
+
+// ---- file-I/O (read_file + stdout) component framing --------------------
+//
+// component_full_io_fs wraps a core that uses the preview2 stdout + read
+// filesystem imports (get-stdout, blocking-write-and-flush, get-directories,
+// descriptor.open-at, descriptor.read-via-stream, input-stream.blocking-read)
+// and exports `_lang_run` + `cabi_realloc` into a wasi:cli/run component.
+// As with component_full_io the framing (wasi type imports, the canon-lower
+// shim cores, canon-lift/instance/export) is constant for this fixed shape,
+// so it is embedded verbatim as \xNN blobs around the core.
+
+
+function component_full_io_fs(core: i32[]): i32[] {
+    var o: i32[] = io_fs_read_head();
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_fs_read());
+}
+
+// ---- file-I/O (write_file + stdout) component framing -------------------
+//
+// component_full_io_fs_write wraps a core that uses the preview2 stdout +
+// write filesystem imports (get-stdout, blocking-write-and-flush,
+// get-directories, descriptor.open-at, descriptor.write-via-stream) and
+// exports `_lang_run` + `cabi_realloc` into a wasi:cli/run component. The
+// import set differs from the read shape (write-via-stream replaces
+// read-via-stream + blocking-read), so it carries its own constant framing
+// blobs around the core.
+
+
+function component_full_io_fs_write(core: i32[]): i32[] {
+    var o: i32[] = io_fs_write_head();
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_fs_write());
+}
+
+// ---- file-I/O (read_file + write_file + stdout) component framing -------
+//
+// component_full_io_fs_rw wraps a core that uses BOTH the preview2 read and
+// write filesystem imports plus stdout (get-stdout, blocking-write-and-flush,
+// get-directories, descriptor.open-at, descriptor.read-via-stream,
+// input-stream.blocking-read, descriptor.write-via-stream). This is the
+// import set emit_module_run_io_fs produces when a program calls both
+// read_file and write_file; the framing differs from the read-only and
+// write-only shapes (it lowers all of read-via + blocking-read + write-via),
+// so it carries its own constant \xNN blobs.
+
+
+function component_full_io_fs_rw(core: i32[]): i32[] {
+    var o: i32[] = io_fs_rw_head();
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_fs_rw());
+}
+
+// ---- random + stdout component framing ----------------------------------
+//
+// component_full_io_random wraps a core that uses the preview2 stdout imports
+// plus wasi:random/random's get-random-u64 (get-stdout,
+// blocking-write-and-flush, get-random-u64) and exports `_lang_run` into a
+// wasi:cli/run component. get-random-u64 returns a scalar (no list), so unlike
+// the file shapes this framing needs no cabi_realloc. Constant for the shape,
+// so embedded as \xNN blobs around the core.
+
+
+function component_full_io_random(core: i32[]): i32[] {
+    var o: i32[] = io_stdout_head();
+    o = wcat(o, blob_to_bytes(tb_random()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_random());
+}
+
+// ---- env + stdout component framing -------------------------------------
+//
+// component_full_io_env wraps a core that uses the preview2 stdout imports
+// plus wasi:cli/environment's get-environment (get-stdout,
+// blocking-write-and-flush, get-environment) and exports `_lang_run` +
+// `cabi_realloc` (get-environment returns a host-allocated list) into a
+// wasi:cli/run component. Constant for the shape, so embedded as \xNN blobs.
+
+
+function component_full_io_env(core: i32[]): i32[] {
+    var o: i32[] = io_stdout_head();
+    o = wcat(o, blob_to_bytes(tb_cli_environment_env()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_env());
+}
+
+// ---- args + stdout component framing ------------------------------------
+//
+// component_full_io_args wraps a core that uses the preview2 stdout imports
+// plus wasi:cli/environment's get-arguments (get-stdout,
+// blocking-write-and-flush, get-arguments) and exports `_lang_run` +
+// `cabi_realloc` (get-arguments returns a host-allocated list) into a
+// wasi:cli/run component. Constant for the shape, embedded as \xNN blobs.
+
+
+function component_full_io_args(core: i32[]): i32[] {
+    var o: i32[] = io_stdout_head();
+    o = wcat(o, blob_to_bytes(tb_cli_environment_args()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_args());
+}
+
+// ---- clock (wall-clock) + stdout component framing ----------------------
+//
+// component_full_io_clock wraps a core that uses the preview2 stdout imports
+// plus wasi:clocks/wall-clock's now (get-stdout, blocking-write-and-flush,
+// now) and exports `_lang_run` into a wasi:cli/run component. wall-clock now
+// returns a fixed datetime record (no list), so no cabi_realloc. Backs the
+// now_unix_ms / now_ns builtins. Constant for the shape, embedded as \xNN
+// blobs.
+
+
+function component_full_io_clock(core: i32[]): i32[] {
+    var o: i32[] = io_stdout_head();
+    o = wcat(o, blob_to_bytes(tb_wall_clock()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_clock());
+}
+
+// ---- monotonic-clock + stdout component framing -------------------------
+//
+// component_full_io_clock_mono wraps a core that uses the preview2 stdout
+// imports plus wasi:clocks/monotonic-clock's now (get-stdout,
+// blocking-write-and-flush, now) and exports `_lang_run` into a wasi:cli/run
+// component. monotonic-clock now returns a u64 instant directly (no record,
+// no list -> no cabi_realloc). Backs the monotonic_ns builtin. Constant for
+// the shape, embedded as \xNN blobs.
+
+
+function component_full_io_clock_mono(core: i32[]): i32[] {
+    var o: i32[] = io_stdout_head();
+    o = wcat(o, blob_to_bytes(tb_monotonic_clock()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_clock_mono());
+}
+
+// ---- read_file + env + stdout component framing -------------------------
+//
+// component_full_io_fs_read_env wraps a core that uses the preview2 stdout
+// imports plus env (get-environment) and the filesystem read chain
+// (get-directories, descriptor.open-at, descriptor.read-via-stream,
+// input-stream.blocking-read) -- the canonical edge-handler shape: read a
+// config file + read env secrets + respond. The self-host emits imports in
+// the native compiler's canonical order (stdout, bwf, get-environment, then
+// the fs read chain), so this combined framing wires up byte-identically to
+// native. Exports `_lang_run` + `cabi_realloc` (env + fs lists).
+
+
+function component_full_io_fs_read_env(core: i32[]): i32[] {
+    var o: i32[] = io_fs_read_head();
+    o = wcat(o, blob_to_bytes(tb_fsread_env_tail()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_fs_read_env());
+}
+
+// ---- read_file + write_file + env + stdout component framing ------------
+//
+// component_full_io_fs_rw_env wraps a core that uses the preview2 stdout
+// imports plus env (get-environment) and the full filesystem read+write chain
+// (get-directories, open-at, read-via-stream, blocking-read, write-via-stream)
+// -- the richest realistic edge-handler shape: read a config file, read env
+// secrets, write an output/log file, respond. The self-host emits imports in
+// the native compiler's canonical order, so this combined framing wires up
+// byte-identically to native. Exports `_lang_run` + `cabi_realloc`.
+
+
+function component_full_io_fs_rw_env(core: i32[]): i32[] {
+    var o: i32[] = io_fs_rw_head();
+    o = wcat(o, blob_to_bytes(tb_fsrw_env_tail()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_fs_rw_env());
+}
+
+// ---- random + write_file + stdout component framing ---------------------
+//
+// component_full_io_random_write wraps a core that uses the preview2 stdout
+// imports plus random (get-random-u64) and the filesystem write chain
+// (get-directories, open-at, write-via-stream) -- the token-generating
+// handler shape: draw a random id, persist it, respond. random is mem-free
+// (lowered without memory) while the fs imports are mem-dependent, so this
+// mixes both lowering kinds; canonical import order keeps it byte-identical
+// to native. Exports `_lang_run` + `cabi_realloc` (fs lists).
+
+
+function component_full_io_random_write(core: i32[]): i32[] {
+    var o: i32[] = io_fs_write_head();
+    o = wcat(o, blob_to_bytes(tb_fswrite_random_tail()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_random_write());
+}
+
+// ---- eprint (stderr) + stdout component framing -------------------------
+//
+// component_full_io_eprint wraps a core that uses eprint -- the preview2
+// stderr import (wasi:cli/stderr's get-stderr) plus the shared stdout pair
+// (get-stderr, blocking-write-and-flush, get-stdout). The native compiler
+// orders stderr before stdout, which the self-host mirrors; stdout is always
+// present on the io path, so this single framing covers both eprint+stdout
+// and eprint-only programs (the latter just leaves the stdout import unused).
+// Exports `_lang_run`; no list results, so no cabi_realloc.
+
+
+function component_full_io_eprint(core: i32[]): i32[] {
+    var o: i32[] = io_stdout_head();
+    o = wcat(o, blob_to_bytes(tb_cli_stderr()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_eprint());
+}
+
+// ---- exit + stdout component framing ------------------------------------
+//
+// component_full_io_exit wraps a core that uses exit -- the preview2
+// wasi:cli/exit import (its `exit` takes a result discriminant: 0 = ok -> exit
+// 0, 1 = err -> exit 1) plus the stdout pair (get-stdout,
+// blocking-write-and-flush, exit). exit sits right after the stdout pair in
+// the native compiler's canonical order. No list results, so no cabi_realloc.
+
+
+function component_full_io_exit(core: i32[]): i32[] {
+    var o: i32[] = io_stdout_head();
+    o = wcat(o, blob_to_bytes(tb_cli_exit()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_exit());
+}
+
+// ---- args + read_file + stdout component framing ------------------------
+//
+// component_full_io_fs_args_read wraps a core that uses the preview2 stdout
+// imports plus args (get-arguments) and the filesystem read chain
+// (get-directories, open-at, read-via-stream, blocking-read) -- the canonical
+// CLI-tool shape: read a filename from argv, read that file, print it (like
+// `cat $1`). Canonical import order keeps it byte-identical to native.
+// Exports `_lang_run` + `cabi_realloc` (args + fs lists).
+
+
+function component_full_io_fs_args_read(core: i32[]): i32[] {
+    var o: i32[] = io_fs_read_head();
+    o = wcat(o, blob_to_bytes(tb_fsread_args_tail()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_fs_args_read());
+}
+
+// ---- args + read_file + write_file + stdout component framing -----------
+//
+// component_full_io_fs_rw_args wraps a core for the file-transform CLI shape
+// (read a file named in argv, write another) -- the read+write fs imports plus
+// args. Its prefix is io_fs_rw_head() + a small args tail (demonstrating the
+// phase-3 prefix composition); the suffix is captured (per the design doc, the
+// suffix wiring is not yet generative).
+
+function tb_fsrw_args_tail(): string { return "\x07\x1d\x01\x42\x03\x01\x70\x73\x01\x40\x00\x00\x00\x04\x00\x0d\x67\x65\x74\x2d\x61\x72\x67\x75\x6d\x65\x6e\x74\x73\x01\x01\x0a\x1f\x01\x00\x1a\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x40\x30\x2e\x32\x2e\x30\x05\x09"; }
+
+function component_full_io_fs_rw_args(core: i32[]): i32[] {
+    var o: i32[] = io_fs_rw_head();
+    o = wcat(o, blob_to_bytes(tb_fsrw_args_tail()));
+    o = wcat(o, wsection(1, core));
+    return wcat(o, component_suffix_fs_rw_args());
+}
+
+// ---- generative suffix builder: shim cores ------------------------------
+//
+// Phase of docs/WASM-COMPONENT-GENERATOR.md's suffix work. A memory-dependent
+// import (one taking/returning a list, lowered with (memory)) is wired through
+// the wit-component "$imports" table trampoline. Two tiny core modules per such
+// import, both parameterised by the import's lowered core signature:
+//   - shim_trampoline_core: exports func "0" (forwards its params, then
+//     call_indirect through table slot 0) + the "$imports" funcref table.
+//   - shim_tablefill_core: imports func "0" + the "$imports" table, and an
+//     elem writes func 0 into slot 0.
+// These reproduce the native compiler's shim cores byte-for-byte (validated by
+// TestSelfHostWasmShimCore against the stdout blocking-write-and-flush shape).
+
+// functype emits a core wasm functype: 0x60, vec(params), vec(results), where
+// each param/result is a valtype byte (i32=0x7f, i64=0x7e, f32=0x7d, f64=0x7c).
+function functype(params: i32[], results: i32[]): i32[] {
+    var t: i32[] = [96];
+    t = leb_u32(t, params.len());
+    t = wcat(t, params);
+    t = leb_u32(t, results.len());
+    return wcat(t, results);
+}
+
+function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
+    var o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
+    o = wcat(o, wsection(1, wvec(1, functype(params, results))));
+    o = wcat(o, wsection(3, [1, 0]));
+    o = wcat(o, wsection(4, [1, 112, 1, 1, 1]));
+    var ex: i32[] = [2];
+    ex = wname(ex, "0");
+    ex = ex.push(0);
+    ex = ex.push(0);
+    ex = wname(ex, "$imports");
+    ex = ex.push(1);
+    ex = ex.push(0);
+    o = wcat(o, wsection(7, ex));
+    var body: i32[] = [0];
+    var k: i32 = 0;
+    while (k < params.len()) {
+        body = body.push(32);
+        body = body.push(k);
+        k = k + 1;
+    }
+    body = body.push(65);
+    body = body.push(0);
+    body = body.push(17);
+    body = body.push(0);
+    body = body.push(0);
+    body = body.push(11);
+    var fe: i32[] = [];
+    fe = leb_u32(fe, body.len());
+    fe = wcat(fe, body);
+    return wcat(o, wsection(10, wvec(1, fe)));
+}
+
+function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
+    var o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
+    o = wcat(o, wsection(1, wvec(1, functype(params, results))));
+    var im: i32[] = [2];
+    im = im.push(0);
+    im = wname(im, "0");
+    im = im.push(0);
+    im = im.push(0);
+    im = im.push(0);
+    im = wname(im, "$imports");
+    im = im.push(1);
+    im = im.push(112);
+    im = im.push(1);
+    im = im.push(1);
+    im = im.push(1);
+    o = wcat(o, wsection(2, im));
+    return wcat(o, wsection(9, [1, 0, 65, 0, 11, 1, 0]));
+}
+
+// ---- generative suffix builder: component-section encoders --------------
+//
+// Ports of internal/wasm/component/component.go's Put* primitives that the
+// native composer's lower() (Phases B-H) + finish() emit. Each wraps a body
+// in a component section (wsection = native wrapSection; wname = putName).
+// Together with the shim cores above they regenerate a CLI component's whole
+// suffix from the import list. The component section ids: 1 core-module,
+// 2 core-instance, 5 instance, 6 alias, 7 type, 8 canon, 11 export.
+
+function comp_core_module_section(mod: i32[]): i32[] {
+    return wsection(1, mod);
+}
+
+// core-instance "instantiate" with no args (a self-contained module).
+function comp_core_instance_instantiate(modidx: i32): i32[] {
+    var b: i32[] = [1, 0];
+    b = leb_u32(b, modidx);
+    b = b.push(0);
+    return wsection(2, b);
+}
+
+// core-instance "instantiate" passing N instance args (name -> instance idx).
+function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts: i32[]): i32[] {
+    var b: i32[] = [1, 0];
+    b = leb_u32(b, modidx);
+    b = leb_u32(b, names.len());
+    var i: i32 = 0;
+    while (i < names.len()) {
+        b = wname(b, names[i]);
+        b = b.push(18);
+        b = leb_u32(b, insts[i]);
+        i = i + 1;
+    }
+    return wsection(2, b);
+}
+
+// core-instance "from-exports": package N (name, core-sort, idx) entries.
+function comp_core_instance_from_exports(names: string[], sorts: i32[], idxs: i32[]): i32[] {
+    var b: i32[] = [1, 1];
+    b = leb_u32(b, names.len());
+    var i: i32 = 0;
+    while (i < names.len()) {
+        b = wname(b, names[i]);
+        b = b.push(sorts[i]);
+        b = leb_u32(b, idxs[i]);
+        i = i + 1;
+    }
+    return wsection(2, b);
+}
+
+// alias a func exported by a component instance -> top-level component func.
+function comp_alias_inst_func(inst: i32, name: string): i32[] {
+    var b: i32[] = [1, 1, 0];
+    b = leb_u32(b, inst);
+    b = wname(b, name);
+    return wsection(6, b);
+}
+
+// alias a func exported by a CORE instance -> top-level core func.
+function comp_alias_core_func(coreinst: i32, name: string): i32[] {
+    var b: i32[] = [1, 0, 0, 1];
+    b = leb_u32(b, coreinst);
+    b = wname(b, name);
+    return wsection(6, b);
+}
+
+// alias a core-instance export of any sort (memory=2 / table=1 / func=0).
+function comp_alias_core_export(coresort: i32, coreinst: i32, name: string): i32[] {
+    var b: i32[] = [1, 0, coresort, 1];
+    b = leb_u32(b, coreinst);
+    b = wname(b, name);
+    return wsection(6, b);
+}
+
+// canon lower a component func with no opts.
+function comp_canon_lower_noopts(funcidx: i32): i32[] {
+    var b: i32[] = [1, 1, 0];
+    b = leb_u32(b, funcidx);
+    b = b.push(0);
+    return wsection(8, b);
+}
+
+// canon lower carrying a single `memory` option.
+function comp_canon_lower_mem(funcidx: i32, memidx: i32): i32[] {
+    var b: i32[] = [1, 1, 0];
+    b = leb_u32(b, funcidx);
+    b = b.push(1);
+    b = b.push(3);
+    b = leb_u32(b, memidx);
+    return wsection(8, b);
+}
+
+// canon lift a core func into a component func of the given type, no opts.
+function comp_canon_lift_noopts(corefunc: i32, typeidx: i32): i32[] {
+    var b: i32[] = [1, 0, 0];
+    b = leb_u32(b, corefunc);
+    b = b.push(0);
+    b = leb_u32(b, typeidx);
+    return wsection(8, b);
+}
+
+// two component types: result<_,_> at `rt`, then func() -> result<rt> at rt+1.
+function comp_type_result_unit(rt: i32): i32[] {
+    var b: i32[] = [2, 106, 0, 0, 64, 0, 0];
+    b = leb_u32(b, rt);
+    return wsection(7, b);
+}
+
+// component instance packaging one func under `name`.
+function comp_instance_one_func(name: string, funcidx: i32): i32[] {
+    var b: i32[] = [1, 1, 1, 0];
+    b = wname(b, name);
+    b = b.push(1);
+    b = leb_u32(b, funcidx);
+    return wsection(5, b);
+}
+
+// export a component instance under a WASI interface name.
+function comp_export_one_instance(name: string, inst: i32): i32[] {
+    var b: i32[] = [1, 0];
+    b = wname(b, name);
+    b = b.push(5);
+    b = leb_u32(b, inst);
+    b = b.push(0);
+    return wsection(11, b);
+}
+
+// canon resource.drop: a core func that drops a handle of resourceT.
+function comp_canon_resource_drop(rt: i32): i32[] {
+    var b: i32[] = [1, 3];
+    b = leb_u32(b, rt);
+    return wsection(8, b);
+}
+
+// canon lower carrying both `memory` and `realloc` options (for imports whose
+// canonical-ABI shape returns a heap-allocated list/string).
+function comp_canon_lower_mem_realloc(funcidx: i32, memidx: i32, realloc: i32): i32[] {
+    var b: i32[] = [1, 1, 0];
+    b = leb_u32(b, funcidx);
+    b = b.push(2);
+    b = b.push(3);
+    b = leb_u32(b, memidx);
+    b = b.push(4);
+    b = leb_u32(b, realloc);
+    return wsection(8, b);
+}
+
+// suffix_group_find returns the index of `iface` in `order`, or -1.
+function suffix_group_find(order: string[], iface: string): i32 {
+    var i: i32 = 0;
+    while (i < order.len()) {
+        if (order[i] == iface) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// component_suffix is the data-driven CLI-component suffix generator: a port
+// of the native composer's gComposer.lower() Phases B-H + finish()'s cli/run
+// tail (internal/wasm/component/compose_general.go). Given the program's
+// preview-2 import list and the index state Phase A + the user core module
+// leave behind, it regenerates the whole suffix from scratch.
+//
+// Imports are passed as parallel arrays (length = number of imports):
+//   imp_iface     wasi:X interface the user module imports the func from
+//   imp_name      method / func / [resource-drop] name
+//   imp_kind      0 no-opt, 1 memory trampoline, 2 memory+realloc, 3 resource.drop
+//   imp_inst      component-instance index of imp_iface (from Phase A)
+//   imp_params    lowered core signature the trampoline mirrors (kinds 1/2)
+//   imp_resourceT surfaced resource type index (kind 3)
+// n_type0 / n_inst0 are the component type / instance counts after Phase A;
+// user_mod is the user core module index; core_export is the lifted entry.
+function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
+    var n: i32 = imp_iface.len();
+    var o: i32[] = [];
+    var none: i32[] = [];
+    // per-import scratch (filled as the phases run).
+    var tramp_mod: i32[] = [];
+    var fixup_mod: i32[] = [];
+    var tramp_inst: i32[] = [];
+    var tbl: i32[] = [];
+    var coref: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        tramp_mod = tramp_mod.push(0);
+        fixup_mod = fixup_mod.push(0);
+        tramp_inst = tramp_inst.push(0);
+        tbl = tbl.push(0);
+        coref = coref.push(0);
+        i = i + 1;
+    }
+    var n_mod: i32 = user_mod + 1;
+    var n_cfunc: i32 = 0;
+    var n_corefunc: i32 = 0;
+    var n_coreinst: i32 = 0;
+    var n_coretab: i32 = 0;
+    var n_inst: i32 = n_inst0;
+    // Phase B: trampoline + table-fill cores per memory import.
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+            tramp_mod[i] = n_mod;
+            n_mod = n_mod + 1;
+            o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], none)));
+            fixup_mod[i] = n_mod;
+            n_mod = n_mod + 1;
+            o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], none)));
+        }
+        i = i + 1;
+    }
+    // Phase C: instantiate the trampolines.
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+            tramp_inst[i] = n_coreinst;
+            n_coreinst = n_coreinst + 1;
+            o = wcat(o, comp_core_instance_instantiate(tramp_mod[i]));
+        }
+        i = i + 1;
+    }
+    // Phase D: no-opt lowers / resource.drops / mem placeholders, grouped by
+    // import interface (first-occurrence order).
+    var order: string[] = [];
+    var group_names: string[][] = [];
+    var group_idxs: i32[][] = [];
+    i = 0;
+    while (i < n) {
+        var k: i32 = imp_kind[i];
+        var idx: i32 = 0;
+        if (k == 0) {
+            o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
+            var cf: i32 = n_cfunc;
+            n_cfunc = n_cfunc + 1;
+            idx = n_corefunc;
+            o = wcat(o, comp_canon_lower_noopts(cf));
+            n_corefunc = n_corefunc + 1;
+        } else if (k == 3) {
+            idx = n_corefunc;
+            o = wcat(o, comp_canon_resource_drop(imp_resourceT[i]));
+            n_corefunc = n_corefunc + 1;
+        } else {
+            idx = n_corefunc;
+            o = wcat(o, comp_alias_core_func(tramp_inst[i], "0"));
+            n_corefunc = n_corefunc + 1;
+        }
+        var gi: i32 = suffix_group_find(order, imp_iface[i]);
+        if (gi < 0) {
+            order = order.push(imp_iface[i]);
+            group_names = group_names.push([imp_name[i]]);
+            group_idxs = group_idxs.push([idx]);
+        } else {
+            group_names[gi] = group_names[gi].push(imp_name[i]);
+            group_idxs[gi] = group_idxs[gi].push(idx);
+        }
+        i = i + 1;
+    }
+    // package each interface's lowered funcs into a core instance.
+    var arg_insts: i32[] = [];
+    var g: i32 = 0;
+    while (g < order.len()) {
+        var gn: string[] = group_names[g];
+        var gx: i32[] = group_idxs[g];
+        var sorts: i32[] = [];
+        var s: i32 = 0;
+        while (s < gn.len()) {
+            sorts = sorts.push(0);
+            s = s + 1;
+        }
+        o = wcat(o, comp_core_instance_from_exports(gn, sorts, gx));
+        arg_insts = arg_insts.push(n_coreinst);
+        n_coreinst = n_coreinst + 1;
+        g = g + 1;
+    }
+    // Phase E: instantiate the user module with the per-interface args.
+    var user_inst: i32 = n_coreinst;
+    o = wcat(o, comp_core_instance_instantiate_args(user_mod, order, arg_insts));
+    n_coreinst = n_coreinst + 1;
+    // Phase F: memory + realloc + trampoline tables.
+    var need_mem: boolean = false;
+    var need_realloc: boolean = false;
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1) { need_mem = true; }
+        if (imp_kind[i] == 2) {
+            need_mem = true;
+            need_realloc = true;
+        }
+        i = i + 1;
+    }
+    if (need_mem) {
+        o = wcat(o, comp_alias_core_export(2, user_inst, "memory"));
+    }
+    var realloc_f: i32 = 0;
+    if (need_realloc) {
+        realloc_f = n_corefunc;
+        o = wcat(o, comp_alias_core_export(0, user_inst, "cabi_realloc"));
+        n_corefunc = n_corefunc + 1;
+    }
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+            tbl[i] = n_coretab;
+            n_coretab = n_coretab + 1;
+            o = wcat(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
+        }
+        i = i + 1;
+    }
+    // Phase G: memory lowers.
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1) {
+            o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
+            var cfg: i32 = n_cfunc;
+            n_cfunc = n_cfunc + 1;
+            coref[i] = n_corefunc;
+            o = wcat(o, comp_canon_lower_mem(cfg, 0));
+            n_corefunc = n_corefunc + 1;
+        } else if (imp_kind[i] == 2) {
+            o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
+            var cfr: i32 = n_cfunc;
+            n_cfunc = n_cfunc + 1;
+            coref[i] = n_corefunc;
+            o = wcat(o, comp_canon_lower_mem_realloc(cfr, 0, realloc_f));
+            n_corefunc = n_corefunc + 1;
+        }
+        i = i + 1;
+    }
+    // Phase H: fill each trampoline table with its lowered func, instantiate fixup.
+    i = 0;
+    while (i < n) {
+        if (imp_kind[i] == 1 || imp_kind[i] == 2) {
+            var arg: i32 = n_coreinst;
+            o = wcat(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [tbl[i], coref[i]]));
+            n_coreinst = n_coreinst + 1;
+            o = wcat(o, comp_core_instance_instantiate_args(fixup_mod[i], [""], [arg]));
+            n_coreinst = n_coreinst + 1;
+        }
+        i = i + 1;
+    }
+    // finish (cli/run): lift core_export and export the run instance.
+    var run_core_f: i32 = n_corefunc;
+    o = wcat(o, comp_alias_core_func(user_inst, core_export));
+    n_corefunc = n_corefunc + 1;
+    o = wcat(o, comp_type_result_unit(n_type0));
+    var lifted: i32 = n_cfunc;
+    o = wcat(o, comp_canon_lift_noopts(run_core_f, n_type0 + 1));
+    n_cfunc = n_cfunc + 1;
+    var run_inst: i32 = n_inst;
+    o = wcat(o, comp_instance_one_func("run", lifted));
+    n_inst = n_inst + 1;
+    return wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
+}
+
+// blocking_write_name / write_sig: the one memory import every write-shape
+// shares (output-stream.blocking-write-and-flush, lowered (i32 i32 i32 i32)).
+function blocking_write_name(): string {
+    return "[method]output-stream.blocking-write-and-flush";
+}
+
+// component_suffix_stdout: write-to-stdout. Imports [blocking-write-and-flush
+// (mem, streams=1), get-stdout (no-opt, cli/stdout=2)]; Phase A leaves
+// component types=5, instances=3.
+function component_suffix_stdout(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
+        [blocking_write_name(), "get-stdout"],
+        [1, 0],
+        [1, 2],
+        [[127, 127, 127, 127], none],
+        [0, 0],
+        5, 3, 0, "_lang_run");
+}
+
+// component_suffix_eprint: stdout + an extra get-stderr no-opt import.
+// Phase A leaves component types=6, instances=4.
+function component_suffix_eprint(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0"],
+        [blocking_write_name(), "get-stdout", "get-stderr"],
+        [1, 0, 0],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, none],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
+}
+
+// component_suffix_exit: stdout + an extra exit no-opt import (cli/exit).
+// Phase A leaves component types=6, instances=4.
+function component_suffix_exit(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/exit@0.2.0"],
+        [blocking_write_name(), "get-stdout", "exit"],
+        [1, 0, 0],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, none],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
+}
+
+// component_suffix_fs_read: read_file + stdout. Imports (in canonical order)
+// get-directories (mem+realloc, preopens=3), descriptor.open-at (mem,
+// fstypes=2), descriptor.read-via-stream (mem, fstypes=2),
+// output-stream.blocking-write-and-flush (mem, streams=1),
+// input-stream.blocking-read (mem+realloc, streams=1), get-stdout (no-opt,
+// stdout=4). Exercises the engine's interface grouping (fstypes + streams each
+// carry two methods) and the realloc path. Phase A leaves component types=9,
+// instances=5.
+function component_suffix_fs_read(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout"],
+        [2, 1, 1, 1, 2, 0],
+        [3, 2, 2, 1, 1, 4],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none],
+        [0, 0, 0, 0, 0, 0],
+        9, 5, 0, "_lang_run");
+}
+
+function component_suffix_random(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
+        [blocking_write_name(), "get-stdout", "get-random-u64"],
+        [1, 0, 0],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, none],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
+}
+
+function component_suffix_env(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        [blocking_write_name(), "get-stdout", "get-environment"],
+        [1, 0, 2],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, [127]],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
+}
+
+function component_suffix_args(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        [blocking_write_name(), "get-stdout", "get-arguments"],
+        [1, 0, 2],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, [127]],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
+}
+
+function component_suffix_clock(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:clocks/wall-clock@0.2.0"],
+        [blocking_write_name(), "get-stdout", "now"],
+        [1, 0, 1],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, [127]],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
+}
+
+function component_suffix_clock_mono(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:clocks/monotonic-clock@0.2.0"],
+        [blocking_write_name(), "get-stdout", "now"],
+        [1, 0, 0],
+        [1, 2, 3],
+        [[127, 127, 127, 127], none, none],
+        [0, 0, 0],
+        6, 4, 0, "_lang_run");
+}
+
+function component_suffix_random_write(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", blocking_write_name(), "get-stdout", "get-random-u64"],
+        [2, 1, 1, 1, 0, 0],
+        [3, 2, 2, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], none, none],
+        [0, 0, 0, 0, 0, 0],
+        9, 6, 0, "_lang_run");
+}
+
+function component_suffix_fs_write(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", blocking_write_name(), "get-stdout"],
+        [2, 1, 1, 1, 0],
+        [3, 2, 2, 1, 4],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], none],
+        [0, 0, 0, 0, 0],
+        8, 5, 0, "_lang_run");
+}
+
+function component_suffix_fs_rw(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout"],
+        [2, 1, 1, 1, 1, 2, 0],
+        [3, 2, 2, 2, 1, 1, 4],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none],
+        [0, 0, 0, 0, 0, 0, 0],
+        9, 5, 0, "_lang_run");
+}
+
+function component_suffix_fs_read_env(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout", "get-environment"],
+        [2, 1, 1, 1, 2, 0, 2],
+        [3, 2, 2, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none, [127]],
+        [0, 0, 0, 0, 0, 0, 0],
+        10, 6, 0, "_lang_run");
+}
+
+function component_suffix_fs_rw_env(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout", "get-environment"],
+        [2, 1, 1, 1, 1, 2, 0, 2],
+        [3, 2, 2, 2, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none, [127]],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        10, 6, 0, "_lang_run");
+}
+
+function component_suffix_fs_args_read(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout", "get-arguments"],
+        [2, 1, 1, 1, 2, 0, 2],
+        [3, 2, 2, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none, [127]],
+        [0, 0, 0, 0, 0, 0, 0],
+        10, 6, 0, "_lang_run");
+}
+
+function component_suffix_fs_rw_args(): i32[] {
+    var none: i32[] = [];
+    return component_suffix(
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout", "get-arguments"],
+        [2, 1, 1, 1, 1, 2, 0, 2],
+        [3, 2, 2, 2, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none, [127]],
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        10, 6, 0, "_lang_run");
+}
