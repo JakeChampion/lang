@@ -652,39 +652,40 @@ type ExternRecordField struct {
 // core value, so the field count is the flat count.
 const maxFlatExternRecordFields = 16
 
-// externRecordLayout flattens a record (struct) `@import` parameter type to its
-// scalar fields' offsets + types, or returns ok=false if it can't be lowered:
-// the struct must be known, have 1..maxFlatExternRecordFields fields, and every
-// field must be a 32-/64-bit integer or float (sub-word ints, bool, strings,
-// arrays, and nested structs are deferred). Offsets are measured from the
-// struct value (the user-visible data pointer), so the wasm wrapper loads each
-// field straight off it — the same indexing a `p.field` read uses.
-func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bool) {
-	st, ok := t.(ast.StructType)
-	if !ok {
+// externCompositeFieldTypes returns the in-order field/element types of a
+// record (struct) or tuple type — the composites the canonical ABI flattens to
+// their fields — or ok=false if t is neither, the struct is unknown, or any
+// field/element isn't a flattenable scalar (32-/64-bit integer or float;
+// sub-word ints, bool, strings, arrays, and nested composites are deferred).
+// A Fern tuple is laid out exactly like a struct (rc header + elements at
+// tupleElemLayout offsets, value = base + rc header), so both flatten the same
+// way; the elements are structural so no info lookup is needed for tuples.
+func externCompositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool) {
+	var types []ast.Type
+	switch x := t.(type) {
+	case ast.StructType:
+		sd, ok := info.Structs[x.Name]
+		if !ok {
+			return nil, false
+		}
+		for _, f := range sd.Fields {
+			types = append(types, f.Type)
+		}
+	case ast.TupleType:
+		types = append(types, x.Elems...)
+	default:
 		return nil, false
 	}
-	sd, ok := info.Structs[st.Name]
-	if !ok || len(sd.Fields) == 0 || len(sd.Fields) > maxFlatExternRecordFields {
-		return nil, false
-	}
-	for _, f := range sd.Fields {
-		if !externRecordFieldSupported(f.Type) {
+	for _, ft := range types {
+		if !externRecordFieldSupported(ft) {
 			return nil, false
 		}
 	}
-	// 4-byte ptrW: the wasm backend is the only consumer (records aren't an
-	// extern shape on the natives), so the wasm32 struct layout governs offsets.
-	offs, _ := structFieldLayout(sd.Fields, 4)
-	out := make([]ExternRecordField, len(sd.Fields))
-	for i, f := range sd.Fields {
-		out[i] = ExternRecordField{Offset: offs[f.Name], Type: f.Type}
-	}
-	return out, true
+	return types, true
 }
 
-// externRecordFieldSupported reports whether a record field type is one this
-// slice flattens: a 32-/64-bit integer or a float. Those load naturally
+// externRecordFieldSupported reports whether a record/tuple field type is one
+// this slice flattens: a 32-/64-bit integer or a float. Those load naturally
 // (i32/i64/f32/f64.load) at the field's slot and flatten to a single core
 // value of the matching type. Sub-word ints (s8/s16), bool, and composites are
 // deferred.
@@ -699,32 +700,44 @@ func externRecordFieldSupported(t ast.Type) bool {
 	return false
 }
 
-// externRecordResultLayout flattens a record (struct) `@import` *result* to its
-// scalar fields' offsets + types + struct size, or ok=false if it can't be
-// lowered. Requires 2..maxFlatExternRecordFields fields (a multi-field record
-// flattens to > 1 core value, so it returns indirectly through a return-area
-// pointer — the only result shape this slice handles; a single-field record
-// returns its field directly and is deferred), each a 32-/64-bit integer or
-// float. Offsets and size come from the same struct layout the constructor
-// uses, so the wrapper writes fields where a `p.field` read would find them.
+// externRecordLayout flattens a record (struct) or tuple `@import` parameter
+// type to its scalar fields' offsets + types, or returns ok=false if it can't
+// be lowered: 1..maxFlatExternRecordFields scalar fields. Offsets are measured
+// from the composite value (the user-visible data pointer), so the wasm wrapper
+// loads each field straight off it — the same indexing a `p.field` read uses.
+func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bool) {
+	types, ok := externCompositeFieldTypes(t, info)
+	if !ok || len(types) == 0 || len(types) > maxFlatExternRecordFields {
+		return nil, false
+	}
+	// 4-byte ptrW: the wasm backend is the only consumer (composites aren't an
+	// extern shape on the natives). tupleElemLayout's packing is identical to
+	// structFieldLayout's, so it computes the right offsets for both.
+	offs, _ := tupleElemLayout(types, 4)
+	out := make([]ExternRecordField, len(types))
+	for i, ft := range types {
+		out[i] = ExternRecordField{Offset: offs[i], Type: ft}
+	}
+	return out, true
+}
+
+// externRecordResultLayout flattens a record (struct) or tuple `@import`
+// *result* to its scalar fields' offsets + types + size, or ok=false if it
+// can't be lowered. Requires 2..maxFlatExternRecordFields scalar fields (a
+// multi-field composite flattens to > 1 core value, so it returns indirectly
+// through a return-area pointer — the only result shape this slice handles; a
+// single-field composite returns its field directly and is deferred). Offsets
+// and size come from the same layout the constructor uses, so the wrapper
+// writes fields where a `p.field` read would find them.
 func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResult, bool) {
-	st, ok := t.(ast.StructType)
-	if !ok {
+	types, ok := externCompositeFieldTypes(t, info)
+	if !ok || len(types) < 2 || len(types) > maxFlatExternRecordFields {
 		return nil, false
 	}
-	sd, ok := info.Structs[st.Name]
-	if !ok || len(sd.Fields) < 2 || len(sd.Fields) > maxFlatExternRecordFields {
-		return nil, false
-	}
-	for _, f := range sd.Fields {
-		if !externRecordFieldSupported(f.Type) {
-			return nil, false
-		}
-	}
-	offs, size := structFieldLayout(sd.Fields, 4)
-	fields := make([]ExternRecordField, len(sd.Fields))
-	for i, f := range sd.Fields {
-		fields[i] = ExternRecordField{Offset: offs[f.Name], Type: f.Type}
+	offs, size := tupleElemLayout(types, 4)
+	fields := make([]ExternRecordField, len(types))
+	for i, ft := range types {
+		fields[i] = ExternRecordField{Offset: offs[i], Type: ft}
 	}
 	return &ExternRecordResult{Fields: fields, Size: size}, true
 }

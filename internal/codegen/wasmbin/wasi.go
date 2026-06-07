@@ -784,10 +784,11 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			case externScalarType(p.Type):
 				// plain scalar — passes through, no wrapper needed for this param
 			default:
-				if _, isStruct := p.Type.(ast.StructType); isStruct {
-					return nil, nil, fmt.Errorf("@import %q (%s/%s): record parameter %q (type %s) is not lowerable yet — every field must be a 32-/64-bit integer or float and there must be at most %d of them (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type, 16)
+				switch p.Type.(type) {
+				case ast.StructType, ast.TupleType:
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): record/tuple parameter %q (type %s) is not lowerable yet — every field must be a 32-/64-bit integer or float and there must be at most %d of them (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type, 16)
 				}
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), and record extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), record, and tuple extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 			}
 		}
 		params, err := paramValtypes(ex.Params)
@@ -904,10 +905,11 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add("__fern_alloc")
 			helpers.add("cabi_realloc")
 		default:
-			if _, isStruct := ret.(ast.StructType); isStruct {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): record result (type %s) is not lowerable yet — it must have 2..%d fields, each a 32-/64-bit integer or float (P4c)", ex.Name, ex.Iface, ex.WITName, ret, 16)
+			switch ret.(type) {
+			case ast.StructType, ast.TupleType:
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): record/tuple result (type %s) is not lowerable yet — it must have 2..%d fields, each a 32-/64-bit integer or float (P4c)", ex.Name, ex.Iface, ex.WITName, ret, 16)
 			}
-			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), and record results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
+			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), record, and tuple results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 		}
 	}
 	return specs, wrappers, nil

@@ -391,10 +391,22 @@ world-driven composer (P2) wires it.
      directly — a different shape — and is deferred). Gated by
      `TestExternRecordResultCustomProvider` (a `make-point: func(s32, s32) ->
      point` lifted to a Fern struct, fields read back).
-   - Still rejected (next slices): single-field records (direct return); tuple /
-     variant / option / result params and results; bool arrays; sub-word /
-     nested-record fields; and the self-host port. The multi-component harness
-     (`TestExternImportCustomProvider`) is the test vehicle for these.
+   - **Tuple params + results — ✅ done (Go).** A Fern tuple is laid out exactly
+     like a struct (rc header + elements at the same packing), so the record
+     machinery generalises to tuples for free: `externCompositeFieldTypes`
+     extracts a struct's field types *or* a tuple's element types, and the same
+     `externRecordLayout` / `externRecordResultLayout` / wrappers handle both.
+     `tuple<...>` params flatten to their elements; multi-element `tuple<...>`
+     results return indirectly and materialize a Fern tuple. Same scope as
+     records (32-/64-bit numeric/float elements; 1..16 for params, 2..16 for
+     results). Gated by `TestExternTupleParamCustomProvider` (a `sum-pair:
+     func(p: tuple<s32, s32>) -> s32`) and `TestExternTupleResultCustomProvider`
+     (a `make-pair: func(s32, s32) -> tuple<s32, s32>`).
+   - Still rejected (next slices): single-element records/tuples (direct
+     return); variant / option / result params and results; bool arrays;
+     sub-word / nested-composite fields; and the self-host port. The
+     multi-component harness (`TestExternImportCustomProvider`) is the test
+     vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
