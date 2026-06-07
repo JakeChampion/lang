@@ -367,3 +367,15 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostRcRuntimeArm64` (the latter built + run under
   qemu-aarch64 — all six cases green). Next: wasm
   (`wasm.fern`); then Phase 0b array layout migration.
+- 2026-06-07: **Phase 0a (array-alloc centralization), x86-64 —
+  SHIPPED.** Introduced `__fern_arr_box(cap) -> data ptr` in `asm.fern`
+  and routed all 11 array allocation sites through it (literal,
+  str_split, the read-array builder, `__fern_alloc_u8`, `__fern_args`,
+  push-grow, slice, concat, reverse, str_bytes, str_chars). The box
+  layout (`[cap, len, e…]`, data = base+8, cap at `[data-8]`) is now
+  defined in ONE place — behaviour-preserving (identical layout), so
+  the full suite + byte-identical bootstrap stay green. The raw exec
+  `argv` buffer (not a Fern array) is correctly left inline. This turns
+  the rc-header migration (0b) into a ~2-line change to the helper +
+  the single `cap` reader in `__fern_arr_push`. Clobbers only
+  rax/rdi (matches `__fern_alloc`'s contract → drop-in at every site).
