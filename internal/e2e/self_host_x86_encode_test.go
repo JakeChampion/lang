@@ -481,6 +481,11 @@ function main(): i32 {
     if (to.len() != 3 || to[0] != 72 || to[1] != 99 || to[2] != 192) { return 96; }
     var tp: i32[] = x86_movslq_rr([], 8, 9);
     if (tp[0] != 77 || tp[1] != 99 || tp[2] != 193) { return 97; }
+    // sqrtsd %xmm0,%xmm0 -> F2 0F 51 C0; roundsd $1,%xmm0,%xmm0 -> 66 0F 3A 0B C0 01
+    var tq: i32[] = x86_sqrtsd([], 0, 0);
+    if (tq.len() != 4 || tq[0] != 242 || tq[1] != 15 || tq[2] != 81 || tq[3] != 192) { return 98; }
+    var tr: i32[] = x86_roundsd([], 0, 0, 1);
+    if (tr.len() != 6 || tr[0] != 102 || tr[1] != 15 || tr[2] != 58 || tr[3] != 11 || tr[4] != 192 || tr[5] != 1) { return 99; }
     return 0;
 }
 `

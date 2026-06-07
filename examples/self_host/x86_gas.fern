@@ -597,6 +597,17 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         }
         return a;
     }
+    // roundsd $mode, %src, %dst — three operands (imm, xmm, xmm).
+    if (mnem == "roundsd") {
+        var rc1: i32 = x86_gas_top_comma(rest);
+        var rmode: string = x86_gas_trim(rest[0:rc1]);
+        var rrem: string = rest[rc1 + 1:rest.len()];
+        var rc2: i32 = x86_gas_top_comma(rrem);
+        var rsrc: string = x86_gas_trim(rrem[0:rc2]);
+        var rdst: string = x86_gas_trim(rrem[rc2 + 1:rrem.len()]);
+        a.code = x86_roundsd(a.code, x86_gas_xmm(rdst), x86_gas_xmm(rsrc), x86_gas_atoi(rmode));
+        return a;
+    }
     if (mnem == "incq") { a.code = x86_inc_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "decq") { a.code = x86_dec_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "negq") { a.code = x86_neg_r64(a.code, x86_gas_reg(rest)); return a; }
@@ -649,6 +660,7 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "divsd") { a.code = x86_sse_rr(a.code, 94, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
     if (mnem == "ucomisd") { a.code = x86_ucomisd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
     if (mnem == "xorpd") { a.code = x86_xorpd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
+    if (mnem == "sqrtsd") { a.code = x86_sqrtsd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
     if (mnem == "cvttsd2si") { a.code = x86_cvttsd2si(a.code, x86_gas_reg(dst), x86_gas_xmm(src)); return a; }
     if (mnem == "cvtsi2sd") { a.code = x86_cvtsi2sd(a.code, x86_gas_xmm(dst), x86_gas_reg(src)); return a; }
     // 32-bit ALU + moves + extends + cmov + testb (slice 2q).

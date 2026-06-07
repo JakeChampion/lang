@@ -1209,10 +1209,23 @@ smallest → largest:
     recur, float, string, struct, array, strlen, strchar, map×2) — the
     whole core-language surface, all assembled by the self-host toolchain
     and run natively with no external `as`/`ld`.
-  - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
-    transcendental math builtins; broadening the capstone toward
-    progressively larger programs (and ultimately `asm.fern`'s own output
-    → a native self-host fixpoint); and the CLI wiring (blocked above).
+  - ✅ **slice 2w — SSE float-math encoders (`sqrtsd` / `roundsd`)**. Added
+    `x86_sqrtsd` (`F2 0F 51 /r`) and `x86_roundsd` (`66 0F 3A 0B /r ib`,
+    the 3-operand `$mode, %src, %dst`) — the ops `asm.fern`'s `__sqrt_f64` /
+    `__floor_f64` / `__ceil_f64` / `__trunc_f64` builtins emit. Byte-checked
+    vs `as`/objdump. *Found:* the user-facing f64 methods `.sqrt()` /
+    `.floor()` / `.ceil()` / `.trunc()` are an **`asm.fern` gap** — it emits
+    `call __fn_f64__sqrt` etc. without emitting those method bodies (an
+    undefined reference even for gcc's linker), so they can't run e2e yet
+    (a self-host emitter bug, not the assembler). The inline `__*_f64`
+    builtins (used by `std/math`) do emit the encoders, so a `std/math`
+    program would exercise them once multi-module assembly is in the
+    capstone.
+  - ⬜ remaining: the x87 transcendentals (`fldl`/`fstpl` + `fsin`/`fcos`/…)
+    for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; broadening
+    the capstone toward progressively larger / multi-module programs (and
+    ultimately `asm.fern`'s own output → a native self-host fixpoint); and
+    the CLI wiring (blocked above).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

@@ -90,6 +90,11 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		// i32-keyed and string-keyed.
 		{"mapi32", "function main(): i32 { var m = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }\n", 42, ""},
 		{"mapstr", "function main(): i32 { var m = Map { \"a\": 40, \"b\": 2 }; return m.get_or(\"a\", 0) + m.get_or(\"b\", 0); }\n", 42, ""},
+		// NOTE: f64 `.sqrt()`/`.floor()`/`.ceil()`/`.trunc()` are an asm.fern
+		// gap — it emits `call __fn_f64__sqrt` etc. without emitting those
+		// method bodies (an undefined reference even for gcc), so they aren't
+		// capstone cases. Their SSE encoders (sqrtsd / roundsd) are
+		// byte-verified in TestSelfHostX86Encode for when asm.fern emits them.
 	}
 
 	for _, tc := range cases {
