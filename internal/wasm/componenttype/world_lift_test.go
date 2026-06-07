@@ -67,6 +67,45 @@ func TestWorldInterfaces(t *testing.T) {
 		[]string{"incoming-datagram-stream", "outgoing-datagram-stream", "udp-socket"})
 }
 
+// TestClassifyEqAliasedRecordResult guards the eq-alias resolution in
+// liftInterface: wall-clock `now: func() -> datetime` returns the `datetime`
+// record through a `(type (eq N))` re-export. The record's two fields flatten
+// to two core values (> the single-flat-result cap), so `now` must classify as
+// KindMem — a memory trampoline whose `canon lower` carries the `memory`
+// option. If the decoder failed to follow the eq-alias the result resolved to
+// a nil def (an opaque handle, flat 1) and `now` mis-classified as KindNoOpt,
+// dropping the memory option and producing a component wasm-tools rejects.
+func TestClassifyEqAliasedRecordResult(t *testing.T) {
+	w, err := DecodeWorld("fern")
+	if err != nil {
+		t.Fatalf("DecodeWorld: %v", err)
+	}
+	var wall *WorldInterface
+	for _, wi := range w.Interfaces() {
+		if wi.Name == "wasi:clocks/wall-clock@0.2.0" {
+			c := wi
+			wall = &c
+			break
+		}
+	}
+	if wall == nil {
+		t.Fatal("wall-clock interface not found in fern world")
+	}
+	var now *WorldFunc
+	for i := range wall.FuncSigs {
+		if wall.FuncSigs[i].Name == "now" {
+			now = &wall.FuncSigs[i]
+			break
+		}
+	}
+	if now == nil {
+		t.Fatal("wall-clock `now` not found")
+	}
+	if got := wall.Classify(*now); got != KindMem {
+		t.Errorf("Classify(wall-clock.now) = %v, want KindMem (datetime is a 2-field record returned via memory)", got)
+	}
+}
+
 func checkInv(t *testing.T, by map[string]WorldInterface, name string, funcs, resources []string) {
 	t.Helper()
 	wi, ok := by[name]

@@ -372,10 +372,36 @@ world-driven composer (P2) wires it.
      `outgoing-datagram-stream.check-send` / `send` / `subscribe`, plus the
      three resource-drops) lowers without bespoke socket knowledge. Gated by
      `TestExternImportWithBuiltinUDPViaCLI` (an extern + `udp_send()` whose
-     datagram a real listener receives). With this the `fern` world covers
-     the full built-in capability set, so the next step is migrating the
-     default (non-extern) compose path off the native registry onto the
-     world-driven composer.
+     datagram a real listener receives).
+   - **World coverage — wall-clock `now()` — ✅ done.** `wasi:clocks/wall-clock`
+     gained `now` (the `now_ns()` builtin). Unlike monotonic `now` (a `u64`),
+     wall-clock `now` returns the `datetime` record, which the interface
+     re-exports through a `(type (eq N))` alias. The world decoder's
+     `ResolveDef` (`internal/wasm/componenttype/world_lift.go`) didn't follow
+     that eq-alias, so the result resolved to a nil def (an opaque handle) and
+     `now` mis-classified as `KindNoOpt` — the emitted `canon lower` then
+     dropped the required `memory` option and wasm-tools rejected the
+     component. The fix resolves an eq-aliased type-export slot to its target
+     def so the record's two fields flatten correctly (`KindMem`). Gated by
+     `TestClassifyEqAliasedRecordResult` (decoder layer) and
+     `TestExternImportWithBuiltinWallClockViaCLI` (an extern + `now_ns()`, run
+     under wasmtime). With this every built-in capability the CLI emits lowers
+     through the world path.
+   - **Migrating the default (non-extern) compose path — ⏸ blocked on
+     self-hosting parity.** Every non-extern shape is now world-composable
+     (the `TestCompose*FromWorld` gates), so the `fern` CLI's
+     `buildPreview2Component` *could* route plain cli/run programs through
+     `ComposeFromWorldAuto` instead of the registry `component.Compose`. But the
+     Go CLI's component output is the **oracle for self-hosting**:
+     `TestSelfHostWasmComponentFull*` assert the self-hosted Fern compiler
+     (`examples/self_host/wasm.fern`) emits byte-identical components to
+     `fern -target wasm`. The self-hosted compiler implements the registry
+     composition, so flipping the Go CLI to the world composer desyncs them.
+     Retiring the registry for cli/run therefore requires re-implementing
+     world-driven composition in the self-hosted compiler first (and
+     `component.Compose` stays regardless — the HTTP `incoming-handler` export
+     path still needs it; `ComposeExportsFromWorld` doesn't yet handle the
+     resource-drops a handler uses).
    - **Custom (non-WASI) interface + provider — ✅ done (Go).** The headline
      BYO-WIT capability: a Fern program `@import`s a *fully custom* interface
      (`local:test/answer@0.1.0`, defined by the user, unknown to the compiler)
