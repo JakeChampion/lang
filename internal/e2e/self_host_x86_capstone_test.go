@@ -77,13 +77,10 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		{"recur", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\nfunction main(): i32 { return fib(9) + 8; }\n", 42, ""},
 		{"float", "function main(): i32 { var x: f64 = 84.0; var y: f64 = 2.0; var z: f64 = x / y; return z as i32; }\n", 42, ""},
 		{"string", "function main(): i32 { write(\"hi!\"); return 0; }\n", 0, "hi!"},
-		// NOTE: heap programs (struct/array/map) emit ~32 KB of asm (the whole
-		// alloc/memcpy runtime); assembling that at runtime exhausts the
-		// self-host wasm module's 1 MB bump heap (no GC; emit_module's
-		// __fern_alloc traps at 16 pages rather than growing). The encoders
-		// for every instruction those programs use are byte-verified in
-		// TestSelfHostX86Encode; the end-to-end run is gated on a self-host
-		// heap-grow fix. See docs/SELF-HOST-REMAINING-PLAN.md.
+		// Heap programs (struct/array/map) additionally need a `.bss` section
+		// + ELF p_memsz>p_filesz for asm.fern's 1 GB `__fern_heap`; tracked as
+		// the next slice. Their instructions are byte-verified in
+		// TestSelfHostX86Encode. See docs/SELF-HOST-REMAINING-PLAN.md.
 	}
 
 	for _, tc := range cases {
