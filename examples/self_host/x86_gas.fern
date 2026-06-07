@@ -1,0 +1,247 @@
+// examples/self_host/x86_gas.fern — a GAS (AT&T) assembly front-end for
+// the self-hosted x86-64 backend (slice 2g of the native-binary track).
+// It tokenizes the assembly text asm.fern emits and drives the byte
+// encoders + label/.rodata API in x86_encode.fern, producing an X86Asm
+// whose `code` / `rodata` sections elf.fern wraps into a runnable binary —
+// the final wiring that removes the external `as` + `ld` step.
+//
+// This first slice covers the core integer/pointer subset (enough to
+// assemble a hand-written GAS program end-to-end): the directives
+// `.text` / `.section .rodata` / `.globl` / `.quad`, labels, and the
+// mnemonics movq, leaq, addq/subq/cmpq, pushq/popq, jmp/jCC, call, ret,
+// syscall, leave. Operand forms: `%reg`, `$imm`, `disp(%base)`,
+// `sym(%rip)`, and bare branch-target labels. AT&T operand order is
+// `op src, dst` (the reverse of the encoder's dst,src). Later slices grow
+// the mnemonic coverage (incq/decq, testq, movb/movzbq, mul/div, SSE,
+// x87) to the full asm.fern surface.
+//
+// Import-free, like the other native-binary modules: the eventual emitter
+// `import`s x86_encode + this, and the unit test concatenates them.
+
+// GasMem is a parsed memory operand: either rip-relative (`sym(%rip)`,
+// carrying the label) or `disp(%base)` (carrying a base register + disp).
+struct GasMem {
+    is_rip: boolean,
+    label: string,
+    base: i32,
+    disp: i32,
+}
+
+// x86_gas_trim strips leading/trailing spaces (32) AND tabs (9). The
+// self-host string `trim` only removes spaces, but asm.fern indents with
+// tabs, so the mnemonic-splitting relies on this.
+function x86_gas_trim(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && (s[a] == 32 || s[a] == 9)) {
+        a = a + 1;
+    }
+    while (b > a && (s[b - 1] == 32 || s[b - 1] == 9)) {
+        b = b - 1;
+    }
+    return s[a:b];
+}
+
+// x86_gas_reg maps a register token (`%rax` or `rax`) to its number, or -1.
+function x86_gas_reg(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 37) { // '%'
+        s = s[1:s.len()];
+    }
+    if (s == "rax") { return 0; }
+    if (s == "rcx") { return 1; }
+    if (s == "rdx") { return 2; }
+    if (s == "rbx") { return 3; }
+    if (s == "rsp") { return 4; }
+    if (s == "rbp") { return 5; }
+    if (s == "rsi") { return 6; }
+    if (s == "rdi") { return 7; }
+    return 0 - 1;
+}
+
+// x86_gas_atoi parses a decimal integer token, tolerating a leading `$`
+// (immediate sigil) and a leading `-`.
+function x86_gas_atoi(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 36) { // '$'
+        s = s[1:s.len()];
+    }
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    }
+    var v: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        if (c >= 48 && c <= 57) {
+            v = v * 10 + (c - 48);
+        }
+        i = i + 1;
+    }
+    if (neg) {
+        return 0 - v;
+    }
+    return v;
+}
+
+// x86_gas_parse_mem parses a memory operand `disp(%base)` / `(%base)` /
+// `sym(%rip)`.
+function x86_gas_parse_mem(op: string): GasMem {
+    var lp: i32 = op.index_of("(");
+    var disp_str: string = op[0:lp];
+    var inner: string = op[lp + 1:op.len() - 1]; // between ( and )
+    if (inner == "%rip") {
+        return GasMem { is_rip: true, label: disp_str, base: 0, disp: 0 };
+    }
+    var d: i32 = 0;
+    if (disp_str.len() > 0) {
+        d = x86_gas_atoi(disp_str);
+    }
+    return GasMem { is_rip: false, label: "", base: x86_gas_reg(inner), disp: d };
+}
+
+// x86_gas_movq dispatches the four movq operand shapes (AT&T src, dst).
+function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) { // $imm -> reg
+        a.code = x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src));
+        return a;
+    }
+    var src_mem: boolean = src.contains("(");
+    var dst_mem: boolean = dst.contains("(");
+    if (!src_mem && !dst_mem) { // reg -> reg
+        a.code = x86_mov_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src));
+        return a;
+    }
+    if (src_mem && !dst_mem) { // mem -> reg (load)
+        var m: GasMem = x86_gas_parse_mem(src);
+        a.code = x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp);
+        return a;
+    }
+    if (!src_mem && dst_mem) { // reg -> mem (store)
+        var m2: GasMem = x86_gas_parse_mem(dst);
+        a.code = x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src));
+        return a;
+    }
+    return a;
+}
+
+// x86_gas_alu dispatches addq/subq/cmpq (slash = 0 add / 5 sub / 7 cmp).
+function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) { // $imm -> reg
+        a.code = x86_alu_r64_imm32(a.code, slash, x86_gas_reg(dst), x86_gas_atoi(src));
+        return a;
+    }
+    var d: i32 = x86_gas_reg(dst);
+    var s: i32 = x86_gas_reg(src);
+    if (slash == 0) {
+        a.code = x86_add_r64_r64(a.code, d, s);
+    } else {
+        if (slash == 5) {
+            a.code = x86_sub_r64_r64(a.code, d, s);
+        } else {
+            a.code = x86_cmp_r64_r64(a.code, d, s);
+        }
+    }
+    return a;
+}
+
+// x86_gas_emit assembles one instruction line (mnemonic + operand text).
+function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
+    // zero-operand
+    if (mnem == "ret") { a.code = x86_ret(a.code); return a; }
+    if (mnem == "syscall") { a.code = x86_syscall(a.code); return a; }
+    if (mnem == "leave") { a.code = x86_leave(a.code); return a; }
+    // branch / call: one operand = a label
+    if (mnem == "jmp") { return x86_jmp_label(a, rest); }
+    if (mnem == "je" || mnem == "jz") { return x86_jcc_label(a, x86_cc_e(), rest); }
+    if (mnem == "jne" || mnem == "jnz") { return x86_jcc_label(a, x86_cc_ne(), rest); }
+    if (mnem == "jge") { return x86_jcc_label(a, x86_cc_ge(), rest); }
+    if (mnem == "jl") { return x86_jcc_label(a, x86_cc_l(), rest); }
+    if (mnem == "jle") { return x86_jcc_label(a, x86_cc_le(), rest); }
+    if (mnem == "jg") { return x86_jcc_label(a, x86_cc_g(), rest); }
+    if (mnem == "call") { return x86_call_label(a, rest); }
+    // one-operand register
+    if (mnem == "pushq") { a.code = x86_push_r64(a.code, x86_gas_reg(rest)); return a; }
+    if (mnem == "popq") { a.code = x86_pop_r64(a.code, x86_gas_reg(rest)); return a; }
+    // two-operand (split on the first comma)
+    var ci: i32 = rest.index_of(",");
+    if (ci < 0) {
+        return a; // unknown / unsupported single-operand mnemonic: skip
+    }
+    var src: string = x86_gas_trim(rest[0:ci]);
+    var dst: string = x86_gas_trim(rest[ci + 1:rest.len()]);
+    if (mnem == "leaq") {
+        var m: GasMem = x86_gas_parse_mem(src);
+        return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
+    }
+    if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
+    if (mnem == "addq") { return x86_gas_alu(a, 0, src, dst); }
+    if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
+    if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
+    return a; // unsupported mnemonic: skip (grown in later slices)
+}
+
+// x86_gas_assemble parses a whole GAS program and returns the resolved
+// X86Asm (code + rodata). Lines are classified as label (`name:`),
+// directive (`.…`), or instruction; `#` begins a comment.
+function x86_gas_assemble(src: string): X86Asm {
+    var a: X86Asm = x86_asm_new();
+    var section: i32 = 0; // 0 = .text, 1 = .rodata
+    var lines: string[] = src.split("\n");
+    var li: i32 = 0;
+    while (li < lines.len()) {
+        var raw: string = lines[li];
+        li = li + 1;
+        var hash: i32 = raw.index_of("#");
+        if (hash >= 0) {
+            raw = raw[0:hash];
+        }
+        var line: string = x86_gas_trim(raw);
+        if (line.len() == 0) {
+            continue;
+        }
+        // label: `name:`
+        if (line[line.len() - 1] == 58) { // ':'
+            var lname: string = line[0:line.len() - 1];
+            if (section == 1) {
+                a = x86_rodata_label(a, lname);
+            } else {
+                a = x86_label(a, lname);
+            }
+            continue;
+        }
+        // directive: `.…`
+        if (line[0] == 46) { // '.'
+            if (line.starts_with(".section")) {
+                if (line.contains(".rodata")) {
+                    section = 1;
+                } else {
+                    section = 0;
+                }
+            } else {
+                if (line == ".text") {
+                    section = 0;
+                } else {
+                    if (line.starts_with(".quad")) {
+                        var qv: i32 = x86_gas_atoi(x86_gas_trim(line[6:line.len()]));
+                        a = x86_rodata_quad(a, qv, 0);
+                    }
+                    // .globl / .type / .size: ignored
+                }
+            }
+            continue;
+        }
+        // instruction: mnemonic + operand text
+        var sp: i32 = line.index_of(" ");
+        var mnem: string = line;
+        var rest: string = "";
+        if (sp >= 0) {
+            mnem = line[0:sp];
+            rest = x86_gas_trim(line[sp + 1:line.len()]);
+        }
+        a = x86_gas_emit(a, mnem, rest);
+    }
+    return x86_resolve(a);
+}

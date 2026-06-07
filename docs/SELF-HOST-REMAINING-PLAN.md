@@ -901,11 +901,58 @@ smallest → largest:
     `TestSelfHostX86MaxRuns` (forward `jge` over an else-arm → max(42,17))
     and `TestSelfHostX86CallRuns` (forward `call` to a later subroutine +
     `ret`).
-  - ⬜ remaining: a **named-label table** over the patch primitive (string
-    label → offset + a deferred-fixup list, for the text parser), memory
-    operands (ModR/M memory forms, SIB, disp8/32), SSE + x87 floats,
-    `.rodata` + rip-relative symbol addressing, and the text parser
-    (`asm.fern` GAS text → these encoders).
+  - ✅ **slice 2d — named-label assembler**: an `X86Asm` struct (code
+    buffer + parallel label name/offset arrays + a forward-fixup list) with
+    `x86_label` / `x86_jcc_label` / `x86_jmp_label` / `x86_call_label` /
+    `x86_resolve`. Branches name a label; backward targets patch
+    immediately, forward ones queue and `x86_resolve` patches them via
+    `x86_patch_rel32`. This is the API the GAS-text parser will call
+    instead of hand bookkeeping. Byte-checked (`TestSelfHostX86Labels`:
+    forward/backward branch + call + lookup) and run end-to-end
+    (`TestSelfHostX86LabelProgramRuns`: a two-routine program — `main`
+    calls `compute`, which loops to 42 and returns — assembled entirely
+    through the label API, runs natively exiting 42).
+  - ✅ **slice 2e — memory operands**: `mov r64, [base+disp]` /
+    `mov [base+disp], r64` (`0x8B`/`0x89` /r) via `x86_emit_mem` + `x86_sib`,
+    handling the mod 00/01/10 disp sizing and the two special cases —
+    `rsp` (SIB escape) and `rbp` (no mod=00 form, so `[rbp]` is mod=01
+    disp8=0). Byte-checked (`TestSelfHostX86Encode`) and run end-to-end
+    (`TestSelfHostX86FrameRuns`: a stack-frame round-trip — store 42 to
+    `[rbp-8]`, clobber, reload, exit — runs natively exiting 42).
+  - ✅ **slice 2f — `.rodata` + rip-relative addressing**: a `.rodata`
+    section on `X86Asm` (cross-section labels: `x86_rodata_label` /
+    `x86_rodata_quad`), `lea r64, [rip+label]` (`x86_lea_rip_label`,
+    `48 8D` + ModR/M mod=00 rm=101), and `x86_resolve` extended to place
+    `.rodata` labels at the padded `.text` length and patch rip-relative
+    fixups (same `target - (next+4)` math as branches, since the whole
+    image is one segment). This is the addressing mode `asm.fern` uses
+    pervasively (`leaq .S<n>(%rip)` for the string pool, function
+    addresses, floats, `__fern_argc`). Byte-checked (`TestSelfHostX86Labels`)
+    and run end-to-end (`TestSelfHostX86RodataRuns`: `lea rax,[rip+answer]`;
+    `rax=[rax]`; exit — a `.quad 42` in `.rodata`, R+W+X data ELF, runs
+    natively exiting 42).
+  - ✅ **slice 2g — GAS-text front-end**: `examples/self_host/x86_gas.fern`
+    parses the AT&T assembly `asm.fern` emits and drives the encoders +
+    label/`.rodata` API. Covers the core integer/pointer subset — directives
+    `.text` / `.section .rodata` / `.globl` / `.quad`, labels, and `movq`
+    (imm/reg/reg-reg/load/store), `leaq sym(%rip)`, `addq`/`subq`/`cmpq`,
+    `pushq`/`popq`, `jmp`/`jCC`, `call`, `ret`, `syscall`, `leave` — with
+    operand forms `%reg` / `$imm` / `disp(%base)` / `sym(%rip)` / bare
+    label, in AT&T `src, dst` order. Operand parsers byte-checked
+    (`TestSelfHostX86Gas`); two end-to-end native runs assemble hand-written
+    GAS **text** → machine code → ELF → run on x86-64 exiting 42:
+    `TestSelfHostX86GasLoopRuns` (a loop) and `TestSelfHostX86GasRodataRuns`
+    (a `.section .rodata` `.quad` loaded via `leaq sym(%rip)`). *Found on
+    the way:* the self-host string `trim` strips only spaces, not tabs, so
+    the front-end carries its own tab-aware `x86_gas_trim` (asm.fern indents
+    with tabs).
+  - ⬜ remaining: grow mnemonic coverage to the full `asm.fern` surface
+    (`incq`/`decq`, `testq`, `movb`/`movzbq`/`movl`, `imulq`/`divq`/`idivq`/
+    `cqto`, `negq`, `andq`/`orq`/`xorq`, `setCC`, `movabsq`, the `0x83` imm8
+    ALU + `movq $imm` sign-extended `C7` form) and the SSE/x87 float ops
+    (`movsd`, `ucomisd`, `xorpd`, `roundsd`, `fldl`/`fstpl`), then wire it
+    into the `fern -target x86-64 -o` driver so a real program compiles to
+    an ELF with no external tool.
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

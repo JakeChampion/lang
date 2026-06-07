@@ -217,7 +217,14 @@ pub struct Import { path: string }
 // checker treat funcs first (build a signature table) and then
 // either dispatch to `main` if it exists or fall back to the
 // top-level stmt stream as the entry point.
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[], enums: EnumDecl[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[], enums: EnumDecl[], resources: ResourceDecl[] }
+
+// ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
+// types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
+// from an `@import("iface", "wit-resource-name")` attribute (empty for an
+// unbound resource). insert_resource_drops uses the binding to synthesize the
+// `[resource-drop]` import an owned handle is released through.
+pub struct ResourceDecl { name: string, iface: string, wit: string }
 
 // EnumDecl preserves an enum's name + the names of its variants. The
 // parser desugars each enum into variant structs (pushed to `structs`)
@@ -1812,9 +1819,15 @@ function parse_type_name(p: Par): TypeNameResult {
     // owned/borrowed distinction and the resource binding are checker-/drop-
     // slice concerns the emitter doesn't need here.
     if (base == "own" || base == "borrow") {
+        // WIT resource-handle type `own R` / `borrow R` (P5 —
+        // docs/WIT-BRING-YOUR-OWN.md). Preserved as "own <R>" / "borrow <R>"
+        // (mirroring `dyn <trait>`): it lowers to i32 everywhere (a handle is an
+        // opaque scalar — see wat_extern_valtype and the local/param valtype
+        // defaults), and the spelling lets insert_resource_drops find owned
+        // handles and tell own from borrow for its move analysis.
         p = p.advance(); // consume `own` / `borrow`
         var hinner: TypeNameResult = parse_type_name(p);
-        return TypeNameResult { par: hinner.par, name: "i32" };
+        return TypeNameResult { par: hinner.par, name: base + " " + hinner.name };
     }
     if (base.len() == 0) {
         // Tuple type `(T1, T2, …)`. The self-host stores types
@@ -3042,7 +3055,8 @@ pub function monomorphize_module(mod: Module): Module {
         aliases: mod.aliases,
         imports: mod.imports,
         top_stmts: tr.rstmts,
-        enums: mod.enums
+        enums: mod.enums,
+        resources: mod.resources
     };
 }
 
@@ -3500,7 +3514,8 @@ pub function monomorphize_structs(mod: Module): Module {
         aliases: mod.aliases,
         imports: mod.imports,
         top_stmts: tr.rstmts,
-        enums: mod.enums
+        enums: mod.enums,
+        resources: mod.resources
     };
 }
 
@@ -3697,18 +3712,226 @@ pub function lower_defers_module(mod: Module): Module {
         funcs = funcs.push(lower_defers_func(mod.funcs[i]));
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources };
+}
+
+// ---- automatic resource-handle drop (P5 slice 3) --------------------
+// Mirrors the Go internal/ir/insert_resource_drops.go. For each owned `own R`
+// top-level local that is not moved (returned, or passed to an `own`
+// parameter), insert `defer __resource_drop_R(local);` right after the
+// declaration — lower_defers_module then runs it on every exit path — and
+// synthesize one body-less `@import("<iface>","[resource-drop]<wit>")` drop
+// function per dropped resource (which the world-driven composer wires).
+// Borrowed handles are never dropped. Sound over complete: a handle whose
+// escaping use isn't recognised is conservatively treated as moved.
+
+function resource_drop_fn_name(res: string): string { return "__resource_drop_" + res; }
+
+// name_in_list is a local membership test (contains_str lives in other modules).
+function name_in_list(xs: string[], n: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// handle_resource_of returns R for an owned-handle spelling "own R", else "".
+function handle_resource_of(type_name: string): string {
+    if (type_name.len() >= 4 && type_name[0:4] == "own ") {
+        return type_name[4 : type_name.len()];
+    }
+    return "";
+}
+
+function resource_binding_iface(resources: ResourceDecl[], name: string): string {
+    var i: i32 = 0;
+    while (i < resources.len()) {
+        if (resources[i].name == name) { return resources[i].iface; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function resource_binding_wit(resources: ResourceDecl[], name: string): string {
+    var i: i32 = 0;
+    while (i < resources.len()) {
+        if (resources[i].name == name) { return resources[i].wit; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// handle_returned reports whether `name` appears in any return value in stmts.
+function handle_returned(stmts: Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtReturn(r) => { if (expr_mentions(r.value, name)) { return true; } },
+            StmtIf(f) => { if (handle_returned(f.then_body, name) || handle_returned(f.else_body, name)) { return true; } },
+            StmtWhile(w) => { if (handle_returned(w.body, name)) { return true; } },
+            StmtFor(fr) => { if (handle_returned(fr.body, name)) { return true; } },
+            StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (handle_returned(m.arms[k].body, name)) { return true; }
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// callee_param_is_own reports whether function `fname`'s parameter at position
+// `pos` is an owned-handle (`own …`) type — an argument there is moved.
+function callee_param_is_own(funcs: FuncDecl[], fname: string, pos: i32): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == fname) {
+            if (pos < funcs[i].params.len()) {
+                var tn: string = funcs[i].params[pos].type_name;
+                return tn.len() >= 4 && tn[0:4] == "own ";
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function expr_own_consumes(e: Expr, funcs: FuncDecl[], name: string): boolean {
+    match (e) {
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprIdent(id) => {
+                    var i: i32 = 0;
+                    while (i < c.args.len()) {
+                        match (c.args[i]) {
+                            ExprIdent(aid) => {
+                                if (aid.name == name && callee_param_is_own(funcs, id.name, i)) { return true; }
+                            },
+                            _ => {},
+                        }
+                        i = i + 1;
+                    }
+                },
+                _ => {},
+            }
+            if (expr_own_consumes(c.callee, funcs, name)) { return true; }
+            var j: i32 = 0;
+            while (j < c.args.len()) {
+                if (expr_own_consumes(c.args[j], funcs, name)) { return true; }
+                j = j + 1;
+            }
+            return false;
+        },
+        ExprBinary(b) => { return expr_own_consumes(b.left, funcs, name) || expr_own_consumes(b.right, funcs, name); },
+        ExprUnary(u) => { return expr_own_consumes(u.operand, funcs, name); },
+        _ => { return false; }
+    }
+}
+
+// handle_own_consumed reports whether `name` is passed as a call argument bound
+// to an owned-handle parameter anywhere in stmts (moved into the callee).
+function handle_own_consumed(stmts: Stmt[], funcs: FuncDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtVar(v) => { if (expr_own_consumes(v.init, funcs, name)) { return true; } },
+            StmtReturn(r) => { if (expr_own_consumes(r.value, funcs, name)) { return true; } },
+            StmtExpr(e) => { if (expr_own_consumes(e.value, funcs, name)) { return true; } },
+            StmtAssign(a) => { if (expr_own_consumes(a.value, funcs, name)) { return true; } },
+            StmtIf(f) => {
+                if (expr_own_consumes(f.cond, funcs, name) || handle_own_consumed(f.then_body, funcs, name) || handle_own_consumed(f.else_body, funcs, name)) { return true; }
+            },
+            StmtWhile(w) => { if (expr_own_consumes(w.cond, funcs, name) || handle_own_consumed(w.body, funcs, name)) { return true; } },
+            StmtFor(fr) => { if (expr_own_consumes(fr.iter, funcs, name) || handle_own_consumed(fr.body, funcs, name)) { return true; } },
+            StmtMatch(m) => {
+                if (expr_own_consumes(m.scrutinee, funcs, name)) { return true; }
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (handle_own_consumed(m.arms[k].body, funcs, name)) { return true; }
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub function insert_resource_drops(mod: Module): Module {
+    if (mod.resources.len() == 0) { return mod; }
+    var out_funcs: FuncDecl[] = [];
+    var needed: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var f: FuncDecl = mod.funcs[i];
+        if (f.import_iface.len() > 0) { out_funcs = out_funcs.push(f); i = i + 1; continue; }
+        var nbody: Stmt[] = [];
+        var j: i32 = 0;
+        while (j < f.body.len()) {
+            var s: Stmt = f.body[j];
+            nbody = nbody.push(s);
+            match (s) {
+                StmtVar(v) => {
+                    var res: string = handle_resource_of(v.type_name);
+                    if (res.len() > 0) {
+                        var iface: string = resource_binding_iface(mod.resources, res);
+                        if (iface.len() > 0
+                            && !handle_returned(f.body, v.name)
+                            && !handle_own_consumed(f.body, mod.funcs, v.name)) {
+                            var dropcall: Expr = e_call(e_ident(resource_drop_fn_name(res)), [e_ident(v.name)]);
+                            nbody = nbody.push(s_defer(s_expr(dropcall)));
+                            if (!name_in_list(needed, res)) { needed = needed.push(res); }
+                        }
+                    }
+                },
+                _ => {},
+            }
+            j = j + 1;
+        }
+        out_funcs = out_funcs.push(FuncDecl { ...f, body: nbody });
+        i = i + 1;
+    }
+    var no_tp: string[] = [];
+    var no_body: Stmt[] = [];
+    var k: i32 = 0;
+    while (k < needed.len()) {
+        var rn: string = needed[k];
+        var iface2: string = resource_binding_iface(mod.resources, rn);
+        var wit2: string = resource_binding_wit(mod.resources, rn);
+        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn }];
+        out_funcs = out_funcs.push(FuncDecl {
+            name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
+            type_params: no_tp, params: hp, ret_type: "void", body: no_body,
+            line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, type_param_count: 0
+        });
+        k = k + 1;
+    }
+    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources };
 }
 
 pub function module_with_builtins(mod: Module): Module {
-    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(mod)));
+    // Automatic drop for owned WIT resource handles (P5 slice 3): insert a
+    // `defer <drop>(h);` for each kept `own R` local and synthesize the
+    // `[resource-drop]` import functions — BEFORE lower_defers_module so the
+    // inserted defers expand to drops on every exit path
+    // (docs/WIT-BRING-YOUR-OWN.md).
+    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(mod))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
         aliases: mono.aliases,
         imports: mono.imports,
         top_stmts: mono.top_stmts,
-        enums: mono.enums
+        enums: mono.enums,
+        resources: mono.resources
     };
 }
 
@@ -3995,16 +4218,19 @@ function parse_import_attr(p: Par): ImportAttrResult {
     return ImportAttrResult { par: p, iface: iface, wit: wit, is_import: true };
 }
 
-// skip_resource_decl consumes `resource Name;` (the contextual `resource`
-// identifier is at the cursor) and returns the advanced parser. The self-host
-// erases WIT resource handles to i32 (own/borrow → i32 in parse_type_name), so
-// the declaration carries no info the emitter needs in this slice — it is
-// consumed and discarded. See docs/WIT-BRING-YOUR-OWN.md (P5).
-function skip_resource_decl(p: Par): Par {
+// ResourceNameResult carries the advanced parser plus the parsed resource name.
+pub struct ResourceNameResult { par: Par, name: string }
+
+// parse_resource_decl_name consumes `resource Name;` (the contextual `resource`
+// identifier is at the cursor) and returns the parser plus `Name`. The optional
+// `@import` WIT binding is attached by parse_module. See ResourceDecl and
+// docs/WIT-BRING-YOUR-OWN.md (P5).
+function parse_resource_decl_name(p: Par): ResourceNameResult {
     p = p.advance(); // `resource`
-    if (p.peek_ident().len() > 0) { p = p.advance(); } // Name
+    var name: string = p.peek_ident();
+    if (name.len() > 0) { p = p.advance(); } // Name
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return p;
+    return ResourceNameResult { par: p, name: name };
 }
 
 // parse_impl_decl consumes `impl Trait for Type { <function>… }`.
@@ -4142,6 +4368,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
     var imports: Import[] = [];
     var top_stmts: Stmt[] = [];
     var enums: EnumDecl[] = [];
+    var resources: ResourceDecl[] = [];
     while (!p.at_end()) {
         var kw: string = p.peek_keyword();
         // `pub` is currently a no-op prefix on top-level decls
@@ -4170,9 +4397,12 @@ pub function parse_module(toks: lexer.Token[]): Module {
                     var ifn: FuncDecl = FuncDecl { ...ifr.func, import_iface: iar.iface, import_wit: iar.wit };
                     funcs = funcs.push(ifn);
                 } else if (p.peek_ident() == "resource") {
-                    // `@import(...) resource Name;` binds a WIT resource handle
-                    // type (P5). Consumed + discarded — handles erase to i32.
-                    p = skip_resource_decl(p);
+                    // `@import(iface, wit) resource Name;` binds a WIT resource
+                    // handle type to its WIT identity (P5). Record it so
+                    // insert_resource_drops can synthesize the [resource-drop].
+                    var rnr: ResourceNameResult = parse_resource_decl_name(p);
+                    p = rnr.par;
+                    resources = resources.push(ResourceDecl { name: rnr.name, iface: iar.iface, wit: iar.wit });
                 }
                 continue;
             }
@@ -4267,12 +4497,14 @@ pub function parse_module(toks: lexer.Token[]): Module {
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).
         // `resource` is a contextual identifier (not a keyword), so dispatch
-        // here when it's followed by a name. Consumed + discarded; handles
-        // erase to i32. See docs/WIT-BRING-YOUR-OWN.md.
+        // here when it's followed by a name. Recorded (with an empty WIT binding
+        // when no `@import` preceded it). See docs/WIT-BRING-YOUR-OWN.md.
         if (p.peek_ident() == "resource") {
             var pr: Par = p.advance();
             if (pr.peek_ident().len() > 0) {
-                p = skip_resource_decl(p);
+                var rnr2: ResourceNameResult = parse_resource_decl_name(p);
+                p = rnr2.par;
+                resources = resources.push(ResourceDecl { name: rnr2.name, iface: "", wit: "" });
                 continue;
             }
         }
@@ -4287,7 +4519,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
         p = stmtR.par;
         top_stmts = top_stmts.push(stmtR.stmt);
     }
-    return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums };
+    return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources };
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
@@ -4308,13 +4540,17 @@ pub function merge_module(into: Module, from: Module): Module {
     var naliases: TypeAlias[] = into.aliases;
     var ai: i32 = 0;
     while (ai < from.aliases.len()) { naliases = naliases.push(from.aliases[ai]); ai = ai + 1; }
+    var nresources: ResourceDecl[] = into.resources;
+    var ri: i32 = 0;
+    while (ri < from.resources.len()) { nresources = nresources.push(from.resources[ri]); ri = ri + 1; }
     return Module {
         funcs: nfuncs,
         structs: nstructs,
         aliases: naliases,
         imports: into.imports,
         top_stmts: into.top_stmts,
-        enums: concat_enums(into.enums, from.enums)
+        enums: concat_enums(into.enums, from.enums),
+        resources: nresources
     };
 }
 
@@ -4354,13 +4590,21 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
         naliases = naliases.push(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants, line: ad.line, col: ad.col });
         ai = ai + 1;
     }
+    var nresources: ResourceDecl[] = into.resources;
+    var ri: i32 = 0;
+    while (ri < from.resources.len()) {
+        var rd: ResourceDecl = from.resources[ri];
+        nresources = nresources.push(ResourceDecl { name: prefix + "." + rd.name, iface: rd.iface, wit: rd.wit });
+        ri = ri + 1;
+    }
     return Module {
         funcs: nfuncs,
         structs: nstructs,
         aliases: naliases,
         imports: into.imports,
         top_stmts: into.top_stmts,
-        enums: concat_enums(into.enums, from.enums)
+        enums: concat_enums(into.enums, from.enums),
+        resources: nresources
     };
 }
 

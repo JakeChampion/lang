@@ -93,6 +93,77 @@ func TestSelfHostX86CallRuns(t *testing.T) {
 	runX86NativeDriver(t, "call42", x86ElfCallDriverMain, 42)
 }
 
+// TestSelfHostX86Labels byte-checks the named-label assembler (slice 2d):
+// forward branch (patched by x86_resolve), backward branch (patched
+// immediately), forward call, and label lookup. Same wasm self-test shape
+// as TestSelfHostX86Encode.
+func TestSelfHostX86Labels(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host x86 labels e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	enc, err := os.ReadFile("../../examples/self_host/x86_encode.fern")
+	if err != nil {
+		t.Fatalf("read x86_encode.fern: %v", err)
+	}
+	source := string(enc) + "\n" + x86LabelsSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the x86 labels self-test")
+	}
+	watPath := filepath.Join(dir, "x86_labels_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("x86 labels self-test failed at check %d\n--- WAT ---\n%s", code, wat)
+	}
+}
+
+// TestSelfHostX86LabelProgramRuns is the end-to-end proof of the label
+// assembler: a Fern program uses the named-label API to assemble
+// main { call compute; exit(result) } compute { loop 7×: acc += 6; ret }
+// — a forward `call` and a backward loop branch, both resolved by name —
+// wraps it in an ELF via elf.fern, and the binary runs natively exiting 42.
+func TestSelfHostX86LabelProgramRuns(t *testing.T) {
+	runX86NativeDriver(t, "label42", x86ElfLabelDriverMain, 42)
+}
+
+// TestSelfHostX86FrameRuns is the end-to-end proof of the memory operands
+// (slice 2e): a Fern program assembles a stack-frame round-trip — set up
+// rbp, store 42 to [rbp-8], clobber the register, reload it, tear the
+// frame down — exercising mov reg,reg (rbp/rsp), push/pop, sub rsp, and
+// rbp-relative store/load, then runs natively on x86-64 exiting 42.
+func TestSelfHostX86FrameRuns(t *testing.T) {
+	runX86NativeDriver(t, "frame42", x86ElfFrameDriverMain, 42)
+}
+
+// TestSelfHostX86RodataRuns is the end-to-end proof of rip-relative
+// addressing + a .rodata section (slice 2f): a Fern program interns a
+// `.quad 42` in .rodata, loads its address via `lea rax, [rip+answer]`,
+// dereferences it, and exits with the value — wrapped in an R+W+X ELF via
+// elf_static_executable_data_x86. A wrong rip displacement or .rodata base
+// would not exit 42.
+func TestSelfHostX86RodataRuns(t *testing.T) {
+	runX86NativeDriver(t, "rodata42", x86ElfRodataDriverMain, 42)
+}
+
 // runX86NativeDriver compiles x86_encode.fern + elf.fern + driverMain
 // through the self-host wasm emitter, runs the resulting WAT under
 // wasmtime to obtain the raw ELF the Fern program assembled and wrote to
@@ -239,6 +310,26 @@ function main(): i32 {
     var s: i32[] = x86_jmp_rel32([], 0);
     s = x86_patch_rel32(s, 1, 0 - 27);
     if (s.len() != 5 || s[0] != 233 || s[1] != 229 || s[2] != 255 || s[3] != 255 || s[4] != 255) { return 22; }
+    // mov rax, [rbp-8] -> 48 8B 45 F8 (mod=01 disp8, rm=rbp)
+    var t: i32[] = x86_mov_load_r64([], x86_rax(), x86_rbp(), 0 - 8);
+    if (t.len() != 4 || t[0] != 72 || t[1] != 139 || t[2] != 69 || t[3] != 248) { return 23; }
+    // mov [rbp-8], rax -> 48 89 45 F8
+    var u: i32[] = x86_mov_store_r64([], x86_rbp(), 0 - 8, x86_rax());
+    if (u.len() != 4 || u[0] != 72 || u[1] != 137 || u[2] != 69 || u[3] != 248) { return 24; }
+    // mov rax, [rsp+16] -> 48 8B 44 24 10 (SIB escape for rsp)
+    var v2: i32[] = x86_mov_load_r64([], x86_rax(), x86_rsp(), 16);
+    if (v2.len() != 5 || v2[0] != 72 || v2[1] != 139 || v2[2] != 68 || v2[3] != 36 || v2[4] != 16) { return 25; }
+    // mov rax, [rcx] -> 48 8B 01 (mod=00, no disp)
+    var w: i32[] = x86_mov_load_r64([], x86_rax(), x86_rcx(), 0);
+    if (w.len() != 3 || w[0] != 72 || w[1] != 139 || w[2] != 1) { return 26; }
+    // mov rax, [rbp] -> 48 8B 45 00 (rbp forces mod=01 disp8=0)
+    var x: i32[] = x86_mov_load_r64([], x86_rax(), x86_rbp(), 0);
+    if (x.len() != 4 || x[0] != 72 || x[1] != 139 || x[2] != 69 || x[3] != 0) { return 27; }
+    // mov rax, [rcx+512] -> 48 8B 81 00 02 00 00 (mod=10 disp32)
+    var y: i32[] = x86_mov_load_r64([], x86_rax(), x86_rcx(), 512);
+    if (y.len() != 7 || y[0] != 72 || y[1] != 139 || y[2] != 129 || y[3] != 0 || y[4] != 2 || y[5] != 0 || y[6] != 0) { return 28; }
+    // sib byte for [rsp]: scale=0,index=4,base=4 -> 0x24 (36)
+    if (x86_sib(0, 4, 4) != 36) { return 29; }
     return 0;
 }
 `
@@ -333,6 +424,145 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 42); // setval: result = 42
     code = x86_ret(code);
     var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86LabelsSelfTestMain byte-checks the named-label assembler. Each
+// `return N` is a distinct failing-check id (0 = all pass). 0x0F=15,
+// 0x8D=141 (jge), 0x85=133 (jne), 0xE8=232 (call); rel32s: forward jge to
+// done=22 with field at 15 -> 3; backward jne to loop=0 with field at 9 ->
+// -13 (0xF3,FF,FF,FF = 243,255,255,255); forward call to sub=6 with field
+// at 1 -> 1.
+const x86LabelsSelfTestMain = `
+function main(): i32 {
+    // forward conditional: cmp then jge done (placeholder, resolved later).
+    var a: X86Asm = x86_asm_new();
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 42);
+    a.code = x86_mov_r32_imm32(a.code, x86_rcx(), 17);
+    a.code = x86_cmp_r64_r64(a.code, x86_rax(), x86_rcx());
+    a = x86_jcc_label(a, x86_cc_ge(), "done");
+    a.code = x86_mov_r64_r64(a.code, x86_rax(), x86_rcx());
+    a = x86_label(a, "done");
+    a = x86_resolve(a);
+    if (a.code.len() != 22 || a.code[13] != 15 || a.code[14] != 141) { return 1; }
+    if (a.code[15] != 3 || a.code[16] != 0 || a.code[17] != 0 || a.code[18] != 0) { return 2; }
+
+    // backward conditional: label loop, body, jne loop (patched immediately).
+    var b: X86Asm = x86_asm_new();
+    b = x86_label(b, "loop");
+    b.code = x86_add_r64_imm32(b.code, x86_rax(), 6);
+    b = x86_jcc_label(b, x86_cc_ne(), "loop");
+    if (b.code.len() != 13 || b.code[7] != 15 || b.code[8] != 133) { return 3; }
+    if (b.code[9] != 243 || b.code[10] != 255 || b.code[11] != 255 || b.code[12] != 255) { return 4; }
+
+    // forward call: call sub, ret, label sub, resolve.
+    var c: X86Asm = x86_asm_new();
+    c = x86_call_label(c, "sub");
+    c.code = x86_ret(c.code);
+    c = x86_label(c, "sub");
+    c = x86_resolve(c);
+    if (c.code.len() != 6 || c.code[0] != 232 || c.code[1] != 1 || c.code[2] != 0) { return 5; }
+
+    // label lookup: defined vs missing.
+    if (x86_label_off(c, "sub") != 6) { return 6; }
+    if (x86_label_off(c, "nope") != (0 - 1)) { return 7; }
+
+    // rip-relative lea placeholder: lea rax, [rip+0] -> 48 8D 05 00*4.
+    var d: X86Asm = x86_asm_new();
+    d = x86_lea_rip_label(d, x86_rax(), "S0");
+    if (d.code.len() != 7 || d.code[0] != 72 || d.code[1] != 141 || d.code[2] != 5) { return 8; }
+    if (d.code[3] != 0 || d.code[4] != 0 || d.code[5] != 0 || d.code[6] != 0) { return 9; }
+    // resolve a rip ref to a .rodata quad: lea(7)+mov(3)=10 text, padded 16,
+    // S0 at 16; disp32 = 16 - (3+4) = 9.
+    d.code = x86_mov_load_r64(d.code, x86_rax(), x86_rax(), 0);
+    d = x86_rodata_label(d, "S0");
+    d = x86_rodata_quad(d, 42, 0);
+    d = x86_resolve(d);
+    if (d.code.len() != 10 || d.code[3] != 9 || d.code[4] != 0 || d.code[5] != 0 || d.code[6] != 0) { return 10; }
+    if (d.rodata.len() != 8 || d.rodata[0] != 42 || d.rodata[1] != 0 || d.rodata[7] != 0) { return 11; }
+    // x86_align8 rounds up to the .text/.rodata boundary.
+    if (x86_align8(10) != 16 || x86_align8(16) != 16 || x86_align8(0) != 0) { return 12; }
+    return 0;
+}
+`
+
+// x86ElfLabelDriverMain assembles, via the named-label API, a two-routine
+// program: main calls compute (forward call), which loops acc += 6 seven
+// times (backward jne to a label) and returns; main exits with the result
+// (42). Both references resolve by name through x86_resolve.
+const x86ElfLabelDriverMain = `
+function main(): i32 {
+    var a: X86Asm = x86_asm_new();
+    a = x86_call_label(a, "compute");              // forward call
+    a.code = x86_mov_r64_r64(a.code, x86_rdi(), x86_rax()); // exit code = result
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 60);
+    a.code = x86_syscall(a.code);
+    a = x86_label(a, "compute");
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 0); // acc = 0
+    a.code = x86_mov_r32_imm32(a.code, x86_rcx(), 7); // counter = 7
+    a = x86_label(a, "loop");
+    a.code = x86_add_r64_imm32(a.code, x86_rax(), 6); // acc += 6
+    a.code = x86_sub_r64_imm32(a.code, x86_rcx(), 1); // counter -= 1
+    a.code = x86_cmp_r64_imm32(a.code, x86_rcx(), 0);
+    a = x86_jcc_label(a, x86_cc_ne(), "loop");     // backward branch
+    a.code = x86_ret(a.code);
+    a = x86_resolve(a);
+    var bin: i32[] = elf_static_executable_x86(a.code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfFrameDriverMain assembles a stack-frame round-trip:
+//
+//	push rbp ; mov rbp, rsp ; sub rsp, 16
+//	rax = 42 ; [rbp-8] = rax ; rax = 0 ; rax = [rbp-8]
+//	mov rsp, rbp ; pop rbp ; exit(rax)
+//
+// The value survives only via the store/reload through [rbp-8], so a wrong
+// memory encoding would not exit 42.
+const x86ElfFrameDriverMain = `
+function main(): i32 {
+    var code: i32[] = [];
+    code = x86_push_r64(code, x86_rbp());
+    code = x86_mov_r64_r64(code, x86_rbp(), x86_rsp());          // mov rbp, rsp
+    code = x86_sub_r64_imm32(code, x86_rsp(), 16);              // sub rsp, 16
+    code = x86_mov_r32_imm32(code, x86_rax(), 42);
+    code = x86_mov_store_r64(code, x86_rbp(), 0 - 8, x86_rax()); // [rbp-8] = rax
+    code = x86_mov_r32_imm32(code, x86_rax(), 0);               // clobber
+    code = x86_mov_load_r64(code, x86_rax(), x86_rbp(), 0 - 8);  // rax = [rbp-8]
+    code = x86_mov_r64_r64(code, x86_rsp(), x86_rbp());          // mov rsp, rbp
+    code = x86_pop_r64(code, x86_rbp());
+    code = x86_mov_r64_r64(code, x86_rdi(), x86_rax());          // exit code = rax
+    code = x86_mov_r32_imm32(code, x86_rax(), 60);
+    code = x86_syscall(code);
+    var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfRodataDriverMain assembles a program that reads a .rodata constant
+// via rip-relative addressing:
+//
+//	lea rax, [rip+answer] ; rax = [rax] ; exit(rax) ; .rodata answer: .quad 42
+//
+// The rip displacement and the .rodata base (padded .text length) are
+// resolved by x86_resolve, and the image is built with the R+W+X data ELF.
+const x86ElfRodataDriverMain = `
+function main(): i32 {
+    var a: X86Asm = x86_asm_new();
+    a = x86_lea_rip_label(a, x86_rax(), "answer");          // rax = &answer
+    a.code = x86_mov_load_r64(a.code, x86_rax(), x86_rax(), 0); // rax = *answer
+    a.code = x86_mov_r64_r64(a.code, x86_rdi(), x86_rax());  // exit code = answer
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 60);
+    a.code = x86_syscall(a.code);
+    a = x86_rodata_label(a, "answer");
+    a = x86_rodata_quad(a, 42, 0);                          // .quad 42
+    a = x86_resolve(a);
+    var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
     write(string_from_bytes(bin));
     return 0;
 }
