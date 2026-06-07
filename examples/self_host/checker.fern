@@ -2669,6 +2669,16 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                         },
                         _ => { }
                     }
+                    // E027: a match-arm guard (`Pat if <expr> =>`) must be
+                    // boolean. Typed in the arm scope so a guard referencing
+                    // the pattern binding (`Has(n) if n > 0`) resolves.
+                    if (m.arms[a].has_guard) {
+                        var gt: Type = check_expr(m.arms[a].guard, armScope);
+                        if (!is_unknown(gt) && !type_eq(gt, t_bool())) {
+                            out = out.push(dg_at("E027", "match guard must be boolean, got " + type_label(gt), expr_line(m.arms[a].guard), expr_col(m.arms[a].guard)));
+                        }
+                        out = append_diags(out, call_diags(m.arms[a].guard, armScope));
+                    }
                     out = append_diags(out, stmts_call_diags(m.arms[a].body, armScope));
                     a = a + 1;
                 }
