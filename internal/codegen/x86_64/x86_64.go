@@ -3494,6 +3494,14 @@ func (g *generator) emitRcIncRuntime() {
 	// (arrays / structs / enums / closures / map handles / etc.).
 	g.emit("test dil, 1")
 	g.emit("jnz .Lrcinc_ret")
+	// Below-heap guard (see emitRcDecRuntime): only heap objects carry an
+	// rc word at [ptr-8]. The exit-dec sweep / sharing can hand this helper
+	// a below-heap value — a no-capture closure's bare code pointer, static
+	// data, or a non-pointer scalar — and inc'ing it would write [ptr-8]
+	// into read-only .text/.rodata. The heap lives at/above the 0x1000_0000
+	// mmap hint, so skip anything lower.
+	g.emit("cmp rdi, 0x10000000")
+	g.emit("jb .Lrcinc_ret")
 	g.emit("mov ecx, dword ptr [rdi - 8]")
 	if ast.RcFreeDebug {
 		// UAF detector: a poisoned rc word means this block was
@@ -3536,12 +3544,15 @@ func (g *generator) emitRcDecRuntime() {
 	// pointer is actually a packed inline value and must not be deref'd.
 	g.emit("test dil, 1")
 	g.emit("jnz .Lrcdec_ret")
-	// Defensive low-address guard — see emitRcDecRuntime in
-	// arm64.go for the rationale. Phase 1d-v's exit dec sweep
-	// can touch slots holding non-pointer values; treating
-	// the low 64 KiB as "not a heap object, don't touch"
-	// keeps the helper safe.
-	g.emit("cmp rdi, 0x10000")
+	// Below-heap guard: Phase 1d-v's exit-dec sweep decrements every
+	// local slot, including ones holding non-heap values (a non-pointer
+	// scalar, static data, or a no-capture closure's bare code pointer).
+	// Only heap-allocated objects carry an rc word at [ptr-8], and the
+	// heap lives at/above the 0x1000_0000 mmap hint, so skip anything
+	// lower — writing [ptr-8] of a .text/.rodata address would corrupt
+	// read-only memory. (The old guard only rejected < 0x10000, letting
+	// code/rodata/static addresses through.)
+	g.emit("cmp rdi, 0x10000000")
 	g.emit("jb .Lrcdec_ret")
 	g.emit("mov ecx, dword ptr [rdi - 8]")
 	if ast.RcFreeDebug {

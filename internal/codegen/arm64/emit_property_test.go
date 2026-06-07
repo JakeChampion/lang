@@ -262,3 +262,52 @@ func TestEmitGrowsWithCode(t *testing.T) {
 		t.Fatalf("expected non-trivial program to emit more assembly than minimal: big=%d bytes, small=%d bytes", len(big), len(small))
 	}
 }
+
+// TestRcHelpersGuardBelowHeap pins the below-heap guard in the refcount
+// helpers. The exit-dec sweep (Phase 1d-v) decrements every local slot at
+// function exit, including ones that don't hold heap pointers — a large
+// non-pointer i32, or a no-capture closure's bare function pointer (a
+// .text address). Only heap-allocated objects carry an rc word at
+// [ptr-8], so the helpers must skip any pointer below the heap base
+// (0x1000_0000, the mmap hint). Without the guard the helper writes the
+// rc word into read-only .text/.rodata — a crash under an external
+// linker (the native RWX ELF would silently corrupt code instead). The
+// old guard only rejected < 0x10000, letting code/rodata/static
+// addresses through. We assert the heap-base computation (1 << 28) is
+// present in the emitted __fern_rc_dec / __fern_rc_inc helpers. A program
+// that drops a heap value pulls both helpers in.
+func TestRcHelpersGuardBelowHeap(t *testing.T) {
+	// Two heap values whose scopes end inside main → the exit-dec sweep
+	// emits rc_dec on their slots; assigning one to another pulls rc_inc.
+	src := `struct Box { v: i32 }
+function main(): i32 {
+	var a: Box = Box { v: 1 };
+	var b: Box = a;
+	return b.v;
+}`
+	asm := compile(t, src, Options{})
+	// rc_dec is the demonstrated crash path (the exit-dec sweep), so it
+	// must be present; rc_inc is emitted only when a value is shared, so
+	// check it only when present. Both must carry the guard.
+	if !strings.Contains(asm, "__fern_rc_dec:") {
+		t.Fatal("__fern_rc_dec helper not emitted by a program that drops a heap value")
+	}
+	for _, helper := range []string{"__fern_rc_dec", "__fern_rc_inc"} {
+		i := strings.Index(asm, helper+":")
+		if i < 0 {
+			continue
+		}
+		// Slice from the helper label to the next helper/global so we only
+		// inspect this helper's body.
+		body := asm[i:]
+		if j := strings.Index(body[len(helper)+1:], "\n.global "); j >= 0 {
+			body = body[:len(helper)+1+j]
+		}
+		// The below-heap guard computes 0x1000_0000 as 1 << 28 and skips
+		// anything lower. `lsl ... #28` is the load-bearing instruction;
+		// a regression to the old `#0x10000`-only guard drops it.
+		if !strings.Contains(body, "#28") {
+			t.Errorf("%s is missing the below-heap guard (no `lsl … #28` heap-base computation):\n%s", helper, body)
+		}
+	}
+}
