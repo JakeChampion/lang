@@ -288,10 +288,9 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 			t.Errorf("SSA wasm string-concat program exited %d, want 6", got)
 		}
 
-		// Out-of-subset program: print isn't lowered by the wasm SSA backend
-		// yet (its newline semantics need a cross-backend fix), so the
-		// supported() gate forces the AST emitter — default WAT == -no-ssa WAT,
-		// and print keeps its trailing newline.
+		// print compiles through SSA now and appends a trailing newline (Fern's
+		// print semantics), matching the AST emitter. WAT differs from -no-ssa,
+		// exits 42, and writes "hi from wasm\n" to stdout.
 		prSrc := "function main(): i32 { print(\"hi from wasm\"); return 6 * 7; }\n"
 		prPath := filepath.Join(dir, "wasm_print.fern")
 		if err := os.WriteFile(prPath, []byte(prSrc), 0o644); err != nil {
@@ -299,11 +298,20 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 		defPr, _ := runDriver(t, "-target", "wasm", prPath)
 		astPr, _ := runDriver(t, "-no-ssa", "-target", "wasm", prPath)
-		if string(defPr) != string(astPr) {
-			t.Error("default -target wasm did not fall back for a print program (supported() gate not engaged)")
+		if string(defPr) == string(astPr) {
+			t.Error("default -target wasm fell back to AST for a print program (expected the SSA print helper)")
 		}
-		if got := runWat(t, "wasm_print", defPr); got != 42 {
-			t.Errorf("print program (AST wasm fallback) exited %d, want 42", got)
+		prWatPath := filepath.Join(dir, "wasm_print.wat")
+		if err := os.WriteFile(prWatPath, defPr, 0o644); err != nil {
+			t.Fatalf("write wat: %v", err)
+		}
+		prCmd := exec.Command("wasmtime", "run", prWatPath)
+		prOut, _ := prCmd.Output()
+		if c := prCmd.ProcessState.ExitCode(); c != 42 {
+			t.Errorf("SSA wasm print program exited %d, want 42", c)
+		}
+		if string(prOut) != "hi from wasm\n" {
+			t.Errorf("SSA wasm print stdout = %q, want %q", string(prOut), "hi from wasm\n")
 		}
 
 		// Regression: try_ssa must not mutate the shared AST. A capturing
