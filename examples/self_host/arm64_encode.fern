@@ -147,3 +147,76 @@ function arm64_svc(buf: i32[], imm16: i32): i32[] {
 function arm64_ret(buf: i32[], rn: i32): i32[] {
     return arm64_le32(buf, arm64_ret_word(rn));
 }
+
+// ---- compare (subs to XZR) ----
+
+// arm64_cmpreg_word encodes `cmp Xn, Xm` — AArch64 spells it
+// `subs XZR, Xn, Xm` (shifted-register, zero shift) -> sets NZCV.
+//   0xEB000000 | Rm<<16 | Rn<<5 | 31
+function arm64_cmpreg_word(rn: i32, rm: i32): i64 {
+    return 0xeb000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | 31;
+}
+
+// arm64_cmpimm_word encodes `cmp Xn, #imm12` — `subs XZR, Xn, #imm12`.
+//   0xF1000000 | imm12<<10 | Rn<<5 | 31
+function arm64_cmpimm_word(rn: i32, imm12: i32): i64 {
+    return 0xf1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | 31;
+}
+
+function arm64_cmpreg(buf: i32[], rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_cmpreg_word(rn, rm));
+}
+function arm64_cmpimm(buf: i32[], rn: i32, imm12: i32): i32[] {
+    return arm64_le32(buf, arm64_cmpimm_word(rn, imm12));
+}
+
+// ---- condition codes (the 4-bit cond field of B.cond) ----
+function arm64_eq(): i32 { return 0; }   // ==
+function arm64_ne(): i32 { return 1; }   // !=
+function arm64_ge(): i32 { return 10; }  // >= (signed)
+function arm64_lt(): i32 { return 11; }  // <  (signed)
+function arm64_gt(): i32 { return 12; }  // >  (signed)
+function arm64_le(): i32 { return 13; }  // <= (signed)
+
+// ---- branches ----
+//
+// Branch targets are PC-relative byte deltas (target - branch_site),
+// always a multiple of 4; the encoders divide by 4 to form the immediate.
+// A *backward* branch (the bottom of a loop) knows its target offset when
+// it is emitted, so the byte delta is `target_off - buf.len()`; forward
+// branches await the label/fixup pass (a later slice).
+
+// arm64_b_word encodes `b <rel>` -> 0x14000000 | imm26, imm26 = rel/4
+// as a signed 26-bit field.
+function arm64_b_word(rel: i32): i64 {
+    return 0x14000000 | (((rel >> 2) & 0x3ffffff) as i64);
+}
+
+// arm64_bcond_word encodes `b.<cond> <rel>` -> 0x54000000 | imm19<<5 |
+// cond, imm19 = rel/4 as a signed 19-bit field.
+function arm64_bcond_word(cond: i32, rel: i32): i64 {
+    return 0x54000000 | ((((rel >> 2) & 0x7ffff) as i64) << 5) | ((cond & 15) as i64);
+}
+
+// arm64_cbz_word / arm64_cbnz_word encode `cbz/cbnz Xt, <rel>` (compare
+// the register against zero and branch) -> 0xB4000000 / 0xB5000000 |
+// imm19<<5 | Rt. No flags needed (they test the register directly).
+function arm64_cbz_word(rt: i32, rel: i32): i64 {
+    return 0xb4000000 | ((((rel >> 2) & 0x7ffff) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_cbnz_word(rt: i32, rel: i32): i64 {
+    return 0xb5000000 | ((((rel >> 2) & 0x7ffff) as i64) << 5) | ((rt & 31) as i64);
+}
+
+function arm64_b(buf: i32[], rel: i32): i32[] {
+    return arm64_le32(buf, arm64_b_word(rel));
+}
+function arm64_bcond(buf: i32[], cond: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_bcond_word(cond, rel));
+}
+function arm64_cbz(buf: i32[], rt: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_cbz_word(rt, rel));
+}
+function arm64_cbnz(buf: i32[], rt: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_cbnz_word(rt, rel));
+}
