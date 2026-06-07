@@ -323,6 +323,29 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 	userInst := g.lower(core)
 
 	coreExports := coreFuncExportNames(core)
+	// A string/list export needs the core memory aliased for the lift. If the
+	// import lowering already aliased it (a mem trampoline), reuse core-memory
+	// index 0; otherwise alias it now. (Mixing mem-imports with composite
+	// exports beyond this is a later refinement.)
+	lowerAliasedMem := false
+	for i := range imports {
+		if imports[i].kind == gMem || imports[i].kind == gMemRealloc {
+			lowerAliasedMem = true
+		}
+	}
+	needMem := false
+	for _, wi := range w.ExportedInterfaces() {
+		for _, f := range wi.FuncSigs {
+			if coreExports[wi.Name+"#"+f.Name] && exportNeedsMemory(f.Sig) {
+				needMem = true
+			}
+		}
+	}
+	if needMem && !lowerAliasedMem {
+		g.c.aliasMemory(userInst)
+	}
+	var memIdx uint32 // the first (only) aliased core memory
+
 	emitted := 0
 	for _, wi := range w.ExportedInterfaces() {
 		for _, f := range wi.FuncSigs {
@@ -330,7 +353,7 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			if !coreExports[coreName] {
 				continue
 			}
-			if err := g.liftScalarExport(userInst, wi.Name, f.Name, coreName, f.Sig); err != nil {
+			if err := g.liftExport(userInst, wi.Name, f.Name, coreName, f.Sig, memIdx); err != nil {
 				return nil, err
 			}
 			emitted++
@@ -342,10 +365,32 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 	return g.c.buf, nil
 }
 
-// liftScalarExport lifts one scalar world export: alias the surfaced core func,
-// build its component functype from the WIT signature, canon-lift it, and
-// export it as `iface` exposing `witName`.
-func (g *gComposer) liftScalarExport(userInst uint32, iface, witName, coreName string, sig *componenttype.FuncType) error {
+// cValtypeString is the component-model primitive byte for `string` (it equals
+// componenttype.primString — a primitive Valtype's Prim byte is the CValtype).
+const cValtypeString = 0x73
+
+// exportNeedsMemory reports whether lifting `sig` needs the core memory aliased
+// — true when any parameter or the result is a string/list (which the lift
+// reads from / writes to linear memory). Scalars need no memory.
+func exportNeedsMemory(sig *componenttype.FuncType) bool {
+	if sig == nil {
+		return false
+	}
+	for i := range sig.Params {
+		if sig.Params[i].Ty.IsPrim && sig.Params[i].Ty.Prim == cValtypeString {
+			return true
+		}
+	}
+	return !sig.NamedResults && sig.Result.IsPrim && sig.Result.Prim == cValtypeString
+}
+
+// liftExport lifts one world export: alias the surfaced core func, build its
+// component functype from the WIT signature, canon-lift it, and export it as
+// `iface` exposing `witName`. A scalar result uses the no-opts lift; a string
+// result uses the memory lift (the core returns a pointer to the (ptr,len)
+// return area, which the lift reads from `memIdx`). String/list PARAMETERS and
+// other composites are not handled yet.
+func (g *gComposer) liftExport(userInst uint32, iface, witName, coreName string, sig *componenttype.FuncType, memIdx uint32) error {
 	if sig == nil {
 		return fmt.Errorf("component: export %s#%s has no resolved signature", iface, witName)
 	}
@@ -356,7 +401,10 @@ func (g *gComposer) liftScalarExport(userInst uint32, iface, witName, coreName s
 	for i := range sig.Params {
 		p := sig.Params[i]
 		if !p.Ty.IsPrim {
-			return fmt.Errorf("component: export %s#%s: non-scalar parameter (scalar-only in this slice)", iface, witName)
+			return fmt.Errorf("component: export %s#%s: non-scalar parameter (unsupported in this slice)", iface, witName)
+		}
+		if p.Ty.Prim == cValtypeString {
+			return fmt.Errorf("component: export %s#%s: string parameter (not supported yet — needs the realloc lift)", iface, witName)
 		}
 		name := p.Name
 		if name == "" {
@@ -366,12 +414,19 @@ func (g *gComposer) liftScalarExport(userInst uint32, iface, witName, coreName s
 		pvals = append(pvals, p.Ty.Prim)
 	}
 	if sig.NamedResults || !sig.Result.IsPrim {
-		return fmt.Errorf("component: export %s#%s: non-scalar / multi result (scalar-only in this slice)", iface, witName)
+		return fmt.Errorf("component: export %s#%s: non-scalar / multi result (unsupported in this slice)", iface, witName)
 	}
 	funcType := c.nType
 	c.buf = PutTypeSectionOneFunc(c.buf, pnames, pvals, sig.Result.Prim)
 	c.nType++
-	c.buf = PutCanonSectionLiftNoOpts(c.buf, coreF, funcType)
+	if sig.Result.Prim == cValtypeString {
+		// A string result flattens to (ptr,len) — more than one core value, so
+		// the core func returns a pointer to the [ptr,len] return area, which
+		// the memory lift reads from the core's linear memory.
+		c.buf = PutCanonSectionLiftWithMemory(c.buf, coreF, funcType, memIdx)
+	} else {
+		c.buf = PutCanonSectionLiftNoOpts(c.buf, coreF, funcType)
+	}
 	lifted := c.nCFunc
 	c.nCFunc++
 	c.buf = PutInstanceSectionOnePackagedFunc(c.buf, witName, lifted)
