@@ -1,0 +1,29 @@
+import "core/no_prelude";
+import "core/map";
+// Alias-safety contract of the value-returning (immutable-looking)
+// collection API (docs/PURE-COLLECTION-API-PLAN.md §1). This is the
+// property the discarded-result "fire-and-forget" form silently
+// violated: when a map is aliased (a snapshot is held), mutating
+// through the reassignment form `m = m.insert(...)` updates `m` while
+// leaving the snapshot untouched — copy-on-write isolates them.
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(1, 10);
+
+    var snapshot: Map[i32, i32] = m;   // alias — both reference the same buffer
+
+    // Mutate through the value-returning form while the alias is live.
+    m = m.insert(1, 99);               // CoW: copies, snapshot keeps {1:10}
+    m = m.insert(2, 20);
+
+    // The snapshot must be unchanged: {1: 10}, len 1.
+    if (snapshot.len() != 1) { return 81; }
+    if (snapshot.get_or(1, -1) != 10) { return 82; }
+
+    // m reflects every update: {1: 99, 2: 20}, len 2.
+    if (m.len() != 2) { return 83; }
+    if (m.get_or(1, -1) != 99) { return 84; }
+
+    // 99 + 20 + 10 = 129
+    return m.get_or(1, -1) + m.get_or(2, -1) + snapshot.get_or(1, -1);
+}
