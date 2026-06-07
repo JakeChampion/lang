@@ -624,3 +624,62 @@ function arm64_cset(buf: i32[], rd: i32, cond: i32): i32[] {
     var w: i64 = 0x9a800400 | (31 << 16) | ((((cond ^ 1) & 15) as i64) << 12) | (31 << 5) | ((rd & 31) as i64);
     return arm64_le32(buf, w);
 }
+
+// ---- shifts (immediate), cmn, csel, and ----
+
+// arm64_lsl_imm / arm64_lsr_imm encode `lsl/lsr Rd, Rn, #sh` — the UBFM
+// aliases. `w` selects the 32-bit form (sf=0, base 0x53000000); else the
+// 64-bit form (base 0xD3400000, N=1 folded in). lsl uses immr=(width-sh),
+// imms=(width-1-sh); lsr uses immr=sh, imms=width-1.
+function arm64_lsl_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {
+    var width: i32 = 64;
+    var base: i64 = 0xd3400000;
+    if (w) { width = 32; base = 0x53000000; }
+    var immr: i64 = ((width - sh) & (width - 1)) as i64;
+    var imms: i64 = ((width - 1 - sh) & 63) as i64;
+    return arm64_le32(buf, base | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+function arm64_lsr_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {
+    var width: i32 = 64;
+    var base: i64 = 0xd3400000;
+    if (w) { width = 32; base = 0x53000000; }
+    var immr: i64 = (sh & (width - 1)) as i64;
+    var imms: i64 = ((width - 1) & 63) as i64;
+    return arm64_le32(buf, base | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// arm64_cmn_imm encodes `cmn Xn, #imm12` — `adds XZR, Xn, #imm12`.
+function arm64_cmn_imm(buf: i32[], rn: i32, imm12: i32): i32[] {
+    return arm64_le32(buf, 0xb1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | 31);
+}
+
+// arm64_csel encodes `csel Xd, Xn, Xm, <cond>`.
+//   0x9A800000 | Rm<<16 | cond<<12 | Rn<<5 | Rd
+function arm64_csel(buf: i32[], rd: i32, rn: i32, rm: i32, cond: i32): i32[] {
+    return arm64_le32(buf, 0x9a800000 | (((rm & 31) as i64) << 16) | (((cond & 15) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// arm64_andreg encodes `and Xd, Xn, Xm` (logical shifted-register, zero shift).
+function arm64_andreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, 0x8a000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// arm64_and_imm_nimms returns the encoded (N<<12 | immr<<6 | imms) bitmask
+// fields for a supported `and Xd, Xn, #imm` immediate, or -1 if the
+// immediate is not in the verified table. (A full AArch64 bitmask-immediate
+// encoder is a follow-up; the codegen's only and-immediate today is the
+// 16-byte alloc alignment mask `#-16`.) Fields verified vs llvm-mc.
+function arm64_and_imm_fields(imm: i32): i32 {
+    if (imm == (0 - 16)) { return (1 << 12) | (60 << 6) | 59; } // #-16: N=1 immr=60 imms=59
+    return 0 - 1;
+}
+
+// arm64_and_imm encodes `and Xd, Xn, #imm` for a supported immediate.
+// Callers must check arm64_and_imm_fields(imm) >= 0 first.
+function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32): i32[] {
+    var f: i32 = arm64_and_imm_fields(imm);
+    var nbit: i64 = ((f >> 12) & 1) as i64;
+    var immr: i64 = ((f >> 6) & 63) as i64;
+    var imms: i64 = (f & 63) as i64;
+    return arm64_le32(buf, 0x92000000 | (nbit << 22) | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
