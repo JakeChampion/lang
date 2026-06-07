@@ -111,17 +111,20 @@ capturing-lambda fallback).
 runtime helpers (string build + content equality over the `[len, c0, …]`
 word layout). String-building programs now lower to the IR on wasm.
 
-**Phase 2d (next):** the remaining kinds — `print` and `funcaddr` /
-`call_indirect` (escaping closures via a function table). `print` is
-gated for now because of a **cross-backend `print` semantics bug** the
-default-on switch surfaced: canonical Fern `print` appends a newline (the
-native backend, the interpreter, and the AST emitters all do), but the
-SSA backends (`ssa_x86` / `ssa_arm64`) do a raw write *without* it — so
-since Phase 1 a `print(x)` with no explicit `\n` drops its newline on the
-x86-64 / arm64 default path. The fix (append the newline in all three SSA
-print helpers + update `self_host_ssa_print_test.go`) is its own PR; it
-also adds `print` to the wasm subset. Clearing these makes **all three
-backends consume the IR** for the whole current SSA subset.
+**Phase 2d ✅ (landed — print + the newline fix):** canonical Fern `print`
+/ `eprint` append a newline (the native backend, the interpreter, and the
+AST emitters all do), but the SSA backends did a raw write *without* it —
+a latent bug the default-on switch (Phase 1) made user-visible (a
+`print(x)` with no explicit `\n` dropped its newline on the x86-64 /
+arm64 default path). Fixed by appending the newline in all three SSA
+`print` helpers (`ssa_x86`, `ssa_arm64`, and the new `ssa_wasm`
+`fd_write` path) and rewriting `self_host_ssa_print_test.go` to println
+semantics. `print` now lowers to the IR on wasm too.
+
+**Phase 2e (next):** the last reject-list entries — `funcaddr` /
+`call_indirect` (escaping closures via a function table). Clearing them
+makes **all three backends consume the IR** for the whole current SSA
+subset.
 
 (arm64-darwin reuses the arm64 SSA output with a Mach-O reskin —
 `ssa_arm64` emit + a `darwinize`-equivalent on the SSA framing — folded

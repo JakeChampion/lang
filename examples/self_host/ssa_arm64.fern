@@ -400,9 +400,11 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         i = i + 1;
     }
     out = out + str_join_chunks(chunks);
-    // __fern_ssa_print(x0 = string handle): write each byte to stdout. The
-    // string is [len, b0, …] as 8-byte words; each byte's low octet is at
-    // its word address (little-endian), so write 1 byte per word.
+    // __fern_ssa_print(x0 = string handle): write each byte to stdout, then a
+    // trailing newline — Fern's print / eprint append a '\n' (the native
+    // backend, the interpreter, and the AST emitters all do). The string is
+    // [len, b0, …] as 8-byte words; each byte's low octet is at its word
+    // address (little-endian), so write 1 byte per word.
     out = out + "__fern_ssa_print:\n";
     out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
     out = out + "    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n";
@@ -418,6 +420,10 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    mov x0, x22\n    mov x2, #1\n    mov x8, #64\n    svc #0\n";
     out = out + "    add w21, w21, #1\n    b .Lfsp_loop\n";
     out = out + ".Lfsp_done:\n";
+    // Trailing newline: write one '\n' byte from a scratch stack slot.
+    out = out + "    sub sp, sp, #16\n    mov w0, #10\n    strb w0, [sp]\n";
+    out = out + "    mov x1, sp\n    mov x0, x22\n    mov x2, #1\n    mov x8, #64\n    svc #0\n";
+    out = out + "    add sp, sp, #16\n";
     out = out + "    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
     // __fern_ssa_concat(x0 = a, x1 = b) → x0: new length-prefixed string.
     // Leaf (no bl), so it uses caller-saved x9..x15 freely — no frame.

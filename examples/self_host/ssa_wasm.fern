@@ -16,14 +16,15 @@
 // width bookkeeping the native backends need disappears here.
 //
 // Strategy (Phase 2 of docs/SELFHOST-SSA-ALWAYS.md): the integer subset,
-// the heap, and string build/equality — const / copy / binary / unary /
-// call / param / phi over ret / br / brif; alloc / load_elem / store_elem
-// over a linear-memory bump allocator (arrays, strings, structs, tuples,
-// methods; on wasm32 every value is a 4-byte i32 word); and concat / streq
-// via small runtime helpers. `supported()` lets the caller (fern.try_ssa)
-// fall back to the AST emitter (wasm.fern) for the kinds left — print (its
-// newline semantics need a cross-backend fix first) and funcaddr /
-// call_indirect (escaping closures) — so output is never wrong.
+// the heap, strings, and I/O — const / copy / binary / unary / call /
+// param / phi over ret / br / brif; alloc / load_elem / store_elem over a
+// linear-memory bump allocator (arrays, strings, structs, tuples, methods;
+// on wasm32 every value is a 4-byte i32 word); concat / streq; and print
+// (bytes + a trailing '\n', via fd_write) — all through small runtime
+// helpers. `supported()` lets the caller (fern.try_ssa) fall back to the
+// AST emitter (wasm.fern) for the only kinds left — funcaddr /
+// call_indirect (escaping closures via a function table) — so output is
+// never wrong.
 
 import "core/no_prelude";
 import "./ssa";
@@ -170,6 +171,11 @@ function emit_inst(ins: ssa.SInst): string {
     if (ins.kind == "streq") {
         return "    (local.set " + i32_to_string(ins.result) + " (call $__fern_ssa_streq " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
     }
+    if (ins.kind == "print") {
+        // No result — write the string's bytes (plus a trailing newline) to
+        // fd imm (1=stdout, 2=stderr).
+        return "    (call $__fern_ssa_print " + loc(ins.args[0]) + " (i32.const " + i32_to_string(ins.imm) + "))\n";
+    }
     return "";
 }
 
@@ -278,7 +284,8 @@ function inst_supported(kind: string): boolean {
     return kind == "const_int" || kind == "const_bool" || kind == "binary"
         || kind == "unary" || kind == "call" || kind == "param" || kind == "copy"
         || kind == "phi" || kind == "alloc" || kind == "load_elem"
-        || kind == "store_elem" || kind == "concat" || kind == "streq";
+        || kind == "store_elem" || kind == "concat" || kind == "streq"
+        || kind == "print";
 }
 
 // supported reports whether every instruction in every function is in the
@@ -363,19 +370,47 @@ function streq_helper(): string {
     return o;
 }
 
-// emit_program frames the whole module: the WASI proc_exit import, an
-// exported linear memory (WASI command modules require one), the runtime
-// string helpers a program actually uses, each function body, then a
-// `_start` that exits with main()'s value.
+// print_helper: __fern_ssa_print(h, fd) writes the string's bytes then a
+// trailing '\n' to fd via fd_write, one byte per call (no scratch-size
+// limit). Fern's print / eprint append a newline (the native backend, the
+// interpreter, and the AST emitters all do). The fixed low-memory scratch:
+// byte buffer at 0, iovec [base=0,len=1] at 8, nwritten at 16 — all inside
+// the reserved [0,1024) region below $__hp.
+function print_helper(): string {
+    var o: string = "  (func $__fern_ssa_print (param $h i32) (param $fd i32)\n";
+    o = o + "    (local $len i32) (local $i i32)\n";
+    o = o + "    (local.set $len (i32.load (local.get $h)))\n";
+    o = o + "    (i32.store (i32.const 8) (i32.const 0)) (i32.store (i32.const 12) (i32.const 1))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (i32.store8 (i32.const 0) (i32.load (i32.add (local.get $h) (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 2)))))\n";
+    o = o + "      (drop (call $fd_write (local.get $fd) (i32.const 8) (i32.const 1) (i32.const 16)))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $c)))\n";
+    o = o + "    (i32.store8 (i32.const 0) (i32.const 10))\n";   // trailing newline
+    o = o + "    (drop (call $fd_write (local.get $fd) (i32.const 8) (i32.const 1) (i32.const 16)))\n";
+    o = o + "    )\n";
+    return o;
+}
+
+// emit_program frames the whole module: the WASI proc_exit import (plus
+// fd_write when print is used), an exported linear memory (WASI command
+// modules require one), the runtime helpers a program actually uses, each
+// function body, then a `_start` that exits with main()'s value.
 pub function emit_program(funcs: ssa.SFunc[]): string {
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+    var has_print: boolean = uses_kind(funcs, "print");
+    if (has_print) {
+        out = out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+    }
     // A 16 MiB linear-memory arena (256 × 64 KiB pages) and a bump pointer
-    // ($__hp) for the heap. The low 1 KiB is reserved (null / scratch).
+    // ($__hp) for the heap. The low 1 KiB is reserved (print scratch / null).
     out = out + "  (memory (export \"memory\") 256)\n";
     out = out + "  (global $__hp (mut i32) (i32.const 1024))\n";
     if (uses_kind(funcs, "concat")) { out = out + concat_helper(); }
     if (uses_kind(funcs, "streq")) { out = out + streq_helper(); }
+    if (has_print) { out = out + print_helper(); }
     var chunks: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {

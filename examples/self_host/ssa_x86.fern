@@ -392,7 +392,9 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         i = i + 1;
     }
     out = out + str_join_chunks(chunks);
-    // __fern_ssa_print(%rdi = string handle): write each byte to stdout.
+    // __fern_ssa_print(%rdi = string handle): write each byte to stdout,
+    // then a trailing newline — Fern's print / eprint append a '\n' (the
+    // native backend, the interpreter, and the AST emitters all do).
     // The string is [len, b0, b1, …] as 8-byte words; each byte's low octet
     // sits at its word's address (little-endian), so write 1 byte per word.
     out = out + "__fern_ssa_print:\n";
@@ -409,6 +411,10 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    movq $1, %rax\n    movl %r14d, %edi\n    movq $1, %rdx\n    syscall\n";
     out = out + "    incl %r13d\n    jmp .Lfsp_loop\n";
     out = out + ".Lfsp_done:\n";
+    // Trailing newline: write one '\n' byte from a scratch stack slot.
+    out = out + "    subq $16, %rsp\n    movb $10, (%rsp)\n";
+    out = out + "    movq $1, %rax\n    movl %r14d, %edi\n    movq %rsp, %rsi\n    movq $1, %rdx\n    syscall\n";
+    out = out + "    addq $16, %rsp\n";
     out = out + "    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
     // __fern_ssa_concat(%rdi = a, %rsi = b) → %rax: new length-prefixed
     // string = lenA+lenB, then A's bytes, then B's bytes. Words are 8 bytes;

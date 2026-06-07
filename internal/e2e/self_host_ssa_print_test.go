@@ -68,27 +68,32 @@ func TestSelfHostSSAPrint(t *testing.T) {
 		return out
 	}
 
+	// Fern's print / eprint append a newline (the native backend, the
+	// interpreter, and the AST emitters all do); the SSA backends now match,
+	// so each print() call contributes its text followed by '\n'.
 	cases := []struct {
 		name string
 		src  string
 		want string
 	}{
-		{"hello", "function main(): i32 { print(\"hello\\n\"); return 0; }", "hello\n"},
-		{"two-prints", "function main(): i32 { print(\"ab\"); print(\"cd\"); return 0; }", "abcd"},
-		{"print-in-loop", "function main(): i32 { var i = 0; while (i < 3) { print(\"x\"); i = i + 1; } return 0; }", "xxx"},
-		{"print-in-for", "function main(): i32 { var a = [1, 2, 3]; for x in a { print(\"y\"); } return 0; }", "yyy"},
-		{"print-then-loop", "function main(): i32 { print(\"hi\\n\"); var s = 0; var i = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", "hi\n"},
-		{"print-string-var", "function main(): i32 { var msg = \"done\\n\"; print(msg); return 0; }", "done\n"},
+		{"hello", "function main(): i32 { print(\"hello\"); return 0; }", "hello\n"},
+		{"two-prints", "function main(): i32 { print(\"ab\"); print(\"cd\"); return 0; }", "ab\ncd\n"},
+		{"print-in-loop", "function main(): i32 { var i = 0; while (i < 3) { print(\"x\"); i = i + 1; } return 0; }", "x\nx\nx\n"},
+		{"print-in-for", "function main(): i32 { var a = [1, 2, 3]; for x in a { print(\"y\"); } return 0; }", "y\ny\ny\n"},
+		{"print-then-loop", "function main(): i32 { print(\"hi\"); var s = 0; var i = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", "hi\n"},
+		{"print-string-var", "function main(): i32 { var msg = \"done\"; print(msg); return 0; }", "done\n"},
 		// String concatenation feeding print.
-		{"print-concat", "function main(): i32 { var a = \"foo\"; var b = \"bar\\n\"; print(a + b); return 0; }", "foobar\n"},
-		{"print-chained-concat", "function main(): i32 { print(\"a\" + \"b\" + \"c\" + \"d\"); return 0; }", "abcd"},
+		{"print-concat", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; print(a + b); return 0; }", "foobar\n"},
+		{"print-chained-concat", "function main(): i32 { print(\"a\" + \"b\" + \"c\" + \"d\"); return 0; }", "abcd\n"},
 		// A string-returning helper + concat builds output (the i32_to_string shape).
-		{"print-built", "function digit(d: i32): string { if (d == 1) { return \"1\"; } if (d == 2) { return \"2\"; } return \"3\"; } function main(): i32 { var out = \"\"; out = out + digit(1); out = out + digit(2); out = out + digit(3); print(out); return 0; }", "123"},
+		{"print-built", "function digit(d: i32): string { if (d == 1) { return \"1\"; } if (d == 2) { return \"2\"; } return \"3\"; } function main(): i32 { var out = \"\"; out = out + digit(1); out = out + digit(2); out = out + digit(3); print(out); return 0; }", "123\n"},
 		// The headline: a real i32_to_string (mod/div + digit chain + concat)
-		// printing formatted numbers — positive, negative, and zero.
-		{"print-number", i32ToString + " function main(): i32 { print(i32_to_string(12345)); print(\"\\n\"); print(i32_to_string(0 - 67)); print(\"\\n\"); print(i32_to_string(0)); print(\"\\n\"); return 0; }", "12345\n-67\n0\n"},
+		// printing formatted numbers — positive, negative, and zero. Each
+		// print() adds its own newline, so the explicit print("\n") calls are
+		// no longer needed.
+		{"print-number", i32ToString + " function main(): i32 { print(i32_to_string(12345)); print(i32_to_string(0 - 67)); print(i32_to_string(0)); return 0; }", "12345\n-67\n0\n"},
 		// eprint goes to stderr, so only the print() output lands on stdout.
-		{"eprint-separate", "function main(): i32 { print(\"OK\"); eprint(\"ERR\"); print(\"!\"); return 0; }", "OK!"},
+		{"eprint-separate", "function main(): i32 { print(\"OK\"); eprint(\"ERR\"); print(\"!\"); return 0; }", "OK\n!\n"},
 	}
 
 	run := func(t *testing.T, asm []byte, gcc string, pie bool, runner func(string) *exec.Cmd) string {

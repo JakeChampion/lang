@@ -21,11 +21,12 @@ import (
 // Scope mirrors ssa_wasm.fern's subset: the integer ops (const / copy /
 // binary / unary / call / phi over ret / br / brif), the heap (alloc /
 // load_elem / store_elem) — arrays, strings, structs, tuples, methods,
-// i32 maps, struct-union match, push / slice — and string build / equality
-// (concat / streq). print (newline semantics) and escaping closures fall
-// back to wasm.fern and are excluded here. The cases are a subset of
-// TestSelfHostSSAEmitX86_64's matrix that stays in that subset, with all
-// wanted values < 126 (wasmtime's WASI exit range).
+// i32 maps, struct-union match, push / slice — string build / equality
+// (concat / streq), and print (bytes + trailing newline via fd_write).
+// Escaping closures (funcaddr / call_indirect) fall back to wasm.fern and
+// are excluded here. The cases are a subset of TestSelfHostSSAEmitX86_64's
+// matrix that stays in that subset, with all wanted values < 126
+// (wasmtime's WASI exit range).
 func TestSelfHostSSAEmitWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host SSA→wasm e2e")
@@ -130,6 +131,9 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		{"streq-content-key", "function main(): i32 { var k = \"fo\" + \"o\"; if (k == \"foo\") { return 7; } return 0; }", 7},
 		{"call-result-string", "function greet(): string { return \"hello\"; } function main(): i32 { return greet().len() + (greet() + \"!\").len(); }", 11},
 		{"string-array-concat", "function main(): i32 { var a = [\"foo\", \"bar\"]; var c = a[0] + a[1]; return c.len(); }", 6},
+		// print (bytes + trailing newline via fd_write) — exit code checked here;
+		// the stdout/newline contract is pinned by the CLI test's emit-ssa-wasm.
+		{"print-then-return", "function main(): i32 { print(\"hi\"); return 7; }", 7},
 	}
 
 	for _, tc := range cases {
