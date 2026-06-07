@@ -168,3 +168,68 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 		}
 	})
 }
+
+// Phase 1d (cont.): reassigning an array slot `y = x` retains the new
+// reference and releases (dec) the OLD value the slot held. With free
+// off this is observably a no-op on values, so we check value-
+// correctness, a clean over-release detector (the old value had rc>=1),
+// and that the reassignment emits both a retain (new) and a release
+// (old). Mirrors docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 1d.
+func TestSelfHostRcReassignX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Reassign one array slot to alias another: ys now sees xs's data.
+		{"reassign-to-alias", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = [4, 5, 6]; ys = xs; return ys[0] + ys[2]; }", 4},
+		// The source alias stays readable after the reassignment.
+		{"reassign-source-intact", "function main(): i32 { var xs: i32[] = [7, 8]; var ys: i32[] = [0, 0]; ys = xs; return xs[1] + ys[1]; }", 16},
+		// Reassign to a fresh literal (no retain), old value released.
+		{"reassign-to-fresh", "function main(): i32 { var xs: i32[] = [1, 2]; xs = [9, 9, 9]; return xs[2]; }", 9},
+		// Over-release detector stays 0 across reassignments.
+		{"reassign-no-underflow", "function main(): i32 { var xs: i32[] = [1, 2]; var ys: i32[] = [3, 4]; ys = xs; var zs: i32[] = [5, 6]; zs = ys; return __fern_rc_underflow_count(); }", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+
+	// Emission: `ys = xs` retains the new ref AND releases the old value.
+	t.Run("emits-retain-and-release", func(t *testing.T) {
+		asm := string(runCapture(t, gcc, runner, driverBin,
+			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys: i32[] = [3, 4]; ys = xs; return ys[0]; }")))
+		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+			t.Errorf("expected a retain (__fern_rc_inc) for the reassigned alias")
+		}
+		if !strings.Contains(asm, "call __fn___fern_rc_dec") {
+			t.Errorf("expected a release (__fern_rc_dec) of the overwritten value")
+		}
+	})
+}

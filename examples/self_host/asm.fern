@@ -3301,9 +3301,34 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    # unresolved assign: " + a.target + "\n");
                 return s;
             }
+            // Perceus inc/dec (Phase 1d): reassigning an array slot
+            // `y = x` retains the new reference (if it aliases an
+            // rc-tracked array) and releases the OLD value the slot held
+            // (dec-on-overwrite). A fresh literal / call RHS is already
+            // owned and is not re-incremented. The old value was bound
+            // by an earlier `var y = ...` (rc >= 1) or is null, so the
+            // dec is over-release-detector clean. No free yet (safe
+            // leak) — this balances the reassignment lifecycle ahead of
+            // Phase 3.
+            var reassign_inc: boolean = asmcore.needs_rc_inc_on_alias(a.value, s);
+            var target_is_arr: boolean = asmcore.ty_is_array_like(s.local_type_of(a.target));
             s = emit_expr(a.value, s);
             var off: i32 = s.lookup_local(a.target);
-            s = s.write("    popq %rax\n");
+            s = s.write("    popq %rax\n");                 // new value
+            if (reassign_inc) {
+                s = s.mark_heap();
+                s = s.write("    pushq %rax\n");
+                s = s.write("    call __fn___fern_rc_inc\n"); // retain new (returns ptr in %rax)
+                s = s.write("    addq $8, %rsp\n");
+            }
+            if (target_is_arr) {
+                s = s.mark_heap();
+                s = s.write("    pushq %rax\n");            // save new value across the dec
+                s = s.write("    pushq " + asmcore.i32_to_string(off) + "(%rbp)\n");  // OLD value as dec arg
+                s = s.write("    call __fn___fern_rc_dec\n");
+                s = s.write("    addq $8, %rsp\n");         // pop dec arg
+                s = s.write("    popq %rax\n");             // restore new value
+            }
             s = s.write("    movq %rax, " + asmcore.i32_to_string(off) + "(%rbp)\n");
             return s;
         },

@@ -420,3 +420,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   field+index alias / literal element / closure capture) and the dec
   sites (function-exit sweep + dec-on-overwrite) — together they
   balance the counts; then arm64 + wasm mirrors.
+- 2026-06-07: **Phase 1d (reassign-inc + dec-on-overwrite), x86-64 —
+  SHIPPED.** `asm.fern`'s `StmtAssign` now retains the new reference
+  when `y = x` reassigns an array slot to an rc-tracked alias
+  (`needs_rc_inc_on_alias`) and releases (dec) the OLD value the slot
+  held (`ty_is_array_like` target). A fresh literal / call RHS is not
+  re-incremented. Local, detector-clean for ordinary reassignment (the
+  old value had rc>=1), and balances the reassignment lifecycle ahead
+  of Phase 3. Tests: `TestSelfHostRcReassignX86_64` (reassign-to-alias /
+  source-intact / reassign-to-fresh / no-underflow + an emission
+  assertion that both the retain and the release are emitted). Full
+  suite + byte-identical bootstrap/fixpoint green. KNOWN DRIFT (benign
+  under safe-leak): the self-host's own `xs = xs.push(v)` internal form
+  decrements a buffer the in-place push returned unchanged (the
+  self-host push doesn't bump rc the way native Phase 2a does), so rc
+  drifts down on repeated self-mutation. Harmless while free is off
+  (values stay valid; fixpoint stays byte-identical); the cow-aware dec
+  that fixes it is a Phase-3-prep item (mirrors the native drift audit).
+  Next: the function-exit dec sweep (zero-init rc locals + per-return
+  sweep, excluding borrowed params) — the other half of balance — then
+  the remaining inc sites and the arm64/wasm mirrors.
