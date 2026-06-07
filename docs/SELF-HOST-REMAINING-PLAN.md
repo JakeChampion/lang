@@ -864,11 +864,20 @@ smallest → largest:
     the track: a Fern program assembles `exit(42)` to machine code,
     wraps it with `elf.fern`, and the binary **runs natively on x86-64**
     (exit 42) — no external assembler or linker.
-  - ⬜ remaining: the full integer ALU + memory (ModR/M memory forms,
-    SIB, disp8/32), control flow (jmp/jcc/call + rel32 relocation
-    against `elf_text_vaddr`), SSE + x87 floats, `.rodata` + rip-relative
-    symbol addressing, and the text parser (`asm.fern` GAS text → these
-    encoders).
+  - ✅ **slice 2b — immediate ALU + control flow**: `add`/`sub`/`cmp
+    r64, imm32` (group-1 `0x81 /digit`), `cmp r64, r64`, and near
+    branches `jcc`/`jmp rel32` (`0F 8x` / `0xE9`) with the rel32 math
+    helper `x86_branch_rel`. Byte-checked against `as`/objdump
+    (`TestSelfHostX86Encode`) and gated end-to-end by
+    `TestSelfHostX86LoopRuns`: a Fern program assembles a real loop
+    (acc=0; repeat 7×: acc += 6; exit(acc)) with a backward `jne`, and
+    the binary **runs natively** exiting 42. Backward branches resolve
+    directly (target known); forward branches still await the label
+    table (next slice).
+  - ⬜ remaining: a **label/fixup table** (forward-reference resolution +
+    `call rel32`), memory operands (ModR/M memory forms, SIB, disp8/32),
+    SSE + x87 floats, `.rodata` + rip-relative symbol addressing, and the
+    text parser (`asm.fern` GAS text → these encoders).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

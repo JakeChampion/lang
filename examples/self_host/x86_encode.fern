@@ -110,3 +110,84 @@ function x86_syscall(buf: i32[]): i32[] {
 function x86_ret(buf: i32[]): i32[] {
     return buf.push(195); // 0xC3
 }
+
+// ---- immediate ALU (slice 2b) ----
+
+// x86_alu_r64_imm32 encodes the `<op> <reg>, imm32` group-1 form:
+// REX.W + 0x81 /digit, where `slash` is the opcode-extension in the
+// ModR/M reg field (0 = add, 5 = sub, 7 = cmp). imm32 little-endian.
+// The full imm32 form (vs the compact 0x83 /digit imm8) keeps the
+// encoder uniform for any constant.
+function x86_alu_r64_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(129); // 0x81
+    buf = buf.push(x86_modrm(3, slash, reg));
+    return x86_le32(buf, imm);
+}
+
+// x86_add_r64_imm32: `add <reg>, imm32` (0x81 /0).
+function x86_add_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 0, reg, imm);
+}
+
+// x86_sub_r64_imm32: `sub <reg>, imm32` (0x81 /5).
+function x86_sub_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 5, reg, imm);
+}
+
+// x86_cmp_r64_imm32: `cmp <reg>, imm32` (0x81 /7).
+function x86_cmp_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 7, reg, imm);
+}
+
+// x86_cmp_r64_r64: `cmp <a>, <b>` (64-bit) — REX.W + 0x39 /r.
+function x86_cmp_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(57); // 0x39
+    buf = buf.push(x86_modrm(3, b, a));
+    return buf;
+}
+
+// ---- control flow (slice 2b) ----
+//
+// Near branches take a 32-bit displacement relative to the *next*
+// instruction: rel32 = target_offset - (branch_offset + branch_length).
+// Backward branches (target already emitted) can compute this directly;
+// forward branches need a fixup pass (a later slice's label table).
+
+// Condition codes for the 0F 8x near-jcc opcodes.
+function x86_cc_e(): i32 { return 4; }   // je  / jz
+function x86_cc_ne(): i32 { return 5; }  // jne / jnz
+function x86_cc_l(): i32 { return 12; }  // jl  (signed <)
+function x86_cc_ge(): i32 { return 13; } // jge (signed >=)
+function x86_cc_le(): i32 { return 14; } // jle (signed <=)
+function x86_cc_g(): i32 { return 15; }  // jg  (signed >)
+
+// x86_jcc_rel32: a near conditional jump (0F 80+cc) with a 32-bit
+// signed displacement. 6 bytes total.
+function x86_jcc_rel32(buf: i32[], cc: i32, rel: i32): i32[] {
+    buf = buf.push(15);             // 0x0F
+    buf = buf.push(128 + (cc & 15)); // 0x80 + cc
+    return x86_le32(buf, rel);
+}
+
+// x86_je_rel32 / x86_jne_rel32: the two most common conditionals.
+function x86_je_rel32(buf: i32[], rel: i32): i32[] {
+    return x86_jcc_rel32(buf, x86_cc_e(), rel);
+}
+function x86_jne_rel32(buf: i32[], rel: i32): i32[] {
+    return x86_jcc_rel32(buf, x86_cc_ne(), rel);
+}
+
+// x86_jmp_rel32: an unconditional near jump (0xE9 cd). 5 bytes total.
+function x86_jmp_rel32(buf: i32[], rel: i32): i32[] {
+    buf = buf.push(233); // 0xE9
+    return x86_le32(buf, rel);
+}
+
+// x86_branch_rel computes the rel32 a branch at `branch_off` (the offset
+// of its first opcode byte) needs to reach `target_off`, given the
+// branch's total encoded length `branch_len` (6 for jcc, 5 for jmp).
+function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 {
+    return target_off - (branch_off + branch_len);
+}
