@@ -240,6 +240,34 @@ function f(p: P): i32 { return p.x + p.y; }`,
 	}
 }
 
+// A `resource` declaration (with its `@import` binding) and `own R` /
+// `borrow R` handle types round-trip through the formatter unchanged (P5 —
+// docs/WIT-BRING-YOUR-OWN.md).
+func TestFormatResourceHandle(t *testing.T) {
+	src := `@import("wasi:io/poll@0.2.0", "pollable")
+resource Pollable;
+
+@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
+function subscribe(ns: u64): own Pollable;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.ready")
+function ready(h: borrow Pollable): boolean;
+`
+	got := formatSrc(t, src)
+	for _, want := range []string{
+		"@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;",
+		"function subscribe(ns: u64): own Pollable;",
+		"function ready(h: borrow Pollable): boolean;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatted output missing %q:\n%s", want, got)
+		}
+	}
+	if _, err := parser.Parse(got); err != nil {
+		t.Errorf("formatted resource/handle output failed to reparse:\n%s\nerror: %v", got, err)
+	}
+}
+
 // Trailing newline at end of file — every editor expects it; many
 // VCSs flag its absence as a diff hazard.
 func TestFormatEndsWithNewline(t *testing.T) {

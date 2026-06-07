@@ -90,6 +90,14 @@ func Format(prog *ast.Program) string {
 		f.formatUnionDecl(ud)
 		written = true
 	}
+	for _, rd := range prog.Resources {
+		if written {
+			f.b.WriteByte('\n')
+		}
+		f.drainLeading(rd.P.Line, 0)
+		f.formatResourceDecl(rd)
+		written = true
+	}
 	for _, cd := range prog.Consts {
 		if written {
 			f.b.WriteByte('\n')
@@ -301,6 +309,25 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 		f.b.WriteString(formatType(fld.Type))
 	}
 	f.b.WriteString(" }\n")
+}
+
+// formatResourceDecl emits a `resource Name;` declaration (P5 WIT
+// resource-handle type), with its optional `@import(iface, wit-name)` binding
+// on the line above — mirroring the body-less `@import` extern rendering.
+func (f *formatter) formatResourceDecl(rd *ast.ResourceDecl) {
+	if rd.ImportIface != "" {
+		f.b.WriteString("@import(\"")
+		f.b.WriteString(rd.ImportIface)
+		f.b.WriteString("\", \"")
+		f.b.WriteString(rd.ImportWITName)
+		f.b.WriteString("\")\n")
+	}
+	if rd.Public {
+		f.b.WriteString("pub ")
+	}
+	f.b.WriteString("resource ")
+	f.b.WriteString(rd.Name)
+	f.b.WriteString(";\n")
 }
 
 // formatFunc emits a top-level or nested function declaration.
@@ -1104,6 +1131,11 @@ func formatType(t ast.Type) string {
 		return "Self"
 	case ast.DynTraitType:
 		return "dyn " + x.Trait
+	case ast.HandleType:
+		if x.Borrowed {
+			return "borrow " + x.Resource
+		}
+		return "own " + x.Resource
 	}
 	return ""
 }

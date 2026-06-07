@@ -1295,6 +1295,72 @@ function many(ds: dyn Shape[]): i32 { return 0; }`)
 	}
 }
 
+// `resource Name;` parses to a ResourceDecl (with its optional `@import`
+// binding), and `own R` / `borrow R` parse to HandleType in type position.
+// See docs/WIT-BRING-YOUR-OWN.md (P5).
+func TestResourceHandleParse(t *testing.T) {
+	prog, err := Parse(`@import("wasi:io/poll@0.2.0", "pollable")
+resource Pollable;
+
+@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
+function subscribe(ns: u64): own Pollable;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.ready")
+function ready(h: borrow Pollable): boolean;
+
+function take(hs: own Pollable[]): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("resource/handle syntax should parse: %v", err)
+	}
+	if len(prog.Resources) != 1 {
+		t.Fatalf("got %d resources, want 1", len(prog.Resources))
+	}
+	rd := prog.Resources[0]
+	if rd.Name != "Pollable" || rd.ImportIface != "wasi:io/poll@0.2.0" || rd.ImportWITName != "pollable" {
+		t.Errorf("resource decl = %#v, want Pollable bound to wasi:io/poll@0.2.0/pollable", rd)
+	}
+	var subscribe, ready, take *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		switch fn.Name {
+		case "subscribe":
+			subscribe = fn
+		case "ready":
+			ready = fn
+		case "take":
+			take = fn
+		}
+	}
+	if subscribe == nil || ready == nil || take == nil {
+		t.Fatal("functions not parsed")
+	}
+	if h, ok := subscribe.ReturnType.(ast.HandleType); !ok || h.Resource != "Pollable" || h.Borrowed {
+		t.Errorf("subscribe return = %#v, want own Pollable", subscribe.ReturnType)
+	}
+	if h, ok := ready.Params[0].Type.(ast.HandleType); !ok || h.Resource != "Pollable" || !h.Borrowed {
+		t.Errorf("ready param = %#v, want borrow Pollable", ready.Params[0].Type)
+	}
+	// `own Pollable[]` is an array of owned handles (suffix `[]` binds after
+	// the handle base type).
+	at, ok := take.Params[0].Type.(ast.ArrayType)
+	if !ok {
+		t.Fatalf("take param = %#v, want array", take.Params[0].Type)
+	}
+	if h, ok := at.Elem.(ast.HandleType); !ok || h.Resource != "Pollable" || h.Borrowed {
+		t.Errorf("take element = %#v, want own Pollable", at.Elem)
+	}
+}
+
+// `own` / `borrow` stay usable as ordinary identifiers when not in the
+// `own R` / `borrow R` handle-type position (contextual keywords).
+func TestOwnBorrowStillIdentifiers(t *testing.T) {
+	if _, err := Parse(`function f(own x: i32): i32 { return x; }`); err != nil {
+		t.Fatalf("`own` param modifier should still parse: %v", err)
+	}
+	if _, err := Parse(`function g(borrow: i32): i32 { return borrow; }`); err != nil {
+		t.Fatalf("`borrow` as a param name should still parse: %v", err)
+	}
+}
+
 func TestParametricImplDecl(t *testing.T) {
 	prog, err := Parse(`trait Display { function to_string(self: Self): string; }
 struct Box[T] { v: T }

@@ -363,7 +363,31 @@ world-driven composer (P2) wires it.
      0.2 target and so need a custom provider to test against.
 4. **P5 — resources / handles** (`own`/`borrow`/drop): a new type-system
    concept; the largest phase, and the first to exercise the composer's
-   `gDrop` path from user code.
+   `gDrop` path from user code. Plan + design forks: `docs/P5-PLAN.md`.
+   - **Slice 1 — handle type vocabulary. ✅ Done (Go + self-host).** A
+     `resource Name;` declaration (bound to its WIT identity by an
+     `@import("iface", "wit-resource-name")` attribute) introduces a nominal
+     handle type, written `own Name` / `borrow Name` (the Fern-idiomatic
+     prefix form, mirroring `dyn Trait` — Fern uses `[]` for generics, not
+     `<>`); a bare resource name means an owned handle. Go: `ast.HandleType` +
+     `ast.ResourceDecl`, parser (`parseType` own/borrow, `parseResourceDecl`),
+     checker (register resources, `resolveType` reclassification,
+     `validateResourceHandles`, `assignable` own→borrow coercion — a plain i32
+     is *not* a handle), and erasure to i32 at the single `ir.LowerWith` choke
+     point (`internal/ir/erase_handles.go`) so no backend/interp/self-host
+     sees a HandleType. Self-host: `parser.fern` erases `own`/`borrow` to i32
+     in `parse_type_name` and consumes `resource` decls. Gated by parser +
+     checker + printer-round-trip tests and the e2e
+     `TestExternResourceHandleTypes` / `TestSelfHostExternResourceHandleTypes`
+     (the 0ns-timer pollable, now written with the handle vocabulary, runs
+     under real WASI — proving the types are real yet erase to the working
+     i32-handle core). Handles are still leaked.
+   - **Slice 2 (next) — composer `[resource-drop]` wiring** (additive,
+     byte-identity-gated): surface each resource as a component-level type via
+     an alias in `EmitWorldImports`, thread its index into `gImport{gDrop}`,
+     and drop the `hasResourceDropPrefix` rejection.
+   - **Slice 3 — automatic drop**: compiler-inserted `[resource-drop]` for
+     owned handles at scope exit (hooking `emitRcDecLocalsAtExit`).
 5. **P6 — arbitrary exports**: bind a Fern function to a world export (beyond
    `cli/run` / `incoming-handler`) and lift it.
 

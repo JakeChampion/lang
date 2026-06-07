@@ -302,12 +302,41 @@ func (p *parser) parseProgram() *ast.Program {
 			p.advance() // opaque
 			isOpaque = true
 		}
-		// `@import` binds a single body-less function — once the optional
-		// `pub`/`fip` modifiers are consumed, the next token must be
-		// `function`.
+		// `resource Name;` — a nominal WIT resource-handle type (P5 —
+		// docs/WIT-BRING-YOUR-OWN.md), referenced as `own Name` / `borrow
+		// Name`. An optional preceding `@import(iface, wit-resource-name)`
+		// binds its WIT identity (used by the drop slice). Contextual keyword:
+		// `resource` followed by an identifier at decl position, so `resource`
+		// stays usable as an ordinary identifier elsewhere.
+		if p.match(lexer.Ident, "resource") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+			rd, err := p.parseResourceDecl()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if rd != nil {
+				rd.Public = isPub
+				rd.ImportIface = importIface
+				rd.ImportWITName = importWIT
+				if len(derives) > 0 {
+					p.errors = append(p.errors, p.errorf(rd.P,
+						"@derive only applies to a `struct` or `enum` declaration"))
+				}
+				prog.Resources = append(prog.Resources, rd)
+			}
+			continue
+		}
+		// `@import` binds a single body-less function or a `resource`
+		// declaration — once the optional `pub`/`fip` modifiers are consumed,
+		// the next token must be `function` (the `resource` case is handled
+		// above and `continue`s before reaching here).
 		if importIface != "" && !p.match(lexer.Keyword, "function") {
 			p.errors = append(p.errors, p.errorf(p.peek().Pos,
-				"@import only applies to a function declaration"))
+				"@import only applies to a function or resource declaration"))
 			p.syncToTopLevel()
 			if p.i == before {
 				p.advance()
@@ -791,6 +820,22 @@ func (p *parser) parseAttribute() (derives []string, impIface, impName string, e
 	default:
 		return nil, "", "", p.errorf(at.Pos, "unknown attribute @%s (only @derive and @import are supported)", attr)
 	}
+}
+
+// parseResourceDecl parses `resource Name;` (the contextual `resource`
+// identifier is at the current position). The optional `@import` WIT binding
+// is stamped onto the returned decl by the caller. See ResourceDecl and
+// docs/WIT-BRING-YOUR-OWN.md (P5).
+func (p *parser) parseResourceDecl() (*ast.ResourceDecl, error) {
+	kw := p.advance() // resource
+	nameTok, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	return &ast.ResourceDecl{P: kw.Pos, Name: nameTok.Text}, nil
 }
 
 // maybeQualify consumes an optional `.ident` suffix and returns the
@@ -1435,6 +1480,24 @@ func (p *parser) parseType() (ast.Type, error) {
 		}
 		name := p.maybeQualify(nameTok.Text)
 		base = ast.DynTraitType{Trait: name}
+	case (t.Kind == lexer.Ident) && (t.Text == "own" || t.Text == "borrow") &&
+		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident:
+		// `own R` / `borrow R` — a WIT resource-handle type (P5 —
+		// docs/WIT-BRING-YOUR-OWN.md). R names a `resource` declaration (the
+		// checker validates that). `own` is owned/consuming (dropped at scope
+		// exit, a later slice); `borrow` is a non-consuming view. Contextual:
+		// only a handle when an identifier (the resource name) follows, so
+		// `own`/`borrow` stay usable as ordinary type names otherwise. Falls
+		// through to the trailing-`[]` suffix loop like any base type.
+		borrowed := t.Text == "borrow"
+		p.advance() // own / borrow
+		nameTok, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		name := p.maybeQualify(nameTok.Text)
+		p.typeRefs = append(p.typeRefs, ast.TypeRef{P: nameTok.Pos, Name: name})
+		base = ast.HandleType{Resource: name, Borrowed: borrowed}
 	case t.Kind == lexer.Ident && t.Text == "Self" &&
 		!(p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "."):
 		// `Self` is the contextual trait/impl type. It's only valid

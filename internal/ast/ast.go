@@ -184,6 +184,23 @@ type SelfType struct{}
 // path — see docs/DYN-TRAITS.md.
 type DynTraitType struct{ Trait string }
 
+// HandleType is a WIT resource-handle type (P5 — docs/WIT-BRING-YOUR-OWN.md),
+// written `own R` / `borrow R` in type position where R names a top-level
+// `resource` declaration. `own R` is an owned handle (consuming — dropped when
+// it goes out of scope, in a later P5 slice); `borrow R` is a non-consuming
+// view (never dropped). A bare resource name `R` in type position parses as a
+// StructType and the checker reclassifies it to an owned HandleType.
+//
+// A handle is an opaque i32 at the canonical ABI — NOT pointer-shaped — so it
+// sizes and stores like a scalar. Handle type-safety is enforced entirely in
+// the checker; the `ir.LowerWith` choke point erases HandleType to plain i32
+// (NumberType{}) before any compiled backend, the interpreter, or the
+// self-host emitter sees it (see internal/ir/erase_handles.go).
+type HandleType struct {
+	Resource string
+	Borrowed bool
+}
+
 func (NumberType) isType()   {}
 func (SelfType) isType()     {}
 func (BoolType) isType()     {}
@@ -198,6 +215,7 @@ func (StructType) isType()   {}
 func (EnumType) isType()     {}
 func (ParamType) isType()    {}
 func (DynTraitType) isType() {}
+func (HandleType) isType()   {}
 func (n NumberType) String() string {
 	if n.IsPointerWidth() {
 		return "usize"
@@ -270,6 +288,12 @@ func (e EnumType) String() string {
 func (p ParamType) String() string    { return p.Name }
 func (SelfType) String() string       { return "Self" }
 func (d DynTraitType) String() string { return "dyn " + d.Trait }
+func (h HandleType) String() string {
+	if h.Borrowed {
+		return "borrow " + h.Resource
+	}
+	return "own " + h.Resource
+}
 
 // SubstSelf recursively replaces every SelfType in t with self. Used
 // when desugaring `impl Trait for Type` methods (the parser) and when
@@ -716,6 +740,9 @@ func Equal(a, b Type) bool {
 	case DynTraitType:
 		y, ok := b.(DynTraitType)
 		return ok && x.Trait == y.Trait
+	case HandleType:
+		y, ok := b.(HandleType)
+		return ok && x.Resource == y.Resource && x.Borrowed == y.Borrowed
 	}
 	return false
 }
@@ -1755,6 +1782,27 @@ type EnumVariant struct {
 	Payloads []Type
 }
 
+// ResourceDecl is a top-level `resource Name;` — a nominal WIT resource-handle
+// type (P5 — docs/WIT-BRING-YOUR-OWN.md). An `@import("iface",
+// "wit-resource-name")` attribute binds the Fern name to its WIT resource
+// identity (ImportIface / ImportWITName); a later P5 slice uses that binding to
+// call `[resource-drop]<wit-name>` when an owned handle goes out of scope. The
+// type is referenced as `own Name` / `borrow Name` (HandleType); values are
+// opaque i32 handles. The checker registers each in Info.Resources; no later
+// pass sees ResourceDecl (handles erase to i32 before IR lowering).
+type ResourceDecl struct {
+	P             Position
+	Name          string
+	ImportIface   string
+	ImportWITName string
+	// Public marks the resource as exported across modules — same semantics
+	// as FuncDecl.Public.
+	Public bool
+	// SourceModule mirrors FuncDecl.SourceModule (modload stamps the
+	// declaring module path). Empty for parser-only single-file programs.
+	SourceModule string
+}
+
 // UnionDecl is a top-level `type Expr = Binary | Unary | Call;`
 // — a closed sum over named struct types. Each member must be
 // the name of an existing StructDecl; the checker desugars the
@@ -1865,6 +1913,12 @@ func (s *ImplDecl) Pos() Position  { return s.P }
 type Program struct {
 	Funcs   []*FuncDecl
 	Structs []*StructDecl
+	// Resources lists top-level `resource Name;` declarations in source
+	// order — nominal WIT resource-handle types (P5 — see ResourceDecl and
+	// docs/WIT-BRING-YOUR-OWN.md). Referenced as `own Name` / `borrow Name`
+	// (HandleType). The checker registers them in Info.Resources; the IR
+	// never sees them (handles erase to i32 before lowering).
+	Resources []*ResourceDecl
 	// Traits lists top-level `trait` declarations in source order.
 	// Impls lists `impl Trait for Type` declarations in source
 	// order. Both are consumed by the checker (conformance +
