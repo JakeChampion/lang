@@ -2700,17 +2700,12 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // Layout with a hidden capacity word: alloc
             // [cap, len, e0, …] at base B and return B+8, so readers
             // see the classic [len@0, e_i@(i+1)*8] layout while
-            // __fern_arr_push finds cap at -8 and can grow
+            // __fern_arr_push finds cap at -16 (rc at -8) and can grow
             // geometrically. cap = len for a literal (first push
             // reallocs, then doubles).
-            var a_bytes: i32 = (n_elems + 2) * 8;
-            s = s.write("    movq $" + asmcore.i32_to_string(a_bytes) + ", %rdi\n");
-            s = s.write("    call __fern_alloc\n");
+            s = s.write("    movq $" + asmcore.i32_to_string(n_elems) + ", %rdi\n");   // cap = element count
+            s = s.write("    call __fern_arr_box\n");   // -> data ptr in %rax (cap + len written)
             s = s.mark_heap();
-            s = s.write("    movq $" + asmcore.i32_to_string(n_elems) + ", %rcx\n");
-            s = s.write("    movq %rcx, (%rax)\n");   // cap at base
-            s = s.write("    addq $8, %rax\n");       // shift to returned ptr (base+8)
-            s = s.write("    movq %rcx, (%rax)\n");   // len at base+8
             var aj: i32 = n_elems - 1;
             while (aj >= 0) {
                 s = s.write("    popq %rcx\n");
@@ -3283,10 +3278,21 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             if (v.type_name.len() > 0) {
                 ity = asmcore.ty_from_name(v.type_name);
             }
+            // Perceus inc (Phase 1d): binding `var y = x` where x is an
+            // rc-tracked array creates a second reference, so retain the
+            // buffer. A fresh literal / call result is already owned and
+            // is not re-incremented (needs_rc_inc_on_alias gates this).
+            var alias_inc: boolean = asmcore.needs_rc_inc_on_alias(v.init, s);
             s = emit_expr(v.init, s);
             s = s.bind_local_typed(v.name, ity);
             var off: i32 = s.lookup_local(v.name);
             s = s.write("    popq %rax\n");
+            if (alias_inc) {
+                s = s.mark_heap();                          // __fern_rc_inc lives in the heap runtime block
+                s = s.write("    pushq %rax\n");            // arg for __fern_rc_inc (frameless: param[0] at 8(%rsp))
+                s = s.write("    call __fn___fern_rc_inc\n"); // returns the ptr in %rax
+                s = s.write("    addq $8, %rsp\n");
+            }
             s = s.write("    movq %rax, " + asmcore.i32_to_string(off) + "(%rbp)\n");
             return s;
         },
@@ -4705,21 +4711,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    incq %rbx\n");
         s = s.write("    jmp .Lsplit_cl\n");
         s = s.write(".Lsplit_count_done:\n");
-        // Allocate array: 16 (cap + len words) + (count+1)*8 bytes.
-        s = s.write("    movq -24(%rbp), %rax\n");
-        s = s.write("    incq %rax\n");
-        s = s.write("    shlq $3, %rax\n");
-        s = s.write("    addq $16, %rax\n");
-        s = s.write("    movq %rax, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        // cap at base, shift to base+8, store returned ptr + len
-        // (hidden-cap layout; see __fern_arr_push).
-        s = s.write("    movq -24(%rbp), %rcx\n");
-        s = s.write("    incq %rcx\n");              // len = count + 1
-        s = s.write("    movq %rcx, (%rax)\n");      // cap
-        s = s.write("    addq $8, %rax\n");
-        s = s.write("    movq %rax, -32(%rbp)\n");   // returned arr ptr (base+8)
-        s = s.write("    movq %rcx, (%rax)\n");      // len
+        // Allocate the result string[] via __fern_arr_box (cap = count+1).
+        s = s.write("    movq -24(%rbp), %rdi\n");
+        s = s.write("    incq %rdi\n");              // cap = count + 1
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
+        s = s.write("    movq %rax, -32(%rbp)\n");   // returned arr ptr
         s = s.write("    movq $0, -40(%rbp)\n");     // write_idx
         s = s.write("    movq $0, -48(%rbp)\n");     // seg_start
         // Second pass: walk haystack, emit segments.
@@ -4897,6 +4893,38 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $137, %rdi\n");
         s = s.write("    syscall\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
+
+        // __fern_arr_box(%rdi = cap element count) -> %rax = array data
+        // pointer. Centralises the array box layout so every array
+        // allocation site (literal / push-grow / slice / concat /
+        // reverse / split / str_bytes / str_chars / args / u8) shares
+        // ONE layout definition (docs/RC-PERCEUS-SELF-HOST-PORT.md Phase
+        // 0a/0b). Perceus rc-header layout: base = [cap, rc, len, e0,
+        // e1, ...]; the returned data pointer is base+16 (at the len
+        // slot), so rc is at [data-8] (the uniform offset the generic
+        // __fern_rc_inc / __fern_rc_dec / __fern_rc_is_unique helpers
+        // read), cap is at [data-16], and element i stays at
+        // [data+(i+1)*8] — UNCHANGED from the pre-rc layout, since array
+        // readers index relative to data; only the alloc side moves. The
+        // helper inits rc = 1 and writes cap and len = cap; callers
+        // overwrite len when it differs (push) and fill the elements.
+        // Clobbers only %rax + %rdi (matching __fern_alloc's contract,
+        // so it is a drop-in replacement at every call site — callers
+        // keep live values in %rcx/%rsi/%r8-%r15 across the call).
+        s = s.write("__fern_arr_box:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rdi\n");             // save cap (also keeps 16B align)
+        s = s.write("    addq $3, %rdi\n");          // cap + 3 header words (cap, rc, len)
+        s = s.write("    shlq $3, %rdi\n");          // * 8 bytes
+        s = s.write("    call __fern_alloc\n");      // base in %rax
+        s = s.write("    movq -8(%rbp), %rdi\n");    // reload cap
+        s = s.write("    movq %rdi, (%rax)\n");      // cap at base+0   (= data-16)
+        s = s.write("    movq $1, 8(%rax)\n");       // rc = 1 at base+8 (= data-8)
+        s = s.write("    movq %rdi, 16(%rax)\n");    // len = cap at base+16 (= data)
+        s = s.write("    addq $16, %rax\n");         // data ptr = base+16
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
 
         // Low-level memory intrinsics (`__alloc` / `__free` / the
         // `__load_*` / `__store_*` pokes / `__ptr_width` / `__memset`)
@@ -5675,12 +5703,8 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    addq %rax, %rbx\n");
         s = s.write("    jmp .Lrd_c1\n");
         s = s.write(".Lrd_c1d:\n");
-        s = s.write("    leaq 2(%r15), %rdi\n");     // (count+2)*8
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r15, (%rax)\n");      // cap
-        s = s.write("    addq $8, %rax\n");
-        s = s.write("    movq %r15, (%rax)\n");      // len
+        s = s.write("    movq %r15, %rdi\n");        // cap = count
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
         s = s.write("    movq %rax, %r12\n");        // array ptr P
         // pass 2: fill
         s = s.write("    movq $0, %rbx\n");          // offset
@@ -6476,12 +6500,8 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
         s = s.write("    movq %rdi, %r12\n");        // n
-        s = s.write("    leaq 2(%r12), %rdi\n");     // (n+2)*8 bytes
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r12, (%rax)\n");       // cap
-        s = s.write("    addq $8, %rax\n");
-        s = s.write("    movq %r12, (%rax)\n");       // len
+        s = s.write("    movq %r12, %rdi\n");        // cap = n
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
         s = s.write("    popq %r12\n");
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
@@ -7066,12 +7086,8 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %r13\n");           // arr (returned ptr)
         s = s.write("    pushq %r14\n");           // i
         s = s.write("    movq __fern_argc(%rip), %r12\n");
-        s = s.write("    leaq 2(%r12), %rdi\n");   // (argc+2)*8 bytes
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r12, (%rax)\n");     // cap
-        s = s.write("    addq $8, %rax\n");
-        s = s.write("    movq %r12, (%rax)\n");     // len
+        s = s.write("    movq %r12, %rdi\n");       // cap = argc
+        s = s.write("    call __fern_arr_box\n");   // -> data ptr in %rax (cap + len written)
         s = s.write("    movq %rax, %r13\n");       // arr (base+8)
         s = s.write("    movq $0, %r14\n");
         s = s.write(".Largs_loop:\n");
@@ -7093,10 +7109,10 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ret\n");
     }
     // __fern_arr_push: append an 8-byte payload to an array.
-    // %rdi = arr ptr (returned form, [len@0, e_i@(i+1)*8]; capacity
-    // hidden at -8), %rsi = value. Amortised O(1): if len < cap,
+    // %rdi = arr ptr (returned form, [len@0, e_i@(i+1)*8]; rc hidden at
+    // -8, capacity at -16), %rsi = value. Amortised O(1): if len < cap,
     // mutate in place and return the same pointer; otherwise alloc a
-    // doubled buffer ([cap, len, …] at base B, returned B+8), copy,
+    // doubled buffer (via __fern_arr_box, returned at data ptr), copy,
     // and return the new pointer. Replaces the old fresh-copy-every-
     // push runtime, which was O(N²) and exhausted the heap when the
     // self-hosted compiler tokenised its own ~100k-token source.
@@ -7111,7 +7127,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rdi, %r12\n");        // arr ptr
         s = s.write("    movq %rsi, %r13\n");        // value
         s = s.write("    movq (%r12), %r14\n");      // len
-        s = s.write("    movq -8(%r12), %r15\n");    // cap (hidden at -8)
+        s = s.write("    movq -16(%r12), %r15\n");   // cap (hidden at -16; rc at -8)
         s = s.write("    cmpq %r15, %r14\n");
         s = s.write("    jge .Larr_push_grow\n");    // len >= cap → grow
         // In place: store value at slot (len+1), bump len, return arr.
@@ -7133,15 +7149,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    shlq $1, %rcx\n");
         s = s.write(".Larr_push_cap:\n");
         s = s.write("    movq %rcx, %r15\n");        // r15 = newcap
-        s = s.write("    addq $2, %rcx\n");
-        s = s.write("    shlq $3, %rcx\n");
-        s = s.write("    movq %rcx, %rdi\n");
-        s = s.write("    call __fern_alloc\n");      // base in %rax
-        s = s.write("    movq %r15, (%rax)\n");      // cap at base
-        s = s.write("    addq $8, %rax\n");          // returned ptr = base+8
+        s = s.write("    movq %r15, %rdi\n");        // cap = newcap
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len=cap written)
         s = s.write("    movq %r14, %rcx\n");
         s = s.write("    incq %rcx\n");
-        s = s.write("    movq %rcx, (%rax)\n");      // new len = old+1
+        s = s.write("    movq %rcx, (%rax)\n");      // new len = old+1 (overwrite helper's len)
         // Copy old elements (slots 1..len) from old arr to new.
         s = s.write("    movq $1, %rcx\n");
         s = s.write(".Larr_push_copy:\n");
@@ -7183,15 +7195,8 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rdx, %r14\n");      // end
         s = s.write("    movq %r14, %r15\n");
         s = s.write("    subq %r13, %r15\n");      // new len = end - start
-        // alloc (new_len + 2) * 8 bytes (extra word for the hidden cap)
-        s = s.write("    movq %r15, %rdi\n");
-        s = s.write("    addq $2, %rdi\n");
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        // cap at base, then shift to base+8 and write len (see __fern_arr_push)
-        s = s.write("    movq %r15, (%rax)\n");     // cap
-        s = s.write("    addq $8, %rax\n");
-        s = s.write("    movq %r15, (%rax)\n");     // len
+        s = s.write("    movq %r15, %rdi\n");        // cap = new len
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
         // copy: for i in 0..new_len, dst[i+1] = src[start + i + 1]
         s = s.write("    movq $0, %rcx\n");
         s = s.write(".Larr_slice_loop:\n");
@@ -7229,18 +7234,9 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rsi, %r13\n");      // arr B
         s = s.write("    movq (%r12), %r14\n");    // a_len
         s = s.write("    movq (%r13), %r15\n");    // b_len
-        // alloc (a_len + b_len + 2) * 8 (extra word for the hidden cap)
-        s = s.write("    movq %r14, %rdi\n");
+        s = s.write("    movq %r14, %rdi\n");        // cap = a_len + b_len
         s = s.write("    addq %r15, %rdi\n");
-        s = s.write("    addq $2, %rdi\n");
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        // cap at base, shift to base+8, then len (see __fern_arr_push)
-        s = s.write("    movq %r14, %rcx\n");
-        s = s.write("    addq %r15, %rcx\n");
-        s = s.write("    movq %rcx, (%rax)\n");     // cap
-        s = s.write("    addq $8, %rax\n");
-        s = s.write("    movq %rcx, (%rax)\n");     // len
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
         // copy A
         s = s.write("    movq $0, %rcx\n");
         s = s.write(".Larr_concat_a:\n");
@@ -7285,13 +7281,8 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %r13\n");
         s = s.write("    movq %rdi, %r12\n");      // src
         s = s.write("    movq (%r12), %r13\n");    // len
-        s = s.write("    movq %r13, %rdi\n");
-        s = s.write("    addq $2, %rdi\n");        // +cap word
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r13, (%rax)\n");    // cap
-        s = s.write("    addq $8, %rax\n");
-        s = s.write("    movq %r13, (%rax)\n");    // len
+        s = s.write("    movq %r13, %rdi\n");        // cap = len
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
         s = s.write("    movq $0, %rcx\n");        // i
         s = s.write(".Larr_rev_loop:\n");
         s = s.write("    cmpq %r13, %rcx\n");
@@ -7479,15 +7470,9 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %r15\n");
         s = s.write("    movq (%rdi), %r12\n");      // src data
         s = s.write("    movq 8(%rdi), %r13\n");     // src len
-        // alloc (len + 2) * 8 (extra word for the hidden cap)
-        s = s.write("    movq %r13, %rdi\n");
-        s = s.write("    addq $2, %rdi\n");
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r14\n");        // arr base
-        s = s.write("    movq %r13, (%r14)\n");      // cap
-        s = s.write("    addq $8, %r14\n");          // shift to base+8
-        s = s.write("    movq %r13, (%r14)\n");      // len
+        s = s.write("    movq %r13, %rdi\n");        // cap = len
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
+        s = s.write("    movq %rax, %r14\n");        // arr data ptr
         s = s.write("    movq $0, %r15\n");          // i
         s = s.write(".Lbytes_loop:\n");
         s = s.write("    cmpq %r13, %r15\n");
@@ -7523,15 +7508,9 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rdi, %r12\n");       // src box
         s = s.write("    movq (%r12), %r13\n");     // src data
         s = s.write("    movq 8(%r12), %r14\n");    // src len
-        // alloc array (len + 2) * 8 (extra word for the hidden cap)
-        s = s.write("    movq %r14, %rdi\n");
-        s = s.write("    addq $2, %rdi\n");
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r15\n");       // arr base
-        s = s.write("    movq %r14, (%r15)\n");     // cap
-        s = s.write("    addq $8, %r15\n");         // shift to base+8
-        s = s.write("    movq %r14, (%r15)\n");     // arr.len
+        s = s.write("    movq %r14, %rdi\n");        // cap = src len
+        s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
+        s = s.write("    movq %rax, %r15\n");       // arr data ptr
         s = s.write("    movq $0, -40(%rbp)\n");    // i
         s = s.write(".Lchars_loop:\n");
         s = s.write("    movq -40(%rbp), %rcx\n");

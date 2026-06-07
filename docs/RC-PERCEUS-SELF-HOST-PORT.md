@@ -357,3 +357,66 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostBootstrapsItself`, `TestSelfHostFixpoint`) stays green.
   Next: mirror to `asm_arm64.fern` + `wasm.fern`; then Phase 0b — the
   array rc-header layout migration that wires these in.
+- 2026-06-07: **Phase 0c (runtime layer), arm64 — SHIPPED.** Mirrored
+  the x86-64 helpers to `asm_arm64.fern` (ported from the native arm64
+  backend: `ldur`/`stur` for `[ptr-8]`, `tbnz #31` sentinel, `tbnz #0`
+  SSO tag, `mov x9,#0x10000` low-address guard, adrp/`:lo12:` access to
+  the `__fern_rc_underflow` BSS counter). Tests consolidated into
+  `internal/e2e/self_host_rc_runtime_test.go` with a shared case table
+  driving both `TestSelfHostRcRuntimeX86_64` and
+  `TestSelfHostRcRuntimeArm64` (the latter built + run under
+  qemu-aarch64 — all six cases green). Next: wasm
+  (`wasm.fern`); then Phase 0b array layout migration.
+- 2026-06-07: **Phase 0a (array-alloc centralization), x86-64 —
+  SHIPPED.** Introduced `__fern_arr_box(cap) -> data ptr` in `asm.fern`
+  and routed all 11 array allocation sites through it (literal,
+  str_split, the read-array builder, `__fern_alloc_u8`, `__fern_args`,
+  push-grow, slice, concat, reverse, str_bytes, str_chars). The box
+  layout (`[cap, len, e…]`, data = base+8, cap at `[data-8]`) is now
+  defined in ONE place — behaviour-preserving (identical layout), so
+  the full suite + byte-identical bootstrap stay green. The raw exec
+  `argv` buffer (not a Fern array) is correctly left inline. This turns
+  the rc-header migration (0b) into a ~2-line change to the helper +
+  the single `cap` reader in `__fern_arr_push`. Clobbers only
+  rax/rdi (matches `__fern_alloc`'s contract → drop-in at every site).
+- 2026-06-07: **Phase 0b (array rc-header layout), x86-64 — SHIPPED.**
+  Flipped `__fern_arr_box` to the rc layout: base = `[cap, rc, len,
+  e…]`, data = base+16, so **rc sits at `[data-8]`** (the uniform offset
+  the generic `__fern_rc_*` helpers read), cap at `[data-16]`, and every
+  element/`len` offset relative to `data` is **unchanged** (array
+  readers index off `data`, so only the alloc side moved). Allocs init
+  `rc = 1`. The only non-helper edit was the single `cap` reader in
+  `__fern_arr_push` (`-8`→`-16`). x86-64 arrays now carry live rc
+  headers, ready for inc/dec wiring (Phase 1d). inc/dec are not emitted
+  yet, so behaviour is unchanged (+8 bytes/array, underflow detector
+  stays 0). Verified green: full asm-run + array / array-method /
+  string / map / json / bytes / charmethods / map-iter/keys/literal
+  self-host suites + the RC runtime tests + the byte-identical
+  self-bootstrap (BootstrapsItself / Fixpoint / Stage2FixedPoint).
+  Next: Phase 1d — emit `__fern_rc_inc` at array alias sites +
+  `__fern_rc_dec` at scope/exit + overwrite (porting
+  `needs_rc_inc_on_alias` + the exit-dec sweep). Then mirror 0a/0b/1d to
+  arm64 + wasm.
+- 2026-06-07: **Phase 1d-i (array alias-inc on var-decl), x86-64 —
+  SHIPPED.** First RC counting wired into real allocations. Added the
+  shared `needs_rc_inc_on_alias` + `ty_is_array_like` predicates to
+  `asmcore.fern` (ported from native `needsRcIncOnAlias`, scoped to
+  arrays), and emit `__fern_rc_inc` in `asm.fern`'s `StmtVar` general
+  path when `var y = x` binds an array-typed ident alias (a fresh
+  literal / call result is already owned at rc=1 and is NOT
+  re-incremented). This is the first time the Phase-0c helpers run on
+  the Phase-0b rc-headered arrays — proving the three layers integrate.
+  Inc-only (no dec sites yet), so it's safe-leak + over-release-detector
+  clean (rc only grows). Tests: `TestSelfHostRcAliasIncX86_64`
+  (aliasing value-correctness, detector == 0, and an emission assertion
+  that the retain is actually emitted at the alias). Byte-identical
+  self-bootstrap + fixpoint stay green (the fixpoint executes the
+  self-host's own array code with the new inc emission). NOTE: the
+  user-level `xs = xs.push(v)` form on `i32[]` is a *pre-existing*
+  self-host limitation (segfaults on origin/main too — `.push`
+  reassignment lowers to a `-1` fallback), independent of this work; the
+  self-host's internal push (validated via fixpoint) is unaffected.
+  Next sub-slices: the remaining inc sites (reassign / call-arg /
+  field+index alias / literal element / closure capture) and the dec
+  sites (function-exit sweep + dec-on-overwrite) — together they
+  balance the counts; then arm64 + wasm mirrors.
