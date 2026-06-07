@@ -1995,6 +1995,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// See docs/DYN-TRAITS.md.
 	c.validateDynTraitTypes(prog)
 	c.validateResourceHandles(prog)
+	c.validateExports(prog)
 
 	// Second pass: check bodies. Per-function cancellation
 	// checkpoint — the LSP can cancel a long type-check
@@ -2197,6 +2198,25 @@ func (c *checker) validateResourceHandles(prog *ast.Program) {
 		visit(fn.ReturnType, fn.P)
 		if fn.Body != nil {
 			c.walkVarTypes(fn.Body, visit)
+		}
+	}
+}
+
+// validateExports checks `@export` functions (P6 — bind a Fern function to a
+// WIT world export, docs/WIT-BRING-YOUR-OWN.md). A world export is lifted with
+// a single concrete canonical ABI, so it cannot be generic; and the export
+// surface is for top-level functions, not methods. The body is type-checked
+// like any function elsewhere.
+func (c *checker) validateExports(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		if fn.ExportIface == "" {
+			continue
+		}
+		if len(fn.TypeParams) > 0 {
+			c.errfCode(fn.P, "E054", "@export function %q cannot be generic (a world export has a single concrete ABI)", fn.Name)
+		}
+		if fn.Receiver != nil || fn.MethodRecv != "" {
+			c.errfCode(fn.P, "E054", "@export cannot be applied to a method (%q); use a top-level function", fn.Name)
 		}
 	}
 }

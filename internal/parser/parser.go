@@ -241,8 +241,9 @@ func (p *parser) parseProgram() *ast.Program {
 		// derived trait. See docs/TRAITS.md.
 		var derives []string
 		var importIface, importWIT string
+		var exportIface, exportWIT string
 		if p.match(lexer.Punct, "@") {
-			ds, ifc, wn, err := p.parseAttribute()
+			attr, err := p.parseAttribute()
 			if err != nil {
 				p.errors = append(p.errors, err)
 				p.syncToTopLevel()
@@ -251,9 +252,11 @@ func (p *parser) parseProgram() *ast.Program {
 				}
 				continue
 			}
-			derives = ds
-			importIface = ifc
-			importWIT = wn
+			derives = attr.derives
+			importIface = attr.importIface
+			importWIT = attr.importWIT
+			exportIface = attr.exportIface
+			exportWIT = attr.exportWIT
 		}
 		// `pub` is an optional prefix on function, struct, enum, or
 		// const decls at the top level. Track it and consume; the
@@ -326,6 +329,10 @@ func (p *parser) parseProgram() *ast.Program {
 					p.errors = append(p.errors, p.errorf(rd.P,
 						"@derive only applies to a `struct` or `enum` declaration"))
 				}
+				if exportIface != "" {
+					p.errors = append(p.errors, p.errorf(rd.P,
+						"@export only applies to a function declaration"))
+				}
 				prog.Resources = append(prog.Resources, rd)
 			}
 			continue
@@ -337,6 +344,16 @@ func (p *parser) parseProgram() *ast.Program {
 		if importIface != "" && !p.match(lexer.Keyword, "function") {
 			p.errors = append(p.errors, p.errorf(p.peek().Pos,
 				"@import only applies to a function or resource declaration"))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
+			}
+			continue
+		}
+		// `@export` binds a single function (with a body) to a WIT export (P6).
+		if exportIface != "" && !p.match(lexer.Keyword, "function") {
+			p.errors = append(p.errors, p.errorf(p.peek().Pos,
+				"@export only applies to a function declaration"))
 			p.syncToTopLevel()
 			if p.i == before {
 				p.advance()
@@ -481,6 +498,15 @@ func (p *parser) parseProgram() *ast.Program {
 				}
 				fn.ImportIface = importIface
 				fn.ImportWITName = importWIT
+			} else if exportIface != "" {
+				// An `@export` function is an implementation — it must have a
+				// body (unlike a body-less `@import`).
+				if fn.Body == nil {
+					p.errors = append(p.errors, p.errorf(fn.P,
+						"@export function %q must have a body", fn.Name))
+				}
+				fn.ExportIface = exportIface
+				fn.ExportWITName = exportWIT
 			} else if fn.Body == nil {
 				p.errors = append(p.errors, p.errorf(fn.P,
 					"function %q has no body (only @import functions may omit a body)", fn.Name))
@@ -755,38 +781,51 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	return id, methods, nil
 }
 
+// declAttr is the parsed result of a leading `@…` declaration attribute.
+// Exactly one flavour is set per attribute: Derives (from `@derive`),
+// (ImportIface, ImportWIT) (from `@import`), or (ExportIface, ExportWIT)
+// (from `@export`).
+type declAttr struct {
+	derives     []string
+	importIface string
+	importWIT   string
+	exportIface string
+	exportWIT   string
+}
+
 // parseAttribute parses a leading `@…` declaration attribute (the `@` is at
 // the current position):
 //
-//   - `@derive(Trait, …)` returns the (possibly module-qualified) trait names.
+//   - `@derive(Trait, …)` — the (possibly module-qualified) trait names.
 //   - `@import("wasi:iface@x.y.z", "wit-func")` binds the following body-less
-//     function to a WIT import; returns the interface + WIT function strings
-//     (bring-your-own WIT, P4 — docs/WIT-BRING-YOUR-OWN.md).
-//
-// Exactly one of (derives) / (impIface, impName) is set per call.
-func (p *parser) parseAttribute() (derives []string, impIface, impName string, err error) {
+//     function to a WIT import (bring-your-own WIT, P4 —
+//     docs/WIT-BRING-YOUR-OWN.md).
+//   - `@export("wasi:iface@x.y.z", "wit-name")` binds the following function
+//     (with a body) to a WIT export, lifted as that world export (P6).
+func (p *parser) parseAttribute() (declAttr, error) {
 	at := p.advance() // @
 	// The attribute name follows `@`. `import` lexes as a keyword (reused
-	// from the import-statement syntax); `derive` is an ordinary identifier.
+	// from the import-statement syntax); `derive` / `export` are identifiers.
 	var attr string
 	if tok, ok := p.accept(lexer.Keyword, "import"); ok {
 		attr = tok.Text
 	} else {
 		tok, e := p.expect(lexer.Ident, "")
 		if e != nil {
-			return nil, "", "", e
+			return declAttr{}, e
 		}
 		attr = tok.Text
 	}
 	switch attr {
 	case "derive":
+		var derives []string
 		if _, err := p.expect(lexer.Punct, "("); err != nil {
-			return nil, "", "", err
+			return declAttr{}, err
 		}
 		for {
 			tn, err := p.expect(lexer.Ident, "")
 			if err != nil {
-				return nil, "", "", err
+				return declAttr{}, err
 			}
 			derives = append(derives, p.maybeQualify(tn.Text))
 			if _, ok := p.accept(lexer.Punct, ","); ok {
@@ -795,31 +834,46 @@ func (p *parser) parseAttribute() (derives []string, impIface, impName string, e
 			break
 		}
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
-			return nil, "", "", err
+			return declAttr{}, err
 		}
-		return derives, "", "", nil
-	case "import":
-		if _, err := p.expect(lexer.Punct, "("); err != nil {
-			return nil, "", "", err
-		}
-		iface, err := p.expect(lexer.String, "")
+		return declAttr{derives: derives}, nil
+	case "import", "export":
+		// `@import(iface, name)` and `@export(iface, name)` share the same
+		// two-string shape; only the binding direction differs.
+		iface, name, err := p.parseIfaceNamePair()
 		if err != nil {
-			return nil, "", "", err
+			return declAttr{}, err
 		}
-		if _, err := p.expect(lexer.Punct, ","); err != nil {
-			return nil, "", "", err
+		if attr == "import" {
+			return declAttr{importIface: iface, importWIT: name}, nil
 		}
-		fn, err := p.expect(lexer.String, "")
-		if err != nil {
-			return nil, "", "", err
-		}
-		if _, err := p.expect(lexer.Punct, ")"); err != nil {
-			return nil, "", "", err
-		}
-		return nil, iface.Text, fn.Text, nil
+		return declAttr{exportIface: iface, exportWIT: name}, nil
 	default:
-		return nil, "", "", p.errorf(at.Pos, "unknown attribute @%s (only @derive and @import are supported)", attr)
+		return declAttr{}, p.errorf(at.Pos, "unknown attribute @%s (only @derive, @import, and @export are supported)", attr)
 	}
+}
+
+// parseIfaceNamePair parses `("iface", "name")` — the argument shape shared by
+// `@import` and `@export`.
+func (p *parser) parseIfaceNamePair() (iface, name string, err error) {
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return "", "", err
+	}
+	it, err := p.expect(lexer.String, "")
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := p.expect(lexer.Punct, ","); err != nil {
+		return "", "", err
+	}
+	nt, err := p.expect(lexer.String, "")
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return "", "", err
+	}
+	return it.Text, nt.Text, nil
 }
 
 // parseResourceDecl parses `resource Name;` (the contextual `resource`

@@ -346,6 +346,16 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.ImportWITName)
 		f.b.WriteString("\")\n")
 	}
+	// An `@export` function (P6) renders its binding on its own line above the
+	// signature, like `@import` but the function keeps its body.
+	if fn.ExportIface != "" {
+		f.indent(depth)
+		f.b.WriteString("@export(\"")
+		f.b.WriteString(fn.ExportIface)
+		f.b.WriteString("\", \"")
+		f.b.WriteString(fn.ExportWITName)
+		f.b.WriteString("\")\n")
+	}
 	f.indent(depth)
 	if fn.Public {
 		f.b.WriteString("pub ")

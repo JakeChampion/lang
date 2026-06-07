@@ -1612,6 +1612,15 @@ type FuncDecl struct {
 	// lowers to a core wasm import of (ImportIface, ImportWITName).
 	ImportIface   string
 	ImportWITName string
+	// ExportIface / ExportWITName bind a function (WITH a body) to a WIT
+	// *export* via an `@export("wasi:iface@x.y.z", "wit-name")` attribute
+	// (bring-your-own WIT, P6 — docs/WIT-BRING-YOUR-OWN.md): the component
+	// provides this function as the named world export, lifted with the WIT
+	// canonical ABI — the generalisation of the fixed `cli/run` (main) and
+	// `incoming-handler` (handle) lifts to an arbitrary world export. Both
+	// empty for an ordinary function; mutually exclusive with ImportIface.
+	ExportIface   string
+	ExportWITName string
 	// Public marks this declaration as exported from its module.
 	// Set by the parser when the source carries `pub function …`.
 	// Default false (private) — modload rejects cross-module
