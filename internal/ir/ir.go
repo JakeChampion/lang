@@ -611,6 +611,17 @@ type ExternFunc struct {
 	ReturnType ast.Type
 }
 
+// ExternExport binds a defined function (Name) to the WIT world export
+// (Iface, WITName) it implements, via an `@export(...)` attribute (P6 —
+// docs/WIT-BRING-YOUR-OWN.md). Unlike ExternFunc the function keeps its body
+// and is lowered normally into Funcs; ExternExport just records the binding so
+// the wasm backend can surface a core export the composer lifts.
+type ExternExport struct {
+	Name    string
+	Iface   string
+	WITName string
+}
+
 // Program is the lowered form of an entire ast.Program.
 type Program struct {
 	Funcs []*Func
@@ -618,6 +629,12 @@ type Program struct {
 	// imports). They are kept out of Funcs so every backend's defined-function
 	// machinery is unaffected; only the wasm backend consults them.
 	Externs []*ExternFunc
+	// Exports lists the `@export`-bound functions (P6 — bind a Fern function to
+	// a WIT world export, docs/WIT-BRING-YOUR-OWN.md). Each entry pairs the
+	// (defined) function's Name with the world export (Iface, WITName) it
+	// implements. The wasm backend surfaces a core export `Iface#WITName` for
+	// each so the world-driven composer can lift it as the named world export.
+	Exports []ExternExport
 	// PairForm is the set of function names lowered with the
 	// register-based (tag, payload) return ABI. Populated once
 	// per program by findPairFormFuncs during `LowerWith`.
@@ -858,6 +875,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			return nil, err
 		}
 		out.Funcs = append(out.Funcs, f)
+		if fn.ExportIface != "" {
+			// `@export` function: lowered normally (it has a body), with the
+			// world-export binding recorded for the wasm backend / composer (P6).
+			out.Exports = append(out.Exports, ExternExport{Name: fn.Name, Iface: fn.ExportIface, WITName: fn.ExportWITName})
+		}
 	}
 	// Closure reclamation Stage 3: emit a per-closure
 	// __closure_drop_<name> thunk for every closure with rc-tracked

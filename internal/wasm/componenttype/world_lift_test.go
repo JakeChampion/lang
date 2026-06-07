@@ -165,3 +165,41 @@ func findSig(t *testing.T, wi WorldInterface, name string) WorldFunc {
 	t.Fatalf("%s: no func %q", wi.Name, name)
 	return WorldFunc{}
 }
+
+// TestWorldExportedInterfaces checks P6's export query: the http world's
+// exported wasi:http/incoming-handler interface is lifted with its `handle`
+// function (docs/WIT-BRING-YOUR-OWN.md).
+func TestWorldExportedInterfaces(t *testing.T) {
+	w, err := DecodeWorld("http")
+	if err != nil {
+		t.Fatalf("DecodeWorld: %v", err)
+	}
+	exps := w.ExportedInterfaces()
+	if len(exps) == 0 {
+		t.Fatal("http: no exported interfaces lifted")
+	}
+	var handler *WorldInterface
+	for i := range exps {
+		if exps[i].Name == "wasi:http/incoming-handler@0.2.0" {
+			handler = &exps[i]
+		}
+	}
+	if handler == nil {
+		t.Fatalf("http: missing exported interface wasi:http/incoming-handler@0.2.0; got %v", exps)
+	}
+	found := false
+	for _, f := range handler.Funcs {
+		if f == "handle" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("incoming-handler exports = %v, want it to include handle", handler.Funcs)
+	}
+	if _, ok := w.ExportFunc("wasi:http/incoming-handler@0.2.0", "handle"); !ok {
+		t.Error("ExportFunc(incoming-handler, handle) not found")
+	}
+	if _, ok := w.ExportFunc("wasi:http/incoming-handler@0.2.0", "nope"); ok {
+		t.Error("ExportFunc should not find a nonexistent export")
+	}
+}

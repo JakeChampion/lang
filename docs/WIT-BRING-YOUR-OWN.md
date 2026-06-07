@@ -444,9 +444,24 @@ world-driven composer (P2) wires it.
      literal before it's used). Gated by parser (`TestExportAttributeParses` /
      `…Errors`), checker (`TestExportChecker`), printer (`TestFormatExportAttr`),
      and the self-host `TestSelfHostExportAttributeCompiles`.
-   - **Slice 2 (next) — per-export lift + codegen**: emit the named world
-     export by lifting the bound function with the WIT canonical ABI (generalising
-     the fixed `_lang_run` / `incoming-handler` lifts), composed + run under WASI.
+   - **Slice 2 — export bridge: world query + IR + core-export surfacing. ✅
+     Done (Go).** The codegen plumbing that the lift (slice 3) builds on:
+     `componenttype.World.ExportedInterfaces` / `ExportFunc` lift the world's
+     *export* declarations to a queryable model (mirroring `Interfaces` for
+     imports — so the lift can resolve an export's WIT signature); `ir.Program`
+     gains `Exports` (`@export` bindings threaded from `FuncDecl.ExportIface`);
+     and the wasm backend surfaces a core export `iface#wit-name` per `@export`
+     function (the WIT-id alias the world-driven composer keys off), pinning
+     each `@export` function as a tree-shake / inline root so it survives even
+     when no Fern code calls it. Purely additive (a program with no `@export`
+     emits no extra exports — byte-identical; the byte-identity-gated
+     `internal/wasm/component` suite stays green). Gated by
+     `TestWorldExportedInterfaces` and `TestBuildExportSurfacesCoreExport`.
+   - **Slice 3 (next) — per-export lift + run**: the world-driven composer
+     aliases each surfaced `iface#wit-name` core export, lifts it with the WIT
+     canonical ABI (generalising the fixed `_lang_run` / `incoming-handler`
+     lifts), and emits the component export; composed with a consumer and run
+     under WASI. Then composite signatures + the self-host port.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.

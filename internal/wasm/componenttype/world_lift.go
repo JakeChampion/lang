@@ -127,6 +127,59 @@ func liftInterface(name string, inst *TypeDef) WorldInterface {
 	return wi
 }
 
+// ExportedInterfaces lifts the world's *export* declarations into per-interface
+// function/resource inventories (mirroring Interfaces for imports), in
+// declaration order. A world export is an instance the component must provide
+// (e.g. `export wasi:cli/run@0.2.0` / a custom `local:test/math@0.1.0`); P6
+// (docs/WIT-BRING-YOUR-OWN.md) lifts a Fern `@export` function as one of these.
+func (w *World) ExportedInterfaces() []WorldInterface {
+	world := w.worldComponent()
+	if world == nil {
+		return nil
+	}
+	var localTypes []*TypeDef
+	var out []WorldInterface
+	for i := range world.Decls {
+		d := &world.Decls[i]
+		switch d.Kind {
+		case 0x01: // type
+			localTypes = append(localTypes, d.Type)
+		case 0x02: // alias
+			if d.Alias != nil && d.Alias.Sort == 0x03 {
+				localTypes = append(localTypes, nil)
+			}
+		case 0x04: // export
+			if d.Extern == nil || d.Extern.Kind != 0x05 { // 0x05 = instance
+				continue
+			}
+			idx := int(d.Extern.TypeIdx)
+			if idx < 0 || idx >= len(localTypes) || localTypes[idx] == nil {
+				continue
+			}
+			out = append(out, liftInterface(d.Name, localTypes[idx]))
+		}
+	}
+	return out
+}
+
+// ExportFunc finds the signature of an exported function `name` on the world's
+// exported interface `iface` (P6). Returns (sig, true) when the world declares
+// it; sig may be nil if the interface exports the name but its type didn't
+// resolve to a func type.
+func (w *World) ExportFunc(iface, name string) (*FuncType, bool) {
+	for _, wi := range w.ExportedInterfaces() {
+		if wi.Name != iface {
+			continue
+		}
+		for _, f := range wi.FuncSigs {
+			if f.Name == name {
+				return f.Sig, true
+			}
+		}
+	}
+	return nil, false
+}
+
 // ResolveDef returns the defined type a value type refers to within this
 // interface, or nil for a primitive or an unresolved (handle) slot.
 func (wi WorldInterface) ResolveDef(v Valtype) *DefinedType {
