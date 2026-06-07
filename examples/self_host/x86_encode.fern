@@ -666,6 +666,21 @@ function x86_cc_l(): i32 { return 12; }  // jl  (signed <)
 function x86_cc_ge(): i32 { return 13; } // jge (signed >=)
 function x86_cc_le(): i32 { return 14; } // jle (signed <=)
 function x86_cc_g(): i32 { return 15; }  // jg  (signed >)
+function x86_cc_b(): i32 { return 2; }   // jb  (unsigned <,  CF=1)
+function x86_cc_ae(): i32 { return 3; }  // jae (unsigned >=, CF=0)
+function x86_cc_be(): i32 { return 6; }  // jbe (unsigned <=)
+function x86_cc_a(): i32 { return 7; }   // ja  (unsigned >)
+function x86_cc_s(): i32 { return 8; }   // js  (sign set)
+function x86_cc_ns(): i32 { return 9; }  // jns (sign clear)
+function x86_cc_p(): i32 { return 10; }  // jp  (parity, NaN tests)
+
+// x86_movabsq: `movabs <reg>, imm64` (REX.W 0xB8+rd io) — load a full
+// 64-bit immediate (heap addresses, IEEE-754 bit patterns, wide masks).
+function x86_movabsq(buf: i32[], reg: i32, imm: i64): i32[] {
+    buf = buf.push(x86_rex(1, 0, 0, reg)); // REX.W (+ REX.B for r8..r15)
+    buf = buf.push(184 + (reg & 7));       // 0xB8 + rd
+    return x86_le64_i64(buf, imm);
+}
 
 // x86_jcc_rel32: a near conditional jump (0F 80+cc) with a 32-bit
 // signed displacement. 6 bytes total.

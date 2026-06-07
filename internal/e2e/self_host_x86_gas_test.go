@@ -235,6 +235,16 @@ function main(): i32 {
     // escape handling: "\n\t" -> 10, 9.
     var ac: i32[] = x86_gas_ascii([], ".ascii \"\\n\\t\"");
     if (ac.len() != 2 || ac[0] != 10 || ac[1] != 9) { return 20; }
+    // atoi64 (slice 2p): decimal, hex, negative.
+    var n1: i64 = x86_gas_atoi64("$4611686018427387904");
+    var ref1: i64 = 4611686018427387904;
+    if (n1 != ref1) { return 21; }
+    var n2: i64 = x86_gas_atoi64("$0x40");
+    var ref2: i64 = 64;
+    if (n2 != ref2) { return 22; }
+    var n3: i64 = x86_gas_atoi64("-5");
+    var ref3: i64 = 0 - 5;
+    if (n3 != ref3) { return 23; }
     return 0;
 }
 `
