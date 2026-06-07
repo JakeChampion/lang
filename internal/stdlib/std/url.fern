@@ -207,7 +207,7 @@ pub function query_parse(s: string): Map[string, string[]] {
         if (sep) {
             var pair_len: i32 = i - pair_start;
             if (pair_len > 0) {
-                __query_pair(m, s, pair_start, i);
+                m = __query_pair(m, s, pair_start, i);
             }
             pair_start = i + 1;
         }
@@ -216,7 +216,12 @@ pub function query_parse(s: string): Map[string, string[]] {
     return m;
 }
 
-function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32) {
+// Value-returning per docs/PURE-COLLECTION-API-PLAN.md: rather than
+// mutating a borrowed `m` through the call (the old fire-and-forget
+// `m.set(...)` form, which silently loses the edit if `m` is ever
+// aliased), this returns the updated map and the caller rebinds
+// (`m = __query_pair(...)`).
+function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32): Map[string, string[]] {
     // Find '=' in [start, end).
     var eq: i32 = -1;
     var j: i32 = start;
@@ -236,11 +241,12 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
     // else create a one-element array.
     match (m.get(key)) {
         Some(existing) => {
-            m.set(key, existing.push(val));
+            m = m.insert(key, existing.push(val));
         },
         None => {
             var arr: string[] = [val];
-            m.set(key, arr);
+            m = m.insert(key, arr);
         }
     }
+    return m;
 }
