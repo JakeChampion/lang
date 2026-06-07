@@ -218,7 +218,7 @@ pub function query_parse(s: string): Map[string, string[]] {
 
 // Value-returning per docs/PURE-COLLECTION-API-PLAN.md: rather than
 // mutating a borrowed `m` through the call (the old fire-and-forget
-// `m.set(...)` form, which silently loses the edit if `m` is ever
+// `m.insert(...)` form, which silently loses the edit if `m` is ever
 // aliased), this returns the updated map and the caller rebinds
 // (`m = __query_pair(...)`).
 function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32): Map[string, string[]] {

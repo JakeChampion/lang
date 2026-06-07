@@ -72,7 +72,7 @@ function main(): i32 {
 	"map_ops": `
 function main(): i32 {
 	var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
-	m = m.set("d", 4);
+	m = m.insert("d", 4);
 	return m.get_or("b", 0) + m.get_or("d", 0);
 }`,
 

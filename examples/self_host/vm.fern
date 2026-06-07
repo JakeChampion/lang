@@ -2140,7 +2140,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                             var bi: i32 = 0;
                             while (bi < unames.len()) {
                                 if (unames[bi] == oname) {
-                                    uvals = uvals.set(bi, oval);
+                                    uvals[bi] = oval;
                                     replaced = true;
                                 }
                                 bi = bi + 1;
@@ -2758,7 +2758,7 @@ function main(): i32 {
     }
 
     // Map builtin: set + get_or via VM dispatch.
-    var src62: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); return m.get_or(\"b\", 0 - 1); }";
+    var src62: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); return m.get_or(\"b\", 0 - 1); }";
     var r62: Value = run_module(src62);
     match (r62) {
         VInt(i) => { if (i.v != 2) { return 620; } },
@@ -2766,7 +2766,7 @@ function main(): i32 {
     }
 
     // Map: get_or returns default on miss.
-    var src63: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); return m.get_or(\"x\", 99); }";
+    var src63: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); return m.get_or(\"x\", 99); }";
     var r63: Value = run_module(src63);
     match (r63) {
         VInt(i) => { if (i.v != 99) { return 630; } },
@@ -2774,7 +2774,7 @@ function main(): i32 {
     }
 
     // Map: len.
-    var src64: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); return m.len(); }";
+    var src64: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); return m.len(); }";
     var r64: Value = run_module(src64);
     match (r64) {
         VInt(i) => { if (i.v != 2) { return 640; } },

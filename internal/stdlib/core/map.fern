@@ -32,7 +32,7 @@
 //
 // Lives in `core/` rather than `std/` because the bodies are
 // raw-memory implementations the user shouldn't reach for
-// directly — user code calls `m.set(k, v)` / etc. and the
+// directly — user code calls `m.insert(k, v)` / etc. and the
 // IR rewrites those to the `_impl` functions here.
 //
 // Migrated from the auto-injected prelude per
@@ -297,7 +297,7 @@ pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
 
 // __map_lookup_val returns the stored VALUE pointer for key k, or 0 if
 // the key is absent — WITHOUT retaining it. The IR's overwrite pre-drop
-// (struct/enum-valued maps) calls this just before `m.set(k, v2)` to
+// (struct/enum-valued maps) calls this just before `m.insert(k, v2)` to
 // deep-drop the old value v1 that the set is about to replace, which the
 // type-erased runtime overwrite-dec (__map_dec_value) can't do for those
 // kinds. No retain: the returned pointer is consumed by the deep-drop,

@@ -218,7 +218,7 @@ function func_param_is_f64(cx: Ctx, fn: string, idx: i32): boolean {    var i: i
 }
 
 // expr_map_rooted is true for an expression whose value is a fresh map:
-// a `map_new_i32(n)` call or a `.set(…)` chain over one. Used at
+// a `map_new_i32(n)` call or a `.insert(…)` chain over one. Used at
 // var-collection time (no Ctx available yet) to seed map_names.
 function expr_map_rooted(e: parser.Expr): boolean {
     match (e) {
@@ -226,7 +226,7 @@ function expr_map_rooted(e: parser.Expr): boolean {
             match (c.callee) {
                 parser.ExprIdent(id) => { return id.name == "map_new_i32" || id.name == "map_new"; },
                 parser.ExprFieldAccess(fa) => {
-                    if (fa.field == "set" || fa.field == "insert") { return expr_map_rooted(fa.obj); }
+                    if (fa.field == "insert") { return expr_map_rooted(fa.obj); }
                     return false;
                 },
                 _ => { return false; },
@@ -246,7 +246,7 @@ function is_map_expr(e: parser.Expr, cx: Ctx): boolean {
             match (c.callee) {
                 parser.ExprIdent(id) => { return id.name == "map_new_i32" || id.name == "map_new"; },
                 parser.ExprFieldAccess(fa) => {
-                    if (fa.field == "set" || fa.field == "insert") { return is_map_expr(fa.obj, cx); }
+                    if (fa.field == "insert") { return is_map_expr(fa.obj, cx); }
                     return false;
                 },
                 _ => { return false; },
@@ -295,7 +295,7 @@ function is_str_val_map(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
-                    if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
+                    if ((fa.field == "insert") && c.args.len() == 2) {
                         if (is_string_expr(c.args[1], cx)) { return true; }
                         return is_str_val_map(fa.obj, cx);
                     }
@@ -315,7 +315,7 @@ function set_chain_has_str(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
-                    if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
+                    if ((fa.field == "insert") && c.args.len() == 2) {
                         if (is_string_expr(c.args[1], cx)) { return true; }
                         return set_chain_has_str(fa.obj, cx);
                     }
@@ -331,7 +331,7 @@ function set_chain_has_str(e: parser.Expr, cx: Ctx): boolean {
 
 // collect_str_val_map_names returns the subset of map_names whose values
 // are strings, found by scanning every `var`/assignment that builds the
-// map (init chain or `m = m.set(k, "…")`) for a string-typed set value.
+// map (init chain or `m = m.insert(k, "…")`) for a string-typed set value.
 // Run after string locals are known so is_string_expr is accurate.
 function collect_str_val_map_names(body: parser.Stmt[], cx: Ctx, map_names: string[], acc: string[]): string[] {
     var i: i32 = 0;
@@ -375,7 +375,7 @@ function map_root_is_str(e: parser.Expr): boolean {
             match (c.callee) {
                 parser.ExprIdent(id) => { return id.name == "map_new"; },
                 parser.ExprFieldAccess(fa) => {
-                    if (fa.field == "set" || fa.field == "insert") { return map_root_is_str(fa.obj); }
+                    if (fa.field == "insert") { return map_root_is_str(fa.obj); }
                     return false;
                 },
                 _ => { return false; },
@@ -2636,7 +2636,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // the generic length read (count sits at box offset 0).
                     if (is_map_expr(fa.obj, cx)) {
                         var mrecv: string = emit_expr(fa.obj, cx, depth);
-                        if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
+                        if ((fa.field == "insert") && c.args.len() == 2) {
                             return "(call $__fern_map_set " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + " " + emit_expr(c.args[1], cx, depth + 1) + ")";
                         }
                         if (fa.field == "get" && c.args.len() == 1) {
@@ -2648,7 +2648,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         if (fa.field == "has" && c.args.len() == 1) {
                             return "(call $__fern_map_has " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + ")";
                         }
-                        if ((fa.field == "delete" || fa.field == "without") && c.args.len() == 1) {
+                        if ((fa.field == "without") && c.args.len() == 1) {
                             return "(call $__fern_map_delete " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + ")";
                         }
                         if (fa.field == "keys" && c.args.len() == 0) {
