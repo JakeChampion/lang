@@ -160,9 +160,9 @@ func TestX86_64NativeMap(t *testing.T) {
 import "core/map";
 function main(): i32 {
   var m: Map[i32, i32] = map_new(8);
-  m.insert(7, 40);
-  m.insert(11, 99);
-  m.insert(7, 42);
+  m = m.insert(7, 40);
+  m = m.insert(11, 99);
+  m = m.insert(7, 42);
   if (m.len() != 2) { return 1; }
   if (!m.has(11)) { return 2; }
   match (m.get(7)) {

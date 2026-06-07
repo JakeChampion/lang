@@ -3943,6 +3943,47 @@ func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
 	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile(), ErrCode: code})
 }
 
+// pureCollectionMutators maps each value-returning collection mutator's
+// mangled lowering to its source-level spelling. These are the operations
+// that return a (possibly fresh) collection rather than mutating in place;
+// discarding their result is the aliasing footgun E055 closes.
+var pureCollectionMutators = map[string]string{
+	"__method_Map_set":    "insert",
+	"__method_Map_delete": "without",
+	"__method_Map_clear":  "cleared",
+	"__method_Array_set":  "with",
+	"__method_Array_push": "append",
+}
+
+// checkUnusedCollectionResult implements E055: a bare statement whose whole
+// expression is a value-returning collection mutator (`m.insert(k, v);`,
+// `arr.append(x);`, …) silently discards the new collection. Under CoW that's
+// correct only while the receiver is uniquely held — the moment an alias
+// exists the write is lost (docs/PURE-COLLECTION-API-PLAN.md §1). Require the
+// result be threaded back (`m = m.insert(k, v)`) or explicitly dropped
+// (`var _ = m.insert(k, v)`, a declaration rather than a bare call).
+//
+// Only source-level method calls fire (Method != nil), so the `arr[i] = v`
+// desugar and other synthesised `__method_*` calls are exempt; and only the
+// outermost call of a statement is a bare ExprStmt, so a chained
+// `m.insert(a,b).insert(c,d);` reports once.
+func (c *checker) checkUnusedCollectionResult(e ast.Expr) {
+	call, ok := e.(*ast.Call)
+	if !ok || call.Method == nil {
+		return
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return
+	}
+	if _, isMutator := pureCollectionMutators[id.Name]; !isMutator {
+		return
+	}
+	c.errfCode(call.Method.FieldPos, "E055",
+		"result of `.%s(...)` is unused; assign it back (e.g. `x = x.%s(...)`) — collection operations return a new value, they do not mutate in place (use `var _ = …` to discard intentionally)",
+		call.Method.Field, call.Method.Field)
+}
+
 // fipNonAllocMethods is the whitelist of builtin methods a `fip` function may
 // call: provably non-allocating, scalar-returning reads. Extend as more are
 // proven heap-neutral.
@@ -5144,6 +5185,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 	case *ast.ExprStmt:
 		c.checkExpr(n.Expr, s)
+		c.checkUnusedCollectionResult(n.Expr)
 	case *ast.Switch:
 		tagT := c.checkExpr(n.Tag, s)
 		// Floats compare with NaN edge cases that switch's "exact

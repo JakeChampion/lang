@@ -131,9 +131,9 @@ import "core/map";
 function pb(x: boolean): string { if (x) { return "T"; } return "F"; }
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m.insert(1, 100);
-    m.insert(2, 200);
-    m.insert(1, 111);
+    m = m.insert(1, 100);
+    m = m.insert(2, 200);
+    m = m.insert(1, 111);
     print(m.get_or(1, 0).to_string());
     print(m.get_or(3, 0 - 1).to_string());
     print(m.len().to_string());
@@ -334,7 +334,7 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m.insert(1, 10); m.insert(2, 20); m.insert(3, 30);
+    m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30);
     var total: i32 = 0;
     for k in m.keys() { total = total + k; }
     print(total.to_string());
@@ -353,8 +353,8 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m.insert(1, 10); m.insert(2, 20); m.insert(3, 30); m.insert(4, 40);
-    m.without(1);
+    m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); m = m.insert(4, 40);
+    m = m.without(1).0;
     var ks = m.keys();
     var i: i32 = 0;
     while (i < ks.len()) { print(ks[i].to_string()); i = i + 1; }
@@ -439,7 +439,7 @@ function main(): i32 {
     while (i < fs.len()) { sum = sum + fs[i]; i = i + 1; }
     print(sum.to_string());
     var m: Map[i32, f64] = map_new(8);
-    m.insert(1, 3.14);
+    m = m.insert(1, 3.14);
     print(m.get_or(1, 0.0).to_string());
     return 0;
 }`},
