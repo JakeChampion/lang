@@ -250,9 +250,29 @@ bytes the bump allocator touches):
 - **Pass early-outs** (landed) — `copy_propagate` and `mark_*_calls` now
   return the function untouched (no rebuild allocation) when they have no
   work, which is the common case on every optimise round after the first.
+- **SSA heap 16 MiB → 1 GiB** (landed) — the SSA backends emitted a 16 MiB
+  `__fern_ssa_heap`, sized for small programs; a *self-hosted* SSA compiler
+  is itself leak-everything, so even a modest real compile overruns it
+  (a ~21 MiB allocation segfaults). Raised the native (x86-64 / arm64)
+  arena to 1 GiB, matching the AST backend's proven `__fern_heap`. It is
+  `.bss` (demand-zero): no disk cost, no resident memory until touched. wasm
+  is left at 16 MiB — it is not a self-host target and that suits ordinary
+  wasm programs. Gated by a `heap-beyond-16mib` emit case.
+
+What this does *not* fix: measuring with a stage-1 CLI (`cmd/fern`-built,
+so RC, won't OOM-from-leaks) showed the full unified `fern.fern` (~14
+modules, ~30 K lines) exhausts **>15 GB** compiling itself through **either**
+path — a super-linear blowup in the compiler's *own* memory processing the
+whole multi-module source, distinct from the emitted heap. By contrast the
+SSA pipeline alone (`ssa_emit_run`, ~12 K lines) compiles in ~108 MB. So a
+*scoped* SSA self-host (the SSA pipeline compiling itself) is within reach
+now; the full kitchen-sink CLI additionally needs that frontend blowup
+chased down.
 
 Still open: the *linear* per-function retention (build + emit, freed by
-nothing) — the streaming/arena or GC approach, deferred.
+nothing) — Perceus RC (the native backend already has it; the self-host
+runtime stubs it to no-ops — `asm.fern`: "leak-everything bump heap") or a
+streaming/arena scheme; and the frontend memory blowup on the full CLI.
 
 ### Phase 5 — retire the AST emitters
 
