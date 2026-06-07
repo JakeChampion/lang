@@ -399,8 +399,26 @@ world-driven composer (P2) wires it.
      composer port (`wat_component.fern`), the composer change is Go-only; the
      self-host's role is emitting the drop core, which it already does for any
      `@import`.
-   - **Slice 3 — automatic drop**: compiler-inserted `[resource-drop]` for
-     owned handles at scope exit (hooking `emitRcDecLocalsAtExit`).
+   - **Slice 3 — automatic drop. ✅ Done (Go); self-host port follows.** The
+     compiler releases an owned `own R` handle when it goes out of scope, so
+     user code never writes a manual drop. `internal/ir/insert_resource_drops.go`
+     runs in `LowerWith` (before handle erasure): for each kept owned-handle
+     local it inserts `defer <drop>(h);` — reusing Fern's defer machinery, which
+     runs the drop on every function-exit path — and synthesizes one body-less
+     `@import("…","[resource-drop]<wit>")` drop function per dropped resource
+     (which the slice-2 composer wires). Soundness over completeness: a handle
+     whose use can't be proven non-consuming (anything but a `borrow`-parameter
+     call argument) is treated as moved and left for its consumer — leaking is
+     safe, a double drop is not; `borrow R` is never dropped. The pass is
+     idempotent (the diff oracle / multi-backend compiles re-run `LowerWith`).
+     Gated by `internal/ir/resource_drop_test.go` (synthesis, move-skip,
+     idempotency) and the e2e `TestExternResourceHandleAutoDrop` (a program that
+     declares NO drop, yet the emitted core carries `[resource-drop]pollable`
+     and the component releases the pollable under real WASI). **Self-host
+     port** is the immediate next step: the self-host erases handle types to i32
+     at parse and has no IR / defer machinery, so auto-drop there needs handle
+     info threaded through `wasm.fern` plus drop emission at every return — a
+     focused but non-trivial follow-up.
 5. **P6 — arbitrary exports**: bind a Fern function to a world export (beyond
    `cli/run` / `incoming-handler`) and lift it.
 
