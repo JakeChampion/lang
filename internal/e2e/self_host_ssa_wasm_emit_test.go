@@ -19,12 +19,13 @@ import (
 // SSA IR (after x86-64 and arm64).
 //
 // Scope mirrors ssa_wasm.fern's subset: the integer ops (const / copy /
-// binary / unary / call / phi over ret / br / brif) plus the heap (alloc /
+// binary / unary / call / phi over ret / br / brif), the heap (alloc /
 // load_elem / store_elem) — arrays, strings, structs, tuples, methods,
-// i32 maps, struct-union match, push / slice. String concat / equality,
-// I/O, and escaping closures fall back to wasm.fern and are excluded here.
-// The cases are a subset of TestSelfHostSSAEmitX86_64's matrix that stays in
-// that subset, with all wanted values < 126 (wasmtime's WASI exit range).
+// i32 maps, struct-union match, push / slice — and string build / equality
+// (concat / streq). print (newline semantics) and escaping closures fall
+// back to wasm.fern and are excluded here. The cases are a subset of
+// TestSelfHostSSAEmitX86_64's matrix that stays in that subset, with all
+// wanted values < 126 (wasmtime's WASI exit range).
 func TestSelfHostSSAEmitWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host SSA→wasm e2e")
@@ -121,6 +122,14 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		// i32-keyed maps (open-addressing helpers built from heap + call ops).
 		{"map-literal-get", "function main(): i32 { var m = Map { 1: 40, 2: 50, 3: 60 }; return m.get_or(2, 0) + m.get_or(9, 7) + m.len(); }", 60},
 		{"map-iter-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; for (k, v) in m { s = s + k + v; } return s; }", 33},
+		// String build (concat) + equality (streq) via the runtime helpers.
+		{"concat-len", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; var c = a + b; return c.len(); }", 6},
+		{"concat-content", "function main(): i32 { var c = \"ab\" + \"cd\"; if (c == \"abcd\") { return 1; } return 0; }", 1},
+		{"concat-chained", "function main(): i32 { var s = \"a\" + \"b\" + \"c\" + \"de\"; return s.len(); }", 5},
+		{"streq-dispatch", "function kind(s: string): i32 { if (s == \"add\") { return 1; } if (s == \"sub\") { return 2; } return 0; } function main(): i32 { return kind(\"sub\") + 10 * kind(\"add\"); }", 12},
+		{"streq-content-key", "function main(): i32 { var k = \"fo\" + \"o\"; if (k == \"foo\") { return 7; } return 0; }", 7},
+		{"call-result-string", "function greet(): string { return \"hello\"; } function main(): i32 { return greet().len() + (greet() + \"!\").len(); }", 11},
+		{"string-array-concat", "function main(): i32 { var a = [\"foo\", \"bar\"]; var c = a[0] + a[1]; return c.len(); }", 6},
 	}
 
 	for _, tc := range cases {
