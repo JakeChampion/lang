@@ -885,8 +885,29 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")
 			helpers.add("cabi_realloc")
+		case ex.ResultRecord != nil:
+			// record result (P4c): a multi-field record flattens to > 1 core
+			// value, so the canonical ABI returns it indirectly — the raw import
+			// gains a trailing return-area pointer and returns nothing. The
+			// wrapper reads each field from the area and materializes a Fern
+			// struct (rc header + field stores), returning its pointer.
+			rawName := ex.Name + "$import"
+			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: []byte{encode.ValtypeI32},
+				body:    buildExternRecordResultWrapper(len(ex.Params), rawName, ex.ResultRecord),
+			}
+			helpers.add(ex.Name)
+			helpers.add("__fern_alloc")
+			helpers.add("cabi_realloc")
 		default:
-			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, and numeric-array (u8[]/i32[]/f64[]/…) results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
+			if _, isStruct := ret.(ast.StructType); isStruct {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): record result (type %s) is not lowerable yet — it must have 2..%d fields, each a 32-/64-bit integer or float (P4c)", ex.Name, ex.Iface, ex.WITName, ret, 16)
+			}
+			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), and record results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 		}
 	}
 	return specs, wrappers, nil
