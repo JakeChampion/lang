@@ -243,6 +243,45 @@ function x86_gas_atoi(tok: string): i32 {
     return v;
 }
 
+// x86_gas_atoi64 parses a signed 64-bit integer token (decimal or `0x…`
+// hex, optional `$` sigil and `-`), for movabsq's imm64. Two's-complement
+// wraps give the right bits for INT64_MIN.
+function x86_gas_atoi64(tok: string): i64 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 36) { // '$'
+        s = s[1:s.len()];
+    }
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    }
+    var v: i64 = 0;
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + (d as i64); }
+            i = i + 1;
+        }
+    } else {
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            if (c >= 48 && c <= 57) { v = v * 10 + ((c - 48) as i64); }
+            i = i + 1;
+        }
+    }
+    if (neg) {
+        return 0 - v;
+    }
+    return v;
+}
+
 // x86_gas_parse_mem parses a memory operand `disp(%base)` / `(%base)` /
 // `disp(%base,%index,scale)` / `sym(%rip)`.
 function x86_gas_parse_mem(op: string): GasMem {
@@ -432,6 +471,13 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "jl") { return x86_jcc_label(a, x86_cc_l(), rest); }
     if (mnem == "jle") { return x86_jcc_label(a, x86_cc_le(), rest); }
     if (mnem == "jg") { return x86_jcc_label(a, x86_cc_g(), rest); }
+    if (mnem == "jb") { return x86_jcc_label(a, x86_cc_b(), rest); }
+    if (mnem == "jae" || mnem == "jnc") { return x86_jcc_label(a, x86_cc_ae(), rest); }
+    if (mnem == "jbe") { return x86_jcc_label(a, x86_cc_be(), rest); }
+    if (mnem == "ja") { return x86_jcc_label(a, x86_cc_a(), rest); }
+    if (mnem == "js") { return x86_jcc_label(a, x86_cc_s(), rest); }
+    if (mnem == "jns") { return x86_jcc_label(a, x86_cc_ns(), rest); }
+    if (mnem == "jp") { return x86_jcc_label(a, x86_cc_p(), rest); }
     if (mnem == "call") { return x86_call_label(a, rest); }
     // one-operand: push/pop take a register or a memory operand
     if (mnem == "pushq") {
@@ -488,6 +534,7 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
     }
     if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
+    if (mnem == "movabsq") { a.code = x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)); return a; }
     if (mnem == "addq") { return x86_gas_alu(a, 0, src, dst); }
     if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
     if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }

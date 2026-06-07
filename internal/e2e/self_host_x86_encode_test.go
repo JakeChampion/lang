@@ -431,6 +431,21 @@ function main(): i32 {
     if (so.len() != 5 || so[0] != 104 || so[1] != 0 || so[4] != 0) { return 75; }
     var sp2: i32[] = x86_push_imm32([], 42);
     if (sp2[0] != 104 || sp2[1] != 42) { return 76; }
+    // movabsq (slice 2p): movabs %rax, 0x4000000000000000 (4611686018427387904)
+    var mab: i64 = 4611686018427387904;
+    var sq: i32[] = x86_movabsq([], x86_rax(), mab);
+    // 48 B8 00 00 00 00 00 00 00 40
+    if (sq.len() != 10 || sq[0] != 72 || sq[1] != 184 || sq[9] != 64) { return 77; }
+    if (sq[2] != 0 || sq[8] != 0) { return 78; }
+    // movabs %r8, 1 -> 49 B8 01 00.. (REX.W|B)
+    var one64: i64 = 1;
+    var sr: i32[] = x86_movabsq([], 8, one64);
+    if (sr[0] != 73 || sr[1] != 184 || sr[2] != 1) { return 79; }
+    // new jcc cc codes feed the same 0F 80+cc encoder: js rel=0 -> 0F 88 00*4.
+    var sjs: i32[] = x86_jcc_rel32([], x86_cc_s(), 0);
+    if (sjs.len() != 6 || sjs[0] != 15 || sjs[1] != 136) { return 80; }
+    var sja: i32[] = x86_jcc_rel32([], x86_cc_a(), 0); // 0F 87
+    if (sja[1] != 135) { return 81; }
     return 0;
 }
 `

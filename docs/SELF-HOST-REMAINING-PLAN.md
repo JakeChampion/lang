@@ -1032,9 +1032,22 @@ smallest → largest:
     ops) so the Go-built CLI can import them; or (b) build `fern.fern`
     itself via the self-host backend. Until then the capstone test is the
     end-to-end proof, and the CLI keeps emitting `.s` text.
-  - ⬜ remaining: the x87 / rounding float ops (`fldl`/`fstpl`, `roundsd`,
-    `xorpd`) + `movabsq` (64-bit/hex immediates) for the float math
-    builtins, more capstone cases (structs), and the CLI wiring above.
+  - ✅ **slice 2p — movabsq + extra jCC (runtime-batch part 1)**. Probing a
+    `struct` program showed `asm.fern` emits its full heap/alloc/memcpy/map
+    runtime inline, needing ~12 more instruction forms. First batch:
+    `movabsq $imm64` (`REX.W B8+rd io`, with an i64/hex/`-` literal parser
+    `x86_gas_atoi64`) and the conditional jumps `js`/`jns`/`ja`/`jae`/`jb`/
+    `jbe`/`jp` (new `x86_cc_*` codes feeding the existing jcc encoder).
+    Byte-checked vs `as`/objdump.
+  - 🔧 **runtime batch, remaining (parts 2–3)** — needed before a heap
+    program (`struct`/array/map) assembles: 32-bit ALU (`movl` reg-reg /
+    load / store, `addl`/`cmpl`/`andl $imm`, `shrl $imm`), `testb`,
+    `cmovl`, `movslq`/`movzwq` (extends), then `rep movsb`/`rep stosb` +
+    `cld` (memcpy/memset) and `xorpd`. Once these land, add struct/array
+    capstone cases — the milestone is assembling arbitrary `asm.fern`
+    output (eventually the compiler's own → a native fixpoint).
+  - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
+    transcendental math builtins, and the CLI wiring (blocked above).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
