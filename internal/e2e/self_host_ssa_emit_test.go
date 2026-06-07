@@ -168,6 +168,11 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"slice-empty", "function main(): i32 { var a = [7, 8, 9]; var b = a[0:0]; return b.len() + a[1]; }", 8},
 		{"slice-string-eq", "function main(): i32 { var s = \"hello\"; if (s[1:4] == \"ell\") { return 7; } return 0; }", 7},
 		{"slice-string-len", "function main(): i32 { var s = \"hello world\"; var a = s[0:5]; var b = s[6:11]; return a.len() + b.len(); }", 10},
+		// Open-ended high bound `x[lo:]` — the parser desugars the omitted
+		// end to `x.len()`, so SSA build_func lowers it like any slice.
+		{"slice-open-array", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[2:]; return b[0] + b[1] + b[2] + b.len(); }", 123},
+		{"slice-open-string-eq", "function main(): i32 { var s = \"as_f64\"; if (s[3:] == \"f64\") { return 7; } return 0; }", 7},
+		{"slice-open-string-len", "function main(): i32 { var s = \"hello world\"; return s[6:].len(); }", 5},
 		// Indexed assignment `arr[i] = v` (parser desugar → __set_index →
 		// store_elem): constant index, computed RHS, loop-fill, swap, and
 		// compound `+=`.

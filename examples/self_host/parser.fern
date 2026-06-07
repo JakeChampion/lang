@@ -662,6 +662,18 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             p = idx.par;
             if (p.peek_punct() == ":") {
                 p = p.advance();
+                // Open-ended high bound `a[lo:]` — the end defaults to the
+                // source length, mirroring the Go parser's nil `High`. We
+                // synthesise `base.len()` inline (no new Expr-typed local,
+                // which the checker mis-resolves in this nested scope) so
+                // every downstream consumer — checker, the three AST
+                // emitters, and SSA build_func — sees a real i32 end rather
+                // than the `ExprUnknown` placeholder they each mistranslate.
+                if (p.peek_punct() == "]") {
+                    p = p.advance();
+                    base = e_slice(base, idx.expr, e_call(e_field_access(base, "len"), []));
+                    continue;
+                }
                 var end = parse_expr(p);
                 p = end.par;
                 if (p.peek_punct() != "]") {
@@ -5397,6 +5409,42 @@ function main(): i32 {
             }
         },
         _ => { return 655; }
+    }
+
+    // Open-ended slice `s[1:]` — the omitted high bound desugars to
+    // `s.len()`, so sl.end is a zero-arg call of `s.len` (mirrors the
+    // Go parser's nil High → length default).
+    var srcOS: string = "var t = s[1:]; return 0;";
+    var progOS: Stmt[] = parse_program(lexer.tokenize(srcOS));
+    match (progOS[0]) {
+        StmtVar(v) => {
+            match (v.init) {
+                ExprSlice(sl) => {
+                    match (sl.start) {
+                        ExprNumber(n) => { if (n.text != "1") { return 656; } },
+                        _ => { return 657; }
+                    }
+                    match (sl.end) {
+                        ExprCall(c) => {
+                            if (c.args.len() != 0) { return 658; }
+                            match (c.callee) {
+                                ExprFieldAccess(fa) => {
+                                    if (fa.field != "len") { return 659; }
+                                    match (fa.obj) {
+                                        ExprIdent(id) => { if (id.name != "s") { return 660; } },
+                                        _ => { return 661; }
+                                    }
+                                },
+                                _ => { return 662; }
+                            }
+                        },
+                        _ => { return 663; }
+                    }
+                },
+                _ => { return 664; }
+            }
+        },
+        _ => { return 665; }
     }
 
     // parse_module: two function decls, no top-level stmts.
