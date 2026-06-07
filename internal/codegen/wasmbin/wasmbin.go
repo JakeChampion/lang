@@ -183,6 +183,18 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		helpers.add("__bytes_to_lang_string")
 		helpers.add("__http_entry")
 	}
+	// P6: a string-result `@export` function's wrapper SSO-normalizes the Fern
+	// (data,len) pair into a heap return area, so pin emitStrNormalize's deps
+	// (docs/WIT-BRING-YOUR-OWN.md).
+	for _, exp := range prog.Exports {
+		for _, fn := range prog.Funcs {
+			if fn.Name == exp.Name && isStringType(fn.ReturnType) {
+				helpers.add("__fern_alloc")
+				helpers.add("__fern_str_len")
+				helpers.add("__fern_str_byte")
+			}
+		}
+	}
 	// cabi_realloc is the canonical-ABI allocator the host
 	// calls back into for `list<u8>` / variable-size return
 	// materialisation. Preview-2 wrapping (signalled by
@@ -751,10 +763,40 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// under its plain name above; this adds the WIT-id alias the composer keys
 	// off. Additive — a program with no `@export` emits nothing here, so its
 	// bytes are unchanged.
+	exportFuncByName := map[string]*ir.Func{}
+	for _, fn := range prog.Funcs {
+		exportFuncByName[fn.Name] = fn
+	}
 	for _, exp := range prog.Exports {
 		idx, ok := funcIdx[exp.Name]
 		if !ok {
 			return nil, fmt.Errorf("wasmbin: @export %q: function not found", exp.Name)
+		}
+		fn := exportFuncByName[exp.Name]
+		// A string-RESULT export needs the canonical return-area shape: the Fern
+		// function returns a two-word (data,len) pair, but the world-driven
+		// composer's memory lift expects a core func returning a single i32
+		// pointer to [data,len]. Surface a wrapper that repacks it; scalar-result
+		// exports surface the function directly. (String/list PARAMS are P6's
+		// next sub-slice and are rejected by the composer for now.)
+		if fn != nil && isStringType(fn.ReturnType) {
+			if _, ok := funcIdx["__fern_alloc"]; !ok {
+				return nil, fmt.Errorf("wasmbin: @export %q: string result needs __fern_alloc (not pinned)", exp.Name)
+			}
+			pvts, err := paramValtypes(fn.Params)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			wrapTIdx := addType(pvts, []byte{encode.ValtypeI32})
+			wrapFuncIdx := nextFuncIdx
+			nextFuncIdx++
+			body, locals := buildExportStringResultWrapper(funcIdx, idx, len(pvts))
+			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
+			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, wrapFuncIdx)
+			continue
 		}
 		m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)

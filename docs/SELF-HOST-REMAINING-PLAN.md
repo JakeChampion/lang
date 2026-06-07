@@ -904,6 +904,26 @@ smallest → largest:
   into the emitter** — like `elf.fern`, the next slice connects the arm64
   assembler's bytes to it and writes the file (replacing the `clang`/`ld64`
   shell-out).
+- 🔧 **arm64 assembler** — AArch64 instruction text/forms → machine-code
+  bytes, mirroring `internal/native/arm64/arm64.go`. The arm64 counterpart
+  of the x86-64 assembler below; built up in slices.
+  - ✅ **slice 3a — encoding primitives + `exit(N)` subset**:
+    `examples/self_host/arm64_encode.fern` (`i32[]` byte-buffer convention;
+    fixed-width 32-bit little-endian words). Encoders: the move-wide family
+    (`movz`/`movk`/`movn`), `add`/`sub` immediate + register, `mov` reg
+    (`orr Xd, XZR, Xm`), `svc`, `ret` — each byte-checked against the Go
+    reference (pinned to llvm-mc) via `TestSelfHostArm64Encode`. Gated
+    end-to-end by **`TestSelfHostArm64DarwinMachOExitRuns`**, the first
+    arm64-darwin proof with **no external tool**: a Fern program assembles
+    `exit(42)` (`movz x0,#42` / `movz x16,#1` / `svc #0x80`) to machine
+    code and wraps it with `macho.fern` into an ad-hoc-signed static
+    Mach-O; the test asserts `debug/macho` parses it as an arm64
+    `MH_EXECUTE` (structural on the Linux box) and, on Apple Silicon,
+    executes it and checks exit 42 — the whole chain (Fern encoder →
+    Mach-O writer + signature → kernel → `svc`) with no `clang`/`ld64`/
+    `codesign`. Forward references, named labels, and the wider
+    instruction surface (loads/stores, branches, `cmp`, the `@PAGE`/
+    `@PAGEOFF` literal addressing the full backend needs) are later slices.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
@@ -1084,14 +1104,31 @@ smallest → largest:
     zeroing), plus a 32-bit register parser. With slice 2p this covers the
     **full instruction surface `asm.fern`'s heap/alloc/memcpy/map runtime
     emits**. Byte-checked vs `as`/objdump (13 new cases).
-  - 🔧 **capstone harness scaling — struct/array run blocked.** The
-    encoders are proven, but the capstone embeds the program's emitted asm
-    as a Fern *string literal* in the driver, and a heap program's asm is
-    the whole runtime (huge) — compiling that driver OOMs the self-host's
-    bump heap (exit 137). Fix: have the driver `read_file` the asm at
-    runtime (a small constant driver) under `wasmtime --dir`, instead of
-    embedding it. Then struct/array/map capstone cases (and eventually the
-    compiler's own source) can run natively.
+  - ✅ **slice 2r — read_file capstone harness**. The capstone driver now
+    `read_file`s the asm from a fixed `in.s` at runtime (run under
+    `wasmtime --dir`) instead of embedding it as a string literal, so the
+    driver compiles **once** and the (previously OOMing) embedded-asm size
+    no longer bloats it. All seven small-program cases run through it.
+    Getting there flushed out **three pre-existing self-host wasm bugs**
+    (all in `wasm.fern`/runtime, none in the assembler), now documented for
+    follow-up:
+      1. **match-on-`Result`, second arm** — `Ok(s)=>…; Err(e)=>…` (or any
+         second arm, incl. `_`) emits an undeclared local (`local.get $e`,
+         building an `Err` box) in `emit_module`'s WAT; `Option` match is
+         fine. The driver sidesteps it with a single-arm `Ok` match.
+      2. **`args()` alignment** — `__fern_args` does a layout-dependent
+         unaligned i32 read that traps under wasmtime ("Pointer not aligned
+         to 4"). The driver sidesteps it by reading a fixed path, not argv.
+      3. **`emit_module` heap doesn't grow** — `__fern_alloc` traps at the
+         initial 16 pages (1 MB) instead of `memory.grow`ing (the grow
+         landed only on the binary-encoder path, slice 4j). With no GC, the
+         assembler's transient allocations exhaust 1 MB when assembling a
+         heap program's ~32 KB asm → OOB trap.
+  - 🔧 **struct/array/map capstone — gated on (3)**. The instruction
+    encoders they need are byte-verified (`TestSelfHostX86Encode`), but the
+    end-to-end native run needs the `emit_module` allocator to grow (bug 3)
+    so the 32 KB asm assembles; then the heap-program cases (and ultimately
+    the compiler's own source → a native fixpoint) light up.
   - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
     transcendental math builtins, and the CLI wiring (blocked above).
 

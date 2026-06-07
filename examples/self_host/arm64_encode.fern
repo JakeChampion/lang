@@ -1,0 +1,149 @@
+// examples/self_host/arm64_encode.fern — a self-hosted AArch64 (arm64)
+// machine-code encoder: one function per instruction form, each appending
+// the 4-byte fixed-width little-endian encoding to an `i32[]` byte buffer.
+// It is the arm64 counterpart of x86_encode.fern and the assembler half of
+// the arm64-darwin native-binary path (the container half is macho.fern),
+// mirroring the Go reference internal/native/arm64/arm64.go.
+//
+// AArch64 instructions are all exactly 32 bits, little-endian. Each
+// encoder is pinned byte-for-byte against the Go reference (itself pinned
+// against `llvm-mc -triple=aarch64 --show-encoding`). This is a tiny
+// starting subset — enough to assemble an `exit(N)` program end-to-end
+// (MOVZ + SVC) and small integer arithmetic — so the Mach-O writer and the
+// encode -> wrap -> run pipeline can be proven before the full instruction
+// surface lands.
+//
+// Conventions (matching x86_encode.fern / elf.fern):
+//   * A byte buffer is an `i32[]` of values in 0..255; each encoder appends
+//     to it and returns the (possibly grown) buffer (`buf = f(buf, …)`).
+//   * Instruction *word* helpers (`arm64_*_word`) return the 32-bit
+//     encoding in an i64 (so the 0xD2…/0xF2…/0xAA… bases stay positive);
+//     the append wrappers thread the byte buffer.
+//   * This module is import-free so the native emitter can `import
+//     "./arm64_encode"` and the unit test can concatenate it with a driver.
+
+// ---- register name helpers (5-bit register numbers) ----
+function arm64_x0(): i32 { return 0; }
+function arm64_x1(): i32 { return 1; }
+function arm64_x2(): i32 { return 2; }
+function arm64_x16(): i32 { return 16; }
+function arm64_lr(): i32 { return 30; } // x30, the link register
+function arm64_xzr(): i32 { return 31; }
+
+// ---- byte emitter ----
+
+// arm64_le32 appends a 32-bit instruction word (held in an i64),
+// little-endian.
+function arm64_le32(buf: i32[], v: i64): i32[] {
+    buf = buf.push((v & 255) as i32);
+    buf = buf.push(((v >> 8) & 255) as i32);
+    buf = buf.push(((v >> 16) & 255) as i32);
+    buf = buf.push(((v >> 24) & 255) as i32);
+    return buf;
+}
+
+// ---- move-wide family ----
+
+// arm64_movz_word encodes `movz Xd, #imm16, lsl #shift` (move-wide-zero):
+// load imm16 into the given 16-bit slot of Xd, zeroing the rest. shift
+// must be one of 0, 16, 32, 48.
+//   sf=1 opc=10 100101 hw(2) imm16(16) Rd(5) -> 0xD2800000 | hw<<21 | imm16<<5 | Rd
+function arm64_movz_word(rd: i32, imm16: i32, shift: i32): i64 {
+    var hw: i64 = ((shift / 16) & 3) as i64;
+    return 0xd2800000 | (hw << 21) | (((imm16 & 0xffff) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_movk_word encodes `movk Xd, #imm16, lsl #shift` (move-wide-keep):
+// write imm16 into one 16-bit slot of Xd, leaving the rest unchanged.
+//   sf=1 opc=11 -> base 0xF2800000.
+function arm64_movk_word(rd: i32, imm16: i32, shift: i32): i64 {
+    var hw: i64 = ((shift / 16) & 3) as i64;
+    return 0xf2800000 | (hw << 21) | (((imm16 & 0xffff) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_movn_word encodes `movn Xd, #imm16, lsl #shift` (move-wide-not):
+// load the bitwise complement of (imm16 << shift) into Xd.
+//   sf=1 opc=00 -> base 0x92800000.
+function arm64_movn_word(rd: i32, imm16: i32, shift: i32): i64 {
+    var hw: i64 = ((shift / 16) & 3) as i64;
+    return 0x92800000 | (hw << 21) | (((imm16 & 0xffff) as i64) << 5) | ((rd & 31) as i64);
+}
+
+function arm64_movz(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
+    return arm64_le32(buf, arm64_movz_word(rd, imm16, shift));
+}
+function arm64_movk(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
+    return arm64_le32(buf, arm64_movk_word(rd, imm16, shift));
+}
+function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
+    return arm64_le32(buf, arm64_movn_word(rd, imm16, shift));
+}
+
+// ---- add / sub (immediate) ----
+
+// arm64_addimm_word encodes `add Xd, Xn, #imm12` (64-bit, no lsl #12).
+//   sf=1 op=0 S=0 100010 sh=0 imm12 Rn Rd -> 0x91000000 | imm12<<10 | Rn<<5 | Rd
+function arm64_addimm_word(rd: i32, rn: i32, imm12: i32): i64 {
+    return 0x91000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_subimm_word encodes `sub Xd, Xn, #imm12` (64-bit) — base 0xD1000000.
+function arm64_subimm_word(rd: i32, rn: i32, imm12: i32): i64 {
+    return 0xd1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+function arm64_addimm(buf: i32[], rd: i32, rn: i32, imm12: i32): i32[] {
+    return arm64_le32(buf, arm64_addimm_word(rd, rn, imm12));
+}
+function arm64_subimm(buf: i32[], rd: i32, rn: i32, imm12: i32): i32[] {
+    return arm64_le32(buf, arm64_subimm_word(rd, rn, imm12));
+}
+
+// ---- add / sub / mov (register) ----
+
+// arm64_addreg_word encodes `add Xd, Xn, Xm` (shifted-register, zero shift).
+//   sf=1 op=0 S=0 01011 -> 0x8B000000 | Rm<<16 | Rn<<5 | Rd
+function arm64_addreg_word(rd: i32, rn: i32, rm: i32): i64 {
+    return 0x8b000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_subreg_word encodes `sub Xd, Xn, Xm` -> base 0xCB000000.
+function arm64_subreg_word(rd: i32, rn: i32, rm: i32): i64 {
+    return 0xcb000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_movreg_word encodes `mov Xd, Xm` — AArch64 spells it
+// `orr Xd, XZR, Xm` -> 0xAA000000 | Rm<<16 | 31<<5 | Rd.
+function arm64_movreg_word(rd: i32, rm: i32): i64 {
+    return 0xaa000000 | (((rm & 31) as i64) << 16) | (31 << 5) | ((rd & 31) as i64);
+}
+
+function arm64_addreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_addreg_word(rd, rn, rm));
+}
+function arm64_subreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_subreg_word(rd, rn, rm));
+}
+function arm64_movreg(buf: i32[], rd: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_movreg_word(rd, rm));
+}
+
+// ---- system / control ----
+
+// arm64_svc_word encodes `svc #imm16` -> 0xD4000001 | imm16<<5.
+// The Darwin syscall trap is `svc #0x80`.
+function arm64_svc_word(imm16: i32): i64 {
+    return 0xd4000001 | (((imm16 & 0xffff) as i64) << 5);
+}
+
+// arm64_ret_word encodes `ret Xn` (default x30) -> 0xD65F0000 | Rn<<5.
+function arm64_ret_word(rn: i32): i64 {
+    return 0xd65f0000 | (((rn & 31) as i64) << 5);
+}
+
+function arm64_svc(buf: i32[], imm16: i32): i32[] {
+    return arm64_le32(buf, arm64_svc_word(imm16));
+}
+function arm64_ret(buf: i32[], rn: i32): i32[] {
+    return arm64_le32(buf, arm64_ret_word(rn));
+}

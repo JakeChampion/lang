@@ -39,7 +39,7 @@ function row_to_object(headers: string[], row: string[]): JsonValue {
   var m: Map[string, JsonValue] = map_new(headers.len());
   var i: i32 = 0;
   while (i < headers.len() && i < row.len()) {
-    m.set(headers[i].trim(), JString(row[i].trim()));
+    m = m.insert(headers[i].trim(), JString(row[i].trim()));
     i = i + 1;
   }
   return JObject(m);
