@@ -187,6 +187,35 @@ function x86_gas_parse_f64(s: string): f64 {
     return val;
 }
 
+// x86_gas_ascii appends the bytes of a `.ascii "…"` directive's string to
+// `buf`, processing the common C escapes (\n \t \r \0 \\ \"). The string
+// is the part between the first `"` and the closing unescaped `"`.
+function x86_gas_ascii(buf: i32[], line: string): i32[] {
+    var q1: i32 = line.index_of("\"");
+    if (q1 < 0) {
+        return buf;
+    }
+    var i: i32 = q1 + 1;
+    while (i < line.len()) {
+        var c: i32 = line[i];
+        if (c == 34) { // closing '"'
+            return buf;
+        }
+        if (c == 92 && i + 1 < line.len()) { // backslash escape
+            i = i + 1;
+            var e: i32 = line[i];
+            if (e == 110) { c = 10; }        // \n
+            else { if (e == 116) { c = 9; }  // \t
+            else { if (e == 114) { c = 13; } // \r
+            else { if (e == 48) { c = 0; }   // \0
+            else { c = e; } } } }            // \\ \" and any other -> literal
+        }
+        buf = buf.push(c & 255);
+        i = i + 1;
+    }
+    return buf;
+}
+
 // x86_gas_atoi parses a decimal integer token, tolerating a leading `$`
 // (immediate sigil) and a leading `-`.
 function x86_gas_atoi(tok: string): i32 {
@@ -406,11 +435,15 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "call") { return x86_call_label(a, rest); }
     // one-operand: push/pop take a register or a memory operand
     if (mnem == "pushq") {
-        if (rest.contains("(")) {
-            var pm: GasMem = x86_gas_parse_mem(rest);
-            a.code = x86_push_mem(a.code, pm.base, pm.has_index, pm.index, pm.scale, pm.disp);
+        if (rest.len() > 0 && rest[0] == 36) { // $imm
+            a.code = x86_push_imm32(a.code, x86_gas_atoi(rest));
         } else {
-            a.code = x86_push_r64(a.code, x86_gas_reg(rest));
+            if (rest.contains("(")) {
+                var pm: GasMem = x86_gas_parse_mem(rest);
+                a.code = x86_push_mem(a.code, pm.base, pm.has_index, pm.index, pm.scale, pm.disp);
+            } else {
+                a.code = x86_push_r64(a.code, x86_gas_reg(rest));
+            }
         }
         return a;
     }
@@ -557,6 +590,10 @@ function x86_gas_assemble(src: string): X86Asm {
                         if (line.starts_with(".double")) {
                             var fv: f64 = x86_gas_parse_f64(x86_gas_trim(line[8:line.len()]));
                             a.rodata = x86_le64_i64(a.rodata, f64_bits(fv));
+                        } else {
+                            if (line.starts_with(".ascii")) {
+                                a.rodata = x86_gas_ascii(a.rodata, line);
+                            }
                         }
                         // .globl / .type / .size: ignored
                     }

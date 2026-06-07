@@ -426,6 +426,11 @@ function main(): i32 {
     var sm2: i64 = 255;
     var sn: i32[] = x86_le64_i64([], sm2);
     if (sn.len() != 8 || sn[0] != 255 || sn[1] != 0 || sn[7] != 0) { return 74; }
+    // push $imm (slice 2o): push $0 -> 68 00 00 00 00; push $42 -> 68 2A ...
+    var so: i32[] = x86_push_imm32([], 0);
+    if (so.len() != 5 || so[0] != 104 || so[1] != 0 || so[4] != 0) { return 75; }
+    var sp2: i32[] = x86_push_imm32([], 42);
+    if (sp2[0] != 104 || sp2[1] != 42) { return 76; }
     return 0;
 }
 `

@@ -1011,11 +1011,30 @@ smallest → largest:
     The GAS front-end also learned **same-line `label: directive`**
     (asm.fern emits `.L0: .double 84.0` on one line). `TestSelfHostX86Capstone`
     gains a `float` case (`84.0 / 2.0` → 42) that runs natively.
+  - ✅ **slice 2o — strings (`.ascii` + `push $imm`)**. A `write("…")`
+    program surfaced two gaps: the `.ascii "…"` directive (string bytes in
+    `.rodata`, with the common C escapes) and `push $imm` (`0x68 id`).
+    Added `x86_push_imm32` + `x86_gas_ascii`. `TestSelfHostX86Capstone`
+    gains a `string` case (`write("hi!")`) that asserts **stdout** "hi!"
+    (not just exit code) from the self-assembled native binary.
+  - 🔧 **CLI wiring — blocked by the Go-vs-self-host semantic gap.** The
+    natural finish line is `fern -target x86-64-elf -o OUT` emitting an ELF
+    directly. Attempted (import `x86_encode`/`x86_gas`/`elf` into
+    `fern.fern`, dispatch a new target through `x86_gas_assemble` +
+    `elf`), but **`fern.fern` is built with the Go backend** in the CLI
+    test/bootstrap, and the Go checker rejects these modules: they use
+    **mutable struct fields** (`a.code = …`, which Go requires rebuilt as
+    `T { ...old, … }`) and **string-method syntax** (`s.contains(…)`,
+    `s.index_of(…)`) the Go checker doesn't dispatch. Both are accepted by
+    the self-host **wasm** backend (which is why the capstone, compiled via
+    `wasm_run`, works). So the path is one of: (a) make the three modules
+    Go-checker-compatible (immutable-field rebuilds + Go-supported string
+    ops) so the Go-built CLI can import them; or (b) build `fern.fern`
+    itself via the self-host backend. Until then the capstone test is the
+    end-to-end proof, and the CLI keeps emitting `.s` text.
   - ⬜ remaining: the x87 / rounding float ops (`fldl`/`fstpl`, `roundsd`,
     `xorpd`) + `movabsq` (64-bit/hex immediates) for the float math
-    builtins, more capstone cases (strings / structs), and finally wiring
-    the front-end into the `fern -target x86-64 -o` driver (so the CLI
-    itself emits an ELF with no external tool).
+    builtins, more capstone cases (structs), and the CLI wiring above.
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

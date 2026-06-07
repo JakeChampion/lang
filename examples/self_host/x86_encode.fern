@@ -118,6 +118,12 @@ function x86_push_r64(buf: i32[], reg: i32): i32[] {
     return buf.push(80 + (reg & 7)); // 0x50 + rd
 }
 
+// x86_push_imm32: `push $imm` (0x68 id) — push a sign-extended imm32.
+function x86_push_imm32(buf: i32[], imm: i32): i32[] {
+    buf = buf.push(104); // 0x68
+    return x86_le32(buf, imm);
+}
+
 // x86_pop_r64: `pop <reg>` — 0x58+rd (REX.B for r8..r15).
 function x86_pop_r64(buf: i32[], reg: i32): i32[] {
     if (reg >= 8) {

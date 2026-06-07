@@ -229,6 +229,12 @@ function main(): i32 {
     if (fv < 84.4 || fv > 84.6) { return 17; }
     var fz: f64 = x86_gas_parse_f64("2.0");
     if (fz < 1.9 || fz > 2.1) { return 18; }
+    // .ascii byte extraction (slice 2o): "hi!" -> 104,105,33.
+    var ab: i32[] = x86_gas_ascii([], ".ascii \"hi!\"");
+    if (ab.len() != 3 || ab[0] != 104 || ab[1] != 105 || ab[2] != 33) { return 19; }
+    // escape handling: "\n\t" -> 10, 9.
+    var ac: i32[] = x86_gas_ascii([], ".ascii \"\\n\\t\"");
+    if (ac.len() != 2 || ac[0] != 10 || ac[1] != 9) { return 20; }
     return 0;
 }
 `
