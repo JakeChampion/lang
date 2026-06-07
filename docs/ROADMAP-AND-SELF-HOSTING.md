@@ -1333,9 +1333,13 @@ the wasm self-test harness like the LEB128 / wat_encode slices:
    `internal/native/x86_64/`, incl. the SSE / x87 float paths).
 3. **arm64 assembler** — GAS text → AArch64 bytes (mirror
    `internal/native/arm64/asm.go` / `gas.go`).
-4. **Mach-O writer + ad-hoc signature** — for arm64-darwin (mirror
-   `internal/native/macho/`, incl. `sign.go`; Apple Silicon refuses
-   unsigned binaries).
+4. **Mach-O writer + ad-hoc signature** — `examples/self_host/macho.fern`
+   (**landed**, `TestSelfHostMachO`): the arm64-darwin container half,
+   mirroring `internal/native/macho/` incl. `sign.go`. Static, non-PIE
+   `__PAGEZERO`/`__TEXT`/`__DATA`/`__LINKEDIT` image with an
+   `LC_UNIXTHREAD` entry and a mandatory ad-hoc `LC_CODE_SIGNATURE` (Apple
+   Silicon refuses unsigned binaries). Carries a self-contained SHA-256
+   (no stdlib here) for the CodeDirectory page hashes.
 
 With 1–4 in Fern, the self-host wires `asm.fern` → assembler →
 `elf.fern` → file (and the arm64 / Darwin equivalents), and the

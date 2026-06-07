@@ -868,6 +868,31 @@ smallest → largest:
   `e_type`/`e_machine`, `e_entry` = 0x400078, the single PT_LOAD,
   `p_flags`, sizes, body placement + data alignment) for both the arm64
   R+X and x86-64 R+W+X shapes.
+- ✅ **Mach-O writer + ad-hoc signature** — `examples/self_host/macho.fern`,
+  mirroring `internal/native/macho/` (`macho.go` + `image.go` + `sign.go`).
+  Static, non-PIE arm64-darwin executable: `__PAGEZERO`, an r-x `__TEXT`
+  (header + load commands + `__text`), an optional r/w `__DATA`, and an
+  r `__LINKEDIT` carrying the code signature; execution starts via
+  `LC_UNIXTHREAD` (kernel sets PC, no dyld). The public entry is
+  `macho_static_executable(text, data, ident)`; `macho_text_vaddr` /
+  `macho_data_vaddr` expose the same fixed addresses an `@PAGE`/`@PAGEOFF`
+  assembler must resolve against (the parity of the Go `SegmentAddrs`).
+  Apple Silicon refuses unsigned binaries, so the ad-hoc
+  `CSMAGIC_EMBEDDED_SIGNATURE` SuperBlob + `CSMAGIC_CODEDIRECTORY` is
+  mandatory — its per-4 KiB-page hashes need **SHA-256**, which has no
+  stdlib home yet, so a self-contained FIPS 180-4 implementation
+  (`sha256_bytes`, words carried in `[0, 2^32)` i64s masked with
+  `& 0xffffffff`) lives in the module. Big-endian for the signing blobs,
+  little-endian for the Mach-O header/load-commands; the same
+  `i32[]`-of-0..255 byte-buffer convention as `elf.fern`. Gated by
+  `internal/e2e/self_host_macho_emit_test.go` (`TestSelfHostMachO`),
+  asserting the fixed header + load-command layout (magic, cputype,
+  filetype, `ncmds`/`sizeofcmds`, the segment names, the `LC_UNIXTHREAD`
+  entry pc, the SuperBlob + CodeDirectory magics) for both the no-data and
+  `__DATA` shapes, plus the SHA-256 "abc"/"" test vectors. **Not yet wired
+  into the emitter** — like `elf.fern`, the next slice connects the arm64
+  assembler's bytes to it and writes the file (replacing the `clang`/`ld64`
+  shell-out).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
