@@ -334,10 +334,18 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 		}
 	}
 	needMem := false
+	needRealloc := false
 	for _, wi := range w.ExportedInterfaces() {
 		for _, f := range wi.FuncSigs {
-			if coreExports[wi.Name+"#"+f.Name] && exportNeedsMemory(f.Sig) {
+			if !coreExports[wi.Name+"#"+f.Name] {
+				continue
+			}
+			if exportNeedsMemory(f.Sig) {
 				needMem = true
+			}
+			if exportNeedsRealloc(f.Sig) {
+				needMem = true
+				needRealloc = true
 			}
 		}
 	}
@@ -345,6 +353,12 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 		g.c.aliasMemory(userInst)
 	}
 	var memIdx uint32 // the first (only) aliased core memory
+	var reallocIdx uint32
+	if needRealloc {
+		// A string/list PARAMETER lift uses cabi_realloc to materialise the
+		// incoming bytes in the core's memory; the core exports it.
+		reallocIdx = g.c.aliasReallocFunc(userInst)
+	}
 
 	emitted := 0
 	for _, wi := range w.ExportedInterfaces() {
@@ -353,7 +367,7 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			if !coreExports[coreName] {
 				continue
 			}
-			if err := g.liftExport(userInst, wi.Name, f.Name, coreName, f.Sig, memIdx); err != nil {
+			if err := g.liftExport(userInst, wi.Name, f.Name, coreName, f.Sig, memIdx, reallocIdx); err != nil {
 				return nil, err
 			}
 			emitted++
@@ -384,13 +398,28 @@ func exportNeedsMemory(sig *componenttype.FuncType) bool {
 	return !sig.NamedResults && sig.Result.IsPrim && sig.Result.Prim == cValtypeString
 }
 
+// exportNeedsRealloc reports whether lifting `sig` needs cabi_realloc — true
+// when any parameter is a string/list, which the canonical ABI materialises in
+// the core's memory before the call.
+func exportNeedsRealloc(sig *componenttype.FuncType) bool {
+	if sig == nil {
+		return false
+	}
+	for i := range sig.Params {
+		if sig.Params[i].Ty.IsPrim && sig.Params[i].Ty.Prim == cValtypeString {
+			return true
+		}
+	}
+	return false
+}
+
 // liftExport lifts one world export: alias the surfaced core func, build its
 // component functype from the WIT signature, canon-lift it, and export it as
 // `iface` exposing `witName`. A scalar result uses the no-opts lift; a string
 // result uses the memory lift (the core returns a pointer to the (ptr,len)
 // return area, which the lift reads from `memIdx`). String/list PARAMETERS and
 // other composites are not handled yet.
-func (g *gComposer) liftExport(userInst uint32, iface, witName, coreName string, sig *componenttype.FuncType, memIdx uint32) error {
+func (g *gComposer) liftExport(userInst uint32, iface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32) error {
 	if sig == nil {
 		return fmt.Errorf("component: export %s#%s has no resolved signature", iface, witName)
 	}
@@ -398,13 +427,14 @@ func (g *gComposer) liftExport(userInst uint32, iface, witName, coreName string,
 	coreF := c.aliasCoreFunc(userInst, coreName)
 	var pnames []string
 	var pvals []byte
+	hasStringParam := false
 	for i := range sig.Params {
 		p := sig.Params[i]
 		if !p.Ty.IsPrim {
 			return fmt.Errorf("component: export %s#%s: non-scalar parameter (unsupported in this slice)", iface, witName)
 		}
 		if p.Ty.Prim == cValtypeString {
-			return fmt.Errorf("component: export %s#%s: string parameter (not supported yet — needs the realloc lift)", iface, witName)
+			hasStringParam = true
 		}
 		name := p.Name
 		if name == "" {
@@ -416,15 +446,23 @@ func (g *gComposer) liftExport(userInst uint32, iface, witName, coreName string,
 	if sig.NamedResults || !sig.Result.IsPrim {
 		return fmt.Errorf("component: export %s#%s: non-scalar / multi result (unsupported in this slice)", iface, witName)
 	}
+	hasStringResult := sig.Result.Prim == cValtypeString
 	funcType := c.nType
 	c.buf = PutTypeSectionOneFunc(c.buf, pnames, pvals, sig.Result.Prim)
 	c.nType++
-	if sig.Result.Prim == cValtypeString {
+	switch {
+	case hasStringParam:
+		// A string parameter: the canonical ABI materialises the incoming bytes
+		// in the core's memory via cabi_realloc, then passes (ptr,len) to the
+		// core func. The realloc lift carries both memory + realloc (it also
+		// covers a string result, whose return-area read needs memory).
+		c.buf = PutCanonSectionLiftWithMemoryRealloc(c.buf, coreF, funcType, memIdx, reallocIdx)
+	case hasStringResult:
 		// A string result flattens to (ptr,len) — more than one core value, so
 		// the core func returns a pointer to the [ptr,len] return area, which
 		// the memory lift reads from the core's linear memory.
 		c.buf = PutCanonSectionLiftWithMemory(c.buf, coreF, funcType, memIdx)
-	} else {
+	default:
 		c.buf = PutCanonSectionLiftNoOpts(c.buf, coreF, funcType)
 	}
 	lifted := c.nCFunc
