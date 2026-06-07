@@ -506,11 +506,22 @@ world-driven composer (P2) wires it.
      Fern consumer that `@import`s `greet() -> string` and `write`s it links +
      runs under wasmtime. Additive — the byte-identity composer suite stays
      green.
-   - **Slice 5c (next) — the Fern→canonical wrapper**: a wasmbin wrapper
-     adapting a Fern `@export f(): string` (core `() -> (i32,i32)` pair) to the
-     canonical return-area shape the lift expects, so the export works from Fern
-     source (not just a hand-written core). Then string PARAMS (realloc lift)
-     and the self-host port.
+   - **Slice 5c — string-result export from Fern source. ✅ Done (Go).** The
+     wasmbin Fern→canonical wrapper: a string-returning `@export` function
+     compiles to a core `(params…) -> (i32,i32)` pair, so the export loop now
+     surfaces a wrapper (`buildExportStringResultWrapper`) that forwards the
+     scalar params, calls the user func, **SSO-normalizes** the returned string
+     into a heap buffer (`emitStrNormalize` — short Fern strings pack bytes
+     inline, so the words aren't a raw `(ptr,len)`), and writes the 4-byte
+     aligned `[ptr,len]` return area the memory lift reads; its helpers
+     (`__fern_str_len/byte/alloc`) are pinned for string-result exports.
+     Scalar-result exports surface the function directly (unchanged). Gated by
+     `TestExportStringResultFromFernRunsViaConsumer`: a Fern `@export greet():
+     string { return "hi"; }` reactor composes and a Fern consumer reads `"hi"`
+     under wasmtime — the whole Fern→component→consumer string-export path.
+   - **Slice 5d (next) — string/list PARAMS** (the realloc lift + a wrapper that
+     materialises the incoming bytes), then **the self-host port** of the
+     export wrapper.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
