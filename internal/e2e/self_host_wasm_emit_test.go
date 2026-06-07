@@ -446,6 +446,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-abs", "function main(): i32 { print_int(__abs_f64(-5.0) as i32); return 0; }", 0, "5"},
 		{"f64-to-i64-cast", "function main(): i32 { var x: f64 = 5000000000.0; var r: i64 = x as i64; print_int(r); return 0; }", 0, "5000000000"},
 		{"f64-to-i64-direct-print", "function main(): i32 { print_int(9000000000.0 as i64); return 0; }", 0, "9000000000"},
+		// Un-annotated f64 locals: `var x = 1.5` (no `: f64`) must declare its
+		// wasm local as f64 to match the f64 value stored — the type is inferred
+		// from the initialiser (literal / float arith / negation / `as f64`).
+		// Regression: collect_f64_var_names previously only honoured an explicit
+		// annotation, so an inferred-f64 local was declared i32 and the module
+		// failed to validate (i32 local <- f64.const).
+		{"f64-inferred-unused", "function main(): i32 { var z = 1.5; return 5; }", 5, ""},
+		{"f64-inferred-cast-print", "function main(): i32 { var x = 3.5; print_int(x as i32); return 0; }", 0, "3"},
+		{"f64-inferred-arith", "function main(): i32 { var x = 2.5 + 1.5; print_int(x as i32); return 0; }", 0, "4"},
+		{"f64-inferred-neg", "function main(): i32 { var a = 0.0 - 4.0; print_int(a as i32); return 0; }", 0, "-4"},
+		{"f64-inferred-from-cast", "function main(): i32 { var x = 7 as f64; print_int((x + 0.5) as i32); return 0; }", 0, "7"},
+		{"f64-inferred-reassign", "function main(): i32 { var a = 1.0; a = a * 3.0; print_int(a as i32); return 0; }", 0, "3"},
+		{"f64-inferred-compare", "function main(): i32 { var z = 1.5; if (z > 1.0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 
 		// i32-keyed / i32-valued maps. `Map { k: v }` desugars to
 		// map_new_i32(8).set(...).set(...); methods dispatch to the hash
