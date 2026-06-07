@@ -63,9 +63,26 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   mangling, `arr[i] += y` compound assignment, C-style `enum`
   constants (`Color.Green` → a variant box, reusing struct-union `match`),
   void-function statement calls, short-circuit `&&` / `||`, and nested
-  closures. The full core language is supported. Remaining for
-  wasm is packaging, not language: the `wasi:cli/run` / `wasi:http`
-  component shapes, and binary wasm encoding (it emits WAT text today).
+  closures. The full core language is supported.
+
+  **Update (wasm packaging — now wired into the unified `fern` CLI).** What
+  this section called "remaining for wasm" is largely done:
+  - `fern -target wasm-bin` emits a runnable **binary** `.wasm` (the
+    self-hosted WAT→binary assembler, `watbin.fern`), not WAT text.
+  - `fern -target wasm-component` emits a **Component-Model** `wasi:cli/run`
+    component, auto-selecting the framing from the program's WASI usage:
+    no-I/O, stdout, filesystem (read / write / read+write), random, env,
+    args, clock (wall / monotonic), stderr, exit, and the fs-paired
+    two-category combos (fs+env, fs+args, random+write). Programs whose WASI
+    combination has no wrap yet are rejected with a clear error rather than
+    emitting a broken component. This covers **every wasi:cli/run shape the
+    self-host emit supports**.
+
+    The one wasm shape still missing is **`wasi:http/incoming-handler`**
+    (the native `-target wasi-http`): it needs a new self-host core emitter
+    that lowers the request/response **resource handles** — which builds on
+    the in-progress own/borrow resource-handle work — so it's deferred until
+    that lands.
 
 ---
 
