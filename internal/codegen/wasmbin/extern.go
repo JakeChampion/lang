@@ -162,6 +162,76 @@ func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) 
 // import is called; its scalar result (if any) is left on the stack. The
 // wrapper's params mirror the Fern flattening (string→2, u8[]→1, scalar→1); 3
 // i32 scratch locals (buf, byteLen, i), reused across string params, follow.
+// buildExternRecordResultWrapper builds the wrapper for an `@import` extern
+// returning a record (P4c). A multi-field record flattens to > 1 core value, so
+// the canonical ABI returns it indirectly: the raw import takes a trailing
+// return-area pointer and writes the record's fields there (canonical record
+// layout). The wrapper allocs that return area, calls the import, then
+// materializes a Fern struct — alloc `rcHeaderBytes + size`, set rc=1 at
+// base+0, copy each field from the return area to `base + rcHeaderBytes +
+// offset`, and return the user-visible pointer `base + rcHeaderBytes` — exactly
+// how the struct constructor lays a struct out. Field offsets coincide between
+// the canonical record and the Fern struct for 32-/64-bit scalar fields (same
+// natural alignment). Wrapper type is (scalar params…) -> i32.
+//
+// Locals after the params: 0:$rb (return area) 1:$base (struct block).
+func buildExternRecordResultWrapper(nparams int, rawImport string, rr *ir.ExternRecordResult) func(map[string]uint32) []byte {
+	const rcHeaderBytes = 8
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		rb := uint32(nparams)
+		base := uint32(nparams + 1)
+
+		var body []byte
+		// rb = __fern_alloc(size) — 8-aligned canonical return area.
+		body = inst.InstI32Const(body, rr.Size)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, rb)
+		// call import(params…, rb).
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		// base = __fern_alloc(rcHeaderBytes + size); rc = 1 at base+0.
+		body = inst.InstI32Const(body, rcHeaderBytes+rr.Size)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, base)
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		// Copy each field: [base + rcHeaderBytes + off] = [rb + off].
+		for _, f := range rr.Fields {
+			off := uint32(f.Offset)
+			vt := externRecordFieldValtype(f.Type)
+			body = inst.InstLocalGet(body, base) // dst base (store offset adds rcHeaderBytes+off)
+			body = inst.InstLocalGet(body, rb)   // src base (load offset adds off)
+			switch vt {
+			case encode.ValtypeI64:
+				body = memory.InstI64Load(body, 3, off)
+				body = memory.InstI64Store(body, 3, rcHeaderBytes+off)
+			case encode.ValtypeF32:
+				body = memory.InstF32Load(body, 2, off)
+				body = memory.InstF32Store(body, 2, rcHeaderBytes+off)
+			case encode.ValtypeF64:
+				body = memory.InstF64Load(body, 3, off)
+				body = memory.InstF64Store(body, 3, rcHeaderBytes+off)
+			default:
+				body = memory.InstI32Load(body, 2, off)
+				body = memory.InstI32Store(body, 2, rcHeaderBytes+off)
+			}
+		}
+		// return base + rcHeaderBytes (user-visible struct pointer).
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstI32Const(body, rcHeaderBytes)
+		body = numeric.InstI32Add(body)
+
+		locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32) // rb, base
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
 func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		imp := idxs[rawImport]

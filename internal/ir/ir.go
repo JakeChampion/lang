@@ -618,6 +618,21 @@ type ExternFunc struct {
 	// more than maxFlatExternRecordFields fields), which the wasm backend then
 	// rejects with a clear error.
 	ParamRecords map[int][]ExternRecordField
+	// ResultRecord is the layout of a record (struct) RESULT (P4c), or nil if
+	// the result isn't a lowerable record. A multi-field record flattens to >1
+	// core value, so the canonical ABI returns it indirectly through a
+	// return-area pointer; the wasm result wrapper reads each field from the
+	// area and materializes a Fern struct.
+	ResultRecord *ExternRecordResult
+}
+
+// ExternRecordResult is the flattened layout of a record (struct) `@import`
+// result: the scalar fields (offsets from the struct value + types) and the
+// struct's field-area Size (excluding the rc header). The wasm result wrapper
+// allocs the canonical return area + the Fern struct from Size.
+type ExternRecordResult struct {
+	Fields []ExternRecordField
+	Size   int32
 }
 
 // ExternRecordField is one scalar field of a record `@import` parameter,
@@ -682,6 +697,36 @@ func externRecordFieldSupported(t ast.Type) bool {
 		return true
 	}
 	return false
+}
+
+// externRecordResultLayout flattens a record (struct) `@import` *result* to its
+// scalar fields' offsets + types + struct size, or ok=false if it can't be
+// lowered. Requires 2..maxFlatExternRecordFields fields (a multi-field record
+// flattens to > 1 core value, so it returns indirectly through a return-area
+// pointer — the only result shape this slice handles; a single-field record
+// returns its field directly and is deferred), each a 32-/64-bit integer or
+// float. Offsets and size come from the same struct layout the constructor
+// uses, so the wrapper writes fields where a `p.field` read would find them.
+func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResult, bool) {
+	st, ok := t.(ast.StructType)
+	if !ok {
+		return nil, false
+	}
+	sd, ok := info.Structs[st.Name]
+	if !ok || len(sd.Fields) < 2 || len(sd.Fields) > maxFlatExternRecordFields {
+		return nil, false
+	}
+	for _, f := range sd.Fields {
+		if !externRecordFieldSupported(f.Type) {
+			return nil, false
+		}
+	}
+	offs, size := structFieldLayout(sd.Fields, 4)
+	fields := make([]ExternRecordField, len(sd.Fields))
+	for i, f := range sd.Fields {
+		fields[i] = ExternRecordField{Offset: offs[f.Name], Type: f.Type}
+	}
+	return &ExternRecordResult{Fields: fields, Size: size}, true
 }
 
 // ExternExport binds a defined function (Name) to the WIT world export
@@ -951,6 +996,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 					}
 					ef.ParamRecords[i] = layout
 				}
+			}
+			if rr, ok := externRecordResultLayout(fn.ReturnType, info); ok {
+				ef.ResultRecord = rr
 			}
 			out.Externs = append(out.Externs, ef)
 			continue

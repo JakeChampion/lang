@@ -377,9 +377,23 @@ world-driven composer (P2) wires it.
      `record point { x: s32, y: s32 }` summed) and
      `TestExternRecordParamWideCustomProvider` (a mixed `record mix { a: s32,
      b: s64 }`, exercising the i64 field's 8-byte offset + i64 flat valtype).
-   - Still rejected (next slices): record *results*; tuple / variant / option /
-     result params and results; bool arrays; sub-word / nested-record fields;
-     and the self-host port. The multi-component harness
+   - **Record (struct) results — ✅ done (Go).** An `@import` extern returning a
+     `record` lifts into a Fern struct. A multi-field record flattens to > 1
+     core value, so the canonical ABI returns it indirectly through a
+     return-area pointer (like string/list results): the raw import gains a
+     trailing area pointer and returns nothing. The layout (fields + struct
+     size) is precomputed during IR lowering (`ir.ExternFunc.ResultRecord`), and
+     `buildExternRecordResultWrapper` allocs the return area, calls the import,
+     then materializes a Fern struct exactly as the constructor does — alloc
+     `rcHeaderBytes + size`, rc=1 at base+0, copy each field to `base +
+     rcHeaderBytes + offset`, return `base + rcHeaderBytes`. Scoped to 2..16
+     32-/64-bit numeric/float fields (a single-field record returns its field
+     directly — a different shape — and is deferred). Gated by
+     `TestExternRecordResultCustomProvider` (a `make-point: func(s32, s32) ->
+     point` lifted to a Fern struct, fields read back).
+   - Still rejected (next slices): single-field records (direct return); tuple /
+     variant / option / result params and results; bool arrays; sub-word /
+     nested-record fields; and the self-host port. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
