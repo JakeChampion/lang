@@ -624,6 +624,22 @@ type ExternFunc struct {
 	// return-area pointer; the wasm result wrapper reads each field from the
 	// area and materializes a Fern struct.
 	ResultRecord *ExternRecordResult
+	// ParamEnums maps a parameter index to the flattened option/result layout
+	// of an enum parameter (P4c). A Fern Option[T]/Result[T,E] is a heap box
+	// `[tag:i32 @0][payload @off]`; the canonical option/result flattens to
+	// (disc:i32, payload). nil/absent for a non-enum (or unlowerable) param.
+	ParamEnums map[int]*ExternEnumParam
+}
+
+// ExternEnumParam describes a flattened option/result `@import` parameter
+// (P4c). The wasm wrapper loads the Fern box's tag (i32 @0), remaps it for
+// option (whose Fern Some=0/None=1 is the reverse of canonical none=0/some=1),
+// pushes the canonical discriminant, then loads + pushes the payload from
+// PayloadOffset. Result needs no remap (Fern Ok=0/Err=1 matches canonical).
+type ExternEnumParam struct {
+	RemapDisc     bool
+	PayloadType   ast.Type
+	PayloadOffset int32
 }
 
 // ExternRecordResult is the flattened layout of a record (struct) `@import`
@@ -682,6 +698,55 @@ func externCompositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool
 		}
 	}
 	return types, true
+}
+
+// externEnumParamLayout describes how to flatten an option/result `@import`
+// parameter, or ok=false if t isn't a lowerable one. Handles Option[T] (one
+// scalar arg; discriminant remapped) and Result[T, E] (two equal-width scalar
+// args; no remap) where the payload is a 32-/64-bit integer or float. The
+// payload's box offset comes from payloadLayout (the slot after the i32 tag).
+func externEnumParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnumParam, bool) {
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return nil, false
+	}
+	var payload ast.Type
+	remap := false
+	switch et.Name {
+	case "Option":
+		if len(et.Args) != 1 {
+			return nil, false
+		}
+		payload, remap = et.Args[0], true
+	case "Result":
+		// First slice: ok and err must be the same-width scalar, so the box has
+		// a single payload slot and the canonical join is that one type.
+		if len(et.Args) != 2 || !externScalarTypeEq(et.Args[0], et.Args[1]) {
+			return nil, false
+		}
+		payload = et.Args[0]
+	default:
+		return nil, false
+	}
+	if !externRecordFieldSupported(payload) {
+		return nil, false
+	}
+	offs, _ := payloadLayout([]ast.Type{payload}, 1, ptrW)
+	return &ExternEnumParam{RemapDisc: remap, PayloadType: payload, PayloadOffset: offs[0]}, true
+}
+
+// externScalarTypeEq reports whether two extern-supported scalar types are the
+// same kind + width (used to gate Result[T, E] to a single payload slot).
+func externScalarTypeEq(a, b ast.Type) bool {
+	switch x := a.(type) {
+	case ast.NumberType:
+		y, ok := b.(ast.NumberType)
+		return ok && x.NormalWidth() == y.NormalWidth()
+	case ast.FloatType:
+		y, ok := b.(ast.FloatType)
+		return ok && x.NormalWidth() == y.NormalWidth()
+	}
+	return false
 }
 
 // externRecordFieldSupported reports whether a record/tuple field type is one
@@ -1008,6 +1073,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 						ef.ParamRecords = map[int][]ExternRecordField{}
 					}
 					ef.ParamRecords[i] = layout
+				} else if el, ok := externEnumParamLayout(p.Type, info, ptrW); ok {
+					if ef.ParamEnums == nil {
+						ef.ParamEnums = map[int]*ExternEnumParam{}
+					}
+					ef.ParamEnums[i] = el
 				}
 			}
 			if rr, ok := externRecordResultLayout(fn.ReturnType, info); ok {

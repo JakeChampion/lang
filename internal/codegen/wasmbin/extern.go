@@ -275,6 +275,33 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 					}
 				}
 				slot++
+			case ex.ParamEnums[i] != nil:
+				// option/result param: the Fern slot holds the enum box value.
+				// Push the canonical discriminant (the i32 tag at +0, remapped
+				// 1-tag for option), then the payload loaded at its box offset.
+				ep := ex.ParamEnums[i]
+				if ep.RemapDisc {
+					body = inst.InstI32Const(body, 1)
+					body = inst.InstLocalGet(body, slot)
+					body = memory.InstI32Load(body, 2, 0) // tag @ +0
+					body = numeric.InstI32Sub(body)       // 1 - tag
+				} else {
+					body = inst.InstLocalGet(body, slot)
+					body = memory.InstI32Load(body, 2, 0)
+				}
+				poff := uint32(ep.PayloadOffset)
+				body = inst.InstLocalGet(body, slot)
+				switch externRecordFieldValtype(ep.PayloadType) {
+				case encode.ValtypeI64:
+					body = memory.InstI64Load(body, 3, poff)
+				case encode.ValtypeF32:
+					body = memory.InstF32Load(body, 2, poff)
+				case encode.ValtypeF64:
+					body = memory.InstF64Load(body, 3, poff)
+				default:
+					body = memory.InstI32Load(body, 2, poff)
+				}
+				slot++
 			case isScalarArrayParamType(p.Type):
 				// (ptr, len) = (elemPtr, load(elemPtr-4)). The count prefix holds
 				// the element count, which is the canonical list length for any

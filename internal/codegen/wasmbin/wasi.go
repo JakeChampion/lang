@@ -781,14 +781,19 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				hasMemParam = true
 			case ex.ParamRecords[i] != nil:
 				hasMemParam = true
+			case ex.ParamEnums[i] != nil:
+				// option/result: flattens to (disc, payload), read off the box.
+				hasMemParam = true
 			case externScalarType(p.Type):
 				// plain scalar — passes through, no wrapper needed for this param
 			default:
 				switch p.Type.(type) {
 				case ast.StructType, ast.TupleType:
 					return nil, nil, fmt.Errorf("@import %q (%s/%s): record/tuple parameter %q (type %s) is not lowerable yet — every field must be a 32-/64-bit integer or float and there must be at most %d of them (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type, 16)
+				case ast.EnumType:
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): enum parameter %q (type %s) is not lowerable yet — only Option[T] / Result[T, E] with a 32-/64-bit numeric/float payload (Result's arms same width) are supported (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 				}
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), record, and tuple extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): parameter %q has type %s; only scalar, string, numeric-array (u8[]/i32[]/f64[]/…), record, tuple, and option/result extern parameters are supported yet (P4c)", ex.Name, ex.Iface, ex.WITName, p.Name, p.Type)
 			}
 		}
 		params, err := paramValtypes(ex.Params)

@@ -402,11 +402,25 @@ world-driven composer (P2) wires it.
      results). Gated by `TestExternTupleParamCustomProvider` (a `sum-pair:
      func(p: tuple<s32, s32>) -> s32`) and `TestExternTupleResultCustomProvider`
      (a `make-pair: func(s32, s32) -> tuple<s32, s32>`).
-   - Still rejected (next slices): single-element records/tuples (direct
-     return); variant / option / result params and results; bool arrays;
-     sub-word / nested-composite fields; and the self-host port. The
-     multi-component harness (`TestExternImportCustomProvider`) is the test
-     vehicle for these.
+   - **Sum-type (option / result) params — ✅ done (Go).** A Fern Option / Result
+     passed to an `@import` extern whose WIT takes `option<T>` / `result<T,E>`.
+     A Fern enum is a heap box `[tag:i32 @0][payload @off]`; the canonical
+     `option`/`result` flattens to `(disc:i32, payload)`. The wrapper pushes the
+     discriminant — the tag, **remapped `1-tag` for option** (Fern's Some=0/None=1
+     is the reverse of canonical none=0/some=1; result's Ok=0/Err=1 matches) —
+     then the payload loaded at its box offset. The layout (remap flag, payload
+     type/offset) is precomputed during IR lowering (`ir.ExternFunc.ParamEnums`
+     via `externEnumParamLayout`). Body-less externs are never pair-form
+     (`isPairFormEligible` requires a body), so the enum value is always a heap
+     box at the boundary. Scoped to `Option[T]` and `Result[T,E]` (T,E equal-
+     width) with a 32-/64-bit numeric/float payload. Gated by
+     `TestExternSumTypeParamCustomProvider` (Ok(42)→42, Err(5)→-5, Some(7)→7,
+     None→-1 through the multi-component harness under wasmtime).
+   - Still rejected (next slices): sum-type (option/result/variant) *results*;
+     general user `variant` params; single-element records/tuples (direct
+     return); bool arrays; sub-word / nested-composite fields; and the self-host
+     port. The multi-component harness (`TestExternImportCustomProvider`) is the
+     test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
