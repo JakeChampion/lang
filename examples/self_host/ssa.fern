@@ -256,11 +256,26 @@ function type_of_expr(e: parser.Expr, s: BState): string {
         parser.ExprIdent(id) => { return s.get_var_type(id.name); },
         parser.ExprStructLit(sl) => { return sl.type_name; },
         parser.ExprString(_) => { return "string"; },
+        parser.ExprNumber(n) => { if (n.is_float) { return "f64"; } return ""; },
         parser.ExprBinary(b) => {
             // `string + string` (concatenation) yields a string.
             if (b.op == "+") {
                 if (type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string") { return "string"; }
             }
+            // Float arithmetic (an f64 operand) yields f64; comparisons yield
+            // a bool (i32), so only the arithmetic operators propagate "f64".
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+                if (type_of_expr(b.left, s) == "f64" || type_of_expr(b.right, s) == "f64") { return "f64"; }
+            }
+            return "";
+        },
+        parser.ExprUnary(u) => {
+            // `as f64` casts (parser desugars to a unary "as_f64") yield f64;
+            // `as i32` / `as i64` yield the target int; negation keeps its
+            // operand's type (so `-1.5` is f64).
+            if (u.op == "as_f64") { return "f64"; }
+            if (u.op == "as_i32" || u.op == "as_i64" || u.op == "as_u8") { return ""; }
+            if (u.op == "-") { return type_of_expr(u.operand, s); }
             return "";
         },
         parser.ExprFieldAccess(fa) => {
@@ -396,9 +411,13 @@ function count_fn_markers(types: string[]): i32 {
 function build_expr(e: parser.Expr, s: BState): BState {
     match (e) {
         parser.ExprNumber(n) => {
-            if (n.is_float) { return s.fail(); }
             s = s.fresh();
             var args0: i32[] = [];
+            if (n.is_float) {
+                // f64 literal: the bits aren't representable in imm, so carry
+                // the source text; the backend emits it as a `.double` constant.
+                return s.emit(SInst { kind: "const_float", result: s.cur_id(), args: args0, imm: 0, str: n.text });
+            }
             return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: digits_to_i32(n.text), str: "" });
         },
         parser.ExprBool(b) => {
@@ -1034,6 +1053,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             // dispatch indirectly.
             if (ity == "fn" || (ity.len() > 3 && ity[0:3] == "fn:") || (ity.len() >= 4 && ity[0:4] == "gfn:")) { return s.set_var_type(v.name, "fnval"); }
             if (ity == "Map" || ity == "SMap") { return s.set_var_type(v.name, ity); }
+            if (ity == "f64" || v.type_name == "f64") { return s.set_var_type(v.name, "f64"); }
             if (ends_with_brackets(ity)) { return s.set_var_type(v.name, ity); }
             if (is_struct_type(ity, s.structs) || ity == "string") { return s.set_var_type(v.name, ity); }
             if (ends_with_brackets(v.type_name)) { return s.set_var_type(v.name, v.type_name); }
@@ -2030,6 +2050,15 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs
 pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[], seed: Seed): BResult {
     var sym: string = fn_sym(fd);
     var f0: SFunc = SFunc { name: sym, nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
+    // f64 across a call boundary (a float param / return) needs the XMM
+    // argument/return ABI, not wired into the SSA backends yet — fall back to
+    // the AST emitter for those. Float *locals* within a function are fine.
+    if (fd.ret_type == "f64") { return BResult { func: f0, ok: false }; }
+    var fpi: i32 = 0;
+    while (fpi < fd.params.len()) {
+        if (fd.params[fpi].type_name == "f64") { return BResult { func: f0, ok: false }; }
+        fpi = fpi + 1;
+    }
     // Params occupy value ids 0..nparams-1, defined by "param" insts in the
     // entry block (block id 0). A pointer-shaped param — array / string / struct
     // / enum — is marked str="ptr" so compute_widths gives it 64-bit width.
@@ -2256,7 +2285,10 @@ function const_fold(f: SFunc): SFunc {
                         cval = env_put(cval, ins.result, fv);
                         changed = true;
                     }
-                } else if (ins.kind == "unary" && cset[ins.args[0]] == 1) {
+                } else if (ins.kind == "unary" && cset[ins.args[0]] == 1 && (ins.str == "-" || ins.str == "!")) {
+                    // Only the integer unary ops fold to an i32 constant; `as_*`
+                    // casts (e.g. `as_f64`) change representation and must not be
+                    // folded here (folding `as_f64 7` as `!7` was the bug).
                     var x: i32 = cval[ins.args[0]];
                     var nv: i32 = 0;
                     if (ins.str == "-") { nv = 0 - x; } else { if (x == 0) { nv = 1; } else { nv = 0; } }
@@ -2716,6 +2748,66 @@ pub function compute_widths(f: SFunc): i32[] {
 // call to `call __fn_<name>`, so a call to a builtin (print, write, …) or
 // any other unknown name can't be emitted — the caller bails to the AST
 // emitter in that case.
+// compute_isfloat returns 1 for every SSA value that holds an f64 and 0
+// otherwise — a const_float, float arithmetic / negation, an `as f64` cast,
+// or a copy / phi of a float. The backends use it to pick XMM registers +
+// the sd-suffixed instructions (movsd / addsd / cvt…) for those values.
+// Comparisons and `as i32` casts yield an i32 (0), even with float operands.
+pub function compute_isfloat(f: SFunc): i32[] {
+    var fl: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { fl = fl.push(0); i = i + 1; }
+    var changed: boolean = true;
+    var rounds: i32 = 0;
+    while (changed && rounds < 100000) {
+        changed = false;
+        rounds = rounds + 1;
+        var bi: i32 = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                var isf: boolean = false;
+                if (ins.kind == "const_float") { isf = true; }
+                else if (ins.kind == "unary") {
+                    if (ins.str == "as_f64") { isf = true; }
+                    else if (ins.str == "-" && fl[ins.args[0]] == 1) { isf = true; }
+                }
+                else if (ins.kind == "binary") {
+                    if (ins.str == "+" || ins.str == "-" || ins.str == "*" || ins.str == "/") {
+                        if (fl[ins.args[0]] == 1 || fl[ins.args[1]] == 1) { isf = true; }
+                    }
+                }
+                else if (ins.kind == "copy") { if (fl[ins.args[0]] == 1) { isf = true; } }
+                else if (ins.kind == "phi") {
+                    var a: i32 = 0;
+                    while (a < ins.args.len()) { if (fl[ins.args[a]] == 1) { isf = true; } a = a + 1; }
+                }
+                if (isf && fl[ins.result] != 1) { fl = env_put(fl, ins.result, 1); changed = true; }
+                k = k + 1;
+            }
+            bi = bi + 1;
+        }
+    }
+    return fl;
+}
+
+// any_float reports whether any function in the program holds an f64 value
+// — the driver uses it to keep float programs on the AST fallback for
+// backends that don't lower f64 from the IR yet (currently arm64; the wasm
+// backend self-gates via ssa_wasm.supported, and x86-64 lowers f64).
+pub function any_float(funcs: SFunc[]): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var fl: i32[] = compute_isfloat(funcs[i]);
+        var k: i32 = 0;
+        while (k < fl.len()) { if (fl[k] == 1) { return true; } k = k + 1; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // mark_ptr_calls tags (imm=1) every call whose callee returns a pointer
 // (its name is in ptr_ret), so compute_widths gives the call result 64-bit
 // width. Run after build_func, before optimise/emit. Leaves other insts

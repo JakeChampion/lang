@@ -151,8 +151,25 @@ Each item deletes an `s.fail()` site and joins the SSA subset (with
 matching cases in every backend's differential matrix):
 
 - **Floats (f64)** — the largest item: a floating value class in the IR
-  and an XMM/SSE path in x86-64, the FP register file in arm64, and the
-  f64 ops in wasm. The IR currently `fail()`s on `is_float`.
+  (`const_float`, the `compute_isfloat` pass) and an XMM/SSE path in
+  x86-64, the FP register file in arm64, and the f64 ops in wasm.
+  - **Phase 3a ✅ (landed — f64 in the IR + x86-64, intra-function):**
+    `build_func` lowers float literals (`const_float`, carrying the source
+    text), float arithmetic / negation / comparison (reusing `binary` /
+    `unary`; `compute_isfloat` marks which values are f64), and `as f64` /
+    `as i32` casts. `ssa_x86` emits them with SSE2 over 8-byte stack slots
+    (`.rodata` `.double` constants, `movsd` / `addsd` / `ucomisd` /
+    `cvtsi2sd` / `cvttsd2si`); float functions skip register allocation so
+    every value is slot-addressable, and float values are 64-bit-wide so
+    copy / phi-edge moves carry all 8 bytes. Also fixed a `const_fold` bug
+    it surfaced (it folded `as_f64 k` as `!k`). Float *locals* lower
+    through SSA on x86-64; a float **param / return** (the XMM call ABI)
+    still falls back, and **arm64 / wasm** float programs fall back to the
+    AST emitter (gated by `ssa.any_float` / `ssa_wasm.supported`). Gated by
+    `TestSelfHostSSAEmitX86_64` float cases.
+  - **Phase 3b (next):** the XMM/NEON **call ABI** (float params /
+    returns / args), then the **arm64** and **wasm** SSA float paths, to
+    bring f64 to parity across all three backends.
 - **Generics by erasure** in `build_func` (the AST emitters already do
   this).
 - **`...base` struct spread**, remaining **`match` patterns**, **tagged

@@ -175,9 +175,42 @@ function emit_binary(op: string, out: string): string {
     return out;
 }
 
+// fconst_label is the .rodata label for a const_float value (unique per
+// function + value id), holding the f64 bits the assembler computes from the
+// literal text.
+function fconst_label(fname: string, result: i32): string {
+    return ".LCf_" + fname + "_" + i32_to_string(result);
+}
+
+// fsetcc maps a float comparison operator to its x86 set-condition mnemonic.
+// ucomisd %xmm1, %xmm0 sets CF when xmm0 < xmm1 (the lhs), so the unsigned
+// (b/a) conditions read as the signed float relations on lhs vs rhs.
+function fsetcc(op: string): string {
+    if (op == "<") { return "setb"; }
+    if (op == "<=") { return "setbe"; }
+    if (op == ">") { return "seta"; }
+    if (op == ">=") { return "setae"; }
+    if (op == "==") { return "sete"; }
+    return "setne";
+}
+
+// fbinop maps a float arithmetic operator to its SSE2 instruction.
+function fbinop(op: string): string {
+    if (op == "+") { return "addsd"; }
+    if (op == "-") { return "subsd"; }
+    if (op == "*") { return "mulsd"; }
+    return "divsd";
+}
+
 // emit_inst lowers a single value-defining instruction. param and phi are
-// handled elsewhere (prologue / edge copies) and skipped here.
-function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): string {
+// handled elsewhere (prologue / edge copies) and skipped here. isfloat marks
+// f64 values (always stack-spilled in a float function, so slot() is their
+// home); fname names the function for const_float .rodata labels.
+function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[], fname: string, out: string): string {
+    if (ins.kind == "const_float") {
+        out = out + "    movsd " + fconst_label(fname, ins.result) + "(%rip), %xmm0\n";
+        return out + "    movsd %xmm0, " + slot(ins.result) + "\n";
+    }
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
         return out + "    movl $" + i32_to_string(ins.imm) + ", " + regn(reg_of, ins.result, 32) + "\n";
     }
@@ -186,12 +219,46 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "binary") {
+        // Float arithmetic (result is f64) and float comparison (f64 operands,
+        // i32 result) use SSE2 over the values' stack slots.
+        if (isfloat[ins.result] == 1) {
+            out = out + "    movsd " + slot(ins.args[0]) + ", %xmm0\n";
+            out = out + "    movsd " + slot(ins.args[1]) + ", %xmm1\n";
+            out = out + "    " + fbinop(ins.str) + " %xmm1, %xmm0\n";
+            return out + "    movsd %xmm0, " + slot(ins.result) + "\n";
+        }
+        if (isfloat[ins.args[0]] == 1) {
+            out = out + "    movsd " + slot(ins.args[0]) + ", %xmm0\n";
+            out = out + "    movsd " + slot(ins.args[1]) + ", %xmm1\n";
+            out = out + "    ucomisd %xmm1, %xmm0\n    " + fsetcc(ins.str) + " %al\n    movzbl %al, %eax\n";
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         out = load_op(reg_of, widths, ins.args[1], "c", out);
         out = emit_binary(ins.str, out);
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "unary") {
+        // f64 negation: 0.0 - x.
+        if (ins.str == "-" && isfloat[ins.args[0]] == 1) {
+            out = out + "    movsd " + slot(ins.args[0]) + ", %xmm0\n";
+            out = out + "    pxor %xmm1, %xmm1\n    subsd %xmm0, %xmm1\n";
+            return out + "    movsd %xmm1, " + slot(ins.result) + "\n";
+        }
+        // i32 → f64.
+        if (ins.str == "as_f64") {
+            out = out + "    cvtsi2sdl " + slot(ins.args[0]) + ", %xmm0\n";
+            return out + "    movsd %xmm0, " + slot(ins.result) + "\n";
+        }
+        // f64 → i32 (truncating); a non-float `as i32` is an identity copy.
+        if (ins.str == "as_i32") {
+            if (isfloat[ins.args[0]] == 1) {
+                out = out + "    cvttsd2si " + slot(ins.args[0]) + ", %eax\n";
+                return out + "    movl %eax, " + regn(reg_of, ins.result, 32) + "\n";
+            }
+            out = load_op(reg_of, widths, ins.args[0], "a", out);
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         if (ins.str == "-") { out = out + "    negl %eax\n"; }
         else { out = out + "    testl %eax, %eax\n    sete %al\n    movzbl %al, %eax\n"; }
@@ -334,6 +401,18 @@ function emit_term(f: ssa.SFunc, name: string, reg_of: i32[], widths: i32[], blk
 // emit_func lowers one SSA function to its `__fn_<name>` body.
 pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var widths: i32[] = ssa.compute_widths(f);
+    var isfloat: i32[] = ssa.compute_isfloat(f);
+    // f64 values occupy 8 bytes, so the generic copy / phi-edge moves (which
+    // pick movl/movq by width) must use movq to carry all 8 bytes — otherwise
+    // a float loop variable's phi move truncates it. The SSE2 paths use movsd
+    // directly; this only fixes the width-driven gpr moves.
+    var wmerged: i32[] = [];
+    var wi: i32 = 0;
+    while (wi < widths.len()) {
+        if (isfloat[wi] == 1) { wmerged = wmerged.push(64); } else { wmerged = wmerged.push(widths[wi]); }
+        wi = wi + 1;
+    }
+    widths = wmerged;
     // Collect asm fragments in a string[] (amortised-O(1) push) and join once
     // at the end; emit_inst / emit_term append to their `out` arg and never
     // read it, so passing "" returns just that piece's contribution.
@@ -360,7 +439,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
         while (k < blk.insts.len()) {
             var ins: ssa.SInst = blk.insts[k];
             if (ins.kind != "param" && ins.kind != "phi") {
-                chunks = chunks.push(emit_inst(ins, reg_of, widths, ""));
+                chunks = chunks.push(emit_inst(ins, reg_of, widths, isfloat, f.name, ""));
             }
             k = k + 1;
         }
@@ -375,11 +454,48 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
 // pointer and dispatches into main(). With use_regalloc the linear-scan
 // allocator runs per function (caller-saved %r10d/%r11d); else everything
 // spills.
+// func_has_float reports whether any value in f is an f64 — such a function
+// is emitted with everything stack-spilled (regalloc_none), so the SSE2
+// paths can address every value by its slot (no XMM allocation needed).
+function func_has_float(f: ssa.SFunc): boolean {
+    var fl: i32[] = ssa.compute_isfloat(f);
+    var i: i32 = 0;
+    while (i < fl.len()) { if (fl[i] == 1) { return true; } i = i + 1; }
+    return false;
+}
+
+// emit_float_consts emits a .rodata `.double` constant for every const_float
+// across all functions, labelled by fconst_label so emit_inst can load it.
+function emit_float_consts(funcs: ssa.SFunc[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var bi: i32 = 0;
+        while (bi < funcs[i].blocks.len()) {
+            var blk: ssa.SBlock = funcs[i].blocks[bi];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: ssa.SInst = blk.insts[k];
+                if (ins.kind == "const_float") {
+                    out = out + "    .align 8\n" + fconst_label(funcs[i].name, ins.result) + ":\n    .double " + ins.str + "\n";
+                }
+                k = k + 1;
+            }
+            bi = bi + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var out: string = "    .globl _start\n";
     // Heap: a 16 MiB zero-initialised arena and an 8-byte bump pointer.
     out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 16777216\n";
     out = out + "    .data\n__fern_ssa_hp:\n    .quad 0\n";
+    // f64 literals as .rodata .double constants (the assembler computes bits).
+    var fconsts: string = emit_float_consts(funcs);
+    if (fconsts.len() > 0) { out = out + "    .section .rodata\n" + fconsts; }
     out = out + "    .text\n";
     // Collect each function body, then join once — a left fold here is
     // O(total²) and OOMs on a whole compiler's worth of asm.
@@ -387,7 +503,9 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var i: i32 = 0;
     while (i < funcs.len()) {
         var reg_of: i32[] = ssa.regalloc_none(funcs[i]);
-        if (use_regalloc) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
+        // A float function keeps every value in its slot (the SSE2 paths
+        // address slots directly), so skip register allocation for it.
+        if (use_regalloc && !func_has_float(funcs[i])) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
         chunks = chunks.push(emit_func(funcs[i], reg_of));
         i = i + 1;
     }
