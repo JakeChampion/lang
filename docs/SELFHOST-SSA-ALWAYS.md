@@ -295,15 +295,32 @@ back to the AST emitter** (the output is byte-identical to `-no-ssa`).
 - **`build_func` failures** in exactly two functions: `main` (the CLI
   driver) and `wasm__build_ctx`.
 
-So scoped SSA self-hosting needs: teach the SSA backends the `strbuf_*` /
-`exit` / `f64_bits` runtime (+ add to `known`), resolve the bare
-method-call names (`cur_id` / `w`), and close the two `build_func` gaps.
-Each is a discrete follow-up.
+**Re-measured (current main).** Re-running the instrumented `try_ssa` on the
+whole `fern.fern` shows the list has collapsed to a **single** remaining
+blocker — the `cur_id` / `w` receiver-method calls and **both** `build_func`
+failures (`main`, `wasm__build_ctx`) are gone, resolved by intervening
+frontend fixes (param-spread, extern arrays, …) on top of the `exit` and
+`f64_bits` ops above. The sole remaining unknown callee is the
+**`strbuf_*` string-builder** (`strbuf_reset` / `strbuf_append` /
+`strbuf_take`): a global amortised-O(1) output accumulator used by `asmcore`
+(the shared frontend) and the AST emitters.
+
+`strbuf` is the heavy one, and the last piece:
+- It needs a backend runtime (a global buffer + reset/append/take), so it
+  can't be a pure-Fern injected helper — the SSA subset has no global
+  mutable state.
+- The AST runtime (`asm.fern`'s `__fern_strbuf_*`) uses the 16-byte-box
+  string ABI (`{data@0, len@8}`); the SSA backends use the `[len, b0, …]`
+  8-byte-word layout, so the runtime must be **re-derived** for SSA (x86-64
+  + arm64), not copied. wasm would reject it (`inst_supported`) and fall
+  back, as for `f64_bits`.
+- Once it lands, the whole compiler should compile through SSA on
+  x86-64/arm64 — the Phase 4 fixpoint — modulo validating byte-stability.
 
 Still open: the *linear* per-function retention (build + emit, freed by
 nothing) — Perceus RC (the native backend already has it; the self-host
 runtime stubs it to no-ops — `asm.fern`: "leak-everything bump heap") or a
-streaming/arena scheme; plus the enumerated SSA-fallback gaps above.
+streaming/arena scheme; and the `strbuf_*` runtime port above.
 
 ### Phase 5 — retire the AST emitters
 
