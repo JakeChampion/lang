@@ -135,6 +135,22 @@ function wasm_binop(op: string, a: string, b: string): string {
 // emit_inst lowers one value-defining instruction to a `(local.set …)`.
 // param and phi are handled elsewhere (wasm params / predecessor edges).
 function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
+    if (ins.kind == "const_str") {
+        // Materialise the literal [len, b0, b1, …] on the heap (one i32 word
+        // per element). build_func emits one compact const_str; the backend
+        // expands it (so the IR stays small for string-heavy functions).
+        var sv: string = ins.str;
+        var n: i32 = sv.len();
+        var o: string = "    (local.set " + i32_to_string(ins.result) + " (global.get $__hp))\n";
+        o = o + "    (global.set $__hp (i32.add (global.get $__hp) (i32.const " + i32_to_string((n + 1) * 4) + ")))\n";
+        o = o + "    (i32.store " + loc(ins.result) + " (i32.const " + i32_to_string(n) + "))\n";
+        var ci: i32 = 0;
+        while (ci < n) {
+            o = o + "    (i32.store (i32.add " + loc(ins.result) + " (i32.const " + i32_to_string((ci + 1) * 4) + ")) (i32.const " + i32_to_string(sv[ci]) + "))\n";
+            ci = ci + 1;
+        }
+        return o;
+    }
     if (ins.kind == "const_float") {
         return "    (local.set " + i32_to_string(ins.result) + " (f64.const " + ins.str + "))\n";
     }
@@ -378,7 +394,7 @@ function inst_supported(kind: string): boolean {
         || kind == "phi" || kind == "alloc" || kind == "load_elem"
         || kind == "store_elem" || kind == "concat" || kind == "streq"
         || kind == "print" || kind == "funcaddr" || kind == "call_indirect"
-        || kind == "const_float";
+        || kind == "const_float" || kind == "const_str";
 }
 
 // supported reports whether every instruction in every function is in the
