@@ -450,7 +450,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
         if (c == 34) {   // closing "
             l = l.advance();
             if (have_lit) {
-                parts = parts.push(FStringPart { lit: lit, expr: "", is_expr: false });
+                parts = parts.append(FStringPart { lit: lit, expr: "", is_expr: false });
             }
             return NumResult { lex: l, tok: fstring_tok(parts, start_line, start_col) };
         }
@@ -495,7 +495,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             }
             l = l.advance();   // opening {
             if (have_lit) {   // flush the literal accumulated so far
-                parts = parts.push(FStringPart { lit: lit, expr: "", is_expr: false });
+                parts = parts.append(FStringPart { lit: lit, expr: "", is_expr: false });
                 lit = "";
                 have_lit = false;
             }
@@ -539,7 +539,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             if (is_blank_range(expr_text)) {
                 return NumResult { lex: l, tok: error_tok("empty `{}` in f-string", start_line, start_col) };
             }
-            parts = parts.push(FStringPart { lit: "", expr: expr_text, is_expr: true });
+            parts = parts.append(FStringPart { lit: "", expr: expr_text, is_expr: true });
             continue;
         }
         if (c == 125) {   // }
@@ -571,7 +571,7 @@ pub function tokenize(src: string): Token[] {
     while (true) {
         l = skip_trivia(l);
         if (l.at_end()) {
-            out = out.push(TokEof { line: l.line, col: l.col });
+            out = out.append(TokEof { line: l.line, col: l.col });
             return out;
         }
         var start_line: i32 = l.line;
@@ -584,7 +584,7 @@ pub function tokenize(src: string): Token[] {
             l = l.advance();   // consume `f`
             var rf = scan_fstring(l, start_line, start_col);
             l = rf.lex;
-            out = out.push(rf.tok);
+            out = out.append(rf.tok);
             if (is_error_tok(rf.tok)) { return out; }
             after_dot = false;
             continue;
@@ -592,7 +592,7 @@ pub function tokenize(src: string): Token[] {
         if (is_digit(b)) {
             var rn = scan_number(l, after_dot, start_line, start_col);
             l = rn.lex;
-            out = out.push(rn.tok);
+            out = out.append(rn.tok);
             if (is_error_tok(rn.tok)) { return out; }
             after_dot = false;
             continue;
@@ -600,14 +600,14 @@ pub function tokenize(src: string): Token[] {
         if (is_alpha(b)) {
             var ri = scan_ident(l, start_line, start_col);
             l = ri.lex;
-            out = out.push(ri.tok);
+            out = out.append(ri.tok);
             after_dot = false;
             continue;
         }
         if (b == 34) {   // "
             var rs = scan_string(l, start_line, start_col);
             l = rs.lex;
-            out = out.push(rs.tok);
+            out = out.append(rs.tok);
             if (is_error_tok(rs.tok)) { return out; }
             after_dot = false;
             continue;
@@ -619,20 +619,20 @@ pub function tokenize(src: string): Token[] {
                 l = l.advance();
                 i = i + 1;
             }
-            out = out.push(TokPunct { text: mp, line: start_line, col: start_col });
+            out = out.append(TokPunct { text: mp, line: start_line, col: start_col });
             after_dot = false;
             continue;
         }
         if (is_single_punct(b)) {
             var text: string = l.src[l.i:l.i + 1];
             l = l.advance();
-            out = out.push(TokPunct { text: text, line: start_line, col: start_col });
+            out = out.append(TokPunct { text: text, line: start_line, col: start_col });
             after_dot = (text == ".");
             continue;
         }
         // Unknown byte — surface a TokError and stop, matching the
         // Go lexer's `unexpected character` error.
-        out = out.push(error_tok("unexpected character", start_line, start_col));
+        out = out.append(error_tok("unexpected character", start_line, start_col));
         return out;
     }
     return out;

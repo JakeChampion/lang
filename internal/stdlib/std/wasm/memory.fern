@@ -43,97 +43,97 @@ function put_memarg(buf: u8[], align: u32, offset: u32): u8[] {
 // otherwise.
 
 pub function inst_i32_load(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(40u8), align, offset);   // 0x28
+    return put_memarg(buf.append(40u8), align, offset);   // 0x28
 }
 
 pub function inst_i64_load(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(41u8), align, offset);   // 0x29
+    return put_memarg(buf.append(41u8), align, offset);   // 0x29
 }
 
 pub function inst_f32_load(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(42u8), align, offset);   // 0x2A
+    return put_memarg(buf.append(42u8), align, offset);   // 0x2A
 }
 
 pub function inst_f64_load(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(43u8), align, offset);   // 0x2B
+    return put_memarg(buf.append(43u8), align, offset);   // 0x2B
 }
 
 pub function inst_i32_load8_s(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(44u8), align, offset);   // 0x2C
+    return put_memarg(buf.append(44u8), align, offset);   // 0x2C
 }
 
 pub function inst_i32_load8_u(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(45u8), align, offset);   // 0x2D
+    return put_memarg(buf.append(45u8), align, offset);   // 0x2D
 }
 
 pub function inst_i32_load16_s(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(46u8), align, offset);   // 0x2E
+    return put_memarg(buf.append(46u8), align, offset);   // 0x2E
 }
 
 pub function inst_i32_load16_u(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(47u8), align, offset);   // 0x2F
+    return put_memarg(buf.append(47u8), align, offset);   // 0x2F
 }
 
 pub function inst_i64_load8_s(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(48u8), align, offset);   // 0x30
+    return put_memarg(buf.append(48u8), align, offset);   // 0x30
 }
 
 pub function inst_i64_load8_u(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(49u8), align, offset);   // 0x31
+    return put_memarg(buf.append(49u8), align, offset);   // 0x31
 }
 
 pub function inst_i64_load16_s(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(50u8), align, offset);   // 0x32
+    return put_memarg(buf.append(50u8), align, offset);   // 0x32
 }
 
 pub function inst_i64_load16_u(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(51u8), align, offset);   // 0x33
+    return put_memarg(buf.append(51u8), align, offset);   // 0x33
 }
 
 pub function inst_i64_load32_s(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(52u8), align, offset);   // 0x34
+    return put_memarg(buf.append(52u8), align, offset);   // 0x34
 }
 
 pub function inst_i64_load32_u(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(53u8), align, offset);   // 0x35
+    return put_memarg(buf.append(53u8), align, offset);   // 0x35
 }
 
 // ---- Stores (0x36 - 0x3E) ------------------------------------
 
 pub function inst_i32_store(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(54u8), align, offset);   // 0x36
+    return put_memarg(buf.append(54u8), align, offset);   // 0x36
 }
 
 pub function inst_i64_store(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(55u8), align, offset);   // 0x37
+    return put_memarg(buf.append(55u8), align, offset);   // 0x37
 }
 
 pub function inst_f32_store(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(56u8), align, offset);   // 0x38
+    return put_memarg(buf.append(56u8), align, offset);   // 0x38
 }
 
 pub function inst_f64_store(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(57u8), align, offset);   // 0x39
+    return put_memarg(buf.append(57u8), align, offset);   // 0x39
 }
 
 pub function inst_i32_store8(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(58u8), align, offset);   // 0x3A
+    return put_memarg(buf.append(58u8), align, offset);   // 0x3A
 }
 
 pub function inst_i32_store16(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(59u8), align, offset);   // 0x3B
+    return put_memarg(buf.append(59u8), align, offset);   // 0x3B
 }
 
 pub function inst_i64_store8(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(60u8), align, offset);   // 0x3C
+    return put_memarg(buf.append(60u8), align, offset);   // 0x3C
 }
 
 pub function inst_i64_store16(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(61u8), align, offset);   // 0x3D
+    return put_memarg(buf.append(61u8), align, offset);   // 0x3D
 }
 
 pub function inst_i64_store32(buf: u8[], align: u32, offset: u32): u8[] {
-    return put_memarg(buf.push(62u8), align, offset);   // 0x3E
+    return put_memarg(buf.append(62u8), align, offset);   // 0x3E
 }
 
 // ---- Memory size / grow --------------------------------------
@@ -146,15 +146,15 @@ pub function inst_i64_store32(buf: u8[], align: u32, offset: u32): u8[] {
 
 pub function inst_memory_size(buf: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(63u8);   // 0x3F
-    out = out.push(0u8);    // reserved memidx
+    out = out.append(63u8);   // 0x3F
+    out = out.append(0u8);    // reserved memidx
     return out;
 }
 
 pub function inst_memory_grow(buf: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(64u8);   // 0x40
-    out = out.push(0u8);    // reserved memidx
+    out = out.append(64u8);   // 0x40
+    out = out.append(0u8);    // reserved memidx
     return out;
 }
 
@@ -170,17 +170,17 @@ pub function inst_memory_grow(buf: u8[]): u8[] {
 
 pub function inst_memory_copy(buf: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(252u8);  // 0xFC prefix
-    out = out.push(10u8);   // 0x0A memory.copy sub-opcode
-    out = out.push(0u8);    // dst memidx (reserved)
-    out = out.push(0u8);    // src memidx (reserved)
+    out = out.append(252u8);  // 0xFC prefix
+    out = out.append(10u8);   // 0x0A memory.copy sub-opcode
+    out = out.append(0u8);    // dst memidx (reserved)
+    out = out.append(0u8);    // src memidx (reserved)
     return out;
 }
 
 pub function inst_memory_fill(buf: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(252u8);  // 0xFC prefix
-    out = out.push(11u8);   // 0x0B memory.fill sub-opcode
-    out = out.push(0u8);    // memidx (reserved)
+    out = out.append(252u8);  // 0xFC prefix
+    out = out.append(11u8);   // 0x0B memory.fill sub-opcode
+    out = out.append(0u8);    // memidx (reserved)
     return out;
 }

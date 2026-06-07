@@ -430,16 +430,16 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var wmerged: i32[] = [];
     var wi: i32 = 0;
     while (wi < widths.len()) {
-        if (isfloat[wi] == 1) { wmerged = wmerged.push(64); } else { wmerged = wmerged.push(widths[wi]); }
+        if (isfloat[wi] == 1) { wmerged = wmerged.append(64); } else { wmerged = wmerged.append(widths[wi]); }
         wi = wi + 1;
     }
     widths = wmerged;
     var chunks: string[] = [];
-    chunks = chunks.push("__fn_" + f.name + ":\n");
-    chunks = chunks.push("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    chunks = chunks.append("__fn_" + f.name + ":\n");
+    chunks = chunks.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
-    if (frame > 0) { chunks = chunks.push("    sub sp, sp, #" + i32_to_string(frame) + "\n"); }
+    if (frame > 0) { chunks = chunks.append("    sub sp, sp, #" + i32_to_string(frame) + "\n"); }
     // Spill incoming args: f64 params arrive in d0…, integer/pointer params in
     // x0… (two AAPCS64 sequences).
     var p: i32 = 0;
@@ -447,11 +447,11 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var fip: i32 = 0;
     while (p < f.nparams) {
         if (isfloat[p] == 1) {
-            chunks = chunks.push("    str d" + i32_to_string(fip) + ", " + slot(p) + "\n");
+            chunks = chunks.append("    str d" + i32_to_string(fip) + ", " + slot(p) + "\n");
             fip = fip + 1;
         } else {
             var pw: i32 = widths[p];
-            chunks = chunks.push(store_reg(reg_of, p, argreg_w(iip, pw), pw, ""));
+            chunks = chunks.append(store_reg(reg_of, p, argreg_w(iip, pw), pw, ""));
             iip = iip + 1;
         }
         p = p + 1;
@@ -459,16 +459,16 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
         var blk: ssa.SBlock = f.blocks[bi];
-        chunks = chunks.push(blk_label(f.name, blk.id) + ":\n");
+        chunks = chunks.append(blk_label(f.name, blk.id) + ":\n");
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: ssa.SInst = blk.insts[k];
             if (ins.kind != "param" && ins.kind != "phi") {
-                chunks = chunks.push(emit_inst(ins, reg_of, widths, isfloat, f.name, ""));
+                chunks = chunks.append(emit_inst(ins, reg_of, widths, isfloat, f.name, ""));
             }
             k = k + 1;
         }
-        chunks = chunks.push(emit_term(f, reg_of, widths, isfloat, blk, ""));
+        chunks = chunks.append(emit_term(f, reg_of, widths, isfloat, blk, ""));
         bi = bi + 1;
     }
     return str_join_chunks(chunks);
@@ -526,7 +526,7 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         // A float function keeps every value in its slot (the FP paths address
         // slots directly), so skip register allocation for it.
         if (use_regalloc && !func_has_float(funcs[i])) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
-        chunks = chunks.push(emit_func(funcs[i], reg_of));
+        chunks = chunks.append(emit_func(funcs[i], reg_of));
         i = i + 1;
     }
     out = out + str_join_chunks(chunks);

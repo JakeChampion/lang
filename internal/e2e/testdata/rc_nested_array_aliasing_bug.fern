@@ -11,7 +11,7 @@
 //   -target wasm     → trap
 // After the fix: 12 on every backend.
 //
-// Root cause: `def_body.push(body[k])` retains the inner BodyLine
+// Root cause: `def_body.append(body[k])` retains the inner BodyLine
 // structs (and their string pointers) out of `body` WITHOUT an inc, but
 // computeFreeEligible's escape analysis only tainted a directly-named
 // pushed element — it missed the `body[k]` projection, so `body` stayed
@@ -26,7 +26,7 @@
 //     out of the intermediate `body` array, which is then dropped); a
 //     hardcoded ChunkDef[] does NOT reproduce.
 //   * `expand` must combine the union return, the `indent + text` string
-//     concat, the `active.push(name)` copy, and the (here untaken)
+//     concat, the `active.append(name)` copy, and the (here untaken)
 //     is_ref/chunk_defined recursion branch; dropping any single one
 //     makes it run correctly.
 //
@@ -46,8 +46,8 @@ type Res = ExOk | ExErr;
 
 function split_lines(src: string): string[] {
     var out: string[] = []; var n: i32 = src.len(); var start: i32 = 0; var i: i32 = 0;
-    while (i < n) { if (src[i] == 10) { out = out.push(src[start:i]); start = i + 1; } i = i + 1; }
-    if (start < n) { out = out.push(src[start:n]); }
+    while (i < n) { if (src[i] == 10) { out = out.append(src[start:i]); start = i + 1; } i = i + 1; }
+    if (start < n) { out = out.append(src[start:n]); }
     return out;
 }
 function trim(s: string): string {
@@ -75,13 +75,13 @@ function parse_defs(src: string): ChunkDef[] {
     while (i < n) {
         if (lines[i].len() >= 3 && lines[i][0:3] == "```") {
             var body: BodyLine[] = []; var i2: i32 = i + 1;
-            while (i2 < n && !(lines[i2].len() >= 3 && lines[i2][0:3] == "```")) { body = body.push(BodyLine { text: lines[i2], line: i2 + 1 }); i2 = i2 + 1; }
+            while (i2 < n && !(lines[i2].len() >= 3 && lines[i2][0:3] == "```")) { body = body.append(BodyLine { text: lines[i2], line: i2 + 1 }); i2 = i2 + 1; }
             var hidx: i32 = header_index(body);
             if (hidx >= 0) {
                 var name: string = header_name(trim(body[hidx].text));
                 var def_body: BodyLine[] = []; var k: i32 = hidx + 1;
-                while (k < body.len()) { def_body = def_body.push(body[k]); k = k + 1; }
-                defs = defs.push(ChunkDef { name: name, body: def_body });
+                while (k < body.len()) { def_body = def_body.append(body[k]); k = k + 1; }
+                defs = defs.append(ChunkDef { name: name, body: def_body });
             }
             if (i2 < n) { i = i2 + 1; } else { i = i2; }
         } else { i = i + 1; }
@@ -92,7 +92,7 @@ function chunk_defined(defs: ChunkDef[], name: string): boolean { var i: i32 = 0
 function stack_has(stack: string[], name: string): boolean { var i: i32 = 0; while (i < stack.len()) { if (stack[i] == name) { return true; } i = i + 1; } return false; }
 function expand(defs: ChunkDef[], name: string, indent: string, active: string[]): Res {
     if (stack_has(active, name)) { return ExErr { msg: "cyc", line: 0 }; }
-    var active2: string[] = active.push(name); var out: string[] = []; var i: i32 = 0;
+    var active2: string[] = active.append(name); var out: string[] = []; var i: i32 = 0;
     while (i < defs.len()) {
         if (defs[i].name == name) {
             var body: BodyLine[] = defs[i].body; var j: i32 = 0;
@@ -101,8 +101,8 @@ function expand(defs: ChunkDef[], name: string, indent: string, active: string[]
                 if (is_ref(t)) {
                     var rn: string = ref_name(t); if (!chunk_defined(defs, rn)) { return ExErr { msg: "undef", line: bl.line }; }
                     var sub: Res = expand(defs, rn, indent + leading_ws(bl.text), active2);
-                    match (sub) { ExOk(o) => { var k: i32 = 0; while (k < o.lines.len()) { out = out.push(o.lines[k]); k = k + 1; } }, _ => { return sub; } }
-                } else { out = out.push(indent + bl.text); }
+                    match (sub) { ExOk(o) => { var k: i32 = 0; while (k < o.lines.len()) { out = out.append(o.lines[k]); k = k + 1; } }, _ => { return sub; } }
+                } else { out = out.append(indent + bl.text); }
                 j = j + 1;
             }
         }

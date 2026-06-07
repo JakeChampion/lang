@@ -51,8 +51,8 @@ function split_modules(blob: string): Sections {
             var line: string = blob[line_start:i];
             if (is_marker(line)) {
                 if (have) {
-                    names = names.push(cur_name);
-                    sources = sources.push(blob[src_start:line_start]);
+                    names = names.append(cur_name);
+                    sources = sources.append(blob[src_start:line_start]);
                 }
                 cur_name = marker_name(line);
                 src_start = i + 1;
@@ -63,8 +63,8 @@ function split_modules(blob: string): Sections {
         i = i + 1;
     }
     if (have) {
-        names = names.push(cur_name);
-        sources = sources.push(blob[src_start:n]);
+        names = names.append(cur_name);
+        sources = sources.append(blob[src_start:n]);
     }
     return Sections { names: names, sources: sources };
 }
@@ -79,7 +79,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < count - 1) {
         var m: parser.Module = parser.parse_module(lexer.tokenize(secs.sources[i]));
-        loaded = loaded.push(flatten.LoadedModule { name: secs.names[i], mod: m });
+        loaded = loaded.append(flatten.LoadedModule { name: secs.names[i], mod: m });
         i = i + 1;
     }
     var entry: parser.Module = parser.parse_module(lexer.tokenize(secs.sources[count - 1]));

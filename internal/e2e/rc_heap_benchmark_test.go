@@ -61,7 +61,7 @@ func TestX86_64HeapReclamationPeakRSS(t *testing.T) {
     var m: Map[i32, i32[]] = map_new(4);
     var i: i32 = 0;
     while (i < 800000) {
-        m = m.set(0, [i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i]);
+        m = m.insert(0, [i, i, i, i, i, i, i, i, i, i, i, i, i, i, i, i]);
         i = i + 1;
     }
     return m.get_or(0, [])[0] - 799999;

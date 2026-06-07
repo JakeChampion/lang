@@ -58,7 +58,7 @@ pub function put_bytes(buf: u8[], src: u8[]): u8[] {
     var out: u8[] = buf;
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(src[i]);
+        out = out.append(src[i]);
         i = i + 1;
     }
     return out;
@@ -70,10 +70,10 @@ pub function put_bytes(buf: u8[], src: u8[]): u8[] {
 // what writes those four bytes.
 pub function put_u32_le(buf: u8[], v: u32): u8[] {
     var out: u8[] = buf;
-    out = out.push((v & 255u32) as u8);
-    out = out.push(((v >> 8) & 255u32) as u8);
-    out = out.push(((v >> 16) & 255u32) as u8);
-    out = out.push(((v >> 24) & 255u32) as u8);
+    out = out.append((v & 255u32) as u8);
+    out = out.append(((v >> 8) & 255u32) as u8);
+    out = out.append(((v >> 16) & 255u32) as u8);
+    out = out.append(((v >> 24) & 255u32) as u8);
     return out;
 }
 
@@ -82,10 +82,10 @@ pub function put_u32_le(buf: u8[], v: u32): u8[] {
 // a fixed-width u32 LE (0x01 0x00 0x00 0x00). Always 8 bytes.
 pub function put_module_header(buf: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(0u8);
-    out = out.push(97u8);   // 'a'
-    out = out.push(115u8);  // 's'
-    out = out.push(109u8);  // 'm'
+    out = out.append(0u8);
+    out = out.append(97u8);   // 'a'
+    out = out.append(115u8);  // 's'
+    out = out.append(109u8);  // 'm'
     out = put_u32_le(out, 1u32);
     return out;
 }
@@ -100,7 +100,7 @@ pub function put_name(buf: u8[], s: string): u8[] {
     var out: u8[] = leb128.uleb_u32(buf, n as u32);
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(s[i] as u8);
+        out = out.append(s[i] as u8);
         i = i + 1;
     }
     return out;
@@ -113,7 +113,7 @@ pub function put_name(buf: u8[], s: string): u8[] {
 // https://webassembly.github.io/spec/core/binary/modules.html#sections
 pub function put_section(buf: u8[], id: u8, body: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(id);
+    out = out.append(id);
     out = leb128.uleb_u32(out, body.len() as u32);
     out = put_bytes(out, body);
     return out;
@@ -127,7 +127,7 @@ pub function put_section(buf: u8[], id: u8, body: u8[]): u8[] {
 // https://webassembly.github.io/spec/core/binary/types.html#function-types
 pub function put_func_type(buf: u8[], params: u8[], results: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(96u8);    // 0x60 functype tag
+    out = out.append(96u8);    // 0x60 functype tag
     out = leb128.uleb_u32(out, params.len() as u32);
     out = put_bytes(out, params);
     out = leb128.uleb_u32(out, results.len() as u32);

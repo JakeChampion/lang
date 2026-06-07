@@ -795,13 +795,13 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 

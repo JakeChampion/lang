@@ -139,7 +139,7 @@ function (s: BState) with_lc(lc: LoopCtx): BState {
 // field-offset resolution; a variable's type is fixed, so this map is not
 // part of the snapshot/restore env that build_if / build_while manage.
 function (s: BState) set_var_type(name: string, ty: string): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names.push(name), s.vt_types.push(ty));
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names.append(name), s.vt_types.append(ty));
 }
 function (s: BState) get_var_type(name: string): string {
     var i: i32 = s.vt_names.len() - 1;   // last wins
@@ -158,7 +158,7 @@ function (s: BState) cur_id(): i32 { return s.nvals - 1; }
 
 // emit appends an instruction to the current block.
 function (s: BState) emit(inst: SInst): BState {
-    var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts.push(inst), term: s.cur.term, preds: s.cur.preds };
+    var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts.append(inst), term: s.cur.term, preds: s.cur.preds };
     return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 
@@ -170,7 +170,7 @@ function (s: BState) set_term(term: STerm): BState {
 
 // close_cur pushes the current block into the finished list.
 function (s: BState) close_cur(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.push(s.cur), s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.append(s.cur), s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 
 // open_block makes a fresh empty block (with the given preds) current.
@@ -188,14 +188,14 @@ function (s: BState) set_var(name: string, val: i32): BState {
             var nv: i32[] = [];
             var j: i32 = 0;
             while (j < s.var_vals.len()) {
-                if (j == i) { nv = nv.push(val); } else { nv = nv.push(s.var_vals[j]); }
+                if (j == i) { nv = nv.append(val); } else { nv = nv.append(s.var_vals[j]); }
                 j = j + 1;
             }
             return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, nv, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
         }
         i = i + 1;
     }
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.push(name), s.var_vals.push(val), s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.append(name), s.var_vals.append(val), s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 function (s: BState) get_var(name: string): i32 {
     var i: i32 = 0;
@@ -224,17 +224,17 @@ function (s: BState) record_break(): BState {
     var lc: LoopCtx = s.lc;
     var nflat: i32[] = lc.brk_flat;
     var v: i32 = 0;
-    while (v < lc.n0) { nflat = nflat.push(s.var_vals[v]); v = v + 1; }
+    while (v < lc.n0) { nflat = nflat.append(s.var_vals[v]); v = v + 1; }
     return s.with_lc(LoopCtx { active: lc.active, hdr: lc.hdr, exit: lc.exit, n0: lc.n0,
-        brk_ids: lc.brk_ids.push(s.cur.id), brk_flat: nflat, cont_ids: lc.cont_ids, cont_flat: lc.cont_flat });
+        brk_ids: lc.brk_ids.append(s.cur.id), brk_flat: nflat, cont_ids: lc.cont_ids, cont_flat: lc.cont_flat });
 }
 function (s: BState) record_continue(): BState {
     var lc: LoopCtx = s.lc;
     var nflat: i32[] = lc.cont_flat;
     var v: i32 = 0;
-    while (v < lc.n0) { nflat = nflat.push(s.var_vals[v]); v = v + 1; }
+    while (v < lc.n0) { nflat = nflat.append(s.var_vals[v]); v = v + 1; }
     return s.with_lc(LoopCtx { active: lc.active, hdr: lc.hdr, exit: lc.exit, n0: lc.n0,
-        brk_ids: lc.brk_ids, brk_flat: lc.brk_flat, cont_ids: lc.cont_ids.push(s.cur.id), cont_flat: nflat });
+        brk_ids: lc.brk_ids, brk_flat: lc.brk_flat, cont_ids: lc.cont_ids.append(s.cur.id), cont_flat: nflat });
 }
 
 // ---- expression lowering ----------------------------------------------
@@ -295,7 +295,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             // A map-producing expression is typed "Map" (i32 keys) or "SMap"
             // (string keys) so `.len()` etc. dispatch to the map helpers and
             // method-key compares pick the right one: the constructors
-            // map_new_i32(…) / map_new(…), and `.set(…)` (which returns the
+            // map_new_i32(…) / map_new(…), and `.insert(…)` (which returns the
             // map, threading the construction chain — so it inherits the
             // receiver's map type).
             match (c.callee) {
@@ -311,7 +311,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { return cgt[4 : cgt.len()]; }
                 },
                 parser.ExprFieldAccess(fa2) => {
-                    if (fa2.field == "set" || fa2.field == "insert") { return type_of_expr(fa2.obj, s); }
+                    if (fa2.field == "insert") { return type_of_expr(fa2.obj, s); }
                     // A user method call → its declared return type (so a
                     // chained `a.m().n()` resolves n's receiver), read from the
                     // "<recv>#<m>" → "m:<sym>:<ret>" seed.
@@ -500,7 +500,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         while (iai < c.args.len()) {
                             s = build_expr(c.args[iai], s);
                             if (!s.ok) { return s; }
-                            iav = iav.push(s.cur_id());
+                            iav = iav.append(s.cur_id());
                             iai = iai + 1;
                         }
                         var boxv: i32 = s.get_var(cid.name);
@@ -512,8 +512,8 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var fnaddr: i32 = s.cur_id();
                         var icargs: i32[] = [fnaddr];
                         var ica: i32 = 0;
-                        while (ica < iav.len()) { icargs = icargs.push(iav[ica]); ica = ica + 1; }
-                        icargs = icargs.push(boxv);
+                        while (ica < iav.len()) { icargs = icargs.append(iav[ica]); ica = ica + 1; }
+                        icargs = icargs.append(boxv);
                         s = s.fresh();
                         return s.emit(SInst { kind: "call_indirect", result: s.cur_id(), args: icargs, imm: 0, str: "" });
                     }
@@ -652,7 +652,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     while (i < c.args.len()) {
                         s = build_expr(c.args[i], s);
                         if (!s.ok) { return s; }
-                        argvals = argvals.push(s.cur_id());
+                        argvals = argvals.append(s.cur_id());
                         i = i + 1;
                     }
                     // Append captured values (marker order) as trailing args.
@@ -660,7 +660,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var cpi: i32 = 0;
                     while (cpi <= cap_csv.len()) {
                         if (cpi == cap_csv.len() || cap_csv[cpi] == 44) {
-                            if (ccn.len() > 0) { argvals = argvals.push(s.get_var(ccn)); }
+                            if (ccn.len() > 0) { argvals = argvals.append(s.get_var(ccn)); }
                             ccn = "";
                         } else { ccn = ccn + cap_csv[cpi : cpi + 1]; }
                         cpi = cpi + 1;
@@ -690,7 +690,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                             while (uai < c.args.len()) {
                                 s = build_expr(c.args[uai], s);
                                 if (!s.ok) { return s; }
-                                uargs = uargs.push(s.cur_id());
+                                uargs = uargs.append(s.cur_id());
                                 uai = uai + 1;
                             }
                             s = s.fresh();
@@ -699,7 +699,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     }
                     // Map methods (i32-keyed maps): set / get_or / has, and
                     // len on a Map receiver. The parser desugars a `Map { … }`
-                    // literal to map_new_i32(8).set(k0,v0)… and user code calls
+                    // literal to map_new_i32(8).insert(k0,v0)… and user code calls
                     // these by name; arrays have none of set/get_or/has, so
                     // those are unambiguous. They lower to calls into the
                     // injected association-array helpers (__ssa_map_*), with
@@ -717,14 +717,14 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var pfx: string = "__ssa_map_";
                     if (mt == "SMap") { pfx = "__ssa_smap_"; }
                     var mname: string = "";
-                    if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) { mname = pfx + "set"; }
+                    if ((fa.field == "insert") && c.args.len() == 2) { mname = pfx + "set"; }
                     else if (fa.field == "get_or" && c.args.len() == 2) { mname = pfx + "get_or"; }
                     else if (fa.field == "has" && c.args.len() == 1) { mname = pfx + "has"; }
-                    else if ((fa.field == "delete" || fa.field == "without") && c.args.len() == 1) { mname = pfx + "delete"; }
+                    else if ((fa.field == "without") && c.args.len() == 1) { mname = pfx + "delete"; }
                     else if (fa.field == "len" && c.args.len() == 0 && ismap) { mname = "__ssa_map_len"; }
                     else if (fa.field == "keys" && c.args.len() == 0 && ismap) { mname = "__ssa_map_keys"; }
                     else if (fa.field == "values" && c.args.len() == 0 && ismap) { mname = "__ssa_map_values"; }
-                    else if (fa.field == "push" && c.args.len() == 1) { mname = "__ssa_arr_push"; }
+                    else if (fa.field == "append" && c.args.len() == 1) { mname = "__ssa_arr_push"; }
                     if (mname.len() > 0) {
                         s = build_expr(fa.obj, s);
                         if (!s.ok) { return s; }
@@ -733,7 +733,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         while (mi < c.args.len()) {
                             s = build_expr(c.args[mi], s);
                             if (!s.ok) { return s; }
-                            margs = margs.push(s.cur_id());
+                            margs = margs.append(s.cur_id());
                             mi = mi + 1;
                         }
                         s = s.fresh();
@@ -1150,10 +1150,10 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                 var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0 }, right: parser.ExprNumber { text: int_str(tag), suffix: "", is_float: false, line: 0, col: 0 } };
                 var then_body: parser.Stmt[] = [];
                 if (pv.binding.len() > 0 && pv.binding != "_") {
-                    then_body = then_body.push(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: parser.ExprIdent { name: "$scrut", line: 0, col: 0 }, line: 0, col: 0 });
+                    then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: parser.ExprIdent { name: "$scrut", line: 0, col: 0 }, line: 0, col: 0 });
                 }
                 var bi: i32 = 0;
-                while (bi < arm.body.len()) { then_body = then_body.push(arm.body[bi]); bi = bi + 1; }
+                while (bi < arm.body.len()) { then_body = then_body.append(arm.body[bi]); bi = bi + 1; }
                 var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain };
                 chain = [theif];
             }
@@ -1254,26 +1254,26 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         // literal of concrete struct values assigned to a union-typed array
         // doesn't tag-wrap its elements, so a later match on them misfires.
         var kargs: parser.Expr[] = [];
-        kargs = kargs.push(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
-        kargs = kargs.push(parser.ExprIdent { name: i_name, line: 0, col: 0 });
+        kargs = kargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
+        kargs = kargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_k: parser.Stmt = parser.StmtVar { name: kname, type_name: "",
             init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0 };
         var vargs: parser.Expr[] = [];
-        vargs = vargs.push(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
-        vargs = vargs.push(parser.ExprIdent { name: i_name, line: 0, col: 0 });
+        vargs = vargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
+        vargs = vargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_v: parser.Stmt = parser.StmtVar { name: vname, type_name: "",
             init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0 };
-        wbody = wbody.push(bind_k);
-        wbody = wbody.push(bind_v);
+        wbody = wbody.append(bind_k);
+        wbody = wbody.append(bind_v);
     } else {
         var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
             init: parser.ExprIndex {
                 array: parser.ExprIdent { name: arr_name, line: 0, col: 0 },
                 index: parser.ExprIdent { name: i_name, line: 0, col: 0 } }, line: 0, col: 0 };
-        wbody = wbody.push(bind_elem);
+        wbody = wbody.append(bind_elem);
     }
     var bi: i32 = 0;
-    while (bi < fr.body.len()) { wbody = wbody.push(fr.body[bi]); bi = bi + 1; }
+    while (bi < fr.body.len()) { wbody = wbody.append(fr.body[bi]); bi = bi + 1; }
 
     var loop: parser.Stmt = parser.StmtWhile { cond: guard, body: wbody };
 
@@ -1333,8 +1333,8 @@ function build_if(f: parser.StmtIf, s: BState): BState {
 
     // ---- merge ----
     var mpreds: i32[] = [];
-    if (then_reaches) { mpreds = mpreds.push(then_exit_id); }
-    if (else_reaches) { mpreds = mpreds.push(else_exit_id); }
+    if (then_reaches) { mpreds = mpreds.append(then_exit_id); }
+    if (else_reaches) { mpreds = mpreds.append(else_exit_id); }
     s = s.open_block(merge_id, mpreds);
 
     // Reconcile the environment with phi nodes. Iterate the pre-existing
@@ -1380,7 +1380,7 @@ function env_set_at(vals: i32[], i: i32, v: i32): i32[] {
     var out: i32[] = [];
     var k: i32 = 0;
     while (k < vals.len()) {
-        if (k == i) { out = out.push(v); } else { out = out.push(vals[k]); }
+        if (k == i) { out = out.append(v); } else { out = out.append(vals[k]); }
         k = k + 1;
     }
     return out;
@@ -1440,7 +1440,7 @@ function collect_assigned(body: parser.Stmt[]): string[] {
 function collect_assigned_stmt(st: parser.Stmt, out: string[]): string[] {
     match (st) {
         parser.StmtAssign(a) => {
-            if (!contains_str(out, a.target)) { out = out.push(a.target); }
+            if (!contains_str(out, a.target)) { out = out.append(a.target); }
             return out;
         },
         parser.StmtIf(f) => {
@@ -1473,7 +1473,7 @@ function collect_assigned_stmt(st: parser.Stmt, out: string[]): string[] {
 function merge_names(a: string[], b: string[]): string[] {
     var i: i32 = 0;
     while (i < b.len()) {
-        if (!contains_str(a, b[i])) { a = a.push(b[i]); }
+        if (!contains_str(a, b[i])) { a = a.append(b[i]); }
         i = i + 1;
     }
     return a;
@@ -1508,21 +1508,21 @@ function append_header_latches(s: BState, header_id: i32, phi_vars: i32[], phi_r
                         var nargs: i32[] = ins.args;
                         var li: i32 = 0;
                         while (li < latch_ids.len()) {
-                            nargs = nargs.push(latch_flat[li * n0 + vi]);
+                            nargs = nargs.append(latch_flat[li * n0 + vi]);
                             li = li + 1;
                         }
                         ins = SInst { kind: "phi", result: ins.result, args: nargs, imm: 0, str: "" };
                     }
                 }
-                ninsts = ninsts.push(ins);
+                ninsts = ninsts.append(ins);
                 k = k + 1;
             }
             var npreds: i32[] = blk.preds;
             var lp: i32 = 0;
-            while (lp < latch_ids.len()) { npreds = npreds.push(latch_ids[lp]); lp = lp + 1; }
+            while (lp < latch_ids.len()) { npreds = npreds.append(latch_ids[lp]); lp = lp + 1; }
             blk = SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: npreds };
         }
-        nb = nb.push(blk);
+        nb = nb.append(blk);
         i = i + 1;
     }
     return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, nb, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
@@ -1565,8 +1565,8 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
             s = s.fresh();
             var pa: i32[] = [pre_vals[vi]];
             s = s.emit(SInst { kind: "phi", result: s.cur_id(), args: pa, imm: 0, str: "" });
-            phi_vars = phi_vars.push(vi);
-            phi_results = phi_results.push(s.cur_id());
+            phi_vars = phi_vars.append(vi);
+            phi_results = phi_results.append(s.cur_id());
             header_vals = env_set_at(header_vals, vi, s.cur_id());
         }
         vi = vi + 1;
@@ -1606,9 +1606,9 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
     var latch_ids: i32[] = cont_ids;
     var latch_flat: i32[] = cont_flat;
     if (body_reaches) {
-        latch_ids = latch_ids.push(body_exit_id);
+        latch_ids = latch_ids.append(body_exit_id);
         var bv: i32 = 0;
-        while (bv < n0) { latch_flat = latch_flat.push(body_vals[bv]); bv = bv + 1; }
+        while (bv < n0) { latch_flat = latch_flat.append(body_vals[bv]); bv = bv + 1; }
     }
     s = append_header_latches(s, header_id, phi_vars, phi_results, latch_ids, latch_flat, n0);
 
@@ -1616,7 +1616,7 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
     // variable whose break values differ from the header value needs a phi.
     var epreds: i32[] = [header_id];
     var bp: i32 = 0;
-    while (bp < brk_ids.len()) { epreds = epreds.push(brk_ids[bp]); bp = bp + 1; }
+    while (bp < brk_ids.len()) { epreds = epreds.append(brk_ids[bp]); bp = bp + 1; }
     s = s.open_block(exit_id, epreds);
     var exit_vals: i32[] = header_vals;
     if (brk_ids.len() > 0) {
@@ -1632,7 +1632,7 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
                 s = s.fresh();
                 var pa2: i32[] = [header_vals[ev]];
                 var bb2: i32 = 0;
-                while (bb2 < brk_ids.len()) { pa2 = pa2.push(brk_flat[bb2 * n0 + ev]); bb2 = bb2 + 1; }
+                while (bb2 < brk_ids.len()) { pa2 = pa2.append(brk_flat[bb2 * n0 + ev]); bb2 = bb2 + 1; }
                 s = s.emit(SInst { kind: "phi", result: s.cur_id(), args: pa2, imm: 0, str: "" });
                 exit_vals = env_set_at(exit_vals, ev, s.cur_id());
             }
@@ -1652,7 +1652,7 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
 // creation). Captures are reads that resolve to an enclosing local.
 function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { return acc.push(id.name); },
+        parser.ExprIdent(id) => { return acc.append(id.name); },
         parser.ExprNumber(_) => { return acc; },
         parser.ExprString(_) => { return acc; },
         parser.ExprBool(_) => { return acc; },
@@ -1750,7 +1750,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return acc.push(v.name); },
+        parser.StmtVar(v) => { return acc.append(v.name); },
         parser.StmtReturn(_) => { return acc; },
         parser.StmtExpr(_) => { return acc; },
         parser.StmtIf(i) => {
@@ -1770,7 +1770,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 match (m.arms[ai].pattern) {
-                    parser.PatVariant(pv) => { if (pv.binding.len() > 0) { acc = acc.push(pv.binding); } },
+                    parser.PatVariant(pv) => { if (pv.binding.len() > 0) { acc = acc.append(pv.binding); } },
                     parser.PatWildcard(_) => { }
                 }
                 var bi: i32 = 0;
@@ -1780,7 +1780,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
             return acc;
         },
         parser.StmtFor(f) => {
-            acc = acc.push(f.var_name);
+            acc = acc.append(f.var_name);
             var i: i32 = 0;
             while (i < f.body.len()) { acc = collect_bound_stmt(f.body[i], acc); i = i + 1; }
             return acc;
@@ -1802,7 +1802,7 @@ function lambda_free_caps(lm: parser.ExprLambda, locals: string[]): string[] {
     while (bi < lm.body.len()) { refs = collect_idents_stmt(lm.body[bi], refs); bi = bi + 1; }
     var bound: string[] = [];
     var pi: i32 = 0;
-    while (pi < lm.params.len()) { bound = bound.push(lm.params[pi].name); pi = pi + 1; }
+    while (pi < lm.params.len()) { bound = bound.append(lm.params[pi].name); pi = pi + 1; }
     var si: i32 = 0;
     while (si < lm.body.len()) { bound = collect_bound_stmt(lm.body[si], bound); si = si + 1; }
     var caps: string[] = [];
@@ -1810,7 +1810,7 @@ function lambda_free_caps(lm: parser.ExprLambda, locals: string[]): string[] {
     while (ri < refs.len()) {
         var nm: string = refs[ri];
         if (index_of_str(bound, nm) < 0 && index_of_str(caps, nm) < 0 && index_of_str(locals, nm) >= 0) {
-            caps = caps.push(nm);
+            caps = caps.append(nm);
         }
         ri = ri + 1;
     }
@@ -1824,7 +1824,7 @@ function lambda_free_caps(lm: parser.ExprLambda, locals: string[]): string[] {
 function parent_locals_upto(fd: parser.FuncDecl, upto: i32): string[] {
     var out: string[] = [];
     var pi: i32 = 0;
-    while (pi < fd.params.len()) { out = out.push(fd.params[pi].name); pi = pi + 1; }
+    while (pi < fd.params.len()) { out = out.append(fd.params[pi].name); pi = pi + 1; }
     var si: i32 = 0;
     while (si < upto) {
         match (fd.body[si]) {
@@ -1833,7 +1833,7 @@ function parent_locals_upto(fd: parser.FuncDecl, upto: i32): string[] {
                 var ci: i32 = 0;
                 while (ci <= v.name.len()) {
                     if (ci == v.name.len() || v.name[ci] == 44) {
-                        if (nm.len() > 0) { out = out.push(nm); }
+                        if (nm.len() > 0) { out = out.append(nm); }
                         nm = "";
                     } else { nm = nm + v.name[ci : ci + 1]; }
                     ci = ci + 1;
@@ -1908,7 +1908,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             if (caps.len() == 0) {
                                 // No captures: lift verbatim. Called directly
                                 // (fast path) or via a 1-slot box (env ignored).
-                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 });
+                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 });
                             } else {
                             // Capturing: the closure is boxed [fn_addr, cap…] at
                             // its binding; the lifted body reads captures back
@@ -1928,7 +1928,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var ct: string = resolve_capture_type(caps[ci], fd);
                                 var muted: boolean = index_of_str(parent_assigned, caps[ci]) >= 0 || index_of_str(lam_assigned, caps[ci]) >= 0;
                                 if (ct.len() == 0 || muted) { ok = false; ci = caps.len(); }
-                                else { ctypes = ctypes.push(ct); ci = ci + 1; }
+                                else { ctypes = ctypes.append(ct); ci = ci + 1; }
                             }
                             if (ok) {
                                 // Copy lam.params into a fresh array before
@@ -1939,18 +1939,18 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 // param and emits a broken function).
                                 var eparams: parser.ParamDecl[] = [];
                                 var ep: i32 = 0;
-                                while (ep < lam.params.len()) { eparams = eparams.push(lam.params[ep]); ep = ep + 1; }
-                                eparams = eparams.push(parser.ParamDecl { name: "__env", type_name: "fn", own: false });
+                                while (ep < lam.params.len()) { eparams = eparams.append(lam.params[ep]); ep = ep + 1; }
+                                eparams = eparams.append(parser.ParamDecl { name: "__env", type_name: "fn", own: false });
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
                                     var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0 }, field: int_str(cj + 1), line: 0, col: 0 };
-                                    ebody = ebody.push(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0 });
+                                    ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0 });
                                     cj = cj + 1;
                                 }
                                 var bk: i32 = 0;
-                                while (bk < lam.body.len()) { ebody = ebody.push(lam.body[bk]); bk = bk + 1; }
-                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 });
+                                while (bk < lam.body.len()) { ebody = ebody.append(lam.body[bk]); bk = bk + 1; }
+                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 });
                             }
                             }
                         },
@@ -1986,15 +1986,15 @@ pub function build_seed(funcs: parser.FuncDecl[]): Seed {
     var mi: i32 = 0;
     while (mi < funcs.len()) {
         if (funcs[mi].receiver_type.len() > 0) {
-            names = names.push(funcs[mi].receiver_type + "#" + funcs[mi].name);
-            types = types.push("m:" + fn_sym(funcs[mi]) + ":" + funcs[mi].ret_type);
+            names = names.append(funcs[mi].receiver_type + "#" + funcs[mi].name);
+            types = types.append("m:" + fn_sym(funcs[mi]) + ":" + funcs[mi].ret_type);
         }
         mi = mi + 1;
     }
     var gi: i32 = 0;
     while (gi < funcs.len()) {
-        names = names.push(funcs[gi].name);
-        types = types.push("gfn:" + funcs[gi].ret_type);
+        names = names.append(funcs[gi].name);
+        types = types.append("gfn:" + funcs[gi].ret_type);
         gi = gi + 1;
     }
     return Seed { names: names, types: types };
@@ -2081,9 +2081,9 @@ pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[]
     var pidx: i32 = 0;
     if (fd.receiver_type.len() > 0) {
         var rna: i32[] = [];
-        insts0 = insts0.push(SInst { kind: "param", result: 0, args: rna, imm: 0, str: "ptr" });
-        pnames = pnames.push(fd.receiver_name);
-        pvals = pvals.push(0);
+        insts0 = insts0.append(SInst { kind: "param", result: 0, args: rna, imm: 0, str: "ptr" });
+        pnames = pnames.append(fd.receiver_name);
+        pvals = pvals.append(0);
         pidx = 1;
     }
     var i: i32 = 0;
@@ -2092,9 +2092,9 @@ pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[]
         var pmark: string = "";
         if (is_ptr_type(fd.params[i].type_name) || is_struct_type(fd.params[i].type_name, structs)) { pmark = "ptr"; }
         else if (fd.params[i].type_name == "f64") { pmark = "f64"; }   // an f64 param (XMM-passed)
-        insts0 = insts0.push(SInst { kind: "param", result: pidx, args: noargs, imm: pidx, str: pmark });
-        pnames = pnames.push(fd.params[i].name);
-        pvals = pvals.push(pidx);
+        insts0 = insts0.append(SInst { kind: "param", result: pidx, args: noargs, imm: pidx, str: pmark });
+        pnames = pnames.append(fd.params[i].name);
+        pvals = pvals.append(pidx);
         pidx = pidx + 1;
         i = i + 1;
     }
@@ -2187,14 +2187,14 @@ pub function optimize(f: SFunc): SFunc {
 function zeros(n: i32): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
-    while (i < n) { out = out.push(0); i = i + 1; }
+    while (i < n) { out = out.append(0); i = i + 1; }
     return out;
 }
 
 function rewrite_args(ins: SInst, resolved: i32[]): SInst {
     var na: i32[] = [];
     var i: i32 = 0;
-    while (i < ins.args.len()) { na = na.push(resolved[ins.args[i]]); i = i + 1; }
+    while (i < ins.args.len()) { na = na.append(resolved[ins.args[i]]); i = i + 1; }
     return SInst { kind: ins.kind, result: ins.result, args: na, imm: ins.imm, str: ins.str };
 }
 function rewrite_term(t: STerm, resolved: i32[]): STerm {
@@ -2209,7 +2209,7 @@ function copy_propagate(f: SFunc): SFunc {
     // ct[i] = the value a `copy` at id i aliases, or -1 if id i is not a copy.
     var ct: i32[] = [];
     var i: i32 = 0;
-    while (i < f.nvals) { ct = ct.push(0 - 1); i = i + 1; }
+    while (i < f.nvals) { ct = ct.append(0 - 1); i = i + 1; }
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
         var blk: SBlock = f.blocks[bi];
@@ -2228,7 +2228,7 @@ function copy_propagate(f: SFunc): SFunc {
         var v: i32 = i;
         var guard: i32 = 0;
         while (ct[v] >= 0 && guard < 1000000) { v = ct[v]; guard = guard + 1; }
-        resolved = resolved.push(v);
+        resolved = resolved.append(v);
         i = i + 1;
     }
     // Rewrite operands through `resolved` and drop the copy nodes.
@@ -2240,10 +2240,10 @@ function copy_propagate(f: SFunc): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind != "copy") { ninsts = ninsts.push(rewrite_args(ins, resolved)); }
+            if (ins.kind != "copy") { ninsts = ninsts.append(rewrite_args(ins, resolved)); }
             k = k + 1;
         }
-        nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, resolved), preds: blk.preds });
+        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, resolved), preds: blk.preds });
         bi = bi + 1;
     }
     return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
@@ -2310,10 +2310,10 @@ function const_fold(f: SFunc): SFunc {
                     cval = env_put(cval, ins.result, nv);
                     changed = true;
                 }
-                ninsts = ninsts.push(folded);
+                ninsts = ninsts.append(folded);
                 k = k + 1;
             }
-            nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+            nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
             bi = bi + 1;
         }
         f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
@@ -2409,10 +2409,10 @@ function algebraic_simplify(f: SFunc): SFunc {
                     if (simp.kind != "binary") { changed = true; }
                     ins = simp;
                 }
-                ninsts = ninsts.push(ins);
+                ninsts = ninsts.append(ins);
                 k = k + 1;
             }
-            nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+            nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
             bi = bi + 1;
         }
         f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
@@ -2464,7 +2464,7 @@ function cse_key(ins: SInst): string {
 function cse(f: SFunc): SFunc {
     var repl: i32[] = [];
     var i: i32 = 0;
-    while (i < f.nvals) { repl = repl.push(i); i = i + 1; }
+    while (i < f.nvals) { repl = repl.append(i); i = i + 1; }
 
     var nblocks: SBlock[] = [];
     var bi: i32 = 0;
@@ -2485,13 +2485,13 @@ function cse(f: SFunc): SFunc {
                     k = k + 1;
                     continue;   // drop the redundant definition
                 }
-                keys = keys.push(key);
-                ids = ids.push(ins.result);
+                keys = keys.append(key);
+                ids = ids.append(ins.result);
             }
-            ninsts = ninsts.push(ins);
+            ninsts = ninsts.append(ins);
             k = k + 1;
         }
-        nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, repl), preds: blk.preds });
+        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, repl), preds: blk.preds });
         bi = bi + 1;
     }
     // Final pass: apply the complete replacement map to every surviving
@@ -2505,8 +2505,8 @@ function cse(f: SFunc): SFunc {
         var blk: SBlock = nblocks[bi];
         var ri: SInst[] = [];
         var k: i32 = 0;
-        while (k < blk.insts.len()) { ri = ri.push(rewrite_args(blk.insts[k], repl)); k = k + 1; }
-        fblocks = fblocks.push(SBlock { id: blk.id, insts: ri, term: rewrite_term(blk.term, repl), preds: blk.preds });
+        while (k < blk.insts.len()) { ri = ri.append(rewrite_args(blk.insts[k], repl)); k = k + 1; }
+        fblocks = fblocks.append(SBlock { id: blk.id, insts: ri, term: rewrite_term(blk.term, repl), preds: blk.preds });
         bi = bi + 1;
     }
     return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: fblocks, entry: f.entry, takes_env: f.takes_env };
@@ -2530,15 +2530,15 @@ function reachable_ids(f: SFunc): i32[] {
         var id: i32 = work[work.len() - 1];
         var nw: i32[] = [];
         var w: i32 = 0;
-        while (w < work.len() - 1) { nw = nw.push(work[w]); w = w + 1; }
+        while (w < work.len() - 1) { nw = nw.append(work[w]); w = w + 1; }
         work = nw;
         var bi: i32 = block_index(f, id);
         if (bi >= 0) {
             var t: STerm = f.blocks[bi].term;
-            if (t.kind == "br") { if (index_of_i32(seen, t.target) < 0) { seen = seen.push(t.target); work = work.push(t.target); } }
+            if (t.kind == "br") { if (index_of_i32(seen, t.target) < 0) { seen = seen.append(t.target); work = work.append(t.target); } }
             else if (t.kind == "brif") {
-                if (index_of_i32(seen, t.t) < 0) { seen = seen.push(t.t); work = work.push(t.t); }
-                if (index_of_i32(seen, t.f) < 0) { seen = seen.push(t.f); work = work.push(t.f); }
+                if (index_of_i32(seen, t.t) < 0) { seen = seen.append(t.t); work = work.append(t.t); }
+                if (index_of_i32(seen, t.f) < 0) { seen = seen.append(t.f); work = work.append(t.f); }
             }
         }
     }
@@ -2585,7 +2585,7 @@ function branch_simplify(f: SFunc): SFunc {
                 t = t_br(taken);
                 changed = true;
             }
-            folded_blocks = folded_blocks.push(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
+            folded_blocks = folded_blocks.append(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
             bi = bi + 1;
         }
         f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: folded_blocks, entry: f.entry, takes_env: f.takes_env };
@@ -2605,13 +2605,13 @@ function branch_simplify(f: SFunc): SFunc {
                 var p: i32 = blk.preds[pi];
                 var psrc: i32 = block_index(f, p);
                 var alive: boolean = index_of_i32(reach, p) >= 0 && psrc >= 0 && term_targets(f.blocks[psrc].term, blk.id);
-                if (alive) { keep = keep.push(pi); }
+                if (alive) { keep = keep.append(pi); }
                 pi = pi + 1;
             }
             if (keep.len() != blk.preds.len()) { changed = true; }
             var npreds: i32[] = [];
             var ki: i32 = 0;
-            while (ki < keep.len()) { npreds = npreds.push(blk.preds[keep[ki]]); ki = ki + 1; }
+            while (ki < keep.len()) { npreds = npreds.append(blk.preds[keep[ki]]); ki = ki + 1; }
             // Prune phi operands to the surviving preds.
             var ninsts: SInst[] = [];
             var k: i32 = 0;
@@ -2620,7 +2620,7 @@ function branch_simplify(f: SFunc): SFunc {
                 if (ins.kind == "phi") {
                     var nargs: i32[] = [];
                     var ai: i32 = 0;
-                    while (ai < keep.len()) { nargs = nargs.push(ins.args[keep[ai]]); ai = ai + 1; }
+                    while (ai < keep.len()) { nargs = nargs.append(ins.args[keep[ai]]); ai = ai + 1; }
                     if (nargs.len() == 1) {
                         ins = SInst { kind: "copy", result: ins.result, args: nargs, imm: 0, str: "" };
                         changed = true;
@@ -2628,10 +2628,10 @@ function branch_simplify(f: SFunc): SFunc {
                         ins = SInst { kind: "phi", result: ins.result, args: nargs, imm: ins.imm, str: ins.str };
                     }
                 }
-                ninsts = ninsts.push(ins);
+                ninsts = ninsts.append(ins);
                 k = k + 1;
             }
-            nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: npreds });
+            nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: npreds });
             bi = bi + 1;
         }
         f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
@@ -2681,7 +2681,7 @@ function merge_blocks(f: SFunc): SFunc {
         // Append T's instructions to B; B inherits T's terminator.
         var merged_insts: SInst[] = bb.insts;
         var ii: i32 = 0;
-        while (ii < tb.insts.len()) { merged_insts = merged_insts.push(tb.insts[ii]); ii = ii + 1; }
+        while (ii < tb.insts.len()) { merged_insts = merged_insts.append(tb.insts[ii]); ii = ii + 1; }
         var merged: SBlock = SBlock { id: bb.id, insts: merged_insts, term: tb.term, preds: bb.preds };
 
         // Rebuild: replace B with the merged block, drop T, and relabel any
@@ -2695,10 +2695,10 @@ function merge_blocks(f: SFunc): SFunc {
             var np: i32[] = [];
             var p: i32 = 0;
             while (p < blk.preds.len()) {
-                if (blk.preds[p] == tid) { np = np.push(bb.id); } else { np = np.push(blk.preds[p]); }
+                if (blk.preds[p] == tid) { np = np.append(bb.id); } else { np = np.append(blk.preds[p]); }
                 p = p + 1;
             }
-            nblocks = nblocks.push(SBlock { id: blk.id, insts: blk.insts, term: blk.term, preds: np });
+            nblocks = nblocks.append(SBlock { id: blk.id, insts: blk.insts, term: blk.term, preds: np });
             k = k + 1;
         }
         f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
@@ -2722,7 +2722,7 @@ pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 pub function compute_widths(f: SFunc): i32[] {
     var w: i32[] = [];
     var i: i32 = 0;
-    while (i < f.nvals) { w = w.push(32); i = i + 1; }
+    while (i < f.nvals) { w = w.append(32); i = i + 1; }
     var changed: boolean = true;
     var rounds: i32 = 0;
     while (changed && rounds < 100000) {
@@ -2770,7 +2770,7 @@ pub function compute_widths(f: SFunc): i32[] {
 pub function compute_isfloat(f: SFunc): i32[] {
     var fl: i32[] = [];
     var i: i32 = 0;
-    while (i < f.nvals) { fl = fl.push(0); i = i + 1; }
+    while (i < f.nvals) { fl = fl.append(0); i = i + 1; }
     var changed: boolean = true;
     var rounds: i32 = 0;
     while (changed && rounds < 100000) {
@@ -2840,10 +2840,10 @@ pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
             if (ins.kind == "call" && index_of_str(ptr_ret, ins.str) >= 0) {
                 ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 1, str: ins.str };
             }
-            ninsts = ninsts.push(ins);
+            ninsts = ninsts.append(ins);
             k = k + 1;
         }
-        nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
         bi = bi + 1;
     }
     return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
@@ -2865,10 +2865,10 @@ pub function mark_float_calls(f: SFunc, float_ret: string[]): SFunc {
             if (ins.kind == "call" && index_of_str(float_ret, ins.str) >= 0) {
                 ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 2, str: ins.str };
             }
-            ninsts = ninsts.push(ins);
+            ninsts = ninsts.append(ins);
             k = k + 1;
         }
-        nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
         bi = bi + 1;
     }
     return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
@@ -2931,7 +2931,7 @@ pub function uses_memory(f: SFunc): boolean {
 pub function regalloc_none(f: SFunc): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
-    while (i < f.nvals) { out = out.push(0 - 1); i = i + 1; }
+    while (i < f.nvals) { out = out.append(0 - 1); i = i + 1; }
     return out;
 }
 
@@ -2964,11 +2964,11 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
         var placed: boolean = false;
         var j: i32 = 0;
         while (j < out.len()) {
-            if (!placed && lo[v] < lo[out[j]]) { ins = ins.push(v); placed = true; }
-            ins = ins.push(out[j]);
+            if (!placed && lo[v] < lo[out[j]]) { ins = ins.append(v); placed = true; }
+            ins = ins.append(out[j]);
             j = j + 1;
         }
-        if (!placed) { ins = ins.push(v); }
+        if (!placed) { ins = ins.append(v); }
         out = ins;
         v = v + 1;
     }
@@ -2980,13 +2980,13 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
     var lo: i32[] = [];
     var hi: i32[] = [];
     var i: i32 = 0;
-    while (i < f.nvals) { lo = lo.push(big); hi = hi.push(0 - 1); i = i + 1; }
+    while (i < f.nvals) { lo = lo.append(big); hi = hi.append(0 - 1); i = i + 1; }
     var calls: i32[] = [];
 
     // Number instructions and record each value's def/use positions.
     var def_pos: i32[] = [];
     i = 0;
-    while (i < f.nvals) { def_pos = def_pos.push(0 - 1); i = i + 1; }
+    while (i < f.nvals) { def_pos = def_pos.append(0 - 1); i = i + 1; }
     var pos: i32 = 0;
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
@@ -3001,7 +3001,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.push(pos); }
+            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -3051,8 +3051,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
     var rpos: i32 = 0;
     var rbi: i32 = 0;
     while (rbi < f.blocks.len()) {
-        blk_ids = blk_ids.push(f.blocks[rbi].id);
-        blk_starts = blk_starts.push(rpos);
+        blk_ids = blk_ids.append(f.blocks[rbi].id);
+        blk_starts = blk_starts.append(rpos);
         rpos = rpos + f.blocks[rbi].insts.len() + 1;
         rbi = rbi + 1;
     }
@@ -3090,7 +3090,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
 
     var reg_of: i32[] = [];
     i = 0;
-    while (i < f.nvals) { reg_of = reg_of.push(0 - 1); i = i + 1; }
+    while (i < f.nvals) { reg_of = reg_of.append(0 - 1); i = i + 1; }
 
     // Linear scan in order of interval start.
     var order: i32[] = order_by_lo(f.nvals, lo);
@@ -3099,7 +3099,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
     var act_reg: i32[] = [];
     var free: i32[] = [];
     var r: i32 = nregs - 1;
-    while (r >= 0) { free = free.push(r); r = r - 1; }
+    while (r >= 0) { free = free.append(r); r = r - 1; }
 
     var oi: i32 = 0;
     while (oi < order.len()) {
@@ -3109,8 +3109,8 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         var nv: i32[] = []; var nh: i32[] = []; var nr: i32[] = [];
         var ai: i32 = 0;
         while (ai < act_val.len()) {
-            if (act_hi[ai] < lo[v]) { free = free.push(act_reg[ai]); }
-            else { nv = nv.push(act_val[ai]); nh = nh.push(act_hi[ai]); nr = nr.push(act_reg[ai]); }
+            if (act_hi[ai] < lo[v]) { free = free.append(act_reg[ai]); }
+            else { nv = nv.append(act_val[ai]); nh = nh.append(act_hi[ai]); nr = nr.append(act_reg[ai]); }
             ai = ai + 1;
         }
         act_val = nv; act_hi = nh; act_reg = nr;
@@ -3121,10 +3121,10 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
             var reg: i32 = free[free.len() - 1];
             var nf: i32[] = [];
             var fj: i32 = 0;
-            while (fj < free.len() - 1) { nf = nf.push(free[fj]); fj = fj + 1; }
+            while (fj < free.len() - 1) { nf = nf.append(free[fj]); fj = fj + 1; }
             free = nf;
             reg_of = env_put(reg_of, v, reg);
-            act_val = act_val.push(v); act_hi = act_hi.push(hi[v]); act_reg = act_reg.push(reg);
+            act_val = act_val.append(v); act_hi = act_hi.append(hi[v]); act_reg = act_reg.append(reg);
         }
         oi = oi + 1;
     }
@@ -3167,10 +3167,10 @@ function dead_code_elim(f: SFunc): SFunc {
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
                 var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "concat" || used[ins.result] == 1;
-                if (keep) { ninsts = ninsts.push(ins); } else { changed = true; }
+                if (keep) { ninsts = ninsts.append(ins); } else { changed = true; }
                 k = k + 1;
             }
-            nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+            nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
             bi = bi + 1;
         }
         f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
@@ -3199,7 +3199,7 @@ function vtab_set(tab: i32[], id: i32, v: i32): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < tab.len()) {
-        if (i == id) { out = out.push(v); } else { out = out.push(tab[i]); }
+        if (i == id) { out = out.append(v); } else { out = out.append(tab[i]); }
         i = i + 1;
     }
     return out;
@@ -3248,11 +3248,11 @@ function eval_binary(op: string, l: i32, r: i32): i32 {
 // vmem_set writes v at element index `at` in the heap model, growing it
 // with zeros as needed.
 function vmem_set(mem: i32[], at: i32, v: i32): i32[] {
-    while (mem.len() <= at) { mem = mem.push(0); }
+    while (mem.len() <= at) { mem = mem.append(0); }
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < mem.len()) {
-        if (i == at) { out = out.push(v); } else { out = out.push(mem[i]); }
+        if (i == at) { out = out.append(v); } else { out = out.append(mem[i]); }
         i = i + 1;
     }
     return out;
@@ -3261,7 +3261,7 @@ function vmem_set(mem: i32[], at: i32, v: i32): i32[] {
 pub function eval_func(f: SFunc, args: i32[]): i32 {
     var tab: i32[] = [];
     var i: i32 = 0;
-    while (i < f.nvals) { tab = tab.push(0); i = i + 1; }
+    while (i < f.nvals) { tab = tab.append(0); i = i + 1; }
     // Heap model: an element-indexed i32 store; alloc bumps its length.
     var mem: i32[] = [];
 
@@ -3301,7 +3301,7 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 if (inst.args.len() > 0) { asz = tab[inst.args[0]]; }
                 var base: i32 = mem.len();
                 var a: i32 = 0;
-                while (a < asz) { mem = mem.push(0); a = a + 1; }
+                while (a < asz) { mem = mem.append(0); a = a + 1; }
                 tab = vtab_set(tab, inst.result, base);
             } else if (inst.kind == "load_elem") {
                 var p: i32 = tab[inst.args[0]];
@@ -3319,7 +3319,7 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var lb: i32 = mem[pb];
                 var cbase: i32 = mem.len();
                 var cz: i32 = 0;
-                while (cz < la + lb + 1) { mem = mem.push(0); cz = cz + 1; }
+                while (cz < la + lb + 1) { mem = mem.append(0); cz = cz + 1; }
                 mem = vmem_set(mem, cbase, la + lb);
                 var ca: i32 = 0;
                 while (ca < la) { mem = vmem_set(mem, cbase + 1 + ca, mem[pa + 1 + ca]); ca = ca + 1; }
@@ -3494,7 +3494,7 @@ pub function ssa_helpers_src(): string {
     src = src + "  }" + nl;
     src = src + "  return m;" + nl;
     src = src + "}" + nl;
-    // arr.push(x) → a fresh length-(n+1) array (__new_array) with a's elements
+    // arr.append(x) → a fresh length-(n+1) array (__new_array) with a's elements
     // copied in and x appended. Returns the new array (the caller reassigns);
     // a's buffer is left untouched. Works for any element kind — pointer
     // elements (string / struct) fit the 32-bit slots like i32 do.

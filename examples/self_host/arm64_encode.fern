@@ -35,10 +35,10 @@ function arm64_xzr(): i32 { return 31; }
 // arm64_le32 appends a 32-bit instruction word (held in an i64),
 // little-endian.
 function arm64_le32(buf: i32[], v: i64): i32[] {
-    buf = buf.push((v & 255) as i32);
-    buf = buf.push(((v >> 8) & 255) as i32);
-    buf = buf.push(((v >> 16) & 255) as i32);
-    buf = buf.push(((v >> 24) & 255) as i32);
+    buf = buf.append((v & 255) as i32);
+    buf = buf.append(((v >> 8) & 255) as i32);
+    buf = buf.append(((v >> 16) & 255) as i32);
+    buf = buf.append(((v >> 24) & 255) as i32);
     return buf;
 }
 
@@ -309,8 +309,8 @@ function arm64_asm_new(): Arm64Asm {
 
 // arm64_asm_label records `name` at the current code offset.
 function arm64_asm_label(a: Arm64Asm, name: string): Arm64Asm {
-    a.lab_names = a.lab_names.push(name);
-    a.lab_offs = a.lab_offs.push(a.code.len());
+    a.lab_names = a.lab_names.append(name);
+    a.lab_offs = a.lab_offs.append(a.code.len());
     return a;
 }
 
@@ -343,9 +343,9 @@ function arm64_asm_fixup_or_patch(a: Arm64Asm, name: string, kind: i32): Arm64As
             a.code = arm64_patch_b(a.code, at, target - at);
         }
     } else {
-        a.fix_offs = a.fix_offs.push(at);
-        a.fix_names = a.fix_names.push(name);
-        a.fix_kinds = a.fix_kinds.push(kind);
+        a.fix_offs = a.fix_offs.append(at);
+        a.fix_names = a.fix_names.append(name);
+        a.fix_kinds = a.fix_kinds.append(kind);
     }
     return a;
 }

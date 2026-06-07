@@ -199,8 +199,8 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[string, string] = map_new(8);
-    m = m.set("hello", "world");
-    m = m.set("foo", "bar");
+    m = m.insert("hello", "world");
+    m = m.insert("foo", "bar");
     var v: string = m.get_or("hello", "missing");
     return (v.len() - 5) + __rc_underflow_count();
 }`,
@@ -218,7 +218,7 @@ function main(): i32 {
     var ns: Node[] = [];
     var i: i32 = 0;
     while (i < 8) {
-        ns = ns.push(Node { id: i });
+        ns = ns.append(Node { id: i });
         i = i + 1;
     }
     return (ns.len() - 8) + (ns[7].id - 7) + __rc_underflow_count();
@@ -301,9 +301,9 @@ function vi(n: i32): Value { return VInt { v: n }; }
 function va(xs: i32[]): Value { return VArr { v: xs }; }
 function main(): i32 {
     var vs: Value[] = [];
-    vs = vs.push(vi(1));
-    vs = vs.push(va([2, 3]));
-    vs = vs.push(vi(4));
+    vs = vs.append(vi(1));
+    vs = vs.append(va([2, 3]));
+    vs = vs.append(vi(4));
     var got: i32 = 0;
     match (vs[1]) { VInt(n) => { got = n.v; }, VArr(a) => { got = a.v[1]; } }
     return (got - 3) + (vs.len() - 3) + __rc_underflow_count();
@@ -487,7 +487,7 @@ function main(): i32 {
     while (k < 50) {
         var pre: string = "x";
         var s: string = pre + "y";
-        arr = arr.push(Holder { name: s });
+        arr = arr.append(Holder { name: s });
         k = k + 1;
     }
     var got: i32 = arr[10].name.len();
@@ -552,7 +552,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 5) {
         var s: string = "v" + "x";
-        arr = arr.push(s);
+        arr = arr.append(s);
         k = k + 1;
     }
     return arr[3].len();
@@ -795,8 +795,8 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(8);
-    m = m.set(1, [10, 20]);
-    m = m.set(2, [30, 40, 50]);
+    m = m.insert(1, [10, 20]);
+    m = m.insert(2, [30, 40, 50]);
     var v: i32[] = m.get_or(2, []);
     return (v.len() - 3) + __rc_underflow_count();
 }`,
@@ -817,8 +817,8 @@ import "core/map";
 struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
     var m: Map[i32, Item] = map_new(8);
-    m = m.set(seed, Item { xs: [seed, seed + 1] });
-    m = m.set(seed + 1, Item { xs: [seed + 2] });
+    m = m.insert(seed, Item { xs: [seed, seed + 1] });
+    m = m.insert(seed + 1, Item { xs: [seed + 2] });
     var it: Item = m.get_or(seed, Item { xs: [0] });
     return it.xs[1];
 }
@@ -841,7 +841,7 @@ import "core/map";
 struct Item { xs: i32[] }
 function mk(n: i32): Item {
     var m: Map[i32, Item] = map_new(4);
-    m = m.set(0, Item { xs: [n, n + 1] });
+    m = m.insert(0, Item { xs: [n, n + 1] });
     return m.get_or(0, Item { xs: [0] });
 }
 function main(): i32 {
@@ -871,7 +871,7 @@ struct VA { v: i32[] }
 type Value = VI | VA;
 function mk(seed: i32): i32 {
     var m: Map[i32, Value] = map_new(8);
-    m = m.set(seed, VI { v: [seed, seed + 1] });
+    m = m.insert(seed, VI { v: [seed, seed + 1] });
     var v: Value = m.get_or(seed, VA { v: [0] });
     var got: i32 = 0;
     match (v) { VI(a) => { got = a.v[1]; }, VA(b) => { got = b.v[0]; } }
@@ -898,7 +898,7 @@ import "core/map";
 struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
     var m: Map[i32, Item[]] = map_new(8);
-    m = m.set(seed, [Item { xs: [seed, seed + 1] }, Item { xs: [seed + 2] }]);
+    m = m.insert(seed, [Item { xs: [seed, seed + 1] }, Item { xs: [seed + 2] }]);
     var vs: Item[] = m.get_or(seed, []);
     return vs[0].xs[1];
 }
@@ -923,7 +923,7 @@ import "core/map";
 struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
     var m: Map[i32, Option[Item]] = map_new(8);
-    m = m.set(seed, Some(Item { xs: [seed, seed + 1] }));
+    m = m.insert(seed, Some(Item { xs: [seed, seed + 1] }));
     var o: Option[Item] = m.get_or(seed, None);
     var got: i32 = 0;
     match (o) { Some(it) => { got = it.xs[1]; }, None => { got = 0; } }
@@ -951,9 +951,9 @@ import "core/map";
 struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
     var m: Map[i32, Item] = map_new(8);
-    m = m.set(0, Item { xs: [seed, seed + 1] });
-    m = m.set(0, Item { xs: [seed + 2, seed + 3] });
-    m = m.set(0, Item { xs: [seed + 4] });
+    m = m.insert(0, Item { xs: [seed, seed + 1] });
+    m = m.insert(0, Item { xs: [seed + 2, seed + 3] });
+    m = m.insert(0, Item { xs: [seed + 4] });
     var it: Item = m.get_or(0, Item { xs: [0] });
     return it.xs[0];
 }
@@ -979,7 +979,7 @@ import "core/map";
 import "std/string";
 function add_pair(m: Map[i32, i32[]], k: i32) {
     var arr: i32[] = [k * 10, k * 10 + 1];
-    m.set(k, arr);
+    m.insert(k, arr);
 }
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(8);
@@ -1010,9 +1010,9 @@ import "core/map";
 import "std/string";
 function mk(seed: i32): i32 {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "first" + "val");
-    m = m.set(2, "other" + "entry");
-    m = m.set(1, "second" + "value");
+    m = m.insert(1, "first" + "val");
+    m = m.insert(2, "other" + "entry");
+    m = m.insert(1, "second" + "value");
     var out: string = "";
     match (m.get(1)) { Some(v) => { out = v; }, None => { out = "z"; } }
     return out.len();
@@ -1045,9 +1045,9 @@ import "std/string";
 function mk(seed: i32): i32 {
     var m: Map[string, string] = map_new(8);
     var key: string = "k" + "ey";
-    m = m.set(key, "va" + "lue");
-    m = m.set("other" + "k", "x" + "yz");
-    m = m.set(key, "val" + "ue");
+    m = m.insert(key, "va" + "lue");
+    m = m.insert("other" + "k", "x" + "yz");
+    m = m.insert(key, "val" + "ue");
     var out: string = "";
     match (m.get(key)) { Some(v) => { out = v; }, None => { out = "zz"; } }
     var other: string = "";
@@ -1082,8 +1082,8 @@ import "std/string";
 function mk(): i32 {
     var m: Map[string, i32] = map_new(8);
     var key: string = "ke" + "y";
-    m = m.set(key, 7);
-    m = m.set("ot" + "her", 3);
+    m = m.insert(key, 7);
+    m = m.insert("ot" + "her", 3);
     var acc: i32 = 0;
     acc = acc + m.get_or(key, 0);
     acc = acc + m.get_or("ke" + "y", 0);
@@ -1120,24 +1120,24 @@ import "std/string";
 function mk(): i32 {
     var acc: i32 = 0;
     var sm: Map[string, i32] = map_new(8);
-    sm = sm.set("ke" + "y", 7);
-    sm = sm.set("ot" + "her", 3);
-    sm = sm.set("th" + "ird", 10);
-    var st = sm.delete("ke" + "y");   // bound delete-hit
+    sm = sm.insert("ke" + "y", 7);
+    sm = sm.insert("ot" + "her", 3);
+    sm = sm.insert("th" + "ird", 10);
+    var st = sm.without("ke" + "y");   // bound delete-hit
     sm = st.0;                        // reassign idiom
     if (st.1) { acc = acc + 2; }
-    sm.delete("th" + "ird");          // discarded delete (hit)
-    var sm2 = sm.delete("zz" + "zz"); // bound delete-miss
+    sm.without("th" + "ird");          // discarded delete (hit)
+    var sm2 = sm.without("zz" + "zz"); // bound delete-miss
     sm = sm2.0;
     if (sm2.1) { acc = acc + 100; }
     acc = acc + sm.get_or("ot" + "her", 0); // surviving entry: +3
     var im: Map[i32, i32] = map_new(8);
-    im = im.set(1, 4);
-    im = im.set(2, 6);
-    var it = im.delete(1);            // i32 delete-hit
+    im = im.insert(1, 4);
+    im = im.insert(2, 6);
+    var it = im.without(1);            // i32 delete-hit
     im = it.0;
     if (it.1) { acc = acc + 2; }
-    var im2 = im.delete(9);           // i32 delete-miss
+    var im2 = im.without(9);           // i32 delete-miss
     im = im2.0;
     if (im2.1) { acc = acc + 100; }
     acc = acc + im.get_or(2, 0);      // surviving entry: +6
@@ -1168,16 +1168,16 @@ import "core/map";
 import "std/string";
 function mk(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m = m.set(1, 5);
-    m = m.set(2, 9);
+    m = m.insert(1, 5);
+    m = m.insert(2, 9);
     var hit = m.get(1);              // unused Some(i32), dropped at exit
     var miss = m.get(99);            // unused None, dropped at exit
     var sm: Map[string, i32] = map_new(8);
-    sm = sm.set("a" + "a", 3);
+    sm = sm.insert("a" + "a", 3);
     var shit = sm.get("a" + "a");    // unused Some, string key
     var smiss = sm.get("z" + "z");   // unused None, string key
     var vm: Map[i32, string] = map_new(8);
-    vm = vm.set(1, "hi" + "there");
+    vm = vm.insert(1, "hi" + "there");
     var vhit = vm.get(1);            // unused Some(string): str_inc must balance
     var acc: i32 = 0;
     match (m.get(2)) { Some(x) => { acc = x; }, None => {} } // anchored read: 9
@@ -1208,14 +1208,14 @@ import "core/int";
 import "core/map";
 function mk(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m = m.set(1, 10);
-    m = m.set(2, 20);
-    m = m.set(3, 30);
+    m = m.insert(1, 10);
+    m = m.insert(2, 20);
+    m = m.insert(3, 30);
     var ks = m.keys();      // unused i32[] snapshot, dropped at exit
     var vs = m.values();    // unused i32[] snapshot, dropped at exit
     var wm: Map[i64, i64] = map_new(8);
-    wm = wm.set(5, 50);
-    wm = wm.set(6, 60);
+    wm = wm.insert(5, 50);
+    wm = wm.insert(6, 60);
     var wks = wm.keys();    // unused i64[] (IR wide path), dropped at exit
     var wvs = wm.values();  // unused i64[] (IR wide path), dropped at exit
     var ks2 = m.keys();     // consumed snapshot anchors the value
@@ -1248,8 +1248,8 @@ import "core/map";
 import "std/string";
 function mk(): i32 {
     var m: Map[string, string] = map_new(8);
-    m = m.set("longkeyaaaaaaaaaaaaaaaa1", "longvalbbbbbbbbbbbbbbbb1");
-    m = m.set("longkeyaaaaaaaaaaaaaaaa2", "longvalbbbbbbbbbbbbbbbb2");
+    m = m.insert("longkeyaaaaaaaaaaaaaaaa1", "longvalbbbbbbbbbbbbbbbb1");
+    m = m.insert("longkeyaaaaaaaaaaaaaaaa2", "longvalbbbbbbbbbbbbbbbb2");
     var vs = m.values();    // unused string[] snapshot, dropped at exit
     var ks = m.keys();      // consumed snapshot anchors the value
     return ks.len() + ks[0].len() + ks[1].len();
@@ -1280,16 +1280,16 @@ import "core/map";
 import "std/string";
 function mk(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("longkeyaaaaaaaaaaaaaa1", 10);
-    m = m.set("longkeyaaaaaaaaaaaaaa2", 20);
+    m = m.insert("longkeyaaaaaaaaaaaaaa1", 10);
+    m = m.insert("longkeyaaaaaaaaaaaaaa2", 20);
     var keys_acc: string[] = [];
     var vsum: i32 = 0;
-    for (k, v) in m { keys_acc = keys_acc.push(k); vsum = vsum + v; }
+    for (k, v) in m { keys_acc = keys_acc.append(k); vsum = vsum + v; }
     var am: Map[i32, i32[]] = map_new(8);
-    am = am.set(1, [100, 200]);
+    am = am.insert(1, [100, 200]);
     var outer: i32[][] = [];
     var it = am.iter();
-    while (it.has_next()) { outer = outer.push(it.value()); it.advance(); }
+    while (it.has_next()) { outer = outer.append(it.value()); it.advance(); }
     return keys_acc.len() + vsum + outer[0][0];
 }
 function main(): i32 {
@@ -1325,9 +1325,9 @@ import "std/string";
 function mk(): i32 {
     var shared: string = "value-aaaaaaaaaaaaaaaaaaaa-shared";
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, shared);                              // aliased set
-    m = m.set(2, shared);                              // second alias
-    m = m.set(3, "value-bbbbbbbbbbbbbbbbbbbb-fresh"); // fresh value (moves in)
+    m = m.insert(1, shared);                              // aliased set
+    m = m.insert(2, shared);                              // second alias
+    m = m.insert(3, "value-bbbbbbbbbbbbbbbbbbbb-fresh"); // fresh value (moves in)
     var got: Option[string] = m.get(1);                // get retains
     var got_len: i32 = 0;
     match (got) { Some(s) => { got_len = s.len(); }, None => {} }
@@ -1361,9 +1361,9 @@ import "std/string";
 function mk(): i32 {
     var key: string = "key-aaaaaaaaaaaaaaaaaaaa-shared";
     var m: Map[string, i32] = map_new(8);
-    m = m.set(key, 1);                                // aliased key
-    m = m.set(key, 2);                                // re-set same key (overwrite)
-    m = m.set("key-bbbbbbbbbbbbbbbbbbbb-fresh", 3);   // fresh key (moves in)
+    m = m.insert(key, 1);                                // aliased key
+    m = m.insert(key, 2);                                // re-set same key (overwrite)
+    m = m.insert("key-bbbbbbbbbbbbbbbbbbbb-fresh", 3);   // fresh key (moves in)
     return key.len();
 }
 function main(): i32 {
@@ -1395,7 +1395,7 @@ function mk(): i32 {
     var short_key: string = src[0:1];   // inline (1 byte, tagged)
     var short_val: string = src[2:4];   // inline (2 bytes, tagged)
     var m: Map[string, string] = map_new(8);
-    m = m.set(short_key, short_val);    // aliased inline K + V — retains must skip tagged
+    m = m.insert(short_key, short_val);    // aliased inline K + V — retains must skip tagged
     var n = m.len();
     return short_key.len() + short_val.len();
 }
@@ -1423,7 +1423,7 @@ import "core/map";
 import "std/string";
 function get_value(): string {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
+    m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
     var v: string = m.get_or(1, "fallback-aaaaaaaaaaaaaaa");
     return v;
 }
@@ -1452,20 +1452,20 @@ import "core/map";
 import "std/string";
 function collect_values(): string[] {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
-    m = m.set(2, "value-aaaaaaaaaaaaaaaaaaaa-2");
+    m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
+    m = m.insert(2, "value-aaaaaaaaaaaaaaaaaaaa-2");
     var out: string[] = [];
     var it = m.iter();
-    while (it.has_next()) { out = out.push(it.value()); it.advance(); }
+    while (it.has_next()) { out = out.append(it.value()); it.advance(); }
     return out;
 }
 function collect_keys(): string[] {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("key-aaaaaaaaaaaaaaaaaaaa-1", 10);
-    m = m.set("key-aaaaaaaaaaaaaaaaaaaa-2", 20);
+    m = m.insert("key-aaaaaaaaaaaaaaaaaaaa-1", 10);
+    m = m.insert("key-aaaaaaaaaaaaaaaaaaaa-2", 20);
     var out: string[] = [];
     var it = m.iter();
-    while (it.has_next()) { out = out.push(it.key()); it.advance(); }
+    while (it.has_next()) { out = out.append(it.key()); it.advance(); }
     return out;
 }
 function main(): i32 {
@@ -1497,9 +1497,9 @@ import "core/map";
 import "std/string";
 function mk(): i32 {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-A");
-    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-B");
-    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-C");
+    m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-A");
+    m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-B");
+    m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-C");
     return m.len();
 }
 function main(): i32 {
@@ -1825,7 +1825,7 @@ import "std/array";
 import "std/string";
 function add_row(grid: i32[][], n: i32): i32[][] {
     var row: i32[] = [n, n + 1, n + 2, n + 3];
-    return grid.push(row);
+    return grid.append(row);
 }
 function main(): i32 {
     var grid: i32[][] = [];
@@ -1903,7 +1903,7 @@ import "core/map";
 function build(seed: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
-    while (i < 16) { m = m.set(i, seed + i); i = i + 1; }
+    while (i < 16) { m = m.insert(i, seed + i); i = i + 1; }
     var sum: i32 = 0;
     var j: i32 = 0;
     while (j < 16) { sum = sum + m.get_or(j, -1); j = j + 1; }
@@ -1928,8 +1928,8 @@ import "core/int";
 import "core/map";
 function make_map(n: i32): Map[i32, i32] {
     var m: Map[i32, i32] = map_new(4);
-    m = m.set(1, n);
-    m = m.set(2, n * 2);
+    m = m.insert(1, n);
+    m = m.insert(2, n * 2);
     return m;
 }
 function main(): i32 {
@@ -2181,7 +2181,7 @@ import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
-    while (i < 100) { m = m.set(i, i * 2); i = i + 1; }
+    while (i < 100) { m = m.insert(i, i * 2); i = i + 1; }
     var sum: i32 = 0;
     var j: i32 = 0;
     while (j < 100) { sum = sum + m.get_or(j, -1); j = j + 1; }
@@ -2199,8 +2199,8 @@ import "core/int";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
-    m = m.set(1, [10, 20, 30]);
-    m = m.set(2, [40, 50]);
+    m = m.insert(1, [10, 20, 30]);
+    m = m.insert(2, [40, 50]);
     var v1: i32[] = m.get_or(1, []);
     var v2: i32[] = m.get_or(2, []);
     return (v1[2] + v2[0] - 70) + __rc_underflow_count();
@@ -2218,7 +2218,7 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[string, string[]] = map_new(4);
-    m = m.set("a", ["x", "yy", "zzz"]);
+    m = m.insert("a", ["x", "yy", "zzz"]);
     var v: string[] = m.get_or("a", []);
     return (v[2].len() - 3) + __rc_underflow_count();
 }`,
@@ -2235,7 +2235,7 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, i32[][]] = map_new(4);
-    m = m.set(1, [[1, 2], [3, 4, 5]]);
+    m = m.insert(1, [[1, 2], [3, 4, 5]]);
     var v: i32[][] = m.get_or(1, []);
     return (v[1].len() + v[0][1] - 5) + __rc_underflow_count();
 }`,
@@ -2251,7 +2251,7 @@ import "core/map";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     var arr: i32[] = [7, 8, 9];
-    m = m.set(5, arr);
+    m = m.insert(5, arr);
     var v: i32[] = m.get_or(5, []);
     return (v[1] - 8) + __rc_underflow_count();
 }`,
@@ -2270,7 +2270,7 @@ function lookup(m: Map[i32, i32[]], k: i32): i32[] {
 }
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
-    m = m.set(1, [100, 200]);
+    m = m.insert(1, [100, 200]);
     var got: i32[] = lookup(m, 1);
     return (got[1] - 200) + __rc_underflow_count();
 }`,
@@ -2289,9 +2289,9 @@ import "std/array";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
-    m = m.set(1, [10]);
+    m = m.insert(1, [10]);
     match (m.get(1)) {
-        Some(cur) => { m = m.set(1, cur.push(20)); },
+        Some(cur) => { m = m.insert(1, cur.append(20)); },
         None => {}
     }
     var v: i32[] = m.get_or(1, []);
@@ -2310,7 +2310,7 @@ import "core/map";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     var i: i32 = 0;
-    while (i < 200) { m = m.set(7, [i, i + 1, i + 2]); i = i + 1; }
+    while (i < 200) { m = m.insert(7, [i, i + 1, i + 2]); i = i + 1; }
     var v: i32[] = m.get_or(7, []);
     return (v[2] - 201) + __rc_underflow_count();
 }`,
@@ -2326,9 +2326,9 @@ import "core/int";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
-    m = m.set(1, [10, 11]);
+    m = m.insert(1, [10, 11]);
     var borrow: i32[] = m.get_or(1, []);
-    m = m.set(1, [20, 21]);
+    m = m.insert(1, [20, 21]);
     var x: i32 = borrow[1];
     var y: i32 = m.get_or(1, [])[0];
     return (x + y - 31) + __rc_underflow_count();
@@ -2345,8 +2345,8 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
-    m = m.set(1, [3, 4]);
-    m = m.set(2, [5, 6, 7]);
+    m = m.insert(1, [3, 4]);
+    m = m.insert(2, [5, 6, 7]);
     var vs: i32[][] = m.values();
     var sum: i32 = 0;
     var i: i32 = 0;
@@ -2368,8 +2368,8 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
-    m = m.set(1, [3, 4]);
-    m = m.set(2, [5, 6, 7]);
+    m = m.insert(1, [3, 4]);
+    m = m.insert(2, [5, 6, 7]);
     var vs: i32[][] = m.values();
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -2500,7 +2500,7 @@ function main(): i32 {
     var shared: Inner = Inner { vals: [1, 2, 3] };
     var keep: Outer[] = [];
     var o: Outer = Outer { inner: shared };
-    keep = keep.push(o);
+    keep = keep.append(o);
     var c: i32 = 0;
     while (c < 200) {
         var junk: i32[] = [c, c, c];
@@ -2687,7 +2687,7 @@ struct Item { tags: i32[] }
 enum Node { Leaf(Item), Branch(i32) }
 function main(): i32 {
     var keep: Node[] = [];
-    keep = keep.push(Leaf(Item { tags: [5, 6] }));
+    keep = keep.append(Leaf(Item { tags: [5, 6] }));
     var c: i32 = 0;
     while (c < 200) {
         var junk: i32[] = [c, c];
@@ -2855,7 +2855,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 50) {
         var m: Map[string, string] = map_new(8);
-        m = m.set("k", "v");
+        m = m.insert("k", "v");
         var r: Req = Req { headers: m, n: i };
         acc = acc + r.headers.get_or("k", "x").len();
         i = i + 1;
@@ -2875,7 +2875,7 @@ import "std/string";
 struct Req { headers: Map[string, string], n: i32 }
 function mk(): Req {
     var m: Map[string, string] = map_new(8);
-    m = m.set("k", "vv");
+    m = m.insert("k", "vv");
     return Req { headers: m, n: 1 };
 }
 function main(): i32 {

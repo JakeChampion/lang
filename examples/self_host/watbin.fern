@@ -52,7 +52,7 @@ function leb_u32(buf: i32[], value: i32): i32[] {
         } else {
             b = b | 128;
         }
-        buf = buf.push(b);
+        buf = buf.append(b);
     }
     return buf;
 }
@@ -70,7 +70,7 @@ function leb_i32(buf: i32[], value: i32): i32[] {
         } else {
             b = b | 128;
         }
-        buf = buf.push(b);
+        buf = buf.append(b);
     }
     return buf;
 }
@@ -88,7 +88,7 @@ function leb_i64(buf: i32[], value: i64): i32[] {
         } else {
             b = b | 128;
         }
-        buf = buf.push(b);
+        buf = buf.append(b);
     }
     return buf;
 }
@@ -134,10 +134,10 @@ function wat_tokenize(src: string): WatTok[] {
         if (wat_is_space(c)) {
             i = i + 1;
         } else if (c == 40) {
-            toks = toks.push(WatTok { kind: 0, text: "(" });
+            toks = toks.append(WatTok { kind: 0, text: "(" });
             i = i + 1;
         } else if (c == 41) {
-            toks = toks.push(WatTok { kind: 1, text: ")" });
+            toks = toks.append(WatTok { kind: 1, text: ")" });
             i = i + 1;
         } else if (c == 34) {
             // String literal. Find the closing quote, skipping any escaped
@@ -153,7 +153,7 @@ function wat_tokenize(src: string): WatTok[] {
                     j = j + 1;
                 }
             }
-            toks = toks.push(WatTok { kind: 3, text: src[start:j] });
+            toks = toks.append(WatTok { kind: 3, text: src[start:j] });
             i = j + 1;
         } else {
             // Atom: run up to the next whitespace, paren, or quote.
@@ -165,7 +165,7 @@ function wat_tokenize(src: string): WatTok[] {
                 }
                 i = i + 1;
             }
-            toks = toks.push(WatTok { kind: 2, text: src[astart:i] });
+            toks = toks.append(WatTok { kind: 2, text: src[astart:i] });
         }
     }
     return toks;
@@ -205,7 +205,7 @@ function wat_parse_one(toks: WatTok[], i: i32): ParseOne {
     var j: i32 = i + 1;
     while (j < toks.len() && toks[j].kind != 1) {
         var r: ParseOne = wat_parse_one(toks, j);
-        children = children.push(r.node);
+        children = children.append(r.node);
         j = r.pos;
     }
     // Skip the closing ")".
@@ -239,7 +239,7 @@ function wat_parse(toks: WatTok[]): SExpr {
 function wcat(buf: i32[], src: i32[]): i32[] {
     var i: i32 = 0;
     while (i < src.len()) {
-        buf = buf.push(src[i]);
+        buf = buf.append(src[i]);
         i = i + 1;
     }
     return buf;
@@ -250,7 +250,7 @@ function wcat(buf: i32[], src: i32[]): i32[] {
 function wstr_bytes(buf: i32[], s: string): i32[] {
     var i: i32 = 0;
     while (i < s.len()) {
-        buf = buf.push(s[i]);
+        buf = buf.append(s[i]);
         i = i + 1;
     }
     return buf;
@@ -266,7 +266,7 @@ function wname(buf: i32[], s: string): i32[] {
 // LEB_u32 byte length, then the contents.
 function wsection(id: i32, contents: i32[]): i32[] {
     var o: i32[] = [];
-    o = o.push(id);
+    o = o.append(id);
     o = leb_u32(o, contents.len());
     return wcat(o, contents);
 }
@@ -292,14 +292,14 @@ function valtype_byte(t: string): i32 {
 // wmagic emits the 8-byte module preamble: "\0asm" + version 1.
 function wmagic(): i32[] {
     var o: i32[] = [];
-    o = o.push(0);
-    o = o.push(97);
-    o = o.push(115);
-    o = o.push(109);
-    o = o.push(1);
-    o = o.push(0);
-    o = o.push(0);
-    o = o.push(0);
+    o = o.append(0);
+    o = o.append(97);
+    o = o.append(115);
+    o = o.append(109);
+    o = o.append(1);
+    o = o.append(0);
+    o = o.append(0);
+    o = o.append(0);
     return o;
 }
 // examples/self_host/wat_emit_bin.fern — the module-walker + opcode
@@ -429,16 +429,16 @@ function data_bytes(s: string): i32[] {
         var c: i32 = s[i];
         if (c == 92 && i + 1 < s.len()) {
             var n: i32 = s[i + 1];
-            if (n == 110) { out = out.push(10); i = i + 2; }
-            else if (n == 116) { out = out.push(9); i = i + 2; }
-            else if (n == 92) { out = out.push(92); i = i + 2; }
-            else if (n == 34) { out = out.push(34); i = i + 2; }
+            if (n == 110) { out = out.append(10); i = i + 2; }
+            else if (n == 116) { out = out.append(9); i = i + 2; }
+            else if (n == 92) { out = out.append(92); i = i + 2; }
+            else if (n == 34) { out = out.append(34); i = i + 2; }
             else if (i + 2 < s.len()) {
-                out = out.push(hexval(n) * 16 + hexval(s[i + 2]));
+                out = out.append(hexval(n) * 16 + hexval(s[i + 2]));
                 i = i + 3;
-            } else { out = out.push(c); i = i + 1; }
+            } else { out = out.append(c); i = i + 1; }
         } else {
-            out = out.push(c);
+            out = out.append(c);
             i = i + 1;
         }
     }
@@ -465,12 +465,12 @@ function collect_func_names(mod: SExpr): string[] {
     var names: string[] = [];
     var i: i32 = 0;
     while (i < mod.items.len()) {
-        if (node_head(mod.items[i]) == "import") { names = names.push(func_name(func_node(mod.items[i]))); }
+        if (node_head(mod.items[i]) == "import") { names = names.append(func_name(func_node(mod.items[i]))); }
         i = i + 1;
     }
     i = 0;
     while (i < mod.items.len()) {
-        if (node_head(mod.items[i]) == "func") { names = names.push(func_name(mod.items[i])); }
+        if (node_head(mod.items[i]) == "func") { names = names.append(func_name(mod.items[i])); }
         i = i + 1;
     }
     return names;
@@ -489,10 +489,10 @@ function func_param_types(fnode: SExpr): string[] {
         if (node_head(c) == "param") {
             if (c.items.len() >= 2 && c.items[1].text[0] == 36) {
                 // `(param $name type)` — named single.
-                out = out.push(c.items[2].text);
+                out = out.append(c.items[2].text);
             } else {
                 var j: i32 = 1;
-                while (j < c.items.len()) { out = out.push(c.items[j].text); j = j + 1; }
+                while (j < c.items.len()) { out = out.append(c.items[j].text); j = j + 1; }
             }
         }
         i = i + 1;
@@ -507,7 +507,7 @@ function func_result_types(fnode: SExpr): string[] {
         var c: SExpr = fnode.items[i];
         if (node_head(c) == "result") {
             var j: i32 = 1;
-            while (j < c.items.len()) { out = out.push(c.items[j].text); j = j + 1; }
+            while (j < c.items.len()) { out = out.append(c.items[j].text); j = j + 1; }
         }
         i = i + 1;
     }
@@ -522,14 +522,14 @@ function local_names(fnode: SExpr): string[] {
     while (i < fnode.items.len()) {
         var c: SExpr = fnode.items[i];
         if (node_head(c) == "param") {
-            if (c.items.len() >= 2 && c.items[1].text[0] == 36) { out = out.push(c.items[1].text); }
+            if (c.items.len() >= 2 && c.items[1].text[0] == 36) { out = out.append(c.items[1].text); }
         }
         i = i + 1;
     }
     i = 2;
     while (i < fnode.items.len()) {
         var c2: SExpr = fnode.items[i];
-        if (node_head(c2) == "local") { out = out.push(c2.items[1].text); }
+        if (node_head(c2) == "local") { out = out.append(c2.items[1].text); }
         i = i + 1;
     }
     return out;
@@ -542,7 +542,7 @@ function local_decl_types(fnode: SExpr): string[] {
     var i: i32 = 2;
     while (i < fnode.items.len()) {
         var c: SExpr = fnode.items[i];
-        if (node_head(c) == "local") { out = out.push(c.items[2].text); }
+        if (node_head(c) == "local") { out = out.append(c.items[2].text); }
         i = i + 1;
     }
     return out;
@@ -652,8 +652,8 @@ function arith_opcode(op: string): i32 {
 function labels_push(labels: string[], x: string): string[] {
     var out: string[] = [];
     var i: i32 = 0;
-    while (i < labels.len()) { out = out.push(labels[i]); i = i + 1; }
-    out = out.push(x);
+    while (i < labels.len()) { out = out.append(labels[i]); i = i + 1; }
+    out = out.append(x);
     return out;
 }
 
@@ -702,56 +702,56 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     var out: i32[] = [];
     var op: string = node.items[0].text;
     if (op == "i32.const") {
-        out = out.push(65);
+        out = out.append(65);
         return leb_i32(out, parse_dec(node.items[1].text));
     }
     if (op == "i64.const") {
-        out = out.push(66);
+        out = out.append(66);
         return leb_i64(out, parse_dec_i64(node.items[1].text));
     }
     if (op == "f64.const") {
         // 0x44 then the 8-byte little-endian IEEE-754 double. The value's
         // bits come from f64_bits() on the parsed literal.
-        out = out.push(68);
+        out = out.append(68);
         var bits: i64 = f64_bits(parse_f64(node.items[1].text));
         var k: i32 = 0;
         while (k < 8) {
-            out = out.push(((bits >> (k * 8)) & 255) as i32);
+            out = out.append(((bits >> (k * 8)) & 255) as i32);
             k = k + 1;
         }
         return out;
     }
     if (op == "local.get") {
-        out = out.push(32);
+        out = out.append(32);
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
     if (op == "local.set") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
-        out = out.push(33);
+        out = out.append(33);
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
     if (op == "local.tee") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
-        out = out.push(34);
+        out = out.append(34);
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
     if (op == "global.get") {
-        out = out.push(35);
+        out = out.append(35);
         return leb_u32(out, index_of_str(gnames, node.items[1].text));
     }
     if (op == "global.set") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
-        out = out.push(36);
+        out = out.append(36);
         return leb_u32(out, index_of_str(gnames, node.items[1].text));
     }
     if (op == "return") {
         if (node.items.len() > 1) { out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames)); }
-        out = out.push(15);
+        out = out.append(15);
         return out;
     }
     if (op == "drop") {
         out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
-        out = out.push(26);
+        out = out.append(26);
         return out;
     }
     if (op == "call") {
@@ -760,7 +760,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
             out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
             k = k + 1;
         }
-        out = out.push(16);
+        out = out.append(16);
         return leb_u32(out, index_of_str(fnames, node.items[1].text));
     }
     if (op == "call_indirect") {
@@ -775,26 +775,26 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
             k = k + 1;
         }
         out = wcat(out, enc_instr(node.items[lasti], lnames, fnames, gnames, labels, tnames));
-        out = out.push(17);    // 0x11
+        out = out.append(17);    // 0x11
         out = leb_u32(out, index_of_str(tnames, node.items[1].items[1].text));
         return leb_u32(out, 0);    // table index 0
     }
     if (op == "memory.size") {
-        out = out.push(63);    // 0x3f
-        return out.push(0);    // reserved memory index
+        out = out.append(63);    // 0x3f
+        return out.append(0);    // reserved memory index
     }
     if (op == "memory.grow") {
         out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
-        out = out.push(64);    // 0x40
-        return out.push(0);    // reserved memory index
+        out = out.append(64);    // 0x40
+        return out.append(0);    // reserved memory index
     }
     if (op == "br") {
-        out = out.push(12);
+        out = out.append(12);
         return leb_u32(out, label_depth(labels, node.items[1].text));
     }
     if (op == "br_if") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
-        out = out.push(13);
+        out = out.append(13);
         return leb_u32(out, label_depth(labels, node.items[1].text));
     }
     if (op == "block" || op == "loop") {
@@ -806,14 +806,14 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
             bt = valtype_byte(node.items[bi].items[1].text);
             bi = bi + 1;
         }
-        if (op == "block") { out = out.push(2); } else { out = out.push(3); }
-        out = out.push(bt);
+        if (op == "block") { out = out.append(2); } else { out = out.append(3); }
+        out = out.append(bt);
         var inner: string[] = labels_push(labels, label);
         while (bi < node.items.len()) {
             out = wcat(out, enc_instr(node.items[bi], lnames, fnames, gnames, inner, tnames));
             bi = bi + 1;
         }
-        out = out.push(11);        // end
+        out = out.append(11);        // end
         return out;
     }
     if (op == "if") {
@@ -825,8 +825,8 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         }
         // condition (stack operand) first
         out = wcat(out, enc_instr(node.items[ci], lnames, fnames, gnames, labels, tnames));
-        out = out.push(4);         // if
-        out = out.push(ibt);
+        out = out.append(4);         // if
+        out = out.append(ibt);
         var iinner: string[] = labels_push(labels, "");
         var thenN: SExpr = node.items[ci + 1];
         var tk: i32 = 1;
@@ -835,7 +835,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
             tk = tk + 1;
         }
         if (node.items.len() > ci + 2 && node_head(node.items[ci + 2]) == "else") {
-            out = out.push(5);     // else
+            out = out.append(5);     // else
             var elseN: SExpr = node.items[ci + 2];
             var ek: i32 = 1;
             while (ek < elseN.items.len()) {
@@ -843,13 +843,13 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
                 ek = ek + 1;
             }
         }
-        out = out.push(11);        // end
+        out = out.append(11);        // end
         return out;
     }
     var ml: i32 = mem_load_opcode(op);
     if (ml != 0) {
         out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
-        out = out.push(ml);
+        out = out.append(ml);
         out = leb_u32(out, memarg_align(op));
         out = leb_u32(out, 0);     // offset
         return out;
@@ -858,7 +858,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     if (ms != 0) {
         out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
-        out = out.push(ms);
+        out = out.append(ms);
         out = leb_u32(out, memarg_align(op));
         out = leb_u32(out, 0);
         return out;
@@ -868,7 +868,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = wcat(out, enc_instr(node.items[3], lnames, fnames, gnames, labels, tnames));
-        out = out.push(27);    // 0x1b
+        out = out.append(27);    // 0x1b
         return out;
     }
     var ao: i32 = arith_opcode(op);
@@ -878,7 +878,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         if (op != "i32.eqz" && node.items.len() > 2) {
             out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         }
-        out = out.push(ao);
+        out = out.append(ao);
         return out;
     }
     return out;
@@ -902,7 +902,7 @@ function enc_locals_vec(types: string[]): i32[] {
         var n: i32 = 1;
         while (i + n < types.len() && types[i + n] == types[i]) { n = n + 1; }
         body = leb_u32(body, n);
-        body = body.push(valtype_byte(types[i]));
+        body = body.append(valtype_byte(types[i]));
         i = i + n;
     }
     return wvec(runs, body);
@@ -911,14 +911,14 @@ function enc_locals_vec(types: string[]): i32[] {
 // enc_functype emits `0x60 vec(params) vec(results)`.
 function enc_functype(params: string[], results: string[]): i32[] {
     var o: i32[] = [];
-    o = o.push(96);
+    o = o.append(96);
     var pb: i32[] = [];
     var i: i32 = 0;
-    while (i < params.len()) { pb = pb.push(valtype_byte(params[i])); i = i + 1; }
+    while (i < params.len()) { pb = pb.append(valtype_byte(params[i])); i = i + 1; }
     o = wcat(o, wvec(params.len(), pb));
     var rb: i32[] = [];
     i = 0;
-    while (i < results.len()) { rb = rb.push(valtype_byte(results[i])); i = i + 1; }
+    while (i < results.len()) { rb = rb.append(valtype_byte(results[i])); i = i + 1; }
     o = wcat(o, wvec(results.len(), rb));
     return o;
 }
@@ -931,7 +931,7 @@ function body_instrs(fnode: SExpr): SExpr[] {
     while (i < fnode.items.len()) {
         var c: SExpr = fnode.items[i];
         var h: string = node_head(c);
-        if (h != "param" && h != "result" && h != "local") { out = out.push(c); }
+        if (h != "param" && h != "result" && h != "local") { out = out.append(c); }
         i = i + 1;
     }
     return out;
@@ -943,7 +943,7 @@ function emit_binary(mod: SExpr): i32[] {
     var gnames: string[] = [];
     var gi: i32 = 0;
     while (gi < mod.items.len()) {
-        if (node_head(mod.items[gi]) == "global") { gnames = gnames.push(mod.items[gi].items[1].text); }
+        if (node_head(mod.items[gi]) == "global") { gnames = gnames.append(mod.items[gi].items[1].text); }
         gi = gi + 1;
     }
 
@@ -952,8 +952,8 @@ function emit_binary(mod: SExpr): i32[] {
     var definedNodes: SExpr[] = [];
     var i: i32 = 0;
     while (i < mod.items.len()) {
-        if (node_head(mod.items[i]) == "import") { importNodes = importNodes.push(mod.items[i]); }
-        if (node_head(mod.items[i]) == "func") { definedNodes = definedNodes.push(mod.items[i]); }
+        if (node_head(mod.items[i]) == "import") { importNodes = importNodes.append(mod.items[i]); }
+        if (node_head(mod.items[i]) == "func") { definedNodes = definedNodes.append(mod.items[i]); }
         i = i + 1;
     }
 
@@ -966,7 +966,7 @@ function emit_binary(mod: SExpr): i32[] {
     while (i < mod.items.len()) {
         if (node_head(mod.items[i]) == "type") {
             var tn: SExpr = mod.items[i];
-            tnames = tnames.push(tn.items[1].text);
+            tnames = tnames.append(tn.items[1].text);
             var tf: SExpr = tn.items[2];   // the inner (func …)
             namedTypeBody = wcat(namedTypeBody, enc_functype(func_param_types(tf), func_result_types(tf)));
         }
@@ -997,7 +997,7 @@ function emit_binary(mod: SExpr): i32[] {
         var imp: SExpr = importNodes[i];
         impBody = wname(impBody, imp.items[1].text);
         impBody = wname(impBody, imp.items[2].text);
-        impBody = impBody.push(0);             // import kind: func
+        impBody = impBody.append(0);             // import kind: func
         impBody = leb_u32(impBody, ntypes + i); // type index (after named types)
         i = i + 1;
     }
@@ -1019,7 +1019,7 @@ function emit_binary(mod: SExpr): i32[] {
             var mn: SExpr = mod.items[i];
             // min is the last atom child (after an optional (export …)).
             var minv: i32 = parse_dec(mn.items[mn.items.len() - 1].text);
-            memBody = memBody.push(0);
+            memBody = memBody.append(0);
             memBody = leb_u32(memBody, minv);
             memCount = memCount + 1;
         }
@@ -1034,10 +1034,10 @@ function emit_binary(mod: SExpr): i32[] {
         if (node_head(mod.items[i]) == "global") {
             var gn: SExpr = mod.items[i];
             // (global $name (mut i32) (i32.const N))
-            globBody = globBody.push(valtype_byte("i32"));
-            globBody = globBody.push(1);       // mutable
+            globBody = globBody.append(valtype_byte("i32"));
+            globBody = globBody.append(1);       // mutable
             globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, [], []));
-            globBody = globBody.push(11);      // end
+            globBody = globBody.append(11);      // end
             globCount = globCount + 1;
         }
         i = i + 1;
@@ -1055,7 +1055,7 @@ function emit_binary(mod: SExpr): i32[] {
             while (j < mm.items.len()) {
                 if (node_head(mm.items[j]) == "export") {
                     expBody = wname(expBody, mm.items[j].items[1].text);
-                    expBody = expBody.push(2); // mem
+                    expBody = expBody.append(2); // mem
                     expBody = leb_u32(expBody, 0);
                     expCount = expCount + 1;
                 }
@@ -1065,7 +1065,7 @@ function emit_binary(mod: SExpr): i32[] {
         if (node_head(mod.items[i]) == "export") {
             var ex: SExpr = mod.items[i];
             expBody = wname(expBody, ex.items[1].text);
-            expBody = expBody.push(0);         // func
+            expBody = expBody.append(0);         // func
             expBody = leb_u32(expBody, index_of_str(fnames, ex.items[2].items[1].text));
             expCount = expCount + 1;
         }
@@ -1085,7 +1085,7 @@ function emit_binary(mod: SExpr): i32[] {
             fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
             k = k + 1;
         }
-        fbody = fbody.push(11);                // end
+        fbody = fbody.append(11);                // end
         codeBody = leb_u32(codeBody, fbody.len());
         codeBody = wcat(codeBody, fbody);
         i = i + 1;
@@ -1098,9 +1098,9 @@ function emit_binary(mod: SExpr): i32[] {
     while (i < mod.items.len()) {
         if (node_head(mod.items[i]) == "data") {
             var dn: SExpr = mod.items[i];
-            dataBody = dataBody.push(0);       // active, memory 0
+            dataBody = dataBody.append(0);       // active, memory 0
             dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [], [])); // offset (i32.const N)
-            dataBody = dataBody.push(11);      // end
+            dataBody = dataBody.append(11);      // end
             var bytes: i32[] = data_bytes(dn.items[2].text);
             dataBody = leb_u32(dataBody, bytes.len());
             dataBody = wcat(dataBody, bytes);
@@ -1116,8 +1116,8 @@ function emit_binary(mod: SExpr): i32[] {
     while (i < mod.items.len()) {
         if (node_head(mod.items[i]) == "table") {
             var tbn: SExpr = mod.items[i];
-            tableBody = tableBody.push(112);   // 0x70 funcref
-            tableBody = tableBody.push(0);     // limits: no max
+            tableBody = tableBody.append(112);   // 0x70 funcref
+            tableBody = tableBody.append(0);     // limits: no max
             tableBody = leb_u32(tableBody, parse_dec(tbn.items[1].text));
             tableCount = tableCount + 1;
         }
@@ -1132,9 +1132,9 @@ function emit_binary(mod: SExpr): i32[] {
     while (i < mod.items.len()) {
         if (node_head(mod.items[i]) == "elem") {
             var en: SExpr = mod.items[i];
-            elemBody = elemBody.push(0);       // flags: active, table 0
+            elemBody = elemBody.append(0);       // flags: active, table 0
             elemBody = wcat(elemBody, enc_instr(en.items[1], [], fnames, gnames, [], []));
-            elemBody = elemBody.push(11);      // end
+            elemBody = elemBody.append(11);      // end
             var fb: i32[] = [];
             var ei: i32 = 2;
             while (ei < en.items.len()) {
@@ -1188,14 +1188,14 @@ pub function wat_to_binary(wat: string): i32[] {
 // component_preamble: "\0asm" + component version (13) / layer (1).
 function component_preamble(): i32[] {
     var o: i32[] = [];
-    o = o.push(0);
-    o = o.push(97);
-    o = o.push(115);
-    o = o.push(109);
-    o = o.push(13);
-    o = o.push(0);
-    o = o.push(1);
-    o = o.push(0);
+    o = o.append(0);
+    o = o.append(97);
+    o = o.append(115);
+    o = o.append(109);
+    o = o.append(13);
+    o = o.append(0);
+    o = o.append(1);
+    o = o.append(0);
     return o;
 }
 
@@ -1239,16 +1239,16 @@ pub function component_full(core: i32[]): i32[] {
     // 5 instance: vec(1)[ inline exports: "run" = func 0 ]
     var inst: i32[] = [1, 1, 1, 0];
     inst = wname(inst, "run");
-    inst = inst.push(1);
-    inst = inst.push(0);
+    inst = inst.append(1);
+    inst = inst.append(0);
     o = wcat(o, wsection(5, inst));
 
     // 11 export: vec(1)[ name "wasi:cli/run@0.2.0" = instance 0 ]
     var ex: i32[] = [1, 0];
     ex = wname(ex, "wasi:cli/run@0.2.0");
-    ex = ex.push(5);
-    ex = ex.push(0);
-    ex = ex.push(0);
+    ex = ex.append(5);
+    ex = ex.append(0);
+    ex = ex.append(0);
     o = wcat(o, wsection(11, ex));
 
     return o;
@@ -1361,7 +1361,7 @@ function tb_fswrite_random_tail(): string { return "\x07\x1b\x01\x42\x02\x01\x40
 function blob_to_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
     return o;
 }
 
@@ -1665,25 +1665,25 @@ function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
     o = wcat(o, wsection(4, [1, 112, 1, 1, 1]));
     var ex: i32[] = [2];
     ex = wname(ex, "0");
-    ex = ex.push(0);
-    ex = ex.push(0);
+    ex = ex.append(0);
+    ex = ex.append(0);
     ex = wname(ex, "$imports");
-    ex = ex.push(1);
-    ex = ex.push(0);
+    ex = ex.append(1);
+    ex = ex.append(0);
     o = wcat(o, wsection(7, ex));
     var body: i32[] = [0];
     var k: i32 = 0;
     while (k < params.len()) {
-        body = body.push(32);
-        body = body.push(k);
+        body = body.append(32);
+        body = body.append(k);
         k = k + 1;
     }
-    body = body.push(65);
-    body = body.push(0);
-    body = body.push(17);
-    body = body.push(0);
-    body = body.push(0);
-    body = body.push(11);
+    body = body.append(65);
+    body = body.append(0);
+    body = body.append(17);
+    body = body.append(0);
+    body = body.append(0);
+    body = body.append(11);
     var fe: i32[] = [];
     fe = leb_u32(fe, body.len());
     fe = wcat(fe, body);
@@ -1694,17 +1694,17 @@ function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
     var o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
     o = wcat(o, wsection(1, wvec(1, functype(params, results))));
     var im: i32[] = [2];
-    im = im.push(0);
+    im = im.append(0);
     im = wname(im, "0");
-    im = im.push(0);
-    im = im.push(0);
-    im = im.push(0);
+    im = im.append(0);
+    im = im.append(0);
+    im = im.append(0);
     im = wname(im, "$imports");
-    im = im.push(1);
-    im = im.push(112);
-    im = im.push(1);
-    im = im.push(1);
-    im = im.push(1);
+    im = im.append(1);
+    im = im.append(112);
+    im = im.append(1);
+    im = im.append(1);
+    im = im.append(1);
     o = wcat(o, wsection(2, im));
     return wcat(o, wsection(9, [1, 0, 65, 0, 11, 1, 0]));
 }
@@ -1726,7 +1726,7 @@ function comp_core_module_section(mod: i32[]): i32[] {
 function comp_core_instance_instantiate(modidx: i32): i32[] {
     var b: i32[] = [1, 0];
     b = leb_u32(b, modidx);
-    b = b.push(0);
+    b = b.append(0);
     return wsection(2, b);
 }
 
@@ -1738,7 +1738,7 @@ function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts
     var i: i32 = 0;
     while (i < names.len()) {
         b = wname(b, names[i]);
-        b = b.push(18);
+        b = b.append(18);
         b = leb_u32(b, insts[i]);
         i = i + 1;
     }
@@ -1752,7 +1752,7 @@ function comp_core_instance_from_exports(names: string[], sorts: i32[], idxs: i3
     var i: i32 = 0;
     while (i < names.len()) {
         b = wname(b, names[i]);
-        b = b.push(sorts[i]);
+        b = b.append(sorts[i]);
         b = leb_u32(b, idxs[i]);
         i = i + 1;
     }
@@ -1787,7 +1787,7 @@ function comp_alias_core_export(coresort: i32, coreinst: i32, name: string): i32
 function comp_canon_lower_noopts(funcidx: i32): i32[] {
     var b: i32[] = [1, 1, 0];
     b = leb_u32(b, funcidx);
-    b = b.push(0);
+    b = b.append(0);
     return wsection(8, b);
 }
 
@@ -1795,8 +1795,8 @@ function comp_canon_lower_noopts(funcidx: i32): i32[] {
 function comp_canon_lower_mem(funcidx: i32, memidx: i32): i32[] {
     var b: i32[] = [1, 1, 0];
     b = leb_u32(b, funcidx);
-    b = b.push(1);
-    b = b.push(3);
+    b = b.append(1);
+    b = b.append(3);
     b = leb_u32(b, memidx);
     return wsection(8, b);
 }
@@ -1805,7 +1805,7 @@ function comp_canon_lower_mem(funcidx: i32, memidx: i32): i32[] {
 function comp_canon_lift_noopts(corefunc: i32, typeidx: i32): i32[] {
     var b: i32[] = [1, 0, 0];
     b = leb_u32(b, corefunc);
-    b = b.push(0);
+    b = b.append(0);
     b = leb_u32(b, typeidx);
     return wsection(8, b);
 }
@@ -1821,7 +1821,7 @@ function comp_type_result_unit(rt: i32): i32[] {
 function comp_instance_one_func(name: string, funcidx: i32): i32[] {
     var b: i32[] = [1, 1, 1, 0];
     b = wname(b, name);
-    b = b.push(1);
+    b = b.append(1);
     b = leb_u32(b, funcidx);
     return wsection(5, b);
 }
@@ -1830,9 +1830,9 @@ function comp_instance_one_func(name: string, funcidx: i32): i32[] {
 function comp_export_one_instance(name: string, inst: i32): i32[] {
     var b: i32[] = [1, 0];
     b = wname(b, name);
-    b = b.push(5);
+    b = b.append(5);
     b = leb_u32(b, inst);
-    b = b.push(0);
+    b = b.append(0);
     return wsection(11, b);
 }
 
@@ -1848,10 +1848,10 @@ function comp_canon_resource_drop(rt: i32): i32[] {
 function comp_canon_lower_mem_realloc(funcidx: i32, memidx: i32, realloc: i32): i32[] {
     var b: i32[] = [1, 1, 0];
     b = leb_u32(b, funcidx);
-    b = b.push(2);
-    b = b.push(3);
+    b = b.append(2);
+    b = b.append(3);
     b = leb_u32(b, memidx);
-    b = b.push(4);
+    b = b.append(4);
     b = leb_u32(b, realloc);
     return wsection(8, b);
 }
@@ -1893,11 +1893,11 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
     var coref: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
-        tramp_mod = tramp_mod.push(0);
-        fixup_mod = fixup_mod.push(0);
-        tramp_inst = tramp_inst.push(0);
-        tbl = tbl.push(0);
-        coref = coref.push(0);
+        tramp_mod = tramp_mod.append(0);
+        fixup_mod = fixup_mod.append(0);
+        tramp_inst = tramp_inst.append(0);
+        tbl = tbl.append(0);
+        coref = coref.append(0);
         i = i + 1;
     }
     var n_mod: i32 = user_mod + 1;
@@ -1956,12 +1956,12 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
         }
         var gi: i32 = suffix_group_find(order, imp_iface[i]);
         if (gi < 0) {
-            order = order.push(imp_iface[i]);
-            group_names = group_names.push([imp_name[i]]);
-            group_idxs = group_idxs.push([idx]);
+            order = order.append(imp_iface[i]);
+            group_names = group_names.append([imp_name[i]]);
+            group_idxs = group_idxs.append([idx]);
         } else {
-            group_names[gi] = group_names[gi].push(imp_name[i]);
-            group_idxs[gi] = group_idxs[gi].push(idx);
+            group_names[gi] = group_names[gi].append(imp_name[i]);
+            group_idxs[gi] = group_idxs[gi].append(idx);
         }
         i = i + 1;
     }
@@ -1974,11 +1974,11 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
         var sorts: i32[] = [];
         var s: i32 = 0;
         while (s < gn.len()) {
-            sorts = sorts.push(0);
+            sorts = sorts.append(0);
             s = s + 1;
         }
         o = wcat(o, comp_core_instance_from_exports(gn, sorts, gx));
-        arg_insts = arg_insts.push(n_coreinst);
+        arg_insts = arg_insts.append(n_coreinst);
         n_coreinst = n_coreinst + 1;
         g = g + 1;
     }

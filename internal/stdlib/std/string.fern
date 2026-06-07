@@ -802,7 +802,7 @@ pub function (s: string) lines_non_empty(): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        if (raw[i].len() != 0) { out = out.push(raw[i]); }
+        if (raw[i].len() != 0) { out = out.append(raw[i]); }
         i = i + 1;
     }
     return out;
@@ -1150,7 +1150,7 @@ pub function (s: string) split(sep: string): string[] {
     var i: i32 = 0;
     if (sepLen == 0) {
         while (i < n) {
-            out = out.push(s[i:i+1]);
+            out = out.append(s[i:i+1]);
             i = i + 1;
         }
         return out;
@@ -1158,14 +1158,14 @@ pub function (s: string) split(sep: string): string[] {
     var start: i32 = 0;
     while (i + sepLen <= n) {
         if (__substr_eq(s, i, sep, sepLen)) {
-            out = out.push(s[start:i]);
+            out = out.append(s[start:i]);
             i = i + sepLen;
             start = i;
         } else {
             i = i + 1;
         }
     }
-    return out.push(s[start:n]);
+    return out.append(s[start:n]);
 }
 
 // `s.splitn(sep, n)` — like split but caps the result at n
@@ -1176,7 +1176,7 @@ pub function (s: string) split(sep: string): string[] {
 pub function (s: string) splitn(sep: string, n: i32): string[] {
     var out: string[] = [];
     if (n <= 0) { return out; }
-    if (n == 1) { return out.push(s); }
+    if (n == 1) { return out.append(s); }
     var sepLen: i32 = sep.len();
     // Hoist sLen / i / start to function scope — wasm rejects
     // sibling-scope duplicate locals.
@@ -1186,21 +1186,21 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
     if (sepLen == 0) {
         // Match split's empty-sep behaviour: per-byte slicing.
         while (i < sLen && out.len() < n - 1) {
-            out = out.push(s[i:i + 1]);
+            out = out.append(s[i:i + 1]);
             i = i + 1;
         }
-        return out.push(s[i:sLen]);
+        return out.append(s[i:sLen]);
     }
     while (i + sepLen <= sLen && out.len() < n - 1) {
         if (__substr_eq(s, i, sep, sepLen)) {
-            out = out.push(s[start:i]);
+            out = out.append(s[start:i]);
             i = i + sepLen;
             start = i;
         } else {
             i = i + 1;
         }
     }
-    return out.push(s[start:sLen]);
+    return out.append(s[start:sLen]);
 }
 
 // `s.first()` / `s.last()` — first / last byte as Option[i32].
@@ -1245,12 +1245,12 @@ pub function (s: string) chunks(size: i32): string[] {
     var sLen: i32 = s.len();
     var out: string[] = [];
     if (sLen == 0) { return out; }
-    if (size <= 0) { return out.push(s); }
+    if (size <= 0) { return out.append(s); }
     var i: i32 = 0;
     while (i < sLen) {
         var end: i32 = i + size;
         if (end > sLen) { end = sLen; }
-        out = out.push(s[i:end]);
+        out = out.append(s[i:end]);
         i = end;
     }
     return out;
@@ -1283,7 +1283,7 @@ pub function (s: string) lines(): string[] {
             if (end > start) {
                 if (s[end - 1] == 13) { end = end - 1; }
             }
-            out = out.push(s[start:end]);
+            out = out.append(s[start:end]);
             i = i + 1;
             start = i;
         } else {
@@ -1298,7 +1298,7 @@ pub function (s: string) lines(): string[] {
         if (endTail > start) {
             if (s[endTail - 1] == 13) { endTail = endTail - 1; }
         }
-        out = out.push(s[start:endTail]);
+        out = out.append(s[start:endTail]);
     }
     return out;
 }
@@ -1322,7 +1322,7 @@ pub function (s: string) fields(): string[] {
         if (i >= n) { break; }
         var start: i32 = i;
         while (i < n && !__is_ascii_ws(s[i])) { i = i + 1; }
-        out = out.push(s[start:i]);
+        out = out.append(s[start:i]);
     }
     return out;
 }
@@ -1635,7 +1635,7 @@ pub function (s: string) chars(): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(s[i]);
+        out = out.append(s[i]);
         i = i + 1;
     }
     return out;
@@ -1650,7 +1650,7 @@ pub function (s: string) to_array(): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(s[i:i + 1]);
+        out = out.append(s[i:i + 1]);
         i = i + 1;
     }
     return out;

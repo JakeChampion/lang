@@ -424,7 +424,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
             print("  ---");
             print("  message: " + msg);
             print("  ---");
-            var fs: string[] = r.failures.push(display + ": " + msg);
+            var fs: string[] = r.failures.append(display + ": " + msg);
             return TestRunner {
                 suite: r.suite,
                 passed: r.passed,
@@ -465,7 +465,7 @@ pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
     if (!r.quiet) {
         print("ok " + idx.to_string() + " - " + display + " # SKIP " + reason);
     }
-    var sr: string[] = r.skip_reasons.push(display + ": " + reason);
+    var sr: string[] = r.skip_reasons.append(display + ": " + reason);
     return TestRunner {
         suite: r.suite,
         passed: r.passed,
@@ -556,19 +556,19 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
     var fs: string[] = r.failures;
     var i: i32 = 0;
     while (i < child.failures.len()) {
-        fs = fs.push(child.failures[i]);
+        fs = fs.append(child.failures[i]);
         i = i + 1;
     }
     var sr: string[] = r.skip_reasons;
     i = 0;
     while (i < child.skip_reasons.len()) {
-        sr = sr.push(child.skip_reasons[i]);
+        sr = sr.append(child.skip_reasons[i]);
         i = i + 1;
     }
     var cl: string[] = r.cleanup_paths;
     i = 0;
     while (i < child.cleanup_paths.len()) {
-        cl = cl.push(child.cleanup_paths[i]);
+        cl = cl.append(child.cleanup_paths[i]);
         i = i + 1;
     }
     return TestRunner {
@@ -605,7 +605,7 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
 // code's "real" cause — fast-failing on a cleanup error
 // would hide the actual test failure.
 pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
-    var cl: string[] = r.cleanup_paths.push(path);
+    var cl: string[] = r.cleanup_paths.append(path);
     return TestRunner {
         suite: r.suite,
         passed: r.passed,
@@ -1129,7 +1129,7 @@ pub function assert_subset[T: cmp.Eq + cmp.Display](superset: T[], subset: T[]):
     var used: boolean[] = [];
     var sn: i32 = superset.len();
     var i: i32 = 0;
-    while (i < sn) { used = used.push(false); i = i + 1; }
+    while (i < sn) { used = used.append(false); i = i + 1; }
     var j: i32 = 0;
     while (j < subset.len()) {
         var want: T = subset[j];
@@ -1160,7 +1160,7 @@ pub function assert_set_eq[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]):
     // Equal length + actual is a (multiset) subset of expected ⟹ equal.
     var used: boolean[] = [];
     var i: i32 = 0;
-    while (i < en) { used = used.push(false); i = i + 1; }
+    while (i < en) { used = used.append(false); i = i + 1; }
     var j: i32 = 0;
     while (j < an) {
         var want: T = actual[j];
@@ -2086,7 +2086,7 @@ function __bench_sort_us(samples: i64[]): i64[] {
     // (lang has no in-place array set today).
     var taken: boolean[] = [];
     var i: i32 = 0;
-    while (i < n) { taken = taken.push(false); i = i + 1; }
+    while (i < n) { taken = taken.append(false); i = i + 1; }
     var out: i64[] = [];
     i = 0;
     while (i < n) {
@@ -2099,16 +2099,16 @@ function __bench_sort_us(samples: i64[]): i64[] {
             }
             j = j + 1;
         }
-        out = out.push(samples[best]);
-        taken = taken.push(true);   // append to keep length aligned ...
+        out = out.append(samples[best]);
+        taken = taken.append(true);   // append to keep length aligned ...
         // ... then re-flag the chosen index. Lang has no
         // in-place set; rebuild `taken` with the slot
         // updated.
         var t2: boolean[] = [];
         var k: i32 = 0;
         while (k < n) {
-            if (k == best) { t2 = t2.push(true); }
-            else { t2 = t2.push(taken[k]); }
+            if (k == best) { t2 = t2.append(true); }
+            else { t2 = t2.append(taken[k]); }
             k = k + 1;
         }
         taken = t2;
@@ -2130,7 +2130,7 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
         var start_ns: i64 = monotonic_ns();
         fn();
         var elapsed_ns: i64 = monotonic_ns() - start_ns;
-        samples = samples.push(elapsed_ns / (1000 as i64));
+        samples = samples.append(elapsed_ns / (1000 as i64));
         i = i + 1;
     }
     var sorted: i64[] = __bench_sort_us(samples);
@@ -2167,7 +2167,7 @@ pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () 
         var start_ns: i64 = monotonic_ns();
         fn();
         var elapsed_ns: i64 = monotonic_ns() - start_ns;
-        samples = samples.push(elapsed_ns / (1000 as i64));
+        samples = samples.append(elapsed_ns / (1000 as i64));
         i = i + 1;
     }
     var sorted: i64[] = __bench_sort_us(samples);
