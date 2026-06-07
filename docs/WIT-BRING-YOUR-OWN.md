@@ -428,11 +428,29 @@ world-driven composer (P2) wires it.
      ResultEnum`). Same scope as the param side. Gated by
      `TestExternSumTypeResultCustomProvider` (a `div: -> result<s32,s32>` and
      `half: -> option<s32>`, the Fern side matching Ok/Err/Some/None).
-   - Still rejected (next slices): general user `variant`s (n-arm / payload-less
-     mixes); single-element records/tuples (direct return); bool arrays;
-     sub-word / nested-composite fields; and the self-host port. The
-     multi-component harness (`TestExternImportCustomProvider`) is the test
-     vehicle for these.
+   - **Self-host port — numeric array params — ✅ started.** The self-hosted
+     compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
+     beyond strings: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
+     parameter. The self-host array layout differs from the Go backend's (value
+     is the block base — len@0, elements@+8 in native-stride slots — not
+     count-at-ptr-4), and crucially the self-host heap is **unaligned**
+     (`__fern_alloc` bumps without rounding, heap starts at an odd offset), so a
+     zero-copy `(elements, len)` traps the canonical `list<s32>` alignment
+     assert. The wrapper therefore **copies** the elements into a freshly
+     8-aligned buffer (`(__fern_alloc(n*slot)+7)&-8` + a per-element loop) and
+     passes `(buf, len)`. `extern_array_param_supported` gates element kinds
+     whose slot == canonical size (i32/u32/f32 slot 4, i64/u64/f64 slot 8; u8/i16
+     need repacking, deferred). Gated by
+     `TestSelfHostExternArrayParamCustomProvider` (a `sum-i32: func(data:
+     list<s32>) -> s32`, run through the self-hosted backend under wasmtime);
+     the self-host string-param + list-result tests and the self-compile oracles
+     stay green.
+   - Still rejected (next slices): the rest of the self-host port (u8[] params
+     with repacking, records/tuples/sum-types — flatten to values, no alignment
+     wall); general user `variant`s; single-element records/tuples (direct
+     return); bool arrays; sub-word / nested-composite fields. The multi-
+     component harness (`TestExternImportCustomProvider`) is the test vehicle
+     for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
