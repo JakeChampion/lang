@@ -1038,8 +1038,21 @@ smallest → largest:
     wraps it with `macho.fern`, and the signed Mach-O exits 42 — a real
     cross-segment symbol reference, no external tool. (Found + fixed a
     self-host gotcha: a local named `as` collides with the cast keyword and
-    silently mis-compiles.) Remaining for full wiring: `.ltorg` literal
-    pools (`ldr Xd, =imm`), then feeding `asm_arm64`'s real output from the
+    silently mis-compiles.)
+  - ✅ **slice 3j — runtime instruction surface (neg / ubfx / tbz/tbnz /
+    conditions)**: dumping the backend's *actual* arm64-darwin asm for
+    `print("hi")` showed the gap to assembling real output is not
+    `.ltorg`/`ldr =` (unused — addresses go via `adrp`/`add`) but the
+    `__fern_puts` runtime's ops: `neg` (the `sub Xd, XZR, Xm` alias),
+    `ubfx` (UBFM alias), `tbz`/`tbnz` (test-bit branch, a new imm14 label
+    fixup kind), and the full condition-code set (`cc`/`cs`/`hs`/`lo`/`hi`/
+    `ls`/`mi`/`pl`/`vs`/`vc`/`al`). Encoders pinned vs llvm-mc; parsed by
+    `arm64_gas`. Byte-checked by `TestSelfHostArm64BitOpsGas` and gated
+    end-to-end by **`TestSelfHostArm64DarwinMachOBitOpsRuns`**: a program
+    computes 42 via `ubfx` + `neg` + a `tbz` branch and the signed Mach-O
+    exits 42 — no external tool. Remaining for full wiring: a handful more
+    runtime ops (w-register `movz` byte-fidelity, any instructions below
+    the captured output) then feeding `asm_arm64`'s real output from the
     CLI driver (replacing the `clang`/`ld64` shell-out).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
