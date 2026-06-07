@@ -457,11 +457,24 @@ world-driven composer (P2) wires it.
      emits no extra exports — byte-identical; the byte-identity-gated
      `internal/wasm/component` suite stays green). Gated by
      `TestWorldExportedInterfaces` and `TestBuildExportSurfacesCoreExport`.
-   - **Slice 3 (next) — per-export lift + run**: the world-driven composer
-     aliases each surfaced `iface#wit-name` core export, lifts it with the WIT
-     canonical ABI (generalising the fixed `_lang_run` / `incoming-handler`
-     lifts), and emits the component export; composed with a consumer and run
-     under WASI. Then composite signatures + the self-host port.
+   - **Slice 3 — per-export lift + run (scalar). ✅ Done (Go).**
+     `component.ComposeExportsFromWorld` wraps a reactor core (a library of
+     `@export` functions, no cli/run): it wires any world imports, then for each
+     world *exported* interface function whose surfaced `iface#wit-name` core
+     export the backend emitted (slice 2), aliases that core func, builds the
+     component functype from the WIT signature (`liftScalarExport` — a
+     `componenttype.Valtype.Prim` is exactly the component `CValtype` byte), and
+     canon-lifts + packages + exports it under the interface — generalising the
+     fixed `_lang_run` / `incoming-handler` lifts. Purely additive (a new
+     compose entry; existing paths untouched, the byte-identity composer suite
+     stays green). Gated by `TestExportScalarReactorComposes` (validate + the
+     component WIT declares the export) and `TestExportScalarRunsViaConsumer`: a
+     Fern reactor's `@export add` and a separate Fern consumer that `@import`s
+     and calls it are linked with `wasm-tools compose` and **run under wasmtime**
+     (`add(20,3)==23`) — the lifted export is callable across the boundary.
+   - **Slice 4 (next) — composite export signatures** (strings / lists / records
+     via the memory+realloc lift) **+ the self-host port** (surface the
+     `iface#wit-name` core export from `wasm.fern`).
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
