@@ -756,12 +756,19 @@ function build_expr(e: parser.Expr, s: BState): BState {
         parser.ExprStructLit(sl) => {
             // Heap-allocate a tag word + one word per field: element 0 holds
             // the variant tag (the struct's type id, for `match`), fields
-            // follow at offset f+1, each at its width.
-            if (sl.has_base) { return s.fail(); }   // `...base` spread not supported yet
+            // follow at offset f+1, each at its width. A `...base` spread
+            // (functional update) builds the base first; fields the literal
+            // doesn't override are copied from it (load_elem at their offset).
             var si: i32 = find_struct_index(s.structs, sl.type_name);
             if (si < 0) { return s.fail(); }
             var sd: parser.StructDecl = s.structs[si];
             var nf: i32 = sd.fields.len();
+            var baseptr: i32 = 0 - 1;
+            if (sl.has_base) {
+                s = build_expr(sl.base, s);
+                if (!s.ok) { return s; }
+                baseptr = s.cur_id();
+            }
             s = s.fresh();
             var shandle: i32 = s.cur_id();
             var sna: i32[] = [];
@@ -778,13 +785,25 @@ function build_expr(e: parser.Expr, s: BState): BState {
             while (f < nf) {
                 var fname: string = sd.fields[f].name;
                 var lj: i32 = index_of_str(sl.field_names, fname);
-                if (lj < 0) { return s.fail(); }   // field missing from the literal
+                var fw: i32 = struct_field_width(s.structs, sl.type_name, fname);
+                var fv: i32 = 0;
+                if (lj >= 0) {
+                    s = build_expr(sl.field_values[lj], s);
+                    if (!s.ok) { return s; }
+                    fv = s.cur_id();
+                } else if (sl.has_base) {
+                    // Copy the field from the base struct (same offset/width).
+                    s = s.kconst(f + 1);
+                    var bfidx: i32 = s.cur_id();
+                    s = s.fresh();
+                    var bla: i32[] = [baseptr, bfidx];
+                    s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: bla, imm: fw, str: "" });
+                    fv = s.cur_id();
+                } else {
+                    return s.fail();   // field missing from a non-spread literal
+                }
                 s = s.kconst(f + 1);
                 var fidx: i32 = s.cur_id();
-                s = build_expr(sl.field_values[lj], s);
-                if (!s.ok) { return s; }
-                var fv: i32 = s.cur_id();
-                var fw: i32 = struct_field_width(s.structs, sl.type_name, fname);
                 s = s.fresh();
                 var fsa: i32[] = [shandle, fidx, fv];
                 s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: fsa, imm: fw, str: "" });

@@ -251,6 +251,8 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"streq-dispatch", "function kind(s: string): i32 { if (s == \"add\") { return 1; } if (s == \"sub\") { return 2; } return 0; } function main(): i32 { return kind(\"sub\") + 10 * kind(\"add\"); }", 12},
 		// enums + match: a variant-dispatching helper (tag + payload fields).
 		{"match-area", "struct Circle { r: i32 } struct Square { side: i32 } type Shape = Circle | Square; function area(sh: Shape): i32 { match (sh) { Circle(c) => { return c.r * c.r * 3; }, Square(s) => { return s.side * s.side; } } return 0; } function main(): i32 { var a: Shape = Circle { r: 4 }; var b: Shape = Square { side: 5 }; return area(a) + area(b); }", 73},
+		// Struct spread (functional update): non-overridden fields copied from base.
+		{"struct-spread", "struct P { x: i32, y: i32, z: i32 } function (p: P) with_y(v: i32): P { return P { ...p, y: v }; } function main(): i32 { var p = P { x: 1, y: 2, z: 3 }; var q = p.with_y(20); return q.x + q.y + q.z; }", 24},
 		// f64 floats (intra-function): literals lower to .rodata .double + SSE2
 		// (movsd / addsd / …), comparisons via ucomisd, casts via cvtsi2sd /
 		// cvttsd2si. Results are cast to i32 to surface as the exit code. Loop /

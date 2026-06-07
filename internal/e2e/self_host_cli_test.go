@@ -201,11 +201,11 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// A program outside the SSA subset falls back to the AST emitter
 		// transparently: the default output is byte-identical to the -no-ssa
 		// (AST) output, so the default never emits wrong code for programs SSA
-		// can't yet lower. A struct spread (`...base`) is one such construct
-		// build_func still declines (floats — locals, params, and returns —
-		// now lower through SSA on x86-64).
+		// can't yet lower. A `match` on int-literal patterns is one such
+		// construct build_func still declines (floats and struct spread now
+		// lower through SSA).
 		srcPath := filepath.Join(dir, "fallback.fern")
-		if err := os.WriteFile(srcPath, []byte("struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, x: 5 }; return q.x + q.y; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var n = 2; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		def, code1 := runDriver(t, srcPath)
@@ -332,14 +332,15 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 			t.Errorf("SSA wasm capturing-lambda program exited %d, want 15", got)
 		}
 
-		// Regression: try_ssa must not mutate the shared AST. A struct spread
-		// (`...base`) forces the fallback (build_func rejects it), but
-		// collect_lambdas still runs in try_ssa first; it used to append
-		// `__env` to the lambda's params in place, corrupting the AST the
-		// fallback emitter then reused (duplicate $__env → invalid WAT). Guard
-		// it: a spread + capturing-lambda program falls back to the AST emitter
-		// (default WAT == -no-ssa WAT) and runs correctly.
-		fbSrc := "struct P { x: i32, y: i32 } function main(): i32 { var n = 5; var f = function (z: i32): i32 { return z + n; }; var p = P { x: 1, y: 2 }; var q = P { ...p, x: 10 }; return f(q.x) + q.y; }\n"
+		// Regression: try_ssa must not mutate the shared AST. A `while (true)`
+		// loop with all returns inside it forces the fallback (build_func bails
+		// on the missing trailing return), but collect_lambdas still runs in
+		// try_ssa first; it used to append `__env` to the lambda's params in
+		// place, corrupting the AST the fallback emitter then reused (duplicate
+		// $__env → invalid WAT). Guard it: a while-true + capturing-lambda
+		// program falls back to the AST emitter (default WAT == -no-ssa WAT) and
+		// runs correctly.
+		fbSrc := "function main(): i32 { var n = 5; var f = function (z: i32): i32 { return z + n; }; var r = f(2); var i = 0; while (true) { i = i + 1; if (i >= r) { return r; } } }\n"
 		fbPath := filepath.Join(dir, "wasm_fb.fern")
 		if err := os.WriteFile(fbPath, []byte(fbSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -349,8 +350,8 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if string(defFb) != string(astFb) {
 			t.Error("default -target wasm corrupted the AST for a fallback program (try_ssa has a side effect)")
 		}
-		if got := runWat(t, "wasm_fb", defFb); got != 17 {
-			t.Errorf("spread+lambda fallback program exited %d, want 17", got)
+		if got := runWat(t, "wasm_fb", defFb); got != 7 {
+			t.Errorf("while-true+lambda fallback program exited %d, want 7", got)
 		}
 	})
 
