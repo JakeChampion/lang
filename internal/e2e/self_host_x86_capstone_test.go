@@ -86,6 +86,10 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		// and the byte-load char access.
 		{"strlen", "function main(): i32 { var s = \"hello world\"; return s.len() as i32 + 31; }\n", 42, ""},
 		{"strchar", "function main(): i32 { var s = \"*abc\"; return s[0] as i32; }\n", 42, ""},
+		// Maps exercise the full FNV-hash / open-addressing runtime, both
+		// i32-keyed and string-keyed.
+		{"mapi32", "function main(): i32 { var m = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }\n", 42, ""},
+		{"mapstr", "function main(): i32 { var m = Map { \"a\": 40, \"b\": 2 }; return m.get_or(\"a\", 0) + m.get_or(\"b\", 0); }\n", 42, ""},
 	}
 
 	for _, tc := range cases {

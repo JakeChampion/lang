@@ -1198,11 +1198,17 @@ smallest → largest:
     `strchar` capstone cases now run natively (the capstone is up to **11
     program shapes**). Probing also confirmed **multi-function** programs
     (`f3∘f2∘f1`) and `fizzbuzz` (`%`/`if` chains) already work.
-  - 🔧 **maps** — a `Map[string,i32]` program assembles + runs but returns
-    the wrong value (exit 254, not a crash), so a fine-grained
-    encoding/logic bug remains in the FNV-hash / open-addressing runtime
-    (no mis-dispatched reg-reg form; needs bisection of the map asm).
-    Tracked as a follow-up.
+  - ✅ **slice 2v — maps work (no bug after all)**. The earlier
+    "map returns 254" was a **malformed test program** — `Map[string,i32]{}`
+    is a syntax error even in the Go compiler, so `asm.fern` emitted garbage
+    (the gcc-assembled reference exited 254 too). With the correct literal
+    `Map { k: v }`, both i32-keyed and string-keyed maps assemble + run
+    natively to 42 — the full FNV-hash / open-addressing runtime works
+    through the assembler. Added `mapi32` / `mapstr` capstone cases: the
+    capstone is now **13 program shapes** (arith, while, ifelse, call,
+    recur, float, string, struct, array, strlen, strchar, map×2) — the
+    whole core-language surface, all assembled by the self-host toolchain
+    and run natively with no external `as`/`ld`.
   - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
     transcendental math builtins; broadening the capstone toward
     progressively larger programs (and ultimately `asm.fern`'s own output
