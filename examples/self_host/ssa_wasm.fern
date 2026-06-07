@@ -15,14 +15,15 @@
 // on wasm32 every value (i32 and pointer alike) is a 32-bit local, so the
 // width bookkeeping the native backends need disappears here.
 //
-// Strategy (Phase 2 of docs/SELFHOST-SSA-ALWAYS.md): the core integer
-// subset — const / copy / binary / unary / call / param / phi over
-// ret / br / brif. `supported()` lets the caller (fern.try_ssa) fall back
-// to the AST emitter (wasm.fern) for any program that uses an instruction
-// this backend doesn't lower yet (alloc / load_elem / store_elem / concat
-// / streq / print / funcaddr / call_indirect), so output is never wrong.
-// Heap-backed values (arrays / strings / structs / closures / maps) are a
-// later slice that adds a linear-memory runtime mirroring ssa_x86's.
+// Strategy (Phase 2 of docs/SELFHOST-SSA-ALWAYS.md): the integer subset
+// plus the heap — const / copy / binary / unary / call / param / phi over
+// ret / br / brif, and alloc / load_elem / store_elem over a linear-memory
+// bump allocator (arrays, strings, structs, tuples, methods; on wasm32
+// every value is a 4-byte i32 word). `supported()` lets the caller
+// (fern.try_ssa) fall back to the AST emitter (wasm.fern) for any program
+// that uses an instruction this backend doesn't lower yet (concat / streq
+// / print / funcaddr / call_indirect), so output is never wrong. Those
+// (string concat/equality, I/O, and closures) are the next slice.
 
 import "core/no_prelude";
 import "./ssa";
@@ -141,6 +142,26 @@ function emit_inst(ins: ssa.SInst): string {
         expr = expr + ")";
         return "    (local.set " + i32_to_string(ins.result) + " " + expr + ")\n";
     }
+    // Heap: a bump allocator over linear memory. On wasm32 every value is a
+    // 4-byte i32 word, so the native backends' 8-byte word stride / pointer
+    // width collapses to a uniform 4-byte word here (element i lives at
+    // base + i*4; imm element widths are ignored — every slot is one i32).
+    if (ins.kind == "alloc") {
+        // Reserve the result words off __hp, then bump. The word count is imm
+        // (compile-time) unless args[0] is present — a runtime size scaled ×4.
+        var out: string = "    (local.set " + i32_to_string(ins.result) + " (global.get $__hp))\n";
+        if (ins.args.len() > 0) {
+            return out + "    (global.set $__hp (i32.add (global.get $__hp) (i32.mul " + loc(ins.args[0]) + " (i32.const 4))))\n";
+        }
+        return out + "    (global.set $__hp (i32.add (global.get $__hp) (i32.const " + i32_to_string(ins.imm * 4) + ")))\n";
+    }
+    if (ins.kind == "load_elem") {
+        return "    (local.set " + i32_to_string(ins.result) + " (i32.load (i32.add " + loc(ins.args[0]) + " (i32.shl " + loc(ins.args[1]) + " (i32.const 2)))))\n";
+    }
+    if (ins.kind == "store_elem") {
+        // No result — a pure memory store at base + index*4.
+        return "    (i32.store (i32.add " + loc(ins.args[0]) + " (i32.shl " + loc(ins.args[1]) + " (i32.const 2))) " + loc(ins.args[2]) + ")\n";
+    }
     return "";
 }
 
@@ -248,7 +269,8 @@ pub function emit_func(f: ssa.SFunc): string {
 function inst_supported(kind: string): boolean {
     return kind == "const_int" || kind == "const_bool" || kind == "binary"
         || kind == "unary" || kind == "call" || kind == "param" || kind == "copy"
-        || kind == "phi";
+        || kind == "phi" || kind == "alloc" || kind == "load_elem"
+        || kind == "store_elem";
 }
 
 // supported reports whether every instruction in every function is in the
@@ -279,7 +301,10 @@ pub function supported(funcs: ssa.SFunc[]): boolean {
 pub function emit_program(funcs: ssa.SFunc[]): string {
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
-    out = out + "  (memory (export \"memory\") 1)\n";
+    // A 16 MiB linear-memory arena (256 × 64 KiB pages) and a bump pointer
+    // ($__hp) for the heap. The low 1 KiB is reserved (scratch / null).
+    out = out + "  (memory (export \"memory\") 256)\n";
+    out = out + "  (global $__hp (mut i32) (i32.const 1024))\n";
     var chunks: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {

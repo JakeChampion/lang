@@ -255,8 +255,9 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 			t.Errorf("SSA wasm core program exited %d, want 88", got)
 		}
 
-		// Out-of-subset program (array): the supported() gate forces the AST
-		// emitter, so default WAT == -no-ssa WAT, and it still runs correctly.
+		// Heap program (array): the SSA wasm backend covers alloc / load_elem
+		// / store_elem now, so this also compiles through SSA — WAT differs
+		// from the -no-ssa (AST) output and runs to its value.
 		arrSrc := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
 		arrPath := filepath.Join(dir, "wasm_arr.fern")
 		if err := os.WriteFile(arrPath, []byte(arrSrc), 0o644); err != nil {
@@ -264,11 +265,49 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 		defArr, _ := runDriver(t, "-target", "wasm", arrPath)
 		astArr, _ := runDriver(t, "-no-ssa", "-target", "wasm", arrPath)
-		if string(defArr) != string(astArr) {
-			t.Error("default -target wasm did not fall back for an array program (supported() gate not engaged)")
+		if string(defArr) == string(astArr) {
+			t.Error("default -target wasm fell back to AST for an array program (expected the SSA heap backend)")
 		}
 		if got := runWat(t, "wasm_arr", defArr); got != 75 {
-			t.Errorf("array program (AST wasm fallback) exited %d, want 75", got)
+			t.Errorf("SSA wasm array program exited %d, want 75", got)
+		}
+
+		// Out-of-subset program: a string concat needs `concat`, which the wasm
+		// SSA backend doesn't lower yet, so the supported() gate forces the AST
+		// emitter — default WAT == -no-ssa WAT, and it still runs correctly.
+		catSrc := "function main(): i32 { var a = \"foo\"; var b = \"bar\"; var c = a + b; return c.len(); }\n"
+		catPath := filepath.Join(dir, "wasm_cat.fern")
+		if err := os.WriteFile(catPath, []byte(catSrc), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		defCat, _ := runDriver(t, "-target", "wasm", catPath)
+		astCat, _ := runDriver(t, "-no-ssa", "-target", "wasm", catPath)
+		if string(defCat) != string(astCat) {
+			t.Error("default -target wasm did not fall back for a string-concat program (supported() gate not engaged)")
+		}
+		if got := runWat(t, "wasm_cat", defCat); got != 6 {
+			t.Errorf("string-concat program (AST wasm fallback) exited %d, want 6", got)
+		}
+
+		// Regression: try_ssa must not mutate the shared AST. A capturing
+		// lambda falls back on wasm (its closure box needs funcaddr /
+		// call_indirect), and collect_lambdas used to append `__env` to the
+		// lambda's params in place — corrupting the AST the fallback emitter
+		// then reused (duplicate $__env → invalid WAT). With SSA default-on
+		// this corrupted every fallback compile, so guard it: default WAT must
+		// equal -no-ssa WAT and run correctly.
+		capSrc := "function main(): i32 { var n = 10; var f = function (x: i32): i32 { return x + n; }; return f(5); }\n"
+		capPath := filepath.Join(dir, "wasm_cap.fern")
+		if err := os.WriteFile(capPath, []byte(capSrc), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		defCap, _ := runDriver(t, "-target", "wasm", capPath)
+		astCap, _ := runDriver(t, "-no-ssa", "-target", "wasm", capPath)
+		if string(defCap) != string(astCap) {
+			t.Error("default -target wasm corrupted the AST for a capturing-lambda fallback (try_ssa has a side effect)")
+		}
+		if got := runWat(t, "wasm_cap", defCap); got != 15 {
+			t.Errorf("capturing-lambda program (AST wasm fallback) exited %d, want 15", got)
 		}
 	})
 

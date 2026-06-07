@@ -91,14 +91,27 @@ default-on through the IR for in-subset programs. Gated by 30 differential
 cases under `wasmtime` (`self_host_ssa_wasm_emit_test.go`, a subset of the
 `ssa_emit_test` matrix) plus a CLI integration case (`emit-ssa-wasm`).
 
-**Phase 2b (next):** the heap-backed ops — `alloc` / `load_elem` /
-`store_elem` (arrays, strings, structs, tuples), `concat` / `streq`,
-`print`, and `funcaddr` / `call_indirect` (closures via a function
-table). These need a linear-memory runtime (a bump global + WAT ports of
-ssa_x86's `__fern_ssa_*` helpers, and `fd_write` for `print`). Each batch
-removes kinds from `supported()`'s reject list and adds the matching
-`ssa_emit_test` cases to the wasm matrix. When complete, **all three
-backends consume the IR** for the whole SSA subset.
+**Phase 2b ✅ (landed — heap batch):** `alloc` / `load_elem` /
+`store_elem` over a linear-memory bump allocator (a `$__hp` global, 16 MiB
+arena). On wasm32 every value is a 4-byte i32 word, so the native
+backends' 8-byte stride / pointer width collapses to a uniform word. This
+brings arrays, strings (index / len / param), structs (+ fields, params,
+returns), methods, tuples, i32 maps, struct-union `match`, and the
+runtime helpers built only from heap + call ops (array `push` / `slice`,
+the i32 `__ssa_map_*` ops) onto the IR for wasm. Gated by ~30 added
+differential cases. **Hardening:** making `try_ssa` run by default
+(Phase 1) exposed a latent AST-mutation bug — `collect_lambdas` appended
+`__env` to a lambda's params *in place* (`.push` mutates), corrupting the
+shared AST that the fallback emitter then reused (a duplicate `$__env` →
+invalid WAT). Fixed by copying the params first; guarded by an
+`emit-ssa-wasm` regression case (default WAT == `-no-ssa` WAT for a
+capturing-lambda fallback).
+
+**Phase 2c (next):** the remaining kinds — `concat` / `streq` (string
+build / equality), `print` (needs `fd_write`), and `funcaddr` /
+`call_indirect` (escaping closures via a function table). These are the
+last reject-list entries; clearing them makes **all three backends
+consume the IR** for the whole SSA subset.
 
 (arm64-darwin reuses the arm64 SSA output with a Mach-O reskin —
 `ssa_arm64` emit + a `darwinize`-equivalent on the SSA framing — folded
