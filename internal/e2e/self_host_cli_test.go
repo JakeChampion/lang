@@ -121,20 +121,21 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	})
 
 	t.Run("emit-ssa-array", func(t *testing.T) {
-		// An array program is now in the SSA subset on x86-64: -ssa compiles
-		// it through the heap-aware backend (not a fallback). Run it.
+		// An array program is in the SSA subset on x86-64: the default (SSA)
+		// path compiles it through the heap-aware backend (not a fallback).
+		// The AST baseline is -no-ssa now that SSA is the default. Run it.
 		srcPath := filepath.Join(dir, "ssa_arr.fern")
 		src := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		ssaAsm, code := runDriver(t, "-ssa", srcPath)
+		ssaAsm, code := runDriver(t, srcPath)
 		if code != 0 {
-			t.Fatalf("-ssa emit exited %d, want 0", code)
+			t.Fatalf("emit exited %d, want 0", code)
 		}
-		astAsm, _ := runDriver(t, srcPath)
+		astAsm, _ := runDriver(t, "-no-ssa", srcPath)
 		if string(ssaAsm) == string(astAsm) {
-			t.Error("-ssa fell back to AST for an array program (expected the SSA heap backend)")
+			t.Error("default codegen fell back to AST for an array program (expected the SSA heap backend)")
 		}
 		progBin := buildBin(t, gcc, dir, "ssa_arr", string(ssaAsm))
 		cmd := exec.Command(progBin)
@@ -149,20 +150,20 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// (__ssa_arr_push / __ssa_arr_slice). try_ssa must inject those helper
 		// bodies AND admit their names to the known set; otherwise calls_all_known
 		// rejects the call and the whole program falls back to the AST emitter.
-		// Asserting the -ssa output differs from AST proves the SSA path (with
-		// injected helpers) was taken.
+		// Asserting the default (SSA) output differs from -no-ssa (AST) proves
+		// the SSA path (with injected helpers) was taken.
 		srcPath := filepath.Join(dir, "ssa_helpers.fern")
 		src := "function main(): i32 { var a = [1, 2]; a = a.push(3); var b = a[1:3]; return b[0] + b[1] + b.len() + a.len(); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		ssaAsm, code := runDriver(t, "-ssa", srcPath)
+		ssaAsm, code := runDriver(t, srcPath)
 		if code != 0 {
-			t.Fatalf("-ssa emit exited %d, want 0", code)
+			t.Fatalf("emit exited %d, want 0", code)
 		}
-		astAsm, _ := runDriver(t, srcPath)
+		astAsm, _ := runDriver(t, "-no-ssa", srcPath)
 		if string(ssaAsm) == string(astAsm) {
-			t.Error("-ssa fell back to AST for a push/slice program (runtime helpers not injected)")
+			t.Error("default codegen fell back to AST for a push/slice program (runtime helpers not injected)")
 		}
 		progBin := buildBin(t, gcc, dir, "ssa_helpers", string(ssaAsm))
 		cmd := exec.Command(progBin)
@@ -172,36 +173,64 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("ssa-default-on", func(t *testing.T) {
+		// SSA is the DEFAULT now (no -ssa flag needed). For an in-subset
+		// program the default output must equal the explicit -ssa output and
+		// differ from the -no-ssa (AST) output — proving the default routes
+		// through the SSA backend and -no-ssa forces the AST emitter.
+		srcPath := filepath.Join(dir, "default_ssa.fern")
+		src := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		def, code := runDriver(t, srcPath)
+		if code != 0 {
+			t.Fatalf("default emit exited %d, want 0", code)
+		}
+		explicit, _ := runDriver(t, "-ssa", srcPath)
+		if string(def) != string(explicit) {
+			t.Error("default codegen differs from explicit -ssa (SSA is not the default)")
+		}
+		ast, _ := runDriver(t, "-no-ssa", srcPath)
+		if string(def) == string(ast) {
+			t.Error("default codegen equals -no-ssa for an in-subset program (default did not use SSA)")
+		}
+	})
+
 	t.Run("ssa-fallback", func(t *testing.T) {
-		// A program outside the SSA subset (a float local) must fall back to
-		// the AST emitter: -ssa output is byte-identical to the default.
+		// A program outside the SSA subset (a float local) falls back to the
+		// AST emitter transparently: the default output is byte-identical to
+		// the -no-ssa (AST) output, so the default never emits wrong code for
+		// programs SSA can't yet lower.
 		srcPath := filepath.Join(dir, "fallback.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var x = 1.5; return 5; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		withSSA, code1 := runDriver(t, "-ssa", srcPath)
-		astOnly, code2 := runDriver(t, srcPath)
+		def, code1 := runDriver(t, srcPath)
+		astOnly, code2 := runDriver(t, "-no-ssa", srcPath)
 		if code1 != 0 || code2 != 0 {
 			t.Fatalf("emit exited %d / %d, want 0", code1, code2)
 		}
-		if string(withSSA) != string(astOnly) {
-			t.Errorf("-ssa did not fall back cleanly for an out-of-subset program (output differs from AST)")
+		if string(def) != string(astOnly) {
+			t.Errorf("default did not fall back cleanly for an out-of-subset program (output differs from -no-ssa AST)")
 		}
 	})
 
 	t.Run("opt-folds-constants", func(t *testing.T) {
-		// -O constant-folds before codegen (constfold.fold_module). For a
-		// const-only program the emitted asm must differ from the default
-		// (the fold collapsed the arithmetic) and still run to the same value.
+		// -O constant-folds before codegen (constfold.fold_module). Compare on
+		// the AST path (-no-ssa): for a const-only program the folded asm must
+		// differ from the unfolded asm (the fold collapsed the arithmetic) and
+		// still run to the same value. (The SSA optimiser folds constants too,
+		// so the contrast is shown on the AST emitter, which does not.)
 		srcPath := filepath.Join(dir, "fold.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 2 * 3 + 1; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		optAsm, code := runDriver(t, "-O", srcPath)
+		optAsm, code := runDriver(t, "-no-ssa", "-O", srcPath)
 		if code != 0 {
 			t.Fatalf("-O emit exited %d, want 0", code)
 		}
-		astAsm, _ := runDriver(t, srcPath)
+		astAsm, _ := runDriver(t, "-no-ssa", srcPath)
 		if string(optAsm) == string(astAsm) {
 			t.Error("-O did not change the emitted code (constant folding not applied)")
 		}
