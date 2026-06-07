@@ -272,9 +272,8 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 			t.Errorf("SSA wasm array program exited %d, want 75", got)
 		}
 
-		// Out-of-subset program: a string concat needs `concat`, which the wasm
-		// SSA backend doesn't lower yet, so the supported() gate forces the AST
-		// emitter — default WAT == -no-ssa WAT, and it still runs correctly.
+		// String build (concat) compiles through SSA now: WAT differs from the
+		// -no-ssa (AST) output and runs to its value.
 		catSrc := "function main(): i32 { var a = \"foo\"; var b = \"bar\"; var c = a + b; return c.len(); }\n"
 		catPath := filepath.Join(dir, "wasm_cat.fern")
 		if err := os.WriteFile(catPath, []byte(catSrc), 0o644); err != nil {
@@ -282,11 +281,29 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 		defCat, _ := runDriver(t, "-target", "wasm", catPath)
 		astCat, _ := runDriver(t, "-no-ssa", "-target", "wasm", catPath)
-		if string(defCat) != string(astCat) {
-			t.Error("default -target wasm did not fall back for a string-concat program (supported() gate not engaged)")
+		if string(defCat) == string(astCat) {
+			t.Error("default -target wasm fell back to AST for a string-concat program (expected the SSA concat helper)")
 		}
 		if got := runWat(t, "wasm_cat", defCat); got != 6 {
-			t.Errorf("string-concat program (AST wasm fallback) exited %d, want 6", got)
+			t.Errorf("SSA wasm string-concat program exited %d, want 6", got)
+		}
+
+		// Out-of-subset program: print isn't lowered by the wasm SSA backend
+		// yet (its newline semantics need a cross-backend fix), so the
+		// supported() gate forces the AST emitter — default WAT == -no-ssa WAT,
+		// and print keeps its trailing newline.
+		prSrc := "function main(): i32 { print(\"hi from wasm\"); return 6 * 7; }\n"
+		prPath := filepath.Join(dir, "wasm_print.fern")
+		if err := os.WriteFile(prPath, []byte(prSrc), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		defPr, _ := runDriver(t, "-target", "wasm", prPath)
+		astPr, _ := runDriver(t, "-no-ssa", "-target", "wasm", prPath)
+		if string(defPr) != string(astPr) {
+			t.Error("default -target wasm did not fall back for a print program (supported() gate not engaged)")
+		}
+		if got := runWat(t, "wasm_print", defPr); got != 42 {
+			t.Errorf("print program (AST wasm fallback) exited %d, want 42", got)
 		}
 
 		// Regression: try_ssa must not mutate the shared AST. A capturing

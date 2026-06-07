@@ -15,15 +15,15 @@
 // on wasm32 every value (i32 and pointer alike) is a 32-bit local, so the
 // width bookkeeping the native backends need disappears here.
 //
-// Strategy (Phase 2 of docs/SELFHOST-SSA-ALWAYS.md): the integer subset
-// plus the heap — const / copy / binary / unary / call / param / phi over
-// ret / br / brif, and alloc / load_elem / store_elem over a linear-memory
-// bump allocator (arrays, strings, structs, tuples, methods; on wasm32
-// every value is a 4-byte i32 word). `supported()` lets the caller
-// (fern.try_ssa) fall back to the AST emitter (wasm.fern) for any program
-// that uses an instruction this backend doesn't lower yet (concat / streq
-// / print / funcaddr / call_indirect), so output is never wrong. Those
-// (string concat/equality, I/O, and closures) are the next slice.
+// Strategy (Phase 2 of docs/SELFHOST-SSA-ALWAYS.md): the integer subset,
+// the heap, and string build/equality — const / copy / binary / unary /
+// call / param / phi over ret / br / brif; alloc / load_elem / store_elem
+// over a linear-memory bump allocator (arrays, strings, structs, tuples,
+// methods; on wasm32 every value is a 4-byte i32 word); and concat / streq
+// via small runtime helpers. `supported()` lets the caller (fern.try_ssa)
+// fall back to the AST emitter (wasm.fern) for the kinds left — print (its
+// newline semantics need a cross-backend fix first) and funcaddr /
+// call_indirect (escaping closures) — so output is never wrong.
 
 import "core/no_prelude";
 import "./ssa";
@@ -162,6 +162,14 @@ function emit_inst(ins: ssa.SInst): string {
         // No result — a pure memory store at base + index*4.
         return "    (i32.store (i32.add " + loc(ins.args[0]) + " (i32.shl " + loc(ins.args[1]) + " (i32.const 2))) " + loc(ins.args[2]) + ")\n";
     }
+    // Strings (byte arrays in the [len, c0, c1, …] word layout) + I/O, lowered
+    // to calls into the runtime helpers emitted by emit_program.
+    if (ins.kind == "concat") {
+        return "    (local.set " + i32_to_string(ins.result) + " (call $__fern_ssa_concat " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
+    }
+    if (ins.kind == "streq") {
+        return "    (local.set " + i32_to_string(ins.result) + " (call $__fern_ssa_streq " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
+    }
     return "";
 }
 
@@ -270,7 +278,7 @@ function inst_supported(kind: string): boolean {
     return kind == "const_int" || kind == "const_bool" || kind == "binary"
         || kind == "unary" || kind == "call" || kind == "param" || kind == "copy"
         || kind == "phi" || kind == "alloc" || kind == "load_elem"
-        || kind == "store_elem";
+        || kind == "store_elem" || kind == "concat" || kind == "streq";
 }
 
 // supported reports whether every instruction in every function is in the
@@ -295,16 +303,79 @@ pub function supported(funcs: ssa.SFunc[]): boolean {
     return true;
 }
 
+// uses_kind reports whether any instruction in any function has the given
+// kind — used to emit a runtime helper (and its imports) only when needed.
+function uses_kind(funcs: ssa.SFunc[], kind: string): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var b: i32 = 0;
+        while (b < funcs[i].blocks.len()) {
+            var blk: ssa.SBlock = funcs[i].blocks[b];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                if (blk.insts[k].kind == kind) { return true; }
+                k = k + 1;
+            }
+            b = b + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// concat_helper: __fern_ssa_concat(a, b) → a new [lenA+lenB, A words…, B
+// words…] string. Strings are [len, c0, c1, …] with one i32 word per byte
+// (the byte in the low octet), so concat copies whole words.
+function concat_helper(): string {
+    var o: string = "  (func $__fern_ssa_concat (param $a i32) (param $b i32) (result i32)\n";
+    o = o + "    (local $la i32) (local $lb i32) (local $p i32) (local $i i32)\n";
+    o = o + "    (local.set $la (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $lb (i32.load (local.get $b)))\n";
+    o = o + "    (local.set $p (global.get $__hp))\n";
+    o = o + "    (global.set $__hp (i32.add (global.get $__hp) (i32.mul (i32.add (i32.add (local.get $la) (local.get $lb)) (i32.const 1)) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $p) (i32.add (local.get $la) (local.get $lb)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $da (loop $ca\n";
+    o = o + "      (br_if $da (i32.ge_s (local.get $i) (local.get $la)))\n";
+    o = o + "      (i32.store (i32.add (local.get $p) (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 2))) (i32.load (i32.add (local.get $a) (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 2)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $ca)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $db (loop $cb\n";
+    o = o + "      (br_if $db (i32.ge_s (local.get $i) (local.get $lb)))\n";
+    o = o + "      (i32.store (i32.add (local.get $p) (i32.shl (i32.add (i32.add (local.get $la) (local.get $i)) (i32.const 1)) (i32.const 2))) (i32.load (i32.add (local.get $b) (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 2)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cb)))\n";
+    o = o + "    (local.get $p))\n";
+    return o;
+}
+
+// streq_helper: __fern_ssa_streq(a, b) → 1 if equal content else 0.
+function streq_helper(): string {
+    var o: string = "  (func $__fern_ssa_streq (param $a i32) (param $b i32) (result i32)\n";
+    o = o + "    (local $la i32) (local $i i32)\n";
+    o = o + "    (local.set $la (i32.load (local.get $a)))\n";
+    o = o + "    (if (i32.ne (local.get $la) (i32.load (local.get $b))) (then (return (i32.const 0))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $la)))\n";
+    o = o + "      (if (i32.ne (i32.load (i32.add (local.get $a) (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 2)))) (i32.load (i32.add (local.get $b) (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 2))))) (then (return (i32.const 0))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $c)))\n";
+    o = o + "    (i32.const 1))\n";
+    return o;
+}
+
 // emit_program frames the whole module: the WASI proc_exit import, an
-// exported linear memory (WASI command modules require one), each function
-// body, then a `_start` that exits with main()'s value.
+// exported linear memory (WASI command modules require one), the runtime
+// string helpers a program actually uses, each function body, then a
+// `_start` that exits with main()'s value.
 pub function emit_program(funcs: ssa.SFunc[]): string {
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
     // A 16 MiB linear-memory arena (256 × 64 KiB pages) and a bump pointer
-    // ($__hp) for the heap. The low 1 KiB is reserved (scratch / null).
+    // ($__hp) for the heap. The low 1 KiB is reserved (null / scratch).
     out = out + "  (memory (export \"memory\") 256)\n";
     out = out + "  (global $__hp (mut i32) (i32.const 1024))\n";
+    if (uses_kind(funcs, "concat")) { out = out + concat_helper(); }
+    if (uses_kind(funcs, "streq")) { out = out + streq_helper(); }
     var chunks: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {

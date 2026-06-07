@@ -107,11 +107,21 @@ invalid WAT). Fixed by copying the params first; guarded by an
 `emit-ssa-wasm` regression case (default WAT == `-no-ssa` WAT for a
 capturing-lambda fallback).
 
-**Phase 2c (next):** the remaining kinds — `concat` / `streq` (string
-build / equality), `print` (needs `fd_write`), and `funcaddr` /
-`call_indirect` (escaping closures via a function table). These are the
-last reject-list entries; clearing them makes **all three backends
-consume the IR** for the whole SSA subset.
+**Phase 2c ✅ (landed — strings):** `concat` / `streq` via small WAT
+runtime helpers (string build + content equality over the `[len, c0, …]`
+word layout). String-building programs now lower to the IR on wasm.
+
+**Phase 2d (next):** the remaining kinds — `print` and `funcaddr` /
+`call_indirect` (escaping closures via a function table). `print` is
+gated for now because of a **cross-backend `print` semantics bug** the
+default-on switch surfaced: canonical Fern `print` appends a newline (the
+native backend, the interpreter, and the AST emitters all do), but the
+SSA backends (`ssa_x86` / `ssa_arm64`) do a raw write *without* it — so
+since Phase 1 a `print(x)` with no explicit `\n` drops its newline on the
+x86-64 / arm64 default path. The fix (append the newline in all three SSA
+print helpers + update `self_host_ssa_print_test.go`) is its own PR; it
+also adds `print` to the wasm subset. Clearing these makes **all three
+backends consume the IR** for the whole current SSA subset.
 
 (arm64-darwin reuses the arm64 SSA output with a Mach-O reskin —
 `ssa_arm64` emit + a `darwinize`-equivalent on the SSA framing — folded
