@@ -519,9 +519,17 @@ world-driven composer (P2) wires it.
      `TestExportStringResultFromFernRunsViaConsumer`: a Fern `@export greet():
      string { return "hi"; }` reactor composes and a Fern consumer reads `"hi"`
      under wasmtime — the whole Fern→component→consumer string-export path.
+   - **Slice 5c self-host port — string-result export. ✅ Done.** `wasm.fern`'s
+     `extern_exports` now emits the string-result wrapper: the self-host string
+     is a pointer to a `[len][bytes]` block, so the wrapper reads `len=[s]`,
+     `data=s+4`, and writes the 4-byte-aligned `[ptr,len]` canonical return area
+     the Go composer's memory lift reads (no SSO normalize — the self-host
+     string is always heap). Gated by
+     `TestSelfHostExportStringResultRunsViaConsumer`: the self-host emits the
+     wrapper, the Go composer lifts it, and a Fern consumer reads `"hi"` under
+     wasmtime. **P6 string-result exports are now complete in both compilers.**
    - **Slice 5d (next) — string/list PARAMS** (the realloc lift + a wrapper that
-     materialises the incoming bytes), then **the self-host port** of the
-     export wrapper.
+     materialises the incoming bytes into the Fern string), in both compilers.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
