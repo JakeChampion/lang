@@ -548,6 +548,19 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var pa: i32[] = [sv];
                         return s.emit(SInst { kind: "print", result: s.cur_id(), args: pa, imm: fd, str: "" });
                     }
+                    // exit(code) — terminate the process with the given i32
+                    // exit code. A dedicated op (the native backends emit the
+                    // exit syscall directly), so calls_all_known doesn't bail
+                    // on it as an unknown call. wasm has no SSA lowering yet
+                    // (ssa_wasm.supported() excludes it → AST fallback there).
+                    if (cid.name == "exit" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var ev: i32 = s.cur_id();
+                        s = s.fresh();
+                        var ea: i32[] = [ev];
+                        return s.emit(SInst { kind: "exit", result: s.cur_id(), args: ea, imm: 0, str: "" });
+                    }
                     // arr[idx] = val — the parser desugars an indexed
                     // assignment to the builtin __set_index(arr, idx, val).
                     // Lower it to a store_elem at idx+1 (offset 0 is the
@@ -3074,7 +3087,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
+            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -3239,7 +3252,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "concat" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "concat" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.append(ins); } else { changed = true; }
                 k = k + 1;
             }
