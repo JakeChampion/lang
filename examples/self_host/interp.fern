@@ -743,7 +743,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     // keys / values are baked in rather than user-defined.
     match (recv) {
         VMap(m) => {
-            if (name == "set" || name == "insert") {
+            if (name == "insert") {
                 if (args.len() != 2) { return v_err("map.set: need 2 args"); }
                 var i: i32 = 0;
                 while (i < m.keys.len()) {
@@ -780,7 +780,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 }
                 return v_bool(false);
             }
-            if (name == "delete" || name == "without") {
+            if (name == "without") {
                 if (args.len() != 1) { return v_err("map.delete: need 1 arg"); }
                 var nk: Value[] = [];
                 var nv: Value[] = [];
