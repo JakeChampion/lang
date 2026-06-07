@@ -493,11 +493,24 @@ world-driven composer (P2) wires it.
      the existing lower-with-memory encoders. Opts precede the typeidx for a
      lift. Byte-pinned by `TestPutCanonSectionLiftWithMemory_Bytes` /
      `…Realloc_Bytes` (the project's encoding-before-wiring discipline).
-   - **Slice 5b (next) — wire composite exports**: a wasmbin wrapper adapting a
-     string/list-typed `@export` function to the canonical return-area / param
-     ABI, the composer using the memory lift (aliasing the core memory +
-     cabi_realloc), and an e2e composing a string-returning export with a
-     consumer + running it. Then the self-host port.
+   - **Slice 5b — composer string-result lift. ✅ Done (Go).**
+     `ComposeExportsFromWorld` now lifts a string-RESULT export with the memory
+     lift: `liftExport` detects a `string` result (the WIT primitive byte) and
+     emits `PutCanonSectionLiftWithMemory` (the core returns a pointer to the
+     `[ptr,len]` return area, which the lift reads), aliasing the core memory
+     (`exportNeedsMemory` gates it; reuses the lower path's aliased memory when
+     present). Scalar results keep the no-opts lift; string PARAMS and other
+     composites are still rejected with a clear message. Gated by
+     `TestExportStringResultLiftRunsViaConsumer`: a hand-written WAT exporter
+     returns "hi" via the canonical return area, the composer lifts it, and a
+     Fern consumer that `@import`s `greet() -> string` and `write`s it links +
+     runs under wasmtime. Additive — the byte-identity composer suite stays
+     green.
+   - **Slice 5c (next) — the Fern→canonical wrapper**: a wasmbin wrapper
+     adapting a Fern `@export f(): string` (core `() -> (i32,i32)` pair) to the
+     canonical return-area shape the lift expects, so the export works from Fern
+     source (not just a hand-written core). Then string PARAMS (realloc lift)
+     and the self-host port.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
