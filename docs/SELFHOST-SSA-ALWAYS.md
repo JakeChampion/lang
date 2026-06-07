@@ -70,20 +70,35 @@ consume the IR.
 ### Phase 2 — SSA → wasm backend (`ssa_wasm.fern`)
 
 The missing third consumer. New backend `emit_program(funcs:
-ssa.SFunc[], ...) : string` producing WAT, wired into `try_ssa` for
+ssa.SFunc[]) : string` producing WAT, wired into `try_ssa` for
 `-target wasm` (fall back to `wasm.fern` otherwise).
 
 The one structural difference from x86/arm64: WAT has **no arbitrary
 jumps**, so the SSA CFG is lowered with the standard *dispatch-loop*
-shape — a `(loop (block … (br_table $pc)))` over a `$pc` local that each
-terminator sets before branching back to the dispatch. SSA values become
-wasm locals; phis become edge copies (as on the native backends); the
-heap is linear memory + a bump global; the runtime helpers (`print`,
-`concat`, `streq`, the array/map helpers) are ported to WAT once.
+shape — a `(block $exit (loop $L (block … (br_table $blk0 … (local.get
+$pc)))))` over a `$pc` local that each terminator sets before branching
+back to the dispatch. SSA values become wasm locals; phis become edge
+copies (as on the native backends). On wasm32 every value (i32 and
+pointer alike) is a 32-bit local, so the native backends' width
+bookkeeping disappears here.
 
-Gate with the same differential matrix as `self_host_ssa_emit_test.go`,
-run under `wasmtime`. When green, make it default-on for wasm too — at
-which point **all three backends consume the IR** for the SSA subset.
+**Phase 2a ✅ (landed):** the core integer subset — `const_int`,
+`const_bool`, `binary`, `unary`, `call`, `param`, `copy`, `phi` over
+`ret` / `br` / `brif`. `ssa_wasm.supported()` lets `try_ssa` fall back to
+`wasm.fern` for any program that needs an instruction this backend
+doesn't lower yet, so output is never wrong — and `-target wasm` is now
+default-on through the IR for in-subset programs. Gated by 30 differential
+cases under `wasmtime` (`self_host_ssa_wasm_emit_test.go`, a subset of the
+`ssa_emit_test` matrix) plus a CLI integration case (`emit-ssa-wasm`).
+
+**Phase 2b (next):** the heap-backed ops — `alloc` / `load_elem` /
+`store_elem` (arrays, strings, structs, tuples), `concat` / `streq`,
+`print`, and `funcaddr` / `call_indirect` (closures via a function
+table). These need a linear-memory runtime (a bump global + WAT ports of
+ssa_x86's `__fern_ssa_*` helpers, and `fd_write` for `print`). Each batch
+removes kinds from `supported()`'s reject list and adds the matching
+`ssa_emit_test` cases to the wasm matrix. When complete, **all three
+backends consume the IR** for the whole SSA subset.
 
 (arm64-darwin reuses the arm64 SSA output with a Mach-O reskin —
 `ssa_arm64` emit + a `darwinize`-equivalent on the SSA framing — folded

@@ -30,7 +30,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "watbin.fern", "constfold.fern", "fern.fern"} {
+	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -216,6 +216,62 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("emit-ssa-wasm", func(t *testing.T) {
+		// The wasm target is the third SSA consumer (ssa_wasm.fern): a core
+		// integer program compiles through the SSA backend by default — its
+		// WAT differs from the -no-ssa (AST wasm.fern) output and runs to the
+		// program's value. A program outside the wasm SSA subset (an array)
+		// falls back to the AST emitter via the supported() gate: identical
+		// WAT to -no-ssa, and still correct.
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH; skipping -target wasm SSA path")
+		}
+		runWat := func(t *testing.T, name string, wat []byte) int {
+			t.Helper()
+			watPath := filepath.Join(dir, name+".wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", watPath)
+			_ = cmd.Run()
+			return cmd.ProcessState.ExitCode()
+		}
+
+		// Core program: default (SSA) WAT differs from -no-ssa (AST) WAT.
+		coreSrc := "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { var s = 0; var i = 0; while (i < 10) { s = s + fib(i); i = i + 1; } return s; }\n"
+		corePath := filepath.Join(dir, "wasm_core.fern")
+		if err := os.WriteFile(corePath, []byte(coreSrc), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		ssaWat, code := runDriver(t, "-target", "wasm", corePath)
+		if code != 0 {
+			t.Fatalf("-target wasm emit exited %d, want 0", code)
+		}
+		astWat, _ := runDriver(t, "-no-ssa", "-target", "wasm", corePath)
+		if string(ssaWat) == string(astWat) {
+			t.Error("default -target wasm fell back to AST for a core program (expected the SSA wasm backend)")
+		}
+		if got := runWat(t, "wasm_core", ssaWat); got != 88 {
+			t.Errorf("SSA wasm core program exited %d, want 88", got)
+		}
+
+		// Out-of-subset program (array): the supported() gate forces the AST
+		// emitter, so default WAT == -no-ssa WAT, and it still runs correctly.
+		arrSrc := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
+		arrPath := filepath.Join(dir, "wasm_arr.fern")
+		if err := os.WriteFile(arrPath, []byte(arrSrc), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		defArr, _ := runDriver(t, "-target", "wasm", arrPath)
+		astArr, _ := runDriver(t, "-no-ssa", "-target", "wasm", arrPath)
+		if string(defArr) != string(astArr) {
+			t.Error("default -target wasm did not fall back for an array program (supported() gate not engaged)")
+		}
+		if got := runWat(t, "wasm_arr", defArr); got != 75 {
+			t.Errorf("array program (AST wasm fallback) exited %d, want 75", got)
+		}
+	})
+
 	t.Run("opt-folds-constants", func(t *testing.T) {
 		// -O constant-folds before codegen (constfold.fold_module). Compare on
 		// the AST path (-no-ssa): for a const-only program the folded asm must
@@ -284,7 +340,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// is a false positive. This is the bundle-wide FP guard the
 		// differential corpus can't express, mirroring the manual
 		// "fern -check over every module" validation prior slices used.
-		for _, m := range []string{"lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "asm.fern", "asm_arm64.fern", "wasm.fern", "fern.fern"} {
+		for _, m := range []string{"lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "asm.fern", "asm_arm64.fern", "wasm.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
 				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)

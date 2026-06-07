@@ -41,6 +41,7 @@ import "./printer";
 import "./ssa";
 import "./ssa_x86";
 import "./ssa_arm64";
+import "./ssa_wasm";
 import "./watbin";
 import "./constfold";
 
@@ -155,10 +156,11 @@ struct SsaResult { asm: string, ok: boolean }
 // (build_func → optimise → emit). It applies only when EVERY function is in
 // the SSA subset (build_func ok) and a `main` exists; otherwise it returns
 // ok=false so the caller falls back to the AST emitter. The SSA backends
-// cover x86-64 and arm64; other targets always fall back. Register
-// allocation is always on for this path.
+// cover x86-64, arm64, and (a core integer subset of) wasm; arm64-darwin
+// and the wasm-bin / wasm-component targets always fall back. Register
+// allocation is always on for the native path.
 function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target: string): SsaResult {
-    if (target != "x86-64" && target != "arm64") { return SsaResult { asm: "", ok: false }; }
+    if (target != "x86-64" && target != "arm64" && target != "wasm") { return SsaResult { asm: "", ok: false }; }
     // The set of user-defined function names the SSA backend can `call`, and
     // the subset that return a pointer (so their call results are 64-bit).
     // Lambda bindings `var f = function(...){...}` lift to top-level functions
@@ -217,8 +219,13 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
         }
         hj = hj + 1;
     }
+    // The wasm SSA backend covers a narrower subset than build_func (the
+    // core integer ops); anything it can't lower yet falls back to the AST
+    // wasm emitter rather than emitting broken WAT.
+    if (target == "wasm" && !ssa_wasm.supported(sfuncs)) { return SsaResult { asm: "", ok: false }; }
     var asm: string = "";
     if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, true); }
+    else if (target == "wasm") { asm = ssa_wasm.emit_program(sfuncs); }
     else { asm = ssa_x86.emit_program(sfuncs, true); }
     return SsaResult { asm: asm, ok: true };
 }
@@ -405,8 +412,8 @@ function main(): i32 {
     // -no-ssa was given. try_ssa applies only if every function is in the
     // SSA subset (else we fall through to the AST emitter below), so it
     // never changes the output of programs it can't yet handle. -no-ssa
-    // forces the AST emitter; other targets (arm64-darwin, wasm*) have no
-    // SSA consumer yet and always use the AST emitter.
+    // forces the AST emitter; arm64-darwin and the wasm-bin / wasm-component
+    // targets have no SSA consumer yet and always use the AST emitter.
     if (!no_ssa) {
         var sr: SsaResult = try_ssa(merged.funcs, merged.structs, target);
         if (sr.ok) {
