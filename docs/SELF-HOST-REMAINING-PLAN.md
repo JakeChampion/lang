@@ -1021,11 +1021,26 @@ smallest → largest:
     Fern program assembles the actual prologue/epilogue + frame idiom the
     backend emits (`stp` … `mov x29, sp` … push/pop via `str`/`ldr`
     writeback … `ldp` … `ret`, called by `bl`), wraps it with `macho.fern`,
-    and the signed Mach-O exits 42 — no external tool. Remaining for full
-    wiring: data directives (`.4byte`/`.asciz`/`.align`/`.section`) into a
-    `__DATA`/`__const` blob with `adrp`/`ldr` symbol relocation, `.ltorg`
-    literal pools, then feeding `asm_arm64`'s real output from the driver
-    (replacing the `clang`/`ld64` shell-out).
+    and the signed Mach-O exits 42 — no external tool.
+  - ✅ **slice 3i — data section + named-symbol relocation**: `arm64_gas`
+    gains an `Arm64GasProg` (the text assembler + a `__DATA`/`__const`
+    blob + a data-symbol table + a page-fixup queue). The data directives
+    `.quad` / `.4byte` / `.word` / `.byte` / `.asciz` / `.string` /
+    `.align` build the blob; `.section __TEXT,__const` / `.data` switch
+    section; a label in the data section records a data symbol. `adrp
+    sym@PAGE`, `ldr [Xn, sym@PAGEOFF]`, and `add Xn, sym@PAGEOFF` queue
+    fixups that `arm64_gas_link(p, text_vaddr, data_vaddr)` resolves once
+    macho.fern's segment addresses are known (`arm64_patch_adrp` /
+    `_ldr_off` / `_addimm_off`). Byte-checked by `TestSelfHostArm64DataGas`
+    and gated end-to-end by **`TestSelfHostArm64DarwinMachOSymbolRuns`**: a
+    Fern program assembles text that defines a `.quad 42` in `__const` and
+    loads it *by name* (`adrp`/`ldr` `@PAGE`/`@PAGEOFF`), links the fixups,
+    wraps it with `macho.fern`, and the signed Mach-O exits 42 — a real
+    cross-segment symbol reference, no external tool. (Found + fixed a
+    self-host gotcha: a local named `as` collides with the cast keyword and
+    silently mis-compiles.) Remaining for full wiring: `.ltorg` literal
+    pools (`ldr Xd, =imm`), then feeding `asm_arm64`'s real output from the
+    CLI driver (replacing the `clang`/`ld64` shell-out).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

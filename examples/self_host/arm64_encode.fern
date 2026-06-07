@@ -523,3 +523,11 @@ function arm64_ldr_pre(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 function arm64_ldr_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
     return arm64_le32(buf, arm64_ldr_post_word(rt, rn, off));
 }
+
+// arm64_patch_addimm_off splices an unscaled 12-bit immediate into the
+// imm12 field (bits 21:10) of an `add` (immediate) placeholder — used for
+// `add Xd, Xn, sym@PAGEOFF`, preserving the opcode + Rd/Rn (0xffc003ff).
+function arm64_patch_addimm_off(buf: i32[], at: i32, off: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xffc003ff) | (((off & 0xfff) as i64) << 10);
+    return arm64_write_word(buf, at, w);
+}
