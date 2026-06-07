@@ -554,6 +554,26 @@ function field_index(ssig: StructSig, name: string): i32 {
     return 0 - 1;
 }
 
+// variant_binding_type returns the type to bind a variant pattern's
+// payload name to. A payload-bearing ENUM variant `V(T)` is lowered (in
+// the parser) to a struct `V` carrying a single marker field `__ev: T`, so
+// the pattern `V(n)` binds the PAYLOAD value of type T — read T off the
+// `__ev` field, NOT the wrapper struct. (Binding it as `t_struct("V")`
+// false-positived E038 when the payload was passed to a typed function,
+// and E003 on assignment to it.) A struct-union member `type U = A | B` is
+// a genuine user struct with no `__ev` marker, so its binding is the whole
+// struct — `t_struct(name)`, matching the Go checker. A variant whose
+// struct sig is unknown falls back to the membership name too.
+function variant_binding_type(s: Scope, type_name: string): Type {
+    var ss: StructSig = s.lookup_struct(type_name);
+    var i: i32 = 0;
+    while (i < ss.field_names.len()) {
+        if (ss.field_names[i] == "__ev") { return ss.field_types[i]; }
+        i = i + 1;
+    }
+    return t_struct(type_name);
+}
+
 function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     var i: i32 = 0;
     while (i < s.methods.len()) {
@@ -1260,7 +1280,7 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
                             // Bare names and `_` bindings stay
                             // out of scope.
                             if (pv.binding.len() > 0 && pv.binding != "_") {
-                                armScope = armScope.bind(pv.binding, t_struct(pv.type_name));
+                                armScope = armScope.bind(pv.binding, variant_binding_type(s, pv.type_name));
                             }
                         }
                     }
@@ -2871,7 +2891,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                     _ => { }
                                 }
                                 if (!foreign) {
-                                    armScope = armScope.bind(apv.binding, t_struct(apv.type_name));
+                                    armScope = armScope.bind(apv.binding, variant_binding_type(cur, apv.type_name));
                                 }
                             }
                         },
@@ -3117,14 +3137,15 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                     var asc: Scope = cur;
                     match (m.arms[a2].pattern) {
                         parser.PatVariant(apv) => {
-                            // Bind for membership only (unknown type): a
-                            // scalar-payload variant like `Has(i32)` binds the
-                            // inner value, not the variant struct, so binding
-                            // it as `t_struct(variant)` would mis-type an
-                            // assignment to it (spurious E003). E001 needs only
-                            // that the name is in scope.
+                            // A scalar-payload variant like `Has(i32)` binds
+                            // the inner value (the `__ev` payload type), not
+                            // the wrapper struct — variant_binding_type reads
+                            // the precise type so an assignment to the payload
+                            // type-checks the same way the Go checker does
+                            // (and a struct-union member still binds its
+                            // struct).
                             if (apv.binding.len() > 0 && apv.binding != "_") {
-                                asc = asc.bind(apv.binding, t_unknown("match payload"));
+                                asc = asc.bind(apv.binding, variant_binding_type(cur, apv.type_name));
                             }
                         },
                         _ => { }

@@ -654,6 +654,27 @@ same code(s) the Go checker does — restricted to
   language feature or analysis the self-host doesn't yet model end-to-end,
   not a checker-only rule. (E050/E051 owned-parameter move checking and
   E049 captured-reference reassignment are now done — see below.)
+- **Slice 69 (done): enum variant payload bindings get their payload type
+  (fixes an E038/E003 false positive).** A payload-bearing enum variant
+  `V(T)` is lowered by the parser to a struct `V` carrying a single marker
+  field `__ev: T`, so the pattern `V(n)` binds the *payload value* of type
+  `T`. The checker, however, bound the payload name to the *wrapper struct*
+  (`t_struct("V")`) at every match-arm site — so passing the payload to a
+  typed function (`f(n)` with `f(n: i32)`) false-positived **E038**
+  ("argument type"), and an assignment to it would have mis-fired **E003**
+  (the `stmts_assign_diags` site already worked around this by binding the
+  payload to `unknown`, suppressing the check entirely). New helper
+  `variant_binding_type(s, name)` reads the real payload type off the
+  `__ev` marker field when present, falling back to `t_struct(name)` for a
+  struct-union member (`type U = A | B`, which is a genuine struct with no
+  marker — its binding stays the whole struct, matching Go). Applied at all
+  three payload-binding sites (`check_stmt` type inference,
+  `stmts_call_diags`, `stmts_assign_diags`), replacing the imprecise
+  `unknown` workaround with the precise type. Gated by four new corpus
+  cases (i32 + string payload passed to a matching function → clean; a real
+  payload-type mismatch still fires E038; a struct-union member's field
+  access stays clean), all cross-checked against Go. Checker-only;
+  checker.fern isn't in the fixpoint bundle.
 - **Slice 68 (done): E002 — return-type checking inside lambda bodies.**
   The top-level `ret_diags` pass recurses through if / while / for / match /
   defer sub-bodies but deliberately stops at a lambda boundary — a nested
