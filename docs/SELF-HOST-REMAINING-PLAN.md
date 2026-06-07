@@ -961,8 +961,16 @@ smallest → largest:
     a Fern program assembles `_main { bl compute; exit(x0) }` /
     `compute { loop 6 × 7; ret }` — a forward call + a backward loop by
     name — wraps it with `macho.fern`, and the signed Mach-O exits 42 with
-    no external tool. Next: loads/stores + `@PAGE`/`@PAGEOFF` literal
-    addressing, then wiring `asm_arm64` → `macho.fern` → file.
+    no external tool.
+  - ✅ **slice 3e — loads / stores (stack frame)**: `ldr` / `str` Xt,
+    [Xn, #off] (64-bit, unsigned scaled immediate; register 31 names SP),
+    plus an `arm64_sp` helper. Byte-checked by `TestSelfHostArm64LoadStore`
+    and gated end-to-end by **`TestSelfHostArm64DarwinMachOFrameRuns`**: a
+    Fern program assembles a stack-frame round-trip (`sub sp`; `movz`;
+    `str x0,[sp,#8]`; clobber; `ldr x0,[sp,#8]`; `add sp`), wraps it with
+    `macho.fern`, and the signed Mach-O exits 42 — no external tool. Next:
+    `@PAGE`/`@PAGEOFF` literal/data addressing, then wiring `asm_arm64` →
+    `macho.fern` → file.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

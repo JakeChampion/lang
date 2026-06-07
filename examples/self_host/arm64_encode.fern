@@ -391,3 +391,29 @@ function arm64_asm_resolve(a: Arm64Asm): Arm64Asm {
     }
     return a;
 }
+
+// ---- load / store (64-bit, unsigned scaled immediate) ----
+//
+// The base+offset forms `ldr/str Xt, [Xn, #off]`. The 12-bit immediate is
+// scaled by 8 (the access size), so `off` must be a multiple of 8 in
+// 0..32760. Register 31 names SP here (the stack pointer), not XZR — used
+// for spills to the stack frame.
+//   str: (3<<30)|0x39000000              = 0xF9000000
+//   ldr: 0xF9000000 | 0x00400000          = 0xF9400000
+//        | (off/8)<<10 | Rn<<5 | Rt
+
+function arm64_sp(): i32 { return 31; } // SP in load/store + add/sub-imm context
+
+function arm64_str_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf9000000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf9400000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+
+function arm64_str(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_str_word(rt, rn, off));
+}
+function arm64_ldr(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_ldr_word(rt, rn, off));
+}
