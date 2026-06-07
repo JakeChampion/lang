@@ -414,11 +414,18 @@ world-driven composer (P2) wires it.
      Gated by `internal/ir/resource_drop_test.go` (synthesis, move-skip,
      idempotency) and the e2e `TestExternResourceHandleAutoDrop` (a program that
      declares NO drop, yet the emitted core carries `[resource-drop]pollable`
-     and the component releases the pollable under real WASI). **Self-host
-     port** is the immediate next step: the self-host erases handle types to i32
-     at parse and has no IR / defer machinery, so auto-drop there needs handle
-     info threaded through `wasm.fern` plus drop emission at every return — a
-     focused but non-trivial follow-up.
+     and the component releases the pollable under real WASI).
+     **Self-host port — ✅ done.** `parser.fern` now preserves `own R` /
+     `borrow R` type spellings (they still lower to i32 everywhere), records
+     `resource` declarations with their WIT binding on `Module.resources`, and
+     `insert_resource_drops` (run in `module_with_builtins` before
+     `lower_defers_module`) inserts a `StmtDefer` drop after each kept owned
+     handle and synthesizes the `[resource-drop]` import — the self-host's
+     existing defer-lowering then expands it on every exit path, mirroring the
+     Go pass (same move analysis: borrow-arg = kept, returned / `own`-arg =
+     moved). Gated by `TestSelfHostExternResourceHandleAutoDrop` (the self-host
+     emits the auto-inserted drop core, the Go composer wires it, runs under
+     real WASI). **P5 is now complete in both compilers.**
 5. **P6 — arbitrary exports**: bind a Fern function to a world export (beyond
    `cli/run` / `incoming-handler`) and lift it.
 
