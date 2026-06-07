@@ -935,6 +935,19 @@ smallest → largest:
     program assembles a `6 × 7` loop (`add`/`sub` + a backward `cbnz`),
     wraps it with `macho.fern`, and the signed Mach-O exits 42 — still no
     external tool. Forward references / named labels are the next slice.
+  - ✅ **slice 3c — forward references (placeholder + patch)**: a forward
+    branch is emitted with a zero displacement, its byte offset recorded,
+    then the immediate is spliced in once the target is known —
+    `arm64_rel` (byte delta) + `arm64_patch_b` (imm26) / `arm64_patch_b19`
+    (imm19, shared by `b.cond`/`cbz`/`cbnz`), the splicers preserving the
+    opcode/cond/Rt bits via a read-modify-write of the 4-byte word.
+    Byte-checked by `TestSelfHostArm64ForwardRefs` and gated end-to-end by
+    **`TestSelfHostArm64DarwinMachOMaxRuns`**: a Fern program assembles
+    `max(42, 17)` (`cmp; b.ge done; mov; done:`) where the *taken* forward
+    `b.ge` skips the `mov`, wraps it with `macho.fern`, and the signed
+    Mach-O exits 42 — no external tool. A named-label table over these
+    primitives (so multiple forward labels + calls resolve by name) is the
+    next slice.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
