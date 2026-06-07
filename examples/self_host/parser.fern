@@ -220,7 +220,7 @@ pub struct Import { path: string }
 // checker treat funcs first (build a signature table) and then
 // either dispatch to `main` if it exists or fall back to the
 // top-level stmt stream as the entry point.
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[], enums: EnumDecl[], resources: ResourceDecl[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[] }
 
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
@@ -228,6 +228,14 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // unbound resource). insert_resource_drops uses the binding to synthesize the
 // `[resource-drop]` import an owned handle is released through.
 pub struct ResourceDecl { name: string, iface: string, wit: string }
+
+// ExportBinding records an `@export("iface", "wit-name") function f {…}` binding
+// (P6 — docs/WIT-BRING-YOUR-OWN.md): the function `func_name` implements the WIT
+// world export (iface, wit). The wasm emitter surfaces a core export
+// `iface#wit-name` for each so the Go world-driven composer lifts it. Kept as a
+// Module side-list (like resources) rather than a FuncDecl field to avoid
+// rippling through every FuncDecl literal.
+pub struct ExportBinding { func_name: string, iface: string, wit: string }
 
 // EnumDecl preserves an enum's name + the names of its variants. The
 // parser desugars each enum into variant structs (pushed to `structs`)
@@ -3070,7 +3078,8 @@ pub function monomorphize_module(mod: Module): Module {
         imports: mod.imports,
         top_stmts: tr.rstmts,
         enums: mod.enums,
-        resources: mod.resources
+        resources: mod.resources,
+        exports: mod.exports
     };
 }
 
@@ -3529,7 +3538,8 @@ pub function monomorphize_structs(mod: Module): Module {
         imports: mod.imports,
         top_stmts: tr.rstmts,
         enums: mod.enums,
-        resources: mod.resources
+        resources: mod.resources,
+        exports: mod.exports
     };
 }
 
@@ -3726,7 +3736,7 @@ pub function lower_defers_module(mod: Module): Module {
         funcs = funcs.push(lower_defers_func(mod.funcs[i]));
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
 // ---- automatic resource-handle drop (P5 slice 3) --------------------
@@ -3928,7 +3938,7 @@ pub function insert_resource_drops(mod: Module): Module {
         });
         k = k + 1;
     }
-    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources };
+    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
 pub function module_with_builtins(mod: Module): Module {
@@ -3945,7 +3955,8 @@ pub function module_with_builtins(mod: Module): Module {
         imports: mono.imports,
         top_stmts: mono.top_stmts,
         enums: mono.enums,
-        resources: mono.resources
+        resources: mono.resources,
+        exports: mono.exports
     };
 }
 
@@ -4411,6 +4422,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
     var top_stmts: Stmt[] = [];
     var enums: EnumDecl[] = [];
     var resources: ResourceDecl[] = [];
+    var exports: ExportBinding[] = [];
     while (!p.at_end()) {
         var kw: string = p.peek_keyword();
         // `pub` is currently a no-op prefix on top-level decls
@@ -4451,8 +4463,9 @@ pub function parse_module(toks: lexer.Token[]): Module {
             if (probe.peek_ident() == "export") {
                 // `@export("iface", "wit-name") function f(…) {…}` binds a
                 // function to a WIT export (P6 — docs/WIT-BRING-YOUR-OWN.md).
-                // Slice 1 parses + consumes the binding; the export lift (and
-                // storing it on FuncDecl) lands with the codegen slice.
+                // The function is parsed normally; the binding is recorded on
+                // Module.exports so the wasm emitter surfaces a core export
+                // `iface#wit-name` the Go composer lifts.
                 var ear: ImportAttrResult = parse_export_attr(p);
                 p = ear.par;
                 var xk: string = p.peek_keyword();
@@ -4461,6 +4474,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                     var xfr: FuncResult = parse_func_decl(p);
                     p = xfr.par;
                     funcs = funcs.push(xfr.func);
+                    exports = exports.push(ExportBinding { func_name: xfr.func.name, iface: ear.iface, wit: ear.wit });
                 }
                 continue;
             }
@@ -4577,7 +4591,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
         p = stmtR.par;
         top_stmts = top_stmts.push(stmtR.stmt);
     }
-    return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources };
+    return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports };
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
@@ -4601,6 +4615,9 @@ pub function merge_module(into: Module, from: Module): Module {
     var nresources: ResourceDecl[] = into.resources;
     var ri: i32 = 0;
     while (ri < from.resources.len()) { nresources = nresources.push(from.resources[ri]); ri = ri + 1; }
+    var nexports: ExportBinding[] = into.exports;
+    var xi: i32 = 0;
+    while (xi < from.exports.len()) { nexports = nexports.push(from.exports[xi]); xi = xi + 1; }
     return Module {
         funcs: nfuncs,
         structs: nstructs,
@@ -4608,7 +4625,8 @@ pub function merge_module(into: Module, from: Module): Module {
         imports: into.imports,
         top_stmts: into.top_stmts,
         enums: concat_enums(into.enums, from.enums),
-        resources: nresources
+        resources: nresources,
+        exports: nexports
     };
 }
 
@@ -4655,6 +4673,13 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
         nresources = nresources.push(ResourceDecl { name: prefix + "." + rd.name, iface: rd.iface, wit: rd.wit });
         ri = ri + 1;
     }
+    var nexports: ExportBinding[] = into.exports;
+    var xi: i32 = 0;
+    while (xi < from.exports.len()) {
+        var xb: ExportBinding = from.exports[xi];
+        nexports = nexports.push(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit });
+        xi = xi + 1;
+    }
     return Module {
         funcs: nfuncs,
         structs: nstructs,
@@ -4662,7 +4687,8 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
         imports: into.imports,
         top_stmts: into.top_stmts,
         enums: concat_enums(into.enums, from.enums),
-        resources: nresources
+        resources: nresources,
+        exports: nexports
     };
 }
 

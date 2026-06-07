@@ -1216,6 +1216,21 @@ function extern_imports(mod: parser.Module): string {
     return out;
 }
 
+// extern_exports emits a core wasm export `iface#wit-name` for each `@export`
+// function (P6 — docs/WIT-BRING-YOUR-OWN.md). The function is emitted normally
+// (it has a body); this surfaces the WIT-id alias the Go world-driven composer
+// (ComposeExportsFromWorld) keys off to lift it as the named world export.
+function extern_exports(mod: parser.Module): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < mod.exports.len()) {
+        var x: parser.ExportBinding = mod.exports[i];
+        out = out + "  (export \"" + x.iface + "#" + x.wit + "\" (func $" + x.func_name + "))\n";
+        i = i + 1;
+    }
+    return out;
+}
+
 // module_has_extern_composite_result is true when any `@import` extern returns
 // a string / u8[] — the P4c composite-result shapes that need a wrapper plus
 // the exported cabi_realloc.
@@ -6669,6 +6684,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         out = out + ")\n";
     }
 
+    // P6: surface a core export `iface#wit-name` for each `@export` function so
+    // the Go world-driven composer lifts it as the named world export
+    // (docs/WIT-BRING-YOUR-OWN.md). Additive — no `@export` emits nothing.
+    out = out + extern_exports(mod);
     if (component) {
         // Component run entry: export main, and _lang_run = (main() == 0)
         // mapped to the 0=ok / 1=err result the canon lift expects.

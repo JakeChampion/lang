@@ -399,7 +399,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         imports: mod.imports,
         top_stmts: rewrite_block(mod.top_stmts, ctx),
         enums: mod.enums,
-        resources: mod.resources
+        resources: mod.resources,
+        exports: mod.exports
     };
 }
 
@@ -488,6 +489,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     var aliases: parser.TypeAlias[] = [];
     var enums: parser.EnumDecl[] = [];
     var resources: parser.ResourceDecl[] = [];
+    var exports: parser.ExportBinding[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
         var m: parser.Module = mangle_module(imports[i].mod, imports[i].name);
@@ -497,6 +499,8 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         enums = append_enum_decls(enums, m.enums);
         var ri: i32 = 0;
         while (ri < m.resources.len()) { resources = resources.push(m.resources[ri]); ri = ri + 1; }
+        var mxi: i32 = 0;
+        while (mxi < m.exports.len()) { exports = exports.push(m.exports[mxi]); mxi = mxi + 1; }
         i = i + 1;
     }
     var e: parser.Module = flatten_qualified(entry);
@@ -506,6 +510,8 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     enums = append_enum_decls(enums, e.enums);
     var rj: i32 = 0;
     while (rj < e.resources.len()) { resources = resources.push(e.resources[rj]); rj = rj + 1; }
+    var exj: i32 = 0;
+    while (exj < e.exports.len()) { exports = exports.push(e.exports[exj]); exj = exj + 1; }
     var no_imports: parser.Import[] = [];
     return parser.Module {
         funcs: funcs,
@@ -514,7 +520,8 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         imports: no_imports,
         top_stmts: e.top_stmts,
         enums: enums,
-        resources: resources
+        resources: resources,
+        exports: exports
     };
 }
 
