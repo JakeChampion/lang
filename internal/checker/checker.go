@@ -1365,6 +1365,18 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	registerMapMethod("get_or", []ast.Type{keyParam, valueParam}, valueParam)
 	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
 	registerMapMethod("iter", nil, mapIterKV)
+	// Value-returning aliases (docs/PURE-COLLECTION-API-PLAN.md §3a) —
+	// the immutable-looking vocabulary the pure-collection-API work is
+	// migrating onto. Each alias resolves to the SAME mangled lowering
+	// as its mutable-looking sibling, so dispatch (checker.go:6392,
+	// rewriting the call to the mangled ident) and the IR keyed on that
+	// name are reused wholesale — purely additive, zero IR change, no
+	// breakage. The mutable-looking names (`set`/`delete`/`clear`) stay
+	// for now; a later slice marks them deprecated and eventually
+	// removes them once call sites have migrated.
+	c.info.Methods["Map.insert"] = "__method_Map_set"    // m.insert(k, v) — value-returning set
+	c.info.Methods["Map.without"] = "__method_Map_delete" // m.without(k) — value-returning delete
+	c.info.Methods["Map.cleared"] = "__method_Map_clear"  // m.cleared() — value-returning clear
 
 	// `arr.push(v)` is the one Array method that DOESN'T have a
 	// prelude function declaration — the IR intercepts the
@@ -1402,6 +1414,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.ArrayType{Elem: arrayElemParam},
 	}
+	// Value-returning aliases (docs/PURE-COLLECTION-API-PLAN.md §3a),
+	// resolving to the same mangled lowerings as `push` / `set`. See
+	// the Map alias note above — purely additive, no IR change.
+	c.info.Methods["Array.append"] = "__method_Array_push" // arr.append(x) — value-returning push
+	c.info.Methods["Array.with"] = "__method_Array_set"    // arr.with(i, v) — value-returning element set
 	// `arr.len()` — like push, the IR intercepts the rewritten
 	// `__method_Array_len(arr)` call and inlines the [ptr - 4]
 	// length-prefix load. One generic signature covers every
