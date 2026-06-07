@@ -455,12 +455,23 @@ world-driven composer (P2) wires it.
      `cabi_realloc` (the host lifts the list into the self-host memory). Gated by
      `TestSelfHostExternArrayResultCustomProvider` (an `iota: func(n: u32) ->
      list<s32>`, lifted to `i32[]` and indexed).
+   - **Self-host port — record (struct) params — ✅ done.** A struct `@import`
+     parameter flattens to its fields. A self-host struct value is
+     `[type-id@0][field@+4 in 4-byte slots]`, so the wrapper pushes one i32 per
+     field — no canonical memory pointer, hence **no alignment wall** (unlike the
+     arrays). `extern_record_param_supported` gates a known struct of 1..16
+     i32/u32 fields (the self-host struct slot is 4 bytes); `extern_imports`
+     emits one `(param i32)` per field; the wrapper forwards
+     `(i32.load (struct + struct_field_off(idx)))` per field. `mod` is threaded
+     into `has_extern_mem_param` / `extern_needs_wrapper` for the struct-decl
+     lookup. Gated by `TestSelfHostExternRecordParamCustomProvider` (a
+     `sum-point: func(p: record { x, y: s32 }) -> s32`, x+y).
    - Still rejected (next slices): the rest of the self-host port (u8[] params
-     with repacking, records/tuples/sum-types — flatten to values, no alignment
-     wall); general user `variant`s; single-element records/tuples (direct
-     return); bool arrays; sub-word / nested-composite fields. The multi-
-     component harness (`TestExternImportCustomProvider`) is the test vehicle
-     for these.
+     with repacking; tuple/sum-type params; record/tuple/sum results — the
+     return-area materialization); general user `variant`s; single-element
+     records/tuples (direct return); bool arrays; sub-word / nested-composite
+     fields. The multi-component harness (`TestExternImportCustomProvider`) is
+     the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
