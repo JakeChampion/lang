@@ -82,6 +82,10 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		// rip-relative movq — the full instruction + data-section surface.
 		{"struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p = P { x: 40, y: 2 }; return p.x + p.y; }\n", 42, ""},
 		{"array", "function main(): i32 { var a = [10, 20, 12]; var s = 0; var i = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }\n", 42, ""},
+		// String length + indexing exercise movslq reg-reg (the .len() widen)
+		// and the byte-load char access.
+		{"strlen", "function main(): i32 { var s = \"hello world\"; return s.len() as i32 + 31; }\n", 42, ""},
+		{"strchar", "function main(): i32 { var s = \"*abc\"; return s[0] as i32; }\n", 42, ""},
 	}
 
 	for _, tc := range cases {

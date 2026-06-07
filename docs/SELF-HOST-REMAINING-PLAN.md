@@ -1175,6 +1175,19 @@ smallest → largest:
     `asm.fern` → `x86_gas` → `elf` → a runnable ELF with **no external `as`
     or `ld`**. The capstone now spans arithmetic / control-flow / calls /
     recursion / float / string / **struct / array**.
+  - ✅ **slice 2u — `movslq` reg-reg → strings work**. Probing richer
+    programs found `s.len()` returned 0: `asm.fern` widens the i32 length
+    with `movslq %eax, %rax` (reg-reg), but the dispatch only had the
+    *memory* form and sent `%eax` to `parse_mem` (→ a bogus base) → garbage.
+    Added `x86_movslq_rr` (`48 63 /r`) + reg-vs-mem dispatch. `strlen` and
+    `strchar` capstone cases now run natively (the capstone is up to **11
+    program shapes**). Probing also confirmed **multi-function** programs
+    (`f3∘f2∘f1`) and `fizzbuzz` (`%`/`if` chains) already work.
+  - 🔧 **maps** — a `Map[string,i32]` program assembles + runs but returns
+    the wrong value (exit 254, not a crash), so a fine-grained
+    encoding/logic bug remains in the FNV-hash / open-addressing runtime
+    (no mis-dispatched reg-reg form; needs bisection of the map asm).
+    Tracked as a follow-up.
   - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
     transcendental math builtins; broadening the capstone toward
     progressively larger programs (and ultimately `asm.fern`'s own output

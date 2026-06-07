@@ -476,6 +476,11 @@ function main(): i32 {
     // movsd reg-reg: movsd %xmm0,%xmm3 -> F2 0F 10 D8
     var tn: i32[] = x86_movsd_rr([], 3, 0);
     if (tn.len() != 4 || tn[0] != 242 || tn[1] != 15 || tn[2] != 16 || tn[3] != 216) { return 95; }
+    // movslq reg-reg: movslq %eax,%rax -> 48 63 C0; movslq %r9d,%r8 -> 4D 63 C1
+    var to: i32[] = x86_movslq_rr([], x86_rax(), x86_rax());
+    if (to.len() != 3 || to[0] != 72 || to[1] != 99 || to[2] != 192) { return 96; }
+    var tp: i32[] = x86_movslq_rr([], 8, 9);
+    if (tp[0] != 77 || tp[1] != 99 || tp[2] != 193) { return 97; }
     return 0;
 }
 `
