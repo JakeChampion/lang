@@ -3223,6 +3223,355 @@ function strip_generic_args(t: string): string {
     return t;
 }
 
+// ===================== owned-parameter move checking (E050/E051) =========
+// Affine analysis for `own` parameters: using an owned value after it has
+// been consumed (moved) is E050; passing a non-owned value to an `own`
+// parameter is E051. A "consume" is a whole-value use of the bare owned
+// param (returned, passed as a call argument, matched, bound); a "borrow"
+// is a projection (`x.field`, `x[i]`, a method receiver `x.m()`, a call
+// callee) which reads through without ending its life. Ports the core of
+// the Go checker's checkOwnedParams; conservative where the self-host
+// lacks the type detail (no match-payload ownership transfer, no
+// dyn-trait consuming methods) — it under-reports rather than over-reports.
+pub struct OwnFunc { name: string, flags: boolean[] }
+struct MovedEntry { mname: string, mline: i32 }
+struct OwnWalk { moved: MovedEntry[], diags: Diag[] }
+struct OwnCtx { owned: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[] }
+
+function ow_moved_has(m: MovedEntry[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < m.len()) { if (m[i].mname == name) { return true; } i = i + 1; }
+    return false;
+}
+function ow_moved_line(m: MovedEntry[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < m.len()) { if (m[i].mname == name) { return m[i].mline; } i = i + 1; }
+    return 0;
+}
+function ow_moved_add(m: MovedEntry[], name: string, line: i32): MovedEntry[] {
+    if (ow_moved_has(m, name)) { return m; }
+    return m.push(MovedEntry { mname: name, mline: line });
+}
+// ow_moved_join merges a non-diverging branch's consumes into dst (first
+// consume wins). A diverging branch (returns on every path) never reaches
+// the join, so its consumes don't constrain the fall-through.
+function ow_moved_join(dst: MovedEntry[], branch: MovedEntry[], diverges: boolean): MovedEntry[] {
+    if (diverges) { return dst; }
+    var out: MovedEntry[] = dst;
+    var i: i32 = 0;
+    while (i < branch.len()) { out = ow_moved_add(out, branch[i].mname, branch[i].mline); i = i + 1; }
+    return out;
+}
+
+function ow_is_owned(ctx: OwnCtx, name: string): boolean { return name_in(ctx.owned, name); }
+
+function ow_func_flags(ofuncs: OwnFunc[], name: string): boolean[] {
+    var i: i32 = 0;
+    while (i < ofuncs.len()) { if (ofuncs[i].name == name) { return ofuncs[i].flags; } i = i + 1; }
+    var empty: boolean[] = [];
+    return empty;
+}
+function ow_is_own_func(ofuncs: OwnFunc[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < ofuncs.len()) { if (ofuncs[i].name == name) { return true; } i = i + 1; }
+    return false;
+}
+
+// ow_struct_known reports whether `name` is a declared struct/variant — a
+// call to one is a fresh (owned) construction.
+function ow_struct_known(structs: parser.StructDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) { if (structs[i].name == name) { return true; } i = i + 1; }
+    return false;
+}
+
+// ow_is_owned_expr: a value the caller owns and may transfer into an `own`
+// parameter — a fresh construction (struct/tuple/array literal, string
+// concat) or another owned parameter, or a variant-constructor call.
+// Anything else (borrowed param, projection, plain local, ordinary call)
+// is not provably owned → E051.
+function ow_is_owned_expr(e: parser.Expr, ctx: OwnCtx): boolean {
+    match (e) {
+        parser.ExprStructLit(_) => { return true; },
+        parser.ExprArray(_) => { return true; },
+        parser.ExprTuple(_) => { return true; },
+        parser.ExprBinary(b) => { return b.op == "+"; },
+        parser.ExprIdent(id) => { return ow_is_owned(ctx, id.name); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return ow_struct_known(ctx.structs, cid.name); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
+// ow_guard_call: E051 — each argument passed to an `own` parameter of a
+// plain (ident-callee) callee must be an owned value.
+function ow_guard_call(c: parser.ExprCall, ctx: OwnCtx): Diag[] {
+    var out: Diag[] = [];
+    match (c.callee) {
+        parser.ExprIdent(id) => {
+            if (ow_is_own_func(ctx.ofuncs, id.name)) {
+                var flags: boolean[] = ow_func_flags(ctx.ofuncs, id.name);
+                var i: i32 = 0;
+                while (i < c.args.len() && i < flags.len()) {
+                    if (flags[i] && !ow_is_owned_expr(c.args[i], ctx)) {
+                        out = out.push(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one", c.line, c.col));
+                    }
+                    i = i + 1;
+                }
+            }
+        },
+        _ => { }
+    }
+    return out;
+}
+
+// ru_borrow processes a borrow-position expression: a bare owned ident is
+// a borrow (no consume) but using it after a move is still E050; anything
+// else is processed as an ordinary (consume-position) expression.
+function ru_borrow(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var d: Diag[] = [];
+            if (ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
+                d = d.push(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+            }
+            return OwnWalk { moved: moved, diags: d };
+        },
+        _ => { return ru_expr(e, moved, ctx); }
+    }
+}
+
+// ru_expr processes a consume-position expression left-to-right, threading
+// the moved set: a bare owned ident is consumed (or E050 if already
+// moved); projections/call-callees/receivers borrow their target.
+function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var d: Diag[] = [];
+            var m: MovedEntry[] = moved;
+            if (ow_is_owned(ctx, id.name)) {
+                if (ow_moved_has(moved, id.name)) {
+                    d = d.push(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+                } else {
+                    m = ow_moved_add(moved, id.name, id.line);
+                }
+            }
+            return OwnWalk { moved: m, diags: d };
+        },
+        parser.ExprFieldAccess(fa) => { return ru_borrow(fa.obj, moved, ctx); },
+        parser.ExprIndex(ix) => {
+            var r1: OwnWalk = ru_borrow(ix.array, moved, ctx);
+            var r2: OwnWalk = ru_expr(ix.index, r1.moved, ctx);
+            return OwnWalk { moved: r2.moved, diags: append_diags(r1.diags, r2.diags) };
+        },
+        parser.ExprSlice(sl) => {
+            var r1: OwnWalk = ru_borrow(sl.array, moved, ctx);
+            var r2: OwnWalk = ru_expr(sl.start, r1.moved, ctx);
+            var r3: OwnWalk = ru_expr(sl.end, r2.moved, ctx);
+            return OwnWalk { moved: r3.moved, diags: append_diags(append_diags(r1.diags, r2.diags), r3.diags) };
+        },
+        parser.ExprCall(c) => {
+            // IIFE — a 0-arg call of a 0-param lambda runs its body in
+            // place (the parser desugars match-/if-EXPRESSIONS to this), so
+            // its consumes belong to the enclosing scope. Analyse the body
+            // directly rather than treating it as an opaque closure.
+            match (c.callee) {
+                parser.ExprLambda(lm) => {
+                    if (lm.params.len() == 0 && c.args.len() == 0) {
+                        return ow_stmts(lm.body, moved, ctx);
+                    }
+                },
+                _ => { }
+            }
+            var d0: Diag[] = ow_guard_call(c, ctx);
+            // The callee is a borrow (function ref / closure / method receiver).
+            var rc: OwnWalk = ru_borrow(c.callee, moved, ctx);
+            var m: MovedEntry[] = rc.moved;
+            var d: Diag[] = append_diags(d0, rc.diags);
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var ra: OwnWalk = ru_expr(c.args[i], m, ctx);
+                m = ra.moved;
+                d = append_diags(d, ra.diags);
+                i = i + 1;
+            }
+            return OwnWalk { moved: m, diags: d };
+        },
+        parser.ExprBinary(b) => {
+            var r1: OwnWalk = ru_expr(b.left, moved, ctx);
+            var r2: OwnWalk = ru_expr(b.right, r1.moved, ctx);
+            return OwnWalk { moved: r2.moved, diags: append_diags(r1.diags, r2.diags) };
+        },
+        parser.ExprUnary(u) => { return ru_expr(u.operand, moved, ctx); },
+        parser.ExprArray(a) => {
+            var m: MovedEntry[] = moved;
+            var d: Diag[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { var r: OwnWalk = ru_expr(a.elements[i], m, ctx); m = r.moved; d = append_diags(d, r.diags); i = i + 1; }
+            return OwnWalk { moved: m, diags: d };
+        },
+        parser.ExprTuple(t) => {
+            var m: MovedEntry[] = moved;
+            var d: Diag[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { var r: OwnWalk = ru_expr(t.elements[i], m, ctx); m = r.moved; d = append_diags(d, r.diags); i = i + 1; }
+            return OwnWalk { moved: m, diags: d };
+        },
+        parser.ExprStructLit(s) => {
+            var m: MovedEntry[] = moved;
+            var d: Diag[] = [];
+            if (s.has_base) { var rb: OwnWalk = ru_expr(s.base, m, ctx); m = rb.moved; d = append_diags(d, rb.diags); }
+            var i: i32 = 0;
+            while (i < s.field_values.len()) { var r: OwnWalk = ru_expr(s.field_values[i], m, ctx); m = r.moved; d = append_diags(d, r.diags); i = i + 1; }
+            return OwnWalk { moved: m, diags: d };
+        },
+        _ => { return OwnWalk { moved: moved, diags: [] }; }
+    }
+}
+
+// ow_loop walks a loop body once from the entry state and flags any owned
+// param it consumes that was live at entry — a later iteration would use
+// it after move. The fall-through state is left unchanged (the loop may
+// run zero times).
+function ow_loop(body: parser.Stmt[], moved: MovedEntry[], ctx: OwnCtx): Diag[] {
+    var r: OwnWalk = ow_stmts(body, moved, ctx);
+    var out: Diag[] = r.diags;
+    var i: i32 = 0;
+    while (i < r.moved.len()) {
+        var nm: string = r.moved[i].mname;
+        if (!ow_moved_has(moved, nm)) {
+            out = out.push(dg_at("E050", "owned parameter \"" + nm + "\" is consumed inside a loop; a later iteration would use it after move", r.moved[i].mline, 0));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function ow_stmt(st: parser.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+    match (st) {
+        parser.StmtVar(v) => { return ru_expr(v.init, moved, ctx); },
+        parser.StmtReturn(r) => { return ru_expr(r.value, moved, ctx); },
+        parser.StmtExpr(e) => { return ru_expr(e.value, moved, ctx); },
+        parser.StmtAssign(a) => {
+            // Reassigning the bare owned param rebinds it to a fresh value, so
+            // its consumed state resets; otherwise the rhs is a consume.
+            var rv: OwnWalk = ru_expr(a.value, moved, ctx);
+            if (ow_is_owned(ctx, a.target)) {
+                return OwnWalk { moved: ow_moved_del(rv.moved, a.target), diags: rv.diags };
+            }
+            return rv;
+        },
+        parser.StmtIf(f) => {
+            var rc: OwnWalk = ru_expr(f.cond, moved, ctx);
+            var rt: OwnWalk = ow_stmts(f.then_body, rc.moved, ctx);
+            var re: OwnWalk = ow_stmts(f.else_body, rc.moved, ctx);
+            var m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, block_exits(f.then_body));
+            m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && block_exits(f.else_body));
+            return OwnWalk { moved: m, diags: append_diags(append_diags(rc.diags, rt.diags), re.diags) };
+        },
+        parser.StmtWhile(w) => {
+            var rc: OwnWalk = ru_expr(w.cond, moved, ctx);
+            var ld: Diag[] = ow_loop(w.body, rc.moved, ctx);
+            return OwnWalk { moved: rc.moved, diags: append_diags(rc.diags, ld) };
+        },
+        parser.StmtFor(fr) => {
+            var ri: OwnWalk = ru_borrow(fr.iter, moved, ctx);
+            var ld: Diag[] = ow_loop(fr.body, ri.moved, ctx);
+            return OwnWalk { moved: ri.moved, diags: append_diags(ri.diags, ld) };
+        },
+        parser.StmtMatch(m) => {
+            var rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
+            var mv: MovedEntry[] = rs.moved;
+            var d: Diag[] = rs.diags;
+            var a: i32 = 0;
+            while (a < m.arms.len()) {
+                var ra: OwnWalk = ow_stmts(m.arms[a].body, rs.moved, ctx);
+                d = append_diags(d, ra.diags);
+                mv = ow_moved_join(mv, ra.moved, block_exits(m.arms[a].body));
+                a = a + 1;
+            }
+            return OwnWalk { moved: mv, diags: d };
+        },
+        parser.StmtDefer(dd) => {
+            var one: parser.Stmt[] = [dd.action];
+            return ow_stmts(one, moved, ctx);
+        },
+        _ => { return OwnWalk { moved: moved, diags: [] }; }
+    }
+}
+
+function ow_stmts(stmts: parser.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+    var m: MovedEntry[] = moved;
+    var d: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var r: OwnWalk = ow_stmt(stmts[i], m, ctx);
+        m = r.moved;
+        d = append_diags(d, r.diags);
+        i = i + 1;
+    }
+    return OwnWalk { moved: m, diags: d };
+}
+
+function ow_moved_del(m: MovedEntry[], name: string): MovedEntry[] {
+    var out: MovedEntry[] = [];
+    var i: i32 = 0;
+    while (i < m.len()) { if (m[i].mname != name) { out = out.push(m[i]); } i = i + 1; }
+    return out;
+}
+
+// collect_own_funcs records every function that has at least one `own`
+// parameter, with a per-parameter owned-flag list (for the E051 guard).
+function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
+    var out: OwnFunc[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var any_own: boolean = false;
+        var flags: boolean[] = [];
+        var j: i32 = 0;
+        while (j < funcs[i].params.len()) {
+            var o: boolean = funcs[i].params[j].own;
+            flags = flags.push(o);
+            if (o) { any_own = true; }
+            j = j + 1;
+        }
+        if (any_own && funcs[i].receiver_name.len() == 0) {
+            out = out.push(OwnFunc { name: funcs[i].name, flags: flags });
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// own_diags runs the affine move-check over every function whose body
+// could exercise it: those with owned params (the E050 walk) and — once
+// any owned-param function exists — every function (the E051 call-site
+// guard). No-op when the module declares no `own` parameter anywhere, so
+// ordinary programs are untouched.
+pub function own_diags(mod: parser.Module): Diag[] {
+    var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fn: parser.FuncDecl = mod.funcs[i];
+        var owned: string[] = [];
+        var p: i32 = 0;
+        while (p < fn.params.len()) { if (fn.params[p].own) { owned = owned.push(fn.params[p].name); } p = p + 1; }
+        if (owned.len() > 0 || ofuncs.len() > 0) {
+            var ctx: OwnCtx = OwnCtx { owned: owned, ofuncs: ofuncs, structs: mod.structs };
+            var nomoved: MovedEntry[] = [];
+            var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
+            out = append_diags(out, r.diags);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
     // both use them to resolve names. Union aliases come next
@@ -3326,7 +3675,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         }
         sfi = sfi + 1;
     }
-    var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
+    var dd: Diag[] = append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }

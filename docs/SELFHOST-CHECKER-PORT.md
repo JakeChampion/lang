@@ -649,10 +649,29 @@ same code(s) the Go checker does — restricted to
   multi-binding + `when`-guard parser support; E022's `let else` as a
   parser desugar surfacing E035 today). The genuinely-remaining codes are
   E025 (switch-on-float — the parser desugars `switch` to if/else, so the
-  float-scrutinee shape is lost), E044 (typed closure captures), E050/E051
-  (owned-parameter move checking), E023 (unknown-enum scrutinee), and
-  E031/E032/E045/E049/E053 — each needing a language feature or analysis
-  the self-host doesn't yet model end-to-end, not a checker-only rule.
+  float-scrutinee shape is lost), E044 (typed closure captures), E023
+  (unknown-enum scrutinee), and E031/E032/E045/E049/E053 — each needing a
+  language feature or analysis the self-host doesn't yet model end-to-end,
+  not a checker-only rule. (E050/E051 owned-parameter move checking is now
+  done — see below.)
+- **Slice 65 (done): E050/E051 — owned-parameter move checking.** The
+  parser gained an `own` modifier on `ParamDecl` (`function f(own xs: …)`);
+  `own_diags` runs an affine flow analysis over each function body. Using an
+  owned param after it is consumed (returned / passed as a call argument /
+  matched / bound) is **E050** (use-after-move), with borrow-aware
+  classification (a projection `x.f`, index `x[i]`, method receiver, or
+  call callee borrows rather than consumes), flow-sensitive branch joins
+  (a diverging arm's consumes don't reach the join), and a loop check (a
+  consume of a still-live param inside a loop body). Passing a non-owned
+  value to an `own` parameter is **E051** (the call-site guard;
+  `ow_is_owned_expr` accepts fresh constructions / another owned param).
+  Match-/if-EXPRESSION IIFEs are looked through so a match-expression
+  scrutinee consume is attributed to the enclosing scope. Checker-only and
+  gated on the presence of any `own` parameter, so ordinary programs and
+  the self-host's own fixpoint are untouched (verified x86-64 + arm64).
+  Captured params are emitted by codegen as borrows (no transfer lowering
+  yet); this establishes the affine invariant. Ten new differential-corpus
+  cases cross-checked against the Go checker.
 - **Slice 56 (done): E024 — tuple destructure of a non-tuple / wrong
   arity.** The parser already lowers `var (a, b) = E` to a `StmtVar` whose
   `name` is `"a,b"`, so this is checker-only after all (not a missing
