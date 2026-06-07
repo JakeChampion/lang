@@ -123,15 +123,15 @@ func TestPrefixLayout(t *testing.T) {
 		t.Fatalf("DecodeWorld: %v", err)
 	}
 	pl := w.PrefixLayout()
-	if pl.Types != 29 || pl.Instances != 17 {
-		t.Errorf("PrefixLayout = {Types:%d Instances:%d}, want {29 17}", pl.Types, pl.Instances)
+	if pl.Types != 32 || pl.Instances != 19 {
+		t.Errorf("PrefixLayout = {Types:%d Instances:%d}, want {32 19}", pl.Types, pl.Instances)
 	}
 	for name, want := range map[string]int{
 		"wasi:io/error@0.2.0":      0,
 		"wasi:io/streams@0.2.0":    1,
 		"wasi:cli/stdout@0.2.0":    3,
 		"wasi:cli/stderr@0.2.0":    4,
-		"wasi:random/random@0.2.0": 16,
+		"wasi:random/random@0.2.0": 18,
 		"wasi:not/a-thing@9.9.9":   -1,
 	} {
 		if got := w.ImportInstanceIndex(name); got != want {

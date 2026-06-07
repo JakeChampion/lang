@@ -361,9 +361,21 @@ world-driven composer (P2) wires it.
      `ComposeFromWorldAuto` (env / args are `KindMemRealloc` list returns; exit
      / monotonic are `KindNoOpt`) exactly as the legacy registry lowers them.
      Gated by `TestExternImportWithBuiltinEnvArgsViaCLI` (an extern +
-     `args()` + `env()`, run under wasmtime). UDP is the one remaining
-     built-in the world doesn't yet cover — niche for the extern path, so
-     deferred.
+     `args()` + `env()`, run under wasmtime).
+   - **World coverage — UDP sockets — ✅ done.** Sockets had only ever
+     composed through the bespoke native registry; the `fern` world now also
+     imports `wasi:sockets/udp` + `wasi:sockets/udp-create-socket`, so an
+     extern program that also calls `udp_send()` composes through
+     `ComposeFromWorldAuto`. This is the first socket shape the world-driven
+     composer wires generically — the whole flow (`create-udp-socket`,
+     `udp-socket.start-bind` / `finish-bind` / `stream`,
+     `outgoing-datagram-stream.check-send` / `send` / `subscribe`, plus the
+     three resource-drops) lowers without bespoke socket knowledge. Gated by
+     `TestExternImportWithBuiltinUDPViaCLI` (an extern + `udp_send()` whose
+     datagram a real listener receives). With this the `fern` world covers
+     the full built-in capability set, so the next step is migrating the
+     default (non-extern) compose path off the native registry onto the
+     world-driven composer.
    - **Custom (non-WASI) interface + provider — ✅ done (Go).** The headline
      BYO-WIT capability: a Fern program `@import`s a *fully custom* interface
      (`local:test/answer@0.1.0`, defined by the user, unknown to the compiler)
