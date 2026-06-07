@@ -63,6 +63,10 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		// the SSA backend's old 16 MiB arena, pinning the 1 GiB heap a
 		// self-hosted SSA compiler needs (segfaults on the old size).
 		{"heap-beyond-16mib", "function main(): i32 { var s = 0; var i = 0; while (i < 300000) { var a = [i, 0, 0, 0, 0, 0, 0, 0]; if (a[0] == i) { s = s + 1; } i = i + 1; } return s - 299993; }", 7},
+		// exit(code): a dedicated SSA op → the exit syscall (93), must survive DCE.
+		{"exit-code", "function main(): i32 { exit(7); return 0; }", 7},
+		{"exit-conditional", "function main(): i32 { var x = 5; if (x > 3) { exit(9); } return 0; }", 9},
+		{"exit-computed", "function main(): i32 { var n = 3 + 4; exit(n); return 1; }", 7},
 		{"arith", "function main(): i32 { return 2 + 3 * 4; }", 14},
 		{"locals", "function main(): i32 { var x = 10; var y = x - 3; return y * 2; }", 14},
 		{"division", "function main(): i32 { return 84 / 2; }", 42},

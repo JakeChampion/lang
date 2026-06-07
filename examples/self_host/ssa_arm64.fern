@@ -362,6 +362,13 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    mov x1, #" + i32_to_string(ins.imm) + "\n";   // fd (1=stdout,2=stderr)
         return out + "    bl __fern_ssa_print\n";
     }
+    if (ins.kind == "exit") {
+        // exit(code): terminate via the exit syscall (93); code (i32) in x0.
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // code → x9
+        out = out + "    mov x0, x9\n";
+        out = out + "    mov x8, #93\n";
+        return out + "    svc #0\n";
+    }
     if (ins.kind == "concat") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // a → x9
         out = out + "    mov x0, x9\n";
