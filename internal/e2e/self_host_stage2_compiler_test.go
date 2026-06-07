@@ -66,6 +66,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 	}
 
 	// stage 1: bundle into a stdin-driven self-hosted compiler.
+	asmcoreSrc, _ := os.ReadFile("../../examples/self_host/asmcore.fern")
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
 	asmSrc, _ := os.ReadFile("../../examples/self_host/asm.fern")
@@ -85,6 +86,9 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		"}\n"
 
 	var bundle bytes.Buffer
+	bundle.WriteString("///MODULE asmcore\n")
+	bundle.Write(asmcoreSrc)
+	bundle.WriteString("\n")
 	bundle.WriteString("///MODULE lexer\n")
 	bundle.Write(lexerSrc)
 	bundle.WriteString("\n///MODULE parser\n")
