@@ -34,7 +34,7 @@ import (
 func TestSelfHostFixpoint(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
+	for _, name := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -67,6 +67,7 @@ func TestSelfHostFixpoint(t *testing.T) {
 	// to the bundled `io` module below — so the self-hosted compiler
 	// reads its stdin through the REAL std/io.read_all_stdin (Reader +
 	// read_chunk + Some/None + match), not a builtin shortcut.
+	asmcoreSrc, _ := os.ReadFile("../../examples/self_host/asmcore.fern")
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
 	asmSrc, _ := os.ReadFile("../../examples/self_host/asm.fern")
@@ -76,6 +77,9 @@ func TestSelfHostFixpoint(t *testing.T) {
 	driverMod := strings.ReplaceAll(string(bundleRun), "import \"std/io\";", "import \"./io\";")
 
 	var srcBundle bytes.Buffer
+	srcBundle.WriteString("///MODULE asmcore\n")
+	srcBundle.Write(asmcoreSrc)
+	srcBundle.WriteString("\n")
 	srcBundle.WriteString("///MODULE lexer\n")
 	srcBundle.Write(lexerSrc)
 	srcBundle.WriteString("\n///MODULE parser\n")

@@ -1,0 +1,2007 @@
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+
+// asmcore — the target-independent frontend shared by the x86-64
+// (asm.fern) and arm64 (asm_arm64.fern) text emitters: the Ty type
+// system, EmitState + its state methods, the free-variable walker,
+// type inference (infer_expr_type / match_payload_type / field +
+// struct tag resolution) and the pre-codegen checker. The backends
+// import this and add only their instruction-selection (emit_*).
+// Extracted to end the hand-maintained lockstep between the two
+// backends — this code now lives once.
+
+pub function base_type_name(t: string): string {
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] == 91) { return t[0:i]; }
+        i = i + 1;
+    }
+    return t;
+}
+
+pub function sanitize_label(name: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < name.len()) {
+        var b: i32 = name[i];
+        if (b == 46) { out = out + "__"; }
+        else { out = out + name[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
+pub function digits_to_i32(s: string): i32 {
+    if (s.len() == 0) { return 0; }
+    var neg: boolean = false;
+    var start: i32 = 0;
+    if (s[0] == 45) { neg = true; start = 1; }
+    var acc: i32 = 0;
+    var i: i32 = start;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) {
+            if (neg) { return 0 - acc; }
+            return acc;
+        }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    if (neg) { return 0 - acc; }
+    return acc;
+}
+
+pub function is_all_digits(s: string): boolean {
+    if (s.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub function has_str(xs: string[], s: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == s) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return acc.append(id.name); },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => {
+            acc = collect_idents_expr(b.left, acc);
+            return collect_idents_expr(b.right, acc);
+        },
+        parser.ExprUnary(u) => { return collect_idents_expr(u.operand, acc); },
+        parser.ExprCall(c) => {
+            acc = collect_idents_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                acc = collect_idents_expr(c.args[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                acc = collect_idents_expr(a.elements[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                acc = collect_idents_expr(t.elements[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = collect_idents_expr(x.array, acc);
+            return collect_idents_expr(x.index, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = collect_idents_expr(sl.array, acc);
+            acc = collect_idents_expr(sl.start, acc);
+            return collect_idents_expr(sl.end, acc);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                acc = collect_idents_expr(sl.field_values[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) {
+                acc = collect_idents_stmt(lm.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        // StmtDefer is eliminated by lower_defers before emit; the arm is
+        // here for exhaustiveness and recurses defensively.
+        parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
+        parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
+        parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
+        parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
+        parser.StmtIf(i) => {
+            acc = collect_idents_expr(i.cond, acc);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) {
+                acc = collect_idents_stmt(i.then_body[ti], acc);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) {
+                acc = collect_idents_stmt(i.else_body[ei], acc);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = collect_idents_expr(w.cond, acc);
+            var i: i32 = 0;
+            while (i < w.body.len()) {
+                acc = collect_idents_stmt(w.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(a) => { return collect_idents_expr(a.value, acc); },
+        parser.StmtMatch(m) => {
+            acc = collect_idents_expr(m.scrutinee, acc);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) {
+                    acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = collect_idents_expr(f.iter, acc);
+            var i: i32 = 0;
+            while (i < f.body.len()) {
+                acc = collect_idents_stmt(f.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
+        parser.StmtVar(v) => { return acc.append(v.name); },
+        parser.StmtReturn(_) => { return acc; },
+        parser.StmtExpr(_) => { return acc; },
+        parser.StmtIf(i) => {
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) {
+                acc = collect_bound_stmt(i.then_body[ti], acc);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) {
+                acc = collect_bound_stmt(i.else_body[ei], acc);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            var i: i32 = 0;
+            while (i < w.body.len()) {
+                acc = collect_bound_stmt(w.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(_) => { return acc; },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                match (m.arms[ai].pattern) {
+                    parser.PatVariant(pv) => {
+                        if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
+                    },
+                    parser.PatWildcard(_) => { }
+                }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) {
+                    acc = collect_bound_stmt(m.arms[ai].body[bi], acc);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = acc.append(f.var_name);
+            var i: i32 = 0;
+            while (i < f.body.len()) {
+                acc = collect_bound_stmt(f.body[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+pub function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
+    var refs: string[] = [];
+    var bi: i32 = 0;
+    while (bi < lm.body.len()) {
+        refs = collect_idents_stmt(lm.body[bi], refs);
+        bi = bi + 1;
+    }
+    var bound: string[] = [];
+    var pi: i32 = 0;
+    while (pi < lm.params.len()) {
+        bound = bound.append(lm.params[pi].name);
+        pi = pi + 1;
+    }
+    var si: i32 = 0;
+    while (si < lm.body.len()) {
+        bound = collect_bound_stmt(lm.body[si], bound);
+        si = si + 1;
+    }
+    var caps: string[] = [];
+    var ri: i32 = 0;
+    while (ri < refs.len()) {
+        var nm: string = refs[ri];
+        if (!has_str(bound, nm) && !has_str(caps, nm) && outer.has_local(nm)) {
+            caps = caps.append(nm);
+        }
+        ri = ri + 1;
+    }
+    return caps;
+}
+
+pub struct EmitState {
+    out: string,
+    label_n: i32,
+    local_names: string[],
+    in_function: boolean,
+    string_lits: string[],
+    // needed: the set of runtime-library helpers this module
+    // requests, by name. Populated via need() / the mark_*
+    // wrappers; emit_module consults has_need() to decide which
+    // helper bodies to append. Replaces ~26 parallel needs_*
+    // booleans — see asm.fern for the rationale.
+    needed: string[],
+    struct_decls: parser.StructDecl[],
+    // loop_exit_labels / loop_cont_labels: see asm.fern for
+    // semantics. break / continue use the top of each stack.
+    loop_exit_labels: string[],
+    loop_cont_labels: string[],
+    // funcs: the module's FuncDecls — used by method dispatch
+    // in ExprCall(ExprFieldAccess(...), args).
+    funcs: parser.FuncDecl[],
+    // local_types: parallel to local_names. See asm.fern.
+    local_types: Ty[]
+}
+
+pub function new_state(): EmitState {
+    var ns: string[] = [];
+    var sl: string[] = [];
+    var lex: string[] = [];
+    var lcn: string[] = [];
+    var fns: parser.FuncDecl[] = [];
+    var lts: Ty[] = [];
+    var nd: string[] = [];
+    return EmitState {
+        out: "",
+        label_n: 0,
+        local_names: ns,
+        in_function: false,
+        string_lits: sl,
+        needed: nd,
+        struct_decls: [],
+        loop_exit_labels: lex,
+        loop_cont_labels: lcn,
+        funcs: fns,
+        local_types: lts
+    };
+}
+
+pub function (s: EmitState) write(text: string): EmitState {
+    // O(N) amortised: route through the global strbuf primitive
+    // instead of `s.out + text` (which is O(N²) — fatal for self-
+    // hosting). The .out field stays "" through the build; the
+    // accumulated bytes live in the strbuf until emit_module's
+    // tail calls strbuf_take to materialise the final string.
+    // Mirrors the x86-64 backend (asm.fern).
+    strbuf_append(text);
+    return EmitState { ...s };
+}
+
+pub function (s: EmitState) bind_local(name: string): EmitState {
+    return s.bind_local_typed(name, ty_unknown());
+}
+
+pub function (s: EmitState) bind_local_typed(name: string, ty: Ty): EmitState {
+    var ln: string[] = s.local_names.append(name);
+    var lts: Ty[] = s.local_types.append(ty);
+    return EmitState { ...s, local_names: ln, local_types: lts };
+}
+
+pub function (s: EmitState) local_type_of(name: string): Ty {
+    var i: i32 = s.local_names.len() - 1;
+    while (i >= 0) {
+        if (s.local_names[i] == name) { return s.local_types[i]; }
+        i = i - 1;
+    }
+    return ty_unknown();
+}
+
+pub function (s: EmitState) mark_str_concat(): EmitState {
+    return s.need("heap").need("str_concat");
+}
+
+pub function (s: EmitState) mark_str_eq(): EmitState {
+    return s.need("str_eq");
+}
+
+pub function (s: EmitState) mark_str_print(): EmitState {
+    return s.need("str_print");
+}
+
+pub function (s: EmitState) mark_str_cmp(): EmitState {
+    return s.need("str_cmp");
+}
+
+pub function (s: EmitState) mark_str_read_line(): EmitState {
+    return s.need("heap").need("str_read_line");
+}
+
+pub function (s: EmitState) mark_i32_to_string(): EmitState {
+    return s.need("heap").need("i32_to_string");
+}
+
+pub function (s: EmitState) mark_str_to_i32(): EmitState {
+    return s.need("str_to_i32");
+}
+
+pub function (s: EmitState) mark_eprint(): EmitState {
+    return s.need("eprint");
+}
+
+pub function (s: EmitState) mark_str_search(): EmitState {
+    return s.need("str_search");
+}
+
+pub function (s: EmitState) mark_args(): EmitState {
+    return s.need("heap").need("args");
+}
+
+pub function (s: EmitState) mark_arr_push(): EmitState {
+    return s.need("heap").need("arr_push");
+}
+
+pub function (s: EmitState) mark_arr_slice(): EmitState {
+    return s.need("heap").need("arr_slice");
+}
+
+pub function (s: EmitState) mark_arr_i32_index_of(): EmitState {
+    return s.need("arr_i32_index_of");
+}
+
+pub function (s: EmitState) mark_arr_reverse(): EmitState {
+    return s.need("heap").need("arr_reverse");
+}
+
+pub function (s: EmitState) mark_arr_concat(): EmitState {
+    return s.need("heap").need("arr_concat");
+}
+
+pub function (s: EmitState) mark_arr_str_index_of(): EmitState {
+    return s.need("str_eq").need("arr_str_index_of");
+}
+
+pub function (s: EmitState) mark_arr_str_join(): EmitState {
+    return s.need("heap").need("str_concat").need("arr_str_join");
+}
+
+pub function (s: EmitState) mark_arr_i32_sum(): EmitState {
+    return s.need("arr_i32_sum");
+}
+
+pub function (s: EmitState) mark_arr_i32_min_max(): EmitState {
+    return s.need("arr_i32_min_max");
+}
+
+pub function (s: EmitState) mark_arr_i32_product(): EmitState {
+    return s.need("arr_i32_product");
+}
+
+pub function (s: EmitState) mark_str_chars(): EmitState {
+    return s.need("heap").need("str_chars");
+}
+
+pub function (s: EmitState) mark_str_bytes(): EmitState {
+    return s.need("heap").need("str_bytes");
+}
+
+pub function (s: EmitState) mark_str_reverse(): EmitState {
+    return s.need("heap").need("str_reverse");
+}
+
+pub function (s: EmitState) mark_i32_pow(): EmitState {
+    return s.need("i32_pow");
+}
+
+pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
+    match (scrut) {
+        parser.ExprIdent(id) => {
+            // Scrutinee is a local — recover the wrapped payload tag
+            // from its declared/inferred type.
+            if (s.has_local(id.name)) {
+                var lt: Ty = s.local_type_of(id.name);
+                if (is_option(lt)) { return option_inner(lt); }
+                if (is_result(lt)) { return result_inner(lt); }
+            }
+            return ty_unknown();
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if ((id.name == "Some" || id.name == "Ok") && c.args.len() == 1) {
+                        return infer_expr_type(c.args[0], s);
+                    }
+                    if (id.name == "read_file" || id.name == "read_all_stdin") { return ty_string(); }
+                    if (id.name == "tcp_recv") { return ty_string(); }
+                    if (id.name == "temp_dir") { return ty_string(); }
+                    if (id.name == "read_dir") { return ty_array_string(); }
+                    // Arbitrary free / module function returning
+                    // Option[T] or Result[T, …] — see asm.fern.
+                    var fi: i32 = 0;
+                    while (fi < s.funcs.len()) {
+                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
+                            var rt: string = s.funcs[fi].ret_type;
+                            if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == 93) {
+                                return ty_from_name(rt[7 : rt.len() - 1]);
+                            }
+                            if (rt.len() >= 8 && rt[0:7] == "Result[") {
+                                var inner: string = "(" + rt[7 : rt.len() - 1] + ")";
+                                return split_tuple_ret(inner).a;
+                            }
+                            return ty_unknown();
+                        }
+                        fi = fi + 1;
+                    }
+                    return ty_unknown();
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "read_chunk") { return ty_string(); }
+                    if (fa.field == "get") {
+                        var rt: Ty = infer_expr_type(fa.obj, s);
+                        if (is_map(rt)) { return map_val(rt); }
+                    }
+                    if (fa.field == "min" || fa.field == "max") {
+                        if (ty_is_array_i32(infer_expr_type(fa.obj, s))) { return ty_i32(); }
+                    }
+                    // Receiver method call. See asm.fern.
+                    var rcv: Ty = infer_expr_type(fa.obj, s);
+                    if (!ty_is_unknown(rcv)) {
+                        var fi: i32 = 0;
+                        while (fi < s.funcs.len()) {
+                            if (s.funcs[fi].name == fa.field && ty_eq(ty_from_name(s.funcs[fi].receiver_type), rcv)) {
+                                var rt: string = s.funcs[fi].ret_type;
+                                if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == 93) {
+                                    return ty_from_name(rt[7 : rt.len() - 1]);
+                                }
+                                if (rt.len() >= 8 && rt[0:7] == "Result[") {
+                                    var inner: string = "(" + rt[7 : rt.len() - 1] + ")";
+                                    return split_tuple_ret(inner).a;
+                                }
+                                return ty_unknown();
+                            }
+                            fi = fi + 1;
+                        }
+                    }
+                    return ty_unknown();
+                },
+                _ => { return ty_unknown(); }
+            }
+        },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
+pub function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
+    match (init) {
+        parser.ExprTuple(t) => {
+            if (t.elements.len() >= 2) {
+                return TwoTags { a: infer_expr_type(t.elements[0], s), b: infer_expr_type(t.elements[1], s) };
+            }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    var fi: i32 = 0;
+                    while (fi < s.funcs.len()) {
+                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
+                            return split_tuple_ret(s.funcs[fi].ret_type);
+                        }
+                        fi = fi + 1;
+                    }
+                },
+                parser.ExprFieldAccess(fa) => {
+                    // A method call whose result is a tuple. The builtin map
+                    // `delete` / `without` returns `(Map, bool)` — bind the
+                    // first element to the receiver's own map tag so the
+                    // resulting map dispatches its methods correctly (rather
+                    // than mis-mangling as `__fn_i32__<method>`); the bool is
+                    // i32-shaped. A user receiver method that returns a tuple is
+                    // split from its declared return type, mirroring the
+                    // free-function case above.
+                    var rcv: Ty = infer_expr_type(fa.obj, s);
+                    if ((fa.field == "without") && is_map(rcv)) {
+                        return TwoTags { a: rcv, b: ty_i32() };
+                    }
+                    if (!ty_is_unknown(rcv)) {
+                        var mfi: i32 = 0;
+                        while (mfi < s.funcs.len()) {
+                            if (s.funcs[mfi].name == fa.field && ty_eq(ty_from_name(s.funcs[mfi].receiver_type), rcv)) {
+                                return split_tuple_ret(s.funcs[mfi].ret_type);
+                            }
+                            mfi = mfi + 1;
+                        }
+                    }
+                },
+                _ => { }
+            }
+        },
+        _ => { }
+    }
+    return TwoTags { a: ty_i32(), b: ty_i32() };
+}
+
+pub function is_enum_variant(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) {
+            var sd: parser.StructDecl = s.struct_decls[di];
+            var fi: i32 = 0;
+            while (fi < sd.fields.len()) {
+                if (sd.fields[fi].name == "__ev") { return true; }
+                fi = fi + 1;
+            }
+            return false;
+        }
+        di = di + 1;
+    }
+    return false;
+}
+
+pub function is_unit_variant(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) {
+            return s.struct_decls[di].fields.len() == 0;
+        }
+        di = di + 1;
+    }
+    return false;
+}
+
+pub function is_struct_decl_name(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) { return true; }
+        di = di + 1;
+    }
+    return false;
+}
+
+pub function is_enum_recv(name: string, s: EmitState): boolean {
+    if (is_struct_decl_name(name, s)) { return false; }
+    if (is_int_tag(ty_from_name(name))) { return false; }
+    if (name == "string" || name == "bool" || name == "boolean") { return false; }
+    if (name == "f64" || name == "f32" || name == "float") { return false; }
+    return true;
+}
+
+pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == struct_name) {
+            var sd: parser.StructDecl = s.struct_decls[di];
+            var fi: i32 = 0;
+            while (fi < sd.fields.len()) {
+                if (sd.fields[fi].name == field) {
+                    return ty_from_name(sd.fields[fi].type_name);
+                }
+                fi = fi + 1;
+            }
+            return ty_unknown();
+        }
+        di = di + 1;
+    }
+    return ty_unknown();
+}
+
+pub function field_type_tag(field: string, s: EmitState): Ty {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        var sd: parser.StructDecl = s.struct_decls[di];
+        var fi: i32 = 0;
+        while (fi < sd.fields.len()) {
+            if (sd.fields[fi].name == field) {
+                return ty_from_name(sd.fields[fi].type_name);
+            }
+            fi = fi + 1;
+        }
+        di = di + 1;
+    }
+    return ty_unknown();
+}
+
+pub function struct_local_tag(type_name: string, s: EmitState): Ty {
+    var bi: i32 = 0;
+    while (bi < type_name.len()) {
+        if (type_name[bi] == 91) { return ty_from_name(type_name); }
+        bi = bi + 1;
+    }
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == type_name) { return ty_named(type_name); }
+        di = di + 1;
+    }
+    return ty_from_name(type_name);
+}
+
+pub struct TyI32 { tag: i32 }
+
+pub struct TyU32 { tag: i32 }
+
+pub struct TyU64 { tag: i32 }
+
+pub struct TyI64 { tag: i32 }
+
+pub struct TyUsize { tag: i32 }
+
+pub struct TyIsize { tag: i32 }
+
+pub struct TyBool { tag: i32 }
+
+pub struct TyString { tag: i32 }
+
+pub struct TyF64 { tag: i32 }
+
+pub struct TyStruct { tag: i32 }
+
+pub struct TyTuple { tag: i32 }
+
+pub struct TyUnknown { tag: i32 }
+
+pub struct TyArray { tag: i32 }
+
+pub struct TyArrayI32 { tag: i32 }
+
+pub struct TyArrayU32 { tag: i32 }
+
+pub struct TyArrayU64 { tag: i32 }
+
+pub struct TyArrayI64 { tag: i32 }
+
+pub struct TyArrayString { tag: i32 }
+
+pub struct TyFnAny { tag: i32 }
+
+pub struct TyMapAny { tag: i32 }
+
+pub struct TyOption { inner: Ty }
+
+pub struct TyResult { inner: Ty }
+
+pub struct TyFn { ret: Ty }
+
+pub struct TyMapStr { val: Ty }
+
+pub struct TyMapI32 { val: Ty }
+
+pub struct TyMapIter { val: Ty }
+
+pub struct TyStructNamed { name: string }
+
+pub type Ty = TyI32 | TyU32 | TyU64 | TyI64 | TyUsize | TyIsize | TyBool
+            | TyString | TyF64 | TyStruct | TyTuple | TyUnknown |
+            TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
+            | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult |
+            TyFn | TyMapStr | TyMapI32 | TyMapIter | TyStructNamed;
+
+pub function ty_named(name: string): Ty { return TyStructNamed { name: name }; }
+
+pub function ty_struct_name(t: Ty): string {
+    match (t) {
+        TyStructNamed(x) => { return x.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+pub function ty_i32(): Ty { return TyI32 { tag: 0 }; }
+
+pub function ty_u32(): Ty { return TyU32 { tag: 0 }; }
+
+pub function ty_u64(): Ty { return TyU64 { tag: 0 }; }
+
+pub function ty_i64(): Ty { return TyI64 { tag: 0 }; }
+
+pub function ty_usize(): Ty { return TyUsize { tag: 0 }; }
+
+pub function ty_isize(): Ty { return TyIsize { tag: 0 }; }
+
+pub function ty_bool(): Ty { return TyBool { tag: 0 }; }
+
+pub function ty_string(): Ty { return TyString { tag: 0 }; }
+
+pub function ty_f64(): Ty { return TyF64 { tag: 0 }; }
+
+pub function ty_struct(): Ty { return TyStruct { tag: 0 }; }
+
+pub function ty_tuple(): Ty { return TyTuple { tag: 0 }; }
+
+pub function ty_unknown(): Ty { return TyUnknown { tag: 0 }; }
+
+pub function ty_array(): Ty { return TyArray { tag: 0 }; }
+
+pub function ty_array_i32(): Ty { return TyArrayI32 { tag: 0 }; }
+
+pub function ty_array_u32(): Ty { return TyArrayU32 { tag: 0 }; }
+
+pub function ty_array_u64(): Ty { return TyArrayU64 { tag: 0 }; }
+
+pub function ty_array_i64(): Ty { return TyArrayI64 { tag: 0 }; }
+
+pub function ty_array_string(): Ty { return TyArrayString { tag: 0 }; }
+
+pub function ty_fn_any(): Ty { return TyFnAny { tag: 0 }; }
+
+pub function ty_map_any(): Ty { return TyMapAny { tag: 0 }; }
+
+pub function ty_option(x: Ty): Ty { return TyOption { inner: x }; }
+
+pub function ty_result(x: Ty): Ty { return TyResult { inner: x }; }
+
+pub function ty_fn(x: Ty): Ty { return TyFn { ret: x }; }
+
+pub function ty_map_str(x: Ty): Ty { return TyMapStr { val: x }; }
+
+pub function ty_map_i32(x: Ty): Ty { return TyMapI32 { val: x }; }
+
+pub function ty_mapiter(x: Ty): Ty { return TyMapIter { val: x }; }
+
+pub function ty_ord(t: Ty): i32 {
+    match (t) {
+        TyI32(_) => { return 0; },
+        TyU32(_) => { return 1; },
+        TyU64(_) => { return 2; },
+        TyI64(_) => { return 3; },
+        TyUsize(_) => { return 4; },
+        TyIsize(_) => { return 5; },
+        TyBool(_) => { return 6; },
+        TyString(_) => { return 7; },
+        TyF64(_) => { return 8; },
+        TyStruct(_) => { return 9; },
+        TyTuple(_) => { return 10; },
+        TyUnknown(_) => { return 11; },
+        TyArray(_) => { return 12; },
+        TyArrayI32(_) => { return 13; },
+        TyArrayU32(_) => { return 14; },
+        TyArrayU64(_) => { return 15; },
+        TyArrayI64(_) => { return 16; },
+        TyArrayString(_) => { return 17; },
+        TyFnAny(_) => { return 18; },
+        TyMapAny(_) => { return 19; },
+        TyOption(_) => { return 20; },
+        TyResult(_) => { return 21; },
+        TyFn(_) => { return 22; },
+        TyMapStr(_) => { return 23; },
+        TyMapI32(_) => { return 24; },
+        TyMapIter(_) => { return 25; },
+        TyStructNamed(_) => { return 26; },
+        _ => { return -1; }
+    }
+    return -1;
+}
+
+pub function is_int_tag(t: Ty): boolean {
+    match (t) {
+        TyI32(_) => { return true; },
+        TyU32(_) => { return true; },
+        TyU64(_) => { return true; },
+        TyI64(_) => { return true; },
+        TyUsize(_) => { return true; },
+        TyIsize(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function is_int_array_tag(t: Ty): boolean {
+    match (t) {
+        TyArrayI32(_) => { return true; },
+        TyArrayU32(_) => { return true; },
+        TyArrayU64(_) => { return true; },
+        TyArrayI64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function is_unsigned_tag(t: Ty): boolean {
+    match (t) {
+        TyU32(_) => { return true; },
+        TyU64(_) => { return true; },
+        TyUsize(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function is_unsigned_int_array_tag(t: Ty): boolean {
+    match (t) {
+        TyArrayU32(_) => { return true; },
+        TyArrayU64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function is_map(t: Ty): boolean {
+    match (t) {
+        TyMapAny(_) => { return true; },
+        TyMapStr(_) => { return true; },
+        TyMapI32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function is_mapiter(t: Ty): boolean {
+    match (t) {
+        TyMapIter(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function map_key_is_i32(t: Ty): boolean {
+    match (t) {
+        TyMapI32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function is_option(t: Ty): boolean {
+    match (t) {
+        TyOption(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function is_result(t: Ty): boolean {
+    match (t) {
+        TyResult(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function is_fn(t: Ty): boolean {
+    match (t) {
+        TyFn(_) => { return true; },
+        TyFnAny(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_i32(t: Ty): boolean {
+    match (t) {
+        TyI32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_u32(t: Ty): boolean {
+    match (t) {
+        TyU32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_u64(t: Ty): boolean {
+    match (t) {
+        TyU64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_i64(t: Ty): boolean {
+    match (t) {
+        TyI64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_usize(t: Ty): boolean {
+    match (t) {
+        TyUsize(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_isize(t: Ty): boolean {
+    match (t) {
+        TyIsize(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_bool(t: Ty): boolean {
+    match (t) {
+        TyBool(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_string(t: Ty): boolean {
+    match (t) {
+        TyString(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_f64(t: Ty): boolean {
+    match (t) {
+        TyF64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_struct(t: Ty): boolean {
+    match (t) {
+        TyStruct(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_tuple(t: Ty): boolean {
+    match (t) {
+        TyTuple(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_unknown(t: Ty): boolean {
+    match (t) {
+        TyUnknown(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_array(t: Ty): boolean {
+    match (t) {
+        TyArray(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_array_i32(t: Ty): boolean {
+    match (t) {
+        TyArrayI32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_array_u32(t: Ty): boolean {
+    match (t) {
+        TyArrayU32(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_array_u64(t: Ty): boolean {
+    match (t) {
+        TyArrayU64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_array_i64(t: Ty): boolean {
+    match (t) {
+        TyArrayI64(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function ty_is_array_string(t: Ty): boolean {
+    match (t) {
+        TyArrayString(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+pub function option_inner(t: Ty): Ty {
+    match (t) {
+        TyOption(x) => { return x.inner; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
+pub function result_inner(t: Ty): Ty {
+    match (t) {
+        TyResult(x) => { return x.inner; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
+pub function fn_ret(t: Ty): Ty {
+    match (t) {
+        TyFn(x) => { return x.ret; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
+pub function mapiter_val(t: Ty): Ty {
+    match (t) {
+        TyMapIter(x) => { return x.val; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
+pub function map_val(t: Ty): Ty {
+    match (t) {
+        TyMapStr(x) => { return x.val; },
+        TyMapI32(x) => { return x.val; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
+pub function ty_tag(t: Ty): string {
+    match (t) {
+        TyI32(_) => { return "i32"; },
+        TyU32(_) => { return "u32"; },
+        TyU64(_) => { return "u64"; },
+        TyI64(_) => { return "i64"; },
+        TyUsize(_) => { return "usize"; },
+        TyIsize(_) => { return "isize"; },
+        TyBool(_) => { return "bool"; },
+        TyString(_) => { return "string"; },
+        TyF64(_) => { return "f64"; },
+        TyStruct(_) => { return "struct"; },
+        TyTuple(_) => { return "tuple"; },
+        TyUnknown(_) => { return "unknown"; },
+        TyArray(_) => { return "array"; },
+        TyArrayI32(_) => { return "array_i32"; },
+        TyArrayU32(_) => { return "array_u32"; },
+        TyArrayU64(_) => { return "array_u64"; },
+        TyArrayI64(_) => { return "array_i64"; },
+        TyArrayString(_) => { return "array_string"; },
+        TyFnAny(_) => { return "fn"; },
+        TyMapAny(_) => { return "map"; },
+        TyOption(x) => { return "option:" + ty_tag(x.inner); },
+        TyResult(x) => { return "result:" + ty_tag(x.inner); },
+        TyFn(x) => { return "fn_" + ty_tag(x.ret); },
+        TyMapStr(x) => { return "map:" + ty_tag(x.val); },
+        TyMapI32(x) => { return "mapI:" + ty_tag(x.val); },
+        TyMapIter(x) => { return "mapiter:" + ty_tag(x.val); },
+        TyStructNamed(x) => { return x.name; }
+    }
+    return "unknown";
+}
+
+pub function ty_eq(a: Ty, b: Ty): boolean {
+    match (a) {
+        TyOption(x) => { match (b) { TyOption(y) => { return ty_eq(x.inner, y.inner); }, _ => { return false; } } },
+        TyResult(x) => { match (b) { TyResult(y) => { return ty_eq(x.inner, y.inner); }, _ => { return false; } } },
+        TyFn(x) => { match (b) { TyFn(y) => { return ty_eq(x.ret, y.ret); }, _ => { return false; } } },
+        TyMapStr(x) => { match (b) { TyMapStr(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
+        TyMapI32(x) => { match (b) { TyMapI32(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
+        TyMapIter(x) => { match (b) { TyMapIter(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
+        TyStructNamed(x) => { match (b) { TyStructNamed(y) => { return x.name == y.name; }, _ => { return false; } } },
+        _ => { return ty_ord(a) == ty_ord(b); }
+    }
+    return false;
+}
+
+pub function generic_value_ty(name: string, start: i32): Ty {
+    if (name.len() <= start + 1) { return ty_unknown(); }
+    var inner: string = name[start : name.len() - 1];
+    var i: i32 = 0;
+    while (i + 1 < inner.len()) {
+        if (inner[i] == 44 && inner[i + 1] == 32) {
+            return ty_from_name(inner[i + 2 : inner.len()]);
+        }
+        i = i + 1;
+    }
+    return ty_unknown();
+}
+
+pub function generic_key_is_i32(name: string, start: i32): boolean {
+    if (name.len() <= start + 1) { return false; }
+    var inner: string = name[start : name.len() - 1];
+    var i: i32 = 0;
+    while (i + 1 < inner.len()) {
+        if (inner[i] == 44 && inner[i + 1] == 32) {
+            return ty_is_i32(ty_from_name(inner[0 : i]));
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub function ty_from_name(name: string): Ty {
+    if (name == "i32") { return ty_i32(); }
+    if (name == "u32") { return ty_u32(); }
+    if (name == "u64") { return ty_u64(); }
+    if (name == "i64") { return ty_i64(); }
+    if (name == "usize") { return ty_usize(); }
+    if (name == "isize") { return ty_isize(); }
+    if (name == "u32[]") { return ty_array_u32(); }
+    if (name == "u64[]") { return ty_array_u64(); }
+    if (name == "i64[]") { return ty_array_i64(); }
+    if (name == "f64" || name == "f32" || name == "float") { return ty_f64(); }
+    if (name == "bool" || name == "boolean") { return ty_bool(); }
+    if (name == "string") { return ty_string(); }
+    if (name == "string[]") { return ty_array_string(); }
+    if (name == "i32[]") { return ty_array_i32(); }
+    if (name == "bool[]" || name == "boolean[]") { return ty_array_i32(); }
+    if (name.len() >= 8 && name[0:8] == "MapIter[") {
+        return ty_mapiter(generic_value_ty(name, 8));
+    }
+    if (name.len() >= 4 && name[0:4] == "Map[") {
+        if (generic_key_is_i32(name, 4)) { return ty_map_i32(generic_value_ty(name, 4)); }
+        return ty_map_str(generic_value_ty(name, 4));
+    }
+    if (name.len() >= 3 && name[0:3] == "Map") { return ty_map_str(ty_unknown()); }
+    if (name.len() >= 8 && name[0:7] == "Option[") {
+        return ty_option(ty_from_name(name[7:name.len() - 1]));
+    }
+    if (name.len() >= 8 && name[0:7] == "Result[") {
+        var inner: string = "(" + name[7 : name.len() - 1] + ")";
+        return ty_result(split_tuple_ret(inner).a);
+    }
+    if (name.len() > 0 && name[name.len() - 1] == 93) { return ty_array(); }
+    return ty_unknown();
+}
+
+pub struct TwoTags { a: Ty, b: Ty }
+
+pub function split_tuple_ret(tt: string): TwoTags {
+    if (tt.len() < 3 || tt[0] != 40) { return TwoTags { a: ty_i32(), b: ty_i32() }; }
+    var inner: string = tt[1 : tt.len() - 1];
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var split_at: i32 = 0 - 1;
+    while (i < inner.len()) {
+        var ch: i32 = inner[i];
+        if (ch == 91 || ch == 40) { depth = depth + 1; }
+        else if (ch == 93 || ch == 41) { depth = depth - 1; }
+        else if (ch == 44 && depth == 0 && split_at < 0) { split_at = i; }
+        i = i + 1;
+    }
+    if (split_at < 0) { return TwoTags { a: ty_i32(), b: ty_i32() }; }
+    var a: string = inner[0 : split_at];
+    var bstart: i32 = split_at + 1;
+    if (bstart < inner.len() && inner[bstart] == 32) { bstart = bstart + 1; }
+    var b: string = inner[bstart : inner.len()];
+    return TwoTags { a: ty_from_name(a), b: ty_from_name(b) };
+}
+
+pub function ty_friendly(t: Ty): string {
+    match (t) {
+        TyOption(x) => { return "Option[" + ty_friendly(x.inner) + "]"; },
+        TyResult(x) => { return "Result[" + ty_friendly(x.inner) + ", _]"; },
+        TyArrayI32(_) => { return "i32[]"; },
+        TyArrayU32(_) => { return "u32[]"; },
+        TyArrayU64(_) => { return "u64[]"; },
+        TyArrayI64(_) => { return "i64[]"; },
+        TyArrayString(_) => { return "string[]"; },
+        _ => { return ty_tag(t); }
+    }
+    return ty_tag(t);
+}
+
+pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
+    match (e) {
+        parser.ExprNumber(n) => { if (n.is_float) { return ty_f64(); } return ty_i32(); },
+        parser.ExprBool(_) => { return ty_bool(); },
+        parser.ExprString(_) => { return ty_string(); },
+        parser.ExprArray(a) => {
+            if (a.elements.len() == 0) { return ty_array(); }
+            var et: Ty = infer_expr_type(a.elements[0], s);
+            if (ty_is_string(et)) { return ty_array_string(); }
+            if (ty_is_i32(et) || ty_is_bool(et)) { return ty_array_i32(); }
+            return ty_array();
+        },
+        parser.ExprTuple(_) => { return ty_tuple(); },
+        parser.ExprStructLit(_) => { return ty_struct(); },
+        parser.ExprLambda(lm) => {
+            // Encode the return type in the tag so a later
+            // `f()` call site can recover it from the local's
+            // recorded type. The closure-box itself is just an
+            // 8-byte pointer regardless of return shape, so
+            // capture / call machinery is unaffected; this is
+            // purely for the type-aware dispatch on the result
+            // (e.g. `print(f())` needs to know the result is a
+            // string to route through `__fern_print_str`).
+            return ty_fn(ty_from_name(lm.ret_type));
+        },
+        parser.ExprIdent(id) => {
+            if (id.name == "None") { return ty_option(ty_unknown()); }
+            if (s.has_local(id.name)) { return s.local_type_of(id.name); }
+            // A bare ident may name a zero-arg function (a `const`).
+            var cfi: i32 = 0;
+            while (cfi < s.funcs.len()) {
+                if (s.funcs[cfi].name == id.name && s.funcs[cfi].receiver_type.len() == 0 && s.funcs[cfi].params.len() == 0) {
+                    return ty_from_name(s.funcs[cfi].ret_type);
+                }
+                cfi = cfi + 1;
+            }
+            return s.local_type_of(id.name);
+        },
+        parser.ExprBinary(b) => {
+            if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
+                    || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
+                return ty_bool();
+            }
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+                var lt: Ty = infer_expr_type(b.left, s);
+                var rt: Ty = infer_expr_type(b.right, s);
+                if (ty_is_string(lt) || ty_is_string(rt)) { return ty_string(); }
+                if (ty_is_f64(lt) || ty_is_f64(rt)) { return ty_f64(); }
+                return ty_i32();
+            }
+            return ty_i32();
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "!") { return ty_bool(); }
+            if (u.op == "-") { return infer_expr_type(u.operand, s); }
+            if (u.op.len() >= 3 && u.op[0:3] == "as_") {
+                var ct: string = u.op[3:u.op.len()];
+                if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
+                return ty_i32();
+            }
+            return ty_i32();
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (id.name == "Some" && c.args.len() == 1) {
+                        return ty_option(infer_expr_type(c.args[0], s));
+                    }
+                    if (id.name == "Ok" && c.args.len() == 1) {
+                        return ty_result(infer_expr_type(c.args[0], s));
+                    }
+                    if (id.name == "Err" && c.args.len() == 1) { return ty_result(ty_unknown()); }
+                    if (id.name == "read_file") { return ty_result(ty_string()); }
+                    if (id.name == "write_file") { return ty_option(ty_unknown()); }
+                    // now_unix_ms / monotonic_ns return i64. The self-host
+                    // has no distinct i64 tag — integers live in 64-bit x0
+                    // slots and compare via cmp — so "i32" routes them
+                    // through the integer path without truncation.
+                    if (id.name == "now_unix_ms") { return ty_i32(); }
+                    if (id.name == "monotonic_ns") { return ty_i32(); }
+                    // See asm.fern for rationale.
+                    if (id.name == "sleep_ms") { return ty_i32(); }
+                    if (id.name == "remove_file") { return ty_option(ty_unknown()); }
+                    // subprocess(cmd, args, stdin) → ProcessResult struct.
+                    // See asm.fern: returns "unknown" because the struct's
+                    // fields resolve through the shape-pointer dispatch path
+                    // (parser.inject_builtin_enums injects the decl).
+                    if (id.name == "subprocess") { return ty_unknown(); }
+                    if (id.name == "temp_dir") { return ty_result(ty_string()); }
+                    if (id.name == "read_dir") { return ty_result(ty_array_string()); }
+                    if (id.name == "stat") { return ty_result(ty_unknown()); }
+                    if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
+                    if (id.name == "f64_bits" || id.name == "f32_bits") { return ty_i32(); }
+                    if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
+                    // env(name): Option[string] — Some(value) if the
+                    // variable is set (including empty), None otherwise.
+                    if (id.name == "env") { return ty_option(ty_string()); }
+                    if (id.name == "len") { return ty_i32(); }
+                    if (id.name == "read_int") { return ty_i32(); }
+                    if (id.name == "read_line") { return ty_string(); }
+                    if (id.name == "read_all_stdin") { return ty_string(); }
+                    if (id.name == "i32_to_string") { return ty_string(); }
+                    if (id.name == "int__int_to_string") { return ty_string(); }
+                    if (id.name == "str_to_i32") { return ty_i32(); }
+                    if (id.name == "str_starts_with") { return ty_bool(); }
+                    if (id.name == "str_ends_with") { return ty_bool(); }
+                    if (id.name == "str_contains") { return ty_bool(); }
+                    if (id.name == "str_index_of") { return ty_i32(); }
+                    if (id.name == "str_trim") { return ty_string(); }
+                    if (id.name == "str_to_upper") { return ty_string(); }
+                    if (id.name == "str_to_lower") { return ty_string(); }
+                    if (id.name == "str_repeat") { return ty_string(); }
+                    if (id.name == "str_replace") { return ty_string(); }
+                    if (id.name == "chr") { return ty_string(); }
+                    if (id.name == "exit") { return ty_i32(); }
+                    if (id.name == "args_count") { return ty_i32(); }
+                    if (id.name == "arg_at") { return ty_string(); }
+                    if (id.name == "args") { return ty_array_string(); }
+                    if (id.name == "__alloc_u8") { return ty_array_i32(); }
+                    if (id.name == "string_from_bytes") { return ty_string(); }
+                    if (id.name == "random_bytes") { return ty_string(); }
+                    if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
+                    if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }
+                    if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
+                            || id.name == "__floor_f64" || id.name == "__ceil_f64"
+                            || id.name == "__trunc_f64" || id.name == "__round_f64"
+                            || id.name == "__sin_f64" || id.name == "__cos_f64"
+                            || id.name == "__exp_f64" || id.name == "__log_f64"
+                            || id.name == "__pow_f64") {
+                        return ty_f64();
+                    }
+                    if (id.name == "str_split") { return ty_array_string(); }
+                    // Local-callee path: when `f()` invokes a
+                    // local var that was bound to a lambda, its
+                    // recorded type is `fn_<ret>` (see the
+                    // ExprLambda match arm above). Strip the
+                    // prefix so downstream dispatch (`print(f())`,
+                    // string concat, etc.) sees the actual return
+                    // type rather than `"unknown"`.
+                    if (s.has_local(id.name)) {
+                        var lt: Ty = s.local_type_of(id.name);
+                        if (is_fn(lt)) { return fn_ret(lt); }
+                    }
+                    var fi: i32 = 0;
+                    while (fi < s.funcs.len()) {
+                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
+                            return ty_from_name(s.funcs[fi].ret_type);
+                        }
+                        fi = fi + 1;
+                    }
+                    return ty_unknown();
+                },
+                parser.ExprFieldAccess(fa) => {
+                    var rt: Ty = infer_expr_type(fa.obj, s);
+                    if (fa.field == "read_chunk") { return ty_option(ty_string()); }
+                    if (is_map(rt) && fa.field == "get") {
+                        return ty_option(map_val(rt));
+                    }
+                    if (is_map(rt) && fa.field == "get_or") {
+                        return map_val(rt);
+                    }
+                    if (is_map(rt) && (fa.field == "insert")) { return rt; }
+                    if (is_map(rt) && fa.field == "has") { return ty_bool(); }
+                    if (is_map(rt) && fa.field == "len") { return ty_i32(); }
+                    if (is_map(rt) && fa.field == "keys") {
+                        if (map_key_is_i32(rt)) { return ty_array_i32(); }
+                        return ty_array_string();
+                    }
+                    if (is_map(rt) && fa.field == "values") {
+                        var vt: Ty = map_val(rt);
+                        if (ty_is_i32(vt)) { return ty_array_i32(); }
+                        if (ty_is_string(vt)) { return ty_array_string(); }
+                        return ty_array();
+                    }
+                    if (is_map(rt) && fa.field == "iter") {
+                        return ty_mapiter(map_val(rt));
+                    }
+                    if (is_mapiter(rt) && fa.field == "has_next") { return ty_bool(); }
+                    if (is_mapiter(rt) && fa.field == "key") { return ty_string(); }
+                    if (is_mapiter(rt) && fa.field == "value") { return mapiter_val(rt); }
+                    if ((is_int_tag(rt) || ty_is_string(rt)) && fa.field == "to_string") {
+                        return ty_string();
+                    }
+                    if (ty_is_f64(rt) && fa.field == "to_string") {
+                        return ty_string();
+                    }
+                    if (ty_is_i32(rt) && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "to_lower" || fa.field == "to_upper" || fa.field == "gcd" || fa.field == "lcm")) {
+                        return ty_i32();
+                    }
+                    if (ty_is_i32(rt) && fa.field == "to_ascii_string") {
+                        return ty_string();
+                    }
+                    if (ty_is_i32(rt) && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative" || fa.field == "is_digit" || fa.field == "is_alpha" || fa.field == "is_letter" || fa.field == "is_alnum" || fa.field == "is_lower" || fa.field == "is_upper" || fa.field == "is_hex_digit")) {
+                        return ty_bool();
+                    }
+                    if (fa.field == "len"
+                            && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
+                        return ty_i32();
+                    }
+                    if (fa.field == "is_empty"
+                            && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
+                        return ty_bool();
+                    }
+                    // `.append(x)` / `.reverse()` / `.concat(b)` return the same array type.
+                    if ((fa.field == "append" || fa.field == "reverse" || fa.field == "concat")
+                            && (is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
+                        return rt;
+                    }
+                    // `.first()` / `.last()` return the element type.
+                    if ((fa.field == "first" || fa.field == "last")
+                            && (is_int_array_tag(rt) || ty_is_array_string(rt))) {
+                        if (ty_is_array_i32(rt)) { return ty_i32(); }
+                        if (ty_is_array_u32(rt)) { return ty_u32(); }
+                        if (ty_is_array_u64(rt)) { return ty_u64(); }
+                        if (ty_is_array_i64(rt)) { return ty_i64(); }
+                        return ty_string();
+                    }
+                    // i32/string-array search methods.
+                    if (ty_is_array_i32(rt) || ty_is_array_string(rt)) {
+                        if (fa.field == "index_of") { return ty_i32(); }
+                        if (fa.field == "contains") { return ty_bool(); }
+                    }
+                    if (ty_is_array_i32(rt)
+                            && (fa.field == "sum" || fa.field == "product")) {
+                        return ty_i32();
+                    }
+                    // .min()/.max() on an i32 array → Option[i32] (None on
+                    // empty); the Some payload is i32 (match_payload_type).
+                    if (ty_is_array_i32(rt) && (fa.field == "min" || fa.field == "max")) {
+                        return ty_option(ty_i32());
+                    }
+                    if (ty_is_array_string(rt) && fa.field == "join") {
+                        return ty_string();
+                    }
+                    // String methods that mirror existing builtins.
+                    if (ty_is_string(rt)) {
+                        if (fa.field == "split") { return ty_array_string(); }
+                        if (fa.field == "chars") { return ty_array_string(); }
+                        if (fa.field == "lines") { return ty_array_string(); }
+                        if (fa.field == "bytes") { return ty_array_i32(); }
+                        if (fa.field == "as_bytes") { return ty_array_i32(); }
+                        if (fa.field == "reverse") { return ty_string(); }
+                        if (fa.field == "first_byte" || fa.field == "last_byte") { return ty_i32(); }
+                        if (fa.field == "contains") { return ty_bool(); }
+                        if (fa.field == "starts_with") { return ty_bool(); }
+                        if (fa.field == "ends_with") { return ty_bool(); }
+                        if (fa.field == "index_of") { return ty_i32(); }
+                        if (fa.field == "trim") { return ty_string(); }
+                        if (fa.field == "to_upper") { return ty_string(); }
+                        if (fa.field == "to_lower") { return ty_string(); }
+                        if (fa.field == "repeat") { return ty_string(); }
+                        if (fa.field == "replace") { return ty_string(); }
+                    }
+                    if (ty_is_string(rt) || ty_is_i32(rt) || ty_is_bool(rt) || ty_is_f64(rt)) {
+                        var mi: i32 = 0;
+                        while (mi < s.funcs.len()) {
+                            if (s.funcs[mi].name == fa.field && ty_eq(ty_from_name(s.funcs[mi].receiver_type), rt)) {
+                                return ty_from_name(s.funcs[mi].ret_type);
+                            }
+                            mi = mi + 1;
+                        }
+                    }
+                    // Method call on a struct receiver: resolve by
+                    // method name alone (the coarse "struct" tag loses
+                    // the receiver's name). Mirrors asm.fern.
+                    var mj: i32 = 0;
+                    while (mj < s.funcs.len()) {
+                        if (s.funcs[mj].name == fa.field && s.funcs[mj].receiver_type.len() > 0) {
+                            return ty_from_name(s.funcs[mj].ret_type);
+                        }
+                        mj = mj + 1;
+                    }
+                    return ty_unknown();
+                },
+                _ => { return ty_unknown(); }
+            }
+            return ty_unknown();
+        },
+        parser.ExprIndex(x) => {
+            // Container type drives element type:
+            //   string → "i32" (byte)
+            //   array_string → "string"
+            //   array_u64 → "u64" (so element compares pick unsigned)
+            //   array_u32 → "u32"; array_i64 → "i64"; else → "i32"
+            var at: Ty = infer_expr_type(x.array, s);
+            if (ty_is_string(at)) { return ty_i32(); }
+            if (ty_is_array_string(at)) { return ty_string(); }
+            if (ty_is_array_u64(at)) { return ty_u64(); }
+            if (ty_is_array_u32(at)) { return ty_u32(); }
+            if (ty_is_array_i64(at)) { return ty_i64(); }
+            return ty_i32();
+        },
+        parser.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
+        parser.ExprFieldAccess(fa) => {
+            // Resolve within the receiver's struct when its type is a
+            // known struct name (match-bound variant payloads); else
+            // fall back to the first-match field scan. See asm.fern.
+            var frt: Ty = infer_expr_type(fa.obj, s);
+            var di: i32 = 0;
+            while (di < s.struct_decls.len()) {
+                if (s.struct_decls[di].name == ty_struct_name(frt)) {
+                    return field_type_tag_in(ty_struct_name(frt), fa.field, s);
+                }
+                di = di + 1;
+            }
+            return field_type_tag(fa.field, s);
+        },
+        parser.ExprUnknown(_) => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
+pub function (s: EmitState) reset_locals(): EmitState {
+    var ln: string[] = [];
+    var lts: Ty[] = [];
+    return EmitState { ...s, local_names: ln, local_types: lts };
+}
+
+pub function (s: EmitState) enter_function(): EmitState {
+    return EmitState { ...s, in_function: true };
+}
+
+pub function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): EmitState {
+    var nex: string[] = s.loop_exit_labels.append(exit_lbl);
+    var ncn: string[] = s.loop_cont_labels.append(cont_lbl);
+    return EmitState { ...s, loop_exit_labels: nex, loop_cont_labels: ncn };
+}
+
+pub function (s: EmitState) pop_loop_labels(): EmitState {
+    var nex: string[] = [];
+    var ncn: string[] = [];
+    var i: i32 = 0;
+    while (i < s.loop_exit_labels.len() - 1) {
+        nex = nex.append(s.loop_exit_labels[i]);
+        ncn = ncn.append(s.loop_cont_labels[i]);
+        i = i + 1;
+    }
+    return EmitState { ...s, loop_exit_labels: nex, loop_cont_labels: ncn };
+}
+
+pub function (s: EmitState) top_loop_exit(): string {
+    if (s.loop_exit_labels.len() == 0) { return ""; }
+    return s.loop_exit_labels[s.loop_exit_labels.len() - 1];
+}
+
+pub function (s: EmitState) top_loop_cont(): string {
+    if (s.loop_cont_labels.len() == 0) { return ""; }
+    return s.loop_cont_labels[s.loop_cont_labels.len() - 1];
+}
+
+pub function (s: EmitState) leave_function(): EmitState {
+    return EmitState { ...s, in_function: false };
+}
+
+pub function (s: EmitState) lookup_local(name: string): i32 {
+    var i: i32 = s.local_names.len() - 1;
+    while (i >= 0) {
+        if (s.local_names[i] == name) {
+            return 0 - 8 * (i + 1);
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
+pub function (s: EmitState) has_local(name: string): boolean {
+    var i: i32 = 0;
+    while (i < s.local_names.len()) {
+        if (s.local_names[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub struct LabelOut { state: EmitState, name: string }
+
+pub function fresh_label(s: EmitState): LabelOut {
+    var name: string = ".L" + i32_to_string(s.label_n);
+    var ns: EmitState = EmitState { ...s, label_n: s.label_n + 1 };
+    return LabelOut { state: ns, name: name };
+}
+
+pub function count_locals(body: parser.Stmt[]): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < body.len()) {
+        n = n + count_locals_in_stmt(body[i]);
+        i = i + 1;
+    }
+    return n;
+}
+
+pub function name_has_comma(name: string): boolean {
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == 44) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub function count_locals_in_stmt(stmt: parser.Stmt): i32 {
+    match (stmt) {
+        parser.StmtVar(v) => {
+            if (name_has_comma(v.name)) { return 2; }
+            return 1;
+        },
+        parser.StmtIf(ifs) => { return count_locals(ifs.then_body) + count_locals(ifs.else_body); },
+        parser.StmtWhile(w) => { return count_locals(w.body); },
+        parser.StmtMatch(m) => {
+            // +1 for the synthetic scrutinee local + one per
+            // non-empty PatVariant binding + the recursive body
+            // counts. Wildcard arms add no binding.
+            var n: i32 = 1;
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                match (m.arms[i].pattern) {
+                    parser.PatVariant(pv) => {
+                        if (pv.binding.len() > 0 && pv.binding != "_") { n = n + 1; }
+                    },
+                    parser.PatWildcard(_) => { }
+                }
+                n = n + count_locals(m.arms[i].body);
+                i = i + 1;
+            }
+            return n;
+        },
+        parser.StmtFor(f) => {
+            // `for (k,v) in m` binds 4 locals (map ptr, index, k, v);
+            // plain `for x in arr` binds 3.
+            if (name_has_comma(f.var_name)) { return 4 + count_locals(f.body); }
+            return 3 + count_locals(f.body);
+        },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+pub struct StringLitOut { state: EmitState, idx: i32 }
+
+pub function add_string_lit(s: EmitState, v: string): StringLitOut {
+    // Dedup: load-bearing for shape-pointer dispatch in
+    // ExprFieldAccess + StmtMatch. See asm.fern for rationale.
+    var i: i32 = 0;
+    while (i < s.string_lits.len()) {
+        if (s.string_lits[i] == v) {
+            return StringLitOut { state: s, idx: i };
+        }
+        i = i + 1;
+    }
+    var idx: i32 = s.string_lits.len();
+    var sl: string[] = s.string_lits.append(v);
+    var ns: EmitState = EmitState { ...s, string_lits: sl };
+    return StringLitOut { state: ns, idx: idx };
+}
+
+pub function (s: EmitState) need(name: string): EmitState {
+    if (s.has_need(name)) { return s; }
+    return EmitState { ...s, needed: s.needed.append(name) };
+}
+
+pub function (s: EmitState) has_need(name: string): boolean {
+    var i: i32 = 0;
+    while (i < s.needed.len()) {
+        if (s.needed[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub function (s: EmitState) mark_print_int(): EmitState {
+    return s.need("print_int");
+}
+
+pub function (s: EmitState) mark_heap(): EmitState {
+    return s.need("heap");
+}
+
+pub function (s: EmitState) mark_read_int(): EmitState {
+    return s.need("read_int");
+}
+
+pub function escape_for_ascii(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b == 34) { out = out + "\\\""; }
+        else if (b == 92) { out = out + "\\\\"; }
+        else if (b == 10) { out = out + "\\n"; }
+        else if (b == 9) { out = out + "\\t"; }
+        else if (b == 13) { out = out + "\\r"; }
+        else if (b < 32 || b == 127) {
+            // 3-digit octal: \<o2><o1><o0>.
+            var o0: i32 = b % 8;
+            var o1: i32 = (b / 8) % 8;
+            var o2: i32 = (b / 64) % 8;
+            out = out + "\\" + i32_to_string(o2) + i32_to_string(o1) + i32_to_string(o0);
+        }
+        else { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function is_value_fn_name(s: EmitState, name: string): boolean {
+    var fi: i32 = 0;
+    while (fi < s.funcs.len()) {
+        if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+pub function callee_param_is_fn(s: EmitState, name: string, idx: i32): boolean {
+    // Match receiver methods as well as free functions so
+    // `f.bench("…", n, my_workload)` boxes `my_workload` the same way
+    // a free-fn call does. See asm.fern.
+    var fi: i32 = 0;
+    while (fi < s.funcs.len()) {
+        if (s.funcs[fi].name == name) {
+            if (idx < s.funcs[fi].params.len()
+                    && s.funcs[fi].params[idx].type_name == "fn") {
+                return true;
+            }
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+pub function arg_fn_value_name(arg: parser.Expr, callee: string, idx: i32, s: EmitState): string {
+    match (arg) {
+        parser.ExprIdent(id) => {
+            if (callee_param_is_fn(s, callee, idx) && is_value_fn_name(s, id.name)) {
+                return id.name;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+pub function has_main(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].name == "main") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub struct CheckCtx { st: EmitState, errs: string }
+
+pub function is_wrapper(tag: Ty): boolean {
+    return is_option(tag) || is_result(tag);
+}
+
+pub function is_concrete(tag: Ty): boolean {
+    return is_int_tag(tag) || ty_is_string(tag) || ty_is_bool(tag) || ty_is_f64(tag)
+        || is_int_array_tag(tag) || ty_is_array_string(tag) || ty_is_array(tag);
+}
+
+pub function assignable(want: Ty, got: Ty): boolean {
+    if (ty_eq(want, got)) { return true; }
+    if (ty_is_unknown(want) || ty_is_unknown(got)) { return true; }
+    var ww: boolean = is_wrapper(want);
+    var gw: boolean = is_wrapper(got);
+    if (ww && gw) { return true; }
+    if (ww || gw) {
+        var other: Ty = want;
+        if (ww) { other = got; }
+        if (is_concrete(other)) { return false; }
+        return true;
+    }
+    return true;
+}
+
+pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
+    match (st) {
+        parser.StmtReturn(r) => {
+            var got: Ty = infer_expr_type(r.value, ctx.st);
+            if (!assignable(want, got)) {
+                return CheckCtx {
+                    st: ctx.st,
+                    errs: ctx.errs + "error[E002]: in fn '" + fname
+                        + "': returns " + ty_friendly(want)
+                        + " but expression has type " + ty_friendly(got) + "\n"
+                };
+            }
+            return ctx;
+        },
+        parser.StmtVar(v) => {
+            var got: Ty = infer_expr_type(v.init, ctx.st);
+            var bind_ty: Ty = got;
+            if (v.type_name.len() > 0) {
+                var declared: Ty = ty_from_name(v.type_name);
+                bind_ty = declared;
+                if (!assignable(declared, got)) {
+                    ctx = CheckCtx {
+                        st: ctx.st,
+                        errs: ctx.errs + "error[E003]: in fn '" + fname
+                            + "': variable '" + v.name + "' declared "
+                            + ty_friendly(declared) + " but initializer has type "
+                            + ty_friendly(got) + "\n"
+                    };
+                }
+            }
+            return CheckCtx { st: ctx.st.bind_local_typed(v.name, bind_ty), errs: ctx.errs };
+        },
+        parser.StmtAssign(a) => {
+            var got: Ty = infer_expr_type(a.value, ctx.st);
+            var tt: Ty = ctx.st.local_type_of(a.target);
+            if (!assignable(tt, got)) {
+                return CheckCtx {
+                    st: ctx.st,
+                    errs: ctx.errs + "error[E004]: in fn '" + fname
+                        + "': assignment to '" + a.target + "' of type "
+                        + ty_friendly(tt) + " from expression of type "
+                        + ty_friendly(got) + "\n"
+                };
+            }
+            return ctx;
+        },
+        parser.StmtIf(f) => {
+            ctx = check_stmts(f.then_body, want, fname, ctx);
+            return check_stmts(f.else_body, want, fname, ctx);
+        },
+        parser.StmtWhile(w) => {
+            return check_stmts(w.body, want, fname, ctx);
+        },
+        parser.StmtFor(fo) => {
+            var it: Ty = infer_expr_type(fo.iter, ctx.st);
+            var elem: Ty = ty_unknown();
+            if (ty_is_array_i32(it)) { elem = ty_i32(); }
+            if (ty_is_array_u32(it)) { elem = ty_u32(); }
+            if (ty_is_array_u64(it)) { elem = ty_u64(); }
+            if (ty_is_array_i64(it)) { elem = ty_i64(); }
+            if (ty_is_array_string(it)) { elem = ty_string(); }
+            ctx = CheckCtx { st: ctx.st.bind_local_typed(fo.var_name, elem), errs: ctx.errs };
+            return check_stmts(fo.body, want, fname, ctx);
+        },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var actx: CheckCtx = ctx;
+                match (m.arms[ai].pattern) {
+                    parser.PatVariant(pv) => {
+                        if ((pv.type_name == "Some" || pv.type_name == "Ok")
+                                && pv.binding.len() > 0) {
+                            actx = CheckCtx {
+                                st: ctx.st.bind_local_typed(pv.binding,
+                                    match_payload_type(m.scrutinee, ctx.st)),
+                                errs: ctx.errs
+                            };
+                        }
+                    },
+                    parser.PatWildcard(_) => { }
+                }
+                actx = check_stmts(m.arms[ai].body, want, fname, actx);
+                // Keep accumulated errors; drop arm-local bindings.
+                ctx = CheckCtx { st: ctx.st, errs: actx.errs };
+                ai = ai + 1;
+            }
+            return ctx;
+        },
+        _ => { return ctx; }
+    }
+    return ctx;
+}
+
+pub function check_stmts(stmts: parser.Stmt[], want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        ctx = check_stmt(stmts[i], want, fname, ctx);
+        i = i + 1;
+    }
+    return ctx;
+}
+
+pub function check_func(fd: parser.FuncDecl, s: EmitState): string {
+    var want: Ty = ty_from_name(fd.ret_type);
+    var s2: EmitState = s.reset_locals();
+    if (fd.receiver_type.len() > 0) {
+        s2 = s2.bind_local_typed(fd.receiver_name, struct_local_tag(fd.receiver_type, s2));
+    }
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) {
+        s2 = s2.bind_local_typed(fd.params[pi].name, struct_local_tag(fd.params[pi].type_name, s2));
+        pi = pi + 1;
+    }
+    var ctx: CheckCtx = CheckCtx { st: s2, errs: "" };
+    ctx = check_stmts(fd.body, want, fd.name, ctx);
+    return ctx.errs;
+}
+
+pub function check_module(mod: parser.Module, s: EmitState): string {
+    var errs: string = "";
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        errs = errs + check_func(mod.funcs[fi], s);
+        fi = fi + 1;
+    }
+    return errs;
+}
+
+pub function contains(haystack: string, needle: string): boolean {
+    if (needle.len() == 0) { return true; }
+    if (haystack.len() < needle.len()) { return false; }
+    var i: i32 = 0;
+    while (i <= haystack.len() - needle.len()) {
+        if (haystack[i:i + needle.len()] == needle) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
