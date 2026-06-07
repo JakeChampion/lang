@@ -1539,6 +1539,45 @@ function get_random(): u64;`)
 	}
 }
 
+// `@export("iface", "wit-name")` on a function (with a body) records the WIT
+// export binding on FuncDecl.ExportIface / ExportWITName (bring-your-own WIT,
+// P6 — docs/WIT-BRING-YOUR-OWN.md).
+func TestExportAttributeParses(t *testing.T) {
+	prog, err := Parse(`@export("wasi:cli/run@0.2.0", "run")
+function run(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("@export should parse: %v", err)
+	}
+	if len(prog.Funcs) != 1 {
+		t.Fatalf("expected one function, got %d", len(prog.Funcs))
+	}
+	fn := prog.Funcs[0]
+	if fn.Body == nil {
+		t.Errorf("@export function should have a body")
+	}
+	if fn.ExportIface != "wasi:cli/run@0.2.0" || fn.ExportWITName != "run" {
+		t.Errorf("export binding = {%q %q}, want {wasi:cli/run@0.2.0 run}", fn.ExportIface, fn.ExportWITName)
+	}
+	// `@export` before `pub function` works too.
+	prog2, err := Parse(`@export("a:b/c", "d") pub function f(): i32 { return 1; }`)
+	if err != nil {
+		t.Fatalf("@export pub function: %v", err)
+	}
+	if !prog2.Funcs[0].Public || prog2.Funcs[0].ExportIface != "a:b/c" {
+		t.Errorf("expected public @export function, got %+v", prog2.Funcs[0])
+	}
+}
+
+// `@export` on a body-less function or a non-function is a parse error.
+func TestExportAttributeErrors(t *testing.T) {
+	if _, err := Parse(`@export("a:b/c", "d") function f(): i32;`); err == nil {
+		t.Error("@export on a body-less function should be rejected")
+	}
+	if _, err := Parse(`@export("a:b/c", "d") struct S { x: i32 }`); err == nil {
+		t.Error("@export on a struct should be rejected")
+	}
+}
+
 // An @import function that carries a body, an @import on a non-function, and a
 // body-less function without @import are all parse errors.
 func TestImportAttributeErrors(t *testing.T) {

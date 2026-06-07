@@ -428,6 +428,25 @@ world-driven composer (P2) wires it.
      real WASI). **P5 is now complete in both compilers.**
 5. **P6 — arbitrary exports**: bind a Fern function to a world export (beyond
    `cli/run` / `incoming-handler`) and lift it.
+   - **Slice 1 — `@export` front end + checker. ✅ Done (Go + self-host).** An
+     `@export("wasi:iface@x.y.z", "wit-name")` attribute on a function (WITH a
+     body) marks it as the implementation of that world export — the
+     body-carrying counterpart to body-less `@import`, reusing the same
+     attribute machinery (`parseAttribute` now returns a `declAttr`, and
+     `@import`/`@export` share the `("iface","name")` argument shape). Go:
+     `ast.FuncDecl.ExportIface` / `ExportWITName`, parser (stamp + require a
+     body + `@export` only on a function), checker (`validateExports` rejects a
+     generic or method `@export` — a world export has one concrete ABI; the body
+     is type-checked normally), printer round-trip. Self-host: `parser.fern`
+     `parse_export_attr` + the `parse_module` dispatch (parse + consume the
+     binding; storing it on the self-host `FuncDecl` and the lift land with the
+     codegen slice, to avoid rippling the binding through every `FuncDecl`
+     literal before it's used). Gated by parser (`TestExportAttributeParses` /
+     `…Errors`), checker (`TestExportChecker`), printer (`TestFormatExportAttr`),
+     and the self-host `TestSelfHostExportAttributeCompiles`.
+   - **Slice 2 (next) — per-export lift + codegen**: emit the named world
+     export by lifting the bound function with the WIT canonical ABI (generalising
+     the fixed `_lang_run` / `incoming-handler` lifts), composed + run under WASI.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.

@@ -268,6 +268,20 @@ function ready(h: borrow Pollable): boolean;
 	}
 }
 
+// An `@export("iface", "wit-name")` function binding round-trips through the
+// formatter unchanged (P6 — docs/WIT-BRING-YOUR-OWN.md).
+func TestFormatExportAttr(t *testing.T) {
+	got := formatSrc(t, `@export("wasi:cli/run@0.2.0", "run")
+function run(): i32 { return 0; }
+`)
+	if !strings.Contains(got, "@export(\"wasi:cli/run@0.2.0\", \"run\")\nfunction run(): i32 {") {
+		t.Errorf("formatted output missing @export binding:\n%s", got)
+	}
+	if _, err := parser.Parse(got); err != nil {
+		t.Errorf("formatted @export output failed to reparse:\n%s\nerror: %v", got, err)
+	}
+}
+
 // Trailing newline at end of file — every editor expects it; many
 // VCSs flag its absence as a diff hazard.
 func TestFormatEndsWithNewline(t *testing.T) {

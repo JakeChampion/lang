@@ -4188,6 +4188,34 @@ function parse_import_attr(p: Par): ImportAttrResult {
     return ImportAttrResult { par: p, iface: iface, wit: wit, is_import: true };
 }
 
+// parse_export_attr consumes `@export("wasi:iface@x.y.z", "wit-name")` (the `@`
+// is at the cursor) and returns the (iface, name) pair that binds the following
+// function to a WIT export (P6 — docs/WIT-BRING-YOUR-OWN.md). Reuses
+// ImportAttrResult for the shared (par, iface, wit) shape.
+function parse_export_attr(p: Par): ImportAttrResult {
+    p = p.advance(); // `@`
+    if (p.peek_ident() != "export") {
+        return ImportAttrResult { par: p, iface: "", wit: "", is_import: false };
+    }
+    p = p.advance(); // `export`
+    var iface: string = "";
+    var wit: string = "";
+    if (p.peek_punct() == "(") {
+        p = p.advance();
+        match (p.peek()) {
+            lexer.TokString(s) => { iface = s.value; p = p.advance(); },
+            _ => { }
+        }
+        if (p.peek_punct() == ",") { p = p.advance(); }
+        match (p.peek()) {
+            lexer.TokString(s) => { wit = s.value; p = p.advance(); },
+            _ => { }
+        }
+        if (p.peek_punct() == ")") { p = p.advance(); }
+    }
+    return ImportAttrResult { par: p, iface: iface, wit: wit, is_import: true };
+}
+
 // ResourceNameResult carries the advanced parser plus the parsed resource name.
 pub struct ResourceNameResult { par: Par, name: string }
 
@@ -4373,6 +4401,22 @@ pub function parse_module(toks: lexer.Token[]): Module {
                     var rnr: ResourceNameResult = parse_resource_decl_name(p);
                     p = rnr.par;
                     resources = resources.push(ResourceDecl { name: rnr.name, iface: iar.iface, wit: iar.wit });
+                }
+                continue;
+            }
+            if (probe.peek_ident() == "export") {
+                // `@export("iface", "wit-name") function f(…) {…}` binds a
+                // function to a WIT export (P6 — docs/WIT-BRING-YOUR-OWN.md).
+                // Slice 1 parses + consumes the binding; the export lift (and
+                // storing it on FuncDecl) lands with the codegen slice.
+                var ear: ImportAttrResult = parse_export_attr(p);
+                p = ear.par;
+                var xk: string = p.peek_keyword();
+                if (xk == "pub") { p = p.advance(); xk = p.peek_keyword(); }
+                if (xk == "function") {
+                    var xfr: FuncResult = parse_func_decl(p);
+                    p = xfr.par;
+                    funcs = funcs.push(xfr.func);
                 }
                 continue;
             }

@@ -2335,6 +2335,27 @@ function main(): i32 { return 0; }`,
 	}
 }
 
+// An `@export` function (P6 — docs/WIT-BRING-YOUR-OWN.md) type-checks like any
+// function: its body is checked, and it stays callable from Fern. A generic
+// `@export` is rejected (a world export has one concrete ABI).
+func TestExportChecker(t *testing.T) {
+	if err := checkSource(t, `@export("wasi:cli/run@0.2.0", "run")
+function run(): i32 { return 0; }
+function main(): i32 { return run(); }`); err != nil {
+		t.Fatalf("valid @export should check: %v", err)
+	}
+	err := checkSource(t, `@export("a:b/c", "d")
+function f(): i32 { return "nope"; }`)
+	if err == nil || !strings.Contains(err.Error(), "i32") {
+		t.Errorf("type error in @export body should be reported, got %v", err)
+	}
+	err = checkSource(t, `@export("a:b/c", "d")
+function f[T](x: T): T { return x; }`)
+	if err == nil || !strings.Contains(err.Error(), "generic") {
+		t.Errorf("generic @export should be rejected, got %v", err)
+	}
+}
+
 // Calling an extern @import function with the wrong argument arity is a
 // checker error, exactly like an ordinary function.
 func TestExternImportArityMismatch(t *testing.T) {
