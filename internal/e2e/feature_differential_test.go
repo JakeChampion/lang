@@ -113,7 +113,7 @@ function main(): i32 {
 		{"array_ops", `import "std/i32";
 function main(): i32 {
     var xs: i32[] = [10, 20, 30];
-    xs = xs.push(40);
+    xs = xs.append(40);
     print(xs.len().to_string());
     print(xs[3].to_string());
     var sum: i32 = 0;
@@ -131,9 +131,9 @@ import "core/map";
 function pb(x: boolean): string { if (x) { return "T"; } return "F"; }
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m.set(1, 100);
-    m.set(2, 200);
-    m.set(1, 111);
+    m.insert(1, 100);
+    m.insert(2, 200);
+    m.insert(1, 111);
     print(m.get_or(1, 0).to_string());
     print(m.get_or(3, 0 - 1).to_string());
     print(m.len().to_string());
@@ -334,7 +334,7 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m.set(1, 10); m.set(2, 20); m.set(3, 30);
+    m.insert(1, 10); m.insert(2, 20); m.insert(3, 30);
     var total: i32 = 0;
     for k in m.keys() { total = total + k; }
     print(total.to_string());
@@ -353,8 +353,8 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m.set(1, 10); m.set(2, 20); m.set(3, 30); m.set(4, 40);
-    m.delete(1);
+    m.insert(1, 10); m.insert(2, 20); m.insert(3, 30); m.insert(4, 40);
+    m.without(1);
     var ks = m.keys();
     var i: i32 = 0;
     while (i < ks.len()) { print(ks[i].to_string()); i = i + 1; }
@@ -369,9 +369,9 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m = m.set(1, 1);
+    m = m.insert(1, 1);
     var n = m;
-    n = n.set(1, 999);
+    n = n.insert(1, 999);
     print(m.get_or(1, -1).to_string());
     print(n.get_or(1, -1).to_string());
     return 0;
@@ -381,12 +381,12 @@ function main(): i32 {
 		{"map_cow_func_arg", `import "std/i32";
 import "core/map";
 function bump(p: Map[i32, i32]): i32 {
-    p = p.set(1, 999);
+    p = p.insert(1, 999);
     return p.get_or(1, -1);
 }
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m = m.set(1, 1);
+    m = m.insert(1, 1);
     print(bump(m).to_string());
     print(m.get_or(1, -1).to_string());
     return 0;
@@ -397,14 +397,14 @@ function main(): i32 {
 import "core/map";
 function build(): Map[i32, i32] {
     var m: Map[i32, i32] = map_new(8);
-    m = m.set(1, 10);
-    m = m.set(2, 20);
+    m = m.insert(1, 10);
+    m = m.insert(2, 20);
     return m;
 }
 function main(): i32 {
     var a: Map[i32, i32] = build();
     var b = a;
-    b = b.set(1, 111);
+    b = b.insert(1, 111);
     print(a.get_or(1, -1).to_string());
     print(b.get_or(1, -1).to_string());
     print(a.get_or(2, -1).to_string());
@@ -416,9 +416,9 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
-    m = m.set(1, 1);
-    { var n = m; n = n.set(1, 2); }
-    m = m.set(1, 7);
+    m = m.insert(1, 1);
+    { var n = m; n = n.insert(1, 2); }
+    m = m.insert(1, 7);
     print(m.get_or(1, -1).to_string());
     return 0;
 }`},
@@ -439,7 +439,7 @@ function main(): i32 {
     while (i < fs.len()) { sum = sum + fs[i]; i = i + 1; }
     print(sum.to_string());
     var m: Map[i32, f64] = map_new(8);
-    m.set(1, 3.14);
+    m.insert(1, 3.14);
     print(m.get_or(1, 0.0).to_string());
     return 0;
 }`},

@@ -399,9 +399,9 @@ func TestInterpGenericMapAsserts(t *testing.T) {
 import "std/test";
 function main(): i32 {
     var a: Map[i32, i32] = map_new(4);
-    a.set(1, 10); a.set(2, 20);
+    a.insert(1, 10); a.insert(2, 20);
     var s: Map[string, string] = map_new(4);
-    s.set("k", "v");
+    s.insert("k", "v");
     var r: test.TestRunner = test.test_new("map");
     r = r.it("len i32",       test.assert_map_len(a, 2));
     r = r.it("has i32",       test.assert_map_has(a, 1, 10));

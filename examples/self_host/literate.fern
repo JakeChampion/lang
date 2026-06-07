@@ -112,12 +112,12 @@ function split_lines(src: string): string[] {
     var n: i32 = src.len();
     while (i < n) {
         if (src[i] == 10) {
-            lines = lines.push(src[start:i]);
+            lines = lines.append(src[start:i]);
             start = i + 1;
         }
         i = i + 1;
     }
-    lines = lines.push(src[start:n]);
+    lines = lines.append(src[start:n]);
     return lines;
 }
 
@@ -180,7 +180,7 @@ function split_ws(s: string): string[] {
         while (i < n && (s[i] == 32 || s[i] == 9)) { i = i + 1; }
         var start: i32 = i;
         while (i < n && s[i] != 32 && s[i] != 9) { i = i + 1; }
-        if (i > start) { words = words.push(s[start:i]); }
+        if (i > start) { words = words.append(s[start:i]); }
     }
     return words;
 }
@@ -295,8 +295,8 @@ pub function parse_pieces(src: string): Piece[] {
             var body_lines: i32[] = [];
             var i2: i32 = i + 1;
             while (i2 < n && !is_fence_close(lines[i2], open_len)) {
-                body = body.push(lines[i2]);
-                body_lines = body_lines.push(i2 + 1);
+                body = body.append(lines[i2]);
+                body_lines = body_lines.append(i2 + 1);
                 i2 = i2 + 1;
             }
             if (lang == "fern") {
@@ -305,7 +305,7 @@ pub function parse_pieces(src: string): Piece[] {
                     var name: string = header_name(trim(body[hidx]));
                     var k: i32 = hidx + 1;
                     while (k < body.len()) {
-                        pieces = pieces.push(Piece { chunk: name, text: body[k], line: body_lines[k] });
+                        pieces = pieces.append(Piece { chunk: name, text: body[k], line: body_lines[k] });
                         k = k + 1;
                     }
                 }
@@ -349,7 +349,7 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
     if (stack_has(active, name)) {
         return ExpandErr { msg: "literate: chunk <<" + name + ">> is defined in terms of itself (cyclic chunk reference)", line: 0 };
     }
-    var active2: string[] = active.push(name);
+    var active2: string[] = active.append(name);
     var out: string[] = [];
     var i: i32 = 0;
     while (i < pieces.len()) {
@@ -366,14 +366,14 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
                     ExpandOk(o) => {
                         var k: i32 = 0;
                         while (k < o.lines.len()) {
-                            out = out.push(o.lines[k]);
+                            out = out.append(o.lines[k]);
                             k = k + 1;
                         }
                     },
                     _ => { return sub; }
                 }
             } else {
-                out = out.push(indent + text);
+                out = out.append(indent + text);
             }
         }
         i = i + 1;
@@ -433,7 +433,7 @@ pub function parse_file_pieces(src: string): FilePiece[] {
             var i2: i32 = i + 1;
             while (i2 < n && !is_fence_close(lines[i2], open_len)) {
                 if (lang == "fern" && path.len() > 0) {
-                    pieces = pieces.push(FilePiece { path: path, text: lines[i2], line: i2 + 1, is_entry: ent });
+                    pieces = pieces.append(FilePiece { path: path, text: lines[i2], line: i2 + 1, is_entry: ent });
                 }
                 i2 = i2 + 1;
             }
@@ -450,7 +450,7 @@ function file_paths(fp: FilePiece[]): string[] {
     var paths: string[] = [];
     var i: i32 = 0;
     while (i < fp.len()) {
-        if (!stack_has(paths, fp[i].path)) { paths = paths.push(fp[i].path); }
+        if (!stack_has(paths, fp[i].path)) { paths = paths.append(fp[i].path); }
         i = i + 1;
     }
     return paths;
@@ -488,14 +488,14 @@ function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResu
                     ExpandOk(o) => {
                         var k: i32 = 0;
                         while (k < o.lines.len()) {
-                            out = out.push(o.lines[k]);
+                            out = out.append(o.lines[k]);
                             k = k + 1;
                         }
                     },
                     _ => { return sub; }
                 }
             } else {
-                out = out.push(text);
+                out = out.append(text);
             }
         }
         i = i + 1;
@@ -525,7 +525,7 @@ pub function tangle_files(src: string): FileTangleResult {
         var p: string = paths[i];
         var r: ExpandResult = expand_file(fp, chunks, p);
         match (r) {
-            ExpandOk(o) => { results = results.push(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p) }); },
+            ExpandOk(o) => { results = results.append(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p) }); },
             ExpandErr(e) => { return FileTangleErr { msg: e.msg, line: e.line }; }
         }
         i = i + 1;
@@ -540,7 +540,7 @@ pub function entry_file(files: FileResult[]): string {
     var marked: string[] = [];
     var i: i32 = 0;
     while (i < files.len()) {
-        if (files[i].is_entry) { marked = marked.push(files[i].path); }
+        if (files[i].is_entry) { marked = marked.append(files[i].path); }
         i = i + 1;
     }
     if (marked.len() == 1) { return marked[0]; }
@@ -550,7 +550,7 @@ pub function entry_file(files: FileResult[]): string {
     var j: i32 = 0;
     while (j < files.len()) {
         if (contains(files[j].code, "function main") || contains(files[j].code, "fn main")) {
-            mains = mains.push(files[j].path);
+            mains = mains.append(files[j].path);
         }
         j = j + 1;
     }

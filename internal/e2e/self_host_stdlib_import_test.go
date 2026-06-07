@@ -57,7 +57,7 @@ func TestSelfHostStdlibImportX86_64(t *testing.T) {
 		// __store_* / __ptr_width / __memset) and the RC intrinsics. Before
 		// the self-host provided those symbols the bundle failed to link.
 		// The program itself uses the native Map[K,V] runtime (10+32=42).
-		{"std-json-intrinsics", "import \"std/json\";\nfunction main(): i32 {\n var m: Map[string,i32] = map_new(8);\n m.set(\"a\", 10);\n m.set(\"b\", 32);\n var r: i32 = 0;\n match (m.get(\"a\")) { Some(v) => { r = r + v; }, None => { } }\n match (m.get(\"b\")) { Some(v) => { r = r + v; }, None => { } }\n return r;\n}\n", 42},
+		{"std-json-intrinsics", "import \"std/json\";\nfunction main(): i32 {\n var m: Map[string,i32] = map_new(8);\n m.insert(\"a\", 10);\n m.insert(\"b\", 32);\n var r: i32 = 0;\n match (m.get(\"a\")) { Some(v) => { r = r + v; }, None => { } }\n match (m.get(\"b\")) { Some(v) => { r = r + v; }, None => { } }\n return r;\n}\n", 42},
 	}
 
 	for _, tc := range cases {

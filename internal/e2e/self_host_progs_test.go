@@ -11,9 +11,10 @@ import (
 // the self-hosted compiler. They cover two pure-collection / self-host
 // capabilities:
 //
-//   - map value-returning aliases (docs/PURE-COLLECTION-API-PLAN.md
-//     §3a): `insert` ≡ `set`, recognised by the self-host front-end +
-//     backends alongside the canonical name.
+//   - the value-returning map API (docs/PURE-COLLECTION-API-PLAN.md
+//     §3a): `insert` / `without`. The mutable-looking spellings
+//     (`set` / `delete` / `clear`) were removed; these are the only
+//     names the front-end + backends now recognise.
 //   - tuple-destructure type inference: `var (a, b) = recv.method()`
 //     now types each binding from the method's tuple return, so a
 //     destructured struct/map element dispatches its own methods/fields
@@ -27,7 +28,7 @@ var selfHostProgCases = []struct {
 	src  string
 	exit int
 }{
-	// Map.insert ≡ set, value-returning, with overwrite: {1:99, 2:20}.
+	// Map.insert (value-returning) with overwrite: {1:99, 2:20}.
 	{"map-insert", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); m = m.insert(1,99); return m.get_or(1,-1) + m.get_or(2,-1); }`, 119},
 	{"map-insert-fresh", `function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(5,7); return m.get_or(5,0); }`, 7},
 
@@ -39,18 +40,18 @@ var selfHostProgCases = []struct {
 function (p: Pair) swapped(): (Pair, i32) { return (Pair { hi: p.lo, lo: p.hi }, p.hi); }
 function main(): i32 { var p: Pair = Pair { hi: 7, lo: 3 }; var (q, old) = p.swapped(); return q.hi + q.lo + old; }`, 17},
 
-	// Map.delete / without return (map, existed); destructured and
+	// Map.without returns (map, existed); destructured and
 	// re-queried, exercising both the runtime helper and the
-	// tuple-destructure inference. m={1:10,2:20}; delete(1) → existed,
+	// tuple-destructure inference. m={1:10,2:20}; without(1) → existed,
 	// m2={2:20}; m2.get_or(2,-1)=20.
-	{"map-delete", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.delete(1); if (!ex) { return 70; } return m2.get_or(2,-1); }`, 20},
-	// without ≡ delete: {1:10}; existed; m2.get_or(1,-1)=10 and the
+	{"map-delete", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.without(1); if (!ex) { return 70; } return m2.get_or(2,-1); }`, 20},
+	// without: {1:10}; existed; m2.get_or(1,-1)=10 and the
 	// removed key reads the default (-1+1=0): total 10.
 	{"map-without", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.without(2); if (!ex) { return 70; } return m2.get_or(1,-1) + (m2.get_or(2,-1) + 1); }`, 10},
 	// Deleting an absent key reports existed=false; the map is unchanged.
 	{"map-without-absent", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); var (m2, ex) = m.without(9); if (ex) { return 1; } return m2.get_or(1,-1); }`, 10},
-	// String-keyed delete: shift over the string-compare search path.
-	{"smap-delete", `function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert("a",10); m = m.insert("b",20); var (m2, ex) = m.delete("a"); if (!ex) { return 70; } return m2.get_or("b",-1) + (m2.get_or("a",-1) + 1); }`, 20},
+	// String-keyed without: shift over the string-compare search path.
+	{"smap-delete", `function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert("a",10); m = m.insert("b",20); var (m2, ex) = m.without("a"); if (!ex) { return 70; } return m2.get_or("b",-1) + (m2.get_or("a",-1) + 1); }`, 20},
 }
 
 // TestSelfHostProgsX86_64 compiles each program with the self-hosted

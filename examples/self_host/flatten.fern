@@ -80,7 +80,7 @@ pub function mod_names(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.imports.len()) {
-        out = out.push(basename(mod.imports[i].path));
+        out = out.append(basename(mod.imports[i].path));
         i = i + 1;
     }
     return out;
@@ -165,7 +165,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             var args: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) {
-                args = args.push(rewrite_expr(c.args[i], ctx));
+                args = args.append(rewrite_expr(c.args[i], ctx));
                 i = i + 1;
             }
             return parser.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_argc: c.type_argc };
@@ -199,7 +199,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) {
-                elems = elems.push(rewrite_expr(t.elements[i], ctx));
+                elems = elems.append(rewrite_expr(t.elements[i], ctx));
                 i = i + 1;
             }
             return parser.ExprTuple { elements: elems };
@@ -208,7 +208,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) {
-                elems = elems.push(rewrite_expr(a.elements[i], ctx));
+                elems = elems.append(rewrite_expr(a.elements[i], ctx));
                 i = i + 1;
             }
             return parser.ExprArray { elements: elems };
@@ -217,7 +217,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             var fvs: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < slit.field_values.len()) {
-                fvs = fvs.push(rewrite_expr(slit.field_values[i], ctx));
+                fvs = fvs.append(rewrite_expr(slit.field_values[i], ctx));
                 i = i + 1;
             }
             var new_base: parser.Expr = slit.base;
@@ -247,7 +247,7 @@ pub function rewrite_block(stmts: parser.Stmt[], ctx: RewriteCtx): parser.Stmt[]
     var out: parser.Stmt[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
-        out = out.push(rewrite_stmt(stmts[i], ctx));
+        out = out.append(rewrite_stmt(stmts[i], ctx));
         i = i + 1;
     }
     return out;
@@ -293,7 +293,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             var arms: parser.MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.push(parser.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(parser.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
             return parser.StmtMatch { scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms, line: m.line, col: m.col };
@@ -312,7 +312,7 @@ function rewrite_params(params: parser.ParamDecl[], ctx: RewriteCtx): parser.Par
     var out: parser.ParamDecl[] = [];
     var i: i32 = 0;
     while (i < params.len()) {
-        out = out.push(parser.ParamDecl {
+        out = out.append(parser.ParamDecl {
             name: params[i].name,
             type_name: rewrite_type_name(params[i].type_name, ctx),
             own: params[i].own
@@ -326,7 +326,7 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
     var out: parser.StructFieldDecl[] = [];
     var i: i32 = 0;
     while (i < fields.len()) {
-        out = out.push(parser.StructFieldDecl {
+        out = out.append(parser.StructFieldDecl {
             name: fields[i].name,
             type_name: rewrite_type_name(fields[i].type_name, ctx)
         });
@@ -352,7 +352,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         if (fd.receiver_type == "") {
             new_name = mangle_bare(fd.name, ctx);
         }
-        funcs = funcs.push(parser.FuncDecl {
+        funcs = funcs.append(parser.FuncDecl {
             name: new_name,
             receiver_name: fd.receiver_name,
             receiver_type: rewrite_type_name(fd.receiver_type, ctx),
@@ -368,7 +368,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     var structs: parser.StructDecl[] = [];
     var j: i32 = 0;
     while (j < mod.structs.len()) {
-        structs = structs.push(parser.StructDecl {
+        structs = structs.append(parser.StructDecl {
             name: mangle_bare(mod.structs[j].name, ctx),
             fields: rewrite_struct_fields(mod.structs[j].fields, ctx),
             type_params: mod.structs[j].type_params,
@@ -383,10 +383,10 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         var variants: string[] = [];
         var v: i32 = 0;
         while (v < mod.aliases[k].variants.len()) {
-            variants = variants.push(rewrite_type_name(mod.aliases[k].variants[v], ctx));
+            variants = variants.append(rewrite_type_name(mod.aliases[k].variants[v], ctx));
             v = v + 1;
         }
-        aliases = aliases.push(parser.TypeAlias {
+        aliases = aliases.append(parser.TypeAlias {
             name: mangle_bare(mod.aliases[k].name, ctx),
             variants: variants,
             line: mod.aliases[k].line,
@@ -424,18 +424,18 @@ pub function collect_decl_names(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type == "") {
-            names = names.push(mod.funcs[i].name);
+            names = names.append(mod.funcs[i].name);
         }
         i = i + 1;
     }
     var j: i32 = 0;
     while (j < mod.structs.len()) {
-        names = names.push(mod.structs[j].name);
+        names = names.append(mod.structs[j].name);
         j = j + 1;
     }
     var k: i32 = 0;
     while (k < mod.aliases.len()) {
-        names = names.push(mod.aliases[k].name);
+        names = names.append(mod.aliases[k].name);
         k = k + 1;
     }
     return names;
@@ -461,17 +461,17 @@ pub struct LoadedModule { name: string, mod: parser.Module }
 
 function append_funcs(into: parser.FuncDecl[], more: parser.FuncDecl[]): parser.FuncDecl[] {
     var i: i32 = 0;
-    while (i < more.len()) { into = into.push(more[i]); i = i + 1; }
+    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
     return into;
 }
 function append_structs(into: parser.StructDecl[], more: parser.StructDecl[]): parser.StructDecl[] {
     var i: i32 = 0;
-    while (i < more.len()) { into = into.push(more[i]); i = i + 1; }
+    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
     return into;
 }
 function append_aliases(into: parser.TypeAlias[], more: parser.TypeAlias[]): parser.TypeAlias[] {
     var i: i32 = 0;
-    while (i < more.len()) { into = into.push(more[i]); i = i + 1; }
+    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
     return into;
 }
 
@@ -500,9 +500,9 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         aliases = append_aliases(aliases, m.aliases);
         enums = append_enum_decls(enums, m.enums);
         var ri: i32 = 0;
-        while (ri < m.resources.len()) { resources = resources.push(m.resources[ri]); ri = ri + 1; }
+        while (ri < m.resources.len()) { resources = resources.append(m.resources[ri]); ri = ri + 1; }
         var mxi: i32 = 0;
-        while (mxi < m.exports.len()) { exports = exports.push(m.exports[mxi]); mxi = mxi + 1; }
+        while (mxi < m.exports.len()) { exports = exports.append(m.exports[mxi]); mxi = mxi + 1; }
         i = i + 1;
     }
     var e: parser.Module = flatten_qualified(entry);
@@ -511,9 +511,9 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     aliases = append_aliases(aliases, e.aliases);
     enums = append_enum_decls(enums, e.enums);
     var rj: i32 = 0;
-    while (rj < e.resources.len()) { resources = resources.push(e.resources[rj]); rj = rj + 1; }
+    while (rj < e.resources.len()) { resources = resources.append(e.resources[rj]); rj = rj + 1; }
     var exj: i32 = 0;
-    while (exj < e.exports.len()) { exports = exports.push(e.exports[exj]); exj = exj + 1; }
+    while (exj < e.exports.len()) { exports = exports.append(e.exports[exj]); exj = exj + 1; }
     var no_imports: parser.Import[] = [];
     return parser.Module {
         funcs: funcs,
@@ -531,7 +531,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
 function append_enum_decls(into: parser.EnumDecl[], more: parser.EnumDecl[]): parser.EnumDecl[] {
     var out: parser.EnumDecl[] = into;
     var i: i32 = 0;
-    while (i < more.len()) { out = out.push(more[i]); i = i + 1; }
+    while (i < more.len()) { out = out.append(more[i]); i = i + 1; }
     return out;
 }
 
@@ -677,9 +677,9 @@ function main(): i32 {
 
     // rewrite_type_name spot-checks via a hand-built ctx.
     var mn: string[] = [];
-    mn = mn.push("lexer");
+    mn = mn.append("lexer");
     var dn: string[] = [];
-    dn = dn.push("Token");
+    dn = dn.append("Token");
     var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
@@ -694,7 +694,7 @@ function main(): i32 {
     var emod: parser.Module = parser.parse_module(lexer.tokenize(
         "import \"./a\"; function main(): i32 { return a.add(2, 3); }"));
     var loaded: LoadedModule[] = [];
-    loaded = loaded.push(LoadedModule { name: "a", mod: amod });
+    loaded = loaded.append(LoadedModule { name: "a", mod: amod });
     var merged: parser.Module = bundle(emod, loaded);
 
     // a.add → a__add; a's own main → a__main (mangled, no collision);

@@ -60,7 +60,7 @@ pub function (h: HeaderMap) get_all(name: string): string[] {
     var i: i32 = 0;
     while (i < h.names.len()) {
         if (h.names[i] == key) {
-            out = out.push(h.values[i]);
+            out = out.append(h.values[i]);
         }
         i = i + 1;
     }
@@ -74,8 +74,8 @@ pub function (h: HeaderMap) get_all(name: string): string[] {
 pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
     return HeaderMap {
         ...h,
-        names: h.names.push(name.to_lower()),
-        values: h.values.push(value),
+        names: h.names.append(name.to_lower()),
+        values: h.values.append(value),
     };
 }
 
@@ -93,19 +93,19 @@ pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
     while (i < h.names.len()) {
         if (h.names[i] == key) {
             if (!inserted) {
-                new_names = new_names.push(key);
-                new_values = new_values.push(value);
+                new_names = new_names.append(key);
+                new_values = new_values.append(value);
                 inserted = true;
             }
         } else {
-            new_names = new_names.push(h.names[i]);
-            new_values = new_values.push(h.values[i]);
+            new_names = new_names.append(h.names[i]);
+            new_values = new_values.append(h.values[i]);
         }
         i = i + 1;
     }
     if (!inserted) {
-        new_names = new_names.push(key);
-        new_values = new_values.push(value);
+        new_names = new_names.append(key);
+        new_values = new_values.append(value);
     }
     return HeaderMap { ...h, names: new_names, values: new_values };
 }

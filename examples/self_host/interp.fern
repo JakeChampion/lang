@@ -123,8 +123,8 @@ function new_env_with_funcs_aliases(fs: parser.FuncDecl[], al: parser.TypeAlias[
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
-    var ns: string[] = e.names.push(name);
-    var vs: Value[] = e.values.push(v);
+    var ns: string[] = e.names.append(name);
+    var vs: Value[] = e.values.append(v);
     return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases };
 }
 
@@ -164,11 +164,11 @@ function (e: Env) update(name: string, v: Value): Env {
     if (!found) { return e; }
     var j: i32 = 0;
     while (j < n) {
-        ns = ns.push(e.names[j]);
+        ns = ns.append(e.names[j]);
         if (j == hit_idx) {
-            vs = vs.push(v);
+            vs = vs.append(v);
         } else {
-            vs = vs.push(e.values[j]);
+            vs = vs.append(e.values[j]);
         }
         j = j + 1;
     }
@@ -473,7 +473,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             while (i < c.args.len()) {
                 var av: Value = eval_expr(c.args[i], env);
                 if (is_err(av)) { return av; }
-                arg_vals = arg_vals.push(av);
+                arg_vals = arg_vals.append(av);
                 i = i + 1;
             }
             if (is_method) {
@@ -490,7 +490,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             while (i < t.elements.len()) {
                 var ev: Value = eval_expr(t.elements[i], env);
                 if (is_err(ev)) { return ev; }
-                elems = elems.push(ev);
+                elems = elems.append(ev);
                 i = i + 1;
             }
             return v_tuple(elems);
@@ -501,7 +501,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             while (i < a.elements.len()) {
                 var ev: Value = eval_expr(a.elements[i], env);
                 if (is_err(ev)) { return ev; }
-                elems = elems.push(ev);
+                elems = elems.append(ev);
                 i = i + 1;
             }
             return v_arr(elems);
@@ -573,7 +573,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     }
                     var out: Value[] = [];
                     var i: i32 = sb;
-                    while (i < eb) { out = out.push(a.elements[i]); i = i + 1; }
+                    while (i < eb) { out = out.append(a.elements[i]); i = i + 1; }
                     return v_arr(out);
                 },
                 _ => { return v_err("can only slice array or string"); }
@@ -601,14 +601,14 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             var bi: i32 = 0;
                             while (bi < bnames.len()) {
                                 if (bnames[bi] == oname) {
-                                    bvals = bvals.set(bi, ov2);
+                                    bvals[bi] = ov2;
                                     replaced = true;
                                 }
                                 bi = bi + 1;
                             }
                             if (!replaced) {
-                                bnames = bnames.push(oname);
-                                bvals = bvals.push(ov2);
+                                bnames = bnames.append(oname);
+                                bvals = bvals.append(ov2);
                             }
                             oi = oi + 1;
                         }
@@ -626,7 +626,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             while (i < sl.field_values.len()) {
                 var fv: Value = eval_expr(sl.field_values[i], env);
                 if (is_err(fv)) { return fv; }
-                fvs = fvs.push(fv);
+                fvs = fvs.append(fv);
                 i = i + 1;
             }
             return v_struct(sl.type_name, sl.field_names, fvs);
@@ -743,7 +743,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     // keys / values are baked in rather than user-defined.
     match (recv) {
         VMap(m) => {
-            if (name == "set" || name == "insert") {
+            if (name == "insert") {
                 if (args.len() != 2) { return v_err("map.set: need 2 args"); }
                 var i: i32 = 0;
                 while (i < m.keys.len()) {
@@ -752,15 +752,15 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                         var nvs: Value[] = [];
                         var j: i32 = 0;
                         while (j < m.values.len()) {
-                            if (j == i) { nvs = nvs.push(args[1]); }
-                            else { nvs = nvs.push(m.values[j]); }
+                            if (j == i) { nvs = nvs.append(args[1]); }
+                            else { nvs = nvs.append(m.values[j]); }
                             j = j + 1;
                         }
                         return VMap { keys: m.keys, values: nvs };
                     }
                     i = i + 1;
                 }
-                return VMap { keys: m.keys.push(args[0]), values: m.values.push(args[1]) };
+                return VMap { keys: m.keys.append(args[0]), values: m.values.append(args[1]) };
             }
             if (name == "get_or") {
                 if (args.len() != 2) { return v_err("map.get_or: need 2 args"); }
@@ -780,15 +780,15 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 }
                 return v_bool(false);
             }
-            if (name == "delete" || name == "without") {
+            if (name == "without") {
                 if (args.len() != 1) { return v_err("map.delete: need 1 arg"); }
                 var nk: Value[] = [];
                 var nv: Value[] = [];
                 var di: i32 = 0;
                 while (di < m.keys.len()) {
                     if (!value_eq(m.keys[di], args[0])) {
-                        nk = nk.push(m.keys[di]);
-                        nv = nv.push(m.values[di]);
+                        nk = nk.append(m.keys[di]);
+                        nv = nv.append(m.values[di]);
                     }
                     di = di + 1;
                 }
@@ -1229,8 +1229,8 @@ function trim_env(e: Env, base: i32): Env {
     var vs: Value[] = [];
     var i: i32 = 0;
     while (i < base) {
-        ns = ns.push(e.names[i]);
-        vs = vs.push(e.values[i]);
+        ns = ns.append(e.names[i]);
+        vs = vs.append(e.values[i]);
         i = i + 1;
     }
     return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases };
@@ -2003,7 +2003,7 @@ function main(): i32 {
     }
 
     // Map: set / get_or / has / len.
-    var src84: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); var got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
+    var src84: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); var got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
     var r84: Value = run_module(src84);
     match (r84) {
         VInt(i) => { if (i.v != 1) { return 840; } },
@@ -2011,7 +2011,7 @@ function main(): i32 {
     }
 
     // Map: get_or returns default on miss.
-    var src85: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); return m.get_or(\"missing\", 99); }";
+    var src85: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); return m.get_or(\"missing\", 99); }";
     var r85: Value = run_module(src85);
     match (r85) {
         VInt(i) => { if (i.v != 99) { return 850; } },
@@ -2019,7 +2019,7 @@ function main(): i32 {
     }
 
     // Map: len after multiple sets.
-    var src86: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); m = m.set(\"c\", 3); return m.len(); }";
+    var src86: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); m = m.insert(\"c\", 3); return m.len(); }";
     var r86: Value = run_module(src86);
     match (r86) {
         VInt(i) => { if (i.v != 3) { return 860; } },
@@ -2027,7 +2027,7 @@ function main(): i32 {
     }
 
     // Map: overwrite same key keeps the latest value.
-    var src87: string = "function main(): i32 { var m = map_new(); m = m.set(\"k\", 1); m = m.set(\"k\", 99); return m.get_or(\"k\", 0); }";
+    var src87: string = "function main(): i32 { var m = map_new(); m = m.insert(\"k\", 1); m = m.insert(\"k\", 99); return m.get_or(\"k\", 0); }";
     var r87: Value = run_module(src87);
     match (r87) {
         VInt(i) => { if (i.v != 99) { return 870; } },

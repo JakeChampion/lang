@@ -148,14 +148,14 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
         parser.ExprCall(c) => {
             var args: parser.Expr[] = [];
             var i: i32 = 0;
-            while (i < c.args.len()) { args = args.push(fold_expr(c.args[i])); i = i + 1; }
+            while (i < c.args.len()) { args = args.append(fold_expr(c.args[i])); i = i + 1; }
             return parser.ExprCall { callee: fold_expr(c.callee), args: args, line: c.line, col: c.col, type_argc: c.type_argc };
         },
         parser.ExprTuple(t) => {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) {
-                elems = elems.push(fold_expr(t.elements[i]));
+                elems = elems.append(fold_expr(t.elements[i]));
                 i = i + 1;
             }
             return parser.ExprTuple { elements: elems };
@@ -163,7 +163,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
         parser.ExprArray(a) => {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
-            while (i < a.elements.len()) { elems = elems.push(fold_expr(a.elements[i])); i = i + 1; }
+            while (i < a.elements.len()) { elems = elems.append(fold_expr(a.elements[i])); i = i + 1; }
             return parser.ExprArray { elements: elems };
         },
         parser.ExprIndex(x) => {
@@ -180,7 +180,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             var fvs: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                fvs = fvs.push(fold_expr(sl.field_values[i]));
+                fvs = fvs.append(fold_expr(sl.field_values[i]));
                 i = i + 1;
             }
             var folded_base: parser.Expr = sl.base;
@@ -273,7 +273,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
             var arms: parser.MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.push(parser.MatchArm { pattern: m.arms[i].pattern, body: fold_block(m.arms[i].body), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(parser.MatchArm { pattern: m.arms[i].pattern, body: fold_block(m.arms[i].body), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
             return parser.StmtMatch { scrutinee: fold_expr(m.scrutinee), arms: arms, line: m.line, col: m.col };
@@ -291,7 +291,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
 function fold_block(body: parser.Stmt[]): parser.Stmt[] {
     var out: parser.Stmt[] = [];
     var i: i32 = 0;
-    while (i < body.len()) { out = out.push(fold_stmt(body[i])); i = i + 1; }
+    while (i < body.len()) { out = out.append(fold_stmt(body[i])); i = i + 1; }
     return out;
 }
 
@@ -300,7 +300,7 @@ pub function fold_module(mod: parser.Module): parser.Module {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
-        funcs = funcs.push(parser.FuncDecl {
+        funcs = funcs.append(parser.FuncDecl {
             name: fd.name,
             receiver_name: fd.receiver_name,
             receiver_type: fd.receiver_type,

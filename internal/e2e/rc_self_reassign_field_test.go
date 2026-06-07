@@ -9,7 +9,7 @@ import (
 // Self-reassign of an owned struct/enum LOCAL through a method or call —
 // `s = s.emit(x)` — deep-drops the OLD value (freeing its nested array/struct
 // heap) instead of flat-dec'ing the box and orphaning the fields. This is the
-// self-host SSA-builder accumulator shape (`s.cur.insts.push(inst)` threaded
+// self-host SSA-builder accumulator shape (`s.cur.insts.append(inst)` threaded
 // through method calls that rebuild the builder each step): the flat dec leaked
 // the old block's instruction buffer every emit → O(N^2) peak memory and OOM.
 //
@@ -25,7 +25,7 @@ import (
 func selfReassignFieldBumpSrc(n string) string {
 	return `struct Blk { insts: i32[] }
 struct St { cur: Blk }
-function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.push(x) } }; }
+function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.append(x) } }; }
 function main(): i32 {
     var before: i32 = __heap_bump_bytes();
     var s: St = St { cur: Blk { insts: [] } };
@@ -39,7 +39,7 @@ function main(): i32 {
 // Value-correct + no over-release for the string-free accumulator.
 const selfReassignFieldSoundSrc = `struct Blk { insts: i32[] }
 struct St { cur: Blk }
-function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.push(x) } }; }
+function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.append(x) } }; }
 function main(): i32 {
     var s: St = St { cur: Blk { insts: [] } };
     var i: i32 = 0;
@@ -54,7 +54,7 @@ function main(): i32 {
 // here (strings are uncounted), so this must stay value-correct + over-release
 // free — the regression guard for the earlier UAF.
 const selfReassignStringFieldSoundSrc = `struct Acc { tag: string, xs: i32[] }
-function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.push(v) }; }
+function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.append(v) }; }
 function tagfor(i: i32): string { if (i % 2 == 0) { return "even-ish-longer"; } return "odd-ish-longer"; }
 function main(): i32 {
     var a: Acc = Acc { tag: "seed-" + tagfor(0), xs: [] };
@@ -75,7 +75,7 @@ function main(): i32 {
 // value, restoring O(N). Returns the bump high-water / 64.
 func ssaAccumBumpSrc(n string) string {
 	return `struct Bld { name: string, insts: i32[] }
-function (s: Bld) emit(x: i32): Bld { return Bld { name: s.name, insts: s.insts.push(x) }; }
+function (s: Bld) emit(x: i32): Bld { return Bld { name: s.name, insts: s.insts.append(x) }; }
 function build(s: Bld, n: i32): Bld {
     var i: i32 = 0;
     while (i < n) { s = s.emit(i); i = i + 1; }
@@ -93,7 +93,7 @@ function main(): i32 {
 // string-bearing accumulator (the consumed-param promotion must keep the rc
 // accurate — a still-shared value stays rc>1 and is only flat-dec'd).
 const ssaAccumSoundSrc = `struct Bld { name: string, insts: i32[] }
-function (s: Bld) emit(x: i32): Bld { return Bld { name: s.name, insts: s.insts.push(x) }; }
+function (s: Bld) emit(x: i32): Bld { return Bld { name: s.name, insts: s.insts.append(x) }; }
 function build(s: Bld, n: i32): Bld {
     var i: i32 = 0;
     while (i < n) { s = s.emit(i * 2); i = i + 1; }

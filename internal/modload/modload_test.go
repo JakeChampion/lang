@@ -1186,7 +1186,7 @@ func TestLoadPreservesMapRuntimeHelperNames(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("answer", 42);
+    m.insert("answer", 42);
     return m.get_or("answer", 0);
 }`,
 	})

@@ -31,10 +31,10 @@ pub function uleb_u32(buf: u8[], value: u32): u8[] {
         var lo: u32 = v & 127u32;
         v = v >> 7;
         if (v == 0u32) {
-            out = out.push(lo as u8);
+            out = out.append(lo as u8);
             return out;
         }
-        out = out.push((lo | 128u32) as u8);
+        out = out.append((lo | 128u32) as u8);
     }
     return out;
 }
@@ -47,10 +47,10 @@ pub function uleb_u64(buf: u8[], value: u64): u8[] {
         var lo: u64 = v & 127u64;
         v = v >> 7;
         if (v == 0u64) {
-            out = out.push(lo as u8);
+            out = out.append(lo as u8);
             return out;
         }
-        out = out.push((lo | 128u64) as u8);
+        out = out.append((lo | 128u64) as u8);
     }
     return out;
 }
@@ -69,10 +69,10 @@ pub function sleb_i32(buf: u8[], value: i32): u8[] {
         var sign_bit_set: boolean = (byte & 64) != 0;
         var done: boolean = (v == 0 && !sign_bit_set) || (v == (0 - 1) && sign_bit_set);
         if (done) {
-            out = out.push(byte as u8);
+            out = out.append(byte as u8);
             return out;
         }
-        out = out.push((byte | 128) as u8);
+        out = out.append((byte | 128) as u8);
     }
     return out;
 }
@@ -87,10 +87,10 @@ pub function sleb_i64(buf: u8[], value: i64): u8[] {
         var sign_bit_set: boolean = (byte & 64i64) != 0i64;
         var done: boolean = (v == 0i64 && !sign_bit_set) || (v == (0i64 - 1i64) && sign_bit_set);
         if (done) {
-            out = out.push(byte as u8);
+            out = out.append(byte as u8);
             return out;
         }
-        out = out.push((byte | 128i64) as u8);
+        out = out.append((byte | 128i64) as u8);
     }
     return out;
 }

@@ -135,7 +135,7 @@ function has_str(xs: string[], s: string): boolean {
 
 function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { return acc.push(id.name); },
+        parser.ExprIdent(id) => { return acc.append(id.name); },
         parser.ExprNumber(_) => { return acc; },
         parser.ExprString(_) => { return acc; },
         parser.ExprBool(_) => { return acc; },
@@ -265,7 +265,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return acc.push(v.name); },
+        parser.StmtVar(v) => { return acc.append(v.name); },
         parser.StmtReturn(_) => { return acc; },
         parser.StmtExpr(_) => { return acc; },
         parser.StmtIf(i) => {
@@ -295,7 +295,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
             while (ai < m.arms.len()) {
                 match (m.arms[ai].pattern) {
                     parser.PatVariant(pv) => {
-                        if (pv.binding.len() > 0) { acc = acc.push(pv.binding); }
+                        if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
                     },
                     parser.PatWildcard(_) => { }
                 }
@@ -309,7 +309,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
             return acc;
         },
         parser.StmtFor(f) => {
-            acc = acc.push(f.var_name);
+            acc = acc.append(f.var_name);
             var i: i32 = 0;
             while (i < f.body.len()) {
                 acc = collect_bound_stmt(f.body[i], acc);
@@ -334,7 +334,7 @@ function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
     var bound: string[] = [];
     var pi: i32 = 0;
     while (pi < lm.params.len()) {
-        bound = bound.push(lm.params[pi].name);
+        bound = bound.append(lm.params[pi].name);
         pi = pi + 1;
     }
     var si: i32 = 0;
@@ -347,7 +347,7 @@ function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
     while (ri < refs.len()) {
         var nm: string = refs[ri];
         if (!has_str(bound, nm) && !has_str(caps, nm) && outer.has_local(nm)) {
-            caps = caps.push(nm);
+            caps = caps.append(nm);
         }
         ri = ri + 1;
     }
@@ -425,8 +425,8 @@ function (s: EmitState) bind_local(name: string): EmitState {
 }
 
 function (s: EmitState) bind_local_typed(name: string, ty: Ty): EmitState {
-    var ln: string[] = s.local_names.push(name);
-    var lts: Ty[] = s.local_types.push(ty);
+    var ln: string[] = s.local_names.append(name);
+    var lts: Ty[] = s.local_types.append(ty);
     return EmitState { ...s, local_names: ln, local_types: lts };
 }
 
@@ -645,7 +645,7 @@ function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
                     // split from its declared return type, mirroring the
                     // free-function case above.
                     var rcv: Ty = infer_expr_type(fa.obj, s);
-                    if ((fa.field == "delete" || fa.field == "without") && is_map(rcv)) {
+                    if ((fa.field == "without") && is_map(rcv)) {
                         return TwoTags { a: rcv, b: ty_i32() };
                     }
                     if (!ty_is_unknown(rcv)) {
@@ -1478,7 +1478,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (is_map(rt) && fa.field == "get_or") {
                         return map_val(rt);
                     }
-                    if (is_map(rt) && (fa.field == "set" || fa.field == "insert")) { return rt; }
+                    if (is_map(rt) && (fa.field == "insert")) { return rt; }
                     if (is_map(rt) && fa.field == "has") { return ty_bool(); }
                     if (is_map(rt) && fa.field == "len") { return ty_i32(); }
                     if (is_map(rt) && fa.field == "keys") {
@@ -1520,8 +1520,8 @@ function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                             && (ty_is_string(rt) || is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
                         return ty_bool();
                     }
-                    // `.push(x)` / `.reverse()` / `.concat(b)` return the same array type.
-                    if ((fa.field == "push" || fa.field == "reverse" || fa.field == "concat")
+                    // `.append(x)` / `.reverse()` / `.concat(b)` return the same array type.
+                    if ((fa.field == "append" || fa.field == "reverse" || fa.field == "concat")
                             && (is_int_array_tag(rt) || ty_is_array_string(rt) || ty_is_array(rt))) {
                         return rt;
                     }
@@ -1640,8 +1640,8 @@ function (s: EmitState) enter_function(): EmitState {
 }
 
 function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): EmitState {
-    var nex: string[] = s.loop_exit_labels.push(exit_lbl);
-    var ncn: string[] = s.loop_cont_labels.push(cont_lbl);
+    var nex: string[] = s.loop_exit_labels.append(exit_lbl);
+    var ncn: string[] = s.loop_cont_labels.append(cont_lbl);
     return EmitState { ...s, loop_exit_labels: nex, loop_cont_labels: ncn };
 }
 
@@ -1650,8 +1650,8 @@ function (s: EmitState) pop_loop_labels(): EmitState {
     var ncn: string[] = [];
     var i: i32 = 0;
     while (i < s.loop_exit_labels.len() - 1) {
-        nex = nex.push(s.loop_exit_labels[i]);
-        ncn = ncn.push(s.loop_cont_labels[i]);
+        nex = nex.append(s.loop_exit_labels[i]);
+        ncn = ncn.append(s.loop_cont_labels[i]);
         i = i + 1;
     }
     return EmitState { ...s, loop_exit_labels: nex, loop_cont_labels: ncn };
@@ -1812,7 +1812,7 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         i = i + 1;
     }
     var idx: i32 = s.string_lits.len();
-    var sl: string[] = s.string_lits.push(v);
+    var sl: string[] = s.string_lits.append(v);
     var ns: EmitState = EmitState { ...s, string_lits: sl };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -1822,7 +1822,7 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
 // also pull in a helper's dependencies (heap, str_concat, …).
 function (s: EmitState) need(name: string): EmitState {
     if (s.has_need(name)) { return s; }
-    return EmitState { ...s, needed: s.needed.push(name) };
+    return EmitState { ...s, needed: s.needed.append(name) };
 }
 
 function (s: EmitState) has_need(name: string): boolean {
@@ -2001,7 +2001,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // Map methods (string-keyed). set → map; get →
             // Option[V]; has → bool; len → i32. Mirror of
             // asm.fern's x86-64 dispatch.
-            if (is_map(prim_recv) && (fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
+            if (is_map(prim_recv) && (fa.field == "insert") && c.args.len() == 2) {
                 var kk_set: string = "0";
                 if (map_key_is_i32(prim_recv)) { kk_set = "1"; }
                 s = emit_expr(fa.obj, s);
@@ -2018,9 +2018,9 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
                 s = s.mark_arr_push();
                 return s;
             }
-            // m.delete(k) / m.without(k) → tuple (map, existed). See
+            // m.without(k) → tuple (map, existed). See
             // the x86-64 mirror in asm.fern for the contract.
-            if (is_map(prim_recv) && (fa.field == "delete" || fa.field == "without") && c.args.len() == 1) {
+            if (is_map(prim_recv) && (fa.field == "without") && c.args.len() == 1) {
                 var kk_del: string = "0";
                 if (map_key_is_i32(prim_recv)) { kk_del = "1"; }
                 s = emit_expr(fa.obj, s);
@@ -2493,11 +2493,11 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
                     return s;
                 }
             }
-            // Built-in `.push(x)` on arrays — append a
+            // Built-in `.append(x)` on arrays — append a
             // single 8-byte payload (i32 or string-box
             // ptr; both are 8 bytes in the operand-stack
             // representation). Returns a fresh array.
-            if (fa.field == "push" && c.args.len() == 1
+            if (fa.field == "append" && c.args.len() == 1
                     && (is_int_array_tag(prim_recv) || ty_is_array_string(prim_recv) || ty_is_array(prim_recv))) {
                 s = emit_expr(fa.obj, s);
                 s = emit_expr(c.args[0], s);
@@ -8626,11 +8626,11 @@ function emit_runtime(s: EmitState, darwin: boolean): EmitState {
         s = s.write(".Lms_append:\n");
         s = s.write("    ldr x0, [x19]\n");
         s = s.write("    mov x1, x20\n");
-        s = s.write("    bl __fern_arr_push\n");      // keys.push(key)
+        s = s.write("    bl __fern_arr_push\n");      // keys.append(key)
         s = s.write("    str x0, [x19]\n");
         s = s.write("    ldr x0, [x19, #8]\n");
         s = s.write("    mov x1, x21\n");
-        s = s.write("    bl __fern_arr_push\n");      // values.push(val)
+        s = s.write("    bl __fern_arr_push\n");      // values.append(val)
         s = s.write("    str x0, [x19, #8]\n");
         s = s.write(".Lms_ret:\n");
         s = s.write("    mov x0, x19\n");

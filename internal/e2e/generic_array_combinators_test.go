@@ -11,7 +11,7 @@ import "testing"
 // receiver stamps the method call's TypeArgs to `[T]`, and the
 // clone-substitution walker failed to rewrite those to the concrete
 // instantiation because `substituteExpr` had no `*ast.Assign` case
-// (so `out = out.push(x)` was never walked). The re-check then
+// (so `out = out.append(x)` was never walked). The re-check then
 // compared the abstract `T[]` parameter against the concrete element
 // type and rejected with "expected T[], got i32[]".
 //
@@ -28,7 +28,7 @@ func TestGenericArrayCombinators(t *testing.T) {
 			name: "map then index-sum",
 			src: `function map_arr[T, U](xs: T[], f: (T) => U): U[] {
     var out: U[] = [];
-    for x in xs { out = out.push(f(x)); }
+    for x in xs { out = out.append(f(x)); }
     return out;
 }
 function main(): i32 {
@@ -56,7 +56,7 @@ function main(): i32 {
 			src: `function filter_arr[T](xs: T[], keep: (T) => boolean): T[] {
     var out: T[] = [];
     for x in xs {
-        if (keep(x)) { out = out.push(x); }
+        if (keep(x)) { out = out.append(x); }
     }
     return out;
 }
@@ -71,7 +71,7 @@ function main(): i32 {
 			name: "map+fold pipeline",
 			src: `function map_arr[T, U](xs: T[], f: (T) => U): U[] {
     var out: U[] = [];
-    for x in xs { out = out.push(f(x)); }
+    for x in xs { out = out.append(f(x)); }
     return out;
 }
 function fold_arr[T, A](xs: T[], init: A, f: (A, T) => A): A {

@@ -71,7 +71,7 @@ func runNativeWasmCli(t *testing.T, src string) int {
 // TestWASMNativeAliasedArraySetCoW guards the fix for the native-path
 // copy-on-write bug: __fern_rc_inc's low-address guard (0x10000) used
 // to skip every increment on the native heap layout (objects at
-// ~1024), so `var ys = xs` never bumped xs's refcount and `ys.set(...)`
+// ~1024), so `var ys = xs` never bumped xs's refcount and `ys.with(...)`
 // took the rc==1 mutate-in-place fast path, corrupting xs. The
 // preview-1 adapter's higher heap base masked this; the native
 // `-target wasm` path (and now the e2e suite) exercises it directly.
@@ -83,7 +83,7 @@ func TestWASMNativeAliasedArraySetCoW(t *testing.T) {
 		{"array_set", `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var ys = xs;
-    ys = ys.set(0, 999);
+    ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (ys[0] != 999) { return 2; }
     return 0;
@@ -100,9 +100,9 @@ func TestWASMNativeAliasedArraySetCoW(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a", 1);
+    m = m.insert("a", 1);
     var n = m;
-    n = n.set("a", 999);
+    n = n.insert("a", 999);
     if (m.get_or("a", -1) != 1) { return 1; }
     if (n.get_or("a", -1) != 999) { return 2; }
     return 0;
@@ -160,7 +160,7 @@ import "core/map";
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     var i: i32 = 0;
-    while (i < 64) { m = m.set(7, [i, i + 1, i + 2]); i = i + 1; }
+    while (i < 64) { m = m.insert(7, [i, i + 1, i + 2]); i = i + 1; }
     var v: i32[] = m.get_or(7, []);
     return (v[2] - 65) + __rc_underflow_count();
 }`},
