@@ -1692,8 +1692,8 @@ function parse_stmt(p: Par): StmtResult {
     // can't consume the `let` keyword and so never advanced the cursor
     // — an infinite loop (observed as an OOM/SIGKILL when the self-host
     // compiler hit `let`). The variant `let Pat(..) = E else { .. }`
-    // form is not used by any self-host source and falls to the
-    // "missing = in var" graceful error rather than looping.
+    // (let-else) is handled below: it desugars the rest of the
+    // enclosing block into the success arm of a statement-match.
     if (kw == "var" || kw == "let") {
         var vline: i32 = p.peek_line();
         var vcol: i32 = p.peek_col();
@@ -1720,6 +1720,28 @@ function parse_stmt(p: Par): StmtResult {
             return StmtResult { par: p, stmt: s_unknown("missing var name") };
         }
         p = p.advance();
+        // let-else payload bindings: `let Variant(b1, b2, …) = E else { … }`.
+        // The first binding is `le_binding`; any further ones go to
+        // `le_extra` (matching parse_pattern's PatVariant shape, so the
+        // checker can flag a payload-arity mismatch via E015).
+        var le_binding: string = "";
+        var le_extra: string[] = [];
+        if (p.peek_punct() == "(") {
+            p = p.advance();
+            var ben: i32 = 0;
+            while (p.peek_punct() != ")" && !p.at_end()) {
+                var bind_inner: string = p.peek_ident();
+                if (bind_inner.len() > 0) {
+                    if (ben == 0) { le_binding = bind_inner; } else { le_extra = le_extra.push(bind_inner); }
+                    ben = ben + 1;
+                    p = p.advance();
+                } else {
+                    p = p.advance();
+                }
+                if (p.peek_punct() == ",") { p = p.advance(); }
+            }
+            if (p.peek_punct() == ")") { p = p.advance(); }
+        }
         // Optional `: Type` — capture the type name string so
         // the checker can resolve it. Full type syntax (arrays
         // / generics) is still a later milestone; for now just
@@ -1735,8 +1757,43 @@ function parse_stmt(p: Par): StmtResult {
             return StmtResult { par: p, stmt: s_unknown("missing = in var") };
         }
         p = p.advance();
+        // The source expr is followed by either `;` (plain binding) or
+        // the `else` keyword (let-else) — never directly by `{`, so no
+        // struct-literal suppression is needed here.
         var init = parse_expr(p);
         p = init.par;
+        // let-else: `let Variant(b..) = E else { divergent };`. The
+        // rest of the enclosing block becomes the success arm body;
+        // the else block becomes the wildcard arm. Reuses the
+        // statement-match machinery — no new AST node:
+        //   match (E) { Variant(b..) => { <rest of block> },
+        //               _ => { divergent } }
+        // The success bindings are live for the rest of the block
+        // (they live inside the arm), and the else branch is expected
+        // to diverge (return / break / continue) — the Go checker
+        // enforces that (E022); via the desugar a non-diverging else
+        // simply falls through to the end of the block.
+        if (p.peek_keyword() == "else") {
+            p = p.advance();  // consume `else`
+            var le_else: BlockResult = parse_block(p);
+            p = le_else.par;
+            if (p.peek_punct() == ";") { p = p.advance(); }
+            // Consume the rest of the enclosing block as the success
+            // body, mirroring parse_block's loop (incl. its
+            // progress guard so a malformed statement can't spin).
+            var rest: Stmt[] = [];
+            while (p.peek_punct() != "}" && !p.at_end()) {
+                var rr: StmtResult = parse_stmt(p);
+                if (rr.par.pos == p.pos) { p = p.advance(); continue; }
+                p = rr.par;
+                rest = rest.push(rr.stmt);
+            }
+            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra };
+            var le_arms: MatchArm[] = [];
+            le_arms = le_arms.push(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+            le_arms = le_arms.push(MatchArm { pattern: p_wildcard(), body: le_else.body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+            return StmtResult { par: p, stmt: s_match_at(init.expr, le_arms, vline, vcol) };
+        }
         if (p.peek_punct() == ";") { p = p.advance(); }
         return StmtResult { par: p, stmt: s_var_at(name, type_name, init.expr, vline, vcol) };
     }

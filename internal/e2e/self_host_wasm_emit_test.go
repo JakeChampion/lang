@@ -300,6 +300,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Match expressions (value position): desugar to an IIFE + statement-match.
 		{"match-expr", "function mk(): Option[i32] { return Some(5); } function main(): i32 { var x: i32 = match (mk()) { Some(n) => n, None => 0 }; return x; }", 5, ""},
 		{"match-expr-other-arm", "function mk(): Option[i32] { return None; } function main(): i32 { return match (mk()) { Some(n) => n, None => 42 }; }", 42, ""},
+		// let-else — desugars the rest of the block into a match success
+		// arm; the else block is the wildcard (diverging) arm.
+		{"let-else-matched", "function mk(): Option[i32] { return Some(42); } function main(): i32 { let Some(v) = mk() else { return 1; } return v; }", 42, ""},
+		{"let-else-diverge", "function mk(): Option[i32] { return None; } function main(): i32 { let Some(v) = mk() else { return 7; } return v; }", 7, ""},
+		{"let-else-rest-multi", "function mk(): Option[i32] { return Some(40); } function main(): i32 { let Some(v) = mk() else { return 1; } var w: i32 = v + 2; return w; }", 42, ""},
 		{"opt-local", "function main(): i32 { var o: Option[i32] = Some(5); match (o) { Some(v) => { return v * 2; }, None => { return 0; } } return 1; }", 10, ""},
 		{"opt-string-write", "function name(): Option[i32] { return Some(0); } function main(): i32 { match (name()) { Some(v) => { write(\"got\"); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "got"},
 		{"opt-in-if", "function lookup(k: i32): Option[i32] { if (k == 1) { return Some(100); } return None; } function main(): i32 { var sum = 0; match (lookup(1)) { Some(v) => { sum = sum + v; }, None => {} } match (lookup(2)) { Some(v) => { sum = sum + v; }, None => { sum = sum + 1; } } return sum; }", 101, ""},

@@ -3185,6 +3185,29 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         ai016 = ai016 + 1;
     }
+    // E054: an `@export(...)` function bound to a WIT world export cannot be
+    // generic (a world export is lifted with a single concrete canonical
+    // ABI) and cannot be a method (the export surface is for top-level
+    // functions). The binding is recorded on mod.exports by func name; we
+    // look the function up to read its type-param count + receiver.
+    var xi: i32 = 0;
+    while (xi < mod.exports.len()) {
+        var ename: string = mod.exports[xi].func_name;
+        var xfj: i32 = 0;
+        while (xfj < mod.funcs.len()) {
+            var xfd: parser.FuncDecl = mod.funcs[xfj];
+            if (xfd.name == ename) {
+                if (xfd.type_param_count > 0) {
+                    out = out.push(dg_at("E054", "@export function \"" + xfd.name + "\" cannot be generic (a world export has a single concrete ABI)", xfd.line, xfd.col));
+                }
+                if (xfd.receiver_name.len() > 0) {
+                    out = out.push(dg_at("E054", "@export cannot be applied to a method (\"" + xfd.name + "\"); use a top-level function", xfd.line, xfd.col));
+                }
+            }
+            xfj = xfj + 1;
+        }
+        xi = xi + 1;
+    }
     return out;
 }
 

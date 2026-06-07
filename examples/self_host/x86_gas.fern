@@ -96,6 +96,69 @@ function x86_gas_reg8(tok: string): i32 {
     return 0 - 1;
 }
 
+// x86_gas_reg32 maps a 32-bit register token (`%eax`, `%r8d`, …) to its
+// number 0..15, or -1.
+function x86_gas_reg32(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 37) { // '%'
+        s = s[1:s.len()];
+    }
+    if (s == "eax") { return 0; }
+    if (s == "ecx") { return 1; }
+    if (s == "edx") { return 2; }
+    if (s == "ebx") { return 3; }
+    if (s == "esp") { return 4; }
+    if (s == "ebp") { return 5; }
+    if (s == "esi") { return 6; }
+    if (s == "edi") { return 7; }
+    if (s == "r8d") { return 8; }
+    if (s == "r9d") { return 9; }
+    if (s == "r10d") { return 10; }
+    if (s == "r11d") { return 11; }
+    if (s == "r12d") { return 12; }
+    if (s == "r13d") { return 13; }
+    if (s == "r14d") { return 14; }
+    if (s == "r15d") { return 15; }
+    return 0 - 1;
+}
+
+// x86_gas_movl dispatches movl: $imm->reg, reg->reg, mem->reg (load),
+// reg->mem (store), all 32-bit.
+function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) { // $imm -> reg
+        a.code = x86_mov_r32_imm32(a.code, x86_gas_reg32(dst), x86_gas_atoi(src));
+        return a;
+    }
+    var src_mem: boolean = src.contains("(");
+    var dst_mem: boolean = dst.contains("(");
+    if (!src_mem && !dst_mem) { // reg -> reg
+        a.code = x86_mov_r32_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src));
+        return a;
+    }
+    if (src_mem && !dst_mem) { // mem -> reg (load)
+        var m: GasMem = x86_gas_parse_mem(src);
+        a.code = x86_movl_load(a.code, x86_gas_reg32(dst), m.base, m.has_index, m.index, m.scale, m.disp);
+        return a;
+    }
+    if (!src_mem && dst_mem) { // reg -> mem (store)
+        var m2: GasMem = x86_gas_parse_mem(dst);
+        a.code = x86_movl_store(a.code, m2.base, m2.has_index, m2.index, m2.scale, m2.disp, x86_gas_reg32(src));
+        return a;
+    }
+    return a;
+}
+
+// x86_gas_alu32 dispatches addl/subl/andl/orl/xorl/cmpl: `$imm, %reg` uses
+// the group-1 imm32 form (imm_slash), `%reg, %reg` the reg-reg opcode.
+function x86_gas_alu32(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) {
+        a.code = x86_alu_r32_imm32(a.code, imm_slash, x86_gas_reg32(dst), x86_gas_atoi(src));
+        return a;
+    }
+    a.code = x86_binop_r32_r32(a.code, regop, x86_gas_reg32(dst), x86_gas_reg32(src));
+    return a;
+}
+
 // x86_gas_is_xmm reports whether a token names an xmm register.
 function x86_gas_is_xmm(tok: string): boolean {
     return tok.contains("xmm");
@@ -236,6 +299,45 @@ function x86_gas_atoi(tok: string): i32 {
             v = v * 10 + (c - 48);
         }
         i = i + 1;
+    }
+    if (neg) {
+        return 0 - v;
+    }
+    return v;
+}
+
+// x86_gas_atoi64 parses a signed 64-bit integer token (decimal or `0x…`
+// hex, optional `$` sigil and `-`), for movabsq's imm64. Two's-complement
+// wraps give the right bits for INT64_MIN.
+function x86_gas_atoi64(tok: string): i64 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 36) { // '$'
+        s = s[1:s.len()];
+    }
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    }
+    var v: i64 = 0;
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + (d as i64); }
+            i = i + 1;
+        }
+    } else {
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            if (c >= 48 && c <= 57) { v = v * 10 + ((c - 48) as i64); }
+            i = i + 1;
+        }
     }
     if (neg) {
         return 0 - v;
@@ -411,6 +513,12 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "syscall") { a.code = x86_syscall(a.code); return a; }
     if (mnem == "leave") { a.code = x86_leave(a.code); return a; }
     if (mnem == "cqto") { a.code = x86_cqo(a.code); return a; }
+    if (mnem == "cld") { a.code = x86_cld(a.code); return a; }
+    if (mnem == "rep") { // `rep stosb` / `rep movsb`
+        if (rest == "stosb") { a.code = x86_rep_stosb(a.code); }
+        else { if (rest == "movsb") { a.code = x86_rep_movsb(a.code); } }
+        return a;
+    }
     // setCC <reg8>: store a condition flag as 0/1.
     if (mnem == "sete" || mnem == "setz") { a.code = x86_setcc_reg8(a.code, 148, x86_gas_reg8(rest)); return a; }
     if (mnem == "setne" || mnem == "setnz") { a.code = x86_setcc_reg8(a.code, 149, x86_gas_reg8(rest)); return a; }
@@ -432,6 +540,13 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "jl") { return x86_jcc_label(a, x86_cc_l(), rest); }
     if (mnem == "jle") { return x86_jcc_label(a, x86_cc_le(), rest); }
     if (mnem == "jg") { return x86_jcc_label(a, x86_cc_g(), rest); }
+    if (mnem == "jb") { return x86_jcc_label(a, x86_cc_b(), rest); }
+    if (mnem == "jae" || mnem == "jnc") { return x86_jcc_label(a, x86_cc_ae(), rest); }
+    if (mnem == "jbe") { return x86_jcc_label(a, x86_cc_be(), rest); }
+    if (mnem == "ja") { return x86_jcc_label(a, x86_cc_a(), rest); }
+    if (mnem == "js") { return x86_jcc_label(a, x86_cc_s(), rest); }
+    if (mnem == "jns") { return x86_jcc_label(a, x86_cc_ns(), rest); }
+    if (mnem == "jp") { return x86_jcc_label(a, x86_cc_p(), rest); }
     if (mnem == "call") { return x86_call_label(a, rest); }
     // one-operand: push/pop take a register or a memory operand
     if (mnem == "pushq") {
@@ -488,6 +603,7 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
     }
     if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
+    if (mnem == "movabsq") { a.code = x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)); return a; }
     if (mnem == "addq") { return x86_gas_alu(a, 0, src, dst); }
     if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
     if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
@@ -517,8 +633,42 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "mulsd") { a.code = x86_sse_rr(a.code, 89, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
     if (mnem == "divsd") { a.code = x86_sse_rr(a.code, 94, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
     if (mnem == "ucomisd") { a.code = x86_ucomisd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
+    if (mnem == "xorpd") { a.code = x86_xorpd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
     if (mnem == "cvttsd2si") { a.code = x86_cvttsd2si(a.code, x86_gas_reg(dst), x86_gas_xmm(src)); return a; }
     if (mnem == "cvtsi2sd") { a.code = x86_cvtsi2sd(a.code, x86_gas_xmm(dst), x86_gas_reg(src)); return a; }
+    // 32-bit ALU + moves + extends + cmov + testb (slice 2q).
+    if (mnem == "movl") { return x86_gas_movl(a, src, dst); }
+    if (mnem == "addl") { return x86_gas_alu32(a, 0, 1, src, dst); }
+    if (mnem == "subl") { return x86_gas_alu32(a, 5, 41, src, dst); }
+    if (mnem == "andl") { return x86_gas_alu32(a, 4, 33, src, dst); }
+    if (mnem == "orl") { return x86_gas_alu32(a, 1, 9, src, dst); }
+    if (mnem == "xorl") { return x86_gas_alu32(a, 6, 49, src, dst); }
+    if (mnem == "cmpl") { return x86_gas_alu32(a, 7, 57, src, dst); }
+    if (mnem == "shrl") { a.code = x86_shr_r32_imm8(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)); return a; }
+    if (mnem == "testb") {
+        if (src.len() > 0 && src[0] == 36) {
+            a.code = x86_testb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src));
+        } else {
+            a.code = x86_testb_reg8_reg8(a.code, x86_gas_reg8(dst), x86_gas_reg8(src));
+        }
+        return a;
+    }
+    if (mnem == "cmovl") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "cmovle") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_le(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "cmovg") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_g(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "cmovge") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_ge(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "cmove" || mnem == "cmovz") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_e(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "cmovne" || mnem == "cmovnz") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_ne(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "movslq") {
+        var sm: GasMem = x86_gas_parse_mem(src);
+        a.code = x86_movslq_load(a.code, x86_gas_reg(dst), sm.base, sm.has_index, sm.index, sm.scale, sm.disp);
+        return a;
+    }
+    if (mnem == "movzwq") {
+        var zm: GasMem = x86_gas_parse_mem(src);
+        a.code = x86_movzwq_load(a.code, x86_gas_reg(dst), zm.base, zm.has_index, zm.index, zm.scale, zm.disp);
+        return a;
+    }
     if (mnem == "movl") {
         if (src.len() > 0 && src[0] == 36) {
             a.code = x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src));

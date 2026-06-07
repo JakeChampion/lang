@@ -308,6 +308,17 @@ planned order:
 - ✅ **`if let`** pattern sugar — `if let PAT = E { … } else { … }`
   desugars in the parser to `match (E) { PAT => …, _ => … }`
   (`self_host_if_let_test.go`).
+- ✅ **`let else`** — `let PAT = E else { divergent };` desugars in the
+  parser by folding the *rest of the enclosing block* into the success
+  arm of a statement-match: `match (E) { PAT => { <rest> }, _ => {
+  divergent } }`. Reuses the existing match binding + codegen — no new
+  AST node, all backends inherit it (`self_host_let_else_test.go` on
+  x86-64 + arm64, plus wasm cases in `self_host_wasm_emit_test.go`). The
+  success bindings live for the rest of the block; the else branch is
+  expected to diverge. Diagnostic gap: the reference checker's dedicated
+  E022 ("let-else source must be an enum value") surfaces here as E035
+  (match-on-non-enum) via the desugar — a follow-up, matching the
+  if-let / match-guard precedent.
 - ✅ **`switch` / `case`** — desugars in the parser to a nested
   if/else-if chain (multi-value cases OR their `==` comparisons; no
   fall-through) (`self_host_switch_test.go`).
@@ -868,6 +879,31 @@ smallest → largest:
   `e_type`/`e_machine`, `e_entry` = 0x400078, the single PT_LOAD,
   `p_flags`, sizes, body placement + data alignment) for both the arm64
   R+X and x86-64 R+W+X shapes.
+- ✅ **Mach-O writer + ad-hoc signature** — `examples/self_host/macho.fern`,
+  mirroring `internal/native/macho/` (`macho.go` + `image.go` + `sign.go`).
+  Static, non-PIE arm64-darwin executable: `__PAGEZERO`, an r-x `__TEXT`
+  (header + load commands + `__text`), an optional r/w `__DATA`, and an
+  r `__LINKEDIT` carrying the code signature; execution starts via
+  `LC_UNIXTHREAD` (kernel sets PC, no dyld). The public entry is
+  `macho_static_executable(text, data, ident)`; `macho_text_vaddr` /
+  `macho_data_vaddr` expose the same fixed addresses an `@PAGE`/`@PAGEOFF`
+  assembler must resolve against (the parity of the Go `SegmentAddrs`).
+  Apple Silicon refuses unsigned binaries, so the ad-hoc
+  `CSMAGIC_EMBEDDED_SIGNATURE` SuperBlob + `CSMAGIC_CODEDIRECTORY` is
+  mandatory — its per-4 KiB-page hashes need **SHA-256**, which has no
+  stdlib home yet, so a self-contained FIPS 180-4 implementation
+  (`sha256_bytes`, words carried in `[0, 2^32)` i64s masked with
+  `& 0xffffffff`) lives in the module. Big-endian for the signing blobs,
+  little-endian for the Mach-O header/load-commands; the same
+  `i32[]`-of-0..255 byte-buffer convention as `elf.fern`. Gated by
+  `internal/e2e/self_host_macho_emit_test.go` (`TestSelfHostMachO`),
+  asserting the fixed header + load-command layout (magic, cputype,
+  filetype, `ncmds`/`sizeofcmds`, the segment names, the `LC_UNIXTHREAD`
+  entry pc, the SuperBlob + CodeDirectory magics) for both the no-data and
+  `__DATA` shapes, plus the SHA-256 "abc"/"" test vectors. **Not yet wired
+  into the emitter** — like `elf.fern`, the next slice connects the arm64
+  assembler's bytes to it and writes the file (replacing the `clang`/`ld64`
+  shell-out).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
@@ -1032,9 +1068,32 @@ smallest → largest:
     ops) so the Go-built CLI can import them; or (b) build `fern.fern`
     itself via the self-host backend. Until then the capstone test is the
     end-to-end proof, and the CLI keeps emitting `.s` text.
-  - ⬜ remaining: the x87 / rounding float ops (`fldl`/`fstpl`, `roundsd`,
-    `xorpd`) + `movabsq` (64-bit/hex immediates) for the float math
-    builtins, more capstone cases (structs), and the CLI wiring above.
+  - ✅ **slice 2p — movabsq + extra jCC (runtime-batch part 1)**. Probing a
+    `struct` program showed `asm.fern` emits its full heap/alloc/memcpy/map
+    runtime inline, needing ~12 more instruction forms. First batch:
+    `movabsq $imm64` (`REX.W B8+rd io`, with an i64/hex/`-` literal parser
+    `x86_gas_atoi64`) and the conditional jumps `js`/`jns`/`ja`/`jae`/`jb`/
+    `jbe`/`jp` (new `x86_cc_*` codes feeding the existing jcc encoder).
+    Byte-checked vs `as`/objdump.
+  - ✅ **slice 2q — runtime batch part 2 (rest of the integer +
+    string-op surface)**. Added 32-bit ALU (`movl` reg-reg / load / store,
+    `addl`/`subl`/`andl`/`orl`/`xorl`/`cmpl` imm+reg via `x86_alu_r32_imm32`
+    / `x86_binop_r32_r32`, `shrl $imm`), `testb` (imm + reg-reg), `cmov<cc>`
+    (`0F 40+cc`), `movslq` / `movzwq` (sign/zero-extend loads), the string
+    ops `rep stosb` / `rep movsb` + `cld` (memset/memcpy) and `xorpd` (xmm
+    zeroing), plus a 32-bit register parser. With slice 2p this covers the
+    **full instruction surface `asm.fern`'s heap/alloc/memcpy/map runtime
+    emits**. Byte-checked vs `as`/objdump (13 new cases).
+  - 🔧 **capstone harness scaling — struct/array run blocked.** The
+    encoders are proven, but the capstone embeds the program's emitted asm
+    as a Fern *string literal* in the driver, and a heap program's asm is
+    the whole runtime (huge) — compiling that driver OOMs the self-host's
+    bump heap (exit 137). Fix: have the driver `read_file` the asm at
+    runtime (a small constant driver) under `wasmtime --dir`, instead of
+    embedding it. Then struct/array/map capstone cases (and eventually the
+    compiler's own source) can run natively.
+  - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
+    transcendental math builtins, and the CLI wiring (blocked above).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

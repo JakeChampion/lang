@@ -666,6 +666,175 @@ function x86_cc_l(): i32 { return 12; }  // jl  (signed <)
 function x86_cc_ge(): i32 { return 13; } // jge (signed >=)
 function x86_cc_le(): i32 { return 14; } // jle (signed <=)
 function x86_cc_g(): i32 { return 15; }  // jg  (signed >)
+function x86_cc_b(): i32 { return 2; }   // jb  (unsigned <,  CF=1)
+function x86_cc_ae(): i32 { return 3; }  // jae (unsigned >=, CF=0)
+function x86_cc_be(): i32 { return 6; }  // jbe (unsigned <=)
+function x86_cc_a(): i32 { return 7; }   // ja  (unsigned >)
+function x86_cc_s(): i32 { return 8; }   // js  (sign set)
+function x86_cc_ns(): i32 { return 9; }  // jns (sign clear)
+function x86_cc_p(): i32 { return 10; }  // jp  (parity, NaN tests)
+
+// x86_movabsq: `movabs <reg>, imm64` (REX.W 0xB8+rd io) — load a full
+// 64-bit immediate (heap addresses, IEEE-754 bit patterns, wide masks).
+function x86_movabsq(buf: i32[], reg: i32, imm: i64): i32[] {
+    buf = buf.push(x86_rex(1, 0, 0, reg)); // REX.W (+ REX.B for r8..r15)
+    buf = buf.push(184 + (reg & 7));       // 0xB8 + rd
+    return x86_le64_i64(buf, imm);
+}
+
+// ---- 32-bit ALU + extends + cmov (slice 2q) ----
+//
+// asm.fern's runtime uses 32-bit (`l`-suffixed) ops for the alloc bump /
+// map probing / byte-string scanning, plus cmov for min/max and the
+// sign/zero-extend loads. 32-bit ops carry a REX only when an operand is
+// r8..r15 (no REX.W); the result zero-extends into the full 64-bit reg.
+
+// x86_rex_opt pushes a REX byte only if any extension bit is set (w must
+// be 0 here — used for the 32-bit / byte ops whose default size needs no
+// prefix unless an extended register is involved).
+function x86_rex_opt(buf: i32[], reg: i32, index: i32, base: i32): i32[] {
+    var rex: i32 = x86_rex(0, reg, index, base);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    return buf;
+}
+
+// x86_alu_r32_imm32: `<op>l $imm, <reg32>` group-1 (0x81 /digit id):
+// add /0, and /4, sub /5, cmp /7.
+function x86_alu_r32_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
+    buf = x86_rex_opt(buf, 0, 0, reg);
+    buf = buf.push(129); // 0x81
+    buf = buf.push(x86_modrm(3, slash, reg));
+    return x86_le32(buf, imm);
+}
+
+// x86_binop_r32_r32: `<op>l <src>, <dst>` reg-reg (32-bit): add 0x01,
+// sub 0x29, and 0x21, or 0x09, xor 0x31, cmp 0x39 (reg=src, r/m=dst).
+function x86_binop_r32_r32(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
+    buf = x86_rex_opt(buf, src, 0, dst);
+    buf = buf.push(opcode);
+    return buf.push(x86_modrm(3, src, dst));
+}
+
+// x86_shr_r32_imm8: `shrl $imm8, <reg32>` (0xC1 /5 ib).
+function x86_shr_r32_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = x86_rex_opt(buf, 0, 0, reg);
+    buf = buf.push(193); // 0xC1
+    buf = buf.push(x86_modrm(3, 5, reg));
+    return buf.push(imm & 255);
+}
+
+// x86_mov_r32_r32: `movl <src>, <dst>` (0x89 /r, 32-bit).
+function x86_mov_r32_r32(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = x86_rex_opt(buf, src, 0, dst);
+    buf = buf.push(137); // 0x89
+    return buf.push(x86_modrm(3, src, dst));
+}
+
+// x86_movl_store: `movl <src>, mem` (0x89 /r) — 32-bit store.
+function x86_movl_store(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, src: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = x86_rex_opt(buf, src, ix, base);
+    buf = buf.push(137); // 0x89
+    return x86_byte_mem_operand(buf, src, base, has_index, index, scale, disp);
+}
+
+// x86_movl_load: `movl mem, <dst>` (0x8B /r) — 32-bit load (zero-extends).
+function x86_movl_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = x86_rex_opt(buf, dst, ix, base);
+    buf = buf.push(139); // 0x8B
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// x86_testb_imm_reg8: `testb $imm8, <reg8>` (0xF6 /0 ib).
+function x86_testb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
+    var rex: i32 = x86_rex(0, 0, 0, reg8);
+    var force: boolean = (reg8 >= 4 && reg8 <= 7);
+    if (rex != 64 || force) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(246); // 0xF6
+    buf = buf.push(x86_modrm(3, 0, reg8));
+    return buf.push(imm & 255);
+}
+
+// x86_testb_reg8_reg8: `testb <a>, <b>` (0x84 /r).
+function x86_testb_reg8_reg8(buf: i32[], a: i32, b: i32): i32[] {
+    var rex: i32 = x86_rex(0, b, 0, a);
+    var force: boolean = (a >= 4 && a <= 7) || (b >= 4 && b <= 7);
+    if (rex != 64 || force) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(132); // 0x84
+    return buf.push(x86_modrm(3, b, a));
+}
+
+// x86_cmovcc_r64_r64: `cmov<cc> <dst>, <src>` (REX.W 0F 40+cc /r).
+function x86_cmovcc_r64_r64(buf: i32[], cc: i32, dst: i32, src: i32): i32[] {
+    buf = buf.push(x86_rex(1, dst, 0, src));
+    buf = buf.push(15);           // 0x0F
+    buf = buf.push(64 + (cc & 15)); // 0x40 + cc
+    return buf.push(x86_modrm(3, dst, src));
+}
+
+// x86_movslq_load: `movslq mem, <dst>` (REX.W 0x63 /r) — sign-extend a
+// 32-bit memory operand into a 64-bit register.
+function x86_movslq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.push(x86_rex(1, dst, ix, base));
+    buf = buf.push(99); // 0x63
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// x86_movzwq_load: `movzwq mem, <dst>` (REX.W 0F B7 /r) — zero-extend a
+// 16-bit memory operand into a 64-bit register.
+function x86_movzwq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.push(x86_rex(1, dst, ix, base));
+    buf = buf.push(15);  // 0x0F
+    buf = buf.push(183); // 0xB7
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// ---- string ops + xorpd (slice 2q, runtime memcpy/memset/zeroing) ----
+
+// x86_cld: `cld` (0xFC) — clear the direction flag before a rep move.
+function x86_cld(buf: i32[]): i32[] {
+    return buf.push(252); // 0xFC
+}
+
+// x86_rep_stosb: `rep stosb` (0xF3 0xAA) — fill rcx bytes at [rdi] with al
+// (memset); the runtime zeroes allocations with it.
+function x86_rep_stosb(buf: i32[]): i32[] {
+    buf = buf.push(243); // 0xF3
+    return buf.push(170); // 0xAA
+}
+
+// x86_rep_movsb: `rep movsb` (0xF3 0xA4) — copy rcx bytes [rsi]->[rdi]
+// (memcpy).
+function x86_rep_movsb(buf: i32[]): i32[] {
+    buf = buf.push(243); // 0xF3
+    return buf.push(164); // 0xA4
+}
+
+// x86_xorpd: `xorpd <dst>, <src>` (66 0F 57 /r) — xor packed doubles;
+// `xorpd %x,%x` zeroes an xmm register.
+function x86_xorpd(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.push(102); // 0x66
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(87); // 0x57
+    return buf.push(x86_modrm(3, dst, src));
+}
 
 // x86_jcc_rel32: a near conditional jump (0F 80+cc) with a 32-bit
 // signed displacement. 6 bytes total.

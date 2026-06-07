@@ -226,3 +226,138 @@ function main(): i32 {
 		t.Fatalf("stdout = %q, want it to contain %q", out, want)
 	}
 }
+
+// TestExportStringResultLiftRunsViaConsumer is the P6 slice-5b gate: the
+// composer's string-RESULT lift (the memory lift from 5a). A hand-written WAT
+// exporter core returns a string via the canonical return area (a pointer to
+// [data_ptr, byte_len]); ComposeExportsFromWorld lifts `local:test/strings#greet`
+// with PutCanonSectionLiftWithMemory, and a Fern consumer that @imports it and
+// `write`s the result links + runs under wasmtime. The WAT core stands in for
+// the Fern->canonical wrapper (the next sub-slice). docs/WIT-BRING-YOUR-OWN.md.
+func TestExportStringResultLiftRunsViaConsumer(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	run := func(name string, args ...string) {
+		t.Helper()
+		if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
+			t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+		}
+	}
+
+	// --- exporter: a WAT core returning "hi" via the canonical return area. ---
+	// return area @0 = [ptr=16, len=2]; bytes "hi" @16. greet() -> ptr(=0).
+	expCoreWat := filepath.Join(dir, "exp_core.wat")
+	if err := os.WriteFile(expCoreWat, []byte(`(module
+  (memory (export "memory") 1)
+  (data (i32.const 0) "\10\00\00\00\02\00\00\00")
+  (data (i32.const 16) "hi")
+  (func (export "local:test/strings@0.1.0#greet") (result i32) (i32.const 0)))`), 0o644); err != nil {
+		t.Fatalf("write exporter core: %v", err)
+	}
+	expCorePath := filepath.Join(dir, "exp_core.wasm")
+	run(wasmtools, "parse", expCoreWat, "-o", expCorePath)
+	expCore, err := os.ReadFile(expCorePath)
+	if err != nil {
+		t.Fatalf("read exporter core: %v", err)
+	}
+	expWit := filepath.Join(dir, "expwit")
+	if err := os.MkdirAll(expWit, 0o755); err != nil {
+		t.Fatalf("mkdir expwit: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(expWit, "world.wit"),
+		[]byte("package local:test@0.1.0;\ninterface strings {\n  greet: func() -> string;\n}\nworld m {\n  export strings;\n}\n"), 0o644); err != nil {
+		t.Fatalf("write exporter wit: %v", err)
+	}
+	run(wasmtools, "parse", mustWrite(t, dir, "ee.wat", "(module)"), "-o", filepath.Join(dir, "ee.wasm"))
+	run(wasmtools, "component", "embed", expWit, "-w", "m", filepath.Join(dir, "ee.wasm"), "-o", filepath.Join(dir, "eembed.wasm"))
+	expEmbed, err := os.ReadFile(filepath.Join(dir, "eembed.wasm"))
+	if err != nil {
+		t.Fatalf("read exporter embed: %v", err)
+	}
+	expWorld, err := componenttype.DecodeWorldBytes(extractComponentType(t, expEmbed))
+	if err != nil {
+		t.Fatalf("DecodeWorldBytes (exporter): %v", err)
+	}
+	expComp, err := component.ComposeExportsFromWorld(expCore, expWorld)
+	if err != nil {
+		t.Fatalf("ComposeExportsFromWorld (string result): %v", err)
+	}
+	exporter := filepath.Join(dir, "exporter.wasm")
+	if err := os.WriteFile(exporter, expComp, 0o644); err != nil {
+		t.Fatalf("write exporter component: %v", err)
+	}
+	run(wasmtools, "validate", exporter)
+
+	// --- consumer: Fern, @imports greet() -> string and writes it. ---
+	userWit := filepath.Join(dir, "userwit")
+	if err := os.MkdirAll(userWit, 0o755); err != nil {
+		t.Fatalf("mkdir userwit: %v", err)
+	}
+	run("cp", "-r", "../../cmd/fern/wit/deps", filepath.Join(userWit, "deps"))
+	if err := os.MkdirAll(filepath.Join(userWit, "deps", "test"), 0o755); err != nil {
+		t.Fatalf("mkdir deps/test: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(userWit, "deps", "test", "strings.wit"),
+		[]byte("package local:test@0.1.0;\ninterface strings { greet: func() -> string; }\n"), 0o644); err != nil {
+		t.Fatalf("write strings dep: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
+		t.Fatalf("write user world: %v", err)
+	}
+	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))
+	run(wasmtools, "component", "embed", userWit, "-w", "u", filepath.Join(dir, "ue.wasm"), "-o", filepath.Join(dir, "uembed.wasm"))
+	userEmbed, err := os.ReadFile(filepath.Join(dir, "uembed.wasm"))
+	if err != nil {
+		t.Fatalf("read user embed: %v", err)
+	}
+	userWorld, err := componenttype.DecodeWorldBytes(extractComponentType(t, userEmbed))
+	if err != nil {
+		t.Fatalf("DecodeWorldBytes (user): %v", err)
+	}
+	const want = "hi"
+	userSrc := `@import("local:test/strings@0.1.0", "greet")
+function greet(): string;
+
+function main(): i32 { write(greet()); return 0; }`
+	userPath := filepath.Join(dir, "consumer.fern")
+	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
+		t.Fatalf("write consumer prog: %v", err)
+	}
+	userInfo, userProg := loadCheckMono(t, userPath)
+	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
+		ForceMemorySection: true,
+		Preview2WASI:       true,
+		SynthCliRun:        true,
+		CliRunResult:       true,
+	})
+	if err != nil {
+		t.Fatalf("build consumer core: %v", err)
+	}
+	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
+	if err != nil {
+		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)
+	}
+	consumer := filepath.Join(dir, "consumer.wasm")
+	if err := os.WriteFile(consumer, userComp, 0o644); err != nil {
+		t.Fatalf("write consumer component: %v", err)
+	}
+
+	final := filepath.Join(dir, "final.wasm")
+	run(wasmtools, "compose", consumer, "--definitions", exporter, "-o", final)
+	run(wasmtools, "validate", final)
+	out, err := exec.Command(wasmtime, "run", final).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run: %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte(want)) {
+		t.Fatalf("stdout = %q, want it to contain %q", out, want)
+	}
+}

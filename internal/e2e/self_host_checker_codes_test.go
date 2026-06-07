@@ -66,6 +66,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E027": true, // match guard must be boolean
 	"E015": true, // variant pattern payload-binding arity
 	"E040": true, // generic-call type-argument arity mismatch
+	"E054": true, // @export function cannot be generic / a method
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -357,6 +358,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-too-many-bindings", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(a, b) => { return a; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-missing-binding", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has => { return 1; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-binding-arity-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
+		// E054: an `@export(...)` world-export function cannot be generic
+		// (a world export has one concrete ABI) and cannot be a method.
+		{"export-generic", "@export(\"example:app/run\", \"run\") function run[T](x: T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E054"}},
+		{"export-method", "struct P { x: i32 }\n@export(\"example:app/run\", \"run\") function (p: P) run(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E054"}},
+		{"export-plain-ok", "@export(\"example:app/run\", \"run\") function run(x: i32): i32 { return x; }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
