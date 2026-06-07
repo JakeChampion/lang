@@ -159,6 +159,8 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		{"float-param", "function half(x: f64): f64 { return x / 2.0; } function main(): i32 { return half(9.0) as i32; }", 4},
 		{"float-two-args", "function add(a: f64, b: f64): f64 { return a + b; } function main(): i32 { return add(3.5, 3.5) as i32; }", 7},
 		{"float-recursion", "function pow2(n: i32): f64 { if (n <= 0) { return 1.0; } return pow2(n - 1) * 2.0; } function main(): i32 { return (pow2(3) - 2.0) as i32; }", 6},
+		// Struct spread (functional update).
+		{"struct-spread", "struct P { x: i32, y: i32, z: i32 } function (p: P) with_y(v: i32): P { return P { ...p, y: v }; } function main(): i32 { var p = P { x: 1, y: 2, z: 3 }; var q = p.with_y(20); return q.x + q.y + q.z; }", 24},
 	}
 
 	for _, tc := range cases {
