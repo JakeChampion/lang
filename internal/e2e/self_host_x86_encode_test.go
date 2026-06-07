@@ -93,6 +93,58 @@ func TestSelfHostX86CallRuns(t *testing.T) {
 	runX86NativeDriver(t, "call42", x86ElfCallDriverMain, 42)
 }
 
+// TestSelfHostX86Labels byte-checks the named-label assembler (slice 2d):
+// forward branch (patched by x86_resolve), backward branch (patched
+// immediately), forward call, and label lookup. Same wasm self-test shape
+// as TestSelfHostX86Encode.
+func TestSelfHostX86Labels(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host x86 labels e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	enc, err := os.ReadFile("../../examples/self_host/x86_encode.fern")
+	if err != nil {
+		t.Fatalf("read x86_encode.fern: %v", err)
+	}
+	source := string(enc) + "\n" + x86LabelsSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the x86 labels self-test")
+	}
+	watPath := filepath.Join(dir, "x86_labels_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("x86 labels self-test failed at check %d\n--- WAT ---\n%s", code, wat)
+	}
+}
+
+// TestSelfHostX86LabelProgramRuns is the end-to-end proof of the label
+// assembler: a Fern program uses the named-label API to assemble
+// main { call compute; exit(result) } compute { loop 7×: acc += 6; ret }
+// — a forward `call` and a backward loop branch, both resolved by name —
+// wraps it in an ELF via elf.fern, and the binary runs natively exiting 42.
+func TestSelfHostX86LabelProgramRuns(t *testing.T) {
+	runX86NativeDriver(t, "label42", x86ElfLabelDriverMain, 42)
+}
+
 // runX86NativeDriver compiles x86_encode.fern + elf.fern + driverMain
 // through the self-host wasm emitter, runs the resulting WAT under
 // wasmtime to obtain the raw ELF the Fern program assembled and wrote to
@@ -333,6 +385,76 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 42); // setval: result = 42
     code = x86_ret(code);
     var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86LabelsSelfTestMain byte-checks the named-label assembler. Each
+// `return N` is a distinct failing-check id (0 = all pass). 0x0F=15,
+// 0x8D=141 (jge), 0x85=133 (jne), 0xE8=232 (call); rel32s: forward jge to
+// done=22 with field at 15 -> 3; backward jne to loop=0 with field at 9 ->
+// -13 (0xF3,FF,FF,FF = 243,255,255,255); forward call to sub=6 with field
+// at 1 -> 1.
+const x86LabelsSelfTestMain = `
+function main(): i32 {
+    // forward conditional: cmp then jge done (placeholder, resolved later).
+    var a: X86Asm = x86_asm_new();
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 42);
+    a.code = x86_mov_r32_imm32(a.code, x86_rcx(), 17);
+    a.code = x86_cmp_r64_r64(a.code, x86_rax(), x86_rcx());
+    a = x86_jcc_label(a, x86_cc_ge(), "done");
+    a.code = x86_mov_r64_r64(a.code, x86_rax(), x86_rcx());
+    a = x86_label(a, "done");
+    a = x86_resolve(a);
+    if (a.code.len() != 22 || a.code[13] != 15 || a.code[14] != 141) { return 1; }
+    if (a.code[15] != 3 || a.code[16] != 0 || a.code[17] != 0 || a.code[18] != 0) { return 2; }
+
+    // backward conditional: label loop, body, jne loop (patched immediately).
+    var b: X86Asm = x86_asm_new();
+    b = x86_label(b, "loop");
+    b.code = x86_add_r64_imm32(b.code, x86_rax(), 6);
+    b = x86_jcc_label(b, x86_cc_ne(), "loop");
+    if (b.code.len() != 13 || b.code[7] != 15 || b.code[8] != 133) { return 3; }
+    if (b.code[9] != 243 || b.code[10] != 255 || b.code[11] != 255 || b.code[12] != 255) { return 4; }
+
+    // forward call: call sub, ret, label sub, resolve.
+    var c: X86Asm = x86_asm_new();
+    c = x86_call_label(c, "sub");
+    c.code = x86_ret(c.code);
+    c = x86_label(c, "sub");
+    c = x86_resolve(c);
+    if (c.code.len() != 6 || c.code[0] != 232 || c.code[1] != 1 || c.code[2] != 0) { return 5; }
+
+    // label lookup: defined vs missing.
+    if (x86_label_off(c, "sub") != 6) { return 6; }
+    if (x86_label_off(c, "nope") != (0 - 1)) { return 7; }
+    return 0;
+}
+`
+
+// x86ElfLabelDriverMain assembles, via the named-label API, a two-routine
+// program: main calls compute (forward call), which loops acc += 6 seven
+// times (backward jne to a label) and returns; main exits with the result
+// (42). Both references resolve by name through x86_resolve.
+const x86ElfLabelDriverMain = `
+function main(): i32 {
+    var a: X86Asm = x86_asm_new();
+    a = x86_call_label(a, "compute");              // forward call
+    a.code = x86_mov_r64_r64(a.code, x86_rdi(), x86_rax()); // exit code = result
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 60);
+    a.code = x86_syscall(a.code);
+    a = x86_label(a, "compute");
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 0); // acc = 0
+    a.code = x86_mov_r32_imm32(a.code, x86_rcx(), 7); // counter = 7
+    a = x86_label(a, "loop");
+    a.code = x86_add_r64_imm32(a.code, x86_rax(), 6); // acc += 6
+    a.code = x86_sub_r64_imm32(a.code, x86_rcx(), 1); // counter -= 1
+    a.code = x86_cmp_r64_imm32(a.code, x86_rcx(), 0);
+    a = x86_jcc_label(a, x86_cc_ne(), "loop");     // backward branch
+    a.code = x86_ret(a.code);
+    a = x86_resolve(a);
+    var bin: i32[] = elf_static_executable_x86(a.code);
     write(string_from_bytes(bin));
     return 0;
 }
