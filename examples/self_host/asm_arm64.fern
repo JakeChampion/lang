@@ -4480,6 +4480,12 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 3\n");
+        // RC over-release (underflow) detector — Phase 0c. Bumped by
+        // __fern_rc_dec when it sees rc <= 0 before decrementing; read
+        // back by __fern_rc_underflow_count(). Mirrors the x86-64
+        // backend + the native detector.
+        s = s.write("__fern_rc_underflow: .quad 0\n");
+        s = s.write("    .align 3\n");
         s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
@@ -4687,10 +4693,74 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("__fn___ptr_width:\n");
         s = s.write("    mov x0, #8\n");
         s = s.write("    ret\n");
-        // RC intrinsics — no-ops (leak-everything heap). __fern_rc_inc
-        // passes its argument through in x0 in case a caller chains.
+        // RC intrinsics — Phase 0c real bodies (ported from the native
+        // arm64 backend, internal/codegen/arm64/arm64.go). The rc word
+        // is a 32-bit count at [data-8]; data is the value pointer
+        // callers hold. Guard chain: null -> SSO inline-tag (low bit) ->
+        // low-address (< 0x10000) -> static sentinel (rc high bit). The
+        // native backend's below-heap guard is the mmap hint
+        // 0x10000000; the self-host heap is the __fern_heap .bss buffer
+        // (low static address), so < 0x10000 is the right cutoff.
+        // Frameless: param[0] at [sp]; result in x0 (the input ptr).
+        // No free path yet (safe-leak); __fern_arr_dec /
+        // __fern_drop_arr_ptr stay no-ops until the layout migration.
         s = s.write("__fn___fern_rc_inc:\n");
-        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    ldr x0, [sp]\n");            // ptr (also return)
+        s = s.write("    cbz x0, .Lshrcinc_ret\n");
+        s = s.write("    tbnz x0, #0, .Lshrcinc_ret\n");   // SSO inline tag
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x0, x9\n");
+        s = s.write("    blo .Lshrcinc_ret\n");        // low-address guard
+        s = s.write("    ldur w1, [x0, #-8]\n");       // rc
+        s = s.write("    tbnz w1, #31, .Lshrcinc_ret\n");  // static sentinel
+        s = s.write("    add w1, w1, #1\n");
+        s = s.write("    stur w1, [x0, #-8]\n");
+        s = s.write(".Lshrcinc_ret:\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___fern_rc_dec:\n");
+        s = s.write("    ldr x0, [sp]\n");            // ptr (also return)
+        s = s.write("    cbz x0, .Lshrcdec_ret\n");
+        s = s.write("    tbnz x0, #0, .Lshrcdec_ret\n");
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x0, x9\n");
+        s = s.write("    blo .Lshrcdec_ret\n");
+        s = s.write("    ldur w1, [x0, #-8]\n");
+        s = s.write("    tbnz w1, #31, .Lshrcdec_ret\n");  // static sentinel
+        s = s.write("    cmp w1, #0\n");
+        s = s.write("    bgt .Lshrcdec_dec\n");        // rc > 0: normal
+        // rc <= 0: over-release — bump the detector.
+        s = s.write("    adrp x10, __fern_rc_underflow\n");
+        s = s.write("    add x10, x10, :lo12:__fern_rc_underflow\n");
+        s = s.write("    ldr w11, [x10]\n");
+        s = s.write("    add w11, w11, #1\n");
+        s = s.write("    str w11, [x10]\n");
+        s = s.write(".Lshrcdec_dec:\n");
+        s = s.write("    sub w1, w1, #1\n");
+        s = s.write("    stur w1, [x0, #-8]\n");
+        s = s.write(".Lshrcdec_ret:\n");
+        s = s.write("    ret\n");
+        // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object
+        // with rc == 1; null / inline / low-address / sentinel => 0.
+        s = s.write("__fn___fern_rc_is_unique:\n");
+        s = s.write("    ldr x2, [sp]\n");            // ptr
+        s = s.write("    mov x0, #0\n");              // default: not unique
+        s = s.write("    cbz x2, .Lshuniq_ret\n");
+        s = s.write("    tbnz x2, #0, .Lshuniq_ret\n");
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x2, x9\n");
+        s = s.write("    blo .Lshuniq_ret\n");
+        s = s.write("    ldur w3, [x2, #-8]\n");      // rc
+        s = s.write("    tbnz w3, #31, .Lshuniq_ret\n");   // sentinel => immortal
+        s = s.write("    cmp w3, #1\n");
+        s = s.write("    bne .Lshuniq_ret\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write(".Lshuniq_ret:\n");
+        s = s.write("    ret\n");
+        // __fern_rc_underflow_count() -> i32 — read the detector.
+        s = s.write("__fn___fern_rc_underflow_count:\n");
+        s = s.write("    adrp x10, __fern_rc_underflow\n");
+        s = s.write("    add x10, x10, :lo12:__fern_rc_underflow\n");
+        s = s.write("    ldr w0, [x10]\n");
         s = s.write("    ret\n");
         s = s.write("__fn___fern_arr_dec:\n");
         s = s.write("    ret\n");

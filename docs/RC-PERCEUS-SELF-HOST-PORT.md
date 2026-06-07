@@ -357,3 +357,13 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostBootstrapsItself`, `TestSelfHostFixpoint`) stays green.
   Next: mirror to `asm_arm64.fern` + `wasm.fern`; then Phase 0b — the
   array rc-header layout migration that wires these in.
+- 2026-06-07: **Phase 0c (runtime layer), arm64 — SHIPPED.** Mirrored
+  the x86-64 helpers to `asm_arm64.fern` (ported from the native arm64
+  backend: `ldur`/`stur` for `[ptr-8]`, `tbnz #31` sentinel, `tbnz #0`
+  SSO tag, `mov x9,#0x10000` low-address guard, adrp/`:lo12:` access to
+  the `__fern_rc_underflow` BSS counter). Tests consolidated into
+  `internal/e2e/self_host_rc_runtime_test.go` with a shared case table
+  driving both `TestSelfHostRcRuntimeX86_64` and
+  `TestSelfHostRcRuntimeArm64` (the latter built + run under
+  qemu-aarch64 — all six cases green). Next: wasm
+  (`wasm.fern`); then Phase 0b array layout migration.

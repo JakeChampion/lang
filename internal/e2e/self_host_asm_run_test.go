@@ -2517,18 +2517,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"match-expr", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(5); var x: i32 = match (o) { Has(n) => n, Nil => 0 }; return x; }", 5, "", ""},
 		{"match-expr-other-arm", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Nil; var x: i32 = match (o) { Has(n) => n, Nil => 42 }; return x; }", 42, "", ""},
 		{"match-expr-arith", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(20); return match (o) { Has(n) => n + 1, Nil => 0 } + 1; }", 22, "", ""},
-		// Phase 0c RC runtime helpers (ported from the native x86_64
-		// backend). The rc word is a 32-bit count at [data-8]; here we
-		// hand-build an rc-headered object via __alloc + __store_i32 and
-		// exercise the helpers directly (the array literal forces the
-		// heap runtime — incl. these helpers — to be emitted). Wiring
-		// them into real allocations is the layout-migration slice.
-		{"rc-inc-dec", "function main(): i32 { var f: i32[] = [0]; var base: usize = __alloc(16); __store_i32(base, 5); __fern_rc_inc(base + 8); __fern_rc_inc(base + 8); __fern_rc_dec(base + 8); return __load_i32(base); }", 6, "", ""},
-		{"rc-is-unique-true", "function main(): i32 { var f: i32[] = [0]; var base: usize = __alloc(16); __store_i32(base, 1); if (__fern_rc_is_unique(base + 8) == 1) { return 1; } return 0; }", 1, "", ""},
-		{"rc-is-unique-false", "function main(): i32 { var f: i32[] = [0]; var base: usize = __alloc(16); __store_i32(base, 2); if (__fern_rc_is_unique(base + 8) == 1) { return 1; } return 0; }", 0, "", ""},
-		{"rc-underflow-detected", "function main(): i32 { var f: i32[] = [0]; var base: usize = __alloc(16); __store_i32(base, 1); __fern_rc_dec(base + 8); __fern_rc_dec(base + 8); return __fern_rc_underflow_count(); }", 1, "", ""},
-		{"rc-underflow-clean", "function main(): i32 { var f: i32[] = [0]; var base: usize = __alloc(16); __store_i32(base, 3); __fern_rc_dec(base + 8); __fern_rc_dec(base + 8); return __fern_rc_underflow_count(); }", 0, "", ""},
-		{"rc-inc-null-safe", "function main(): i32 { var f: i32[] = [0]; __fern_rc_inc(0); __fern_rc_dec(0); return 7; }", 7, "", ""},
 	}
 
 	for _, tc := range cases {
