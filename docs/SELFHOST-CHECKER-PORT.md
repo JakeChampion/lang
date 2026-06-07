@@ -650,10 +650,25 @@ same code(s) the Go checker does — restricted to
   parser desugar surfacing E035 today). The genuinely-remaining codes are
   E025 (switch-on-float — the parser desugars `switch` to if/else, so the
   float-scrutinee shape is lost), E044 (typed closure captures), E023
-  (unknown-enum scrutinee), and E031/E032/E045/E049/E053 — each needing a
+  (unknown-enum scrutinee), and E031/E032/E045/E053 — each needing a
   language feature or analysis the self-host doesn't yet model end-to-end,
-  not a checker-only rule. (E050/E051 owned-parameter move checking is now
-  done — see below.)
+  not a checker-only rule. (E050/E051 owned-parameter move checking and
+  E049 captured-reference reassignment are now done — see below.)
+- **Slice 66 (done): E049 — captured-reference reassignment.** Assigning
+  to a reference-typed (pointer) variable that a closure captures from an
+  enclosing scope is read-only (rebinding it inside the closure can't take
+  effect outside and could close a reference cycle) → E049. `e049_diags`
+  finds lambdas (in var inits / returns / expr-and-assign values, through
+  control blocks) and flags a `StmtAssign` whose target is a reference-
+  typed enclosing var not shadowed by a lambda param/local. Reference vs
+  scalar is classified by the declared type-name (scalars i32/i64/bool/
+  f64/f32 are exempt; an unannotated capture is conservatively skipped).
+  Checker-only; the self-host's own sources contain no captured-reference
+  reassignments (they compile clean under the Go checker, which already
+  enforces E049), so the fixpoint is untouched (x86-64 + arm64). Seven
+  differential-corpus cases (string/array/struct/ref-param captures fire;
+  scalar capture, read-only use, and a lambda-local assign stay clean),
+  cross-checked against the Go checker.
 - **Slice 65 (done): E050/E051 — owned-parameter move checking.** The
   parser gained an `own` modifier on `ParamDecl` (`function f(own xs: …)`);
   `own_diags` runs an affine flow analysis over each function body. Using an
