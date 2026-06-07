@@ -904,6 +904,26 @@ smallest → largest:
   into the emitter** — like `elf.fern`, the next slice connects the arm64
   assembler's bytes to it and writes the file (replacing the `clang`/`ld64`
   shell-out).
+- 🔧 **arm64 assembler** — AArch64 instruction text/forms → machine-code
+  bytes, mirroring `internal/native/arm64/arm64.go`. The arm64 counterpart
+  of the x86-64 assembler below; built up in slices.
+  - ✅ **slice 3a — encoding primitives + `exit(N)` subset**:
+    `examples/self_host/arm64_encode.fern` (`i32[]` byte-buffer convention;
+    fixed-width 32-bit little-endian words). Encoders: the move-wide family
+    (`movz`/`movk`/`movn`), `add`/`sub` immediate + register, `mov` reg
+    (`orr Xd, XZR, Xm`), `svc`, `ret` — each byte-checked against the Go
+    reference (pinned to llvm-mc) via `TestSelfHostArm64Encode`. Gated
+    end-to-end by **`TestSelfHostArm64DarwinMachOExitRuns`**, the first
+    arm64-darwin proof with **no external tool**: a Fern program assembles
+    `exit(42)` (`movz x0,#42` / `movz x16,#1` / `svc #0x80`) to machine
+    code and wraps it with `macho.fern` into an ad-hoc-signed static
+    Mach-O; the test asserts `debug/macho` parses it as an arm64
+    `MH_EXECUTE` (structural on the Linux box) and, on Apple Silicon,
+    executes it and checks exit 42 — the whole chain (Fern encoder →
+    Mach-O writer + signature → kernel → `svc`) with no `clang`/`ld64`/
+    `codesign`. Forward references, named labels, and the wider
+    instruction surface (loads/stores, branches, `cmp`, the `@PAGE`/
+    `@PAGEOFF` literal addressing the full backend needs) are later slices.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
