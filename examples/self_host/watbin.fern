@@ -1439,7 +1439,7 @@ pub function component_full_io_fs_rw(core: i32[]): i32[] {
 // so embedded as \xNN blobs around the core.
 
 
-function component_full_io_random(core: i32[]): i32[] {
+pub function component_full_io_random(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_random()));
     o = wcat(o, wsection(1, core));
@@ -1455,7 +1455,7 @@ function component_full_io_random(core: i32[]): i32[] {
 // wasi:cli/run component. Constant for the shape, so embedded as \xNN blobs.
 
 
-function component_full_io_env(core: i32[]): i32[] {
+pub function component_full_io_env(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_cli_environment_env()));
     o = wcat(o, wsection(1, core));
@@ -1471,7 +1471,7 @@ function component_full_io_env(core: i32[]): i32[] {
 // wasi:cli/run component. Constant for the shape, embedded as \xNN blobs.
 
 
-function component_full_io_args(core: i32[]): i32[] {
+pub function component_full_io_args(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_cli_environment_args()));
     o = wcat(o, wsection(1, core));
@@ -1488,7 +1488,7 @@ function component_full_io_args(core: i32[]): i32[] {
 // blobs.
 
 
-function component_full_io_clock(core: i32[]): i32[] {
+pub function component_full_io_clock(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_wall_clock()));
     o = wcat(o, wsection(1, core));
@@ -1505,7 +1505,7 @@ function component_full_io_clock(core: i32[]): i32[] {
 // the shape, embedded as \xNN blobs.
 
 
-function component_full_io_clock_mono(core: i32[]): i32[] {
+pub function component_full_io_clock_mono(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_monotonic_clock()));
     o = wcat(o, wsection(1, core));
@@ -1578,7 +1578,7 @@ function component_full_io_random_write(core: i32[]): i32[] {
 // Exports `_lang_run`; no list results, so no cabi_realloc.
 
 
-function component_full_io_eprint(core: i32[]): i32[] {
+pub function component_full_io_eprint(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_cli_stderr()));
     o = wcat(o, wsection(1, core));
@@ -1594,7 +1594,7 @@ function component_full_io_eprint(core: i32[]): i32[] {
 // the native compiler's canonical order. No list results, so no cabi_realloc.
 
 
-function component_full_io_exit(core: i32[]): i32[] {
+pub function component_full_io_exit(core: i32[]): i32[] {
     var o: i32[] = io_stdout_head();
     o = wcat(o, blob_to_bytes(tb_cli_exit()));
     o = wcat(o, wsection(1, core));
