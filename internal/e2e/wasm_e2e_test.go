@@ -956,8 +956,8 @@ function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
     if (m.len() != 0) { return 1; }
     if (m.has(7)) { return 2; }
-    m.insert(7, 42);
-    m.insert(11, 99);
+    m = m.insert(7, 42);
+    m = m.insert(11, 99);
     if (m.len() != 2) { return 3; }
     if (!m.has(7)) { return 4; }
     if (!m.has(11)) { return 5; }
@@ -976,7 +976,7 @@ function main(): i32 {
         return 11;
     }
     // Update an existing key — len stays at 2.
-    m.insert(7, 100);
+    m = m.insert(7, 100);
     if (m.len() != 2) { return 12; }
     if let Some(v) = m.get(7) {
         if (v != 100) { return 13; }
@@ -1002,7 +1002,7 @@ function main(): i32 {
     var m: Map[i32, i32] = map_new(2);
     var i: i32 = 0;
     while (i < 12) {
-        m.insert(i, i * 10);
+        m = m.insert(i, i * 10);
         i = i + 1;
     }
     if (m.len() != 12) { return 1; }
@@ -1031,9 +1031,9 @@ func TestWASMMapKeysValues(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.insert(10, 100);
-    m.insert(20, 200);
-    m.insert(30, 300);
+    m = m.insert(10, 100);
+    m = m.insert(20, 200);
+    m = m.insert(30, 300);
     var ks: i32[] = m.keys();
     var vs: i32[] = m.values();
     if (ks.len() != 3) { return 1; }
@@ -1071,9 +1071,9 @@ func TestWASMMapValuesWideI64(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i64] = map_new(4);
-    m.insert(1, 1000000000000i64);
-    m.insert(2, 2000000000000i64);
-    m.insert(3, 3000000000000i64);
+    m = m.insert(1, 1000000000000i64);
+    m = m.insert(2, 2000000000000i64);
+    m = m.insert(3, 3000000000000i64);
     var vs: i64[] = m.values();
     if (vs.len() != 3) { return 1; }
     if (vs[0] != 1000000000000i64) { return 2; }
@@ -1090,8 +1090,8 @@ func TestWASMMapValuesWideF64(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
-    m.insert(1, 1.5f64);
-    m.insert(2, 2.5f64);
+    m = m.insert(1, 1.5f64);
+    m = m.insert(2, 2.5f64);
     var vs: f64[] = m.values();
     if (vs.len() != 2) { return 1; }
     if (vs[0] != 1.5f64) { return 2; }
@@ -1117,8 +1117,8 @@ func TestWASMWideKeyMapBasic(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.insert(1i64, 100);
-    m.insert(2i64, 200);
+    m = m.insert(1i64, 100);
+    m = m.insert(2i64, 200);
     return m.get_or(2i64, 0) + m.get_or(1i64, 0);
 }`
 	if got := runWasm(t, src); got != 300 {
@@ -1131,8 +1131,8 @@ func TestWASMWideKeyMapHasDelete(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.insert(7i64, 100);
-    m.insert(42i64, 200);
+    m = m.insert(7i64, 100);
+    m = m.insert(42i64, 200);
     if (!m.has(7i64)) { return 1; }
     if (!m.has(42i64)) { return 2; }
     if (m.has(99i64)) { return 3; }
@@ -1151,8 +1151,8 @@ func TestWASMWideKeyMapOverwrite(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.insert(1i64, 100);
-    m.insert(1i64, 999);
+    m = m.insert(1i64, 100);
+    m = m.insert(1i64, 999);
     if (m.len() != 1) { return 1; }
     return m.get_or(1i64, 0);
 }`
@@ -1168,7 +1168,7 @@ function main(): i32 {
     var m: Map[i64, i32] = map_new(2);
     var i: i32 = 0;
     while (i < 20) {
-        m.insert(i as i64, i * 10);
+        m = m.insert(i as i64, i * 10);
         i = i + 1;
     }
     if (m.len() != 20) { return 1; }
@@ -1197,8 +1197,8 @@ function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
     var k1: i64 = 0i64;
     var k2: i64 = 1i64 << 33i64;
-    m.insert(k1, 1);
-    m.insert(k2, 2);
+    m = m.insert(k1, 1);
+    m = m.insert(k2, 2);
     return m.get_or(k1, 99) + m.get_or(k2, 99);
 }`
 	if got := runWasm(t, src); got != 3 {
@@ -1211,7 +1211,7 @@ func TestWASMWideKeyMapU64(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
-    m.insert(1u64, 100);
+    m = m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`
 	if got := runWasm(t, src); got != 100 {
@@ -1224,7 +1224,7 @@ func TestWASMWideKeyMapStringV(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, string] = map_new(4);
-    m.insert(1i64, "hello");
+    m = m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`
 	if got := runWasm(t, src); got != 5 {
@@ -1246,8 +1246,8 @@ func TestWASMWideKeyMapKeysSnapshot(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.insert(1i64, 10);
-    m.insert(1000000000000i64, 20);
+    m = m.insert(1i64, 10);
+    m = m.insert(1000000000000i64, 20);
     var keys: i64[] = m.keys();
     if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
@@ -1270,9 +1270,9 @@ func TestWASMMapDelete(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.insert(1, 10);
-    m.insert(2, 20);
-    m.insert(3, 30);
+    m = m.insert(1, 10);
+    m = m.insert(2, 20);
+    m = m.insert(3, 30);
     if (m.len() != 3) { return 1; }
     if (!m.without(2).1) { return 2; }   // present → true
     if (m.len() != 2) { return 3; }
@@ -1292,7 +1292,7 @@ function main(): i32 {
         return 11;
     }
     // Re-insert the deleted key with a new value.
-    m.insert(2, 222);
+    m = m.insert(2, 222);
     if (m.len() != 3) { return 12; }
     if let Some(v) = m.get(2) {
         if (v != 222) { return 13; }
@@ -2087,14 +2087,14 @@ function main(): i32 {
     var m: Map[string, i32] = map_new(8);
 
     // Inline-form keys (≤ 3 bytes each).
-    m.insert("a", 1);
-    m.insert("ok", 2);
-    m.insert("GET", 3);
-    m.insert("404", 4);
-    m.insert(int.int_to_string(42), 5);   // "42" inline via cascade
+    m = m.insert("a", 1);
+    m = m.insert("ok", 2);
+    m = m.insert("GET", 3);
+    m = m.insert("404", 4);
+    m = m.insert(int.int_to_string(42), 5);   // "42" inline via cascade
 
     // Heap-form key alongside, same map.
-    m.insert("longer", 99);
+    m = m.insert("longer", 99);
 
     if (m.len() != 6) { return 1; }
 
@@ -2133,7 +2133,7 @@ function main(): i32 {
     if (m.has("xy")) { return 21; }
 
     // Update + delete an inline key.
-    m.insert("GET", 30);
+    m = m.insert("GET", 30);
     if let Some(v) = m.get("GET") {
         if (v != 30) { return 22; }
     } else { return 23; }
@@ -2157,9 +2157,9 @@ func TestWASMMapStringKeys(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m.insert("hello", 1);
-    m.insert("world", 2);
-    m.insert("foo", 3);
+    m = m.insert("hello", 1);
+    m = m.insert("world", 2);
+    m = m.insert("foo", 3);
     if (m.len() != 3) { return 1; }
     if (!m.has("hello")) { return 2; }
     if (!m.has("world")) { return 3; }
@@ -2178,7 +2178,7 @@ function main(): i32 {
         return 9;
     }
     // Update + len stays the same.
-    m.insert("hello", 100);
+    m = m.insert("hello", 100);
     if (m.len() != 3) { return 10; }
     if let Some(v) = m.get("hello") {
         if (v != 100) { return 11; }
@@ -2203,8 +2203,8 @@ func TestWASMMapStringStringValues(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var headers: Map[string, string] = map_new(4);
-    headers.insert("content-type", "text/plain");
-    headers.insert("x-trace-id", "abc123");
+    headers = headers.insert("content-type", "text/plain");
+    headers = headers.insert("x-trace-id", "abc123");
     if (headers.len() != 2) { return 1; }
     if let Some(v) = headers.get("content-type") {
         if (v != "text/plain") { return 2; }
@@ -2240,7 +2240,7 @@ function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 100) {
-        m.insert(i, i * 7 + 1);
+        m = m.insert(i, i * 7 + 1);
         i = i + 1;
     }
     if (m.len() != 100) { return 1; }
@@ -2257,7 +2257,7 @@ function main(): i32 {
     // Update every entry's value.
     var k: i32 = 0;
     while (k < 100) {
-        m.insert(k, k * 11 + 2);
+        m = m.insert(k, k * 11 + 2);
         k = k + 1;
     }
     if (m.len() != 100) { return 2; }
@@ -2286,7 +2286,7 @@ function main(): i32 {
     // the load factor stays manageable.
     var r: i32 = 0;
     while (r < 100) {
-        m.insert(r, r);
+        m = m.insert(r, r);
         r = r + 2;
     }
     if (m.len() != 100) { return 4; }
@@ -2336,7 +2336,7 @@ function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 80) {
-        m.insert(key_of(i), i);
+        m = m.insert(key_of(i), i);
         i = i + 1;
     }
     if (m.len() != 80) { return 1; }
@@ -2457,8 +2457,8 @@ func TestWASMMapValueI64(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i64] = map_new(8);
-    m.insert(1, 4294967296 as i64);
-    m.insert(2, 8589934592 as i64);
+    m = m.insert(1, 4294967296 as i64);
+    m = m.insert(2, 8589934592 as i64);
     match (m.get(1)) {
         Some(v) => { if (v != (4294967296 as i64)) { return 1; } },
         None => { return 2; }
@@ -2490,8 +2490,8 @@ func TestWASMMapValueF64(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[string, f64] = map_new(8);
-    m.insert("pi", 3.14 as f64);
-    m.insert("e", 2.71 as f64);
+    m = m.insert("pi", 3.14 as f64);
+    m = m.insert("e", 2.71 as f64);
     match (m.get("pi")) {
         Some(v) => {
             if (v < (3.13 as f64)) { return 1; }
@@ -2674,10 +2674,10 @@ func TestWASMDeferBasic(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function inner(trace: Map[string, i32]): i32 {
-    trace.insert("body-start", 1);
+    trace = trace.insert("body-start", 1);
     defer trace.insert("first-defer", 10);
     defer trace.insert("second-defer", 20);
-    trace.insert("body-end", 2);
+    trace = trace.insert("body-end", 2);
     return 42;
 }
 function main(): i32 {
@@ -2713,7 +2713,7 @@ function main(): i32 {
     run(fired, false);
     if (fired.has(1)) { return 1; }
     if (!fired.has(2)) { return 2; }
-    fired.cleared();
+    fired = fired.cleared();
     run(fired, true);
     if (!fired.has(1)) { return 3; }
     if (!fired.has(2)) { return 4; }
@@ -2783,14 +2783,14 @@ import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
     if (m.len() != 3) { return 1; }
-    m.cleared();
+    m = m.cleared();
     if (m.len() != 0) { return 2; }
     if (m.has("a")) { return 3; }
     if let Some(_) = m.get("b") { return 4; }
     // Re-insert after clear works (bucket array was reset
     // to all-empty so the linear probe terminates).
-    m.insert("hello", 42);
-    m.insert("world", 99);
+    m = m.insert("hello", 42);
+    m = m.insert("world", 99);
     if (m.len() != 2) { return 5; }
     if let Some(v) = m.get("hello") {
         if (v != 42) { return 6; }
@@ -6279,9 +6279,9 @@ function main(): i32 {
 
 		// Object — insertion order preserved (IndexMap).
 		var m: Map[string, JsonValue] = map_new(4);
-		m.insert("name", JString("alice"));
-		m.insert("age", JNumber("30"));
-		m.insert("admin", JBool(false));
+		m = m.insert("name", JString("alice"));
+		m = m.insert("age", JNumber("30"));
+		m = m.insert("admin", JBool(false));
 		if (json.json_encode(JObject(m)) != "{\"name\":\"alice\",\"age\":30,\"admin\":false}") {
 			return 40;
 		}
@@ -6289,7 +6289,7 @@ function main(): i32 {
 		// Nested: object containing an array of numbers.
 		var inner: JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
 		var outer: Map[string, JsonValue] = map_new(2);
-		outer.insert("nums", JArray(inner));
+		outer = outer.insert("nums", JArray(inner));
 		if (json.json_encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
 
 		return 0;
@@ -16492,8 +16492,8 @@ func TestWASMRcUnderflowDetector(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m.insert("a", 1);
-    m.insert("b", 2);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
     var xs: i32[] = [1, 2, 3];
     return __rc_underflow_count() + m.get_or("a", 0) - 1 + xs[0] - 1;
 }`
@@ -16546,7 +16546,7 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.insert("a", 1);
+    m1 = m1.insert("a", 1);
     var m2 = m1;                  // alias → rc 2
     m2 = m2.insert("a", 999);        // copy; old handle released, not leaked
     return __rc_underflow_count() * 1000
@@ -17030,7 +17030,7 @@ func TestWASMMapSetAliasedCopies(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.insert("a", 1);                 // in-place (rc==1)
+    m1 = m1.insert("a", 1);                 // in-place (rc==1)
     var m2 = m1;                    // alias → rc=2
     m2 = m2.insert("a", 999);          // rc>1 → copy; m1 unchanged
     if (m1.get_or("a", 0) != 1)   { return 1; }
@@ -17049,8 +17049,8 @@ func TestWASMMapDeleteClearAliasedCopies(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.insert("a", 1);
-    m1.insert("b", 2);
+    m1 = m1.insert("a", 1);
+    m1 = m1.insert("b", 2);
     var m2 = m1;                       // alias → rc=2
     var (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }

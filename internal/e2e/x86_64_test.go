@@ -1835,8 +1835,8 @@ func TestX86_64Map(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.insert(1, 100);
-    m.insert(2, 200);
+    m = m.insert(1, 100);
+    m = m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
 		{"grow_past_capacity", `import "core/no_prelude";
@@ -1845,7 +1845,7 @@ function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 8) {
-        m.insert(i, i * 10);
+        m = m.insert(i, i * 10);
         i = i + 1;
     }
     if (m.len() != 8) { return 1; }
@@ -1856,19 +1856,19 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.insert("alpha", 1);
-    m.insert("beta", 2);
-    m.insert("gamma", 3);
+    m = m.insert("alpha", 1);
+    m = m.insert("beta", 2);
+    m = m.insert("gamma", 3);
     return m.get_or("beta", 0 - 1) + m.len();
 }`, 5},
 		{"iter_after_delete", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.insert("a", 10);
-    m.insert("b", 20);
-    m.insert("c", 30);
-    m.without("b");
+    m = m.insert("a", 10);
+    m = m.insert("b", 20);
+    m = m.insert("c", 30);
+    m = m.without("b").0;
     if (m.has("b")) { return 1; }
     var total: i32 = 0;
     var it = m.iter();
@@ -1900,7 +1900,7 @@ func TestX86_64MapGetMatch(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.insert(7, 42);
+    m = m.insert(7, 42);
     match (m.get(7)) {
         Some(v) => { return v; },
         None => { return 0; }
@@ -1921,7 +1921,7 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.insert("hello", 42);
+    m = m.insert("hello", 42);
     match (m.get("hello")) {
         Some(v) => { return v; },
         None => { return 0; }
@@ -2285,35 +2285,35 @@ func TestX86_64WideScalarMap(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.insert(1i64, 100);
+    m = m.insert(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
 		{"Map[i32, f64]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
-    m.insert(1, 3.14);
+    m = m.insert(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
 		{"Map[i64, string]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i64, string] = map_new(4);
-    m.insert(1i64, "hello");
+    m = m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
 		{"Map[string, i64]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i64] = map_new(4);
-    m.insert("hello", 42i64);
+    m = m.insert("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
 		{"Map[u64, i32]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
-    m.insert(1u64, 100);
+    m = m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
 		{"distinct high-bit i64 keys", `import "core/no_prelude";
@@ -2322,8 +2322,8 @@ function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
     var k1: i64 = 0i64;
     var k2: i64 = 1i64 << 33i64;
-    m.insert(k1, 1);
-    m.insert(k2, 2);
+    m = m.insert(k1, 1);
+    m = m.insert(k2, 2);
     var v1: i32 = m.get_or(k1, 99);
     var v2: i32 = m.get_or(k2, 99);
     // Sum signals correct separation: v1=1, v2=2 → 3.
@@ -2342,8 +2342,8 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.insert(1i64, 10);
-    m.insert(1000000000000i64, 20);
+    m = m.insert(1i64, 10);
+    m = m.insert(1000000000000i64, 20);
     var keys: i64[] = m.keys();
     if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
@@ -2894,10 +2894,10 @@ func TestX86_64FeatureParity(t *testing.T) {
 		{"defer_basic", `import "core/no_prelude";
 import "core/map";
 function inner(trace: Map[string, i32]): i32 {
-    trace.insert("body-start", 1);
+    trace = trace.insert("body-start", 1);
     defer trace.insert("first-defer", 10);
     defer trace.insert("second-defer", 20);
-    trace.insert("body-end", 2);
+    trace = trace.insert("body-end", 2);
     return 42;
 }
 function main(): i32 {
@@ -3679,7 +3679,7 @@ func TestX86_64MapSetAliasedCopies(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.insert("a", 1);                 // in-place (rc==1)
+    m1 = m1.insert("a", 1);                 // in-place (rc==1)
     var m2 = m1;                    // alias → rc=2
     m2 = m2.insert("a", 999);          // rc>1 → copy; m1 unchanged
     if (m1.get_or("a", 0) != 1)   { return 1; }
@@ -3700,8 +3700,8 @@ func TestX86_64MapDeleteClearAliasedCopies(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.insert("a", 1);
-    m1.insert("b", 2);
+    m1 = m1.insert("a", 1);
+    m1 = m1.insert("b", 2);
     var m2 = m1;                       // alias → rc=2
     var (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }

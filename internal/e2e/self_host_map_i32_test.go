@@ -17,10 +17,10 @@ var mapI32Cases = []struct {
 	src  string
 	exit int
 }{
-	{"set-get-update", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m.insert(7, 40); m.insert(11, 99); m.insert(7, 42); if (m.len() != 2) { return 1; } if (!m.has(11)) { return 2; } match (m.get(7)) { Some(v) => { return v; }, None => { return 3; } } }", 42},
-	{"absent-get", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m.insert(100, 5); m.insert(200, 7); match (m.get(999)) { Some(v) => { return v; }, None => { return 42; } } }", 42},
-	{"has-absent", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m.insert(1, 1); if (m.has(1) && !m.has(2)) { return 7; } return 0; }", 7},
-	{"i32-to-string-val", "function main(): i32 { var m: Map[i32, string] = map_new(4); m.insert(1, \"hello\"); match (m.get(1)) { Some(s) => { return s.len(); }, None => { return 0; } } }", 5},
+	{"set-get-update", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m = m.insert(11, 99); m = m.insert(7, 42); if (m.len() != 2) { return 1; } if (!m.has(11)) { return 2; } match (m.get(7)) { Some(v) => { return v; }, None => { return 3; } } }", 42},
+	{"absent-get", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(100, 5); m = m.insert(200, 7); match (m.get(999)) { Some(v) => { return v; }, None => { return 42; } } }", 42},
+	{"has-absent", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(1, 1); if (m.has(1) && !m.has(2)) { return 7; } return 0; }", 7},
+	{"i32-to-string-val", "function main(): i32 { var m: Map[i32, string] = map_new(4); m = m.insert(1, \"hello\"); match (m.get(1)) { Some(s) => { return s.len(); }, None => { return 0; } } }", 5},
 }
 
 // TestSelfHostMapI32X86_64 — i32-keyed maps with the self-hosted

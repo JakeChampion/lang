@@ -979,7 +979,7 @@ import "core/map";
 import "std/string";
 function add_pair(m: Map[i32, i32[]], k: i32) {
     var arr: i32[] = [k * 10, k * 10 + 1];
-    m.insert(k, arr);
+    m = m.insert(k, arr);
 }
 function main(): i32 {
     var m: Map[i32, i32[]] = map_new(8);
@@ -1126,7 +1126,7 @@ function mk(): i32 {
     var st = sm.without("ke" + "y");   // bound delete-hit
     sm = st.0;                        // reassign idiom
     if (st.1) { acc = acc + 2; }
-    sm.without("th" + "ird");          // discarded delete (hit)
+    sm = sm.without("th" + "ird").0;          // discarded delete (hit)
     var sm2 = sm.without("zz" + "zz"); // bound delete-miss
     sm = sm2.0;
     if (sm2.1) { acc = acc + 100; }

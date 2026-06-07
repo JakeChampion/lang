@@ -20,7 +20,7 @@ var mapLiteralCases = []struct {
 	{"i32-keys", "function main(): i32 { var m: Map[i32,i32] = Map { 1: 10, 2: 20, 3: 12 }; match (m.get(2)) { Some(v) => { return v; }, None => { return 0; } } }", 20},
 	{"string-keys", "function main(): i32 { var m: Map[string,i32] = Map { \"a\": 40, \"b\": 2 }; var t: i32 = 0; match (m.get(\"a\")) { Some(x) => { t = t + x; }, None => {} } match (m.get(\"b\")) { Some(x) => { t = t + x; }, None => {} } return t; }", 42},
 	{"len-has", "function main(): i32 { var m: Map[i32,i32] = Map { 7: 1, 8: 2 }; if (m.len() == 2 && m.has(8) && !m.has(9)) { return 9; } return 0; }", 9},
-	{"empty", "function main(): i32 { var m: Map[i32,i32] = Map { }; m.insert(5, 42); match (m.get(5)) { Some(v) => { return v; }, None => { return 0; } } }", 42},
+	{"empty", "function main(): i32 { var m: Map[i32,i32] = Map { }; m = m.insert(5, 42); match (m.get(5)) { Some(v) => { return v; }, None => { return 0; } } }", 42},
 }
 
 // TestSelfHostMapLiteralX86_64 — `Map { … }` literals with the

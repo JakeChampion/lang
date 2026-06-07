@@ -17,10 +17,10 @@ var mapIterCases = []struct {
 	src  string
 	exit int
 }{
-	{"key-len-plus-value", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.insert(\"a\", 10); m.insert(\"bb\", 20); var it: MapIter[string,i32] = m.iter(); var sum: i32 = 0; while (it.has_next()) { sum = sum + it.key().len() + it.value(); it.advance(); } return sum; }", 33},
+	{"key-len-plus-value", "function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 10); m = m.insert(\"bb\", 20); var it: MapIter[string,i32] = m.iter(); var sum: i32 = 0; while (it.has_next()) { sum = sum + it.key().len() + it.value(); it.advance(); } return sum; }", 33},
 	{"empty", "function main(): i32 { var m: Map[string,i32] = map_new(4); var it: MapIter[string,i32] = m.iter(); var n: i32 = 0; while (it.has_next()) { n = n + 1; it.advance(); } return n + 50; }", 50},
-	{"string-values", "function main(): i32 { var m: Map[string,string] = map_new(4); m.insert(\"k1\", \"abc\"); m.insert(\"k2\", \"de\"); var it: MapIter[string,string] = m.iter(); var t: i32 = 0; while (it.has_next()) { t = t + it.value().len(); it.advance(); } return t; }", 5},
-	{"count", "function main(): i32 { var m: Map[string,i32] = map_new(8); m.insert(\"x\", 1); m.insert(\"y\", 2); m.insert(\"z\", 3); var it: MapIter[string,i32] = m.iter(); var c: i32 = 0; while (it.has_next()) { c = c + 1; it.advance(); } return c; }", 3},
+	{"string-values", "function main(): i32 { var m: Map[string,string] = map_new(4); m = m.insert(\"k1\", \"abc\"); m = m.insert(\"k2\", \"de\"); var it: MapIter[string,string] = m.iter(); var t: i32 = 0; while (it.has_next()) { t = t + it.value().len(); it.advance(); } return t; }", 5},
+	{"count", "function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert(\"x\", 1); m = m.insert(\"y\", 2); m = m.insert(\"z\", 3); var it: MapIter[string,i32] = m.iter(); var c: i32 = 0; while (it.has_next()) { c = c + 1; it.advance(); } return c; }", 3},
 }
 
 // TestSelfHostMapIterX86_64 compiles Map-iteration programs with the

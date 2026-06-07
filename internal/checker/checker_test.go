@@ -2373,6 +2373,52 @@ function main(): i32 {
 	}
 }
 
+// E055: a bare statement whose whole expression is a value-returning
+// collection mutator silently discards the new collection (the CoW aliasing
+// footgun). It must be reassigned, or explicitly discarded with `var _ = …`.
+func TestUnusedCollectionResultE055(t *testing.T) {
+	// A bare `arr.append(x);` discards the returned array → E055.
+	err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1];
+	a.append(2);
+	return a[0];
+}`)
+	if err == nil || !strings.Contains(err.Error(), "is unused") {
+		t.Errorf("bare append should be E055, got %v", err)
+	}
+	// Threading the result back is the fix — no error.
+	if err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1];
+	a = a.append(2);
+	return a[0];
+}`); err != nil {
+		t.Errorf("reassigned append should check, got %v", err)
+	}
+	// Explicit discard via `var _ = …` is the opt-out — no error.
+	if err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1];
+	var _ = a.append(2);
+	return a.len();
+}`); err != nil {
+		t.Errorf("var _ discard should check, got %v", err)
+	}
+	// `arr[i] = v` is subscript assignment, not a bare method call — exempt.
+	if err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1, 2];
+	a[0] = 9;
+	return a[0];
+}`); err != nil {
+		t.Errorf("subscript assignment must not trip E055, got %v", err)
+	}
+	// Using the result in a larger expression is fine (not a bare statement).
+	if err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1];
+	return a.append(2)[0];
+}`); err != nil {
+		t.Errorf("used append result must not trip E055, got %v", err)
+	}
+}
+
 // An extern @import call with a type-mismatched argument is rejected.
 func TestExternImportArgTypeMismatch(t *testing.T) {
 	src := `@import("wasi:foo/bar@0.1.0", "do-thing")

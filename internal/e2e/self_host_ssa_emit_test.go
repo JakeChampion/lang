@@ -186,8 +186,8 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"map-has", "function main(): i32 { var m = Map { 5: 1, 7: 1 }; var r = 0; if (m.has(5)) { r = r + 10; } if (m.has(6)) { r = r + 100; } if (m.has(7)) { r = r + 1; } return r; }", 11},
 		// set after construction: insert a new key, update an existing key —
 		// the buffer is mutated in place (fixed capacity, no realloc).
-		{"map-set-update", "function main(): i32 { var m = Map { 1: 10 }; m.insert(2, 20); m.insert(1, 99); return m.get_or(1, 0) + m.get_or(2, 0) + m.len(); }", 121},
-		{"map-loop-build", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 5) { m.insert(i, i * i); i = i + 1; } return m.get_or(3, 0) + m.get_or(5, 0) + m.len(); }", 40},
+		{"map-set-update", "function main(): i32 { var m = Map { 1: 10 }; m = m.insert(2, 20); m = m.insert(1, 99); return m.get_or(1, 0) + m.get_or(2, 0) + m.len(); }", 121},
+		{"map-loop-build", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 5) { m = m.insert(i, i * i); i = i + 1; } return m.get_or(3, 0) + m.get_or(5, 0) + m.len(); }", 40},
 		{"map-miss-default", "function main(): i32 { var m = Map { 1: 1 }; return m.get_or(42, 7) + m.len(); }", 8},
 		// Maps across calls: the handle is an i32[] pointer param. get_or on a
 		// passed map, and len() on a Map-typed param (dispatches to the helper,
@@ -198,7 +198,7 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// variable and walks entries by index via __ssa_map_key_at/_val_at.
 		{"map-iter-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; for (k, v) in m { s = s + k + v; } return s; }", 33},
 		{"map-iter-values", "function main(): i32 { var m = Map { 1: 100, 2: 50, 3: 30 }; var s = 0; for (k, v) in m { s = s + v; } return s; }", 180},
-		{"map-iter-built", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 4) { m.insert(i, i * 10); i = i + 1; } var sum = 0; for (k, v) in m { sum = sum + v; } return sum; }", 100},
+		{"map-iter-built", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 4) { m = m.insert(i, i * 10); i = i + 1; } var sum = 0; for (k, v) in m { sum = sum + v; } return sum; }", 100},
 		// break / continue inside the iteration body.
 		{"map-iter-break-continue", "function main(): i32 { var m = Map { 1: 5, 2: 6, 3: 7, 4: 8 }; var s = 0; for (k, v) in m { if (k == 2) { continue; } if (k == 4) { break; } s = s + v; } return s; }", 12},
 		// Iterating a Map passed across a call.
@@ -206,14 +206,14 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// keys() / values() snapshot a map's columns into fresh __new_array
 		// arrays (now possible with dynamic allocation): iterate / index them.
 		{"map-keys-values", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var ks = m.keys(); var vs = m.values(); var s = 0; for k in ks { s = s + k; } for v in vs { s = s + v; } return s + ks.len(); }", 69},
-		{"map-values-index", "function main(): i32 { var m = Map { 5: 10, 6: 20 }; m.insert(7, 30); var vs = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s + vs.len(); }", 63},
+		{"map-values-index", "function main(): i32 { var m = Map { 5: 10, 6: 20 }; m = m.insert(7, 30); var vs = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s + vs.len(); }", 63},
 		{"map-keys-after-delete", "function main(): i32 { var m = Map { 9: 1 }; m.without(9); var ks = m.keys(); return ks.len() + 42; }", 42},
 		// String-keyed maps: `Map { "a": … }` → map_new().insert()… → the
 		// __ssa_smap_* helpers, which compare keys by content (__streq) rather
 		// than pointer. Same buffer layout as i32, so len / iteration reuse the
 		// i32 helpers; the value type is i32.
 		{"smap-literal-get", "function main(): i32 { var m = Map { \"a\": 10, \"b\": 20, \"c\": 30 }; return m.get_or(\"b\", 0) + m.get_or(\"z\", 7) + m.len(); }", 30},
-		{"smap-set-has", "function main(): i32 { var m = Map { \"x\": 1 }; m.insert(\"y\", 2); m.insert(\"x\", 99); var r = 0; if (m.has(\"x\")) { r = r + m.get_or(\"x\", 0); } if (m.has(\"q\")) { r = r + 1000; } return r + m.get_or(\"y\", 0) + m.len(); }", 103},
+		{"smap-set-has", "function main(): i32 { var m = Map { \"x\": 1 }; m = m.insert(\"y\", 2); m = m.insert(\"x\", 99); var r = 0; if (m.has(\"x\")) { r = r + m.get_or(\"x\", 0); } if (m.has(\"q\")) { r = r + 1000; } return r + m.get_or(\"y\", 0) + m.len(); }", 103},
 		// Content comparison: the lookup key is built at runtime (concat), so
 		// it's a different pointer than the stored literal — must still match.
 		{"smap-content-key", "function main(): i32 { var m = Map { \"foo\": 42 }; var k = \"fo\" + \"o\"; return m.get_or(k, 0); }", 42},
@@ -223,7 +223,7 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// no-op, and delete composes with set / iteration.
 		{"map-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.without(2); var r = 0; if (m.has(2)) { r = r + 1000; } r = r + m.len() * 100; r = r + m.get_or(1, 0); r = r + m.get_or(3, 0); return r; }", 240},
 		{"map-delete-missing", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m.without(99); return m.len() * 10 + m.get_or(2, 0); }", 40},
-		{"map-delete-readd-iter", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.without(3); m.insert(4, 40); m.without(1); var s = 0; for (k, v) in m { s = s + v; } return s + m.len(); }", 62},
+		{"map-delete-readd-iter", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.without(3); m = m.insert(4, 40); m.without(1); var s = 0; for (k, v) in m { s = s + v; } return s + m.len(); }", 62},
 		// Passing arrays to functions: pointer-typed (64-bit) params.
 		{"arr-param-index", "function get(a: i32[], i: i32): i32 { return a[i]; } function main(): i32 { var xs = [10, 20, 30]; return get(xs, 1); }", 20},
 		{"arr-param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var xs = [5, 10, 15, 20]; return sum(xs); }", 50},

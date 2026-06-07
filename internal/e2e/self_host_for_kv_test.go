@@ -17,9 +17,9 @@ var forKvCases = []struct {
 	exit int
 }{
 	{"sum-k-plus-v", "function main(): i32 { var m: Map[i32,i32] = Map { 1: 10, 2: 20, 3: 12 }; var total: i32 = 0; for (k, v) in m { total = total + k + v; } return total; }", 48},
-	{"sum-values-built", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m.insert(5, 100); m.insert(7, 50); var t: i32 = 0; for (k, v) in m { t = t + v; } return t; }", 150},
+	{"sum-values-built", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(5, 100); m = m.insert(7, 50); var t: i32 = 0; for (k, v) in m { t = t + v; } return t; }", 150},
 	{"count", "function main(): i32 { var m: Map[i32,i32] = Map { 1: 0, 2: 0, 3: 0, 4: 0 }; var c: i32 = 0; for (k, v) in m { c = c + 1; } return c + 38; }", 42},
-	{"string-keys", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.insert(\"a\", 40); m.insert(\"b\", 2); var t: i32 = 0; for (k, v) in m { t = t + v; } return t; }", 42},
+	{"string-keys", "function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"a\", 40); m = m.insert(\"b\", 2); var t: i32 = 0; for (k, v) in m { t = t + v; } return t; }", 42},
 }
 
 // TestSelfHostForKvX86_64 — `for (k,v) in m` with the self-hosted
