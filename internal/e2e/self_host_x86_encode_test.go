@@ -67,11 +67,39 @@ func TestSelfHostX86Encode(t *testing.T) {
 // (Fern instruction encoder -> ELF writer -> kernel load -> syscall) with
 // no external assembler or linker.
 func TestSelfHostX86ElfExitRuns(t *testing.T) {
-	if runtime.GOARCH != "amd64" {
-		t.Skip("native x86-64 run requires an amd64 host")
-	}
+	runX86NativeDriver(t, "exit42", x86ElfExitDriverMain, 42)
+}
+
+// TestSelfHostX86LoopRuns extends the end-to-end proof to control flow: a
+// Fern program assembles a real loop (acc=0; repeat 7×: acc += 6;
+// exit(acc)) — exercising the immediate ALU encoders and a backward
+// conditional branch (jne rel32) — wraps it in an ELF via elf.fern, and
+// the binary runs natively on x86-64 exiting 42 (= 6 × 7).
+func TestSelfHostX86LoopRuns(t *testing.T) {
+	runX86NativeDriver(t, "loop42", x86ElfLoopDriverMain, 42)
+}
+
+// TestSelfHostX86MaxRuns exercises a *forward* conditional branch (jge
+// over the else-arm), resolved via the placeholder + x86_patch_rel32
+// path: max(42, 17) exits 42.
+func TestSelfHostX86MaxRuns(t *testing.T) {
+	runX86NativeDriver(t, "max42", x86ElfMaxDriverMain, 42)
+}
+
+// TestSelfHostX86CallRuns exercises a forward `call` + `ret`: main calls a
+// subroutine (defined after the call site, so the rel32 is patched) that
+// sets the result to 42 and returns; main exits with it.
+func TestSelfHostX86CallRuns(t *testing.T) {
+	runX86NativeDriver(t, "call42", x86ElfCallDriverMain, 42)
+}
+
+// TestSelfHostX86Labels byte-checks the named-label assembler (slice 2d):
+// forward branch (patched by x86_resolve), backward branch (patched
+// immediately), forward call, and label lookup. Same wasm self-test shape
+// as TestSelfHostX86Encode.
+func TestSelfHostX86Labels(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host x86 ELF run")
+		t.Skip("wasmtime not on PATH; skipping self-host x86 labels e2e")
 	}
 	gcc, runner := x86_64Tooling(t)
 
@@ -91,18 +119,85 @@ func TestSelfHostX86ElfExitRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read x86_encode.fern: %v", err)
 	}
+	source := string(enc) + "\n" + x86LabelsSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the x86 labels self-test")
+	}
+	watPath := filepath.Join(dir, "x86_labels_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("x86 labels self-test failed at check %d\n--- WAT ---\n%s", code, wat)
+	}
+}
+
+// TestSelfHostX86LabelProgramRuns is the end-to-end proof of the label
+// assembler: a Fern program uses the named-label API to assemble
+// main { call compute; exit(result) } compute { loop 7×: acc += 6; ret }
+// — a forward `call` and a backward loop branch, both resolved by name —
+// wraps it in an ELF via elf.fern, and the binary runs natively exiting 42.
+func TestSelfHostX86LabelProgramRuns(t *testing.T) {
+	runX86NativeDriver(t, "label42", x86ElfLabelDriverMain, 42)
+}
+
+// TestSelfHostX86FrameRuns is the end-to-end proof of the memory operands
+// (slice 2e): a Fern program assembles a stack-frame round-trip — set up
+// rbp, store 42 to [rbp-8], clobber the register, reload it, tear the
+// frame down — exercising mov reg,reg (rbp/rsp), push/pop, sub rsp, and
+// rbp-relative store/load, then runs natively on x86-64 exiting 42.
+func TestSelfHostX86FrameRuns(t *testing.T) {
+	runX86NativeDriver(t, "frame42", x86ElfFrameDriverMain, 42)
+}
+
+// runX86NativeDriver compiles x86_encode.fern + elf.fern + driverMain
+// through the self-host wasm emitter, runs the resulting WAT under
+// wasmtime to obtain the raw ELF the Fern program assembled and wrote to
+// stdout, then executes that ELF natively on x86-64 and asserts its exit
+// code — the whole chain (Fern encoder -> ELF writer -> kernel -> syscall)
+// with no external assembler or linker.
+func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
+	t.Helper()
+	if runtime.GOARCH != "amd64" {
+		t.Skip("native x86-64 run requires an amd64 host")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host x86 ELF run")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, n := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", n))
+		if err != nil {
+			t.Fatalf("read %s: %v", n, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, n), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", n, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	enc, err := os.ReadFile("../../examples/self_host/x86_encode.fern")
+	if err != nil {
+		t.Fatalf("read x86_encode.fern: %v", err)
+	}
 	elf, err := os.ReadFile("../../examples/self_host/elf.fern")
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}
-	source := string(enc) + "\n" + string(elf) + "\n" + x86ElfExitDriverMain
+	source := string(enc) + "\n" + string(elf) + "\n" + driverMain
 
 	// Stage 1: compile the driver source to WAT via the self-host emitter.
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the x86 exit(42) driver")
+		t.Fatalf("wasm emitter produced 0 bytes for the %s driver", name)
 	}
-	watPath := filepath.Join(dir, "exit42_driver.wat")
+	watPath := filepath.Join(dir, name+"_driver.wat")
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 		t.Fatalf("write wat: %v", err)
 	}
@@ -113,28 +208,24 @@ func TestSelfHostX86ElfExitRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wasmtime run (driver): %v", err)
 	}
-	if len(bin) == 0 {
-		t.Fatal("driver produced 0 bytes for the x86 exit(42) ELF")
-	}
 	if len(bin) < 4 || bin[0] != 0x7f || bin[1] != 'E' || bin[2] != 'L' || bin[3] != 'F' {
 		t.Fatalf("output is not an ELF (bad magic): % x", bin[:min(4, len(bin))])
 	}
 
-	binPath := filepath.Join(dir, "exit42")
+	binPath := filepath.Join(dir, name)
 	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
-	err = exec.Command(binPath).Run()
 	got := 0
-	if err != nil {
+	if err := exec.Command(binPath).Run(); err != nil {
 		ee, ok := err.(*exec.ExitError)
 		if !ok {
 			t.Fatalf("run failed (not an exit code): %v", err)
 		}
 		got = ee.ExitCode()
 	}
-	if got != 42 {
-		t.Fatalf("exit code = %d, want 42", got)
+	if got != wantExit {
+		t.Fatalf("exit code = %d, want %d", got, wantExit)
 	}
 }
 
@@ -173,6 +264,62 @@ function main(): i32 {
     if (i.len() != 1 || i[0] != 195) { return 9; }
     // ModR/M direct-form helper: mod=3, reg=rdi(7), rm=rax(0) -> 0xF8.
     if (x86_modrm(3, x86_rdi(), x86_rax()) != 248) { return 10; }
+    // add rax, 6 -> 48 81 C0 06 00 00 00
+    var j: i32[] = x86_add_r64_imm32([], x86_rax(), 6);
+    if (j.len() != 7 || j[0] != 72 || j[1] != 129 || j[2] != 192 || j[3] != 6 || j[4] != 0) { return 11; }
+    // sub rcx, 1 -> 48 81 E9 01 00 00 00
+    var k: i32[] = x86_sub_r64_imm32([], x86_rcx(), 1);
+    if (k.len() != 7 || k[0] != 72 || k[1] != 129 || k[2] != 233 || k[3] != 1) { return 12; }
+    // cmp rcx, 0 -> 48 81 F9 00 00 00 00
+    var l: i32[] = x86_cmp_r64_imm32([], x86_rcx(), 0);
+    if (l.len() != 7 || l[0] != 72 || l[1] != 129 || l[2] != 249 || l[3] != 0) { return 13; }
+    // cmp rax, rcx -> 48 39 C8 (0x39 /r, reg=rcx rm=rax)
+    var m: i32[] = x86_cmp_r64_r64([], x86_rax(), x86_rcx());
+    if (m.len() != 3 || m[0] != 72 || m[1] != 57 || m[2] != 200) { return 14; }
+    // jne rel=-27 -> 0F 85 E5 FF FF FF
+    var n: i32[] = x86_jne_rel32([], 0 - 27);
+    if (n.len() != 6 || n[0] != 15 || n[1] != 133 || n[2] != 229 || n[3] != 255 || n[4] != 255 || n[5] != 255) { return 15; }
+    // je rel=0 -> 0F 84 00 00 00 00
+    var o: i32[] = x86_je_rel32([], 0);
+    if (o.len() != 6 || o[0] != 15 || o[1] != 132 || o[2] != 0) { return 16; }
+    // jmp rel=0 -> E9 00 00 00 00
+    var pp: i32[] = x86_jmp_rel32([], 0);
+    if (pp.len() != 5 || pp[0] != 233 || pp[1] != 0) { return 17; }
+    // rel math: branch at 31, len 6, target 10 -> -27.
+    if (x86_branch_rel(10, 31, 6) != (0 - 27)) { return 18; }
+    // call rel=10 -> E8 0A 00 00 00
+    var q: i32[] = x86_call_rel32([], 10);
+    if (q.len() != 5 || q[0] != 232 || q[1] != 10 || q[2] != 0 || q[3] != 0 || q[4] != 0) { return 19; }
+    // forward-ref rel: target 22, rel32 field at 15 -> 3.
+    if (x86_rel_to(22, 15) != 3) { return 20; }
+    // patch a placeholder: jne rel=0 then patch its rel32 (offset 2) to 3.
+    var r: i32[] = x86_jne_rel32([], 0);
+    r = x86_patch_rel32(r, 2, 3);
+    if (r.len() != 6 || r[0] != 15 || r[1] != 133 || r[2] != 3 || r[3] != 0 || r[4] != 0 || r[5] != 0) { return 21; }
+    // patch a negative rel (-27) -> E5 FF FF FF.
+    var s: i32[] = x86_jmp_rel32([], 0);
+    s = x86_patch_rel32(s, 1, 0 - 27);
+    if (s.len() != 5 || s[0] != 233 || s[1] != 229 || s[2] != 255 || s[3] != 255 || s[4] != 255) { return 22; }
+    // mov rax, [rbp-8] -> 48 8B 45 F8 (mod=01 disp8, rm=rbp)
+    var t: i32[] = x86_mov_load_r64([], x86_rax(), x86_rbp(), 0 - 8);
+    if (t.len() != 4 || t[0] != 72 || t[1] != 139 || t[2] != 69 || t[3] != 248) { return 23; }
+    // mov [rbp-8], rax -> 48 89 45 F8
+    var u: i32[] = x86_mov_store_r64([], x86_rbp(), 0 - 8, x86_rax());
+    if (u.len() != 4 || u[0] != 72 || u[1] != 137 || u[2] != 69 || u[3] != 248) { return 24; }
+    // mov rax, [rsp+16] -> 48 8B 44 24 10 (SIB escape for rsp)
+    var v2: i32[] = x86_mov_load_r64([], x86_rax(), x86_rsp(), 16);
+    if (v2.len() != 5 || v2[0] != 72 || v2[1] != 139 || v2[2] != 68 || v2[3] != 36 || v2[4] != 16) { return 25; }
+    // mov rax, [rcx] -> 48 8B 01 (mod=00, no disp)
+    var w: i32[] = x86_mov_load_r64([], x86_rax(), x86_rcx(), 0);
+    if (w.len() != 3 || w[0] != 72 || w[1] != 139 || w[2] != 1) { return 26; }
+    // mov rax, [rbp] -> 48 8B 45 00 (rbp forces mod=01 disp8=0)
+    var x: i32[] = x86_mov_load_r64([], x86_rax(), x86_rbp(), 0);
+    if (x.len() != 4 || x[0] != 72 || x[1] != 139 || x[2] != 69 || x[3] != 0) { return 27; }
+    // mov rax, [rcx+512] -> 48 8B 81 00 02 00 00 (mod=10 disp32)
+    var y: i32[] = x86_mov_load_r64([], x86_rax(), x86_rcx(), 512);
+    if (y.len() != 7 || y[0] != 72 || y[1] != 139 || y[2] != 129 || y[3] != 0 || y[4] != 2 || y[5] != 0 || y[6] != 0) { return 28; }
+    // sib byte for [rsp]: scale=0,index=4,base=4 -> 0x24 (36)
+    if (x86_sib(0, 4, 4) != 36) { return 29; }
     return 0;
 }
 `
@@ -187,6 +334,185 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60); // __NR_exit
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code); // R+X, text-only
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfLoopDriverMain assembles a real loop — acc=0; for i in 7 { acc +=
+// 6 }; exit(acc) — exercising the immediate ALU + a backward conditional
+// branch (jne rel32, target known) end-to-end. 6 * 7 = 42. The branch
+// displacement is computed from the recorded loop offset via
+// x86_branch_rel, the same math a label resolver will use.
+const x86ElfLoopDriverMain = `
+function main(): i32 {
+    var code: i32[] = [];
+    code = x86_mov_r32_imm32(code, x86_rax(), 0); // acc = 0
+    code = x86_mov_r32_imm32(code, x86_rcx(), 7); // counter = 7
+    var loop_off: i32 = code.len();               // backward-branch target
+    code = x86_add_r64_imm32(code, x86_rax(), 6);  // acc += 6
+    code = x86_sub_r64_imm32(code, x86_rcx(), 1);  // counter -= 1
+    code = x86_cmp_r64_imm32(code, x86_rcx(), 0);  // counter == 0 ?
+    var jne_off: i32 = code.len();
+    var rel: i32 = x86_branch_rel(loop_off, jne_off, 6);
+    code = x86_jne_rel32(code, rel);               // loop while counter != 0
+    code = x86_mov_r64_r64(code, x86_rdi(), x86_rax()); // exit code = acc
+    code = x86_mov_r32_imm32(code, x86_rax(), 60);  // __NR_exit
+    code = x86_syscall(code);
+    var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfMaxDriverMain assembles max(42, 17) using a FORWARD conditional
+// branch (jge skips the else-arm), resolved via a placeholder + patch:
+//
+//	eax = 42 ; ecx = 17 ; cmp eax, ecx ; jge done ; eax = ecx ; done:
+//	exit(eax)
+//
+// The jge's rel32 is emitted as 0, its field offset recorded, then patched
+// to reach `done` once that offset is known.
+const x86ElfMaxDriverMain = `
+function main(): i32 {
+    var code: i32[] = [];
+    code = x86_mov_r32_imm32(code, x86_rax(), 42); // a
+    code = x86_mov_r32_imm32(code, x86_rcx(), 17); // b
+    code = x86_cmp_r64_r64(code, x86_rax(), x86_rcx());
+    var jge_off: i32 = code.len();                 // branch opcode offset
+    code = x86_jcc_rel32(code, x86_cc_ge(), 0);    // placeholder rel32
+    var patch_off: i32 = jge_off + 2;              // rel32 field (after 0F 8D)
+    code = x86_mov_r64_r64(code, x86_rax(), x86_rcx()); // else: a = b
+    var done_off: i32 = code.len();                // forward-branch target
+    code = x86_patch_rel32(code, patch_off, x86_rel_to(done_off, patch_off));
+    code = x86_mov_r64_r64(code, x86_rdi(), x86_rax()); // exit code = max
+    code = x86_mov_r32_imm32(code, x86_rax(), 60);
+    code = x86_syscall(code);
+    var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfCallDriverMain assembles a forward call + ret:
+//
+//	call setval ; mov rdi, rax ; exit ; setval: mov eax, 42 ; ret
+//
+// The call targets a subroutine defined after the call site, so its rel32
+// is a patched forward reference.
+const x86ElfCallDriverMain = `
+function main(): i32 {
+    var code: i32[] = [];
+    var call_off: i32 = code.len();
+    code = x86_call_rel32(code, 0);               // placeholder -> setval
+    var patch_off: i32 = call_off + 1;            // rel32 field (after E8)
+    code = x86_mov_r64_r64(code, x86_rdi(), x86_rax()); // exit code = result
+    code = x86_mov_r32_imm32(code, x86_rax(), 60);
+    code = x86_syscall(code);
+    var setval_off: i32 = code.len();             // subroutine entry
+    code = x86_patch_rel32(code, patch_off, x86_rel_to(setval_off, patch_off));
+    code = x86_mov_r32_imm32(code, x86_rax(), 42); // setval: result = 42
+    code = x86_ret(code);
+    var bin: i32[] = elf_static_executable_x86(code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86LabelsSelfTestMain byte-checks the named-label assembler. Each
+// `return N` is a distinct failing-check id (0 = all pass). 0x0F=15,
+// 0x8D=141 (jge), 0x85=133 (jne), 0xE8=232 (call); rel32s: forward jge to
+// done=22 with field at 15 -> 3; backward jne to loop=0 with field at 9 ->
+// -13 (0xF3,FF,FF,FF = 243,255,255,255); forward call to sub=6 with field
+// at 1 -> 1.
+const x86LabelsSelfTestMain = `
+function main(): i32 {
+    // forward conditional: cmp then jge done (placeholder, resolved later).
+    var a: X86Asm = x86_asm_new();
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 42);
+    a.code = x86_mov_r32_imm32(a.code, x86_rcx(), 17);
+    a.code = x86_cmp_r64_r64(a.code, x86_rax(), x86_rcx());
+    a = x86_jcc_label(a, x86_cc_ge(), "done");
+    a.code = x86_mov_r64_r64(a.code, x86_rax(), x86_rcx());
+    a = x86_label(a, "done");
+    a = x86_resolve(a);
+    if (a.code.len() != 22 || a.code[13] != 15 || a.code[14] != 141) { return 1; }
+    if (a.code[15] != 3 || a.code[16] != 0 || a.code[17] != 0 || a.code[18] != 0) { return 2; }
+
+    // backward conditional: label loop, body, jne loop (patched immediately).
+    var b: X86Asm = x86_asm_new();
+    b = x86_label(b, "loop");
+    b.code = x86_add_r64_imm32(b.code, x86_rax(), 6);
+    b = x86_jcc_label(b, x86_cc_ne(), "loop");
+    if (b.code.len() != 13 || b.code[7] != 15 || b.code[8] != 133) { return 3; }
+    if (b.code[9] != 243 || b.code[10] != 255 || b.code[11] != 255 || b.code[12] != 255) { return 4; }
+
+    // forward call: call sub, ret, label sub, resolve.
+    var c: X86Asm = x86_asm_new();
+    c = x86_call_label(c, "sub");
+    c.code = x86_ret(c.code);
+    c = x86_label(c, "sub");
+    c = x86_resolve(c);
+    if (c.code.len() != 6 || c.code[0] != 232 || c.code[1] != 1 || c.code[2] != 0) { return 5; }
+
+    // label lookup: defined vs missing.
+    if (x86_label_off(c, "sub") != 6) { return 6; }
+    if (x86_label_off(c, "nope") != (0 - 1)) { return 7; }
+    return 0;
+}
+`
+
+// x86ElfLabelDriverMain assembles, via the named-label API, a two-routine
+// program: main calls compute (forward call), which loops acc += 6 seven
+// times (backward jne to a label) and returns; main exits with the result
+// (42). Both references resolve by name through x86_resolve.
+const x86ElfLabelDriverMain = `
+function main(): i32 {
+    var a: X86Asm = x86_asm_new();
+    a = x86_call_label(a, "compute");              // forward call
+    a.code = x86_mov_r64_r64(a.code, x86_rdi(), x86_rax()); // exit code = result
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 60);
+    a.code = x86_syscall(a.code);
+    a = x86_label(a, "compute");
+    a.code = x86_mov_r32_imm32(a.code, x86_rax(), 0); // acc = 0
+    a.code = x86_mov_r32_imm32(a.code, x86_rcx(), 7); // counter = 7
+    a = x86_label(a, "loop");
+    a.code = x86_add_r64_imm32(a.code, x86_rax(), 6); // acc += 6
+    a.code = x86_sub_r64_imm32(a.code, x86_rcx(), 1); // counter -= 1
+    a.code = x86_cmp_r64_imm32(a.code, x86_rcx(), 0);
+    a = x86_jcc_label(a, x86_cc_ne(), "loop");     // backward branch
+    a.code = x86_ret(a.code);
+    a = x86_resolve(a);
+    var bin: i32[] = elf_static_executable_x86(a.code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfFrameDriverMain assembles a stack-frame round-trip:
+//
+//	push rbp ; mov rbp, rsp ; sub rsp, 16
+//	rax = 42 ; [rbp-8] = rax ; rax = 0 ; rax = [rbp-8]
+//	mov rsp, rbp ; pop rbp ; exit(rax)
+//
+// The value survives only via the store/reload through [rbp-8], so a wrong
+// memory encoding would not exit 42.
+const x86ElfFrameDriverMain = `
+function main(): i32 {
+    var code: i32[] = [];
+    code = x86_push_r64(code, x86_rbp());
+    code = x86_mov_r64_r64(code, x86_rbp(), x86_rsp());          // mov rbp, rsp
+    code = x86_sub_r64_imm32(code, x86_rsp(), 16);              // sub rsp, 16
+    code = x86_mov_r32_imm32(code, x86_rax(), 42);
+    code = x86_mov_store_r64(code, x86_rbp(), 0 - 8, x86_rax()); // [rbp-8] = rax
+    code = x86_mov_r32_imm32(code, x86_rax(), 0);               // clobber
+    code = x86_mov_load_r64(code, x86_rax(), x86_rbp(), 0 - 8);  // rax = [rbp-8]
+    code = x86_mov_r64_r64(code, x86_rsp(), x86_rbp());          // mov rsp, rbp
+    code = x86_pop_r64(code, x86_rbp());
+    code = x86_mov_r64_r64(code, x86_rdi(), x86_rax());          // exit code = rax
+    code = x86_mov_r32_imm32(code, x86_rax(), 60);
+    code = x86_syscall(code);
+    var bin: i32[] = elf_static_executable_x86(code);
     write(string_from_bytes(bin));
     return 0;
 }

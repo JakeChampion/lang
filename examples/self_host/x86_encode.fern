@@ -110,3 +110,278 @@ function x86_syscall(buf: i32[]): i32[] {
 function x86_ret(buf: i32[]): i32[] {
     return buf.push(195); // 0xC3
 }
+
+// ---- memory operands (slice 2e) ----
+//
+// A memory operand `[base + disp]` is encoded by the ModR/M byte's mod/rm
+// fields plus an optional SIB byte and displacement. Two registers need
+// special handling:
+//   * rsp (rm=100) is the SIB escape — any `[rsp + …]` needs a SIB byte
+//     (scale=0, index=100=none, base=100=rsp);
+//   * rbp (rm=101) can't use mod=00 (that encoding means RIP-relative), so
+//     `[rbp]` is emitted as mod=01 with a zero disp8.
+// mod selects the displacement size: 00 = none, 01 = disp8, 10 = disp32.
+// Slice 2e covers the base registers (0..7); index/scale addressing is a
+// later need.
+
+// x86_sib builds a SIB byte: (scale << 6) | (index << 3) | base.
+function x86_sib(scale: i32, index: i32, base: i32): i32 {
+    return ((scale & 3) << 6) | ((index & 7) << 3) | (base & 7);
+}
+
+// x86_emit_mem appends the ModR/M (+ optional SIB + displacement) for a
+// memory operand `[base + disp]` with the given ModR/M `reg` field (the
+// other operand — a register for load/store).
+function x86_emit_mem(buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
+    var b: i32 = base & 7;
+    var is_rsp: boolean = (b == 4); // SIB escape
+    var is_rbp: boolean = (b == 5); // no mod=00 form
+
+    var md: i32 = 2;        // default: disp32
+    var has_disp8: boolean = false;
+    if (disp == 0 && !is_rbp) {
+        md = 0;             // no displacement
+    } else if (disp >= (0 - 128) && disp <= 127) {
+        md = 1;             // disp8
+        has_disp8 = true;
+    }
+
+    buf = buf.push(x86_modrm(md, reg, b));
+    if (is_rsp) {
+        buf = buf.push(x86_sib(0, 4, 4)); // [rsp], no index
+    }
+    if (has_disp8) {
+        buf = buf.push(disp & 255);
+    } else {
+        if (md == 2) {
+            buf = x86_le32(buf, disp);
+        }
+    }
+    return buf;
+}
+
+// x86_mov_load_r64: `mov <dst>, [base + disp]` — REX.W + 0x8B /r.
+function x86_mov_load_r64(buf: i32[], dst: i32, base: i32, disp: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(139); // 0x8B
+    return x86_emit_mem(buf, dst, base, disp);
+}
+
+// x86_mov_store_r64: `mov [base + disp], <src>` — REX.W + 0x89 /r.
+function x86_mov_store_r64(buf: i32[], base: i32, disp: i32, src: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(137); // 0x89
+    return x86_emit_mem(buf, src, base, disp);
+}
+
+// ---- immediate ALU (slice 2b) ----
+
+// x86_alu_r64_imm32 encodes the `<op> <reg>, imm32` group-1 form:
+// REX.W + 0x81 /digit, where `slash` is the opcode-extension in the
+// ModR/M reg field (0 = add, 5 = sub, 7 = cmp). imm32 little-endian.
+// The full imm32 form (vs the compact 0x83 /digit imm8) keeps the
+// encoder uniform for any constant.
+function x86_alu_r64_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(129); // 0x81
+    buf = buf.push(x86_modrm(3, slash, reg));
+    return x86_le32(buf, imm);
+}
+
+// x86_add_r64_imm32: `add <reg>, imm32` (0x81 /0).
+function x86_add_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 0, reg, imm);
+}
+
+// x86_sub_r64_imm32: `sub <reg>, imm32` (0x81 /5).
+function x86_sub_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 5, reg, imm);
+}
+
+// x86_cmp_r64_imm32: `cmp <reg>, imm32` (0x81 /7).
+function x86_cmp_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 7, reg, imm);
+}
+
+// x86_cmp_r64_r64: `cmp <a>, <b>` (64-bit) — REX.W + 0x39 /r.
+function x86_cmp_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(57); // 0x39
+    buf = buf.push(x86_modrm(3, b, a));
+    return buf;
+}
+
+// ---- control flow (slice 2b) ----
+//
+// Near branches take a 32-bit displacement relative to the *next*
+// instruction: rel32 = target_offset - (branch_offset + branch_length).
+// Backward branches (target already emitted) can compute this directly;
+// forward branches need a fixup pass (a later slice's label table).
+
+// Condition codes for the 0F 8x near-jcc opcodes.
+function x86_cc_e(): i32 { return 4; }   // je  / jz
+function x86_cc_ne(): i32 { return 5; }  // jne / jnz
+function x86_cc_l(): i32 { return 12; }  // jl  (signed <)
+function x86_cc_ge(): i32 { return 13; } // jge (signed >=)
+function x86_cc_le(): i32 { return 14; } // jle (signed <=)
+function x86_cc_g(): i32 { return 15; }  // jg  (signed >)
+
+// x86_jcc_rel32: a near conditional jump (0F 80+cc) with a 32-bit
+// signed displacement. 6 bytes total.
+function x86_jcc_rel32(buf: i32[], cc: i32, rel: i32): i32[] {
+    buf = buf.push(15);             // 0x0F
+    buf = buf.push(128 + (cc & 15)); // 0x80 + cc
+    return x86_le32(buf, rel);
+}
+
+// x86_je_rel32 / x86_jne_rel32: the two most common conditionals.
+function x86_je_rel32(buf: i32[], rel: i32): i32[] {
+    return x86_jcc_rel32(buf, x86_cc_e(), rel);
+}
+function x86_jne_rel32(buf: i32[], rel: i32): i32[] {
+    return x86_jcc_rel32(buf, x86_cc_ne(), rel);
+}
+
+// x86_jmp_rel32: an unconditional near jump (0xE9 cd). 5 bytes total.
+function x86_jmp_rel32(buf: i32[], rel: i32): i32[] {
+    buf = buf.push(233); // 0xE9
+    return x86_le32(buf, rel);
+}
+
+// x86_branch_rel computes the rel32 a branch at `branch_off` (the offset
+// of its first opcode byte) needs to reach `target_off`, given the
+// branch's total encoded length `branch_len` (6 for jcc, 5 for jmp/call).
+function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 {
+    return target_off - (branch_off + branch_len);
+}
+
+// ---- forward references (slice 2c) ----
+//
+// A forward branch can't know its rel32 when emitted (the target isn't
+// laid down yet). The standard fix: emit a placeholder rel32 (zeros),
+// remember where the rel32 field starts, and patch it once the target
+// offset is known. x86_patch_rel32 is that patch; the label/fixup table a
+// text assembler needs is built on top of it.
+
+// x86_call_rel32: a near `call` (0xE8 cd) with a 32-bit signed
+// displacement. 5 bytes total — same rel math as jmp.
+function x86_call_rel32(buf: i32[], rel: i32): i32[] {
+    buf = buf.push(232); // 0xE8
+    return x86_le32(buf, rel);
+}
+
+// x86_patch_rel32 overwrites the 4 little-endian rel32 bytes already in
+// `buf` starting at offset `at` (the rel32 field of a previously-emitted
+// branch placeholder). Used to resolve a forward reference once its
+// target offset is known.
+function x86_patch_rel32(buf: i32[], at: i32, rel: i32): i32[] {
+    buf[at] = rel & 255;
+    buf[at + 1] = (rel >> 8) & 255;
+    buf[at + 2] = (rel >> 16) & 255;
+    buf[at + 3] = (rel >> 24) & 255;
+    return buf;
+}
+
+// x86_rel_to computes the rel32 to patch into a placeholder whose rel32
+// field starts at `patch_off`, to reach `target_off`. The branch's next
+// instruction is 4 bytes past the rel32 field, so
+// rel = target_off - (patch_off + 4) — independent of opcode length, so
+// it works for jcc / jmp / call alike given that branch's rel32 offset.
+function x86_rel_to(target_off: i32, patch_off: i32): i32 {
+    return target_off - (patch_off + 4);
+}
+
+// ---- named-label assembler (slice 2d) ----
+//
+// A reusable label/fixup table over the patch primitive: this is the API
+// a text assembler (asm.fern GAS text -> bytes) calls instead of doing
+// offset bookkeeping by hand. Branches name a label; backward labels (the
+// target already has an offset) are patched immediately, forward ones are
+// queued and resolved by x86_resolve once every label is placed.
+//
+// State lives in an X86Asm struct: the code buffer, parallel label
+// name/offset arrays (linear lookup — label counts per function are
+// small), and parallel fixup patch-offset / target-name arrays. Raw
+// instructions still go straight through the encoders into `a.code`
+// (`a.code = x86_mov_r32_imm32(a.code, ...)`); only branches that target a
+// label go through this layer.
+
+struct X86Asm {
+    code: i32[],
+    lab_names: string[],
+    lab_offs: i32[],
+    fix_offs: i32[],
+    fix_names: string[],
+}
+
+// x86_asm_new returns an empty assembler state.
+function x86_asm_new(): X86Asm {
+    return X86Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [] };
+}
+
+// x86_label records `name` as pointing at the current code offset.
+function x86_label(a: X86Asm, name: string): X86Asm {
+    a.lab_names = a.lab_names.push(name);
+    a.lab_offs = a.lab_offs.push(a.code.len());
+    return a;
+}
+
+// x86_label_off returns the recorded offset of `name`, or -1 if it has
+// not been placed yet (a forward reference).
+function x86_label_off(a: X86Asm, name: string): i32 {
+    var i: i32 = 0;
+    while (i < a.lab_names.len()) {
+        if (a.lab_names[i] == name) {
+            return a.lab_offs[i];
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// x86_fixup_or_patch handles the rel32 of a branch placeholder just
+// emitted into a.code: the rel32 field starts at a.code.len()-4. If the
+// label is already placed, patch immediately; otherwise queue a fixup.
+function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
+    var patch_off: i32 = a.code.len() - 4;
+    var target: i32 = x86_label_off(a, name);
+    if (target >= 0) {
+        a.code = x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off));
+    } else {
+        a.fix_offs = a.fix_offs.push(patch_off);
+        a.fix_names = a.fix_names.push(name);
+    }
+    return a;
+}
+
+// x86_jcc_label emits a conditional jump to a (possibly forward) label.
+function x86_jcc_label(a: X86Asm, cc: i32, name: string): X86Asm {
+    a.code = x86_jcc_rel32(a.code, cc, 0); // placeholder rel32
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_jmp_label emits an unconditional jump to a label.
+function x86_jmp_label(a: X86Asm, name: string): X86Asm {
+    a.code = x86_jmp_rel32(a.code, 0);
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_call_label emits a call to a label.
+function x86_call_label(a: X86Asm, name: string): X86Asm {
+    a.code = x86_call_rel32(a.code, 0);
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_resolve patches every queued forward fixup now that all labels are
+// placed. Call once after emitting the whole program; returns the state
+// whose `a.code` is the final machine code.
+function x86_resolve(a: X86Asm): X86Asm {
+    var i: i32 = 0;
+    while (i < a.fix_offs.len()) {
+        var patch_off: i32 = a.fix_offs[i];
+        var target: i32 = x86_label_off(a, a.fix_names[i]);
+        a.code = x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off));
+        i = i + 1;
+    }
+    return a;
+}

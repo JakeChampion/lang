@@ -1100,6 +1100,85 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("emit-target-wasm-component-combos", func(t *testing.T) {
+		// Two-category fs-paired wasi:cli/run shapes: fs-read+env,
+		// fs-rw+env, random+fs-write, fs-read+args, fs-rw+args.
+		wasmtime, err := exec.LookPath("wasmtime")
+		if err != nil {
+			t.Skip("wasmtime not on PATH; skipping -target wasm-component combos")
+		}
+		wasmtools, _ := exec.LookPath("wasm-tools")
+		build := func(t *testing.T, name, src string) string {
+			t.Helper()
+			srcPath := filepath.Join(dir, "compc_"+name+".fern")
+			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			outPath := filepath.Join(dir, "compc_"+name+".wasm")
+			_, code := runDriver(t, "-target", "wasm-component", "-o", outPath, srcPath)
+			if code != 0 {
+				t.Fatalf("%s: -target wasm-component exited %d, want 0", name, code)
+			}
+			if wasmtools != "" {
+				if out, err := exec.Command(wasmtools, "validate", "--features", "component-model", outPath).CombinedOutput(); err != nil {
+					t.Fatalf("%s: wasm-tools validate failed: %v\n%s", name, err, out)
+				}
+			}
+			return outPath
+		}
+		mkdir := func(t *testing.T) string {
+			d := t.TempDir()
+			if err := os.WriteFile(filepath.Join(d, "in.txt"), []byte("DATA"), 0o644); err != nil {
+				t.Fatalf("write in.txt: %v", err)
+			}
+			return d
+		}
+
+		// fs-read + env: print env value then file contents.
+		readEnv := build(t, "read_env", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (env(\"P\")) { Some(v) => { write(v); write(s); return 0; }, None => { write(s); return 0; } } }, Err(e) => { return 1; } } }\n")
+		d1 := mkdir(t)
+		if out, _ := exec.Command(wasmtime, "run", "--dir", d1+"::/", "--env", "P=X-", readEnv).Output(); string(out) != "X-DATA" {
+			t.Errorf("read+env: stdout = %q, want %q", string(out), "X-DATA")
+		}
+
+		// fs read+write + env: copy in.txt -> out.txt prefixed by env.
+		rwEnv := build(t, "rw_env", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (env(\"P\")) { Some(v) => { match (write_file(\"out.txt\", v)) { Some(e) => { return 2; }, None => {} } return 0; }, None => { return 3; } } }, Err(e) => { return 1; } } }\n")
+		d2 := mkdir(t)
+		if ec := exec.Command(wasmtime, "run", "--dir", d2+"::/", "--env", "P=ENV", rwEnv).Run(); ec != nil {
+			t.Fatalf("rw+env: run failed: %v", ec)
+		}
+		if got, _ := os.ReadFile(filepath.Join(d2, "out.txt")); string(got) != "ENV" {
+			t.Errorf("rw+env: out.txt = %q, want %q", string(got), "ENV")
+		}
+
+		// random + fs-write: draw a random i32, write a fixed file.
+		rndWrite := build(t, "rnd_write", "function main(): i32 { var x: i32 = random_i32(); if (x != x) { return 9; } match (write_file(\"out.txt\", \"R\")) { Some(e) => { return 1; }, None => {} } return 0; }\n")
+		d3 := t.TempDir()
+		if ec := exec.Command(wasmtime, "run", "--dir", d3+"::/", rndWrite).Run(); ec != nil {
+			t.Fatalf("random+write: run failed: %v", ec)
+		}
+		if got, _ := os.ReadFile(filepath.Join(d3, "out.txt")); string(got) != "R" {
+			t.Errorf("random+write: out.txt = %q, want %q", string(got), "R")
+		}
+
+		// fs-read + args: print arg count then file contents.
+		readArgs := build(t, "read_args", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { print_int(args().len()); write(s); return 0; }, Err(e) => { return 1; } } }\n")
+		d4 := mkdir(t)
+		if out, _ := exec.Command(wasmtime, "run", "--dir", d4+"::/", readArgs, "a").Output(); string(out) != "2DATA" {
+			t.Errorf("read+args: stdout = %q, want %q (argv0+1, then DATA)", string(out), "2DATA")
+		}
+
+		// fs read+write + args: copy in.txt -> out.txt, using args.
+		rwArgs := build(t, "rw_args", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { var n = args().len(); match (write_file(\"out.txt\", s)) { Some(e) => { return 2; }, None => {} } return n - n; }, Err(e) => { return 1; } } }\n")
+		d5 := mkdir(t)
+		if ec := exec.Command(wasmtime, "run", "--dir", d5+"::/", rwArgs, "x", "y").Run(); ec != nil {
+			t.Fatalf("rw+args: run failed: %v", ec)
+		}
+		if got, _ := os.ReadFile(filepath.Join(d5, "out.txt")); string(got) != "DATA" {
+			t.Errorf("rw+args: out.txt = %q, want %q", string(got), "DATA")
+		}
+	})
+
 	t.Run("wasm-component-rejects-unsupported", func(t *testing.T) {
 		// A program mixing two WASI categories (env + args) has no single
 		// wrap yet, so it must be rejected with a clear error rather than

@@ -5993,8 +5993,9 @@ pub function component_shape(mod: parser.Module): i32 {
     var clkm: boolean = module_calls(mod, "monotonic_ns");
     var ep: boolean = module_calls(mod, "eprint");
     var ex: boolean = module_calls(mod, "exit");
-    // Count distinct non-stdout WASI categories; only single-category programs
-    // have a wrapped wasi:cli/run shape (combinations are a follow-up).
+    // Count distinct non-stdout WASI categories. Single-category programs and
+    // a fixed set of two-category fs-paired combos have a wrapped wasi:cli/run
+    // shape; anything else is rejected.
     var cats: i32 = 0;
     if (rd || wr) { cats = cats + 1; }
     if (env) { cats = cats + 1; }
@@ -6003,10 +6004,25 @@ pub function component_shape(mod: parser.Module): i32 {
     if (clkw || clkm) { cats = cats + 1; }
     if (ep) { cats = cats + 1; }
     if (ex) { cats = cats + 1; }
-    if (cats > 1) { return 0 - 1; }
+    if (cats > 2) { return 0 - 1; }
     if (cats == 0) {
         if (io) { return 1; }
         return 0;
+    }
+    if (cats == 2) {
+        // Only specific fs-paired two-category combos have a single wrap.
+        if ((rd || wr) && env) {
+            if (rd && wr) { return 11; }   // fs read+write + env
+            if (rd) { return 10; }          // fs read + env
+            return 0 - 1;                   // write-only + env: no wrap
+        }
+        if ((rd || wr) && args) {
+            if (rd && wr) { return 16; }   // fs read+write + args
+            if (rd) { return 15; }          // fs read + args
+            return 0 - 1;
+        }
+        if (rnd && wr && !rd) { return 12; } // random + fs write
+        return 0 - 1;
     }
     if (rd || wr) {
         if (rd && wr) { return 4; }

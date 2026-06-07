@@ -1524,7 +1524,7 @@ pub function component_full_io_clock_mono(core: i32[]): i32[] {
 // native. Exports `_lang_run` + `cabi_realloc` (env + fs lists).
 
 
-function component_full_io_fs_read_env(core: i32[]): i32[] {
+pub function component_full_io_fs_read_env(core: i32[]): i32[] {
     var o: i32[] = io_fs_read_head();
     o = wcat(o, blob_to_bytes(tb_fsread_env_tail()));
     o = wcat(o, wsection(1, core));
@@ -1542,7 +1542,7 @@ function component_full_io_fs_read_env(core: i32[]): i32[] {
 // byte-identically to native. Exports `_lang_run` + `cabi_realloc`.
 
 
-function component_full_io_fs_rw_env(core: i32[]): i32[] {
+pub function component_full_io_fs_rw_env(core: i32[]): i32[] {
     var o: i32[] = io_fs_rw_head();
     o = wcat(o, blob_to_bytes(tb_fsrw_env_tail()));
     o = wcat(o, wsection(1, core));
@@ -1560,7 +1560,7 @@ function component_full_io_fs_rw_env(core: i32[]): i32[] {
 // to native. Exports `_lang_run` + `cabi_realloc` (fs lists).
 
 
-function component_full_io_random_write(core: i32[]): i32[] {
+pub function component_full_io_random_write(core: i32[]): i32[] {
     var o: i32[] = io_fs_write_head();
     o = wcat(o, blob_to_bytes(tb_fswrite_random_tail()));
     o = wcat(o, wsection(1, core));
@@ -1611,7 +1611,7 @@ pub function component_full_io_exit(core: i32[]): i32[] {
 // Exports `_lang_run` + `cabi_realloc` (args + fs lists).
 
 
-function component_full_io_fs_args_read(core: i32[]): i32[] {
+pub function component_full_io_fs_args_read(core: i32[]): i32[] {
     var o: i32[] = io_fs_read_head();
     o = wcat(o, blob_to_bytes(tb_fsread_args_tail()));
     o = wcat(o, wsection(1, core));
@@ -1628,7 +1628,7 @@ function component_full_io_fs_args_read(core: i32[]): i32[] {
 
 function tb_fsrw_args_tail(): string { return "\x07\x1d\x01\x42\x03\x01\x70\x73\x01\x40\x00\x00\x00\x04\x00\x0d\x67\x65\x74\x2d\x61\x72\x67\x75\x6d\x65\x6e\x74\x73\x01\x01\x0a\x1f\x01\x00\x1a\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x40\x30\x2e\x32\x2e\x30\x05\x09"; }
 
-function component_full_io_fs_rw_args(core: i32[]): i32[] {
+pub function component_full_io_fs_rw_args(core: i32[]): i32[] {
     var o: i32[] = io_fs_rw_head();
     o = wcat(o, blob_to_bytes(tb_fsrw_args_tail()));
     o = wcat(o, wsection(1, core));

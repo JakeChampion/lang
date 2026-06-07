@@ -63,9 +63,26 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   mangling, `arr[i] += y` compound assignment, C-style `enum`
   constants (`Color.Green` → a variant box, reusing struct-union `match`),
   void-function statement calls, short-circuit `&&` / `||`, and nested
-  closures. The full core language is supported. Remaining for
-  wasm is packaging, not language: the `wasi:cli/run` / `wasi:http`
-  component shapes, and binary wasm encoding (it emits WAT text today).
+  closures. The full core language is supported.
+
+  **Update (wasm packaging — now wired into the unified `fern` CLI).** What
+  this section called "remaining for wasm" is largely done:
+  - `fern -target wasm-bin` emits a runnable **binary** `.wasm` (the
+    self-hosted WAT→binary assembler, `watbin.fern`), not WAT text.
+  - `fern -target wasm-component` emits a **Component-Model** `wasi:cli/run`
+    component, auto-selecting the framing from the program's WASI usage:
+    no-I/O, stdout, filesystem (read / write / read+write), random, env,
+    args, clock (wall / monotonic), stderr, exit, and the fs-paired
+    two-category combos (fs+env, fs+args, random+write). Programs whose WASI
+    combination has no wrap yet are rejected with a clear error rather than
+    emitting a broken component. This covers **every wasi:cli/run shape the
+    self-host emit supports**.
+
+    The one wasm shape still missing is **`wasi:http/incoming-handler`**
+    (the native `-target wasi-http`): it needs a new self-host core emitter
+    that lowers the request/response **resource handles** — which builds on
+    the in-progress own/borrow resource-handle work — so it's deferred until
+    that lands.
 
 ---
 
@@ -864,11 +881,47 @@ smallest → largest:
     the track: a Fern program assembles `exit(42)` to machine code,
     wraps it with `elf.fern`, and the binary **runs natively on x86-64**
     (exit 42) — no external assembler or linker.
-  - ⬜ remaining: the full integer ALU + memory (ModR/M memory forms,
-    SIB, disp8/32), control flow (jmp/jcc/call + rel32 relocation
-    against `elf_text_vaddr`), SSE + x87 floats, `.rodata` + rip-relative
-    symbol addressing, and the text parser (`asm.fern` GAS text → these
-    encoders).
+  - ✅ **slice 2b — immediate ALU + control flow**: `add`/`sub`/`cmp
+    r64, imm32` (group-1 `0x81 /digit`), `cmp r64, r64`, and near
+    branches `jcc`/`jmp rel32` (`0F 8x` / `0xE9`) with the rel32 math
+    helper `x86_branch_rel`. Byte-checked against `as`/objdump
+    (`TestSelfHostX86Encode`) and gated end-to-end by
+    `TestSelfHostX86LoopRuns`: a Fern program assembles a real loop
+    (acc=0; repeat 7×: acc += 6; exit(acc)) with a backward `jne`, and
+    the binary **runs natively** exiting 42. Backward branches resolve
+    directly (target known); forward branches still await the label
+    table (next slice).
+  - ✅ **slice 2c — forward references + `call`**: `call rel32` (`0xE8`)
+    and `x86_patch_rel32` — emit a branch with a placeholder rel32, record
+    its field offset, and patch it once the target is known (`x86_rel_to`
+    does the `target - (patch_off + 4)` math). Built on the self-host's
+    array element-assignment (`buf[i] = v`); this is the mechanism the
+    text assembler's label table will sit on. Byte-checked
+    (`TestSelfHostX86Encode`) plus two end-to-end native runs:
+    `TestSelfHostX86MaxRuns` (forward `jge` over an else-arm → max(42,17))
+    and `TestSelfHostX86CallRuns` (forward `call` to a later subroutine +
+    `ret`).
+  - ✅ **slice 2d — named-label assembler**: an `X86Asm` struct (code
+    buffer + parallel label name/offset arrays + a forward-fixup list) with
+    `x86_label` / `x86_jcc_label` / `x86_jmp_label` / `x86_call_label` /
+    `x86_resolve`. Branches name a label; backward targets patch
+    immediately, forward ones queue and `x86_resolve` patches them via
+    `x86_patch_rel32`. This is the API the GAS-text parser will call
+    instead of hand bookkeeping. Byte-checked (`TestSelfHostX86Labels`:
+    forward/backward branch + call + lookup) and run end-to-end
+    (`TestSelfHostX86LabelProgramRuns`: a two-routine program — `main`
+    calls `compute`, which loops to 42 and returns — assembled entirely
+    through the label API, runs natively exiting 42).
+  - ✅ **slice 2e — memory operands**: `mov r64, [base+disp]` /
+    `mov [base+disp], r64` (`0x8B`/`0x89` /r) via `x86_emit_mem` + `x86_sib`,
+    handling the mod 00/01/10 disp sizing and the two special cases —
+    `rsp` (SIB escape) and `rbp` (no mod=00 form, so `[rbp]` is mod=01
+    disp8=0). Byte-checked (`TestSelfHostX86Encode`) and run end-to-end
+    (`TestSelfHostX86FrameRuns`: a stack-frame round-trip — store 42 to
+    `[rbp-8]`, clobber, reload, exit — runs natively exiting 42).
+  - ⬜ remaining: SSE + x87 floats, `.rodata` + rip-relative symbol
+    addressing, and the text parser (`asm.fern` GAS text → these encoders
+    + the label API).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
