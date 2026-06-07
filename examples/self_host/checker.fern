@@ -2725,6 +2725,48 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
     return out;
 }
 
+// is_collection_mutator names the value-returning collection methods whose
+// result must be used — the immutable-looking vocabulary
+// (docs/PURE-COLLECTION-API-PLAN.md §3a). Mirrors the Go checker's
+// pureCollectionMutators set.
+function is_collection_mutator(field: string): boolean {
+    return field == "insert" || field == "without" || field == "cleared"
+        || field == "with" || field == "append";
+}
+
+// e055_diag reports E055 when a bare statement is a value-returning collection
+// mutator whose result is discarded (`m.insert(k, v);`, `arr.append(x);`, …).
+// Under CoW that silently loses the write the moment an alias exists
+// (docs/PURE-COLLECTION-API-PLAN.md §1); the result must be threaded back
+// (`m = m.insert(k, v)`) or explicitly dropped (`var _ = …`). Only fires when
+// the receiver is a Map or array, so a user method that happens to share the
+// name (e.g. HeaderMap.append) is left alone — matching the Go checker's
+// narrow scope.
+function e055_diag(e: parser.Expr, s: Scope): Diag[] {
+    var none: Diag[] = [];
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (!is_collection_mutator(fa.field)) { return none; }
+                    var is_coll: boolean = false;
+                    match (check_expr(fa.obj, s)) {
+                        TypeMap(_) => { is_coll = true; },
+                        TypeArray(_) => { is_coll = true; },
+                        _ => { }
+                    }
+                    if (!is_coll) { return none; }
+                    var d: Diag[] = [dg_at("E055", "result of `." + fa.field + "(...)` is unused; assign it back (e.g. `x = x." + fa.field + "(...)`) — collection operations return a new value, they do not mutate in place", fa.line, fa.col)];
+                    return d;
+                },
+                _ => { return none; }
+            }
+        },
+        _ => { return none; }
+    }
+    return none;
+}
+
 // stmts_call_diags walks a statement list, threading scope (so a callee
 // name shadowed by a local `var` is recognised as a local, not the
 // function) and collecting the E004s from every expression.
@@ -2759,7 +2801,10 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                 out = append_diags(out, call_diags(v.init, vsc));
             },
             parser.StmtReturn(r) => { out = append_diags(out, call_diags(r.value, cur)); },
-            parser.StmtExpr(x) => { out = append_diags(out, call_diags(x.value, cur)); },
+            parser.StmtExpr(x) => {
+                out = append_diags(out, call_diags(x.value, cur));
+                out = append_diags(out, e055_diag(x.value, cur));
+            },
             parser.StmtAssign(a) => { out = append_diags(out, call_diags(a.value, cur)); },
             parser.StmtIf(f) => {
                 out = append_diags(out, call_diags(f.cond, cur));

@@ -70,6 +70,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E050": true, // use of an owned parameter after it was consumed (move)
 	"E051": true, // argument to an owned parameter must be an owned value
 	"E049": true, // assignment to a reference-typed closure capture
+	"E055": true, // discarded result of a value-returning collection mutator
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -422,6 +423,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A struct-union member still binds the whole struct (no `__ev`), so
 		// field access on it stays clean.
 		{"struct-union-member-field-ok", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, B(b) => { return b.y; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", nil},
+
+		// E055: a bare value-returning collection mutator discards its result.
+		{"unused-append-result", "function main(): i32 { var a: i32[] = [1]; a.append(2); return a[0]; }\n", []string{"E055"}},
+		{"append-reassigned-ok", "function main(): i32 { var a: i32[] = [1]; a = a.append(2); return a[0]; }\n", nil},
+		{"append-result-used-ok", "function main(): i32 { var a: i32[] = [1]; return a.append(2)[0]; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
