@@ -142,7 +142,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		{"else_if_chain", "function main(): i32 { var x: i32 = 2; if (x == 1) { return 10; } else if (x == 2) { return 20; } else { return 30; } }", 20},
 		{"for_in", "function main(): i32 { var a: i32[] = [1, 2, 3, 4]; var s: i32 = 0; for x in a { s = s + x; } return s; }", 10},
 		{"struct_param", "struct Pt { x: i32, y: i32 } function dist(p: Pt): i32 { return p.x + p.y; } function main(): i32 { var p: Pt = Pt { x: 15, y: 27 }; return dist(p); }", 42},
-		{"array_of_structs", "struct C { n: i32 } function main(): i32 { var arr: C[] = []; arr = arr.push(C { n: 5 }); arr = arr.push(C { n: 9 }); return arr[1].n; }", 9},
+		{"array_of_structs", "struct C { n: i32 } function main(): i32 { var arr: C[] = []; arr = arr.append(C { n: 5 }); arr = arr.append(C { n: 9 }); return arr[1].n; }", 9},
 		{"nested_match", "type T = A | B; struct A { v: i32 } struct B { v: i32 } function k(t: T): i32 { match (t) { A(a) => { match (a.v) { _ => { return a.v * 2; } } }, B(b) => { return b.v; } } return 0; } function main(): i32 { var t: T = A { v: 21 }; return k(t); }", 42},
 	}
 	for _, c := range cases {

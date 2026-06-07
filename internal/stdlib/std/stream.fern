@@ -84,7 +84,7 @@ pub function (s: Stream) read_all(): (u8[], Stream) {
     var i: i32 = s.pos;
     var end: i32 = s.data.len();
     while (i < end) {
-        out = out.push(s.data[i]);
+        out = out.append(s.data[i]);
         i = i + 1;
     }
     return (out, Stream { ...s, pos: end });
@@ -142,7 +142,7 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
     var end: i32 = pos + n;
     if (end > s.data.len()) { end = s.data.len(); }
     while (pos < end) {
-        out = out.push(s.data[pos]);
+        out = out.append(s.data[pos]);
         pos = pos + 1;
     }
     return (out, Stream { ...s, pos: pos });
@@ -170,7 +170,7 @@ pub function (s: Stream) read_line(): (Option[string], Stream) {
                     var stripped: u8[] = [];
                     var i: i32 = 0;
                     while (i < n - 1) {
-                        stripped = stripped.push(line_bytes[i]);
+                        stripped = stripped.append(line_bytes[i]);
                         i = i + 1;
                     }
                     return (Some(string_from_bytes(stripped)), Stream { ...s, pos: pos });
@@ -178,7 +178,7 @@ pub function (s: Stream) read_line(): (Option[string], Stream) {
             }
             return (Some(string_from_bytes(line_bytes)), Stream { ...s, pos: pos });
         }
-        line_bytes = line_bytes.push(b as u8);
+        line_bytes = line_bytes.append(b as u8);
     }
     return (Some(string_from_bytes(line_bytes)), Stream { ...s, pos: pos });
 }

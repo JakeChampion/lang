@@ -295,7 +295,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -564,7 +564,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -820,7 +820,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_fs(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -1088,7 +1088,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_fs_write(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -1365,7 +1365,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_fs_rw(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -1616,7 +1616,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_random(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -1860,7 +1860,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_env(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -2104,7 +2104,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_args(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -2338,7 +2338,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_clock(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -2574,7 +2574,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_clock_mono(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -2805,7 +2805,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_fs_read_env(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -3052,7 +3052,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_fs_rw_env(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -3293,7 +3293,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_random_write(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -3529,7 +3529,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_eprint(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -3778,7 +3778,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_exit(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -4023,7 +4023,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_fs_args_read(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -4272,7 +4272,7 @@ function main(): i32 {
         Ok(s) => {
             var core: i32[] = [];
             var i: i32 = 0;
-            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            while (i < s.len()) { core = core.append(s[i]); i = i + 1; }
             var comp: i32[] = component_full_io_fs_rw_args(core);
             var j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }

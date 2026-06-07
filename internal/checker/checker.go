@@ -1374,7 +1374,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// breakage. The mutable-looking names (`set`/`delete`/`clear`) stay
 	// for now; a later slice marks them deprecated and eventually
 	// removes them once call sites have migrated.
-	c.info.Methods["Map.insert"] = "__method_Map_set"    // m.insert(k, v) — value-returning set
+	c.info.Methods["Map.insert"] = "__method_Map_set"     // m.insert(k, v) — value-returning set
 	c.info.Methods["Map.without"] = "__method_Map_delete" // m.without(k) — value-returning delete
 	c.info.Methods["Map.cleared"] = "__method_Map_clear"  // m.cleared() — value-returning clear
 
@@ -1419,6 +1419,20 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// the Map alias note above — purely additive, no IR change.
 	c.info.Methods["Array.append"] = "__method_Array_push" // arr.append(x) — value-returning push
 	c.info.Methods["Array.with"] = "__method_Array_set"    // arr.with(i, v) — value-returning element set
+	// Remove the mutable-looking spellings (docs/PURE-COLLECTION-API-PLAN.md
+	// §3a, "hard removal" step). The value-returning aliases above
+	// (insert / without / cleared / with) are now the ONLY public names;
+	// the mangled lowerings (__method_Map_set / _delete / _clear /
+	// __method_Array_set) stay — the aliases resolve to them — so this
+	// only deletes the user-facing names, with zero IR change. `arr[i] = v`
+	// still lowers through __method_Array_set via the desugar; only the
+	// `arr.set(i, v)` *method* spelling is withdrawn (use `arr.with`);
+	// `arr.push(x)` is withdrawn (use `arr.append`).
+	delete(c.info.Methods, "Map.set")
+	delete(c.info.Methods, "Map.delete")
+	delete(c.info.Methods, "Map.clear")
+	delete(c.info.Methods, "Array.set")
+	delete(c.info.Methods, "Array.push")
 	// `arr.len()` — like push, the IR intercepts the rewritten
 	// `__method_Array_len(arr)` call and inlines the [ptr - 4]
 	// length-prefix load. One generic signature covers every

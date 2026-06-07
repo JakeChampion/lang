@@ -347,8 +347,8 @@ function new_scope_full(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
-    var ns: string[] = s.names.push(name);
-    var ts: Type[] = s.types.push(t);
+    var ns: string[] = s.names.append(name);
+    var ts: Type[] = s.types.append(t);
     return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type };
 }
 
@@ -813,7 +813,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             if (is_method) {
                 match (recv_ty) {
                     TypeMap(mt) => {
-                        if (name == "set" || name == "insert") {
+                        if (name == "insert") {
                             if (c.args.len() != 2) { return t_unknown("map.set: 2 args"); }
                             return recv_ty;
                         }
@@ -825,7 +825,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                             if (c.args.len() != 1) { return t_unknown("map.has: 1 arg"); }
                             return t_bool();
                         }
-                        if (name == "delete" || name == "without") {
+                        if (name == "without") {
                             if (c.args.len() != 1) { return t_unknown("map.delete: 1 arg"); }
                             return t_tuple([recv_ty, t_bool()]);
                         }
@@ -898,7 +898,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             var elems: Type[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) {
-                elems = elems.push(check_expr(t.elements[i], s));
+                elems = elems.append(check_expr(t.elements[i], s));
                 i = i + 1;
             }
             return t_tuple(elems);
@@ -1045,7 +1045,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             var pts: Type[] = [];
             var pi: i32 = 0;
             while (pi < lm.params.len()) {
-                pts = pts.push(type_from_name_with_structs_unions(lm.params[pi].type_name, s.structs, s.unions));
+                pts = pts.append(type_from_name_with_structs_unions(lm.params[pi].type_name, s.structs, s.unions));
                 pi = pi + 1;
             }
             var rt: Type = type_from_name_with_structs_unions(lm.ret_type, s.structs, s.unions);
@@ -1323,7 +1323,7 @@ function check_program(prog: parser.Stmt[]): ProgramTypes {
     while (i < prog.len()) {
         var r: CheckResult = check_stmt(prog[i], s);
         s = r.scope;
-        tys = tys.push(r.ty);
+        tys = tys.append(r.ty);
         i = i + 1;
     }
     return ProgramTypes { tys: tys };
@@ -1344,10 +1344,10 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
         var pts: Type[] = [];
         var j: i32 = 0;
         while (j < fd.params.len()) {
-            pts = pts.push(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
+            pts = pts.append(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
             j = j + 1;
         }
-        out = out.push(FuncSig {
+        out = out.append(FuncSig {
             name: fd.name,
             param_types: pts,
             ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions),
@@ -1371,10 +1371,10 @@ function collect_method_sigs(funcs: parser.FuncDecl[], structs: StructSig[], uni
             var pts: Type[] = [];
             var j: i32 = 0;
             while (j < fd.params.len()) {
-                pts = pts.push(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
+                pts = pts.append(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
                 j = j + 1;
             }
-            out = out.push(MethodSig {
+            out = out.append(MethodSig {
                 name: fd.name,
                 receiver_type: fd.receiver_type,
                 param_types: pts,
@@ -1399,7 +1399,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
     var names: string[] = [];
     var i: i32 = 0;
     while (i < structs.len()) {
-        names = names.push(structs[i].name);
+        names = names.append(structs[i].name);
         i = i + 1;
     }
     // Second pass: resolve fields with the full name set
@@ -1414,11 +1414,11 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
         var ftypes: Type[] = [];
         var j: i32 = 0;
         while (j < sd.fields.len()) {
-            fnames = fnames.push(sd.fields[j].name);
-            ftypes = ftypes.push(type_from_name_with_names_and_unions(sd.fields[j].type_name, names, union_names));
+            fnames = fnames.append(sd.fields[j].name);
+            ftypes = ftypes.append(type_from_name_with_names_and_unions(sd.fields[j].type_name, names, union_names));
             j = j + 1;
         }
-        out = out.push(StructSig { name: sd.name, field_names: fnames, field_types: ftypes });
+        out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes });
         k = k + 1;
     }
     return out;
@@ -1578,7 +1578,7 @@ function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[])
             k = k + 1;
         }
         if (!dup) {
-            out = out.push(UnionSig { name: a.name, variants: a.variants });
+            out = out.append(UnionSig { name: a.name, variants: a.variants });
         }
         i = i + 1;
     }
@@ -1672,7 +1672,7 @@ function type_label(t: Type): string {
 // append_diags concatenates two diagnostic lists.
 function append_diags(a: Diag[], b: Diag[]): Diag[] {
     var i: i32 = 0;
-    while (i < b.len()) { a = a.push(b[i]); i = i + 1; }
+    while (i < b.len()) { a = a.append(b[i]); i = i + 1; }
     return a;
 }
 
@@ -1703,11 +1703,11 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
                     _ => { }
                 }
                 if (bare) {
-                    out = out.push(dg_at("E012", "return without value in function returning " + type_label(ret_ty), r.line, r.col));
+                    out = out.append(dg_at("E012", "return without value in function returning " + type_label(ret_ty), r.line, r.col));
                 } else {
                     var t: Type = check_expr(r.value, cur);
                     if (!is_unknown(t) && !type_assignable(t, ret_ty, unions)) {
-                        out = out.push(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t), r.line, r.col));
+                        out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t), r.line, r.col));
                     }
                 }
             },
@@ -1778,7 +1778,7 @@ function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
                     var d: i32 = 0;
                     while (d < ssig.field_names.len()) {
                         if (!name_in(sl.field_names, ssig.field_names[d])) {
-                            out = out.push(dg_at("E005", "struct literal missing field \"" + ssig.field_names[d] + "\"", sl.line, sl.col));
+                            out = out.append(dg_at("E005", "struct literal missing field \"" + ssig.field_names[d] + "\"", sl.line, sl.col));
                         }
                         d = d + 1;
                     }
@@ -1903,10 +1903,10 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtBreak(bk) => {
-                if (!in_loop) { out = out.push(dg_at("E011", "break outside of a loop or switch", bk.line, bk.col)); }
+                if (!in_loop) { out = out.append(dg_at("E011", "break outside of a loop or switch", bk.line, bk.col)); }
             },
             parser.StmtContinue(ck) => {
-                if (!in_loop) { out = out.push(dg_at("E011", "continue outside of a loop", ck.line, ck.col)); }
+                if (!in_loop) { out = out.append(dg_at("E011", "continue outside of a loop", ck.line, ck.col)); }
             },
             parser.StmtWhile(w) => { out = append_diags(out, loop_diags(w.body, true)); },
             parser.StmtFor(fr) => { out = append_diags(out, loop_diags(fr.body, true)); },
@@ -2014,7 +2014,7 @@ function type_arity_diag(t: string, structs: parser.StructDecl[]): Diag[] {
     if (nargs >= 0) {
         var tpc: i32 = struct_type_param_count(structs, type_base(t));
         if (tpc >= 0 && nargs != tpc) {
-            out = out.push(dg_at("E019", "struct " + type_base(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied", struct_decl_line(structs, type_base(t)), struct_decl_col(structs, type_base(t))));
+            out = out.append(dg_at("E019", "struct " + type_base(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied", struct_decl_line(structs, type_base(t)), struct_decl_col(structs, type_base(t))));
         }
     }
     return out;
@@ -2055,15 +2055,15 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
                     match (m.arms[a].pattern) {
                         parser.PatWildcard(_) => {
                             if (a < m.arms.len() - 1) {
-                                out = out.push(dg_at("E026", "wildcard `_` arm must be last in the match", m.arms[a].line, m.arms[a].col));
+                                out = out.append(dg_at("E026", "wildcard `_` arm must be last in the match", m.arms[a].line, m.arms[a].col));
                             }
                         },
                         parser.PatVariant(pv) => {
                             if (pv.type_name.len() > 0) {
                                 if (name_in(seen, pv.type_name)) {
-                                    out = out.push(dg_at("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
+                                    out = out.append(dg_at("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
                                 } else {
-                                    seen = seen.push(pv.type_name);
+                                    seen = seen.append(pv.type_name);
                                 }
                                 // E015: payload-binding arity. A known variant's
                                 // binding count must equal its payload count.
@@ -2072,7 +2072,7 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
                                     var nb: i32 = pv.extra_bindings.len();
                                     if (pv.binding.len() > 0) { nb = nb + 1; }
                                     if (nb != pc) {
-                                        out = out.push(dg_at("E015", "variant " + pv.type_name + " has " + itoa_nn(pc) + " payload(s), got " + itoa_nn(nb) + " binding(s)", m.arms[a].line, m.arms[a].col));
+                                        out = out.append(dg_at("E015", "variant " + pv.type_name + " has " + itoa_nn(pc) + " payload(s), got " + itoa_nn(nb) + " binding(s)", m.arms[a].line, m.arms[a].col));
                                     }
                                 }
                             }
@@ -2133,15 +2133,15 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (name_in(declared, v.name)) {
-                    out = out.push(dg_at("E013", "variable \"" + v.name + "\" already declared in this scope", v.line, v.col));
+                    out = out.append(dg_at("E013", "variable \"" + v.name + "\" already declared in this scope", v.line, v.col));
                 } else {
-                    declared = declared.push(v.name);
+                    declared = declared.append(v.name);
                 }
                 if (v.type_name.len() == 0) {
                     match (v.init) {
                         parser.ExprArray(arr) => {
                             if (arr.elements.len() == 0) {
-                                out = out.push(dg_at("E020", "empty array literal needs a type annotation", v.line, v.col));
+                                out = out.append(dg_at("E020", "empty array literal needs a type annotation", v.line, v.col));
                             }
                         },
                         _ => { }
@@ -2153,7 +2153,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
                     match (v.init) {
                         parser.ExprNumber(num) => {
                             if (!num.is_float && num.suffix.len() == 0 && !digits_fit_i32(num.text)) {
-                                out = out.push(dg_at("E047", "literal " + num.text + " does not fit in i32", num.line, num.col));
+                                out = out.append(dg_at("E047", "literal " + num.text + " does not fit in i32", num.line, num.col));
                             }
                         },
                         _ => { }
@@ -2221,7 +2221,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     // intrinsic (`__`-prefixed), or a builtin function — is an
                     // undefined call, reported at the callee.
                     if (!is_resolvable_callee(cid.name, s)) {
-                        out = out.push(dg_at("E001", "undefined function \"" + cid.name + "\"", cid.line, cid.col));
+                        out = out.append(dg_at("E001", "undefined function \"" + cid.name + "\"", cid.line, cid.col));
                     }
                 },
                 _ => { out = call_diags(c.callee, s); }
@@ -2245,7 +2245,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                             parser.ExprString(fs) => { fld = fs.value; },
                             _ => { }
                         }
-                        out = out.push(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
+                        out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
                     }
                     if (is_unknown(s.lookup(id.name))) {
                         var sig: FuncSig = s.lookup_sig(id.name);
@@ -2257,11 +2257,11 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         // relies on inference, and type args on a non-generic
                         // function are ignored (matching the Go checker).
                         if (sig.name.len() > 0 && sig.type_param_count > 0 && c.type_argc > 0 && c.type_argc != sig.type_param_count) {
-                            out = out.push(dg_at("E040", id.name + " expects " + itoa_nn(sig.type_param_count) + " type argument(s), got " + itoa_nn(c.type_argc), c.line, c.col));
+                            out = out.append(dg_at("E040", id.name + " expects " + itoa_nn(sig.type_param_count) + " type argument(s), got " + itoa_nn(c.type_argc), c.line, c.col));
                         }
                         if (sig.name.len() > 0) {
                             if (c.args.len() != sig.param_types.len()) {
-                                out = out.push(dg_at("E004", "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()), c.line, c.col));
+                                out = out.append(dg_at("E004", "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()), c.line, c.col));
                             } else {
                                 // E038: per-argument type mismatch (only when
                                 // the arity matches, so indices line up).
@@ -2274,7 +2274,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                     // it, so skip rather than mis-flag E038. (An
                                     // unknown ARG is already skipped above.)
                                     if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !type_assignable(at, sig.param_types[ai], s.unions)) {
-                                        out = out.push(dg_at("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
+                                        out = out.append(dg_at("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
                                     }
                                     ai = ai + 1;
                                 }
@@ -2297,7 +2297,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                             var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
                             if (msig.name.len() > 0) {
                                 if (c.args.len() != msig.param_types.len()) {
-                                    out = out.push(dg_at("E004", "method \"" + mfa.field + "\" expects " + itoa_nn(msig.param_types.len()) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
+                                    out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects " + itoa_nn(msig.param_types.len()) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
                                 } else {
                                     // E038: per-argument type mismatch on a
                                     // user-defined method. Now that
@@ -2313,7 +2313,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                         // Skip an opaque generic param type (see
                                         // the free-function E038 note above).
                                         if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
-                                            out = out.push(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
+                                            out = out.append(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                                         }
                                         mi = mi + 1;
                                     }
@@ -2332,11 +2332,11 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (b.op == "&&" || b.op == "||") {
                 var lt: Type = check_expr(b.left, s);
                 if (!is_unknown(lt) && !type_eq(lt, t_bool())) {
-                    out = out.push(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(lt), b.line, b.col));
+                    out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(lt), b.line, b.col));
                 }
                 var rt: Type = check_expr(b.right, s);
                 if (!is_unknown(rt) && !type_eq(rt, t_bool())) {
-                    out = out.push(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(rt), b.line, b.col));
+                    out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(rt), b.line, b.col));
                 }
             }
             // E041: `==` / `!=` require same-typed operands (the same rule
@@ -2346,7 +2346,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var elt: Type = check_expr(b.left, s);
                 var ert: Type = check_expr(b.right, s);
                 if (!is_unknown(elt) && !is_unknown(ert) && !type_eq(elt, ert)) {
-                    out = out.push(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
+                    out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
                 }
             }
             // E009: `+` is overloaded — both string (concat), both i32, or
@@ -2362,7 +2362,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var oki2: boolean = type_eq(pl, t_i32()) && type_eq(pr, t_i32());
                     var okf2: boolean = type_eq(pl, t_float()) && type_eq(pr, t_float());
                     if (!oks && !oki2 && !okf2) {
-                        out = out.push(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
+                        out = out.append(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
                     }
                 }
             }
@@ -2373,7 +2373,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var oki: boolean = type_eq(alt, t_i32()) && type_eq(art, t_i32());
                     var okf: boolean = b.op != "%" && type_eq(alt, t_float()) && type_eq(art, t_float());
                     if (!oki && !okf) {
-                        out = out.push(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art), b.line, b.col));
+                        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art), b.line, b.col));
                     }
                 }
             }
@@ -2384,7 +2384,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (u.op == "!") {
                 var ot: Type = check_expr(u.operand, s);
                 if (!is_unknown(ot) && !type_eq(ot, t_bool())) {
-                    out = out.push(dg_at("E009", "operator \"!\" requires boolean, got " + type_label(ot), u.line, u.col));
+                    out = out.append(dg_at("E009", "operator \"!\" requires boolean, got " + type_label(ot), u.line, u.col));
                 }
             }
             // E033: an invalid `as` cast. `x as T` desugars to the
@@ -2405,7 +2405,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var cot: Type = check_expr(u.operand, s);
                 if (is_primitive_type(tgt) && is_primitive_type(cot)) {
                     if (!as_cast_allowed(cot, tgt)) {
-                        out = out.push(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
+                        out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
                     }
                 }
             }
@@ -2419,7 +2419,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (u.op == "try_") {
                 var trt: Type = check_expr(u.operand, s);
                 if (is_primitive_type(trt)) {
-                    out = out.push(dg_at("E042", "`?` operator requires an Option or Result value, got " + type_label(trt), u.line, u.col));
+                    out = out.append(dg_at("E042", "`?` operator requires an Option or Result value, got " + type_label(trt), u.line, u.col));
                 }
             }
         },
@@ -2441,7 +2441,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     while (k < a.elements.len() && !flagged) {
                         var etk: Type = check_expr(a.elements[k], s);
                         if (is_primitive_type(etk) && !type_eq(etk, et0)) {
-                            out = out.push(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(et0), expr_line(a.elements[k]), expr_col(a.elements[k])));
+                            out = out.append(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(et0), expr_line(a.elements[k]), expr_col(a.elements[k])));
                             flagged = true;
                         }
                         k = k + 1;
@@ -2460,11 +2460,11 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // (`s[:]`, `s[a:]`) parses to an unknown placeholder — skip it.
             var sbt: Type = check_expr(s2.start, s);
             if (!is_unknown(sbt) && !type_eq(sbt, t_i32())) {
-                out = out.push(dg_at("E037", "slice low bound must be i32, got " + type_label(sbt), expr_line(s2.start), expr_col(s2.start)));
+                out = out.append(dg_at("E037", "slice low bound must be i32, got " + type_label(sbt), expr_line(s2.start), expr_col(s2.start)));
             }
             var ebt: Type = check_expr(s2.end, s);
             if (!is_unknown(ebt) && !type_eq(ebt, t_i32())) {
-                out = out.push(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
+                out = out.append(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
             }
         },
         parser.ExprFieldAccess(fa) => {
@@ -2480,16 +2480,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     if (fsig.name.len() > 0
                             && !name_in(fsig.field_names, fa.field)
                             && s.lookup_method(fa.field, sn.name).name.len() == 0) {
-                        out = out.push(dg_at("E043", "struct " + sn.name + " has no field \"" + fa.field + "\"", fa.line, fa.col));
+                        out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + fa.field + "\"", fa.line, fa.col));
                     }
                 },
                 TypeTuple(tt) => {
                     // E046: a tuple field must be a numeric index in range.
                     var idx: i32 = digit_string_to_i32(fa.field);
                     if (idx < 0) {
-                        out = out.push(dg_at("E046", "tuple field access requires a numeric index, got \"" + fa.field + "\"", fa.line, fa.col));
+                        out = out.append(dg_at("E046", "tuple field access requires a numeric index, got \"" + fa.field + "\"", fa.line, fa.col));
                     } else if (idx >= tt.elements.len()) {
-                        out = out.push(dg_at("E046", "tuple has " + itoa_nn(tt.elements.len()) + " elements; index " + itoa_nn(idx) + " is out of range", fa.line, fa.col));
+                        out = out.append(dg_at("E046", "tuple has " + itoa_nn(tt.elements.len()) + " elements; index " + itoa_nn(idx) + " is out of range", fa.line, fa.col));
                     }
                 },
                 _ => { }
@@ -2512,7 +2512,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         var ft: Type = ssig.field_types[fidx];
                         var vt: Type = check_expr(sl.field_values[fi], s);
                         if (!is_unknown(ft) && !is_unknown(vt) && !type_assignable(vt, ft, s.unions)) {
-                            out = out.push(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
+                            out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
                         }
                     }
                     fi = fi + 1;
@@ -2540,7 +2540,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // fires only on value reads, matching where the Go checker's
             // errIdent reports E001.
             if (!is_resolvable_value(id.name, s)) {
-                out = out.push(dg_at("E001", "undefined name \"" + id.name + "\"", id.line, id.col));
+                out = out.append(dg_at("E001", "undefined name \"" + id.name + "\"", id.line, id.col));
             }
         },
         _ => { }
@@ -2593,7 +2593,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                         match (m.arms[ea].pattern) {
                             parser.PatVariant(epv) => {
                                 if (epv.type_name.len() > 0 && epv.type_name != "true" && epv.type_name != "false") {
-                                    out = out.push(dg_at("E035", "match on non-enum value `" + type_label(mst) + "` only accepts literal patterns or `_`", m.arms[ea].line, m.arms[ea].col));
+                                    out = out.append(dg_at("E035", "match on non-enum value `" + type_label(mst) + "` only accepts literal patterns or `_`", m.arms[ea].line, m.arms[ea].col));
                                 }
                             },
                             _ => { }
@@ -2627,24 +2627,24 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                                 var cbare: string = cpv.type_name[cdp + 1:cpv.type_name.len()];
                                                 if (cqual == mun.name) {
                                                     // Correctly qualified — covers the bare variant.
-                                                    covered = covered.push(cbare);
+                                                    covered = covered.append(cbare);
                                                     if (!name_in(usig.variants, cbare)) {
-                                                        out = out.push(dg_at("E014", "variant \"" + cbare + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
+                                                        out = out.append(dg_at("E014", "variant \"" + cbare + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
                                                     }
                                                 } else if (cur.lookup_union(cqual).name.len() > 0) {
                                                     // E029: qualifier is a known enum/union, but
                                                     // not the scrutinee's.
-                                                    out = out.push(dg_at("E029", "variant pattern qualifier \"" + cqual + "\" does not match scrutinee enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
+                                                    out = out.append(dg_at("E029", "variant pattern qualifier \"" + cqual + "\" does not match scrutinee enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
                                                 }
                                                 // (unknown qualifier: Go reports a module-source
                                                 // mismatch this port doesn't model — left alone.)
                                             } else {
-                                                covered = covered.push(cpv.type_name);
+                                                covered = covered.append(cpv.type_name);
                                                 // E014: a variant pattern that names
                                                 // something outside the scrutinee's
                                                 // enum/union, reported at the arm.
                                                 if (!name_in(usig.variants, cpv.type_name)) {
-                                                    out = out.push(dg_at("E014", "variant \"" + cpv.type_name + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
+                                                    out = out.append(dg_at("E014", "variant \"" + cpv.type_name + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
                                                 }
                                             }
                                         }
@@ -2656,7 +2656,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                 var vi: i32 = 0;
                                 while (vi < usig.variants.len()) {
                                     if (!name_in(covered, usig.variants[vi])) {
-                                        out = out.push(dg_at("E030", "match is not exhaustive — variant " + usig.variants[vi] + " of enum " + mun.name + " is not covered (add an arm or use `_`)", m.line, m.col));
+                                        out = out.append(dg_at("E030", "match is not exhaustive — variant " + usig.variants[vi] + " of enum " + mun.name + " is not covered (add an arm or use `_`)", m.line, m.col));
                                     }
                                     vi = vi + 1;
                                 }
@@ -2704,7 +2704,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                     if (m.arms[a].has_guard) {
                         var gt: Type = check_expr(m.arms[a].guard, armScope);
                         if (!is_unknown(gt) && !type_eq(gt, t_bool())) {
-                            out = out.push(dg_at("E027", "match guard must be boolean, got " + type_label(gt), expr_line(m.arms[a].guard), expr_col(m.arms[a].guard)));
+                            out = out.append(dg_at("E027", "match guard must be boolean, got " + type_label(gt), expr_line(m.arms[a].guard), expr_col(m.arms[a].guard)));
                         }
                         out = append_diags(out, call_diags(m.arms[a].guard, armScope));
                     }
@@ -2753,7 +2753,7 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
                 if (name_in(enums[j].variant_names, vn[k])) { cnt = cnt + 1; }
                 j = j + 1;
             }
-            if (cnt >= 2 && !name_in(out, vn[k])) { out = out.push(vn[k]); }
+            if (cnt >= 2 && !name_in(out, vn[k])) { out = out.append(vn[k]); }
             k = k + 1;
         }
         i = i + 1;
@@ -2771,7 +2771,7 @@ function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): Diag[] {
     match (e) {
         parser.ExprIdent(id) => {
             if (name_in(ambig, id.name) && is_unknown(s.lookup(id.name))) {
-                out = out.push(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
+                out = out.append(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
             }
         },
         parser.ExprBinary(b) => { out = append_diags(vref_expr(b.left, s, ambig), vref_expr(b.right, s, ambig)); },
@@ -2866,7 +2866,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                     var declared: Type = type_from_name_with_structs_unions(v.type_name, cur.structs, cur.unions);
                     var initt: Type = check_expr(v.init, cur);
                     if (!is_unknown(declared) && !is_unknown(initt) && !type_assignable(initt, declared, unions)) {
-                        out = out.push(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared), v.line, v.col));
+                        out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared), v.line, v.col));
                     }
                 }
                 // E024: a tuple destructure `var (a, b) = E` (the parser
@@ -2881,12 +2881,12 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                     match (dit) {
                         TypeTuple(dtt) => {
                             if (dtt.elements.len() != nnames) {
-                                out = out.push(dg_at("E024", "tuple has " + itoa_nn(dtt.elements.len()) + " elements, but " + itoa_nn(nnames) + " names given", v.line, v.col));
+                                out = out.append(dg_at("E024", "tuple has " + itoa_nn(dtt.elements.len()) + " elements, but " + itoa_nn(nnames) + " names given", v.line, v.col));
                             }
                         },
                         TypeUnknown(_) => { },
                         _ => {
-                            out = out.push(dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(dit), v.line, v.col));
+                            out = out.append(dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(dit), v.line, v.col));
                         }
                     }
                 }
@@ -2901,19 +2901,19 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                     // variant / builtin to confuse it with, hence no
                     // allowlist needed. Reported at the `=` token (the
                     // assignment position the parser captured).
-                    out = out.push(dg_at("E001", "undefined name \"" + a.target + "\"", a.target_line, a.target_col));
+                    out = out.append(dg_at("E001", "undefined name \"" + a.target + "\"", a.target_line, a.target_col));
                 } else {
                     var tt: Type = cur.lookup(a.target);
                     var vt: Type = check_expr(a.value, cur);
                     if (!is_unknown(tt) && !is_unknown(vt) && !type_assignable(vt, tt, unions)) {
-                        out = out.push(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt), a.line, a.col));
+                        out = out.append(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt), a.line, a.col));
                     }
                 }
             },
             parser.StmtIf(f) => {
                 var ic: Type = check_expr(f.cond, cur);
                 if (!is_unknown(ic) && !type_eq(ic, t_bool())) {
-                    out = out.push(dg_at("E008", "if condition must be boolean, got " + type_label(ic), expr_line(f.cond), expr_col(f.cond)));
+                    out = out.append(dg_at("E008", "if condition must be boolean, got " + type_label(ic), expr_line(f.cond), expr_col(f.cond)));
                 }
                 out = append_diags(out, stmts_assign_diags(f.then_body, cur, unions));
                 out = append_diags(out, stmts_assign_diags(f.else_body, cur, unions));
@@ -2921,7 +2921,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
             parser.StmtWhile(w) => {
                 var wc: Type = check_expr(w.cond, cur);
                 if (!is_unknown(wc) && !type_eq(wc, t_bool())) {
-                    out = out.push(dg_at("E008", "while condition must be boolean, got " + type_label(wc), expr_line(w.cond), expr_col(w.cond)));
+                    out = out.append(dg_at("E008", "while condition must be boolean, got " + type_label(wc), expr_line(w.cond), expr_col(w.cond)));
                 }
                 out = append_diags(out, stmts_assign_diags(w.body, cur, unions));
             },
@@ -3073,11 +3073,11 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         var sd: parser.StructDecl = mod.structs[si];
         var fnames: string[] = [];
         var fi: i32 = 0;
-        while (fi < sd.fields.len()) { fnames = fnames.push(sd.fields[fi].name); fi = fi + 1; }
+        while (fi < sd.fields.len()) { fnames = fnames.append(sd.fields[fi].name); fi = fi + 1; }
         var fk: i32 = 0;
         while (fk < fnames.len()) {
             if (dup_name_before(fnames, fk)) {
-                out = out.push(dg_at("E007", "duplicate field \"" + fnames[fk] + "\" in struct " + sd.name, sd.line, sd.col));
+                out = out.append(dg_at("E007", "duplicate field \"" + fnames[fk] + "\" in struct " + sd.name, sd.line, sd.col));
             }
             fk = fk + 1;
         }
@@ -3089,11 +3089,11 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         var fd: parser.FuncDecl = mod.funcs[ui];
         var pnames: string[] = [];
         var pi: i32 = 0;
-        while (pi < fd.params.len()) { pnames = pnames.push(fd.params[pi].name); pi = pi + 1; }
+        while (pi < fd.params.len()) { pnames = pnames.append(fd.params[pi].name); pi = pi + 1; }
         var pk: i32 = 0;
         while (pk < pnames.len()) {
             if (dup_name_before(pnames, pk)) {
-                out = out.push(dg_at("E018", "duplicate parameter \"" + pnames[pk] + "\"", fd.line, fd.col));
+                out = out.append(dg_at("E018", "duplicate parameter \"" + pnames[pk] + "\"", fd.line, fd.col));
             }
             pk = pk + 1;
         }
@@ -3124,16 +3124,16 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         if (earlier) {
             if (f2.receiver_name.len() == 0) {
-                out = out.push(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
+                out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
             } else {
-                out = out.push(dg_at("E006", "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared", f2.line, f2.col));
+                out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared", f2.line, f2.col));
             }
         }
         // E021: a method whose receiver type isn't a known struct / enum /
         // union (or a primitive / generic / dyn receiver), reported at the
         // method declaration.
         if (f2.receiver_name.len() > 0 && !receiver_type_ok(f2.receiver_type, mod)) {
-            out = out.push(dg_at("E021", "method receiver references unknown struct \"" + strip_generic_args(f2.receiver_type) + "\"", f2.line, f2.col));
+            out = out.append(dg_at("E021", "method receiver references unknown struct \"" + strip_generic_args(f2.receiver_type) + "\"", f2.line, f2.col));
         }
         di = di + 1;
     }
@@ -3150,17 +3150,17 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
             ej2 = ej2 + 1;
         }
         if (edup) {
-            out = out.push(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
+            out = out.append(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
         }
         // E010: a user enum shadowing a reserved built-in enum name.
         if (is_reserved_enum_name(mod.enums[en].name)) {
-            out = out.push(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
+            out = out.append(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
         }
         var vn: string[] = mod.enums[en].variant_names;
         var vk: i32 = 0;
         while (vk < vn.len()) {
             if (dup_name_before(vn, vk)) {
-                out = out.push(dg_at("E017", "duplicate variant \"" + vn[vk] + "\" in enum " + mod.enums[en].name, mod.enums[en].line, mod.enums[en].col));
+                out = out.append(dg_at("E017", "duplicate variant \"" + vn[vk] + "\" in enum " + mod.enums[en].name, mod.enums[en].line, mod.enums[en].col));
             }
             vk = vk + 1;
         }
@@ -3181,7 +3181,7 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
             si016 = si016 + 1;
         }
         if (hit_struct) {
-            out = out.push(dg_at("E016", "union \"" + aname + "\" collides with a struct of the same name", mod.aliases[ai016].line, mod.aliases[ai016].col));
+            out = out.append(dg_at("E016", "union \"" + aname + "\" collides with a struct of the same name", mod.aliases[ai016].line, mod.aliases[ai016].col));
         }
         ai016 = ai016 + 1;
     }
@@ -3198,10 +3198,10 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
             var xfd: parser.FuncDecl = mod.funcs[xfj];
             if (xfd.name == ename) {
                 if (xfd.type_param_count > 0) {
-                    out = out.push(dg_at("E054", "@export function \"" + xfd.name + "\" cannot be generic (a world export has a single concrete ABI)", xfd.line, xfd.col));
+                    out = out.append(dg_at("E054", "@export function \"" + xfd.name + "\" cannot be generic (a world export has a single concrete ABI)", xfd.line, xfd.col));
                 }
                 if (xfd.receiver_name.len() > 0) {
-                    out = out.push(dg_at("E054", "@export cannot be applied to a method (\"" + xfd.name + "\"); use a top-level function", xfd.line, xfd.col));
+                    out = out.append(dg_at("E054", "@export cannot be applied to a method (\"" + xfd.name + "\"); use a top-level function", xfd.line, xfd.col));
                 }
             }
             xfj = xfj + 1;
@@ -3250,7 +3250,7 @@ function ow_moved_line(m: MovedEntry[], name: string): i32 {
 }
 function ow_moved_add(m: MovedEntry[], name: string, line: i32): MovedEntry[] {
     if (ow_moved_has(m, name)) { return m; }
-    return m.push(MovedEntry { mname: name, mline: line });
+    return m.append(MovedEntry { mname: name, mline: line });
 }
 // ow_moved_join merges a non-diverging branch's consumes into dst (first
 // consume wins). A diverging branch (returns on every path) never reaches
@@ -3318,7 +3318,7 @@ function ow_guard_call(c: parser.ExprCall, ctx: OwnCtx): Diag[] {
                 var i: i32 = 0;
                 while (i < c.args.len() && i < flags.len()) {
                     if (flags[i] && !ow_is_owned_expr(c.args[i], ctx)) {
-                        out = out.push(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one", c.line, c.col));
+                        out = out.append(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one", c.line, c.col));
                     }
                     i = i + 1;
                 }
@@ -3337,7 +3337,7 @@ function ru_borrow(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         parser.ExprIdent(id) => {
             var d: Diag[] = [];
             if (ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
-                d = d.push(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+                d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
             }
             return OwnWalk { moved: moved, diags: d };
         },
@@ -3355,7 +3355,7 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
             var m: MovedEntry[] = moved;
             if (ow_is_owned(ctx, id.name)) {
                 if (ow_moved_has(moved, id.name)) {
-                    d = d.push(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+                    d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + itoa_nn(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
                 } else {
                     m = ow_moved_add(moved, id.name, id.line);
                 }
@@ -3444,7 +3444,7 @@ function ow_loop(body: parser.Stmt[], moved: MovedEntry[], ctx: OwnCtx): Diag[] 
     while (i < r.moved.len()) {
         var nm: string = r.moved[i].mname;
         if (!ow_moved_has(moved, nm)) {
-            out = out.push(dg_at("E050", "owned parameter \"" + nm + "\" is consumed inside a loop; a later iteration would use it after move", r.moved[i].mline, 0));
+            out = out.append(dg_at("E050", "owned parameter \"" + nm + "\" is consumed inside a loop; a later iteration would use it after move", r.moved[i].mline, 0));
         }
         i = i + 1;
     }
@@ -3520,7 +3520,7 @@ function ow_stmts(stmts: parser.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWa
 function ow_moved_del(m: MovedEntry[], name: string): MovedEntry[] {
     var out: MovedEntry[] = [];
     var i: i32 = 0;
-    while (i < m.len()) { if (m[i].mname != name) { out = out.push(m[i]); } i = i + 1; }
+    while (i < m.len()) { if (m[i].mname != name) { out = out.append(m[i]); } i = i + 1; }
     return out;
 }
 
@@ -3535,12 +3535,12 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
         var j: i32 = 0;
         while (j < funcs[i].params.len()) {
             var o: boolean = funcs[i].params[j].own;
-            flags = flags.push(o);
+            flags = flags.append(o);
             if (o) { any_own = true; }
             j = j + 1;
         }
         if (any_own && funcs[i].receiver_name.len() == 0) {
-            out = out.push(OwnFunc { name: funcs[i].name, flags: flags });
+            out = out.append(OwnFunc { name: funcs[i].name, flags: flags });
         }
         i = i + 1;
     }
@@ -3560,7 +3560,7 @@ pub function own_diags(mod: parser.Module): Diag[] {
         var fn: parser.FuncDecl = mod.funcs[i];
         var owned: string[] = [];
         var p: i32 = 0;
-        while (p < fn.params.len()) { if (fn.params[p].own) { owned = owned.push(fn.params[p].name); } p = p + 1; }
+        while (p < fn.params.len()) { if (fn.params[p].own) { owned = owned.append(fn.params[p].name); } p = p + 1; }
         if (owned.len() > 0 || ofuncs.len() > 0) {
             var ctx: OwnCtx = OwnCtx { owned: owned, ofuncs: ofuncs, structs: mod.structs };
             var nomoved: MovedEntry[] = [];
@@ -3581,11 +3581,11 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // unknown. The full UnionSig table (with variants) still comes after.
     var alias_names: string[] = [];
     var an: i32 = 0;
-    while (an < mod.aliases.len()) { alias_names = alias_names.push(mod.aliases[an].name); an = an + 1; }
+    while (an < mod.aliases.len()) { alias_names = alias_names.append(mod.aliases[an].name); an = an + 1; }
     var structs: StructSig[] = collect_struct_sigs(mod.structs, alias_names);
     var struct_names: string[] = [];
     var sn: i32 = 0;
-    while (sn < structs.len()) { struct_names = struct_names.push(structs[sn].name); sn = sn + 1; }
+    while (sn < structs.len()) { struct_names = struct_names.append(structs[sn].name); sn = sn + 1; }
     var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
     // Register enum decls as union sigs (variants = variant names) so an
     // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
@@ -3595,7 +3595,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // exhaustiveness for user / corpus enum matches.
     var een: i32 = 0;
     while (een < mod.enums.len()) {
-        unions = unions.push(UnionSig { name: mod.enums[een].name, variants: mod.enums[een].variant_names });
+        unions = unions.append(UnionSig { name: mod.enums[een].name, variants: mod.enums[een].variant_names });
         een = een + 1;
     }
     var well_typed: boolean = true;
@@ -3615,7 +3615,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
             // E052: a non-void function whose body can fall off the end
             // without returning, reported at the function declaration.
             if (!block_exits(mod.funcs[i].body)) {
-                body_diags = body_diags.push(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
+                body_diags = body_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
             }
         }
         // E005: struct literal missing a declared field (any expression in
@@ -3653,7 +3653,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         var r: CheckResult = check_stmt(mod.top_stmts[j], s);
         s = r.scope;
         if (is_unknown(r.ty)) { well_typed = false; }
-        top_tys = top_tys.push(r.ty);
+        top_tys = top_tys.append(r.ty);
         j = j + 1;
     }
     body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));

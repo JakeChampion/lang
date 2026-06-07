@@ -33,7 +33,7 @@ function values_as_jarray(values: string[]): JsonValue {
   var arr: JsonValue[] = [];
   var i: i32 = 0;
   while (i < values.len()) {
-    arr = arr.push(JString(values[i]));
+    arr = arr.append(JString(values[i]));
     i = i + 1;
   }
   return JArray(arr);

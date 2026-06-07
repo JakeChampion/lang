@@ -18,9 +18,9 @@ function component_from_world(tbody: i32[], core: i32[]): i32[] {
     var rts: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
-        kinds = kinds.push(wit_classify(tbody, ci.ifaces[i], ci.names[i]));
-        insts = insts.push(wit_import_instance_index(tbody, ci.ifaces[i]));
-        rts = rts.push(0);
+        kinds = kinds.append(wit_classify(tbody, ci.ifaces[i], ci.names[i]));
+        insts = insts.append(wit_import_instance_index(tbody, ci.ifaces[i]));
+        rts = rts.append(0);
         i = i + 1;
     }
     var pl: WitPrefixLayout = wit_prefix_layout(tbody);

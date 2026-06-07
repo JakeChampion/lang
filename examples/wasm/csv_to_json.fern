@@ -58,7 +58,7 @@ function main(): i32 {
   while (i < lines.len()) {
     if (!lines[i].is_empty()) {
       var fields: string[] = lines[i].split(",");
-      rows = rows.push(row_to_object(headers, fields));
+      rows = rows.append(row_to_object(headers, fields));
     }
     i = i + 1;
   }
