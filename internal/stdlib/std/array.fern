@@ -168,7 +168,7 @@ pub function __method_Array_abs_each(arr: i32[]): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i].abs());
+        out = out.append(arr[i].abs());
         i = i + 1;
     }
     return out;
@@ -197,7 +197,7 @@ pub function __method_Array_pairwise_diffs(arr: i32[]): i32[] {
     if (n < 2) { return out; }
     var i: i32 = 1;
     while (i < n) {
-        out = out.push(arr[i] - arr[i - 1]);
+        out = out.append(arr[i] - arr[i - 1]);
         i = i + 1;
     }
     return out;
@@ -228,7 +228,7 @@ pub function __method_Array_reversed(arr: i32[]): i32[] {
     var out: i32[] = [];
     var i: i32 = n - 1;
     while (i >= 0) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i - 1;
     }
     return out;
@@ -270,7 +270,7 @@ pub function __method_Array_cumsum(arr: i32[]): i32[] {
     var i: i32 = 0;
     while (i < n) {
         s = s + arr[i];
-        out = out.push(s);
+        out = out.append(s);
         i = i + 1;
     }
     return out;
@@ -377,7 +377,7 @@ pub function __method_Array_reverse(arr: string[]): string[] {
     var out: string[] = [];
     var i: i32 = arr.len() - 1;
     while (i >= 0) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i - 1;
     }
     return out;
@@ -392,7 +392,7 @@ pub function __method_Array_filter_non_empty(arr: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        if (arr[i].len() > 0) { out = out.push(arr[i]); }
+        if (arr[i].len() > 0) { out = out.append(arr[i]); }
         i = i + 1;
     }
     return out;
@@ -421,7 +421,7 @@ pub function __method_Array_distinct(arr: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        if (out.index_of(arr[i]) < 0) { out = out.push(arr[i]); }
+        if (out.index_of(arr[i]) < 0) { out = out.append(arr[i]); }
         i = i + 1;
     }
     return out;
@@ -435,7 +435,7 @@ pub function __method_Array_distinct_count(arr: string[]): i32 {
     var seen: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        if (seen.index_of(arr[i]) < 0) { seen = seen.push(arr[i]); }
+        if (seen.index_of(arr[i]) < 0) { seen = seen.append(arr[i]); }
         i = i + 1;
     }
     return seen.len();
@@ -496,7 +496,7 @@ pub function __method_Array_take(arr: string[], n: i32): string[] {
     if (stop > alen) { stop = alen; }
     var i: i32 = 0;
     while (i < stop) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     return out;
@@ -513,7 +513,7 @@ pub function __method_Array_drop(arr: string[], n: i32): string[] {
     if (start > alen) { return out; }
     var i: i32 = start;
     while (i < alen) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     return out;
@@ -855,7 +855,7 @@ pub function avg_f64(arr: f64[]): Option[f64] {
 // because the roadmap pins this exact free-function surface.
 //
 // The generic-fn-over-`T[]` machinery is the same one `push`
-// already exercises: a body that does `out = out.push(f(x))`
+// already exercises: a body that does `out = out.append(f(x))`
 // stamps the `push` call's TypeArgs to the body's type params,
 // and monomorph rewrites them to the concrete instantiation at
 // each call site. (That substitution walker had an `*ast.Assign`
@@ -874,7 +874,7 @@ pub function avg_f64(arr: f64[]): Option[f64] {
 // Empty → empty. The workhorse transform.
 pub function map[T, U](xs: T[], f: (T) => U): U[] {
     var out: U[] = [];
-    for x in xs { out = out.push(f(x)); }
+    for x in xs { out = out.append(f(x)); }
     return out;
 }
 
@@ -883,7 +883,7 @@ pub function map[T, U](xs: T[], f: (T) => U): U[] {
 pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
     var out: T[] = [];
     for x in xs {
-        if (keep(x)) { out = out.push(x); }
+        if (keep(x)) { out = out.append(x); }
     }
     return out;
 }
@@ -934,7 +934,7 @@ pub function enumerate[T](xs: T[]): (i32, T)[] {
     var out: (i32, T)[] = [];
     var i: i32 = 0;
     for x in xs {
-        out = out.push((i, x));
+        out = out.append((i, x));
         i = i + 1;
     }
     return out;

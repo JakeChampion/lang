@@ -47,7 +47,7 @@ pub function (w: BytesWriter) write_string(s: string): BytesWriter {
     var data: u8[] = w.data;
     var i: i32 = 0;
     while (i < bs.len()) {
-        data = data.push(bs[i]);
+        data = data.append(bs[i]);
         i = i + 1;
     }
     return BytesWriter { ...w, data: data };
@@ -59,7 +59,7 @@ pub function (w: BytesWriter) write_bytes(bs: u8[]): BytesWriter {
     var data: u8[] = w.data;
     var i: i32 = 0;
     while (i < bs.len()) {
-        data = data.push(bs[i]);
+        data = data.append(bs[i]);
         i = i + 1;
     }
     return BytesWriter { ...w, data: data };
@@ -67,7 +67,7 @@ pub function (w: BytesWriter) write_bytes(bs: u8[]): BytesWriter {
 
 // `(w: BytesWriter).write_byte(b)` — single-byte write.
 pub function (w: BytesWriter) write_byte(b: i32): BytesWriter {
-    return BytesWriter { ...w, data: w.data.push(b as u8) };
+    return BytesWriter { ...w, data: w.data.append(b as u8) };
 }
 
 // `(w: BytesWriter).len()` — total bytes written so far.

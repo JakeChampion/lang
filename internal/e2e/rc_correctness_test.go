@@ -218,7 +218,7 @@ function main(): i32 {
     var ns: Node[] = [];
     var i: i32 = 0;
     while (i < 8) {
-        ns = ns.push(Node { id: i });
+        ns = ns.append(Node { id: i });
         i = i + 1;
     }
     return (ns.len() - 8) + (ns[7].id - 7) + __rc_underflow_count();
@@ -301,9 +301,9 @@ function vi(n: i32): Value { return VInt { v: n }; }
 function va(xs: i32[]): Value { return VArr { v: xs }; }
 function main(): i32 {
     var vs: Value[] = [];
-    vs = vs.push(vi(1));
-    vs = vs.push(va([2, 3]));
-    vs = vs.push(vi(4));
+    vs = vs.append(vi(1));
+    vs = vs.append(va([2, 3]));
+    vs = vs.append(vi(4));
     var got: i32 = 0;
     match (vs[1]) { VInt(n) => { got = n.v; }, VArr(a) => { got = a.v[1]; } }
     return (got - 3) + (vs.len() - 3) + __rc_underflow_count();
@@ -487,7 +487,7 @@ function main(): i32 {
     while (k < 50) {
         var pre: string = "x";
         var s: string = pre + "y";
-        arr = arr.push(Holder { name: s });
+        arr = arr.append(Holder { name: s });
         k = k + 1;
     }
     var got: i32 = arr[10].name.len();
@@ -552,7 +552,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 5) {
         var s: string = "v" + "x";
-        arr = arr.push(s);
+        arr = arr.append(s);
         k = k + 1;
     }
     return arr[3].len();
@@ -1284,12 +1284,12 @@ function mk(): i32 {
     m = m.insert("longkeyaaaaaaaaaaaaaa2", 20);
     var keys_acc: string[] = [];
     var vsum: i32 = 0;
-    for (k, v) in m { keys_acc = keys_acc.push(k); vsum = vsum + v; }
+    for (k, v) in m { keys_acc = keys_acc.append(k); vsum = vsum + v; }
     var am: Map[i32, i32[]] = map_new(8);
     am = am.insert(1, [100, 200]);
     var outer: i32[][] = [];
     var it = am.iter();
-    while (it.has_next()) { outer = outer.push(it.value()); it.advance(); }
+    while (it.has_next()) { outer = outer.append(it.value()); it.advance(); }
     return keys_acc.len() + vsum + outer[0][0];
 }
 function main(): i32 {
@@ -1456,7 +1456,7 @@ function collect_values(): string[] {
     m = m.insert(2, "value-aaaaaaaaaaaaaaaaaaaa-2");
     var out: string[] = [];
     var it = m.iter();
-    while (it.has_next()) { out = out.push(it.value()); it.advance(); }
+    while (it.has_next()) { out = out.append(it.value()); it.advance(); }
     return out;
 }
 function collect_keys(): string[] {
@@ -1465,7 +1465,7 @@ function collect_keys(): string[] {
     m = m.insert("key-aaaaaaaaaaaaaaaaaaaa-2", 20);
     var out: string[] = [];
     var it = m.iter();
-    while (it.has_next()) { out = out.push(it.key()); it.advance(); }
+    while (it.has_next()) { out = out.append(it.key()); it.advance(); }
     return out;
 }
 function main(): i32 {
@@ -1825,7 +1825,7 @@ import "std/array";
 import "std/string";
 function add_row(grid: i32[][], n: i32): i32[][] {
     var row: i32[] = [n, n + 1, n + 2, n + 3];
-    return grid.push(row);
+    return grid.append(row);
 }
 function main(): i32 {
     var grid: i32[][] = [];
@@ -2291,7 +2291,7 @@ function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     m = m.insert(1, [10]);
     match (m.get(1)) {
-        Some(cur) => { m = m.insert(1, cur.push(20)); },
+        Some(cur) => { m = m.insert(1, cur.append(20)); },
         None => {}
     }
     var v: i32[] = m.get_or(1, []);
@@ -2500,7 +2500,7 @@ function main(): i32 {
     var shared: Inner = Inner { vals: [1, 2, 3] };
     var keep: Outer[] = [];
     var o: Outer = Outer { inner: shared };
-    keep = keep.push(o);
+    keep = keep.append(o);
     var c: i32 = 0;
     while (c < 200) {
         var junk: i32[] = [c, c, c];
@@ -2687,7 +2687,7 @@ struct Item { tags: i32[] }
 enum Node { Leaf(Item), Branch(i32) }
 function main(): i32 {
     var keep: Node[] = [];
-    keep = keep.push(Leaf(Item { tags: [5, 6] }));
+    keep = keep.append(Leaf(Item { tags: [5, 6] }));
     var c: i32 = 0;
     while (c < 200) {
         var junk: i32[] = [c, c];

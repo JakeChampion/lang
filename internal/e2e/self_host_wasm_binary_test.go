@@ -131,7 +131,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// memory.grow: a program allocating past the initial 16 pages (1 MB)
 		// now grows linear memory instead of trapping (and the encoder emits
 		// memory.size / memory.grow).
-		{"memory-grow", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 300000) { xs = xs.push(i); i = i + 1; } return xs[299999] - xs[299998]; }", 1},
+		{"memory-grow", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 300000) { xs = xs.append(i); i = i + 1; } return xs[299999] - xs[299998]; }", 1},
 		// Integration capstone: string[] + a string-keyed count map + a
 		// loop. Its ~34 KB WAT also exercises the assembler's own grown heap
 		// (it OOM'd before memory.grow).
@@ -140,7 +140,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// through the binary encoder — deep recursion, a struct-array
 		// "linked list" walked by index, and a string split + iteration.
 		{"scale-recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(12) - 100; }", 44},
-		{"scale-struct-array-list", "struct Node { v: i32, next_idx: i32 } function main(): i32 { var ns: Node[] = []; ns = ns.push(Node { v: 10, next_idx: 1 }); ns = ns.push(Node { v: 20, next_idx: 2 }); ns = ns.push(Node { v: 12, next_idx: 0 - 1 }); var sum: i32 = 0; var i: i32 = 0; while (i >= 0) { sum = sum + ns[i].v; i = ns[i].next_idx; } return sum; }", 42},
+		{"scale-struct-array-list", "struct Node { v: i32, next_idx: i32 } function main(): i32 { var ns: Node[] = []; ns = ns.append(Node { v: 10, next_idx: 1 }); ns = ns.append(Node { v: 20, next_idx: 2 }); ns = ns.append(Node { v: 12, next_idx: 0 - 1 }); var sum: i32 = 0; var i: i32 = 0; while (i >= 0) { sum = sum + ns[i].v; i = ns[i].next_idx; } return sum; }", 42},
 		{"scale-string-split", "function main(): i32 { var s: string = \"the quick brown fox\"; var words = s.split(\" \"); var total: i32 = 0; for w in words { total = total + w.len(); } return total + words.len(); }", 20},
 		// string_from_bytes: pack a u8[] (i32[] of byte values) into a string
 		// block. len() * 10 + first byte offset from 'A': 4*10 + (65-65) = 40.

@@ -113,7 +113,7 @@ function main(): i32 {
 		{"array_ops", `import "std/i32";
 function main(): i32 {
     var xs: i32[] = [10, 20, 30];
-    xs = xs.push(40);
+    xs = xs.append(40);
     print(xs.len().to_string());
     print(xs[3].to_string());
     var sum: i32 = 0;

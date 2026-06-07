@@ -122,14 +122,14 @@ pub function section_export(): u8        { return 11u8; }
 // 0x01000000 and there's no layer field).
 pub function put_component_header(buf: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(0u8);
-    out = out.push(97u8);    // 'a'
-    out = out.push(115u8);   // 's'
-    out = out.push(109u8);   // 'm'
-    out = out.push(13u8);    // version low byte (0x0d)
-    out = out.push(0u8);     // version high byte
-    out = out.push(1u8);     // layer low byte (0x01 — component)
-    out = out.push(0u8);     // layer high byte
+    out = out.append(0u8);
+    out = out.append(97u8);    // 'a'
+    out = out.append(115u8);   // 's'
+    out = out.append(109u8);   // 'm'
+    out = out.append(13u8);    // version low byte (0x0d)
+    out = out.append(0u8);     // version high byte
+    out = out.append(1u8);     // layer low byte (0x01 — component)
+    out = out.append(0u8);     // layer high byte
     return out;
 }
 
@@ -140,7 +140,7 @@ pub function put_component_header(buf: u8[]): u8[] {
 // std/wasm/module.build.
 pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
     var out: u8[] = buf;
-    out = out.push(section_core_module());
+    out = out.append(section_core_module());
     out = leb128.uleb_u32(out, core_bytes.len() as u32);
     return encode.put_bytes(out, core_bytes);
 }
@@ -173,24 +173,24 @@ pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
 pub function put_core_type_section_one_func(buf: u8[], param_valtypes: u8[], result_valtypes: u8[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) core types
-    body = body.push(96u8);                       // functype form (0x60)
+    body = body.append(96u8);                       // functype form (0x60)
     var np: i32 = param_valtypes.len();
     body = leb128.uleb_u32(body, np as u32);
     var i: i32 = 0;
     while (i < np) {
-        body = body.push(param_valtypes[i]);
+        body = body.append(param_valtypes[i]);
         i = i + 1;
     }
     var nr: i32 = result_valtypes.len();
     body = leb128.uleb_u32(body, nr as u32);
     i = 0;
     while (i < nr) {
-        body = body.push(result_valtypes[i]);
+        body = body.append(result_valtypes[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_core_type());
+    out = out.append(section_core_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -225,7 +225,7 @@ pub function put_component_type_section(buf: u8[], payload: u8[]): u8[] {
     body = encode.put_bytes(body, payload);
 
     var out: u8[] = buf;
-    out = out.push(0u8);                         // section id 0 (custom)
+    out = out.append(0u8);                         // section id 0 (custom)
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -254,12 +254,12 @@ pub function put_component_type_section(buf: u8[], payload: u8[]): u8[] {
 pub function put_core_instance_section_instantiate(buf: u8[], module_idx: u32): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // one instance entry
-    body = body.push(0u8);                       // tag: instantiate
+    body = body.append(0u8);                       // tag: instantiate
     body = leb128.uleb_u32(body, module_idx);    // which core module
     body = leb128.uleb_u32(body, 0u32);          // no args
 
     var out: u8[] = buf;
-    out = out.push(section_core_instance());
+    out = out.append(section_core_instance());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -322,19 +322,19 @@ pub function core_sort_instance(): u8 { return 18u8; }    // 0x12
 pub function put_core_instance_section_from_func_exports(buf: u8[], export_names: string[], core_func_idxs: u32[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) instances
-    body = body.push(1u8);                       // form: from-exports
+    body = body.append(1u8);                       // form: from-exports
     var n: i32 = export_names.len();
     body = leb128.uleb_u32(body, n as u32);      // vec(N) exports
     var i: i32 = 0;
     while (i < n) {
         body = encode.put_name(body, export_names[i]);
-        body = body.push(core_sort_func());
+        body = body.append(core_sort_func());
         body = leb128.uleb_u32(body, core_func_idxs[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_core_instance());
+    out = out.append(section_core_instance());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -403,20 +403,20 @@ pub function put_core_instance_section_from_one_func_export(buf: u8[], export_na
 pub function put_core_instance_section_instantiate_with_instance_args(buf: u8[], module_idx: u32, arg_names: string[], instance_idxs: u32[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) instances
-    body = body.push(0u8);                       // form: instantiate
+    body = body.append(0u8);                       // form: instantiate
     body = leb128.uleb_u32(body, module_idx);
     var n: i32 = arg_names.len();
     body = leb128.uleb_u32(body, n as u32);      // args vec count = N
     var i: i32 = 0;
     while (i < n) {
         body = encode.put_name(body, arg_names[i]);
-        body = body.push(core_sort_instance());
+        body = body.append(core_sort_instance());
         body = leb128.uleb_u32(body, instance_idxs[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_core_instance());
+    out = out.append(section_core_instance());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -496,7 +496,7 @@ pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][],
     body = leb128.uleb_u32(body, n as u32);      // vec(N) types
     var t: i32 = 0;
     while (t < n) {
-        body = body.push(64u8);                  // functype form (0x40)
+        body = body.append(64u8);                  // functype form (0x40)
         var p_names: string[] = param_names_per_func[t];
         var p_valtypes: u8[] = param_valtypes_per_func[t];
         var pn: i32 = p_names.len();
@@ -504,16 +504,16 @@ pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][],
         var i: i32 = 0;
         while (i < pn) {
             body = encode.put_name(body, p_names[i]);
-            body = body.push(p_valtypes[i]);
+            body = body.append(p_valtypes[i]);
             i = i + 1;
         }
-        body = body.push(0u8);                   // resultlist tag: single anon
-        body = body.push(result_valtype_per_func[t]);
+        body = body.append(0u8);                   // resultlist tag: single anon
+        body = body.append(result_valtype_per_func[t]);
         t = t + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -569,20 +569,20 @@ pub function put_type_section_one_func_no_param(buf: u8[], result_valtype: u8): 
 pub function put_type_section_one_func_no_result(buf: u8[], param_names: string[], param_valtypes: u8[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) of types
-    body = body.push(64u8);                       // functype form (0x40)
+    body = body.append(64u8);                       // functype form (0x40)
     var n: i32 = param_names.len();
     body = leb128.uleb_u32(body, n as u32);      // params vec count
     var i: i32 = 0;
     while (i < n) {
         body = encode.put_name(body, param_names[i]);
-        body = body.push(param_valtypes[i]);
+        body = body.append(param_valtypes[i]);
         i = i + 1;
     }
-    body = body.push(1u8);                        // resultlist tag: named
+    body = body.append(1u8);                        // resultlist tag: named
     body = leb128.uleb_u32(body, 0u32);          // vec(0) named results
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -608,12 +608,12 @@ pub function put_type_section_one_func_no_result(buf: u8[], param_names: string[
 pub function put_type_section_one_resource(buf: u8[], rep_valtype: u8): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(63u8);                       // resource form (0x3f)
-    body = body.push(rep_valtype);
-    body = body.push(0u8);                        // no destructor
+    body = body.append(63u8);                       // resource form (0x3f)
+    body = body.append(rep_valtype);
+    body = body.append(0u8);                        // no destructor
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -640,11 +640,11 @@ pub function put_type_section_one_resource(buf: u8[], rep_valtype: u8): u8[] {
 pub function put_type_section_one_list(buf: u8[], elem_valtype: u8): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(112u8);                      // list form (0x70)
-    body = body.push(elem_valtype);
+    body = body.append(112u8);                      // list form (0x70)
+    body = body.append(elem_valtype);
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -669,11 +669,11 @@ pub function put_type_section_one_list(buf: u8[], elem_valtype: u8): u8[] {
 pub function put_type_section_one_option(buf: u8[], inner_valtype: u8): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(107u8);                      // option form (0x6b)
-    body = body.push(inner_valtype);
+    body = body.append(107u8);                      // option form (0x6b)
+    body = body.append(inner_valtype);
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -699,17 +699,17 @@ pub function put_type_section_one_option(buf: u8[], inner_valtype: u8): u8[] {
 pub function put_type_section_one_tuple(buf: u8[], elem_valtypes: u8[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(111u8);                      // tuple form (0x6f)
+    body = body.append(111u8);                      // tuple form (0x6f)
     var n: i32 = elem_valtypes.len();
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(elem_valtypes[i]);
+        body = body.append(elem_valtypes[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -740,14 +740,14 @@ pub function put_type_section_one_tuple(buf: u8[], elem_valtypes: u8[]): u8[] {
 pub function put_type_section_one_result_ok_err(buf: u8[], ok_valtype: u8, err_valtype: u8): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(106u8);                      // result form (0x6a)
-    body = body.push(1u8);                        // ok present
-    body = body.push(ok_valtype);
-    body = body.push(1u8);                        // err present
-    body = body.push(err_valtype);
+    body = body.append(106u8);                      // result form (0x6a)
+    body = body.append(1u8);                        // ok present
+    body = body.append(ok_valtype);
+    body = body.append(1u8);                        // err present
+    body = body.append(err_valtype);
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -775,7 +775,7 @@ pub function put_type_section_one_result_ok_err(buf: u8[], ok_valtype: u8, err_v
 pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(109u8);                      // enum form (0x6d)
+    body = body.append(109u8);                      // enum form (0x6d)
     var n: i32 = labels.len();
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
@@ -785,7 +785,7 @@ pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
     }
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -813,7 +813,7 @@ pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
 pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(110u8);                      // flags form (0x6e)
+    body = body.append(110u8);                      // flags form (0x6e)
     var n: i32 = labels.len();
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
@@ -823,7 +823,7 @@ pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
     }
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -856,18 +856,18 @@ pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
 pub function put_type_section_one_record(buf: u8[], field_names: string[], field_valtypes: u8[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(114u8);                      // record form (0x72)
+    body = body.append(114u8);                      // record form (0x72)
     var n: i32 = field_names.len();
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
     while (i < n) {
         body = encode.put_name(body, field_names[i]);
-        body = body.push(field_valtypes[i]);
+        body = body.append(field_valtypes[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -907,24 +907,24 @@ pub function put_type_section_one_record(buf: u8[], field_names: string[], field
 pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_has_payload: boolean[], case_payload_valtypes: u8[]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(113u8);                      // variant form (0x71)
+    body = body.append(113u8);                      // variant form (0x71)
     var n: i32 = case_names.len();
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
     while (i < n) {
         body = encode.put_name(body, case_names[i]);
         if (case_has_payload[i]) {
-            body = body.push(1u8);                // payload present
-            body = body.push(case_payload_valtypes[i]);
+            body = body.append(1u8);                // payload present
+            body = body.append(case_payload_valtypes[i]);
         } else {
-            body = body.push(0u8);                // payload absent
+            body = body.append(0u8);                // payload absent
         }
-        body = body.push(0u8);                    // refines absent
+        body = body.append(0u8);                    // refines absent
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -946,11 +946,11 @@ pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_
 pub function put_type_section_one_own(buf: u8[], resource_typeidx: u32): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(105u8);                      // own form (0x69)
+    body = body.append(105u8);                      // own form (0x69)
     body = leb128.uleb_u32(body, resource_typeidx);
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -973,11 +973,11 @@ pub function put_type_section_one_own(buf: u8[], resource_typeidx: u32): u8[] {
 pub function put_type_section_one_borrow(buf: u8[], resource_typeidx: u32): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(104u8);                      // borrow form (0x68)
+    body = body.append(104u8);                      // borrow form (0x68)
     body = leb128.uleb_u32(body, resource_typeidx);
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1046,32 +1046,32 @@ pub function put_type_section_one_instance_one_func_export(buf: u8[], export_nam
 pub function put_type_section_one_instance_one_func_with_result_export(buf: u8[], export_name: string, param_names: string[], param_valtypes: u8[], result_valtype: u8): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) type entries
-    body = body.push(66u8);                       // instance-type form (0x42)
+    body = body.append(66u8);                       // instance-type form (0x42)
     body = leb128.uleb_u32(body, 2u32);          // vec(2) decls
 
     // decl 0: inline functype with single anonymous result.
-    body = body.push(1u8);                        // type decl
-    body = body.push(64u8);                       // functype form (0x40)
+    body = body.append(1u8);                        // type decl
+    body = body.append(64u8);                       // functype form (0x40)
     var np: i32 = param_names.len();
     body = leb128.uleb_u32(body, np as u32);
     var i: i32 = 0;
     while (i < np) {
         body = encode.put_name(body, param_names[i]);
-        body = body.push(param_valtypes[i]);
+        body = body.append(param_valtypes[i]);
         i = i + 1;
     }
-    body = body.push(0u8);                        // resultlist tag: single anon
-    body = body.push(result_valtype);             // result valtype byte
+    body = body.append(0u8);                        // resultlist tag: single anon
+    body = body.append(result_valtype);             // result valtype byte
 
     // decl 1: export — surface the inline-declared func.
-    body = body.push(4u8);                        // export decl
-    body = body.push(0u8);                        // exportname kind = label
+    body = body.append(4u8);                        // export decl
+    body = body.append(0u8);                        // exportname kind = label
     body = encode.put_name(body, export_name);
-    body = body.push(1u8);                        // externdesc kind = func
+    body = body.append(1u8);                        // externdesc kind = func
     body = leb128.uleb_u32(body, 0u32);          // typeidx 0
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1109,15 +1109,15 @@ pub function put_type_section_one_instance_one_func_with_result_export(buf: u8[]
 pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_names: string[], param_names_per_func: string[][], param_valtypes_per_func: u8[][]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) type entries
-    body = body.push(66u8);                       // instance-type form (0x42)
+    body = body.append(66u8);                       // instance-type form (0x42)
     var n: i32 = export_names.len();
     body = leb128.uleb_u32(body, (n * 2) as u32);  // 2N decls
 
     var f: i32 = 0;
     while (f < n) {
         // decl 2f: inline functype with the given params, no result.
-        body = body.push(1u8);                    // type decl
-        body = body.push(64u8);                   // functype form (0x40)
+        body = body.append(1u8);                    // type decl
+        body = body.append(64u8);                   // functype form (0x40)
         var p_names: string[] = param_names_per_func[f];
         var p_valtypes: u8[] = param_valtypes_per_func[f];
         var np: i32 = p_names.len();
@@ -1125,24 +1125,24 @@ pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_n
         var i: i32 = 0;
         while (i < np) {
             body = encode.put_name(body, p_names[i]);
-            body = body.push(p_valtypes[i]);
+            body = body.append(p_valtypes[i]);
             i = i + 1;
         }
-        body = body.push(1u8);                    // resultlist: named
+        body = body.append(1u8);                    // resultlist: named
         body = leb128.uleb_u32(body, 0u32);      // vec(0) = no result
 
         // decl 2f+1: export — surface the inline-declared func.
-        body = body.push(4u8);                    // export decl
-        body = body.push(0u8);                    // exportname kind = label
+        body = body.append(4u8);                    // export decl
+        body = body.append(0u8);                    // exportname kind = label
         body = encode.put_name(body, export_names[f]);
-        body = body.push(1u8);                    // externdesc kind = func
+        body = body.append(1u8);                    // externdesc kind = func
         body = leb128.uleb_u32(body, f as u32);  // typeidx = f
 
         f = f + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_type());
+    out = out.append(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1166,13 +1166,13 @@ pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_n
 pub function put_import_section_one_instance(buf: u8[], name: string, instance_typeidx: u32): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(0u8);                       // importname kind = label
+    body = body.append(0u8);                       // importname kind = label
     body = encode.put_name(body, name);
-    body = body.push(5u8);                       // externdesc kind = instance
+    body = body.append(5u8);                       // externdesc kind = instance
     body = leb128.uleb_u32(body, instance_typeidx);
 
     var out: u8[] = buf;
-    out = out.push(section_import());
+    out = out.append(section_import());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1220,13 +1220,13 @@ pub function put_canon_section_resource_drops(buf: u8[], resource_typeidxs: u32[
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(3u8);                    // canon resource.drop
+        body = body.append(3u8);                    // canon resource.drop
         body = leb128.uleb_u32(body, resource_typeidxs[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1268,13 +1268,13 @@ pub function put_canon_section_resource_news(buf: u8[], resource_typeidxs: u32[]
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(2u8);                    // canon resource.new
+        body = body.append(2u8);                    // canon resource.new
         body = leb128.uleb_u32(body, resource_typeidxs[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1310,13 +1310,13 @@ pub function put_canon_section_resource_reps(buf: u8[], resource_typeidxs: u32[]
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(4u8);                    // canon resource.rep
+        body = body.append(4u8);                    // canon resource.rep
         body = leb128.uleb_u32(body, resource_typeidxs[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1351,7 +1351,7 @@ pub function put_start_section_no_args_no_results(buf: u8[], funcidx: u32): u8[]
     body = leb128.uleb_u32(body, 0u32);          // results count
 
     var out: u8[] = buf;
-    out = out.push(section_start());
+    out = out.append(section_start());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1422,16 +1422,16 @@ pub function put_alias_section_core_exports(buf: u8[], core_sorts: u8[], core_in
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(0u8);                   // sort: core
-        body = body.push(core_sorts[i]);         // core-sort: func/table/mem/...
-        body = body.push(1u8);                   // target: core-instance-export
+        body = body.append(0u8);                   // sort: core
+        body = body.append(core_sorts[i]);         // core-sort: func/table/mem/...
+        body = body.append(1u8);                   // target: core-instance-export
         body = leb128.uleb_u32(body, core_instance_idxs[i]);
         body = encode.put_name(body, names[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_alias());
+    out = out.append(section_alias());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1478,13 +1478,13 @@ pub function put_alias_section_core_export_func(buf: u8[], core_instance_idx: u3
 pub function put_alias_section_instance_export_func(buf: u8[], instance_idx: u32, name: string): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(1u8);                       // sort = func
-    body = body.push(0u8);                       // target: from-instance-export
+    body = body.append(1u8);                       // sort = func
+    body = body.append(0u8);                       // target: from-instance-export
     body = leb128.uleb_u32(body, instance_idx);
     body = encode.put_name(body, name);
 
     var out: u8[] = buf;
-    out = out.push(section_alias());
+    out = out.append(section_alias());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1515,8 +1515,8 @@ pub function put_canon_section_lifts_no_opts(buf: u8[], core_func_idxs: u32[], t
     body = leb128.uleb_u32(body, n as u32);      // vec(N)
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(0u8);                   // canon-lift
-        body = body.push(0u8);                   // function-lift sub-tag
+        body = body.append(0u8);                   // canon-lift
+        body = body.append(0u8);                   // function-lift sub-tag
         body = leb128.uleb_u32(body, core_func_idxs[i]);
         body = leb128.uleb_u32(body, 0u32);      // no opts
         body = leb128.uleb_u32(body, typeidxs[i]);
@@ -1524,7 +1524,7 @@ pub function put_canon_section_lifts_no_opts(buf: u8[], core_func_idxs: u32[], t
     }
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1577,17 +1577,17 @@ pub function canonopt_post_return(): u8                  { return 5u8; }
 pub function put_canon_section_lower_mem_realloc(buf: u8[], func_idx: u32, mem_idx: u32, realloc_func_idx: u32): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(1u8);                       // canon-lower
-    body = body.push(0u8);                       // function-lower sub-tag
+    body = body.append(1u8);                       // canon-lower
+    body = body.append(0u8);                       // function-lower sub-tag
     body = leb128.uleb_u32(body, func_idx);
     body = leb128.uleb_u32(body, 2u32);          // opts vec count = 2
-    body = body.push(canonopt_memory());
+    body = body.append(canonopt_memory());
     body = leb128.uleb_u32(body, mem_idx);
-    body = body.push(canonopt_realloc());
+    body = body.append(canonopt_realloc());
     body = leb128.uleb_u32(body, realloc_func_idx);
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1621,20 +1621,20 @@ pub function put_canon_section_lower_mem_realloc(buf: u8[], func_idx: u32, mem_i
 pub function put_canon_section_lift_mem_realloc_post_return(buf: u8[], core_func_idx: u32, typeidx: u32, mem_idx: u32, realloc_func_idx: u32, post_return_func_idx: u32): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(0u8);                       // canon-lift
-    body = body.push(0u8);                       // function-lift sub-tag
+    body = body.append(0u8);                       // canon-lift
+    body = body.append(0u8);                       // function-lift sub-tag
     body = leb128.uleb_u32(body, core_func_idx);
     body = leb128.uleb_u32(body, 3u32);          // opts vec count = 3
-    body = body.push(canonopt_memory());
+    body = body.append(canonopt_memory());
     body = leb128.uleb_u32(body, mem_idx);
-    body = body.push(canonopt_realloc());
+    body = body.append(canonopt_realloc());
     body = leb128.uleb_u32(body, realloc_func_idx);
-    body = body.push(canonopt_post_return());
+    body = body.append(canonopt_post_return());
     body = leb128.uleb_u32(body, post_return_func_idx);
     body = leb128.uleb_u32(body, typeidx);
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1670,19 +1670,19 @@ pub function put_canon_section_lift_mem_realloc_post_return(buf: u8[], core_func
 pub function put_canon_section_lift_mem_realloc_encoding(buf: u8[], core_func_idx: u32, typeidx: u32, mem_idx: u32, realloc_func_idx: u32, encoding_tag: u8): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(0u8);                       // canon-lift
-    body = body.push(0u8);                       // function-lift sub-tag
+    body = body.append(0u8);                       // canon-lift
+    body = body.append(0u8);                       // function-lift sub-tag
     body = leb128.uleb_u32(body, core_func_idx);
     body = leb128.uleb_u32(body, 3u32);          // opts vec count = 3
-    body = body.push(encoding_tag);              // string-encoding
-    body = body.push(canonopt_memory());
+    body = body.append(encoding_tag);              // string-encoding
+    body = body.append(canonopt_memory());
     body = leb128.uleb_u32(body, mem_idx);
-    body = body.push(canonopt_realloc());
+    body = body.append(canonopt_realloc());
     body = leb128.uleb_u32(body, realloc_func_idx);
     body = leb128.uleb_u32(body, typeidx);
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1712,18 +1712,18 @@ pub function put_canon_section_lift_mem_realloc_encoding(buf: u8[], core_func_id
 pub function put_canon_section_lift_mem_realloc(buf: u8[], core_func_idx: u32, typeidx: u32, mem_idx: u32, realloc_func_idx: u32): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) canon entries
-    body = body.push(0u8);                       // canon-lift
-    body = body.push(0u8);                       // function-lift sub-tag
+    body = body.append(0u8);                       // canon-lift
+    body = body.append(0u8);                       // function-lift sub-tag
     body = leb128.uleb_u32(body, core_func_idx);
     body = leb128.uleb_u32(body, 2u32);          // opts vec count = 2
-    body = body.push(canonopt_memory());
+    body = body.append(canonopt_memory());
     body = leb128.uleb_u32(body, mem_idx);
-    body = body.push(canonopt_realloc());
+    body = body.append(canonopt_realloc());
     body = leb128.uleb_u32(body, realloc_func_idx);
     body = leb128.uleb_u32(body, typeidx);
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1787,15 +1787,15 @@ pub function put_import_section_funcs(buf: u8[], names: string[], typeidxs: u32[
     body = leb128.uleb_u32(body, n as u32);      // vec(N) imports
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(0u8);                   // importname kind = label
+        body = body.append(0u8);                   // importname kind = label
         body = encode.put_name(body, names[i]);
-        body = body.push(1u8);                   // externdesc kind = func type
+        body = body.append(1u8);                   // externdesc kind = func type
         body = leb128.uleb_u32(body, typeidxs[i]);
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_import());
+    out = out.append(section_import());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1830,15 +1830,15 @@ pub function put_canon_section_lowers_no_opts(buf: u8[], func_idxs: u32[]): u8[]
     body = leb128.uleb_u32(body, n as u32);
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(1u8);                   // canon-lower
-        body = body.push(0u8);                   // function-lower sub-tag
+        body = body.append(1u8);                   // canon-lower
+        body = body.append(0u8);                   // function-lower sub-tag
         body = leb128.uleb_u32(body, func_idxs[i]);
         body = leb128.uleb_u32(body, 0u32);      // no opts
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_canon());
+    out = out.append(section_canon());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -1892,16 +1892,16 @@ pub function put_export_section_funcs(buf: u8[], names: string[], func_idxs: u32
     body = leb128.uleb_u32(body, n as u32);      // vec(N) exports
     var i: i32 = 0;
     while (i < n) {
-        body = body.push(0u8);                   // exportname kind = label
+        body = body.append(0u8);                   // exportname kind = label
         body = encode.put_name(body, names[i]);
-        body = body.push(1u8);                   // sort: func
+        body = body.append(1u8);                   // sort: func
         body = leb128.uleb_u32(body, func_idxs[i]);
-        body = body.push(0u8);                   // no externdesc
+        body = body.append(0u8);                   // no externdesc
         i = i + 1;
     }
 
     var out: u8[] = buf;
-    out = out.push(section_export());
+    out = out.append(section_export());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
@@ -2073,7 +2073,7 @@ pub function build_wasi_multi_imported_component(core_bytes: u8[], interface_nam
     var instance_idxs: u32[] = [];
     var j: i32 = 0;
     while (j < n) {
-        instance_idxs = instance_idxs.push(j as u32);
+        instance_idxs = instance_idxs.append(j as u32);
         j = j + 1;
     }
     comp = put_core_instance_section_instantiate_with_instance_args(comp, 0u32, core_import_modules, instance_idxs);

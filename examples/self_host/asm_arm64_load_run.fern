@@ -77,7 +77,7 @@ function add_imports(paths: string[], mod: parser.Module, root: string): string[
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
         if (should_load(ip, root) && !contains_name(paths, ip)) {
-            paths = paths.push(ip);
+            paths = paths.append(ip);
         }
         i = i + 1;
     }
@@ -115,7 +115,7 @@ function main(): i32 {
         var ipath: string = paths[j];
         j = j + 1;
         if (!contains_name(done, ipath)) {
-            done = done.push(ipath);
+            done = done.append(ipath);
             var mpath: string = resolve_path(ipath, dir, root);
             var msrc: string = "";
             var mok: boolean = false;
@@ -130,7 +130,7 @@ function main(): i32 {
                 return 1;
             }
             var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
-            loaded = loaded.push(flatten.LoadedModule { name: module_name(ipath), mod: m });
+            loaded = loaded.append(flatten.LoadedModule { name: module_name(ipath), mod: m });
             paths = add_imports(paths, m, root);
         }
     }

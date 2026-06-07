@@ -57,17 +57,17 @@ function elf_text_vaddr(): i32 {
 
 // elf_le16 appends the low 2 bytes of `v`, little-endian.
 function elf_le16(buf: i32[], v: i32): i32[] {
-    buf = buf.push(v & 255);
-    buf = buf.push((v >> 8) & 255);
+    buf = buf.append(v & 255);
+    buf = buf.append((v >> 8) & 255);
     return buf;
 }
 
 // elf_le32 appends the 4 bytes of `v`, little-endian.
 function elf_le32(buf: i32[], v: i32): i32[] {
-    buf = buf.push(v & 255);
-    buf = buf.push((v >> 8) & 255);
-    buf = buf.push((v >> 16) & 255);
-    buf = buf.push((v >> 24) & 255);
+    buf = buf.append(v & 255);
+    buf = buf.append((v >> 8) & 255);
+    buf = buf.append((v >> 16) & 255);
+    buf = buf.append((v >> 24) & 255);
     return buf;
 }
 
@@ -75,14 +75,14 @@ function elf_le32(buf: i32[], v: i32): i32[] {
 // arithmetic shift; the `& 255` after each shift discards any
 // sign-extended high bits, so the result is correct for any value.
 function elf_le64(buf: i32[], v: i64): i32[] {
-    buf = buf.push((v & 255) as i32);
-    buf = buf.push(((v >> 8) & 255) as i32);
-    buf = buf.push(((v >> 16) & 255) as i32);
-    buf = buf.push(((v >> 24) & 255) as i32);
-    buf = buf.push(((v >> 32) & 255) as i32);
-    buf = buf.push(((v >> 40) & 255) as i32);
-    buf = buf.push(((v >> 48) & 255) as i32);
-    buf = buf.push(((v >> 56) & 255) as i32);
+    buf = buf.append((v & 255) as i32);
+    buf = buf.append(((v >> 8) & 255) as i32);
+    buf = buf.append(((v >> 16) & 255) as i32);
+    buf = buf.append(((v >> 24) & 255) as i32);
+    buf = buf.append(((v >> 32) & 255) as i32);
+    buf = buf.append(((v >> 40) & 255) as i32);
+    buf = buf.append(((v >> 48) & 255) as i32);
+    buf = buf.append(((v >> 56) & 255) as i32);
     return buf;
 }
 
@@ -92,7 +92,7 @@ function elf_le64(buf: i32[], v: i64): i32[] {
 function elf_cat(buf: i32[], src: i32[]): i32[] {
     var i: i32 = 0;
     while (i < src.len()) {
-        buf = buf.push(src[i]);
+        buf = buf.append(src[i]);
         i = i + 1;
     }
     return buf;
@@ -102,7 +102,7 @@ function elf_cat(buf: i32[], src: i32[]): i32[] {
 // of 8 (so the data blob lands 8-byte aligned after .text).
 function elf_pad_to_8(b: i32[]): i32[] {
     while ((b.len() % 8) != 0) {
-        b = b.push(0);
+        b = b.append(0);
     }
     return b;
 }
@@ -138,17 +138,17 @@ function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i
     var buf: i32[] = [];
 
     // ---- ELF-64 header (64 bytes) ----
-    buf = buf.push(127);  // 0x7f  EI_MAG0
-    buf = buf.push(69);   // 'E'   EI_MAG1
-    buf = buf.push(76);   // 'L'   EI_MAG2
-    buf = buf.push(70);   // 'F'   EI_MAG3
-    buf = buf.push(2);    // EI_CLASS = ELFCLASS64
-    buf = buf.push(1);    // EI_DATA  = ELFDATA2LSB
-    buf = buf.push(1);    // EI_VERSION = EV_CURRENT
-    buf = buf.push(0);    // EI_OSABI = SysV
+    buf = buf.append(127);  // 0x7f  EI_MAG0
+    buf = buf.append(69);   // 'E'   EI_MAG1
+    buf = buf.append(76);   // 'L'   EI_MAG2
+    buf = buf.append(70);   // 'F'   EI_MAG3
+    buf = buf.append(2);    // EI_CLASS = ELFCLASS64
+    buf = buf.append(1);    // EI_DATA  = ELFDATA2LSB
+    buf = buf.append(1);    // EI_VERSION = EV_CURRENT
+    buf = buf.append(0);    // EI_OSABI = SysV
     var p: i32 = 0;       // EI_PAD (8 bytes)
     while (p < 8) {
-        buf = buf.push(0);
+        buf = buf.append(0);
         p = p + 1;
     }
     buf = elf_le16(buf, 2);                       // e_type    = ET_EXEC

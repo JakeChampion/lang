@@ -241,7 +241,7 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
     // else create a one-element array.
     match (m.get(key)) {
         Some(existing) => {
-            m = m.insert(key, existing.push(val));
+            m = m.insert(key, existing.append(val));
         },
         None => {
             var arr: string[] = [val];
