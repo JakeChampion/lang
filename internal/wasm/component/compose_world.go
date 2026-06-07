@@ -42,6 +42,29 @@ func ComposeFromWorld(core []byte, w *componenttype.World, coreExportName string
 			g.inst[iface.Name] = uint32(idx)
 		}
 	}
+	// Surface each dropped resource as a component-level type (an alias export
+	// from its imported instance) and thread the index into the gDrop lowering
+	// — the canon resource.drop needs a component type index for the resource,
+	// which the world import prefix doesn't surface at the top level (P5,
+	// docs/WIT-BRING-YOUR-OWN.md). Purely additive: a program with no
+	// `[resource-drop]` imports emits no alias sections, so its bytes are
+	// unchanged. Each resource is surfaced once and shared across its drops.
+	for i := range imports {
+		if imports[i].kind != gDrop {
+			continue
+		}
+		res := imports[i].name[len("[resource-drop]"):]
+		t, ok := g.surfaced[res]
+		if !ok {
+			instIdx, ok := g.inst[imports[i].iface]
+			if !ok {
+				return nil, fmt.Errorf("component: resource-drop import %q: interface %q not imported by the world", imports[i].name, imports[i].iface)
+			}
+			t = g.c.aliasType(instIdx, res)
+			g.surfaced[res] = t
+		}
+		imports[i].resourceT = t
+	}
 	g.add(imports...)
 	return g.finish(core, coreExportName, ""), nil
 }
@@ -194,12 +217,22 @@ func ComposeFromWorldAuto(core []byte, w *componenttype.World) ([]byte, error) {
 	}
 	var imports []gImport
 	for _, imp := range coreFuncImports(core) {
-		if hasResourceDropPrefix(imp.name) {
-			return nil, fmt.Errorf("component: resource-drop import %q not supported by the world-driven path yet", imp.name)
-		}
 		wi, ok := byIface[imp.module]
 		if !ok {
 			return nil, fmt.Errorf("component: core imports interface %q not declared by the world", imp.module)
+		}
+		if hasResourceDropPrefix(imp.name) {
+			// `[resource-drop]<res>` — drop an owned handle (P5,
+			// docs/WIT-BRING-YOUR-OWN.md). The resource is surfaced as a
+			// component-level type and threaded into the canon resource.drop by
+			// ComposeFromWorld; here we just validate the world declares it and
+			// record the gDrop lowering (resourceT filled in once `g` exists).
+			res := imp.name[len("[resource-drop]"):]
+			if !ifaceHasResource(wi, res) {
+				return nil, fmt.Errorf("component: world interface %q has no resource %q to drop", imp.module, res)
+			}
+			imports = append(imports, gImport{iface: imp.module, name: imp.name, kind: gDrop})
+			continue
 		}
 		f, ok := worldFunc(wi, imp.name)
 		if !ok {
@@ -218,6 +251,17 @@ func ComposeFromWorldAuto(core []byte, w *componenttype.World) ([]byte, error) {
 		})
 	}
 	return ComposeFromWorld(core, w, "_lang_run", imports)
+}
+
+// ifaceHasResource reports whether the world interface declares a resource of
+// the given (WIT) name — the set a `[resource-drop]<name>` import may target.
+func ifaceHasResource(wi componenttype.WorldInterface, name string) bool {
+	for _, r := range wi.Resources {
+		if r == name {
+			return true
+		}
+	}
+	return false
 }
 
 func worldFunc(wi componenttype.WorldInterface, name string) (componenttype.WorldFunc, bool) {

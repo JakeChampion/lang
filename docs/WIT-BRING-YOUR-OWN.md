@@ -382,10 +382,23 @@ world-driven composer (P2) wires it.
      (the 0ns-timer pollable, now written with the handle vocabulary, runs
      under real WASI — proving the types are real yet erase to the working
      i32-handle core). Handles are still leaked.
-   - **Slice 2 (next) — composer `[resource-drop]` wiring** (additive,
-     byte-identity-gated): surface each resource as a component-level type via
-     an alias in `EmitWorldImports`, thread its index into `gImport{gDrop}`,
-     and drop the `hasResourceDropPrefix` rejection.
+   - **Slice 2 — composer `[resource-drop]` wiring. ✅ Done (Go composer +
+     self-host core).** `ComposeFromWorldAuto` no longer rejects
+     `[resource-drop]<res>` imports: `ComposeFromWorld` surfaces each dropped
+     resource as a component-level type via `g.c.aliasType(instIdx, res)`
+     (the same primitive the native socket/HTTP composer uses) and threads the
+     index into `gImport{kind: gDrop, resourceT}`, which lowers to a canon
+     `resource.drop`. Purely additive — a program with no `[resource-drop]`
+     imports emits no alias sections, so its bytes are unchanged and the
+     byte-identity-gated `internal/wasm/component` + `componenttype` suites
+     stay green. Gated by `TestExternResourceHandleDrop` /
+     `TestSelfHostExternResourceHandleDrop`: a program drops its pollable via a
+     `[resource-drop]pollable` extern (the test vehicle for the composer
+     change), and the component validates + runs under real WASI with the
+     resource released rather than leaked. Since main retired the self-host
+     composer port (`wat_component.fern`), the composer change is Go-only; the
+     self-host's role is emitting the drop core, which it already does for any
+     `@import`.
    - **Slice 3 — automatic drop**: compiler-inserted `[resource-drop]` for
      owned handles at scope exit (hooking `emitRcDecLocalsAtExit`).
 5. **P6 — arbitrary exports**: bind a Fern function to a world export (beyond
