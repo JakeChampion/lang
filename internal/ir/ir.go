@@ -778,6 +778,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	if err := rejectDynTrait(prog); err != nil {
 		return nil, err
 	}
+	// Automatic drop for owned WIT resource handles (P5 slice 3): insert
+	// `defer <drop>(h);` for each kept `own R` local and synthesize the
+	// `[resource-drop]` import functions. Runs before eraseHandleTypes because
+	// it analyses the handle types (docs/WIT-BRING-YOUR-OWN.md).
+	insertResourceDrops(prog, info)
 	// Erase WIT resource handles (`own R` / `borrow R`) to plain i32 before
 	// any lowering reads a type: a handle is an opaque scalar at the canonical
 	// ABI and the checker has already enforced its type-safety (P5 —
