@@ -111,6 +111,12 @@ function x86_ret(buf: i32[]): i32[] {
     return buf.push(195); // 0xC3
 }
 
+// x86_leave: `leave` (0xC9) — mov rsp, rbp ; pop rbp, the standard frame
+// teardown asm.fern emits.
+function x86_leave(buf: i32[]): i32[] {
+    return buf.push(201); // 0xC9
+}
+
 // ---- memory operands (slice 2e) ----
 //
 // A memory operand `[base + disp]` is encoded by the ModR/M byte's mod/rm
