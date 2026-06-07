@@ -420,3 +420,60 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   field+index alias / literal element / closure capture) and the dec
   sites (function-exit sweep + dec-on-overwrite) — together they
   balance the counts; then arm64 + wasm mirrors.
+- 2026-06-07: **Phase 1d (reassign-inc + dec-on-overwrite), x86-64 —
+  SHIPPED.** `asm.fern`'s `StmtAssign` now retains the new reference
+  when `y = x` reassigns an array slot to an rc-tracked alias
+  (`needs_rc_inc_on_alias`) and releases (dec) the OLD value the slot
+  held (`ty_is_array_like` target). A fresh literal / call RHS is not
+  re-incremented. Local, detector-clean for ordinary reassignment (the
+  old value had rc>=1), and balances the reassignment lifecycle ahead
+  of Phase 3. Tests: `TestSelfHostRcReassignX86_64` (reassign-to-alias /
+  source-intact / reassign-to-fresh / no-underflow + an emission
+  assertion that both the retain and the release are emitted). Full
+  suite + byte-identical bootstrap/fixpoint green. KNOWN DRIFT (benign
+  under safe-leak): the self-host's own `xs = xs.push(v)` internal form
+  decrements a buffer the in-place push returned unchanged (the
+  self-host push doesn't bump rc the way native Phase 2a does), so rc
+  drifts down on repeated self-mutation. Harmless while free is off
+  (values stay valid; fixpoint stays byte-identical); the cow-aware dec
+  that fixes it is a Phase-3-prep item (mirrors the native drift audit).
+  Next: the function-exit dec sweep (zero-init rc locals + per-return
+  sweep, excluding borrowed params) — the other half of balance — then
+  the remaining inc sites and the arm64/wasm mirrors.
+- 2026-06-07: **Phase 1d (field/index alias inc), x86-64 — SHIPPED.**
+  Extended the shared `needs_rc_inc_on_alias` to also fire on
+  `ExprFieldAccess` / `ExprIndex` reads whose inferred type is an array
+  (`var y = h.items`, `var y = m[i]` for an array-of-arrays), using
+  `infer_expr_type`. Picked up automatically by both `StmtVar` and
+  `StmtAssign` (no backend edits). Robust: a spurious inc on a
+  mis-inferred non-array is harmless (the rc-inc guards short-circuit).
+  inc-only → detector-clean. Tests: `alias-struct-field` +
+  `emits-retain-at-field-alias`; struct / json / map self-host suites
+  (which lean on field-access aliases) + bootstrap/fixpoint green. The
+  alias-inc family now covers ident + field + index reads.
+- 2026-06-07: **Phase 1d (function-exit dec sweep), x86-64 — SHIPPED.
+  The array RC lifecycle is now BALANCED.** Added a per-function release
+  sweep: at every in-function `return` and the fall-through exit,
+  `emit_array_exit_dec` releases (dec) each array-typed LOCAL slot.
+  Borrowed params are skipped via a new `n_params` boundary on
+  `EmitState` (set by `emit_function` after binding params) — the borrow
+  model (caller still owns the arg). Two supports make it sound under
+  safe-leak: (1) `emit_function` zero-inits the body-local slots
+  (`rep stosq`) so the sweep reads NULL (dec no-op) for a `var` skipped
+  on the current path; (2) `StmtReturn` retains an array result before
+  the sweep (and restores it after) so the returned buffer reaches the
+  caller at unchanged rc. Combined with the alias/reassign incs +
+  dec-on-overwrite, ordinary code is now over-release-detector clean.
+  Tests: `TestSelfHostRcExitSweepX86_64` — return-array (retain past
+  sweep), borrowed-param (not released, usable in caller), repeated-call
+  detector == 0, not-taken-branch-local zero-init no-op, and an emission
+  assertion (rep stosq + the dec sweep). Full self-host suite +
+  byte-identical bootstrap/fixpoint green (the fixpoint executes the
+  self-host's own functions through the new prologue zero-init + exit
+  sweep). KNOWN benign drift persists for the self-host's internal
+  `xs = xs.push(v)` (prior entry) — harmless while free is off; the
+  cow-aware dec is the Phase-3-prep fix. With this the x86-64 array RC
+  is functionally complete for Phase 1 (rc headers + all alias incs +
+  reassign-inc + dec-on-overwrite + balanced exit sweep). Next: Phase 3
+  (size-class freelist + flip free on, gated on a corpus-wide clean
+  detector after the drift fix) and the arm64/wasm mirrors of 0a/0b/1d.

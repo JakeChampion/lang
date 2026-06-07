@@ -337,7 +337,13 @@ pub struct EmitState {
     // in ExprCall(ExprFieldAccess(...), args).
     funcs: parser.FuncDecl[],
     // local_types: parallel to local_names. See asm.fern.
-    local_types: Ty[]
+    local_types: Ty[],
+    // n_params: count of leading local_names slots that are the
+    // function's receiver + parameters (bound first by emit_function).
+    // The Perceus function-exit dec sweep skips these — parameters are
+    // BORROWED (the caller still owns them), so the callee must not
+    // release them. Set per function after the params are bound.
+    n_params: i32
 }
 
 pub function new_state(): EmitState {
@@ -359,7 +365,8 @@ pub function new_state(): EmitState {
         loop_exit_labels: lex,
         loop_cont_labels: lcn,
         funcs: fns,
-        local_types: lts
+        local_types: lts,
+        n_params: 0
     };
 }
 
@@ -932,13 +939,19 @@ pub function ty_is_array_like(t: Ty): boolean {
 // (the Perceus inc site). Ported from the native compiler's
 // needsRcIncOnAlias (internal/ir/ir.go), scoped to arrays for Phase 1d
 // — strings / structs / enums / closures / tuples join in Phase 1e.
-// Fires only for an Ident READ of an array-typed local (a fresh array
-// literal or a call result is already uniquely owned at rc=1 and is NOT
-// re-incremented). FieldAccess / Index aliases (var y = h.items / m[i])
-// are a later sub-slice.
+// Fires for a READ of an array-typed value that already has an owner:
+//   - an Ident (var y = x),
+//   - a struct field (var y = h.items),
+//   - an index load (var y = m[i], m an array of arrays).
+// A fresh array literal or a call result is already uniquely owned at
+// rc=1 and is NOT re-incremented. A spurious inc on a mis-inferred
+// non-array is harmless — the rc-inc helper's null / low-address /
+// sentinel guards short-circuit — so this is robust to inference gaps.
 pub function needs_rc_inc_on_alias(e: parser.Expr, s: EmitState): boolean {
     match (e) {
         parser.ExprIdent(id) => { return ty_is_array_like(s.local_type_of(id.name)); },
+        parser.ExprFieldAccess(_) => { return ty_is_array_like(infer_expr_type(e, s)); },
+        parser.ExprIndex(_) => { return ty_is_array_like(infer_expr_type(e, s)); },
         _ => { return false; }
     }
     return false;
@@ -1645,6 +1658,13 @@ pub function (s: EmitState) reset_locals(): EmitState {
 
 pub function (s: EmitState) enter_function(): EmitState {
     return EmitState { ...s, in_function: true };
+}
+
+// set_n_params records the receiver+parameter slot count so the
+// Perceus function-exit dec sweep can skip borrowed params. Called by
+// emit_function once the params are bound.
+pub function (s: EmitState) set_n_params(n: i32): EmitState {
+    return EmitState { ...s, n_params: n };
 }
 
 pub function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): EmitState {
