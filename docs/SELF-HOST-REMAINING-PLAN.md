@@ -948,6 +948,21 @@ smallest → largest:
     Mach-O exits 42 — no external tool. A named-label table over these
     primitives (so multiple forward labels + calls resolve by name) is the
     next slice.
+  - ✅ **slice 3d — named-label assembler**: an `Arm64Asm` struct
+    (`code` + a label table + a fixup queue with per-fixup kind: imm26 for
+    `b`/`bl`, imm19 for `b.cond`/`cbz`/`cbnz`), the arm64 counterpart of
+    `X86Asm`. `arm64_asm_label` records a name at the current offset;
+    `arm64_asm_b`/`bl`/`bcond`/`cbz`/`cbnz` branch to a (possibly forward)
+    name — patched immediately if already placed, else queued;
+    `arm64_asm_resolve` patches the rest once everything is placed. Adds
+    `bl` (branch-with-link). Byte-checked by `TestSelfHostArm64Labels`
+    (forward `b`/`b.cond`/`bl` via resolve + backward `cbnz` patched
+    inline) and gated end-to-end by **`TestSelfHostArm64DarwinMachOCallRuns`**:
+    a Fern program assembles `_main { bl compute; exit(x0) }` /
+    `compute { loop 6 × 7; ret }` — a forward call + a backward loop by
+    name — wraps it with `macho.fern`, and the signed Mach-O exits 42 with
+    no external tool. Next: loads/stores + `@PAGE`/`@PAGEOFF` literal
+    addressing, then wiring `asm_arm64` → `macho.fern` → file.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
