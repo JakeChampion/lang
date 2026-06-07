@@ -220,6 +220,40 @@ effectively 100% — the holdouts surfaced while measuring it:
   and open-ended-slice cases in the x86-64 / arm64 / wasm SSA emit
   matrices.
 
+#### Cumulative allocation (the no-GC wall)
+
+With per-function coverage at ~100%, the remaining blocker is **memory**:
+the self-host runtime is a no-GC bump allocator, so building every
+function's SSA in one process accumulates all the dead per-function
+intermediates. The AST path survives self-compile only because it reserves
+a 1 GiB heap; the SSA emitter path was sized for small programs.
+
+Reducing per-function allocation (the chosen first attack — measured with a
+no-GC `ssa_emit_run` driver, whose zero-paged heap makes peak RSS track
+bytes the bump allocator touches):
+
+- **Profiling** (RSS of staged pipelines on a 600-function program): the
+  optimiser is *not* the hog — stubbing `optimize` to identity *raised* RSS
+  (it doubled the emitted IR). `build_func` is ~half the total; the rest is
+  emit, scaling with output size.
+- **Seed overlay** (landed) — the dominant *super-linear* term was
+  `build_func` installing the module-wide signature seed (`gfn:` / method
+  entries — ~one per compiler function) as each function's initial
+  var-type list, so the first `set_var_type` copied the whole shared
+  (rc>1) array: O(functions²). The seed now lives read-only in its own
+  `BState` field; `get_var_type` consults the (initially empty) local
+  overlay first, then the seed. Byte-identical output; peak RSS on a
+  600-function string-typed module dropped 64.3 → 52.1 MB (~19%), and the
+  saving *grows* with module size (4% at 100 fns → 19% at 600), i.e. it
+  removes the quadratic term — the win compounds toward the real
+  ~4000-function compiler.
+- **Pass early-outs** (landed) — `copy_propagate` and `mark_*_calls` now
+  return the function untouched (no rebuild allocation) when they have no
+  work, which is the common case on every optimise round after the first.
+
+Still open: the *linear* per-function retention (build + emit, freed by
+nothing) — the streaming/arena or GC approach, deferred.
+
 ### Phase 5 — retire the AST emitters
 
 Once SSA is at full parity and the fixpoint is SSA-clean, remove the AST
