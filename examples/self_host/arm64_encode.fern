@@ -595,3 +595,32 @@ function arm64_asm_tbnz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm 
     a.code = arm64_tbnz(a.code, rt, bit, 0);
     return arm64_asm_fixup_or_patch(a, name, 2);
 }
+
+// ---- multiply, unscaled load/store, conditional-set ----
+
+// arm64_mul encodes `mul Xd, Xn, Xm` — the `madd Xd, Xn, Xm, XZR` alias.
+//   0x9B000000 | Rm<<16 | (31<<10 = Ra=XZR) | Rn<<5 | Rd
+function arm64_mul(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    var w: i64 = 0x9b000000 | (((rm & 31) as i64) << 16) | (31 << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    return arm64_le32(buf, w);
+}
+
+// arm64_ldur / arm64_stur encode `ldur/stur Xt, [Xn, #off]` — the unscaled
+// signed-imm9 load/store (no writeback, no scaling), the form the backend
+// uses for frame-slot access. 0xF8400000 / 0xF8000000 | imm9<<12 | Rn<<5 | Rt.
+function arm64_ldur(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    var w: i64 = 0xf8400000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+    return arm64_le32(buf, w);
+}
+function arm64_stur(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    var w: i64 = 0xf8000000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+    return arm64_le32(buf, w);
+}
+
+// arm64_cset encodes `cset Xd, <cond>` — `csinc Xd, XZR, XZR, invert(cond)`
+// (set Xd to 1 if cond holds, else 0). The condition is inverted (cond^1).
+//   0x9A800400 | (31<<16) | invcond<<12 | (31<<5) | Rd
+function arm64_cset(buf: i32[], rd: i32, cond: i32): i32[] {
+    var w: i64 = 0x9a800400 | (31 << 16) | ((((cond ^ 1) & 15) as i64) << 12) | (31 << 5) | ((rd & 31) as i64);
+    return arm64_le32(buf, w);
+}

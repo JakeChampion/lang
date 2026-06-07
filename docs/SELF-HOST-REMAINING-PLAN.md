@@ -1050,10 +1050,25 @@ smallest → largest:
     `arm64_gas`. Byte-checked by `TestSelfHostArm64BitOpsGas` and gated
     end-to-end by **`TestSelfHostArm64DarwinMachOBitOpsRuns`**: a program
     computes 42 via `ubfx` + `neg` + a `tbz` branch and the signed Mach-O
-    exits 42 — no external tool. Remaining for full wiring: a handful more
-    runtime ops (w-register `movz` byte-fidelity, any instructions below
-    the captured output) then feeding `asm_arm64`'s real output from the
-    CLI driver (replacing the `clang`/`ld64` shell-out).
+    exits 42 — no external tool.
+  - ✅ **slice 3k — assemble the compiler's *real* emitted asm**: the
+    capstone. **`TestSelfHostArm64DarwinMachORealAsm`** takes the backend's
+    actual arm64-darwin assembly (from `internal/codegen/arm64`, which
+    `asm_arm64.fern` mirrors) for real Fern programs — `return 42`,
+    `6 * 7`, recursive `fib(10)` — feeds it to `arm64_gas_program` +
+    `arm64_gas_link` + `macho.fern`, and the result is a valid arm64
+    `MH_EXECUTE` (every host; exit-code-checked on Apple Silicon). To make
+    the structural check trustworthy (a dropped instruction yields a
+    well-formed-but-wrong binary), `Arm64GasProg` now records any
+    `unknown` mnemonic and the driver surfaces it. That flushed out four
+    silently-missing ops — `mul` (MADD alias), `ldur`/`stur` (unscaled
+    frame load/store), and `cset` (CSINC alias) — now added (pinned vs
+    llvm-mc). The arm64-darwin path now assembles real compiler output to a
+    runnable signed binary with no `as`/`clang`/`ld64`. Remaining: wire it
+    into the CLI driver (emit → assemble → write file) behind a flag, and
+    widen coverage as more language features exercise new instructions —
+    the `unknown`-guard makes each gap a hard failure rather than a silent
+    miscompile.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

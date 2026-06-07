@@ -308,6 +308,24 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "tbz") {
         return arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
     }
+    if (mnem == "mul") {
+        a.code = arm64_mul(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]));
+        return a;
+    }
+    if (mnem == "ldur") {
+        var um: Arm64Mem = arm64_gas_mem(ops[1]);
+        a.code = arm64_ldur(a.code, arm64_gas_reg(ops[0]), um.base, um.off);
+        return a;
+    }
+    if (mnem == "stur") {
+        var sm2: Arm64Mem = arm64_gas_mem(ops[1]);
+        a.code = arm64_stur(a.code, arm64_gas_reg(ops[0]), sm2.base, sm2.off);
+        return a;
+    }
+    if (mnem == "cset") {
+        a.code = arm64_cset(a.code, arm64_gas_reg(ops[0]), arm64_gas_cond(ops[1]));
+        return a;
+    }
     return a; // unknown mnemonic — ignored
 }
 
@@ -327,9 +345,10 @@ struct Arm64GasProg {
     data: i32[],
     dlab_names: string[],
     dlab_offs: i32[],
-    pf_sites: i32[],   // byte offset of the instruction to patch in .text
-    pf_syms: string[], // target data symbol
-    pf_kinds: i32[],   // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
+    pf_sites: i32[],    // byte offset of the instruction to patch in .text
+    pf_syms: string[],  // target data symbol
+    pf_kinds: i32[],    // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
+    unknown: string[],  // mnemonics the assembler did not recognise
 }
 
 function arm64_gas_prog_new(): Arm64GasProg {
@@ -337,7 +356,23 @@ function arm64_gas_prog_new(): Arm64GasProg {
         asm: arm64_asm_new(), data: [],
         dlab_names: [], dlab_offs: [],
         pf_sites: [], pf_syms: [], pf_kinds: [],
+        unknown: [],
     };
+}
+
+// arm64_gas_known reports whether a mnemonic is handled by the assembler
+// (so the program loop can record anything silently dropped). adrp / and
+// the @PAGEOFF forms of ldr / add are handled in the program loop itself.
+function arm64_gas_known(mnem: string): boolean {
+    if (mnem == "mov" || mnem == "movz" || mnem == "movk" || mnem == "movn") { return true; }
+    if (mnem == "add" || mnem == "sub" || mnem == "cmp" || mnem == "neg" || mnem == "mul") { return true; }
+    if (mnem == "ldr" || mnem == "str" || mnem == "ldur" || mnem == "stur") { return true; }
+    if (mnem == "stp" || mnem == "ldp") { return true; }
+    if (mnem == "b" || mnem == "bl" || mnem == "ret" || mnem == "svc") { return true; }
+    if (mnem == "cbz" || mnem == "cbnz" || mnem == "tbz" || mnem == "tbnz") { return true; }
+    if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp") { return true; }
+    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
+    return false;
 }
 
 // arm64_gas_dlabel_off returns the data-blob offset of a data symbol, or
@@ -538,6 +573,9 @@ function arm64_gas_program(src: string): Arm64GasProg {
             p.pf_syms = p.pf_syms.push(arm64_gas_strip_at(dops[2]));
             p.pf_kinds = p.pf_kinds.push(2);
             continue;
+        }
+        if (!arm64_gas_known(mnem)) {
+            p.unknown = p.unknown.push(mnem);
         }
         p.asm = arm64_gas_emit(p.asm, mnem, rest);
     }
