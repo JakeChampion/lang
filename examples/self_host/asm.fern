@@ -5658,11 +5658,11 @@ function check_func(fd: parser.FuncDecl, s: EmitState): string {
     var want: Ty = ty_from_name(fd.ret_type);
     var s2: EmitState = s.reset_locals();
     if (fd.receiver_type.len() > 0) {
-        s2 = s2.bind_local_typed(fd.receiver_name, ty_from_name(fd.receiver_type));
+        s2 = s2.bind_local_typed(fd.receiver_name, struct_local_tag(fd.receiver_type, s2));
     }
     var pi: i32 = 0;
     while (pi < fd.params.len()) {
-        s2 = s2.bind_local_typed(fd.params[pi].name, ty_from_name(fd.params[pi].type_name));
+        s2 = s2.bind_local_typed(fd.params[pi].name, struct_local_tag(fd.params[pi].type_name, s2));
         pi = pi + 1;
     }
     var ctx: CheckCtx = CheckCtx { st: s2, errs: "" };
