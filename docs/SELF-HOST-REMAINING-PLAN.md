@@ -922,8 +922,19 @@ smallest → largest:
     executes it and checks exit 42 — the whole chain (Fern encoder →
     Mach-O writer + signature → kernel → `svc`) with no `clang`/`ld64`/
     `codesign`. Forward references, named labels, and the wider
-    instruction surface (loads/stores, branches, `cmp`, the `@PAGE`/
-    `@PAGEOFF` literal addressing the full backend needs) are later slices.
+    instruction surface (loads/stores, the `@PAGE`/`@PAGEOFF` literal
+    addressing the full backend needs) are later slices.
+  - ✅ **slice 3b — compare + control flow (backward branches)**:
+    `cmp` (reg / imm, as `subs XZR, …`) and the branch family `b` /
+    `b.cond` / `cbz` / `cbnz`, plus the signed condition codes
+    (`eq`/`ne`/`lt`/`ge`/`gt`/`le`). Branch targets are PC-relative byte
+    deltas (÷4 inside the encoder); a *backward* branch knows its target
+    when emitted (`target_off - buf.len()`), so loops assemble without a
+    label table. Byte-checked by `TestSelfHostArm64Branches` and gated
+    end-to-end by **`TestSelfHostArm64DarwinMachOLoopRuns`**: a Fern
+    program assembles a `6 × 7` loop (`add`/`sub` + a backward `cbnz`),
+    wraps it with `macho.fern`, and the signed Mach-O exits 42 — still no
+    external tool. Forward references / named labels are the next slice.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
