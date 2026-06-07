@@ -62,6 +62,7 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		{"ifelse", "function main(): i32 { var x: i32 = 10; if (x > 5) { return 42; } return 0; }\n", 42},
 		{"call", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n", 42},
 		{"recur", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\nfunction main(): i32 { return fib(9) + 8; }\n", 42},
+		{"float", "function main(): i32 { var x: f64 = 84.0; var y: f64 = 2.0; var z: f64 = x / y; return z as i32; }\n", 42},
 	}
 
 	for _, tc := range cases {
