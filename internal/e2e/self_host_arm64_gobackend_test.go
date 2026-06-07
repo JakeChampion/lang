@@ -28,10 +28,13 @@ import (
 // SELF-HOST-REMAINING-PLAN.md (slice 3p) and the byte-pinned
 // TestSelfHostArm64OffsetPairGas.
 //
-// (This also guards a Go x86 backend bug the flip surfaced: a struct
-// spread-update of a function *parameter* miscompiles, so arm64_native binds
-// a local copy in every such function — without those the CLI segfaults
-// here.)
+// (This also guards the struct spread-update self-overwrite miscompile the
+// flip surfaced: `p = T { ...p, f: v }` of a parameter mis-lowered in the
+// shared internal/ir FBIP-reuse fast path. It was originally worked around
+// with per-function local copies in arm64_native; those are gone now that the
+// IR bug is fixed (slice 3r / TestStructUpdateParamSpreadReuse), and this test
+// would surface a regression of that fix when arm64_native is compiled by the
+// Go x86 backend.)
 func TestSelfHostArm64NativeViaGoBackend(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

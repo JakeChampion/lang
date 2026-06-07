@@ -321,11 +321,7 @@ function arm64_asm_new(): Arm64Asm {
 }
 
 // arm64_asm_label records `name` at the current code offset.
-function arm64_asm_label(a0: Arm64Asm, name: string): Arm64Asm {
-    var a: Arm64Asm = a0; // NB: operate on a local, not the parameter —
-    // the Go x86 backend miscompiles a struct spread-update of a function
-    // *parameter* (segfault); spreading a local is fine. See
-    // docs/SELF-HOST-REMAINING-PLAN.md (slice 3o).
+function arm64_asm_label(a: Arm64Asm, name: string): Arm64Asm {
     a = Arm64Asm { ...a, lab_names: a.lab_names.append(name) };
     a = Arm64Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
     return a;
@@ -348,8 +344,7 @@ function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
 // a.code (its instruction word at a.code.len()-4). `kind` selects the
 // immediate field. If the target label is already placed, patch now;
 // otherwise queue a fixup for arm64_asm_resolve.
-function arm64_asm_fixup_or_patch(a0: Arm64Asm, name: string, kind: i32): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_fixup_or_patch(a: Arm64Asm, name: string, kind: i32): Arm64Asm {
     var at: i32 = a.code.len() - 4;
     var target: i32 = arm64_asm_label_off(a, name);
     if (target >= 0) {
@@ -370,31 +365,26 @@ function arm64_asm_fixup_or_patch(a0: Arm64Asm, name: string, kind: i32): Arm64A
 
 // arm64_asm_b / arm64_asm_bl emit an unconditional branch / call to a
 // (possibly forward) label.
-function arm64_asm_b(a0: Arm64Asm, name: string): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_b(a: Arm64Asm, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_b(a.code, 0) };
     return arm64_asm_fixup_or_patch(a, name, 0);
 }
-function arm64_asm_bl(a0: Arm64Asm, name: string): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_bl(a: Arm64Asm, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_bl(a.code, 0) };
     return arm64_asm_fixup_or_patch(a, name, 0);
 }
 
 // arm64_asm_bcond / arm64_asm_cbz / arm64_asm_cbnz emit a conditional
 // branch to a (possibly forward) label.
-function arm64_asm_bcond(a0: Arm64Asm, cond: i32, name: string): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_bcond(a: Arm64Asm, cond: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_bcond(a.code, cond, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
-function arm64_asm_cbz(a0: Arm64Asm, rt: i32, name: string): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_cbz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_cbz(a.code, rt, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
-function arm64_asm_cbnz(a0: Arm64Asm, rt: i32, name: string): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_cbnz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_cbnz(a.code, rt, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
@@ -402,8 +392,7 @@ function arm64_asm_cbnz(a0: Arm64Asm, rt: i32, name: string): Arm64Asm {
 // arm64_asm_resolve patches every queued (forward) fixup now that all
 // labels are placed. Call once after emitting the whole program;
 // afterwards a.code is the final .text.
-function arm64_asm_resolve(a0: Arm64Asm): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_resolve(a: Arm64Asm): Arm64Asm {
     var i: i32 = 0;
     while (i < a.fix_offs.len()) {
         var at: i32 = a.fix_offs[i];
@@ -644,13 +633,11 @@ function arm64_patch_b14(buf: i32[], at: i32, rel: i32): i32[] {
 
 // arm64_asm_tbz / arm64_asm_tbnz emit a test-bit branch to a (possibly
 // forward) label (fixup kind 2 = imm14).
-function arm64_asm_tbz(a0: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_tbz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_tbz(a.code, rt, bit, 0) };
     return arm64_asm_fixup_or_patch(a, name, 2);
 }
-function arm64_asm_tbnz(a0: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_asm_tbnz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_tbnz(a.code, rt, bit, 0) };
     return arm64_asm_fixup_or_patch(a, name, 2);
 }
@@ -1272,8 +1259,7 @@ function arm64_gas_lsl_amount(tok: string): i32 {
 
 // arm64_gas_emit assembles one mnemonic + operand string into a.code (or
 // queues a label fixup). Unknown mnemonics are ignored.
-function arm64_gas_emit(a0: Arm64Asm, mnem: string, rest: string): Arm64Asm {
-    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "ret") {
         a = Arm64Asm { ...a, code: arm64_ret(a.code, arm64_lr()) };
         return a;
@@ -1628,8 +1614,7 @@ function arm64_gas_strip_at(tok: string): string {
 }
 
 // arm64_gas_data_le appends `n` little-endian bytes of `v` to the data blob.
-function arm64_gas_data_le(p0: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
-    var p: Arm64GasProg = p0; // local copy (see arm64_asm_label note)
+function arm64_gas_data_le(p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
     var i: i32 = 0;
     while (i < n) {
         p = Arm64GasProg { ...p, data: p.data.append(((v >> (i * 8)) & 255) as i32) };
@@ -1640,8 +1625,7 @@ function arm64_gas_data_le(p0: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
 
 // arm64_gas_data_asciz appends a `.asciz "…"` string + NUL to the data
 // blob, decoding the common \n \t \0 \\ escapes.
-function arm64_gas_data_asciz(p0: Arm64GasProg, line: string): Arm64GasProg {
-    var p: Arm64GasProg = p0; // local copy (see arm64_asm_label note)
+function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
     var q1: i32 = arm64_str_indexof(line, "\"");
     if (q1 < 0) {
         p = Arm64GasProg { ...p, data: p.data.append(0) };
@@ -1666,8 +1650,7 @@ function arm64_gas_data_asciz(p0: Arm64GasProg, line: string): Arm64GasProg {
 }
 
 // arm64_gas_data_align pads the data blob to a 2^n byte boundary.
-function arm64_gas_data_align(p0: Arm64GasProg, n: i32): Arm64GasProg {
-    var p: Arm64GasProg = p0; // local copy (see arm64_asm_label note)
+function arm64_gas_data_align(p: Arm64GasProg, n: i32): Arm64GasProg {
     var a: i32 = 1;
     var k: i32 = 0;
     while (k < n) { a = a * 2; k = k + 1; }
@@ -1861,8 +1844,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
 // final __TEXT / __DATA segment addresses are known (the caller supplies
 // them from macho.fern's macho_text_vaddr / macho_data_vaddr). After this,
 // p.asm.code + p.data are the final sections.
-pub function arm64_gas_link(p0: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
-    var p: Arm64GasProg = p0; // local copy (see arm64_asm_label note)
+pub function arm64_gas_link(p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
     var aw: Arm64Asm = p.asm;
     var i: i32 = 0;
     while (i < p.pf_sites.len()) {
