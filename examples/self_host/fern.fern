@@ -33,6 +33,18 @@ import "./printer";
 import "./ssa";
 import "./ssa_x86";
 import "./ssa_arm64";
+import "./watbin";
+
+// to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
+// encoder produces) into a u8[] so string_from_bytes can pack it into a
+// string whose bytes are written verbatim (incl. 0x00 / high bytes) by
+// write_file. Used by the -target wasm-bin path.
+function to_u8(b: i32[]): u8[] {
+    var o: u8[] = [];
+    var i: i32 = 0;
+    while (i < b.len()) { o = o.push(b[i] as u8); i = i + 1; }
+    return o;
+}
 
 // last_slash returns the index of the final '/' in p, or -1.
 function last_slash(p: string): i32 {
@@ -252,10 +264,10 @@ function main(): i32 {
 
     if (!have_entry) { return usage(); }
 
-    if (target != "x86-64" && target != "arm64" && target != "arm64-darwin" && target != "wasm") {
+    if (target != "x86-64" && target != "arm64" && target != "arm64-darwin" && target != "wasm" && target != "wasm-bin") {
         eprint("fern: unknown -target: ");
         eprint(target);
-        eprint(" (want x86-64, arm64, arm64-darwin, or wasm)\n");
+        eprint(" (want x86-64, arm64, arm64-darwin, wasm, or wasm-bin)\n");
         return 2;
     }
 
@@ -404,6 +416,13 @@ function main(): i32 {
         // WASI core module in text format (WAT). Runnable directly by
         // `wasmtime run`; main()'s result becomes the process exit code.
         out_asm = wasm.emit_module(full);
+    } else if (target == "wasm-bin") {
+        // Same WASI core module, assembled to the wasm *binary* format:
+        // emit WAT (wasm.emit_module), then run it through the self-hosted
+        // WAT->binary assembler (watbin). The binary bytes (an i32[] of
+        // 0..255) are packed into a string whose bytes write_file / write
+        // emit verbatim, so the output file is a runnable `.wasm`.
+        out_asm = string_from_bytes(to_u8(watbin.wat_to_binary(wasm.emit_module(full))));
     } else {
         out_asm = asm.emit_module(full);
     }
