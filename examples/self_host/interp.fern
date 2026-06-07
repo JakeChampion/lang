@@ -601,7 +601,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             var bi: i32 = 0;
                             while (bi < bnames.len()) {
                                 if (bnames[bi] == oname) {
-                                    bvals = bvals.set(bi, ov2);
+                                    bvals[bi] = ov2;
                                     replaced = true;
                                 }
                                 bi = bi + 1;
@@ -2003,7 +2003,7 @@ function main(): i32 {
     }
 
     // Map: set / get_or / has / len.
-    var src84: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); var got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
+    var src84: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); var got: i32 = m.get_or(\"a\", 0 - 1); return got; }";
     var r84: Value = run_module(src84);
     match (r84) {
         VInt(i) => { if (i.v != 1) { return 840; } },
@@ -2011,7 +2011,7 @@ function main(): i32 {
     }
 
     // Map: get_or returns default on miss.
-    var src85: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); return m.get_or(\"missing\", 99); }";
+    var src85: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); return m.get_or(\"missing\", 99); }";
     var r85: Value = run_module(src85);
     match (r85) {
         VInt(i) => { if (i.v != 99) { return 850; } },
@@ -2019,7 +2019,7 @@ function main(): i32 {
     }
 
     // Map: len after multiple sets.
-    var src86: string = "function main(): i32 { var m = map_new(); m = m.set(\"a\", 1); m = m.set(\"b\", 2); m = m.set(\"c\", 3); return m.len(); }";
+    var src86: string = "function main(): i32 { var m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); m = m.insert(\"c\", 3); return m.len(); }";
     var r86: Value = run_module(src86);
     match (r86) {
         VInt(i) => { if (i.v != 3) { return 860; } },
@@ -2027,7 +2027,7 @@ function main(): i32 {
     }
 
     // Map: overwrite same key keeps the latest value.
-    var src87: string = "function main(): i32 { var m = map_new(); m = m.set(\"k\", 1); m = m.set(\"k\", 99); return m.get_or(\"k\", 0); }";
+    var src87: string = "function main(): i32 { var m = map_new(); m = m.insert(\"k\", 1); m = m.insert(\"k\", 99); return m.get_or(\"k\", 0); }";
     var r87: Value = run_module(src87);
     match (r87) {
         VInt(i) => { if (i.v != 99) { return 870; } },

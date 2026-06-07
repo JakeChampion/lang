@@ -161,13 +161,13 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"set-index-swap", "function main(): i32 { var a = [7, 3]; var t = a[0]; a[0] = a[1]; a[1] = t; return a[0] * 10 + a[1]; }", 37},
 		{"set-index-compound", "function main(): i32 { var a = [10, 20, 30]; a[0] += 5; a[1] -= 4; a[2] *= 2; return a[0] + a[1] + a[2]; }", 91},
 		{"set-index-param", "function bump(a: i32[]): i32 { a[0] = a[0] + 100; return 0; } function main(): i32 { var xs = [5, 6, 7]; var z = bump(xs); return xs[0] + z; }", 105},
-		// i32-keyed maps (Map literal → map_new_i32().set()… → injected
+		// i32-keyed maps (Map literal → map_new_i32().insert()… → injected
 		// __ssa_map_* association-array helpers): get_or / has / len, set
 		// (insert + update), loop-build, miss-default, and maps across calls.
 		{"map-literal-get", "function main(): i32 { var m = Map { 1: 40, 2: 50, 3: 60 }; return m.get_or(2, 0) + m.get_or(9, 7) + m.len(); }", 60},
 		{"map-has", "function main(): i32 { var m = Map { 5: 1, 7: 1 }; var r = 0; if (m.has(5)) { r = r + 10; } if (m.has(6)) { r = r + 100; } if (m.has(7)) { r = r + 1; } return r; }", 11},
-		{"map-set-update", "function main(): i32 { var m = Map { 1: 10 }; m.set(2, 20); m.set(1, 99); return m.get_or(1, 0) + m.get_or(2, 0) + m.len(); }", 121},
-		{"map-loop-build", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 5) { m.set(i, i * i); i = i + 1; } return m.get_or(3, 0) + m.get_or(5, 0) + m.len(); }", 40},
+		{"map-set-update", "function main(): i32 { var m = Map { 1: 10 }; m.insert(2, 20); m.insert(1, 99); return m.get_or(1, 0) + m.get_or(2, 0) + m.len(); }", 121},
+		{"map-loop-build", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 5) { m.insert(i, i * i); i = i + 1; } return m.get_or(3, 0) + m.get_or(5, 0) + m.len(); }", 40},
 		{"map-miss-default", "function main(): i32 { var m = Map { 1: 1 }; return m.get_or(42, 7) + m.len(); }", 8},
 		{"map-param-get", "function total(m: Map[i32, i32], a: i32, b: i32): i32 { return m.get_or(a, 0) + m.get_or(b, 0); } function main(): i32 { var m = Map { 1: 11, 2: 22, 3: 33 }; return total(m, 1, 3); }", 44},
 		{"map-param-len", "function sz(m: Map[i32, i32]): i32 { return m.len(); } function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3, 4: 4 }; return sz(m) * 10 + m.get_or(2, 0); }", 42},
@@ -176,23 +176,23 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		// body, and iterating a Map passed across a call.
 		{"map-iter-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; for (k, v) in m { s = s + k + v; } return s; }", 33},
 		{"map-iter-values", "function main(): i32 { var m = Map { 1: 100, 2: 50, 3: 30 }; var s = 0; for (k, v) in m { s = s + v; } return s; }", 180},
-		{"map-iter-built", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 4) { m.set(i, i * 10); i = i + 1; } var sum = 0; for (k, v) in m { sum = sum + v; } return sum; }", 100},
+		{"map-iter-built", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 4) { m.insert(i, i * 10); i = i + 1; } var sum = 0; for (k, v) in m { sum = sum + v; } return sum; }", 100},
 		{"map-iter-break-continue", "function main(): i32 { var m = Map { 1: 5, 2: 6, 3: 7, 4: 8 }; var s = 0; for (k, v) in m { if (k == 2) { continue; } if (k == 4) { break; } s = s + v; } return s; }", 12},
 		{"map-iter-param", "function sumv(m: Map[i32, i32]): i32 { var s = 0; for (k, v) in m { s = s + v; } return s; } function main(): i32 { var m = Map { 1: 11, 2: 22, 3: 33 }; return sumv(m); }", 66},
 		// keys() / values() snapshot the map's columns into fresh arrays.
 		{"map-keys-values", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var ks = m.keys(); var vs = m.values(); var s = 0; for k in ks { s = s + k; } for v in vs { s = s + v; } return s + ks.len(); }", 69},
-		{"map-values-index", "function main(): i32 { var m = Map { 5: 10, 6: 20 }; m.set(7, 30); var vs = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s + vs.len(); }", 63},
+		{"map-values-index", "function main(): i32 { var m = Map { 5: 10, 6: 20 }; m.insert(7, 30); var vs = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s + vs.len(); }", 63},
 		// String-keyed maps (__ssa_smap_*, key compare by content via __streq).
 		{"smap-literal-get", "function main(): i32 { var m = Map { \"a\": 10, \"b\": 20, \"c\": 30 }; return m.get_or(\"b\", 0) + m.get_or(\"z\", 7) + m.len(); }", 30},
-		{"smap-set-has", "function main(): i32 { var m = Map { \"x\": 1 }; m.set(\"y\", 2); m.set(\"x\", 99); var r = 0; if (m.has(\"x\")) { r = r + m.get_or(\"x\", 0); } if (m.has(\"q\")) { r = r + 1000; } return r + m.get_or(\"y\", 0) + m.len(); }", 103},
+		{"smap-set-has", "function main(): i32 { var m = Map { \"x\": 1 }; m.insert(\"y\", 2); m.insert(\"x\", 99); var r = 0; if (m.has(\"x\")) { r = r + m.get_or(\"x\", 0); } if (m.has(\"q\")) { r = r + 1000; } return r + m.get_or(\"y\", 0) + m.len(); }", 103},
 		{"smap-content-key", "function main(): i32 { var m = Map { \"foo\": 42 }; var k = \"fo\" + \"o\"; return m.get_or(k, 0); }", 42},
-		{"smap-param-delete", "function lookup(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0); } function main(): i32 { var m = Map { \"hi\": 5, \"bye\": 9 }; m.delete(\"hi\"); return lookup(m, \"bye\") + m.len(); }", 10},
+		{"smap-param-delete", "function lookup(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0); } function main(): i32 { var m = Map { \"hi\": 5, \"bye\": 9 }; m.without(\"hi\"); return lookup(m, \"bye\") + m.len(); }", 10},
 		{"smap-iter", "function main(): i32 { var m = Map { \"a\": 100, \"b\": 50, \"c\": 30 }; var s = 0; for (k, v) in m { s = s + v + k.len(); } return s; }", 183},
 		// delete: removes a key (swap-with-last, count--), missing key no-op,
 		// and composes with set / iteration.
-		{"map-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(2); var r = 0; if (m.has(2)) { r = r + 1000; } r = r + m.len() * 100; r = r + m.get_or(1, 0); r = r + m.get_or(3, 0); return r; }", 240},
-		{"map-delete-missing", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m.delete(99); return m.len() * 10 + m.get_or(2, 0); }", 40},
-		{"map-delete-readd-iter", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(3); m.set(4, 40); m.delete(1); var s = 0; for (k, v) in m { s = s + v; } return s + m.len(); }", 62},
+		{"map-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.without(2); var r = 0; if (m.has(2)) { r = r + 1000; } r = r + m.len() * 100; r = r + m.get_or(1, 0); r = r + m.get_or(3, 0); return r; }", 240},
+		{"map-delete-missing", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m.without(99); return m.len() * 10 + m.get_or(2, 0); }", 40},
+		{"map-delete-readd-iter", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.without(3); m.insert(4, 40); m.without(1); var s = 0; for (k, v) in m { s = s + v; } return s + m.len(); }", 62},
 		// Passing arrays to functions: pointer-typed (64-bit) params.
 		{"arr-param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var xs = [5, 10, 15, 20]; return sum(xs); }", 50},
 		{"arr-param-two", "function dot2(a: i32[], b: i32[]): i32 { return a[0] * b[0] + a[1] * b[1]; } function main(): i32 { var p = [2, 3]; var q = [10, 20]; return dot2(p, q); }", 80},

@@ -377,7 +377,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"map-get-or-string",
 			"function main(): i32 { " +
 				"var m: Map[string, i32] = map_new(8); " +
-				"m.set(\"a\", 10); " +
+				"m.insert(\"a\", 10); " +
 				"var a: i32 = m.get_or(\"a\", 0); " +
 				"var b: i32 = m.get_or(\"missing\", 99); " +
 				"return a + b; }",

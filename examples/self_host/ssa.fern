@@ -295,7 +295,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             // A map-producing expression is typed "Map" (i32 keys) or "SMap"
             // (string keys) so `.len()` etc. dispatch to the map helpers and
             // method-key compares pick the right one: the constructors
-            // map_new_i32(…) / map_new(…), and `.set(…)` (which returns the
+            // map_new_i32(…) / map_new(…), and `.insert(…)` (which returns the
             // map, threading the construction chain — so it inherits the
             // receiver's map type).
             match (c.callee) {
@@ -311,7 +311,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { return cgt[4 : cgt.len()]; }
                 },
                 parser.ExprFieldAccess(fa2) => {
-                    if (fa2.field == "set" || fa2.field == "insert") { return type_of_expr(fa2.obj, s); }
+                    if (fa2.field == "insert") { return type_of_expr(fa2.obj, s); }
                     // A user method call → its declared return type (so a
                     // chained `a.m().n()` resolves n's receiver), read from the
                     // "<recv>#<m>" → "m:<sym>:<ret>" seed.
@@ -699,7 +699,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     }
                     // Map methods (i32-keyed maps): set / get_or / has, and
                     // len on a Map receiver. The parser desugars a `Map { … }`
-                    // literal to map_new_i32(8).set(k0,v0)… and user code calls
+                    // literal to map_new_i32(8).insert(k0,v0)… and user code calls
                     // these by name; arrays have none of set/get_or/has, so
                     // those are unambiguous. They lower to calls into the
                     // injected association-array helpers (__ssa_map_*), with
@@ -717,10 +717,10 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var pfx: string = "__ssa_map_";
                     if (mt == "SMap") { pfx = "__ssa_smap_"; }
                     var mname: string = "";
-                    if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) { mname = pfx + "set"; }
+                    if ((fa.field == "insert") && c.args.len() == 2) { mname = pfx + "set"; }
                     else if (fa.field == "get_or" && c.args.len() == 2) { mname = pfx + "get_or"; }
                     else if (fa.field == "has" && c.args.len() == 1) { mname = pfx + "has"; }
-                    else if ((fa.field == "delete" || fa.field == "without") && c.args.len() == 1) { mname = pfx + "delete"; }
+                    else if ((fa.field == "without") && c.args.len() == 1) { mname = pfx + "delete"; }
                     else if (fa.field == "len" && c.args.len() == 0 && ismap) { mname = "__ssa_map_len"; }
                     else if (fa.field == "keys" && c.args.len() == 0 && ismap) { mname = "__ssa_map_keys"; }
                     else if (fa.field == "values" && c.args.len() == 0 && ismap) { mname = "__ssa_map_values"; }

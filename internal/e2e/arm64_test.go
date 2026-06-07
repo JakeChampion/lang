@@ -8849,8 +8849,8 @@ func TestArm64Map(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.set(1, 100);
-    m.set(2, 200);
+    m.insert(1, 100);
+    m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
 		{`import "core/no_prelude";
@@ -8859,7 +8859,7 @@ function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 8) {
-        m.set(i, i * 10);
+        m.insert(i, i * 10);
         i = i + 1;
     }
     if (m.len() != 8) { return 1; }
@@ -8870,9 +8870,9 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("alpha", 1);
-    m.set("beta", 2);
-    m.set("gamma", 3);
+    m.insert("alpha", 1);
+    m.insert("beta", 2);
+    m.insert("gamma", 3);
     return m.get_or("beta", -1) + m.len();
 }`, 5},
 	} {
@@ -8909,7 +8909,7 @@ func TestArm64MapGetMatch(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.set(7, 42);
+    m.insert(7, 42);
     match (m.get(7)) {
         Some(v) => { return v; },
         None => { return 0; }
@@ -8930,7 +8930,7 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("hello", 42);
+    m.insert("hello", 42);
     match (m.get("hello")) {
         Some(v) => { return v; },
         None => { return 0; }
@@ -8949,7 +8949,7 @@ function main(): i32 {
 // End-to-end exercise of the word-frequency pipeline that was
 // segfaulting on natives before the Map.get + match pair-form
 // fix. The shape: tokenize input → `Map[string, i32]` count
-// table populated via `m.set(key, n + 1)` inside the
+// table populated via `m.insert(key, n + 1)` inside the
 // `Some(n) => …, None => …` match arm → snapshot keys +
 // values via `.keys() / .values()` → print rows. The match
 // branch inside the counting loop was the exact pattern
@@ -8984,8 +8984,8 @@ function main(): i32 {
   while (i < words.len()) {
     var w: string = words[i];
     match (counts.get(w)) {
-      Some(n) => { counts.set(w, n + 1); },
-      None    => { counts.set(w, 1); }
+      Some(n) => { counts.insert(w, n + 1); },
+      None    => { counts.insert(w, 1); }
     }
     i = i + 1;
   }
@@ -10225,7 +10225,7 @@ func TestArm64GenericLocalMapType(t *testing.T) {
 import "core/map";
 function mk[V](v: V): Map[string, V] {
     var m: Map[string, V] = map_new(0);
-    m.set("k", v);
+    m.insert("k", v);
     return m;
 }
 function main(): i32 {
@@ -10934,8 +10934,8 @@ import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.set(1, 100);
-    m.set(2, 200);
+    m.insert(1, 100);
+    m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
 		// random_bytes(n) — Darwin getentropy path
@@ -10955,8 +10955,8 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("hello", 42);
-    m.set("world", 99);
+    m.insert("hello", 42);
+    m.insert("world", 99);
     return m.get_or("world", 0);
 }`, 99},
 		// Map[i32, string] — string values. get_or returns
@@ -10970,8 +10970,8 @@ import "std/i32";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, string] = map_new(4);
-    m.set(1, "abc");
-    m.set(2, "abcdef");
+    m.insert(1, "abc");
+    m.insert(2, "abcdef");
     return (m.get_or(2, "")).len();
 }`, 6},
 		// Map[string, string] — both key and value are
@@ -10983,8 +10983,8 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[string, string] = map_new(4);
-    m.set("k1", "ab");
-    m.set("k2", "abcde");
+    m.insert("k1", "ab");
+    m.insert("k2", "abcde");
     return (m.get_or("k2", "")).len();
 }`, 5},
 		// Iteration over Map[string, i32] via has_next /
@@ -10997,9 +10997,9 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("a", 10);
-    m.set("b", 20);
-    m.set("c", 30);
+    m.insert("a", 10);
+    m.insert("b", 20);
+    m.insert("c", 30);
     var it: MapIter[string, i32] = m.iter();
     var sum: i32 = 0;
     while (it.has_next()) {
@@ -11018,11 +11018,11 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("a", 1);
-    m.set("b", 2);
-    m.set("c", 3);
-    m.delete("b");
-    m.delete("c");
+    m.insert("a", 1);
+    m.insert("b", 2);
+    m.insert("c", 3);
+    m.without("b");
+    m.without("c");
     return m.get_or("a", 0) * 10 + m.len();
 }`, 11},
 		// Option[string] payload — the Some(s) variant now
@@ -11090,9 +11090,9 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("alpha", 1);
-    m.set("beta", 2);
-    m.set("gamma", 3);
+    m.insert("alpha", 1);
+    m.insert("beta", 2);
+    m.insert("gamma", 3);
     var ks: string[] = m.keys();
     var i: i32 = 0;
     var total: i32 = 0;
@@ -11111,9 +11111,9 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, string] = map_new(4);
-    m.set(1, "one");
-    m.set(2, "two");
-    m.set(3, "three");
+    m.insert(1, "one");
+    m.insert(2, "two");
+    m.insert(3, "three");
     var vs: string[] = m.values();
     var i: i32 = 0;
     var total: i32 = 0;
@@ -11143,8 +11143,8 @@ function main(): i32 {
     var m: Map[i32, string] = map_new(4);
     var v1: string = "alp" + "ha";
     var v2: string = "be" + "ta";
-    m.set(1, v1);
-    m.set(2, v2);
+    m.insert(1, v1);
+    m.insert(2, v2);
     return (m.get_or(1, "")).len() + (m.get_or(2, "")).len();
 }`, 9},
 	}
@@ -12132,35 +12132,35 @@ func TestArm64WideScalarMap(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.set(1i64, 100);
+    m.insert(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
 		{"Map[i32, f64]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
-    m.set(1, 3.14);
+    m.insert(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
 		{"Map[i64, string]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i64, string] = map_new(4);
-    m.set(1i64, "hello");
+    m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
 		{"Map[string, i64]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i64] = map_new(4);
-    m.set("hello", 42i64);
+    m.insert("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
 		{"Map[u64, i32]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
-    m.set(1u64, 100);
+    m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
 		{"distinct high-bit i64 keys", `import "core/no_prelude";
@@ -12169,8 +12169,8 @@ function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
     var k1: i64 = 0i64;
     var k2: i64 = 1i64 << 33i64;
-    m.set(k1, 1);
-    m.set(k2, 2);
+    m.insert(k1, 1);
+    m.insert(k2, 2);
     var v1: i32 = m.get_or(k1, 99);
     var v2: i32 = m.get_or(k2, 99);
     return v1 + v2;
@@ -12187,8 +12187,8 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.set(1i64, 10);
-    m.set(1000000000000i64, 20);
+    m.insert(1i64, 10);
+    m.insert(1000000000000i64, 20);
     var keys: i64[] = m.keys();
     if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
@@ -12759,10 +12759,10 @@ func TestArm64FeatureParity(t *testing.T) {
 		{"defer_basic", `import "core/no_prelude";
 import "core/map";
 function inner(trace: Map[string, i32]): i32 {
-    trace.set("body-start", 1);
-    defer trace.set("first-defer", 10);
-    defer trace.set("second-defer", 20);
-    trace.set("body-end", 2);
+    trace.insert("body-start", 1);
+    defer trace.insert("first-defer", 10);
+    defer trace.insert("second-defer", 20);
+    trace.insert("body-end", 2);
     return 42;
 }
 function main(): i32 {
@@ -13144,9 +13144,9 @@ func TestArm64RcUnderflowDetector(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a", 1);
-    m = m.set("b", 2);
-    m = m.set("a", 9);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    m = m.insert("a", 9);
     return __rc_underflow_count() * 100
          + (m.len() - 2)
          + (m.get_or("a", 0) - 9);
@@ -13517,17 +13517,17 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 }
 
 // Phase 2c: Map.set is now value-returning. Callers can use
-// the `m = m.set(k, v)` idiom for explicit value semantics;
-// the existing `m.set(k, v)` statement form still works
+// the `m = m.insert(k, v)` idiom for explicit value semantics;
+// the existing `m.insert(k, v)` statement form still works
 // (return discarded).
 func TestArm64MapSetReturnsMap(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a", 1);
-    m = m.set("b", 2);
-    m = m.set("c", 3);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    m = m.insert("c", 3);
     if (m.get_or("a", 0) != 1) { return 1; }
     if (m.get_or("b", 0) != 2) { return 2; }
     if (m.get_or("c", 0) != 3) { return 3; }
@@ -13560,54 +13560,54 @@ function main(): i32 {
 	}
 }
 
-// Phase 2b: explicit value-returning `arr.set(i, v)` method.
+// Phase 2b: explicit value-returning `arr.with(i, v)` method.
 // Self-assign idiom — same shape as the `arr[i] = v` desugar
 // would emit, but expression-position so it composes.
 func TestArm64ArraySetSelfAssign(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
-    xs = xs.set(1, 999);
+    xs = xs.with(1, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 999) { return 2; }
     if (xs[2] != 30) { return 3; }
     return 0;
 }`
 	if _, code := compileAndRunArm64(t, src); code != 0 {
-		t.Errorf("got exit %d, want 0 (xs = xs.set(1, 999))", code)
+		t.Errorf("got exit %d, want 0 (xs = xs.with(1, 999))", code)
 	}
 }
 
-// Phase 2b: aliased `arr.set` must copy. The original holder
+// Phase 2b: aliased `arr.with` must copy. The original holder
 // stays unchanged.
 func TestArm64ArraySetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var ys = xs;                    // Phase 1d-i: xs.rc = 2
-    ys = ys.set(0, 999);            // rc>1 → copy. xs unchanged.
+    ys = ys.with(0, 999);            // rc>1 → copy. xs unchanged.
     if (xs[0] != 10) { return 1; }
     if (ys[0] != 999) { return 2; }
     return 0;
 }`
 	if _, code := compileAndRunArm64(t, src); code != 0 {
-		t.Errorf("got exit %d, want 0 (aliased arr.set must copy)", code)
+		t.Errorf("got exit %d, want 0 (aliased arr.with must copy)", code)
 	}
 }
 
-// Phase 2c: m.delete(k) returns (Map[K,V], bool).
+// Phase 2c: m.without(k) returns (Map[K,V], bool).
 // Tests tuple destructuring, bool-field access, and statement-position discard.
 func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a", 1);
-    m = m.set("b", 2);
-    m = m.set("c", 3);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    m = m.insert("c", 3);
     // Bool field access on call result.
-    if (!m.delete("b").1) { return 1; }   // "b" present → true
-    if (m.delete("z").1)  { return 2; }   // "z" missing → false
+    if (!m.without("b").1) { return 1; }   // "b" present → true
+    if (m.without("z").1)  { return 2; }   // "z" missing → false
     // Tuple destructuring: m2 is the updated map, ok is the found-flag.
-    var (m2, ok) = m.delete("a");
+    var (m2, ok) = m.without("a");
     if (!ok) { return 3; }
     if (m2.has("a")) { return 4; }
     if (!m2.has("c")) { return 5; }
@@ -13619,20 +13619,20 @@ function main(): i32 {
 	}
 }
 
-// Phase 2c: m.clear() returns Map[K,V].
+// Phase 2c: m.cleared() returns Map[K,V].
 func TestArm64MapClearReturnsMap(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("x", 10);
-    m = m.set("y", 20);
+    m = m.insert("x", 10);
+    m = m.insert("y", 20);
     if (m.len() != 2) { return 1; }
-    m = m.clear();
+    m = m.cleared();
     if (m.len() != 0) { return 2; }
     if (m.has("x")) { return 3; }
     // Re-insert after clear must work.
-    m = m.set("z", 99);
+    m = m.insert("z", 99);
     if (m.len() != 1) { return 4; }
     if (m.get_or("z", 0) != 99) { return 5; }
     return 0;
@@ -13644,15 +13644,15 @@ function main(): i32 {
 
 // Phase 2d: Map.set copy-on-write — arm64 sibling of
 // TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
-// has rc=2, so m2.set(...) copies and leaves m1 intact.
+// has rc=2, so m2.insert(...) copies and leaves m1 intact.
 func TestArm64MapSetAliasedCopies(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.set("a", 1);                 // in-place (rc==1)
+    m1.insert("a", 1);                 // in-place (rc==1)
     var m2 = m1;                    // alias → rc=2
-    m2 = m2.set("a", 999);          // rc>1 → copy; m1 unchanged
+    m2 = m2.insert("a", 999);          // rc>1 → copy; m1 unchanged
     if (m1.get_or("a", 0) != 1)   { return 1; }
     if (m2.get_or("a", 0) != 999) { return 2; }
     return 0;
@@ -13669,17 +13669,17 @@ func TestArm64MapDeleteClearAliasedCopies(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.set("a", 1);
-    m1.set("b", 2);
+    m1.insert("a", 1);
+    m1.insert("b", 2);
     var m2 = m1;                       // alias → rc=2
-    var (m3, ok) = m2.delete("a");     // rc>1 → copy; m1/m2 intact
+    var (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }
     if (m1.len() != 2)  { return 2; }
     if (!m1.has("a"))   { return 3; }
     if (m3.len() != 1)  { return 4; }
     if (m3.has("a"))    { return 5; }
     var m4 = m1;                       // alias → rc=2
-    m4 = m4.clear();                   // rc>1 → copy; m1 intact
+    m4 = m4.cleared();                   // rc>1 → copy; m1 intact
     if (m1.len() != 2)  { return 6; }
     if (m4.len() != 0)  { return 7; }
     return 0;
@@ -13775,12 +13775,12 @@ function main(): i32 {
     // Var declaration: K=string, V=i32
     var a: Map[string, i32] = Map {};
     if (a.len() != 0) { return 1; }
-    a = a.set("k", 42);
+    a = a.insert("k", 42);
     if (a.get_or("k", 0) != 42) { return 2; }
     // Var declaration: K=i32, V=string
     var b: Map[i32, string] = Map {};
     if (b.len() != 0) { return 3; }
-    b = b.set(7, "hello");
+    b = b.insert(7, "hello");
     if (!b.has(7)) { return 4; }
     // Function argument
     if (take(Map {}) != 0) { return 5; }
@@ -13851,28 +13851,28 @@ struct P { x: i32, y: i32 }
 function main(): i32 {
     // tuple value
     var mt: Map[string, (i32, i32)] = Map {};
-    mt = mt.set("a", (3, 4));
+    mt = mt.insert("a", (3, 4));
     match (mt.get("a")) {
         Some(p) => { if (p.0 + p.1 != 7) { return 1; } },
         None => { return 2; }
     }
     // struct value
     var ms: Map[string, P] = Map {};
-    ms = ms.set("a", P { x: 3, y: 4 });
+    ms = ms.insert("a", P { x: 3, y: 4 });
     match (ms.get("a")) {
         Some(s) => { if (s.x + s.y != 7) { return 3; } },
         None => { return 4; }
     }
     // array value
     var ma: Map[i32, i32[]] = Map {};
-    ma = ma.set(1, [10, 20, 30]);
+    ma = ma.insert(1, [10, 20, 30]);
     match (ma.get(1)) {
         Some(arr) => { if (arr[0] + arr[2] != 40) { return 5; } },
         None => { return 6; }
     }
     // i32 value (regression guard — must still work after usize fix)
     var mi: Map[string, i32] = Map {};
-    mi = mi.set("a", 42);
+    mi = mi.insert("a", 42);
     match (mi.get("a")) {
         Some(v) => { if (v != 42) { return 7; } },
         None => { return 8; }

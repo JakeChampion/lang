@@ -645,7 +645,7 @@ function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
                     // split from its declared return type, mirroring the
                     // free-function case above.
                     var rcv: Ty = infer_expr_type(fa.obj, s);
-                    if ((fa.field == "delete" || fa.field == "without") && is_map(rcv)) {
+                    if ((fa.field == "without") && is_map(rcv)) {
                         return TwoTags { a: rcv, b: ty_i32() };
                     }
                     if (!ty_is_unknown(rcv)) {
@@ -1478,7 +1478,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (is_map(rt) && fa.field == "get_or") {
                         return map_val(rt);
                     }
-                    if (is_map(rt) && (fa.field == "set" || fa.field == "insert")) { return rt; }
+                    if (is_map(rt) && (fa.field == "insert")) { return rt; }
                     if (is_map(rt) && fa.field == "has") { return ty_bool(); }
                     if (is_map(rt) && fa.field == "len") { return ty_i32(); }
                     if (is_map(rt) && fa.field == "keys") {
@@ -2001,7 +2001,7 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
             // Map methods (string-keyed). set → map; get →
             // Option[V]; has → bool; len → i32. Mirror of
             // asm.fern's x86-64 dispatch.
-            if (is_map(prim_recv) && (fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
+            if (is_map(prim_recv) && (fa.field == "insert") && c.args.len() == 2) {
                 var kk_set: string = "0";
                 if (map_key_is_i32(prim_recv)) { kk_set = "1"; }
                 s = emit_expr(fa.obj, s);
@@ -2018,9 +2018,9 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
                 s = s.mark_arr_push();
                 return s;
             }
-            // m.delete(k) / m.without(k) → tuple (map, existed). See
+            // m.without(k) → tuple (map, existed). See
             // the x86-64 mirror in asm.fern for the contract.
-            if (is_map(prim_recv) && (fa.field == "delete" || fa.field == "without") && c.args.len() == 1) {
+            if (is_map(prim_recv) && (fa.field == "without") && c.args.len() == 1) {
                 var kk_del: string = "0";
                 if (map_key_is_i32(prim_recv)) { kk_del = "1"; }
                 s = emit_expr(fa.obj, s);

@@ -114,7 +114,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// Maps — now testable via the read_file harness (the 33 KB map WAT
 		// overran the old embed-the-WAT approach).
 		{"map-get", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; return m.get_or(2, 0) + m.get_or(3, 0); }", 50},
-		{"map-string-key", "function main(): i32 { var m = map_new(8); m = m.set(\"k\", 41); return m.get_or(\"k\", 0) + 1; }", 42},
+		{"map-string-key", "function main(): i32 { var m = map_new(8); m = m.insert(\"k\", 41); return m.get_or(\"k\", 0) + 1; }", 42},
 		// Closures — named `(type $clos*)` decls + the table & elem sections
 		// + call_indirect through the function table.
 		{"closure-capture", "function adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
@@ -135,7 +135,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// Integration capstone: string[] + a string-keyed count map + a
 		// loop. Its ~34 KB WAT also exercises the assembler's own grown heap
 		// (it OOM'd before memory.grow).
-		{"integration-wordcount", "function main(): i32 { var words: string[] = [\"a\", \"b\", \"a\", \"c\", \"a\", \"b\"]; var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.set(w, counts.get_or(w, 0) + 1); i = i + 1; } return counts.get_or(\"a\", 0) * 10 + counts.get_or(\"b\", 0); }", 32},
+		{"integration-wordcount", "function main(): i32 { var words: string[] = [\"a\", \"b\", \"a\", \"c\", \"a\", \"b\"]; var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.insert(w, counts.get_or(w, 0) + 1); i = i + 1; } return counts.get_or(\"a\", 0) * 10 + counts.get_or(\"b\", 0); }", 32},
 		// At-scale validation: substantial multi-feature programs round-trip
 		// through the binary encoder — deep recursion, a struct-array
 		// "linked list" walked by index, and a string split + iteration.

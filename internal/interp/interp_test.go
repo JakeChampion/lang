@@ -265,14 +265,14 @@ func TestInterpMapBasic(t *testing.T) {
 		{"len of empty", `function main(): i32 { var m: Map[i32, i32] = map_new(4); return m.len(); }`, 0},
 		{"len after set", `function main(): i32 {
 			var m: Map[i32, i32] = map_new(4);
-			m.set(1, 10);
-			m.set(2, 20);
-			m.set(3, 30);
+			m.insert(1, 10);
+			m.insert(2, 20);
+			m.insert(3, 30);
 			return m.len();
 		}`, 3},
 		{"set then get", `function main(): i32 {
 			var m: Map[i32, i32] = map_new(4);
-			m.set(7, 42);
+			m.insert(7, 42);
 			match (m.get(7)) {
 				Some(v) => { return v; },
 				None => { return -1; }
@@ -289,9 +289,9 @@ func TestInterpMapBasic(t *testing.T) {
 		}`, -1},
 		{"has and delete", `function main(): i32 {
 			var m: Map[i32, i32] = map_new(4);
-			m.set(1, 100);
+			m.insert(1, 100);
 			if (m.has(1) && !m.has(2)) {
-				if (m.delete(1).1) {
+				if (m.without(1).1) {
 					if (m.has(1)) { return -1; }
 					return 0;
 				}
@@ -300,7 +300,7 @@ func TestInterpMapBasic(t *testing.T) {
 		}`, 0},
 		{"get_or", `function main(): i32 {
 			var m: Map[i32, i32] = map_new(4);
-			m.set(7, 70);
+			m.insert(7, 70);
 			return m.get_or(7, 1) + m.get_or(99, 2);
 		}`, 72},
 		{"literal", `function main(): i32 {

@@ -16,9 +16,9 @@ var ifLetCases = []struct {
 	src  string
 	exit int
 }{
-	{"some", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.set(\"k\", 42); if let Some(v) = m.get(\"k\") { return v; } else { return 1; } }", 42},
-	{"none-else", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.set(\"k\", 42); if let Some(v) = m.get(\"absent\") { return v; } else { return 7; } }", 7},
-	{"no-else-fallthrough", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.set(\"k\", 5); if let Some(v) = m.get(\"absent\") { return v; } return 9; }", 9},
+	{"some", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.insert(\"k\", 42); if let Some(v) = m.get(\"k\") { return v; } else { return 1; } }", 42},
+	{"none-else", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.insert(\"k\", 42); if let Some(v) = m.get(\"absent\") { return v; } else { return 7; } }", 7},
+	{"no-else-fallthrough", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.insert(\"k\", 5); if let Some(v) = m.get(\"absent\") { return v; } return 9; }", 9},
 	{"user-variant", "enum Shape { Circle(i32), Empty } function main(): i32 { var s: Shape = Circle(42); if let Circle(r) = s { return r; } else { return 0; } }", 42},
 }
 

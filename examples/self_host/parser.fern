@@ -473,7 +473,7 @@ struct StmtResult { par: Par, stmt: Stmt }
 
 // parse_map_lit parses a map literal `Map { k0: v0, k1: v1, … }` (the
 // cursor is on the opening `{`) and desugars it to a chained
-// `map_new[_i32](n).set(k0,v0).set(k1,v1)…` — set returns the map, so
+// `map_new[_i32](n).insert(k0,v0).insert(k1,v1)…` — insert returns the map, so
 // the whole thing is one expression. map_new_i32 when the first key is
 // a number literal (integer keys), else map_new (string keys), so the
 // chained .set dispatch picks the right key compare.

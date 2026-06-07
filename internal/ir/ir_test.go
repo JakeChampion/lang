@@ -2107,7 +2107,7 @@ func TestLowerMapStructValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Item { xs: i32[] }
 function build(): i32 {
     var m: Map[i32, Item] = map_new(8);
-    m = m.set(1, Item { xs: [1, 2] });
+    m = m.insert(1, Item { xs: [1, 2] });
     return 0;
 }`, 8)
 	const loop = "__drop_map_via___drop_struct_Item"
@@ -2131,7 +2131,7 @@ struct VA { v: i32[] }
 type Value = VI | VA;
 function build(): i32 {
     var m: Map[i32, Value] = map_new(8);
-    m = m.set(1, VI { v: [1, 2] });
+    m = m.insert(1, VI { v: [1, 2] });
     return 0;
 }`, 8)
 	const loop = "__drop_map_via___drop_enum_Value"
@@ -2154,7 +2154,7 @@ func TestLowerMapArrayOfStructValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Item { xs: i32[] }
 function build(): i32 {
     var m: Map[i32, Item[]] = map_new(8);
-    m = m.set(1, [Item { xs: [1, 2] }]);
+    m = m.insert(1, [Item { xs: [1, 2] }]);
     return 0;
 }`, 8)
 	const loop = "__drop_map_via___drop_arr_struct_Item"
@@ -2180,7 +2180,7 @@ func TestLowerMapGenericEnumValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `struct Item { xs: i32[] }
 function build(): i32 {
     var m: Map[i32, Option[Item]] = map_new(8);
-    m = m.set(1, Some(Item { xs: [1, 2] }));
+    m = m.insert(1, Some(Item { xs: [1, 2] }));
     return 0;
 }`, 8)
 	const loop = "__drop_map_via___drop_enum_Option_LB_Item_RB_"
@@ -2203,8 +2203,8 @@ func TestLowerMapOverwriteDrop(t *testing.T) {
 	p := lowerSourceWith(t, `struct Item { xs: i32[] }
 function build(): i32 {
     var m: Map[i32, Item] = map_new(8);
-    m = m.set(1, Item { xs: [1, 2] });
-    m = m.set(1, Item { xs: [3] });
+    m = m.insert(1, Item { xs: [1, 2] });
+    m = m.insert(1, Item { xs: [3] });
     return 0;
 }`, 8)
 	if !callsDirect(p, "build", "__map_lookup_val") {
@@ -2222,7 +2222,7 @@ function build(): i32 {
 func TestLowerMapStringValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "hello" + "world");
+    m = m.insert(1, "hello" + "world");
     return 0;
 }`, 4)
 	if !funcExists(p, "__drop_map_str_values") {
@@ -2242,7 +2242,7 @@ func TestLowerMapStringValueReclaim(t *testing.T) {
 func TestLowerMapStringValueGetRetain(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "hello" + "world");
+    m = m.insert(1, "hello" + "world");
     var got: i32 = 0;
     match (m.get(1)) { Some(v) => { got = v.len(); }, None => { got = 0; } }
     return got;
@@ -2260,7 +2260,7 @@ func TestLowerMapStringValueGetRetain(t *testing.T) {
 func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "hello" + "world");
+    m = m.insert(1, "hello" + "world");
     return 0;
 }`, 8)
 	if !funcExists(p, "__drop_map_str_values") {
@@ -2292,7 +2292,7 @@ func TestLowerMapStringValueReclaimOnArm64TwoWord(t *testing.T) {
 	defer func() { ast.TwoWordOverride = prev }()
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "hello" + "world");
+    m = m.insert(1, "hello" + "world");
     return 0;
 }`, 8)
 	if !callsDirect(p, "build", "__drop_map_str_values") {
@@ -2307,7 +2307,7 @@ func TestLowerMapStringValueReclaimOnArm64TwoWord(t *testing.T) {
 func TestLowerMapStringKeyReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("foo" + "bar", 10);
+    m = m.insert("foo" + "bar", 10);
     return 0;
 }`, 4)
 	if !funcExists(p, "__drop_map_str_keys") {
@@ -2332,7 +2332,7 @@ func TestLowerMapStringKeyReclaim(t *testing.T) {
 func TestLowerMapStringKeyReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("foo" + "bar", 10);
+    m = m.insert("foo" + "bar", 10);
     return 0;
 }`, 8)
 	if !funcExists(p, "__drop_map_str_keys") {
@@ -2364,7 +2364,7 @@ func TestLowerMapStringKeyReclaimOnArm64TwoWord(t *testing.T) {
 	defer func() { ast.TwoWordOverride = prev }()
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("foo" + "bar", 10);
+    m = m.insert("foo" + "bar", 10);
     return 0;
 }`, 8)
 	if !callsDirect(p, "build", "__drop_map_str_keys") {
@@ -2379,7 +2379,7 @@ func TestLowerMapStringKeyReclaimOnArm64TwoWord(t *testing.T) {
 func TestLowerMapStringColDropFreesCell(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
-    m = m.set(1, "hello" + "world");
+    m = m.insert(1, "hello" + "world");
     return 0;
 }`, 4)
 	if !callsDirect(p, "__drop_map_str_values", "__fern_cell_free") {
@@ -2388,7 +2388,7 @@ func TestLowerMapStringColDropFreesCell(t *testing.T) {
 }
 
 // TestLowerMapStringLookupKeyCellFreed verifies that the read-only Map
-// methods (get / has / get_or / delete) reclaim the transient boxed
+// methods (get / has / get_or / without) reclaim the transient boxed
 // lookup-key cell via __fern_cell_free — the read helpers never retain
 // the key, so the per-call cell is freed once the helper has consumed it.
 func TestLowerMapStringLookupKeyCellFreed(t *testing.T) {
@@ -2396,13 +2396,13 @@ func TestLowerMapStringLookupKeyCellFreed(t *testing.T) {
 		{"get", `match (m.get("a" + "b")) { Some(v) => { return v; }, None => { return 0; } }`},
 		{"has", `if (m.has("a" + "b")) { return 1; } return 0;`},
 		{"get_or", `return m.get_or("a" + "b", 0);`},
-		{"delete", `var r = m.delete("a" + "b"); return 0;`},
+		{"delete", `var r = m.without("a" + "b"); return 0;`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a" + "b", 1);
+    m = m.insert("a" + "b", 1);
     `+c.call+`
 }`, 4)
 			if !callsDirect(p, "build", "__fern_cell_free") {
@@ -2418,7 +2418,7 @@ func TestLowerMapStringLookupKeyCellFreed(t *testing.T) {
 func TestLowerMapStringLookupKeyNoFreeOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a" + "b", 1);
+    m = m.insert("a" + "b", 1);
     return m.get_or("a" + "b", 0);
 }`, 8)
 	if callsDirect(p, "build", "__fern_cell_free") {
@@ -2432,7 +2432,7 @@ func TestLowerMapStringLookupKeyNoFreeOnNative(t *testing.T) {
 func TestLowerMapStringKeyAndValueReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[string, string] = map_new(8);
-    m = m.set("foo" + "bar", "baz" + "qux");
+    m = m.insert("foo" + "bar", "baz" + "qux");
     return 0;
 }`, 4)
 	if !callsDirect(p, "build", "__drop_map_str_keys") {
