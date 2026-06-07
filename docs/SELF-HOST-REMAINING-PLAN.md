@@ -948,6 +948,29 @@ smallest → largest:
     Mach-O exits 42 — no external tool. A named-label table over these
     primitives (so multiple forward labels + calls resolve by name) is the
     next slice.
+  - ✅ **slice 3d — named-label assembler**: an `Arm64Asm` struct
+    (`code` + a label table + a fixup queue with per-fixup kind: imm26 for
+    `b`/`bl`, imm19 for `b.cond`/`cbz`/`cbnz`), the arm64 counterpart of
+    `X86Asm`. `arm64_asm_label` records a name at the current offset;
+    `arm64_asm_b`/`bl`/`bcond`/`cbz`/`cbnz` branch to a (possibly forward)
+    name — patched immediately if already placed, else queued;
+    `arm64_asm_resolve` patches the rest once everything is placed. Adds
+    `bl` (branch-with-link). Byte-checked by `TestSelfHostArm64Labels`
+    (forward `b`/`b.cond`/`bl` via resolve + backward `cbnz` patched
+    inline) and gated end-to-end by **`TestSelfHostArm64DarwinMachOCallRuns`**:
+    a Fern program assembles `_main { bl compute; exit(x0) }` /
+    `compute { loop 6 × 7; ret }` — a forward call + a backward loop by
+    name — wraps it with `macho.fern`, and the signed Mach-O exits 42 with
+    no external tool.
+  - ✅ **slice 3e — loads / stores (stack frame)**: `ldr` / `str` Xt,
+    [Xn, #off] (64-bit, unsigned scaled immediate; register 31 names SP),
+    plus an `arm64_sp` helper. Byte-checked by `TestSelfHostArm64LoadStore`
+    and gated end-to-end by **`TestSelfHostArm64DarwinMachOFrameRuns`**: a
+    Fern program assembles a stack-frame round-trip (`sub sp`; `movz`;
+    `str x0,[sp,#8]`; clobber; `ldr x0,[sp,#8]`; `add sp`), wraps it with
+    `macho.fern`, and the signed Mach-O exits 42 — no external tool. Next:
+    `@PAGE`/`@PAGEOFF` literal/data addressing, then wiring `asm_arm64` →
+    `macho.fern` → file.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
@@ -1175,6 +1198,25 @@ smallest → largest:
     `asm.fern` → `x86_gas` → `elf` → a runnable ELF with **no external `as`
     or `ld`**. The capstone now spans arithmetic / control-flow / calls /
     recursion / float / string / **struct / array**.
+  - ✅ **slice 2u — `movslq` reg-reg → strings work**. Probing richer
+    programs found `s.len()` returned 0: `asm.fern` widens the i32 length
+    with `movslq %eax, %rax` (reg-reg), but the dispatch only had the
+    *memory* form and sent `%eax` to `parse_mem` (→ a bogus base) → garbage.
+    Added `x86_movslq_rr` (`48 63 /r`) + reg-vs-mem dispatch. `strlen` and
+    `strchar` capstone cases now run natively (the capstone is up to **11
+    program shapes**). Probing also confirmed **multi-function** programs
+    (`f3∘f2∘f1`) and `fizzbuzz` (`%`/`if` chains) already work.
+  - ✅ **slice 2v — maps work (no bug after all)**. The earlier
+    "map returns 254" was a **malformed test program** — `Map[string,i32]{}`
+    is a syntax error even in the Go compiler, so `asm.fern` emitted garbage
+    (the gcc-assembled reference exited 254 too). With the correct literal
+    `Map { k: v }`, both i32-keyed and string-keyed maps assemble + run
+    natively to 42 — the full FNV-hash / open-addressing runtime works
+    through the assembler. Added `mapi32` / `mapstr` capstone cases: the
+    capstone is now **13 program shapes** (arith, while, ifelse, call,
+    recur, float, string, struct, array, strlen, strchar, map×2) — the
+    whole core-language surface, all assembled by the self-host toolchain
+    and run natively with no external `as`/`ld`.
   - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
     transcendental math builtins; broadening the capstone toward
     progressively larger programs (and ultimately `asm.fern`'s own output
