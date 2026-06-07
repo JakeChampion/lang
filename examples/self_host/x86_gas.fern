@@ -179,10 +179,19 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
     return a;
 }
 
-// x86_gas_alu dispatches addq/subq/cmpq (slash = 0 add / 5 sub / 7 cmp).
+// x86_gas_alu dispatches addq/subq/cmpq (slash = 0 add / 5 sub / 7 cmp):
+// `$imm, %reg`, a memory *source* `mem, %reg`, or `%reg, %reg`.
 function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) { // $imm -> reg
         a.code = x86_alu_r64_imm32(a.code, slash, x86_gas_reg(dst), x86_gas_atoi(src));
+        return a;
+    }
+    if (src.contains("(")) { // mem -> reg (load-form ALU)
+        var m: GasMem = x86_gas_parse_mem(src);
+        var op: i32 = 3; // add 0x03
+        if (slash == 5) { op = 43; } // sub 0x2B
+        if (slash == 7) { op = 59; } // cmp 0x3B
+        a.code = x86_alu_load_r64(a.code, op, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp);
         return a;
     }
     var d: i32 = x86_gas_reg(dst);
@@ -280,9 +289,40 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "jle") { return x86_jcc_label(a, x86_cc_le(), rest); }
     if (mnem == "jg") { return x86_jcc_label(a, x86_cc_g(), rest); }
     if (mnem == "call") { return x86_call_label(a, rest); }
-    // one-operand register
-    if (mnem == "pushq") { a.code = x86_push_r64(a.code, x86_gas_reg(rest)); return a; }
-    if (mnem == "popq") { a.code = x86_pop_r64(a.code, x86_gas_reg(rest)); return a; }
+    // one-operand: push/pop take a register or a memory operand
+    if (mnem == "pushq") {
+        if (rest.contains("(")) {
+            var pm: GasMem = x86_gas_parse_mem(rest);
+            a.code = x86_push_mem(a.code, pm.base, pm.has_index, pm.index, pm.scale, pm.disp);
+        } else {
+            a.code = x86_push_r64(a.code, x86_gas_reg(rest));
+        }
+        return a;
+    }
+    if (mnem == "popq") {
+        if (rest.contains("(")) {
+            var qm: GasMem = x86_gas_parse_mem(rest);
+            a.code = x86_pop_mem(a.code, qm.base, qm.has_index, qm.index, qm.scale, qm.disp);
+        } else {
+            a.code = x86_pop_r64(a.code, x86_gas_reg(rest));
+        }
+        return a;
+    }
+    // imulq: 3-operand `$imm, %src, %dst` or 2-operand `%src, %dst`.
+    if (mnem == "imulq") {
+        var c1: i32 = x86_gas_top_comma(rest);
+        var op0: string = x86_gas_trim(rest[0:c1]);
+        var remn: string = rest[c1 + 1:rest.len()];
+        var c2: i32 = x86_gas_top_comma(remn);
+        if (c2 >= 0) {
+            var rs: string = x86_gas_trim(remn[0:c2]);       // %src
+            var rd: string = x86_gas_trim(remn[c2 + 1:remn.len()]); // %dst
+            a.code = x86_imul_r64_r64_imm32(a.code, x86_gas_reg(rd), x86_gas_reg(rs), x86_gas_atoi(op0));
+        } else {
+            a.code = x86_imul_r64_r64(a.code, x86_gas_reg(x86_gas_trim(remn)), x86_gas_reg(op0));
+        }
+        return a;
+    }
     if (mnem == "incq") { a.code = x86_inc_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "decq") { a.code = x86_dec_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "negq") { a.code = x86_neg_r64(a.code, x86_gas_reg(rest)); return a; }
@@ -304,7 +344,6 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
     if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
     if (mnem == "testq") { a.code = x86_test_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)); return a; }
-    if (mnem == "imulq") { a.code = x86_imul_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)); return a; }
     if (mnem == "shlq") { a.code = x86_shl_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)); return a; }
     if (mnem == "andq") { return x86_gas_logic(a, 4, 33, src, dst); }
     if (mnem == "orq") { return x86_gas_logic(a, 1, 9, src, dst); }

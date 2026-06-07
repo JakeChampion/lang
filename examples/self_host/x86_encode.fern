@@ -410,6 +410,51 @@ function x86_cmpb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
     return buf.push(imm & 255);
 }
 
+// ---- push/pop memory + 3-operand imul (slice 2l) ----
+
+// x86_push_mem: `push mem` (0xFF /6) — push a memory operand.
+function x86_push_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    var rex: i32 = x86_rex(0, 0, ix, base);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(255); // 0xFF
+    return x86_byte_mem_operand(buf, 6, base, has_index, index, scale, disp);
+}
+
+// x86_pop_mem: `pop mem` (0x8F /0).
+function x86_pop_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    var rex: i32 = x86_rex(0, 0, ix, base);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(143); // 0x8F
+    return x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
+}
+
+// x86_imul_r64_r64_imm32: `imul <dst>, <src>, imm32` (0x69 /r id) — the
+// three-operand form (reg=dst, r/m=src, then imm32).
+function x86_imul_r64_r64_imm32(buf: i32[], dst: i32, src: i32, imm: i32): i32[] {
+    buf = buf.push(x86_rex(1, dst, 0, src));
+    buf = buf.push(105); // 0x69
+    buf = buf.push(x86_modrm(3, dst, src));
+    return x86_le32(buf, imm);
+}
+
+// x86_alu_load_r64: `<op> <dst>, mem` with a memory *source* — the
+// load-form ALU (add 0x03, sub 0x2B, cmp 0x3B; reg=dst, r/m=mem).
+function x86_alu_load_r64(buf: i32[], opcode: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.push(x86_rex(1, dst, ix, base));
+    buf = buf.push(opcode);
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
 // ---- immediate ALU (slice 2b) ----
 
 // x86_alu_r64_imm32 encodes the `<op> <reg>, imm32` group-1 form:

@@ -982,11 +982,23 @@ smallest → largest:
     `…GasByteImmRuns` (`movb $42`+`movzbq`) and `…GasByteRegRuns`
     (`movb %cl`+`movzbq` into `%r8`). With this the integer surface
     `asm.fern` emits is essentially covered.
+  - ✅ **slice 2l — capstone: assemble asm.fern's real output**. Surveying
+    `asm.fern`'s emit for a real program surfaced the last integer gaps,
+    all now added: `push`/`pop` of a **memory** operand (`0xFF /6` / `0x8F
+    /0`), the **3-operand** `imul $imm, %src, %dst` (`0x69 /r id`), and
+    ALU with a **memory source** (`add`/`sub`/`cmp %reg, mem` → `0x03`/
+    `0x2B`/`0x3B /r`). `elf.fern` gained an **entry-offset** image
+    (`elf_image_entry` / `elf_static_executable_data_x86_at`) because
+    `asm.fern` emits `__fn_main` before `_start`, so the ELF entry is the
+    `_start` label's offset, not 0. `TestSelfHostX86Capstone` is the
+    milestone: it compiles a real Fern program with `asm.fern`, feeds the
+    emitted AT&T text through `x86_gas_assemble` + `elf.fern`, and runs the
+    binary **natively on x86-64 exiting 42 — no external `as` or `ld`**.
   - ⬜ remaining: the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
-    `roundsd`, `fldl`/`fstpl`) + `movabsq` (64-bit/hex immediates) and the
-    odd `setCC` / `0x83` imm8 forms, then wire the front-end into the
-    `fern -target x86-64 -o` driver so a real compiled program becomes an
-    ELF with no external tool.
+    `roundsd`, `fldl`/`fstpl`) + `movabsq` (64-bit/hex immediates) for
+    float-using programs, broadening the capstone to more feature cases,
+    and finally wiring the front-end into the `fern -target x86-64 -o`
+    driver (so the CLI itself emits an ELF with no external tool).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

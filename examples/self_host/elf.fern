@@ -114,8 +114,16 @@ function elf_pad_to_8(b: i32[]): i32[] {
 // e_machine (EM_AARCH64 / EM_X86_64). Entry is the first instruction of
 // .text (elf_text_vaddr).
 function elf_image(body: i32[], flags: i32, machine: i32): i32[] {
+    return elf_image_entry(body, flags, machine, 0);
+}
+
+// elf_image_entry is elf_image with an explicit entry offset within
+// .text: e_entry = elf_text_vaddr() + entry_off. Used when the program's
+// entry is a label other than the first instruction (e.g. asm.fern emits
+// `__fn_main` before `_start`, so the entry is `_start`'s offset).
+function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32): i32[] {
     var total: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
-    var entry: i64 = elf_text_vaddr() as i64;
+    var entry: i64 = (elf_text_vaddr() + entry_off) as i64;
     var zero64: i64 = 0;
 
     var buf: i32[] = [];
@@ -198,4 +206,14 @@ function elf_static_executable_data_x86(text: i32[], data: i32[]): i32[] {
     body = elf_pad_to_8(body);
     body = elf_cat(body, data);
     return elf_image(body, 7, elf_em_x86_64()); // PF_R | PF_W | PF_X
+}
+
+// elf_static_executable_data_x86_at is elf_static_executable_data_x86 with
+// an explicit entry offset within .text (the offset of the `_start` label,
+// since asm.fern emits other functions before it).
+function elf_static_executable_data_x86_at(text: i32[], data: i32[], entry_off: i32): i32[] {
+    var body: i32[] = elf_cat([], text);
+    body = elf_pad_to_8(body);
+    body = elf_cat(body, data);
+    return elf_image_entry(body, 7, elf_em_x86_64(), entry_off); // PF_R | PF_W | PF_X
 }

@@ -4770,12 +4770,29 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                                 }
                             }
                         }
+                        // Guard: a `when <expr>` arm runs only if the guard is
+                        // true; a false guard skips to the arm-block end (next
+                        // arm), same as a tag mismatch. The binding is already
+                        // set, so the guard may reference it.
+                        if (m.arms[i].has_guard) {
+                            st = st.w("    (br_if " + nlabel + " (i32.eqz " + emit_expr(m.arms[i].guard, st.cx, 0) + "))\n");
+                        }
                         st = emit_stmts(m.arms[i].body, st);
                         st = st.w("    (br " + mend + "))\n");
                     },
                     parser.PatWildcard(_) => {
-                        st = emit_stmts(m.arms[i].body, st);
-                        st = st.w("    (br " + mend + ")\n");
+                        // A guarded wildcard needs its own block to skip to when
+                        // the guard is false (an unguarded wildcard always runs).
+                        if (m.arms[i].has_guard) {
+                            var wlabel: string = "$marm_" + i32_to_string(id) + "_" + i32_to_string(i);
+                            st = st.w("    (block " + wlabel + "\n");
+                            st = st.w("    (br_if " + wlabel + " (i32.eqz " + emit_expr(m.arms[i].guard, st.cx, 0) + "))\n");
+                            st = emit_stmts(m.arms[i].body, st);
+                            st = st.w("    (br " + mend + "))\n");
+                        } else {
+                            st = emit_stmts(m.arms[i].body, st);
+                            st = st.w("    (br " + mend + ")\n");
+                        }
                     },
                 }
                 i = i + 1;
