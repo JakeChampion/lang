@@ -4644,3 +4644,38 @@ func TestEmitExternStringParam(t *testing.T) {
 		t.Fatalf("emitted module missing the string-param extern import")
 	}
 }
+
+// TestEmitExternListU8Param — an extern with a `u8[]` parameter and a scalar
+// result (P4c) emits the raw import with the list flattened to the canonical
+// (ptr,len) and resolves the Fern call to a forwarding wrapper. Unlike a
+// string, a Fern `u8[]` is one slot on the Fern side but two on the canonical
+// side, so this exercises canonicalExternParamValtypes.
+func TestEmitExternListU8Param(t *testing.T) {
+	u8arr := ast.ArrayType{Elem: ast.NumberType{Width: 8}}
+	prog := &ir.Program{
+		Externs: []*ir.ExternFunc{{
+			Name:       "sink_sum",
+			Iface:      "local:test/sink@0.1.0",
+			WITName:    "sum-bytes",
+			Params:     []ast.Param{{Name: "data", Type: u8arr}},
+			ReturnType: ast.NumberType{Width: 32},
+		}},
+		Funcs: []*ir.Func{{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 0}, // u8[] element pointer (placeholder arg)
+				{Kind: ir.OpCallDirect, Str: "sink_sum"},
+				{Kind: ir.OpDrop}, // discard the u32 result
+				{Kind: ir.OpConstI32, I32: 0},
+			},
+		}},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !bytes.Contains(bin, []byte("local:test/sink@0.1.0")) || !bytes.Contains(bin, []byte("sum-bytes")) {
+		t.Fatalf("emitted module missing the u8[]-param extern import")
+	}
+}
