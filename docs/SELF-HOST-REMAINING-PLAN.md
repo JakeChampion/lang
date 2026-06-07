@@ -946,13 +946,19 @@ smallest → largest:
     the way:* the self-host string `trim` strips only spaces, not tabs, so
     the front-end carries its own tab-aware `x86_gas_trim` (asm.fern indents
     with tabs).
-  - ⬜ remaining: grow mnemonic coverage to the full `asm.fern` surface
-    (`incq`/`decq`, `testq`, `movb`/`movzbq`/`movl`, `imulq`/`divq`/`idivq`/
-    `cqto`, `negq`, `andq`/`orq`/`xorq`, `setCC`, `movabsq`, the `0x83` imm8
-    ALU + `movq $imm` sign-extended `C7` form) and the SSE/x87 float ops
-    (`movsd`, `ucomisd`, `xorpd`, `roundsd`, `fldl`/`fstpl`), then wire it
-    into the `fern -target x86-64 -o` driver so a real program compiles to
-    an ELF with no external tool.
+  - ✅ **slice 2h — integer mnemonic coverage**: added the high-frequency
+    64-bit ops `incq`/`decq`/`negq` (`0xFF`/`0xF7` group), `testq`,
+    `andq`/`orq`/`xorq` (reg-reg `0x21`/`09`/`31` + the `$imm` group-1
+    forms), `imulq` (`0F AF`), `idivq`/`divq` + `cqto`, and `shlq $imm8`.
+    Byte-checked vs `as`/objdump (`TestSelfHostX86Encode`) and three native
+    runs through the GAS front-end: `TestSelfHostX86GasMulRuns` (`imulq`,
+    6·7), `…IncShlRuns` (`incq`+`shlq`), `…DivRuns` (`cqto`+`idivq`, 84/2).
+  - ⬜ remaining: the 8/32-bit + misc ops (`movb`/`movzbq`/`movl`/`cmpb`,
+    `setCC`, `movabsq`, `0x83` imm8 ALU, `movq $imm` sign-extended `C7`
+    form) and the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
+    `roundsd`, `fldl`/`fstpl`), then wire the front-end into the
+    `fern -target x86-64 -o` driver so a real compiled program becomes an
+    ELF with no external tool.
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
