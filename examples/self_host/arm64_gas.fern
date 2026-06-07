@@ -1,0 +1,302 @@
+// examples/self_host/arm64_gas.fern — a self-hosted AArch64 GAS-text
+// assembler: it parses an assembly-text subset into machine-code bytes via
+// the arm64_encode.fern encoders + named-label assembler (Arm64Asm). It is
+// the arm64 counterpart of x86_gas.fern and the text->bytes step that lets
+// the arm64-darwin native path turn `asm_arm64`-style assembly into a
+// runnable Mach-O (via macho.fern) with no external `as`/`clang`.
+//
+// This module `import`s nothing but depends on the names defined in
+// arm64_encode.fern (the encoders + Arm64Asm), so a build / test
+// concatenates the two (plus macho.fern) the same way the x86 gas slices
+// concatenate x86_encode.fern.
+//
+// Supported subset (the canonical AArch64 GAS spellings):
+//   mov Xd, #imm | mov Xd, Xm | movz/movk Xd, #imm{, lsl #s}
+//   add/sub Xd, Xn, #imm | add/sub Xd, Xn, Xm
+//   cmp Xn, #imm | cmp Xn, Xm
+//   ldr/str Xt, [Xn{, #off}]
+//   b/bl <label> | b.<cond> <label> | cbz/cbnz Xt, <label>
+//   svc #imm | ret
+// Directives: .text (others ignored); `name:` labels; `//` line comments.
+
+// ---- text helpers ----
+
+// arm64_gas_trim strips leading/trailing ASCII spaces and tabs.
+function arm64_gas_trim(s: string): string {
+    var i: i32 = 0;
+    while (i < s.len() && (s[i] == 32 || s[i] == 9)) {
+        i = i + 1;
+    }
+    var j: i32 = s.len();
+    while (j > i && (s[j - 1] == 32 || s[j - 1] == 9)) {
+        j = j - 1;
+    }
+    return s[i:j];
+}
+
+// arm64_gas_atoi parses a signed integer token: optional '-', decimal or
+// `0x…` hex. Two's-complement wrap gives the right bits for negatives.
+function arm64_gas_atoi(tok: string): i32 {
+    var s: string = tok;
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    }
+    var v: i32 = 0;
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + d; }
+            i = i + 1;
+        }
+    } else {
+        while (i < s.len()) {
+            var c2: i32 = s[i];
+            if (c2 >= 48 && c2 <= 57) { v = v * 10 + (c2 - 48); }
+            i = i + 1;
+        }
+    }
+    if (neg) {
+        return 0 - v;
+    }
+    return v;
+}
+
+// arm64_gas_imm parses an immediate operand `#N` (decimal or 0x hex,
+// optional '-'); the leading '#' is dropped.
+function arm64_gas_imm(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    if (s.len() > 0 && s[0] == 35) { // '#'
+        s = s[1:s.len()];
+    }
+    return arm64_gas_atoi(s);
+}
+
+// arm64_gas_reg parses a register token: x0..x30, plus the aliases sp / lr
+// / xzr (and the w… 32-bit names map to the same number). Defaults to 0.
+function arm64_gas_reg(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    if (s == "sp") { return 31; }
+    if (s == "xzr" || s == "wzr") { return 31; }
+    if (s == "lr") { return 30; }
+    if (s.len() >= 2 && (s[0] == 120 || s[0] == 119)) { // 'x' / 'w'
+        return arm64_gas_atoi(s[1:s.len()]);
+    }
+    return 0;
+}
+
+// arm64_gas_cond maps a condition suffix (the `eq` in `b.eq`) to its 4-bit
+// code, matching arm64_encode's arm64_eq/ne/ge/lt/gt/le.
+function arm64_gas_cond(s: string): i32 {
+    if (s == "eq") { return 0; }
+    if (s == "ne") { return 1; }
+    if (s == "ge") { return 10; }
+    if (s == "lt") { return 11; }
+    if (s == "gt") { return 12; }
+    if (s == "le") { return 13; }
+    return 0;
+}
+
+// arm64_gas_operands splits an operand list on top-level commas, ignoring
+// commas inside `[ … ]` (so a memory operand stays one token).
+function arm64_gas_operands(rest: string): string[] {
+    var out: string[] = [];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < rest.len()) {
+        var c: i32 = rest[i];
+        if (c == 91) { depth = depth + 1; }        // '['
+        else if (c == 93) { depth = depth - 1; }   // ']'
+        else if (c == 44 && depth == 0) {           // ','
+            out = out.push(arm64_gas_trim(rest[start:i]));
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    var last: string = arm64_gas_trim(rest[start:rest.len()]);
+    if (last.len() > 0) {
+        out = out.push(last);
+    }
+    return out;
+}
+
+// Arm64Mem is a parsed `[Xn{, #off}]` memory operand.
+struct Arm64Mem {
+    base: i32,
+    off: i32,
+}
+
+// arm64_gas_mem parses `[Xn]` or `[Xn, #off]`.
+function arm64_gas_mem(op: string): Arm64Mem {
+    var s: string = arm64_gas_trim(op);
+    // drop the surrounding [ ]
+    if (s.len() >= 2 && s[0] == 91) {
+        s = s[1:s.len() - 1];
+    }
+    var parts: string[] = arm64_gas_operands(s);
+    var base: i32 = arm64_gas_reg(parts[0]);
+    var off: i32 = 0;
+    if (parts.len() > 1) {
+        off = arm64_gas_imm(parts[1]);
+    }
+    return Arm64Mem { base: base, off: off };
+}
+
+// arm64_gas_lsl_amount parses a `lsl #N` shift operand (the `lsl #16` of a
+// movk); returns 0 if it is not recognised.
+function arm64_gas_lsl_amount(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    var h: i32 = s.index_of("#");
+    if (h < 0) {
+        return 0;
+    }
+    return arm64_gas_atoi(arm64_gas_trim(s[h + 1:s.len()]));
+}
+
+// ---- instruction dispatch ----
+
+// arm64_gas_emit assembles one mnemonic + operand string into a.code (or
+// queues a label fixup). Unknown mnemonics are ignored.
+function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
+    if (mnem == "ret") {
+        a.code = arm64_ret(a.code, arm64_lr());
+        return a;
+    }
+    var ops: string[] = arm64_gas_operands(rest);
+    if (mnem == "svc") {
+        a.code = arm64_svc(a.code, arm64_gas_imm(ops[0]));
+        return a;
+    }
+    if (mnem == "b") {
+        return arm64_asm_b(a, ops[0]);
+    }
+    if (mnem == "bl") {
+        return arm64_asm_bl(a, ops[0]);
+    }
+    if (mnem == "cbz") {
+        return arm64_asm_cbz(a, arm64_gas_reg(ops[0]), ops[1]);
+    }
+    if (mnem == "cbnz") {
+        return arm64_asm_cbnz(a, arm64_gas_reg(ops[0]), ops[1]);
+    }
+    // b.<cond>
+    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { // 'b' '.'
+        return arm64_asm_bcond(a, arm64_gas_cond(mnem[2:mnem.len()]), ops[0]);
+    }
+    if (mnem == "mov" || mnem == "movz") {
+        var rd: i32 = arm64_gas_reg(ops[0]);
+        if (ops[1].len() > 0 && ops[1][0] == 35) { // '#'
+            a.code = arm64_movz(a.code, rd, arm64_gas_imm(ops[1]), 0);
+        } else {
+            a.code = arm64_movreg(a.code, rd, arm64_gas_reg(ops[1]));
+        }
+        return a;
+    }
+    if (mnem == "movk") {
+        var sh: i32 = 0;
+        if (ops.len() > 2) {
+            sh = arm64_gas_lsl_amount(ops[2]);
+        }
+        a.code = arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh);
+        return a;
+    }
+    if (mnem == "add") {
+        var ad: i32 = arm64_gas_reg(ops[0]);
+        var an: i32 = arm64_gas_reg(ops[1]);
+        if (ops[2].len() > 0 && ops[2][0] == 35) {
+            a.code = arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2]));
+        } else {
+            a.code = arm64_addreg(a.code, ad, an, arm64_gas_reg(ops[2]));
+        }
+        return a;
+    }
+    if (mnem == "sub") {
+        var sd: i32 = arm64_gas_reg(ops[0]);
+        var sn: i32 = arm64_gas_reg(ops[1]);
+        if (ops[2].len() > 0 && ops[2][0] == 35) {
+            a.code = arm64_subimm(a.code, sd, sn, arm64_gas_imm(ops[2]));
+        } else {
+            a.code = arm64_subreg(a.code, sd, sn, arm64_gas_reg(ops[2]));
+        }
+        return a;
+    }
+    if (mnem == "cmp") {
+        var cn: i32 = arm64_gas_reg(ops[0]);
+        if (ops[1].len() > 0 && ops[1][0] == 35) {
+            a.code = arm64_cmpimm(a.code, cn, arm64_gas_imm(ops[1]));
+        } else {
+            a.code = arm64_cmpreg(a.code, cn, arm64_gas_reg(ops[1]));
+        }
+        return a;
+    }
+    if (mnem == "ldr") {
+        var lm: Arm64Mem = arm64_gas_mem(ops[1]);
+        a.code = arm64_ldr(a.code, arm64_gas_reg(ops[0]), lm.base, lm.off);
+        return a;
+    }
+    if (mnem == "str") {
+        var sm: Arm64Mem = arm64_gas_mem(ops[1]);
+        a.code = arm64_str(a.code, arm64_gas_reg(ops[0]), sm.base, sm.off);
+        return a;
+    }
+    return a; // unknown mnemonic — ignored
+}
+
+// ---- the assemble loop ----
+
+// arm64_gas_assemble parses a GAS-text program (one statement per line)
+// into an Arm64Asm, resolving forward branches at the end. The resulting
+// a.code is the final .text. `_main` (or whatever label is first) must sit
+// at offset 0, since macho.fern enters at the first text byte.
+function arm64_gas_assemble(src: string): Arm64Asm {
+    var a: Arm64Asm = arm64_asm_new();
+    var lines: string[] = src.split("\n");
+    var li: i32 = 0;
+    while (li < lines.len()) {
+        var raw: string = lines[li];
+        li = li + 1;
+        // strip a `//` line comment
+        var cm: i32 = raw.index_of("//");
+        if (cm >= 0) {
+            raw = raw[0:cm];
+        }
+        var line: string = arm64_gas_trim(raw);
+        if (line.len() == 0) {
+            continue;
+        }
+        // label prefix `name:` (a single token before the first ':')
+        var colon: i32 = line.index_of(":");
+        if (colon > 0) {
+            var before: string = line[0:colon];
+            if (before.index_of(" ") < 0 && before.index_of(",") < 0) {
+                a = arm64_asm_label(a, before);
+                line = arm64_gas_trim(line[colon + 1:line.len()]);
+                if (line.len() == 0) {
+                    continue;
+                }
+            }
+        }
+        // directive: ignore (.text / .globl / .align / .p2align / .type …)
+        if (line[0] == 46) { // '.'
+            continue;
+        }
+        // mnemonic + operands
+        var sp: i32 = line.index_of(" ");
+        var mnem: string = line;
+        var rest: string = "";
+        if (sp >= 0) {
+            mnem = line[0:sp];
+            rest = arm64_gas_trim(line[sp + 1:line.len()]);
+        }
+        a = arm64_gas_emit(a, mnem, rest);
+    }
+    return arm64_asm_resolve(a);
+}
