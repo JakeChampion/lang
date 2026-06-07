@@ -103,7 +103,19 @@ func liftInterface(name string, inst *TypeDef) WorldInterface {
 		case d.Kind == 0x02 && d.Alias != nil && d.Alias.Sort == 0x03:
 			wi.LocalTypes = append(wi.LocalTypes, nil)
 		case (d.Kind == 0x03 || d.Kind == 0x04) && d.Extern != nil && d.Extern.Kind == 0x03:
-			wi.LocalTypes = append(wi.LocalTypes, nil)
+			// A type externdesc binds an index. `(type (eq N))` re-exports an
+			// earlier type — e.g. `export "datetime" (type (eq 0))` aliases the
+			// record at index 0 — so resolve the slot to that target def. A
+			// function whose param/result references this slot must then see the
+			// underlying type (the datetime record is a 2-field KindMem result,
+			// not an opaque handle); leaving it nil mis-lowers `now` as a no-opt
+			// and drops the required `memory` canonical option. A
+			// `(type (sub resource))` bound is a genuine opaque handle → nil.
+			if d.Extern.Bound == 0x00 && int(d.Extern.BoundIdx) < len(wi.LocalTypes) {
+				wi.LocalTypes = append(wi.LocalTypes, wi.LocalTypes[d.Extern.BoundIdx])
+			} else {
+				wi.LocalTypes = append(wi.LocalTypes, nil)
+			}
 		}
 	}
 	for i := range inst.Decls {
