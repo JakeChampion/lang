@@ -1120,13 +1120,17 @@ Type-system extension; ~1-2 weeks design + implementation.
 
 ### Major gaps (workarounds heavy)
 
-1. **Process spawning** — the compiler invokes `clang` /
-   `lld` / `wasm-tools` (see Part 3). Lang has no `exec`
-   and WASI's `wasi:system/process` proposal isn't
-   finalised. **Path forward**: keep a thin Go bootstrap
-   that handles linking only, and let the fern-port emit
-   asm / WAT. Standard self-hosting pattern (TinyCC and
-   others do this).
+1. **Process spawning** — the *self-hosted* native path still
+   invokes `clang` / `lld` / `as` / `ld` to assemble + link its
+   emitted `.s` text (see Part 3). The **goal is zero external
+   tools**: the fern-port should emit ELF / Mach-O / wasm bytes
+   directly, the way it already does for wasm. This is no longer a
+   research question — the Go bootstrap already does it in-process
+   (`internal/native/{x86_64,arm64,elf,macho}`), so the work is a
+   port, not an invention. Tracked as the **native-binary track**
+   in `SELF-HOST-REMAINING-PLAN.md` (the ELF-64 writer landed first
+   as `examples/self_host/elf.fern`). Only if that proves
+   impractical do we fall back to a thin Go link bootstrap.
 
 2. **No sort / no custom comparators**. Compiler sorts
    small lists (field offsets, map sizes). Inline the sort
@@ -1175,12 +1179,37 @@ viable since closures-with-captures lower on every target.
 
 ---
 
-## Part 3 — Why we need clang, lld, and wasm-tools
+## Part 3 — External tools: where they're still used, and the plan to remove them
 
-The lang compiler emits **text** at every backend — `.s`
-assembly for arm64-linux / arm64-darwin / x86-64-linux, and
-`.wat` (WebAssembly Text Format) for wasm. Producing a
-runnable binary from that text requires external tools.
+**Goal: a fully self-hosted toolchain that needs no external tools at
+all** — the compiler should emit runnable ELF / Mach-O / wasm bytes
+directly. Status by half:
+
+- **wasm: done.** Neither the Go backend nor the self-host shells out
+  anymore. `wasm-tools` is no longer a build dependency (see Part 2): the
+  binary encoder + Component-Model framing live in-tree in Go
+  (`internal/wasm/*`) **and** in Fern (`leb128.fern` → `wat_lex.fern` →
+  `wat_parse.fern` → `wat_encode.fern` → `wat_emit_bin.fern` →
+  `wat_component.fern`). `fern -target wasm` produces a runnable binary
+  with no external process.
+- **native (x86-64 / arm64 ELF, arm64-darwin Mach-O): split.** The **Go
+  bootstrap already emits these in-process** —
+  `internal/native/x86_64` + `internal/native/arm64` (text-asm → machine
+  code), `internal/native/elf` (ELF-64 writer), `internal/native/macho`
+  (Mach-O writer + ad-hoc code signing). So the default `fern` build needs
+  no `as`/`ld` for native targets either. The **self-hosted** compiler,
+  however, still only emits `.s` **text** (`asm.fern` / `asm_arm64.fern`)
+  and relies on `clang` / `gcc` / `as` / `ld` / `lld` to assemble + link.
+
+So the remaining external-tool dependency is **only on the self-hosted
+native path**, and closing it is a *port* of the four Go `internal/native`
+packages into Fern — mirroring exactly how the wasm binary track was
+ported. This is the **native-binary track**, tracked in
+`SELF-HOST-REMAINING-PLAN.md`; the ELF-64 writer landed first as
+`examples/self_host/elf.fern` (`TestSelfHostELF`). The subsections below
+document the external tools the self-host *currently* shells out to (and
+the `-cc`/`-fuse-ld` paths the Go backend still offers as an option) until
+the port completes.
 
 ### clang (or `aarch64-linux-gnu-gcc` / `x86_64-linux-gnu-gcc`)
 
@@ -1255,33 +1284,52 @@ adapter. A handful of e2e tests still call `wasm-tools print`
 to inspect a composed component, but that's a test-only
 convenience, not a build dependency.
 
-### Why a self-hosted compiler needs process spawning
+### The native-binary track: emitting ELF / Mach-O directly
 
-To produce a binary, the compiler MUST invoke at least the
-linker — symbol resolution + section layout + executable
-header writing is too much code to bring into the language
-runtime today. For wasm targets you additionally need the
-component-model pipeline.
+The earlier framing of this section — "to produce a binary the
+compiler MUST invoke at least the linker; that's too much code to
+bring into the language" — is **superseded**. It is not too much
+code, and the proof is in-tree: the Go bootstrap already assembles
+and links natively, with no external process, via
+`internal/native/{x86_64,arm64,elf,macho}`. Symbol resolution +
+section layout + ELF/Mach-O header writing for a single
+`-static -nostdlib` blob (no archives, no shared objects, no
+external relocations, no PLT/GOT) is a few hundred lines per piece,
+not a research project. The wasm half already made the same jump
+(`internal/wasm/*`, mirrored in the self-host).
 
-The standard self-hosting workaround is to keep a thin
-external orchestrator that handles ONLY the link step:
+So the plan is to **port those four Go packages into Fern** so the
+self-hosted compiler emits native binaries directly, exactly as it
+already emits binary wasm. Slices (tracked in
+`SELF-HOST-REMAINING-PLAN.md`), each independently testable through
+the wasm self-test harness like the LEB128 / wat_encode slices:
 
 ```
-[lang source] → [lang compiler in lang]
-              → [.s text + temp file write]
-              → [thin Go bootstrap calls clang / lld / wasm-tools]
-              → [runnable binary]
+[fern source] → [compiler in fern]
+              → [emit machine-code bytes  (asm.fern bytes / asm_arm64.fern bytes)]
+              → [wrap in ELF / Mach-O     (elf.fern / macho.fern)]
+              → [write 0o755 file]        → [runnable binary, no external tool]
 ```
 
-The "compiler in lang" part covers lex / parse / check /
-monomorph / closureconv / IR / codegen — ~95% of the
-codebase by line count. The bootstrap stays in Go (or a
-shell script) and is ~50 lines: read asm from a temp file,
-exec clang, exit-code propagation. Many self-hosting
-compilers settle here permanently (TinyCC, Roc, Zig's
-self-host bootstrap before it got `std.process.spawn`).
+1. **ELF-64 writer** — `examples/self_host/elf.fern` (**landed**,
+   `TestSelfHostELF`): the container half, mirroring
+   `internal/native/elf/elf.go`. x86-64 + arm64 Linux, `R+X` and
+   `R+W+X` single-PT_LOAD images.
+2. **x86-64 assembler** — Intel-syntax text → machine code (mirror
+   `internal/native/x86_64/`, incl. the SSE / x87 float paths).
+3. **arm64 assembler** — GAS text → AArch64 bytes (mirror
+   `internal/native/arm64/asm.go` / `gas.go`).
+4. **Mach-O writer + ad-hoc signature** — for arm64-darwin (mirror
+   `internal/native/macho/`, incl. `sign.go`; Apple Silicon refuses
+   unsigned binaries).
 
-If WASI ever lands a stable process-spawn API
-(`wasi:system/process`, currently proposed but unstable)
-the bootstrap could move into the lang runtime too. Until
-then, the bootstrap is the pragmatic answer.
+With 1–4 in Fern, the self-host wires `asm.fern` → assembler →
+`elf.fern` → file (and the arm64 / Darwin equivalents), and the
+`clang` / `lld` / `as` / `ld` shell-outs go away. The self-host
+already has a `disasm.fern` that doubles as a cross-check for an
+emitted-bytes assembler.
+
+(`wasi:system/process` is no longer on the critical path: with the
+in-Fern assembler + writer there is nothing left to spawn. A WASI
+self-host running under wasmtime would write the binary through its
+normal file I/O.)
