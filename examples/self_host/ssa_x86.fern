@@ -272,6 +272,13 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
             out = load_op(reg_of, widths, ins.args[0], "a", out);
             return store_res(reg_of, widths, ins.result, "a", out);
         }
+        // f64_bits / f64_from_bits — bit reinterpret. The 8-byte slot already
+        // holds the IEEE pattern; move it unchanged (int<->float share the
+        // slot). f64 operands force regalloc_none, so both ends are slots.
+        if (ins.str == "f64_bits" || ins.str == "f64_from_bits") {
+            out = out + "    movq " + slot(ins.args[0]) + ", %rax\n";
+            return out + "    movq %rax, " + slot(ins.result) + "\n";
+        }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         if (ins.str == "-") { out = out + "    negl %eax\n"; }
         else { out = out + "    testl %eax, %eax\n    sete %al\n    movzbl %al, %eax\n"; }

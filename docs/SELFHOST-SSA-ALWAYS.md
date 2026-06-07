@@ -284,8 +284,14 @@ back to the AST emitter** (the output is byte-identical to `-no-ssa`).
   `strbuf_reset` / `strbuf_append` / `strbuf_take` (the amortised
   string-builder the AST backends use for output), ~~`exit`~~ (✅ landed —
   a dedicated `exit` SSA op lowering to the exit syscall on x86-64/arm64,
-  kept through DCE; wasm falls back), `f64_bits`, and bare receiver-method
-  calls `cur_id` / `w` (a `type_of_expr` receiver-resolution gap).
+  kept through DCE; wasm falls back), ~~`f64_bits` / `f64_from_bits`~~
+  (✅ landed — a `unary` bit-reinterpret: an 8-byte slot pass-through with
+  `compute_isfloat` marking `f64_from_bits` float / `f64_bits` not, and
+  `compute_widths` making both 64-bit; x86-64/arm64 emit a `movq`/`ldr+str`
+  slot copy, wasm rejects it via `inst_supported` → AST fallback since the
+  i64 pattern doesn't fit wasm32's i32 value model), and bare
+  receiver-method calls `cur_id` / `w` (a `type_of_expr` receiver-resolution
+  gap).
 - **`build_func` failures** in exactly two functions: `main` (the CLI
   driver) and `wasm__build_ctx`.
 

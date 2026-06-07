@@ -561,6 +561,20 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var ea: i32[] = [ev];
                         return s.emit(SInst { kind: "exit", result: s.cur_id(), args: ea, imm: 0, str: "" });
                     }
+                    // f64_bits(x) / f64_from_bits(x) — bit reinterprets between
+                    // an f64 and its 64-bit IEEE pattern. The value already
+                    // lives in an 8-byte slot, so this is a pure pass-through of
+                    // those bytes; modelled as a `unary` (not a `copy`, which
+                    // copy_propagate would collapse — losing the int/float
+                    // distinction that compute_isfloat tracks per value).
+                    if ((cid.name == "f64_bits" || cid.name == "f64_from_bits") && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var rbv: i32 = s.cur_id();
+                        s = s.fresh();
+                        var rba: i32[] = [rbv];
+                        return s.emit(SInst { kind: "unary", result: s.cur_id(), args: rba, imm: 0, str: cid.name });
+                    }
                     // arr[idx] = val — the parser desugars an indexed
                     // assignment to the builtin __set_index(arr, idx, val).
                     // Lower it to a store_elem at idx+1 (offset 0 is the
@@ -2807,6 +2821,7 @@ pub function compute_widths(f: SFunc): i32[] {
                 else if (ins.kind == "param" && ins.str == "f64") { make64 = true; }   // f64 param (8-byte)
                 else if (ins.kind == "call" && ins.imm == 1) { make64 = true; }   // pointer-returning call
                 else if (ins.kind == "call" && ins.imm == 2) { make64 = true; }   // f64-returning call (8-byte)
+                else if (ins.kind == "unary" && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) { make64 = true; }   // f64/i64 bit reinterpret — 8-byte value
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
                 else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
@@ -2854,7 +2869,10 @@ pub function compute_isfloat(f: SFunc): i32[] {
                 else if (ins.kind == "call" && ins.imm == 2) { isf = true; }   // f64-returning call
                 else if (ins.kind == "unary") {
                     if (ins.str == "as_f64") { isf = true; }
+                    else if (ins.str == "f64_from_bits") { isf = true; }   // i64 bits → f64
                     else if (ins.str == "-" && fl[ins.args[0]] == 1) { isf = true; }
+                    // f64_bits → an i64 (NOT float), so it stays non-float even
+                    // though its operand is an f64 (handled by the default).
                 }
                 else if (ins.kind == "binary") {
                     if (ins.str == "+" || ins.str == "-" || ins.str == "*" || ins.str == "/") {
@@ -3378,6 +3396,7 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
             } else if (inst.kind == "unary") {
                 var x: i32 = tab[inst.args[0]];
                 if (inst.str == "-") { tab = vtab_set(tab, inst.result, 0 - x); }
+                else if (inst.str == "f64_bits" || inst.str == "f64_from_bits") { tab = vtab_set(tab, inst.result, x); }   // bit reinterpret = identity on the stored value
                 else { if (x == 0) { tab = vtab_set(tab, inst.result, 1); } else { tab = vtab_set(tab, inst.result, 0); } }
             } else if (inst.kind == "alloc") {
                 // Bump-allocate the handle's base. The slot count is inst.imm
