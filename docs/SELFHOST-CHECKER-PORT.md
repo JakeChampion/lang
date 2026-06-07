@@ -654,6 +654,26 @@ same code(s) the Go checker does — restricted to
   language feature or analysis the self-host doesn't yet model end-to-end,
   not a checker-only rule. (E050/E051 owned-parameter move checking and
   E049 captured-reference reassignment are now done — see below.)
+- **Slice 68 (done): E002 — return-type checking inside lambda bodies.**
+  The top-level `ret_diags` pass recurses through if / while / for / match /
+  defer sub-bodies but deliberately stops at a lambda boundary — a nested
+  function has its own return contract — so a `var f = function(): i32 {
+  return "x"; }` went unflagged even though the Go checker reports E002.
+  The new `lret_stmts` / `lret_expr` pair walks every function (and the
+  top-level statements), scope-threaded, finds each lambda, and runs the
+  same `ret_diags` against the lambda's body using the lambda's OWN declared
+  return type. A recursive local (`var f = function…`) pre-binds its own
+  name to its function type so a self-call inside the body resolves rather
+  than inferring `unknown` (which would silently skip the check). Because it
+  reuses `ret_diags`, bare `return;` inside a non-void lambda is reported as
+  E012 for free, and nested lambdas are covered by the body recursion. Runs
+  for void enclosing functions too (a lambda can be declared anywhere).
+  Mutual recursion with the top-level `ret_diags` is safe — `ret_diags`
+  never descends into lambdas, so no diagnostic is emitted twice. Gated by
+  nine new differential-corpus cases (mismatch, ok, void-enclosing, nested
+  if, bare return → E012, closure-argument mismatch, nested lambda,
+  no-return-type, recursive-local capture mismatch), all cross-checked
+  against Go. Checker-only; checker.fern isn't in the fixpoint bundle.
 - **Slice 67 (done): recursive local functions no longer false-flag E001.**
   A local function `function f(...) { ... }` desugars to `var f =
   function(...) { ... }`, and the codegen hoist lifts a recursive one to
