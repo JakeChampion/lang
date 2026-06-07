@@ -954,6 +954,29 @@ function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
                         fi = fi + 1;
                     }
                 },
+                parser.ExprFieldAccess(fa) => {
+                    // A method call whose result is a tuple. The builtin map
+                    // `delete` / `without` returns `(Map, bool)` — bind the
+                    // first element to the receiver's own map tag so the
+                    // resulting map dispatches its methods correctly (rather
+                    // than mis-mangling as `__fn_i32__<method>`); the bool is
+                    // i32-shaped. A user receiver method that returns a tuple is
+                    // split from its declared return type, mirroring the
+                    // free-function case above.
+                    var rcv: string = infer_expr_type(fa.obj, s);
+                    if ((fa.field == "delete" || fa.field == "without") && is_map(rcv)) {
+                        return TwoTags { a: rcv, b: "i32" };
+                    }
+                    if (rcv.len() > 0) {
+                        var mfi: i32 = 0;
+                        while (mfi < s.funcs.len()) {
+                            if (s.funcs[mfi].name == fa.field && s.funcs[mfi].receiver_type == rcv) {
+                                return split_tuple_ret(s.funcs[mfi].ret_type);
+                            }
+                            mfi = mfi + 1;
+                        }
+                    }
+                },
                 _ => { }
             }
         },
