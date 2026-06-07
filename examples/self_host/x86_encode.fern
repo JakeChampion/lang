@@ -871,6 +871,34 @@ function x86_rep_movsb(buf: i32[]): i32[] {
     return buf.push(164); // 0xA4
 }
 
+// x86_sqrtsd: `sqrtsd <src>, <dst>` (F2 0F 51 /r) — scalar-double sqrt
+// (reg=dst, r/m=src).
+function x86_sqrtsd(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.push(242); // 0xF2
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(81); // 0x51
+    return buf.push(x86_modrm(3, dst, src));
+}
+
+// x86_roundsd: `roundsd $mode, <src>, <dst>` (66 0F 3A 0B /r ib) — round a
+// double per `mode` (1 floor, 2 ceil, 3 trunc). SSE4.1.
+function x86_roundsd(buf: i32[], dst: i32, src: i32, mode: i32): i32[] {
+    buf = buf.push(102); // 0x66
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(58); // 0x3A
+    buf = buf.push(11); // 0x0B
+    buf = buf.push(x86_modrm(3, dst, src));
+    return buf.push(mode & 255);
+}
+
 // x86_xorpd: `xorpd <dst>, <src>` (66 0F 57 /r) — xor packed doubles;
 // `xorpd %x,%x` zeroes an xmm register.
 function x86_xorpd(buf: i32[], dst: i32, src: i32): i32[] {
