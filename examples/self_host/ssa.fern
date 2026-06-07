@@ -1887,7 +1887,16 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 else { ctypes = ctypes.push(ct); ci = ci + 1; }
                             }
                             if (ok) {
-                                var eparams: parser.ParamDecl[] = lam.params.push(parser.ParamDecl { name: "__env", type_name: "fn" });
+                                // Copy lam.params into a fresh array before
+                                // appending `__env` — `.push` mutates in place,
+                                // and lam.params is part of the shared AST that
+                                // the AST emitter still uses if the program
+                                // falls back (else it sees a duplicate __env
+                                // param and emits a broken function).
+                                var eparams: parser.ParamDecl[] = [];
+                                var ep: i32 = 0;
+                                while (ep < lam.params.len()) { eparams = eparams.push(lam.params[ep]); ep = ep + 1; }
+                                eparams = eparams.push(parser.ParamDecl { name: "__env", type_name: "fn" });
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {

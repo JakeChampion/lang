@@ -18,10 +18,13 @@ import (
 // correct on the wasm backend, making wasm the third consumer of the shared
 // SSA IR (after x86-64 and arm64).
 //
-// Scope mirrors ssa_wasm.fern's core integer subset (const / copy / binary /
-// unary / call / phi over ret / br / brif); heap-backed values (arrays /
-// strings / structs / maps / closures) are a later slice. The cases here are
-// a subset of TestSelfHostSSAEmitX86_64's matrix that stays in that subset.
+// Scope mirrors ssa_wasm.fern's subset: the integer ops (const / copy /
+// binary / unary / call / phi over ret / br / brif) plus the heap (alloc /
+// load_elem / store_elem) — arrays, strings, structs, tuples, methods,
+// i32 maps, struct-union match, push / slice. String concat / equality,
+// I/O, and escaping closures fall back to wasm.fern and are excluded here.
+// The cases are a subset of TestSelfHostSSAEmitX86_64's matrix that stays in
+// that subset, with all wanted values < 126 (wasmtime's WASI exit range).
 func TestSelfHostSSAEmitWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host SSA→wasm e2e")
@@ -78,6 +81,46 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		// No-capture lambdas lift to top-level functions and are called directly.
 		{"lambda-call", "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(5); }", 6},
 		{"lambda-compose", "function main(): i32 { var inc = function (x: i32): i32 { return x + 1; }; var dbl = function (x: i32): i32 { return x * 2; }; return inc(dbl(10)); }", 21},
+		// Heap (alloc / load_elem / store_elem): arrays. All wanted values stay
+		// below 126 — wasmtime rejects a WASI exit status outside [0,126).
+		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[1]; }", 20},
+		{"arr-sum-ends", "function main(): i32 { var a = [10, 20, 30]; return a[0] + a[2]; }", 40},
+		{"arr-computed-index", "function main(): i32 { var a = [3, 7, 11, 15]; var i = 2; return a[i]; }", 11},
+		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }", 75},
+		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3},
+		{"for-sum", "function main(): i32 { var a = [5, 10, 15]; var s = 0; for x in a { s = s + x; } return s; }", 30},
+		{"for-break", "function main(): i32 { var a = [1, 2, 3, 4, 5]; var s = 0; for x in a { if (x > 3) { break; } s = s + x; } return s; }", 6},
+		{"for-continue", "function main(): i32 { var a = [1, 2, 3, 4]; var s = 0; for x in a { if (x == 2) { continue; } s = s + x; } return s; }", 8},
+		// Indexed assignment, runtime-sized alloc, push, slice.
+		{"set-index-swap", "function main(): i32 { var a = [7, 3]; var t = a[0]; a[0] = a[1]; a[1] = t; return a[0] * 10 + a[1]; }", 37},
+		{"set-index-compound", "function main(): i32 { var a = [10, 20, 30]; a[0] += 5; a[1] -= 4; a[2] *= 2; return a[0] + a[1] + a[2]; }", 91},
+		{"new-array-fixed", "function main(): i32 { var b = __new_array(3); b[0] = 10; b[1] = 20; b[2] = 30; return b[0] + b[1] + b[2] + b.len(); }", 63},
+		{"array-push", "function main(): i32 { var a = [1, 2]; a = a.push(3); a = a.push(4); return a[0] + a[1] + a[2] + a[3] + a.len(); }", 14},
+		{"slice-array", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[1] + b[2] + b.len(); }", 93},
+		{"slice-empty", "function main(): i32 { var a = [7, 8, 9]; var b = a[0:0]; return b.len() + a[1]; }", 8},
+		// Arrays across calls; returning arrays.
+		{"arr-param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var xs = [5, 10, 15, 20]; return sum(xs); }", 50},
+		{"return-array", "function make(): i32[] { return [10, 20, 30]; } function main(): i32 { var a = make(); return a[1]; }", 20},
+		{"return-array-len", "function mk(): i32[] { return [1, 2, 3, 4]; } function main(): i32 { return mk().len(); }", 4},
+		// Strings (byte arrays): index, byte loop, string param.
+		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
+		{"str-param", "function slen(s: string): i32 { return s.len(); } function main(): i32 { var s = \"wxyz\"; return slen(s); }", 4},
+		{"str-index", "function main(): i32 { var s = \"hello\"; return s[0]; }", 104},
+		// Structs: i32 + pointer fields, params, returns, methods.
+		{"struct-sum", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 7, y: 9 }; return p.x + p.y; }", 16},
+		{"struct-array-field", "struct Box { tag: i32, data: i32[] } function main(): i32 { var b = Box { tag: 1, data: [10, 20, 30] }; return b.data[1] + b.tag; }", 21},
+		{"struct-param", "struct Point { x: i32, y: i32 } function dist(p: Point): i32 { return p.x + p.y; } function main(): i32 { var p = Point { x: 3, y: 4 }; return dist(p); }", 7},
+		{"struct-return", "struct Point { x: i32, y: i32 } function mk(): Point { return Point { x: 5, y: 6 }; } function main(): i32 { var p: Point = mk(); return p.x + p.y; }", 11},
+		{"method-basic", "struct Counter { n: i32 } function (c: Counter) get(): i32 { return c.n; } function (c: Counter) plus(d: i32): i32 { return c.n + d; } function main(): i32 { var c = Counter { n: 40 }; return c.get() + c.plus(2) - c.n; }", 42},
+		{"method-chained", "struct Box { v: i32 } function (b: Box) bump(): Box { return Box { v: b.v + 1 }; } function main(): i32 { var b = Box { v: 10 }; var c = b.bump().bump(); return c.v; }", 12},
+		// Tuples.
+		{"tuple-pair", "function main(): i32 { var t = (3, 4); return t.0 + t.1; }", 7},
+		{"tuple-destructure", "function main(): i32 { var (a, b) = (5, 6); return a + b; }", 11},
+		// Enums + struct-union match.
+		{"match-area", "struct Circle { r: i32 } struct Square { side: i32 } type Shape = Circle | Square; function area(sh: Shape): i32 { match (sh) { Circle(c) => { return c.r * c.r * 3; }, Square(s) => { return s.side * s.side; } } return 0; } function main(): i32 { var a: Shape = Circle { r: 4 }; var b: Shape = Square { side: 5 }; return area(a) + area(b); }", 73},
+		// i32-keyed maps (open-addressing helpers built from heap + call ops).
+		{"map-literal-get", "function main(): i32 { var m = Map { 1: 40, 2: 50, 3: 60 }; return m.get_or(2, 0) + m.get_or(9, 7) + m.len(); }", 60},
+		{"map-iter-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; for (k, v) in m { s = s + k + v; } return s; }", 33},
 	}
 
 	for _, tc := range cases {

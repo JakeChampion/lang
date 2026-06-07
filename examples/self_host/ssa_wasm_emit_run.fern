@@ -25,6 +25,16 @@ function main(): i32 {
         if (ssa.is_ptr_type(mod.funcs[pi].ret_type) || ssa.is_struct_type(mod.funcs[pi].ret_type, mod.structs)) { ptr_ret = ptr_ret.push(ssa.fn_sym(mod.funcs[pi])); }
         pi = pi + 1;
     }
+    // Some lowerings emit calls to injected runtime helpers (__ssa_* — array
+    // push / slice, the map ops) defined in pure Fern. Parse them so their
+    // pointer-returning signatures join ptr_ret; each body is built + emitted
+    // only if the program actually calls it (below).
+    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
+    var hi0: i32 = 0;
+    while (hi0 < hmod.funcs.len()) {
+        if (ssa.is_ptr_type(hmod.funcs[hi0].ret_type)) { ptr_ret = ptr_ret.push(hmod.funcs[hi0].name); }
+        hi0 = hi0 + 1;
+    }
     // No-capture lambdas lift to top-level functions and are called directly;
     // build them like any user function so lambda programs are in the subset.
     var lifted: parser.FuncDecl[] = ssa.collect_lambdas(mod.funcs);
@@ -46,6 +56,15 @@ function main(): i32 {
         var lr: ssa.BResult = ssa.build_func_seeded(lifted[li], mod.structs, seed);
         if (lr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(lr.func, ptr_ret))); }
         li = li + 1;
+    }
+    // Inject each runtime helper body the program actually calls.
+    var hi: i32 = 0;
+    while (hi < hmod.funcs.len()) {
+        if (ssa.calls_func(funcs, hmod.funcs[hi].name)) {
+            var hr: ssa.BResult = ssa.build_func_seeded(hmod.funcs[hi], mod.structs, seed);
+            if (hr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(hr.func, ptr_ret))); }
+        }
+        hi = hi + 1;
     }
     write(ssa_wasm.emit_program(funcs));
     return 0;
