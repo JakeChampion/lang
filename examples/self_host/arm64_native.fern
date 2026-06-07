@@ -321,9 +321,13 @@ function arm64_asm_new(): Arm64Asm {
 }
 
 // arm64_asm_label records `name` at the current code offset.
-function arm64_asm_label(a: Arm64Asm, name: string): Arm64Asm {
-    a.lab_names = a.lab_names.append(name);
-    a.lab_offs = a.lab_offs.append(a.code.len());
+function arm64_asm_label(a0: Arm64Asm, name: string): Arm64Asm {
+    var a: Arm64Asm = a0; // NB: operate on a local, not the parameter —
+    // the Go x86 backend miscompiles a struct spread-update of a function
+    // *parameter* (segfault); spreading a local is fine. See
+    // docs/SELF-HOST-REMAINING-PLAN.md (slice 3o).
+    a = Arm64Asm { ...a, lab_names: a.lab_names.append(name) };
+    a = Arm64Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
     return a;
 }
 
@@ -344,65 +348,72 @@ function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
 // a.code (its instruction word at a.code.len()-4). `kind` selects the
 // immediate field. If the target label is already placed, patch now;
 // otherwise queue a fixup for arm64_asm_resolve.
-function arm64_asm_fixup_or_patch(a: Arm64Asm, name: string, kind: i32): Arm64Asm {
+function arm64_asm_fixup_or_patch(a0: Arm64Asm, name: string, kind: i32): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
     var at: i32 = a.code.len() - 4;
     var target: i32 = arm64_asm_label_off(a, name);
     if (target >= 0) {
         if (kind == 1) {
-            a.code = arm64_patch_b19(a.code, at, target - at);
+            a = Arm64Asm { ...a, code: arm64_patch_b19(a.code, at, target - at) };
         } else if (kind == 2) {
-            a.code = arm64_patch_b14(a.code, at, target - at);
+            a = Arm64Asm { ...a, code: arm64_patch_b14(a.code, at, target - at) };
         } else {
-            a.code = arm64_patch_b(a.code, at, target - at);
+            a = Arm64Asm { ...a, code: arm64_patch_b(a.code, at, target - at) };
         }
     } else {
-        a.fix_offs = a.fix_offs.append(at);
-        a.fix_names = a.fix_names.append(name);
-        a.fix_kinds = a.fix_kinds.append(kind);
+        a = Arm64Asm { ...a, fix_offs: a.fix_offs.append(at) };
+        a = Arm64Asm { ...a, fix_names: a.fix_names.append(name) };
+        a = Arm64Asm { ...a, fix_kinds: a.fix_kinds.append(kind) };
     }
     return a;
 }
 
 // arm64_asm_b / arm64_asm_bl emit an unconditional branch / call to a
 // (possibly forward) label.
-function arm64_asm_b(a: Arm64Asm, name: string): Arm64Asm {
-    a.code = arm64_b(a.code, 0);
+function arm64_asm_b(a0: Arm64Asm, name: string): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+    a = Arm64Asm { ...a, code: arm64_b(a.code, 0) };
     return arm64_asm_fixup_or_patch(a, name, 0);
 }
-function arm64_asm_bl(a: Arm64Asm, name: string): Arm64Asm {
-    a.code = arm64_bl(a.code, 0);
+function arm64_asm_bl(a0: Arm64Asm, name: string): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+    a = Arm64Asm { ...a, code: arm64_bl(a.code, 0) };
     return arm64_asm_fixup_or_patch(a, name, 0);
 }
 
 // arm64_asm_bcond / arm64_asm_cbz / arm64_asm_cbnz emit a conditional
 // branch to a (possibly forward) label.
-function arm64_asm_bcond(a: Arm64Asm, cond: i32, name: string): Arm64Asm {
-    a.code = arm64_bcond(a.code, cond, 0);
+function arm64_asm_bcond(a0: Arm64Asm, cond: i32, name: string): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+    a = Arm64Asm { ...a, code: arm64_bcond(a.code, cond, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
-function arm64_asm_cbz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
-    a.code = arm64_cbz(a.code, rt, 0);
+function arm64_asm_cbz(a0: Arm64Asm, rt: i32, name: string): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+    a = Arm64Asm { ...a, code: arm64_cbz(a.code, rt, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
-function arm64_asm_cbnz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
-    a.code = arm64_cbnz(a.code, rt, 0);
+function arm64_asm_cbnz(a0: Arm64Asm, rt: i32, name: string): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+    a = Arm64Asm { ...a, code: arm64_cbnz(a.code, rt, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
 
 // arm64_asm_resolve patches every queued (forward) fixup now that all
 // labels are placed. Call once after emitting the whole program;
 // afterwards a.code is the final .text.
-function arm64_asm_resolve(a: Arm64Asm): Arm64Asm {
+function arm64_asm_resolve(a0: Arm64Asm): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
     var i: i32 = 0;
     while (i < a.fix_offs.len()) {
         var at: i32 = a.fix_offs[i];
         var target: i32 = arm64_asm_label_off(a, a.fix_names[i]);
         if (a.fix_kinds[i] == 1) {
-            a.code = arm64_patch_b19(a.code, at, target - at);
+            a = Arm64Asm { ...a, code: arm64_patch_b19(a.code, at, target - at) };
         } else if (a.fix_kinds[i] == 2) {
-            a.code = arm64_patch_b14(a.code, at, target - at);
+            a = Arm64Asm { ...a, code: arm64_patch_b14(a.code, at, target - at) };
         } else {
-            a.code = arm64_patch_b(a.code, at, target - at);
+            a = Arm64Asm { ...a, code: arm64_patch_b(a.code, at, target - at) };
         }
         i = i + 1;
     }
@@ -600,12 +611,14 @@ function arm64_patch_b14(buf: i32[], at: i32, rel: i32): i32[] {
 
 // arm64_asm_tbz / arm64_asm_tbnz emit a test-bit branch to a (possibly
 // forward) label (fixup kind 2 = imm14).
-function arm64_asm_tbz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
-    a.code = arm64_tbz(a.code, rt, bit, 0);
+function arm64_asm_tbz(a0: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+    a = Arm64Asm { ...a, code: arm64_tbz(a.code, rt, bit, 0) };
     return arm64_asm_fixup_or_patch(a, name, 2);
 }
-function arm64_asm_tbnz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
-    a.code = arm64_tbnz(a.code, rt, bit, 0);
+function arm64_asm_tbnz(a0: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
+    a = Arm64Asm { ...a, code: arm64_tbnz(a.code, rt, bit, 0) };
     return arm64_asm_fixup_or_patch(a, name, 2);
 }
 
@@ -697,7 +710,7 @@ struct Arm64Bm {
 function arm64_bm_lowmask(k: i32): i64 {
     if (k <= 0) { return 0; }
     if (k >= 64) { return 0 - 1; }
-    return (1 << k) - 1;
+    return ((1 as i64) << k) - 1;
 }
 
 // arm64_bm_lsr is a logical (unsigned) shift right of a 64-bit value.
@@ -818,6 +831,74 @@ function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32): i32[] {
 // Directives: .text (others ignored); `name:` labels; `//` line comments.
 
 // ---- text helpers ----
+
+// ---- portable substring helpers ----
+//
+// The Go reference checker has no string index_of/contains/starts_with/
+// split *methods* (they are self-host-wasm-only builtins; the Go-compiled
+// self-host modules avoid them). Since the unified `fern` CLI compiles this
+// module through the Go front-end, provide them over the portable surface
+// (.len(), s[i], s[a:b], concat, array .append).
+
+function arm64_str_indexof(s: string, sub: string): i32 {
+    var n: i32 = s.len();
+    var m: i32 = sub.len();
+    if (m == 0) { return 0; }
+    if (m > n) { return 0 - 1; }
+    var i: i32 = 0;
+    while (i <= n - m) {
+        var j: i32 = 0;
+        var ok: boolean = true;
+        while (j < m) {
+            if (s[i + j] != sub[j]) { ok = false; j = m; }
+            else { j = j + 1; }
+        }
+        if (ok) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function arm64_str_starts_with(s: string, pre: string): boolean {
+    var m: i32 = pre.len();
+    if (m > s.len()) { return false; }
+    var i: i32 = 0;
+    while (i < m) {
+        if (s[i] != pre[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function arm64_str_contains(s: string, sub: string): boolean {
+    return arm64_str_indexof(s, sub) >= 0;
+}
+
+function arm64_str_split(s: string, sep: string): string[] {
+    var out: string[] = [];
+    var m: i32 = sep.len();
+    if (m == 0) { out = out.append(s); return out; }
+    var n: i32 = s.len();
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= n - m) {
+        var hit: boolean = true;
+        var j: i32 = 0;
+        while (j < m) {
+            if (s[i + j] != sep[j]) { hit = false; j = m; }
+            else { j = j + 1; }
+        }
+        if (hit) {
+            out = out.append(s[start:i]);
+            i = i + m;
+            start = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    out = out.append(s[start:n]);
+    return out;
+}
 
 // arm64_gas_trim strips leading/trailing ASCII spaces and tabs.
 function arm64_gas_trim(s: string): string {
@@ -960,8 +1041,8 @@ struct Arm64Mem {
 // arm64_gas_has_bang).
 function arm64_gas_mem(op: string): Arm64Mem {
     var s: string = arm64_gas_trim(op);
-    var lb: i32 = s.index_of("[");
-    var rb: i32 = s.index_of("]");
+    var lb: i32 = arm64_str_indexof(s, "[");
+    var rb: i32 = arm64_str_indexof(s, "]");
     var inner: string = s;
     if (lb >= 0 && rb > lb) {
         inner = s[lb + 1:rb];
@@ -978,14 +1059,14 @@ function arm64_gas_mem(op: string): Arm64Mem {
 // arm64_gas_has_bang reports whether an operand carries the `!` pre-index
 // writeback marker.
 function arm64_gas_has_bang(op: string): boolean {
-    return op.index_of("!") >= 0;
+    return arm64_str_indexof(op, "!") >= 0;
 }
 
 // arm64_gas_lsl_amount parses a `lsl #N` shift operand (the `lsl #16` of a
 // movk); returns 0 if it is not recognised.
 function arm64_gas_lsl_amount(tok: string): i32 {
     var s: string = arm64_gas_trim(tok);
-    var h: i32 = s.index_of("#");
+    var h: i32 = arm64_str_indexof(s, "#");
     if (h < 0) {
         return 0;
     }
@@ -996,14 +1077,15 @@ function arm64_gas_lsl_amount(tok: string): i32 {
 
 // arm64_gas_emit assembles one mnemonic + operand string into a.code (or
 // queues a label fixup). Unknown mnemonics are ignored.
-function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
+function arm64_gas_emit(a0: Arm64Asm, mnem: string, rest: string): Arm64Asm {
+    var a: Arm64Asm = a0; // local copy (see arm64_asm_label note)
     if (mnem == "ret") {
-        a.code = arm64_ret(a.code, arm64_lr());
+        a = Arm64Asm { ...a, code: arm64_ret(a.code, arm64_lr()) };
         return a;
     }
     var ops: string[] = arm64_gas_operands(rest);
     if (mnem == "svc") {
-        a.code = arm64_svc(a.code, arm64_gas_imm(ops[0]));
+        a = Arm64Asm { ...a, code: arm64_svc(a.code, arm64_gas_imm(ops[0])) };
         return a;
     }
     if (mnem == "b") {
@@ -1029,13 +1111,13 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "mov" || mnem == "movz") {
         var rd: i32 = arm64_gas_reg(ops[0]);
         if (ops[1].len() > 0 && ops[1][0] == 35) { // '#'
-            a.code = arm64_movz(a.code, rd, arm64_gas_imm(ops[1]), 0);
+            a = Arm64Asm { ...a, code: arm64_movz(a.code, rd, arm64_gas_imm(ops[1]), 0) };
         } else if (arm64_gas_trim(ops[0]) == "sp" || arm64_gas_trim(ops[1]) == "sp") {
             // `mov Xd, sp` / `mov sp, Xn` is the `add Xd, Xn, #0` alias
             // (ORR can't name SP).
-            a.code = arm64_addimm(a.code, rd, arm64_gas_reg(ops[1]), 0);
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, rd, arm64_gas_reg(ops[1]), 0) };
         } else {
-            a.code = arm64_movreg(a.code, rd, arm64_gas_reg(ops[1]));
+            a = Arm64Asm { ...a, code: arm64_movreg(a.code, rd, arm64_gas_reg(ops[1])) };
         }
         return a;
     }
@@ -1044,16 +1126,16 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         if (ops.len() > 2) {
             sh = arm64_gas_lsl_amount(ops[2]);
         }
-        a.code = arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh);
+        a = Arm64Asm { ...a, code: arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh) };
         return a;
     }
     if (mnem == "add") {
         var ad: i32 = arm64_gas_reg(ops[0]);
         var an: i32 = arm64_gas_reg(ops[1]);
         if (ops[2].len() > 0 && ops[2][0] == 35) {
-            a.code = arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2]));
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2])) };
         } else {
-            a.code = arm64_addreg(a.code, ad, an, arm64_gas_reg(ops[2]));
+            a = Arm64Asm { ...a, code: arm64_addreg(a.code, ad, an, arm64_gas_reg(ops[2])) };
         }
         return a;
     }
@@ -1061,18 +1143,18 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var sd: i32 = arm64_gas_reg(ops[0]);
         var sn: i32 = arm64_gas_reg(ops[1]);
         if (ops[2].len() > 0 && ops[2][0] == 35) {
-            a.code = arm64_subimm(a.code, sd, sn, arm64_gas_imm(ops[2]));
+            a = Arm64Asm { ...a, code: arm64_subimm(a.code, sd, sn, arm64_gas_imm(ops[2])) };
         } else {
-            a.code = arm64_subreg(a.code, sd, sn, arm64_gas_reg(ops[2]));
+            a = Arm64Asm { ...a, code: arm64_subreg(a.code, sd, sn, arm64_gas_reg(ops[2])) };
         }
         return a;
     }
     if (mnem == "cmp") {
         var cn: i32 = arm64_gas_reg(ops[0]);
         if (ops[1].len() > 0 && ops[1][0] == 35) {
-            a.code = arm64_cmpimm(a.code, cn, arm64_gas_imm(ops[1]));
+            a = Arm64Asm { ...a, code: arm64_cmpimm(a.code, cn, arm64_gas_imm(ops[1])) };
         } else {
-            a.code = arm64_cmpreg(a.code, cn, arm64_gas_reg(ops[1]));
+            a = Arm64Asm { ...a, code: arm64_cmpreg(a.code, cn, arm64_gas_reg(ops[1])) };
         }
         return a;
     }
@@ -1082,40 +1164,37 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
             // post-index: `ldr Xt, [Xn], #off` (ops[1]="[Xn]", ops[2]="#off")
             var pb: i32 = arm64_gas_mem(ops[1]).base;
             var po: i32 = arm64_gas_imm(ops[2]);
-            if (mnem == "ldr") { a.code = arm64_ldr_post(a.code, rt, pb, po); }
-            else { a.code = arm64_str_post(a.code, rt, pb, po); }
-            return a;
+            if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_post(a.code, rt, pb, po) }; }
+            return Arm64Asm { ...a, code: arm64_str_post(a.code, rt, pb, po) };
         }
         var m: Arm64Mem = arm64_gas_mem(ops[1]);
         if (arm64_gas_has_bang(ops[1])) {
             // pre-index writeback: `[Xn, #off]!`
-            if (mnem == "ldr") { a.code = arm64_ldr_pre(a.code, rt, m.base, m.off); }
-            else { a.code = arm64_str_pre(a.code, rt, m.base, m.off); }
-        } else {
-            if (mnem == "ldr") { a.code = arm64_ldr(a.code, rt, m.base, m.off); }
-            else { a.code = arm64_str(a.code, rt, m.base, m.off); }
+            if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_pre(a.code, rt, m.base, m.off) }; }
+            return Arm64Asm { ...a, code: arm64_str_pre(a.code, rt, m.base, m.off) };
         }
-        return a;
+        if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr(a.code, rt, m.base, m.off) }; }
+        return Arm64Asm { ...a, code: arm64_str(a.code, rt, m.base, m.off) };
     }
     if (mnem == "stp") {
         // prologue form: `stp Xt, Xt2, [Xn, #off]!` (pre-index)
         var sm: Arm64Mem = arm64_gas_mem(ops[2]);
-        a.code = arm64_stp_pre(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), sm.base, sm.off);
+        a = Arm64Asm { ...a, code: arm64_stp_pre(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), sm.base, sm.off) };
         return a;
     }
     if (mnem == "ldp") {
         // epilogue form: `ldp Xt, Xt2, [Xn], #off` (post-index)
         var lb: i32 = arm64_gas_mem(ops[2]).base;
         var lo: i32 = arm64_gas_imm(ops[3]);
-        a.code = arm64_ldp_post(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), lb, lo);
+        a = Arm64Asm { ...a, code: arm64_ldp_post(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), lb, lo) };
         return a;
     }
     if (mnem == "neg") {
-        a.code = arm64_neg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]));
+        a = Arm64Asm { ...a, code: arm64_neg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
         return a;
     }
     if (mnem == "ubfx") {
-        a.code = arm64_ubfx(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_imm(ops[3]));
+        a = Arm64Asm { ...a, code: arm64_ubfx(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_imm(ops[3])) };
         return a;
     }
     if (mnem == "tbnz") {
@@ -1125,43 +1204,43 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
     }
     if (mnem == "mul") {
-        a.code = arm64_mul(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]));
+        a = Arm64Asm { ...a, code: arm64_mul(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
         return a;
     }
     if (mnem == "ldur") {
         var um: Arm64Mem = arm64_gas_mem(ops[1]);
-        a.code = arm64_ldur(a.code, arm64_gas_reg(ops[0]), um.base, um.off);
+        a = Arm64Asm { ...a, code: arm64_ldur(a.code, arm64_gas_reg(ops[0]), um.base, um.off) };
         return a;
     }
     if (mnem == "stur") {
         var sm2: Arm64Mem = arm64_gas_mem(ops[1]);
-        a.code = arm64_stur(a.code, arm64_gas_reg(ops[0]), sm2.base, sm2.off);
+        a = Arm64Asm { ...a, code: arm64_stur(a.code, arm64_gas_reg(ops[0]), sm2.base, sm2.off) };
         return a;
     }
     if (mnem == "cset") {
-        a.code = arm64_cset(a.code, arm64_gas_reg(ops[0]), arm64_gas_cond(ops[1]));
+        a = Arm64Asm { ...a, code: arm64_cset(a.code, arm64_gas_reg(ops[0]), arm64_gas_cond(ops[1])) };
         return a;
     }
     if (mnem == "lsl") {
-        a.code = arm64_lsl_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0]));
+        a = Arm64Asm { ...a, code: arm64_lsl_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "lsr") {
-        a.code = arm64_lsr_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0]));
+        a = Arm64Asm { ...a, code: arm64_lsr_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "cmn") {
-        a.code = arm64_cmn_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]));
+        a = Arm64Asm { ...a, code: arm64_cmn_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1])) };
         return a;
     }
     if (mnem == "csel") {
-        a.code = arm64_csel(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]));
+        a = Arm64Asm { ...a, code: arm64_csel(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3])) };
         return a;
     }
     if (mnem == "and") {
         // register form only here; `and Xd, Xn, #imm` is handled in the
         // program loop (it needs the unknown-immediate guard).
-        a.code = arm64_andreg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]));
+        a = Arm64Asm { ...a, code: arm64_andreg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
         return a;
     }
     return a; // unknown mnemonic — ignored
@@ -1232,7 +1311,7 @@ function arm64_gas_dlabel_off(p: Arm64GasProg, name: string): i32 {
 // `sym@PAGEOFF` operand (everything before the '@'), trimmed.
 function arm64_gas_strip_at(tok: string): string {
     var s: string = arm64_gas_trim(tok);
-    var at: i32 = s.index_of("@");
+    var at: i32 = arm64_str_indexof(s, "@");
     if (at >= 0) {
         s = s[0:at];
     }
@@ -1240,10 +1319,11 @@ function arm64_gas_strip_at(tok: string): string {
 }
 
 // arm64_gas_data_le appends `n` little-endian bytes of `v` to the data blob.
-function arm64_gas_data_le(p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
+function arm64_gas_data_le(p0: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
+    var p: Arm64GasProg = p0; // local copy (see arm64_asm_label note)
     var i: i32 = 0;
     while (i < n) {
-        p.data = p.data.append(((v >> (i * 8)) & 255) as i32);
+        p = Arm64GasProg { ...p, data: p.data.append(((v >> (i * 8)) & 255) as i32) };
         i = i + 1;
     }
     return p;
@@ -1251,10 +1331,11 @@ function arm64_gas_data_le(p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
 
 // arm64_gas_data_asciz appends a `.asciz "…"` string + NUL to the data
 // blob, decoding the common \n \t \0 \\ escapes.
-function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
-    var q1: i32 = line.index_of("\"");
+function arm64_gas_data_asciz(p0: Arm64GasProg, line: string): Arm64GasProg {
+    var p: Arm64GasProg = p0; // local copy (see arm64_asm_label note)
+    var q1: i32 = arm64_str_indexof(line, "\"");
     if (q1 < 0) {
-        p.data = p.data.append(0);
+        p = Arm64GasProg { ...p, data: p.data.append(0) };
         return p;
     }
     var i: i32 = q1 + 1;
@@ -1268,42 +1349,43 @@ function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
             else { c = e; }                 // \\ , \"
             i = i + 1;
         }
-        p.data = p.data.append(c);
+        p = Arm64GasProg { ...p, data: p.data.append(c) };
         i = i + 1;
     }
-    p.data = p.data.append(0); // .asciz NUL terminator
+    p = Arm64GasProg { ...p, data: p.data.append(0) }; // .asciz NUL terminator
     return p;
 }
 
 // arm64_gas_data_align pads the data blob to a 2^n byte boundary.
-function arm64_gas_data_align(p: Arm64GasProg, n: i32): Arm64GasProg {
+function arm64_gas_data_align(p0: Arm64GasProg, n: i32): Arm64GasProg {
+    var p: Arm64GasProg = p0; // local copy (see arm64_asm_label note)
     var a: i32 = 1;
     var k: i32 = 0;
     while (k < n) { a = a * 2; k = k + 1; }
     while ((p.data.len() % a) != 0) {
-        p.data = p.data.append(0);
+        p = Arm64GasProg { ...p, data: p.data.append(0) };
     }
     return p;
 }
 
 // arm64_gas_data_directive handles a `.`-directive inside a data section.
 function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
-    if (line.starts_with(".quad")) {
+    if (arm64_str_starts_with(line, ".quad")) {
         return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 8);
     }
-    if (line.starts_with(".4byte") || line.starts_with(".word")) {
+    if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
         var off: i32 = 6;
-        if (line.starts_with(".word")) { off = 5; }
+        if (arm64_str_starts_with(line, ".word")) { off = 5; }
         return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[off:line.len()])) as i64, 4);
     }
-    if (line.starts_with(".byte")) {
+    if (arm64_str_starts_with(line, ".byte")) {
         return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 1);
     }
-    if (line.starts_with(".asciz") || line.starts_with(".string")) {
+    if (arm64_str_starts_with(line, ".asciz") || arm64_str_starts_with(line, ".string")) {
         return arm64_gas_data_asciz(p, line);
     }
-    if (line.starts_with(".align") || line.starts_with(".p2align") || line.starts_with(".balign")) {
-        var sp: i32 = line.index_of(" ");
+    if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
+        var sp: i32 = arm64_str_indexof(line, " ");
         if (sp >= 0) {
             return arm64_gas_data_align(p, arm64_gas_atoi(arm64_gas_trim(line[sp + 1:line.len()])));
         }
@@ -1321,12 +1403,12 @@ function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
 pub function arm64_gas_program(src: string): Arm64GasProg {
     var p: Arm64GasProg = arm64_gas_prog_new();
     var section: i32 = 0; // 0 = .text, 1 = data (__const / __data)
-    var lines: string[] = src.split("\n");
+    var lines: string[] = arm64_str_split(src, "\n");
     var li: i32 = 0;
     while (li < lines.len()) {
         var raw: string = lines[li];
         li = li + 1;
-        var cm: i32 = raw.index_of("//");
+        var cm: i32 = arm64_str_indexof(raw, "//");
         if (cm >= 0) {
             raw = raw[0:cm];
         }
@@ -1335,15 +1417,15 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             continue;
         }
         // label prefix `name:`
-        var colon: i32 = line.index_of(":");
+        var colon: i32 = arm64_str_indexof(line, ":");
         if (colon > 0) {
             var before: string = line[0:colon];
-            if (before.index_of(" ") < 0 && before.index_of(",") < 0) {
+            if (arm64_str_indexof(before, " ") < 0 && arm64_str_indexof(before, ",") < 0) {
                 if (section == 1) {
-                    p.dlab_names = p.dlab_names.append(before);
-                    p.dlab_offs = p.dlab_offs.append(p.data.len());
+                    p = Arm64GasProg { ...p, dlab_names: p.dlab_names.append(before) };
+                    p = Arm64GasProg { ...p, dlab_offs: p.dlab_offs.append(p.data.len()) };
                 } else {
-                    p.asm = arm64_asm_label(p.asm, before);
+                    p = Arm64GasProg { ...p, asm: arm64_asm_label(p.asm, before) };
                 }
                 line = arm64_gas_trim(line[colon + 1:line.len()]);
                 if (line.len() == 0) {
@@ -1355,13 +1437,13 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (line[0] == 46) { // '.'
             if (line == ".text") {
                 section = 0;
-            } else if (line.starts_with(".section")) {
-                if (line.contains("__const") || line.contains("__DATA") || line.contains(".data") || line.contains(".rodata")) {
+            } else if (arm64_str_starts_with(line, ".section")) {
+                if (arm64_str_contains(line, "__const") || arm64_str_contains(line, "__DATA") || arm64_str_contains(line, ".data") || arm64_str_contains(line, ".rodata")) {
                     section = 1;
                 } else {
                     section = 0;
                 }
-            } else if (line.starts_with(".data")) {
+            } else if (arm64_str_starts_with(line, ".data")) {
                 section = 1;
             } else if (section == 1) {
                 p = arm64_gas_data_directive(p, line);
@@ -1369,7 +1451,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             continue;
         }
         // mnemonic + operands
-        var sp: i32 = line.index_of(" ");
+        var sp: i32 = arm64_str_indexof(line, " ");
         var mnem: string = line;
         var rest: string = "";
         if (sp >= 0) {
@@ -1381,60 +1463,60 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (mnem == "adrp") {
             var aops: string[] = arm64_gas_operands(rest);
             var aas: Arm64Asm = p.asm;
-            aas.code = arm64_adrp(aas.code, arm64_gas_reg(aops[0]), 0);
-            p.asm = aas;
-            p.pf_sites = p.pf_sites.append(aas.code.len() - 4);
-            p.pf_syms = p.pf_syms.append(arm64_gas_strip_at(aops[1]));
-            p.pf_kinds = p.pf_kinds.append(0);
+            aas = Arm64Asm { ...aas, code: arm64_adrp(aas.code, arm64_gas_reg(aops[0]), 0) };
+            p = Arm64GasProg { ...p, asm: aas };
+            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(aas.code.len() - 4) };
+            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(aops[1])) };
+            p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(0) };
             continue;
         }
-        if (mnem == "ldr" && rest.index_of("@PAGEOFF") >= 0) {
+        if (mnem == "ldr" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
             var lops: string[] = arm64_gas_operands(rest);
             var lm: Arm64Mem = arm64_gas_mem(lops[1]); // base reg; off symbolic
             // symbol is the bracket's second operand, before '@'
             var linner: string = lops[1];
-            var lb: i32 = linner.index_of("[");
-            var rb: i32 = linner.index_of("]");
+            var lb: i32 = arm64_str_indexof(linner, "[");
+            var rb: i32 = arm64_str_indexof(linner, "]");
             var lparts: string[] = arm64_gas_operands(linner[lb + 1:rb]);
             var las: Arm64Asm = p.asm;
-            las.code = arm64_ldr(las.code, arm64_gas_reg(lops[0]), lm.base, 0);
-            p.asm = las;
-            p.pf_sites = p.pf_sites.append(las.code.len() - 4);
-            p.pf_syms = p.pf_syms.append(arm64_gas_strip_at(lparts[1]));
-            p.pf_kinds = p.pf_kinds.append(1);
+            las = Arm64Asm { ...las, code: arm64_ldr(las.code, arm64_gas_reg(lops[0]), lm.base, 0) };
+            p = Arm64GasProg { ...p, asm: las };
+            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(las.code.len() - 4) };
+            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(lparts[1])) };
+            p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(1) };
             continue;
         }
-        if (mnem == "add" && rest.index_of("@PAGEOFF") >= 0) {
+        if (mnem == "add" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
             var dops: string[] = arm64_gas_operands(rest);
             var das: Arm64Asm = p.asm;
-            das.code = arm64_addimm(das.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0);
-            p.asm = das;
-            p.pf_sites = p.pf_sites.append(das.code.len() - 4);
-            p.pf_syms = p.pf_syms.append(arm64_gas_strip_at(dops[2]));
-            p.pf_kinds = p.pf_kinds.append(2);
+            das = Arm64Asm { ...das, code: arm64_addimm(das.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0) };
+            p = Arm64GasProg { ...p, asm: das };
+            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(das.code.len() - 4) };
+            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(dops[2])) };
+            p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
             continue;
         }
         // `and Xd, Xn, #imm` (logical immediate) needs a verified bitmask
         // encoding; an unsupported immediate is recorded (never silently
         // mis-encoded). Register-form `and` falls through to emit.
-        if (mnem == "and" && rest.index_of("#") >= 0) {
+        if (mnem == "and" && arm64_str_indexof(rest, "#") >= 0) {
             var nops: string[] = arm64_gas_operands(rest);
             var nimm: i32 = arm64_gas_imm(nops[2]);
             if (arm64_and_imm_ok(nimm)) {
                 var aand: Arm64Asm = p.asm;
-                aand.code = arm64_and_imm(aand.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm);
-                p.asm = aand;
+                aand = Arm64Asm { ...aand, code: arm64_and_imm(aand.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm) };
+                p = Arm64GasProg { ...p, asm: aand };
             } else {
-                p.unknown = p.unknown.append("and#");
+                p = Arm64GasProg { ...p, unknown: p.unknown.append("and#") };
             }
             continue;
         }
         if (!arm64_gas_known(mnem)) {
-            p.unknown = p.unknown.append(mnem);
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem) };
         }
-        p.asm = arm64_gas_emit(p.asm, mnem, rest);
+        p = Arm64GasProg { ...p, asm: arm64_gas_emit(p.asm, mnem, rest) };
     }
-    p.asm = arm64_asm_resolve(p.asm);
+    p = Arm64GasProg { ...p, asm: arm64_asm_resolve(p.asm) };
     return p;
 }
 
@@ -1451,15 +1533,15 @@ pub function arm64_gas_link(p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): 
         var kind: i32 = p.pf_kinds[i];
         if (kind == 0) {
             var adrp_addr: i64 = text_vaddr + (site as i64);
-            aw.code = arm64_patch_adrp(aw.code, site, arm64_page_delta(target, adrp_addr));
+            aw = Arm64Asm { ...aw, code: arm64_patch_adrp(aw.code, site, arm64_page_delta(target, adrp_addr)) };
         } else if (kind == 1) {
-            aw.code = arm64_patch_ldr_off(aw.code, site, arm64_page_off(target));
+            aw = Arm64Asm { ...aw, code: arm64_patch_ldr_off(aw.code, site, arm64_page_off(target)) };
         } else {
-            aw.code = arm64_patch_addimm_off(aw.code, site, arm64_page_off(target));
+            aw = Arm64Asm { ...aw, code: arm64_patch_addimm_off(aw.code, site, arm64_page_off(target)) };
         }
         i = i + 1;
     }
-    p.asm = aw;
+    p = Arm64GasProg { ...p, asm: aw };
     return p;
 }
 
@@ -1719,6 +1801,24 @@ function macho_be32(buf: i32[], v: i32): i32[] {
     return buf;
 }
 
+// macho_le32w / macho_be32w take the value as i64, for the magic / flag
+// constants that exceed the signed-i32 range (e.g. 0xfeedfacf) — the Go
+// front-end rejects an out-of-range i32 literal.
+function macho_le32w(buf: i32[], v: i64): i32[] {
+    buf = buf.append((v & 255) as i32);
+    buf = buf.append(((v >> 8) & 255) as i32);
+    buf = buf.append(((v >> 16) & 255) as i32);
+    buf = buf.append(((v >> 24) & 255) as i32);
+    return buf;
+}
+function macho_be32w(buf: i32[], v: i64): i32[] {
+    buf = buf.append(((v >> 24) & 255) as i32);
+    buf = buf.append(((v >> 16) & 255) as i32);
+    buf = buf.append(((v >> 8) & 255) as i32);
+    buf = buf.append((v & 255) as i32);
+    return buf;
+}
+
 // macho_be64 appends the 8 bytes of a 64-bit `v`, big-endian.
 function macho_be64(buf: i32[], v: i64): i32[] {
     var b: i32 = 7;
@@ -1847,7 +1947,7 @@ function macho_seg(buf: i32[], name: string, vmaddr: i64, vmsize: i64, fileoff: 
 }
 
 // macho_sect writes a section_64 record.
-function macho_sect(buf: i32[], sect: string, seg: string, addr: i64, size: i32, offset: i32, align: i32, flags: i32): i32[] {
+function macho_sect(buf: i32[], sect: string, seg: string, addr: i64, size: i32, offset: i32, align: i32, flags: i64): i32[] {
     buf = macho_name16(buf, sect);
     buf = macho_name16(buf, seg);
     buf = macho_le64(buf, addr);
@@ -1856,7 +1956,7 @@ function macho_sect(buf: i32[], sect: string, seg: string, addr: i64, size: i32,
     buf = macho_le32(buf, align);
     buf = macho_le32(buf, 0); // reloff
     buf = macho_le32(buf, 0); // nreloc
-    buf = macho_le32(buf, flags);
+    buf = macho_le32w(buf, flags);
     buf = macho_le32(buf, 0); // reserved1
     buf = macho_le32(buf, 0); // reserved2
     buf = macho_le32(buf, 0); // reserved3
@@ -1892,14 +1992,14 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
 
     var sb: i32[] = [];
     // ---- SuperBlob header + one BlobIndex ----
-    sb = macho_be32(sb, 0xfade0cc0); // CSMAGIC_EMBEDDED_SIGNATURE
+    sb = macho_be32w(sb, 0xfade0cc0); // CSMAGIC_EMBEDDED_SIGNATURE
     sb = macho_be32(sb, total);
     sb = macho_be32(sb, 1);          // sub-blob count
     sb = macho_be32(sb, 0);          // CSSLOT_CODEDIRECTORY
     sb = macho_be32(sb, 20);         // offset of the CodeDirectory
 
     // ---- CodeDirectory ----
-    sb = macho_be32(sb, 0xfade0c02); // CSMAGIC_CODEDIRECTORY
+    sb = macho_be32w(sb, 0xfade0c02); // CSMAGIC_CODEDIRECTORY
     sb = macho_be32(sb, cd_len);
     sb = macho_be32(sb, 0x20400);    // version (supports execSeg fields)
     sb = macho_be32(sb, 2);          // CS_ADHOC
@@ -1984,7 +2084,7 @@ pub function macho_static_executable(text: i32[], data: i32[], ident: string): i
     var buf: i32[] = [];
 
     // ---- Mach-O header (32 bytes) ----
-    buf = macho_le32(buf, 0xfeedfacf); // MH_MAGIC_64
+    buf = macho_le32w(buf, 0xfeedfacf); // MH_MAGIC_64
     buf = macho_le32(buf, 0x0100000c); // CPU_TYPE_ARM64
     buf = macho_le32(buf, 0);          // CPU_SUBTYPE_ARM64_ALL
     buf = macho_le32(buf, 2);          // MH_EXECUTE
