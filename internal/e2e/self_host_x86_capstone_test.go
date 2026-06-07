@@ -53,16 +53,18 @@ func TestSelfHostX86Capstone(t *testing.T) {
 	prelude := string(enc) + "\n" + string(gas) + "\n" + string(elf) + "\n"
 
 	cases := []struct {
-		name string
-		prog string
-		want int
+		name    string
+		prog    string
+		want    int
+		wantOut string
 	}{
-		{"arith", "function main(): i32 { var x: i32 = 40; var y: i32 = 2; return x + y; }\n", 42},
-		{"while", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 7) { s = s + 6; i = i + 1; } return s; }\n", 42},
-		{"ifelse", "function main(): i32 { var x: i32 = 10; if (x > 5) { return 42; } return 0; }\n", 42},
-		{"call", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n", 42},
-		{"recur", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\nfunction main(): i32 { return fib(9) + 8; }\n", 42},
-		{"float", "function main(): i32 { var x: f64 = 84.0; var y: f64 = 2.0; var z: f64 = x / y; return z as i32; }\n", 42},
+		{"arith", "function main(): i32 { var x: i32 = 40; var y: i32 = 2; return x + y; }\n", 42, ""},
+		{"while", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 7) { s = s + 6; i = i + 1; } return s; }\n", 42, ""},
+		{"ifelse", "function main(): i32 { var x: i32 = 10; if (x > 5) { return 42; } return 0; }\n", 42, ""},
+		{"call", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n", 42, ""},
+		{"recur", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\nfunction main(): i32 { return fib(9) + 8; }\n", 42, ""},
+		{"float", "function main(): i32 { var x: f64 = 84.0; var y: f64 = 2.0; var z: f64 = x / y; return z as i32; }\n", 42, ""},
+		{"string", "function main(): i32 { write(\"hi!\"); return 0; }\n", 0, "hi!"},
 	}
 
 	for _, tc := range cases {
@@ -104,16 +106,21 @@ func TestSelfHostX86Capstone(t *testing.T) {
 			if err := os.WriteFile(binPath, bin, 0o755); err != nil {
 				t.Fatalf("write binary: %v", err)
 			}
+			runCmd := exec.Command(binPath)
+			stdout, runErr := runCmd.Output()
 			got := 0
-			if err := exec.Command(binPath).Run(); err != nil {
-				ee, ok := err.(*exec.ExitError)
+			if runErr != nil {
+				ee, ok := runErr.(*exec.ExitError)
 				if !ok {
-					t.Fatalf("run failed (not an exit code): %v\n--- asm ---\n%s", err, asmText)
+					t.Fatalf("run failed (not an exit code): %v\n--- asm ---\n%s", runErr, asmText)
 				}
 				got = ee.ExitCode()
 			}
 			if got != tc.want {
 				t.Fatalf("exit code = %d, want %d\n--- asm ---\n%s", got, tc.want, asmText)
+			}
+			if tc.wantOut != "" && string(stdout) != tc.wantOut {
+				t.Fatalf("stdout = %q, want %q\n--- asm ---\n%s", string(stdout), tc.wantOut, asmText)
 			}
 		})
 	}
