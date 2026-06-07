@@ -953,10 +953,38 @@ smallest → largest:
     Byte-checked vs `as`/objdump (`TestSelfHostX86Encode`) and three native
     runs through the GAS front-end: `TestSelfHostX86GasMulRuns` (`imulq`,
     6·7), `…IncShlRuns` (`incq`+`shlq`), `…DivRuns` (`cqto`+`idivq`, 84/2).
-  - ⬜ remaining: the 8/32-bit + misc ops (`movb`/`movzbq`/`movl`/`cmpb`,
-    `setCC`, `movabsq`, `0x83` imm8 ALU, `movq $imm` sign-extended `C7`
-    form) and the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
-    `roundsd`, `fldl`/`fstpl`), then wire the front-end into the
+  - ✅ **slice 2i — extended registers r8..r15**: added `x86_rex` (REX
+    prefix with dynamic R/X/B bits) and threaded it through every encoder
+    (reg-reg movs/ALU/test/imul, unary inc/dec/neg/div/idiv, push/pop, the
+    B8 imm32 mov, load/store, lea-rip) so any operand can be r8..r15. The
+    existing `base & 7` memory logic already handled r12 (SIB escape, like
+    rsp) and r13 (no-mod0, like rbp); only REX.B was missing. The GAS
+    front-end parses `%r8`..`%r15`. Surfaced by surveying real `asm.fern`
+    output, which uses r12/r13 as frame/string bases pervasively.
+    Byte-checked (`TestSelfHostX86Encode`, r0..r7 cases unchanged) and two
+    native runs: `…GasExtRegRuns` (`imulq %r13,%r12`) and `…GasExtMemRuns`
+    (store `%r8` to `[rsp]`, reload into `%r9`).
+  - ✅ **slice 2j — SIB index addressing**: `[base + index*scale + disp]`
+    via `x86_emit_mem_idx` + `x86_scale_bits` (scale 1/2/4/8 → 0/1/2/3),
+    with `x86_mov_load_r64_idx` / `x86_mov_store_r64_idx` (REX.X for an
+    index >= 8). The GAS front-end parses `disp(%base,%index,scale)`, and
+    crucially the operand splitter is now **paren-aware**
+    (`x86_gas_top_comma` skips commas inside `(%b,%i,s)`). Byte-checked
+    (`TestSelfHostX86Encode`, `TestSelfHostX86Gas`) and a native run
+    (`TestSelfHostX86GasIndexRuns`: store 42 at `[rsp+rcx*8]`, reload).
+  - ✅ **slice 2k — byte / 8-bit ops**: `movb` ($imm/reg8 → mem, mem →
+    reg8; `0xC6`/`0x88`/`0x8A`), `movzbq` (mem/reg8 → r64, REX.W `0F B6`),
+    `movl $imm` (the `0xB8` 32-bit mov), and `cmpb $imm8, %reg8` (`0x80 /7`),
+    plus an 8-bit register parser (`%al`..`%dil`, `%r8b`..`%r15b`). Byte ops
+    reuse the ModR/M+SIB encoders with a W=0 REX emitted only when needed
+    (extended reg/base/index, or spl..dil). Byte-checked
+    (`TestSelfHostX86Encode`, `TestSelfHostX86Gas`) and two native runs:
+    `…GasByteImmRuns` (`movb $42`+`movzbq`) and `…GasByteRegRuns`
+    (`movb %cl`+`movzbq` into `%r8`). With this the integer surface
+    `asm.fern` emits is essentially covered.
+  - ⬜ remaining: the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
+    `roundsd`, `fldl`/`fstpl`) + `movabsq` (64-bit/hex immediates) and the
+    odd `setCC` / `0x83` imm8 forms, then wire the front-end into the
     `fern -target x86-64 -o` driver so a real compiled program becomes an
     ELF with no external tool.
 

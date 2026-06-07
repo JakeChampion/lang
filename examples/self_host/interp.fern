@@ -1158,8 +1158,22 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     var base: i32 = env.names.len();
                     var bodyEnv: Env = env;
                     if (bind_name.len() > 0) { bodyEnv = bodyEnv.bind(bind_name, sv); }
-                    var step: StepResult = eval_block(arm.body, bodyEnv);
-                    return StepResult { env: trim_env(step.env, base), ret: step.ret };
+                    // A guard (`Pat if <expr> =>`) is evaluated with the
+                    // binding in scope; a false guard falls through to the
+                    // next arm instead of running this body.
+                    var pass: boolean = true;
+                    if (arm.has_guard) {
+                        var gv: Value = eval_expr(arm.guard, bodyEnv);
+                        if (is_err(gv)) { return StepResult { env: trim_env(bodyEnv, base), ret: gv }; }
+                        match (gv) {
+                            VBool(gb) => { pass = gb.v; },
+                            _ => { pass = false; }
+                        }
+                    }
+                    if (pass) {
+                        var step: StepResult = eval_block(arm.body, bodyEnv);
+                        return StepResult { env: trim_env(step.env, base), ret: step.ret };
+                    }
                 }
                 i = i + 1;
             }

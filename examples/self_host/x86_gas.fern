@@ -18,13 +18,16 @@
 // Import-free, like the other native-binary modules: the eventual emitter
 // `import`s x86_encode + this, and the unit test concatenates them.
 
-// GasMem is a parsed memory operand: either rip-relative (`sym(%rip)`,
-// carrying the label) or `disp(%base)` (carrying a base register + disp).
+// GasMem is a parsed memory operand: rip-relative (`sym(%rip)`, carrying
+// the label), or `disp(%base)`, or `disp(%base,%index,scale)` (has_index).
 struct GasMem {
     is_rip: boolean,
     label: string,
     base: i32,
     disp: i32,
+    has_index: boolean,
+    index: i32,
+    scale: i32,
 }
 
 // x86_gas_trim strips leading/trailing spaces (32) AND tabs (9). The
@@ -56,6 +59,40 @@ function x86_gas_reg(tok: string): i32 {
     if (s == "rbp") { return 5; }
     if (s == "rsi") { return 6; }
     if (s == "rdi") { return 7; }
+    if (s == "r8") { return 8; }
+    if (s == "r9") { return 9; }
+    if (s == "r10") { return 10; }
+    if (s == "r11") { return 11; }
+    if (s == "r12") { return 12; }
+    if (s == "r13") { return 13; }
+    if (s == "r14") { return 14; }
+    if (s == "r15") { return 15; }
+    return 0 - 1;
+}
+
+// x86_gas_reg8 maps an 8-bit register token (`%al`, `al`, …) to its
+// number, or -1. spl/bpl/sil/dil (4..7) and r8b..r15b (8..15) included.
+function x86_gas_reg8(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 37) { // '%'
+        s = s[1:s.len()];
+    }
+    if (s == "al") { return 0; }
+    if (s == "cl") { return 1; }
+    if (s == "dl") { return 2; }
+    if (s == "bl") { return 3; }
+    if (s == "spl") { return 4; }
+    if (s == "bpl") { return 5; }
+    if (s == "sil") { return 6; }
+    if (s == "dil") { return 7; }
+    if (s == "r8b") { return 8; }
+    if (s == "r9b") { return 9; }
+    if (s == "r10b") { return 10; }
+    if (s == "r11b") { return 11; }
+    if (s == "r12b") { return 12; }
+    if (s == "r13b") { return 13; }
+    if (s == "r14b") { return 14; }
+    if (s == "r15b") { return 15; }
     return 0 - 1;
 }
 
@@ -87,19 +124,26 @@ function x86_gas_atoi(tok: string): i32 {
 }
 
 // x86_gas_parse_mem parses a memory operand `disp(%base)` / `(%base)` /
-// `sym(%rip)`.
+// `disp(%base,%index,scale)` / `sym(%rip)`.
 function x86_gas_parse_mem(op: string): GasMem {
     var lp: i32 = op.index_of("(");
     var disp_str: string = op[0:lp];
     var inner: string = op[lp + 1:op.len() - 1]; // between ( and )
     if (inner == "%rip") {
-        return GasMem { is_rip: true, label: disp_str, base: 0, disp: 0 };
+        return GasMem { is_rip: true, label: disp_str, base: 0, disp: 0, has_index: false, index: 0, scale: 1 };
     }
     var d: i32 = 0;
     if (disp_str.len() > 0) {
         d = x86_gas_atoi(disp_str);
     }
-    return GasMem { is_rip: false, label: "", base: x86_gas_reg(inner), disp: d };
+    var parts: string[] = inner.split(",");
+    if (parts.len() >= 3) {
+        var bb: i32 = x86_gas_reg(x86_gas_trim(parts[0]));
+        var ix: i32 = x86_gas_reg(x86_gas_trim(parts[1]));
+        var sc: i32 = x86_gas_atoi(x86_gas_trim(parts[2]));
+        return GasMem { is_rip: false, label: "", base: bb, disp: d, has_index: true, index: ix, scale: sc };
+    }
+    return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trim(inner)), disp: d, has_index: false, index: 0, scale: 1 };
 }
 
 // x86_gas_movq dispatches the four movq operand shapes (AT&T src, dst).
@@ -116,12 +160,20 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
     }
     if (src_mem && !dst_mem) { // mem -> reg (load)
         var m: GasMem = x86_gas_parse_mem(src);
-        a.code = x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp);
+        if (m.has_index) {
+            a.code = x86_mov_load_r64_idx(a.code, x86_gas_reg(dst), m.base, m.index, m.scale, m.disp);
+        } else {
+            a.code = x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp);
+        }
         return a;
     }
     if (!src_mem && dst_mem) { // reg -> mem (store)
         var m2: GasMem = x86_gas_parse_mem(dst);
-        a.code = x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src));
+        if (m2.has_index) {
+            a.code = x86_mov_store_r64_idx(a.code, m2.base, m2.index, m2.scale, m2.disp, x86_gas_reg(src));
+        } else {
+            a.code = x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src));
+        }
         return a;
     }
     return a;
@@ -158,6 +210,60 @@ function x86_gas_logic(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: 
     return a;
 }
 
+// x86_gas_top_comma returns the index of the first comma at paren depth 0
+// (the operand separator), or -1. A comma inside `(%base,%index,scale)`
+// must not split the operands, so this skips parenthesised commas.
+function x86_gas_top_comma(s: string): i32 {
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        if (c == 40) { // '('
+            depth = depth + 1;
+        } else {
+            if (c == 41) { // ')'
+                depth = depth - 1;
+            } else {
+                if (c == 44 && depth == 0) { // ','
+                    return i;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// x86_gas_movb dispatches movb's three shapes: $imm->mem, reg8->mem (store),
+// mem->reg8 (load), in AT&T src, dst order.
+function x86_gas_movb(a: X86Asm, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) { // $imm -> mem
+        var m: GasMem = x86_gas_parse_mem(dst);
+        a.code = x86_movb_imm_mem(a.code, m.base, m.has_index, m.index, m.scale, m.disp, x86_gas_atoi(src));
+        return a;
+    }
+    if (src.contains("(")) { // mem -> reg8 (load)
+        var ms: GasMem = x86_gas_parse_mem(src);
+        a.code = x86_movb_mem_reg(a.code, x86_gas_reg8(dst), ms.base, ms.has_index, ms.index, ms.scale, ms.disp);
+        return a;
+    }
+    // reg8 -> mem (store)
+    var md: GasMem = x86_gas_parse_mem(dst);
+    a.code = x86_movb_reg_mem(a.code, x86_gas_reg8(src), md.base, md.has_index, md.index, md.scale, md.disp);
+    return a;
+}
+
+// x86_gas_movzbq dispatches movzbq: mem->reg64 or reg8->reg64.
+function x86_gas_movzbq(a: X86Asm, src: string, dst: string): X86Asm {
+    if (src.contains("(")) {
+        var m: GasMem = x86_gas_parse_mem(src);
+        a.code = x86_movzbq_mem(a.code, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp);
+        return a;
+    }
+    a.code = x86_movzbq_reg(a.code, x86_gas_reg(dst), x86_gas_reg8(src));
+    return a;
+}
+
 // x86_gas_emit assembles one instruction line (mnemonic + operand text).
 function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // zero-operand
@@ -182,8 +288,8 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "negq") { a.code = x86_neg_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "divq") { a.code = x86_div_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "idivq") { a.code = x86_idiv_r64(a.code, x86_gas_reg(rest)); return a; }
-    // two-operand (split on the first comma)
-    var ci: i32 = rest.index_of(",");
+    // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
+    var ci: i32 = x86_gas_top_comma(rest);
     if (ci < 0) {
         return a; // unknown / unsupported single-operand mnemonic: skip
     }
@@ -203,6 +309,20 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "andq") { return x86_gas_logic(a, 4, 33, src, dst); }
     if (mnem == "orq") { return x86_gas_logic(a, 1, 9, src, dst); }
     if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
+    if (mnem == "movb") { return x86_gas_movb(a, src, dst); }
+    if (mnem == "movzbq") { return x86_gas_movzbq(a, src, dst); }
+    if (mnem == "movl") {
+        if (src.len() > 0 && src[0] == 36) {
+            a.code = x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src));
+        }
+        return a;
+    }
+    if (mnem == "cmpb") {
+        if (src.len() > 0 && src[0] == 36) {
+            a.code = x86_cmpb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src));
+        }
+        return a;
+    }
     return a; // unsupported mnemonic: skip (grown in later slices)
 }
 

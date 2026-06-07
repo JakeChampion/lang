@@ -63,6 +63,8 @@ var selfHostImplementedCodes = map[string]bool{
 	"E001": true, // undefined name (value position)
 	"E042": true, // `?` operator on a non-Option/Result operand
 	"E010": true, // user enum shadowing a reserved built-in name
+	"E027": true, // match guard must be boolean
+	"E040": true, // generic-call type-argument arity mismatch
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -342,6 +344,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A non-generic argument-type mismatch still fires E038 (regression
 		// guard that the fix didn't disable the check).
 		{"nongeneric-arg-mismatch", "function f(a: string): i32 { return 0; }\nfunction main(): i32 { return f(5); }\n", []string{"E038"}},
+		// E040: explicit generic call-site type-argument arity.
+		{"type-arg-too-many", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id[i32, i32](5); }\n", []string{"E040"}},
+		{"type-arg-too-few", "function pair[A, B](a: A, b: B): A { return a; }\nfunction main(): i32 { return pair[i32](5, 6); }\n", []string{"E040"}},
+		{"type-arg-ok", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id[i32](5); }\n", nil},
+		{"type-arg-nongeneric-ok", "function f(x: i32): i32 { return x; }\nfunction main(): i32 { return f[i32](5); }\n", nil},
+		// E027: a match-arm guard (`Pat when <expr> =>`) must be boolean.
+		{"match-guard-nonbool", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) when n => { return n; }, _ => { return 0; } } }\n", []string{"E027"}},
+		{"match-guard-bool-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) when n > 0 => { return n; }, _ => { return 0; } } }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

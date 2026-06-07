@@ -1189,7 +1189,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
             right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } },
         right: parser.ExprCall {
             callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name, line: 0, col: 0 }, field: "len", line: 0, col: 0 },
-            args: [], line: 0, col: 0 } };
+            args: [], line: 0, col: 0, type_argc: 0 } };
 
     // body: $iN = $iN + 1; <element binding>; <body>
     var incr: parser.Stmt = parser.StmtAssign { target: i_name,
@@ -1213,12 +1213,12 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         kargs = kargs.push(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         kargs = kargs.push(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_k: parser.Stmt = parser.StmtVar { name: kname, type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0 }, line: 0, col: 0 };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0 };
         var vargs: parser.Expr[] = [];
         vargs = vargs.push(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         vargs = vargs.push(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_v: parser.Stmt = parser.StmtVar { name: vname, type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0 }, line: 0, col: 0 };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0 };
         wbody = wbody.push(bind_k);
         wbody = wbody.push(bind_v);
     } else {
@@ -1864,7 +1864,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             if (caps.len() == 0) {
                                 // No captures: lift verbatim. Called directly
                                 // (fast path) or via a 1-slot box (env ignored).
-                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "" });
+                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 });
                             } else {
                             // Capturing: the closure is boxed [fn_addr, cap…] at
                             // its binding; the lifted body reads captures back
@@ -1897,7 +1897,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 }
                                 var bk: i32 = 0;
                                 while (bk < lam.body.len()) { ebody = ebody.push(lam.body[bk]); bk = bk + 1; }
-                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0, import_iface: "", import_wit: "" });
+                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 });
                             }
                             }
                         },

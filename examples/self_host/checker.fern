@@ -263,7 +263,7 @@ function as_cast_allowed(src: Type, tgt: Type): boolean {
 // the module, then read at every ExprCall site. ret_type is a
 // Type (post type-name resolution); param_types parallels the
 // FuncDecl's params in declaration order.
-pub struct FuncSig { name: string, param_types: Type[], ret_type: Type }
+pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32 }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -527,7 +527,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
     // Sentinel: empty name + empty param list + unknown ret_type
     // tells callers the name isn't a function.
     var empty: Type[] = [];
-    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name) };
+    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0 };
 }
 
 function (s: Scope) lookup_struct(name: string): StructSig {
@@ -1350,7 +1350,8 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
         out = out.push(FuncSig {
             name: fd.name,
             param_types: pts,
-            ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions)
+            ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions),
+            type_param_count: fd.type_param_count
         });
         i = i + 1;
     }
@@ -2219,6 +2220,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     }
                     if (is_unknown(s.lookup(id.name))) {
                         var sig: FuncSig = s.lookup_sig(id.name);
+                        // E040: a GENERIC function called with explicit
+                        // call-site type arguments whose count doesn't match
+                        // its declared type-parameter count. Only fires for an
+                        // actually-generic function (type_param_count > 0) when
+                        // type args were written (`f[i32](x)`); a bare call
+                        // relies on inference, and type args on a non-generic
+                        // function are ignored (matching the Go checker).
+                        if (sig.name.len() > 0 && sig.type_param_count > 0 && c.type_argc > 0 && c.type_argc != sig.type_param_count) {
+                            out = out.push(dg_at("E040", id.name + " expects " + itoa_nn(sig.type_param_count) + " type argument(s), got " + itoa_nn(c.type_argc), c.line, c.col));
+                        }
                         if (sig.name.len() > 0) {
                             if (c.args.len() != sig.param_types.len()) {
                                 out = out.push(dg_at("E004", "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()), c.line, c.col));
@@ -2657,6 +2668,16 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                             }
                         },
                         _ => { }
+                    }
+                    // E027: a match-arm guard (`Pat if <expr> =>`) must be
+                    // boolean. Typed in the arm scope so a guard referencing
+                    // the pattern binding (`Has(n) if n > 0`) resolves.
+                    if (m.arms[a].has_guard) {
+                        var gt: Type = check_expr(m.arms[a].guard, armScope);
+                        if (!is_unknown(gt) && !type_eq(gt, t_bool())) {
+                            out = out.push(dg_at("E027", "match guard must be boolean, got " + type_label(gt), expr_line(m.arms[a].guard), expr_col(m.arms[a].guard)));
+                        }
+                        out = append_diags(out, call_diags(m.arms[a].guard, armScope));
                     }
                     out = append_diags(out, stmts_call_diags(m.arms[a].body, armScope));
                     a = a + 1;

@@ -88,6 +88,36 @@ func TestSelfHostX86GasDivRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasdiv42", x86GasDivDriverMain, 42)
 }
 
+// TestSelfHostX86GasExtRegRuns exercises extended registers r8-r15 in
+// arithmetic (imulq %r13,%r12; 6*7=42) — REX.R/.B on reg-reg + B8 imm.
+func TestSelfHostX86GasExtRegRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasext42", x86GasExtRegDriverMain, 42)
+}
+
+// TestSelfHostX86GasExtMemRuns exercises extended registers in memory ops:
+// store r8 to [rsp] (SIB) and load it into r9, exit(r9) = 42.
+func TestSelfHostX86GasExtMemRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasextmem42", x86GasExtMemDriverMain, 42)
+}
+
+// TestSelfHostX86GasIndexRuns exercises SIB-index addressing: store 42 at
+// [rsp + rcx*8] and load it back, exit(rdi) = 42.
+func TestSelfHostX86GasIndexRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasindex42", x86GasIndexDriverMain, 42)
+}
+
+// TestSelfHostX86GasByteImmRuns exercises movb $imm + movzbq: store byte 42
+// to [rsp], zero-extend-load it, exit 42.
+func TestSelfHostX86GasByteImmRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasbyteimm42", x86GasByteImmDriverMain, 42)
+}
+
+// TestSelfHostX86GasByteRegRuns exercises movb %reg8 + movzbq into an
+// extended register: store %cl to [rsp], load into %r8, exit 42.
+func TestSelfHostX86GasByteRegRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasbytereg42", x86GasByteRegDriverMain, 42)
+}
+
 // runX86GasNativeDriver concatenates x86_encode.fern + x86_gas.fern +
 // elf.fern + driverMain, compiles it through the self-host wasm emitter,
 // runs the WAT under wasmtime to get the raw ELF the driver assembled and
@@ -182,6 +212,16 @@ function main(): i32 {
     // first instr movq $0,%rax -> B8 00 00 00 00; second movq $7,%rcx -> B9 07 ...
     if (a.code.len() < 10 || a.code[0] != 184 || a.code[1] != 0) { return 7; }
     if (a.code[5] != 185 || a.code[6] != 7) { return 8; }
+    // paren-aware operand split + indexed memory parsing (slice 2j):
+    if (x86_gas_top_comma("$0, (%r12,%r15,1)") != 2) { return 9; }
+    if (x86_gas_top_comma("(%rax,%rcx,1), %rdx") != 13) { return 10; }
+    var mi: GasMem = x86_gas_parse_mem("(%r12,%r15,1)");
+    if (!mi.has_index || mi.base != 12 || mi.index != 15 || mi.scale != 1) { return 11; }
+    var mi2: GasMem = x86_gas_parse_mem("8(%rsp,%rcx,8)");
+    if (!mi2.has_index || mi2.base != 4 || mi2.index != 1 || mi2.scale != 8 || mi2.disp != 8) { return 12; }
+    // 8-bit register parsing (slice 2k):
+    if (x86_gas_reg8("%al") != 0 || x86_gas_reg8("%dl") != 2 || x86_gas_reg8("%r8b") != 8) { return 13; }
+    if (x86_gas_reg8("%rax") != (0 - 1)) { return 14; }
     return 0;
 }
 `
@@ -234,6 +274,56 @@ function main(): i32 {
 const x86GasDivDriverMain = `
 function main(): i32 {
     var src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasExtRegDriverMain: extended-register arithmetic (imulq %r13,%r12).
+const x86GasExtRegDriverMain = `
+function main(): i32 {
+    var src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasExtMemDriverMain: store r8 to [rsp], reload into r9, exit(r9)=42.
+const x86GasExtMemDriverMain = `
+function main(): i32 {
+    var src: string = "\tsubq $16, %rsp\n\tmovq $42, %r8\n\tmovq %r8, (%rsp)\n\tmovq (%rsp), %r9\n\tmovq %r9, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasIndexDriverMain: SIB-index store/load — [rsp + rcx*8] = 42, reload.
+const x86GasIndexDriverMain = `
+function main(): i32 {
+    var src: string = "\tsubq $64, %rsp\n\tmovq $42, %rax\n\tmovq $2, %rcx\n\tmovq %rax, (%rsp,%rcx,8)\n\tmovq (%rsp,%rcx,8), %rdi\n\taddq $64, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasByteImmDriverMain: movb $42, (%rsp) ; movzbq (%rsp), %rdi.
+const x86GasByteImmDriverMain = `
+function main(): i32 {
+    var src: string = "\tsubq $16, %rsp\n\tmovb $42, (%rsp)\n\tmovzbq (%rsp), %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasByteRegDriverMain: movb %cl, (%rsp) ; movzbq (%rsp), %r8.
+const x86GasByteRegDriverMain = `
+function main(): i32 {
+    var src: string = "\tsubq $16, %rsp\n\tmovq $42, %rcx\n\tmovb %cl, (%rsp)\n\tmovzbq (%rsp), %r8\n\tmovq %r8, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;

@@ -167,7 +167,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 args = args.push(rewrite_expr(c.args[i], ctx));
                 i = i + 1;
             }
-            return parser.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col };
+            return parser.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_argc: c.type_argc };
         },
         parser.ExprBinary(b) => {
             return parser.ExprBinary {
@@ -292,7 +292,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             var arms: parser.MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.push(parser.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col });
+                arms = arms.push(parser.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
             return parser.StmtMatch { scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms, line: m.line, col: m.col };
@@ -359,7 +359,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             ret_type: rewrite_type_name(fd.ret_type, ctx),
             body: rewrite_block(fd.body, ctx),
             line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit
+            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count
         });
         i = i + 1;
     }
