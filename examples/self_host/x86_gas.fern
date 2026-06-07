@@ -18,13 +18,16 @@
 // Import-free, like the other native-binary modules: the eventual emitter
 // `import`s x86_encode + this, and the unit test concatenates them.
 
-// GasMem is a parsed memory operand: either rip-relative (`sym(%rip)`,
-// carrying the label) or `disp(%base)` (carrying a base register + disp).
+// GasMem is a parsed memory operand: rip-relative (`sym(%rip)`, carrying
+// the label), or `disp(%base)`, or `disp(%base,%index,scale)` (has_index).
 struct GasMem {
     is_rip: boolean,
     label: string,
     base: i32,
     disp: i32,
+    has_index: boolean,
+    index: i32,
+    scale: i32,
 }
 
 // x86_gas_trim strips leading/trailing spaces (32) AND tabs (9). The
@@ -95,19 +98,26 @@ function x86_gas_atoi(tok: string): i32 {
 }
 
 // x86_gas_parse_mem parses a memory operand `disp(%base)` / `(%base)` /
-// `sym(%rip)`.
+// `disp(%base,%index,scale)` / `sym(%rip)`.
 function x86_gas_parse_mem(op: string): GasMem {
     var lp: i32 = op.index_of("(");
     var disp_str: string = op[0:lp];
     var inner: string = op[lp + 1:op.len() - 1]; // between ( and )
     if (inner == "%rip") {
-        return GasMem { is_rip: true, label: disp_str, base: 0, disp: 0 };
+        return GasMem { is_rip: true, label: disp_str, base: 0, disp: 0, has_index: false, index: 0, scale: 1 };
     }
     var d: i32 = 0;
     if (disp_str.len() > 0) {
         d = x86_gas_atoi(disp_str);
     }
-    return GasMem { is_rip: false, label: "", base: x86_gas_reg(inner), disp: d };
+    var parts: string[] = inner.split(",");
+    if (parts.len() >= 3) {
+        var bb: i32 = x86_gas_reg(x86_gas_trim(parts[0]));
+        var ix: i32 = x86_gas_reg(x86_gas_trim(parts[1]));
+        var sc: i32 = x86_gas_atoi(x86_gas_trim(parts[2]));
+        return GasMem { is_rip: false, label: "", base: bb, disp: d, has_index: true, index: ix, scale: sc };
+    }
+    return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trim(inner)), disp: d, has_index: false, index: 0, scale: 1 };
 }
 
 // x86_gas_movq dispatches the four movq operand shapes (AT&T src, dst).
@@ -124,12 +134,20 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
     }
     if (src_mem && !dst_mem) { // mem -> reg (load)
         var m: GasMem = x86_gas_parse_mem(src);
-        a.code = x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp);
+        if (m.has_index) {
+            a.code = x86_mov_load_r64_idx(a.code, x86_gas_reg(dst), m.base, m.index, m.scale, m.disp);
+        } else {
+            a.code = x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp);
+        }
         return a;
     }
     if (!src_mem && dst_mem) { // reg -> mem (store)
         var m2: GasMem = x86_gas_parse_mem(dst);
-        a.code = x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src));
+        if (m2.has_index) {
+            a.code = x86_mov_store_r64_idx(a.code, m2.base, m2.index, m2.scale, m2.disp, x86_gas_reg(src));
+        } else {
+            a.code = x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src));
+        }
         return a;
     }
     return a;
@@ -166,6 +184,30 @@ function x86_gas_logic(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: 
     return a;
 }
 
+// x86_gas_top_comma returns the index of the first comma at paren depth 0
+// (the operand separator), or -1. A comma inside `(%base,%index,scale)`
+// must not split the operands, so this skips parenthesised commas.
+function x86_gas_top_comma(s: string): i32 {
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        if (c == 40) { // '('
+            depth = depth + 1;
+        } else {
+            if (c == 41) { // ')'
+                depth = depth - 1;
+            } else {
+                if (c == 44 && depth == 0) { // ','
+                    return i;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 // x86_gas_emit assembles one instruction line (mnemonic + operand text).
 function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // zero-operand
@@ -190,8 +232,8 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "negq") { a.code = x86_neg_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "divq") { a.code = x86_div_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "idivq") { a.code = x86_idiv_r64(a.code, x86_gas_reg(rest)); return a; }
-    // two-operand (split on the first comma)
-    var ci: i32 = rest.index_of(",");
+    // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
+    var ci: i32 = x86_gas_top_comma(rest);
     if (ci < 0) {
         return a; // unknown / unsupported single-operand mnemonic: skip
     }

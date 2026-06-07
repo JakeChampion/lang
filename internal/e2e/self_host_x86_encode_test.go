@@ -375,6 +375,16 @@ function main(): i32 {
     if (rh.len() != 4 || rh[0] != 73 || rh[1] != 137 || rh[2] != 4 || rh[3] != 36) { return 50; }
     var rk: i32[] = x86_imul_r64_r64([], 8, 9); // imul r8,r9 -> 4D 0F AF C1
     if (rk.len() != 4 || rk[0] != 77 || rk[1] != 15 || rk[2] != 175 || rk[3] != 193) { return 51; }
+    // slice 2j SIB-index addressing (verified vs as/objdump):
+    var sa: i32[] = x86_mov_load_r64_idx([], x86_rax(), x86_rax(), x86_rcx(), 1, 0); // 48 8B 04 08
+    if (sa.len() != 4 || sa[0] != 72 || sa[1] != 139 || sa[2] != 4 || sa[3] != 8) { return 52; }
+    var sb: i32[] = x86_mov_load_r64_idx([], x86_rax(), x86_rax(), x86_rcx(), 8, 0); // 48 8B 04 C8
+    if (sb[3] != 200) { return 53; }
+    var sc3: i32[] = x86_mov_load_r64_idx([], x86_rax(), 12, 15, 1, 0); // 4B 8B 04 3C
+    if (sc3[0] != 75 || sc3[1] != 139 || sc3[2] != 4 || sc3[3] != 60) { return 54; }
+    var sd: i32[] = x86_mov_store_r64_idx([], 13, x86_rcx(), 1, 0, x86_rax()); // 49 89 44 0D 00
+    if (sd.len() != 5 || sd[0] != 73 || sd[1] != 137 || sd[2] != 68 || sd[3] != 13 || sd[4] != 0) { return 55; }
+    if (x86_scale_bits(1) != 0 || x86_scale_bits(2) != 1 || x86_scale_bits(4) != 2 || x86_scale_bits(8) != 3) { return 56; }
     return 0;
 }
 `
