@@ -134,20 +134,30 @@ struct Arm64Mem {
     off: i32,
 }
 
-// arm64_gas_mem parses `[Xn]` or `[Xn, #off]`.
+// arm64_gas_mem parses `[Xn]` or `[Xn, #off]`, tolerating a trailing `!`
+// (pre-index writeback marker — detect it separately with
+// arm64_gas_has_bang).
 function arm64_gas_mem(op: string): Arm64Mem {
     var s: string = arm64_gas_trim(op);
-    // drop the surrounding [ ]
-    if (s.len() >= 2 && s[0] == 91) {
-        s = s[1:s.len() - 1];
+    var lb: i32 = s.index_of("[");
+    var rb: i32 = s.index_of("]");
+    var inner: string = s;
+    if (lb >= 0 && rb > lb) {
+        inner = s[lb + 1:rb];
     }
-    var parts: string[] = arm64_gas_operands(s);
+    var parts: string[] = arm64_gas_operands(inner);
     var base: i32 = arm64_gas_reg(parts[0]);
     var off: i32 = 0;
     if (parts.len() > 1) {
         off = arm64_gas_imm(parts[1]);
     }
     return Arm64Mem { base: base, off: off };
+}
+
+// arm64_gas_has_bang reports whether an operand carries the `!` pre-index
+// writeback marker.
+function arm64_gas_has_bang(op: string): boolean {
+    return op.index_of("!") >= 0;
 }
 
 // arm64_gas_lsl_amount parses a `lsl #N` shift operand (the `lsl #16` of a
@@ -195,6 +205,10 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var rd: i32 = arm64_gas_reg(ops[0]);
         if (ops[1].len() > 0 && ops[1][0] == 35) { // '#'
             a.code = arm64_movz(a.code, rd, arm64_gas_imm(ops[1]), 0);
+        } else if (arm64_gas_trim(ops[0]) == "sp" || arm64_gas_trim(ops[1]) == "sp") {
+            // `mov Xd, sp` / `mov sp, Xn` is the `add Xd, Xn, #0` alias
+            // (ORR can't name SP).
+            a.code = arm64_addimm(a.code, rd, arm64_gas_reg(ops[1]), 0);
         } else {
             a.code = arm64_movreg(a.code, rd, arm64_gas_reg(ops[1]));
         }
@@ -237,14 +251,38 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         }
         return a;
     }
-    if (mnem == "ldr") {
-        var lm: Arm64Mem = arm64_gas_mem(ops[1]);
-        a.code = arm64_ldr(a.code, arm64_gas_reg(ops[0]), lm.base, lm.off);
+    if (mnem == "ldr" || mnem == "str") {
+        var rt: i32 = arm64_gas_reg(ops[0]);
+        if (ops.len() >= 3) {
+            // post-index: `ldr Xt, [Xn], #off` (ops[1]="[Xn]", ops[2]="#off")
+            var pb: i32 = arm64_gas_mem(ops[1]).base;
+            var po: i32 = arm64_gas_imm(ops[2]);
+            if (mnem == "ldr") { a.code = arm64_ldr_post(a.code, rt, pb, po); }
+            else { a.code = arm64_str_post(a.code, rt, pb, po); }
+            return a;
+        }
+        var m: Arm64Mem = arm64_gas_mem(ops[1]);
+        if (arm64_gas_has_bang(ops[1])) {
+            // pre-index writeback: `[Xn, #off]!`
+            if (mnem == "ldr") { a.code = arm64_ldr_pre(a.code, rt, m.base, m.off); }
+            else { a.code = arm64_str_pre(a.code, rt, m.base, m.off); }
+        } else {
+            if (mnem == "ldr") { a.code = arm64_ldr(a.code, rt, m.base, m.off); }
+            else { a.code = arm64_str(a.code, rt, m.base, m.off); }
+        }
         return a;
     }
-    if (mnem == "str") {
-        var sm: Arm64Mem = arm64_gas_mem(ops[1]);
-        a.code = arm64_str(a.code, arm64_gas_reg(ops[0]), sm.base, sm.off);
+    if (mnem == "stp") {
+        // prologue form: `stp Xt, Xt2, [Xn, #off]!` (pre-index)
+        var sm: Arm64Mem = arm64_gas_mem(ops[2]);
+        a.code = arm64_stp_pre(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), sm.base, sm.off);
+        return a;
+    }
+    if (mnem == "ldp") {
+        // epilogue form: `ldp Xt, Xt2, [Xn], #off` (post-index)
+        var lb: i32 = arm64_gas_mem(ops[2]).base;
+        var lo: i32 = arm64_gas_imm(ops[3]);
+        a.code = arm64_ldp_post(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), lb, lo);
         return a;
     }
     return a; // unknown mnemonic — ignored

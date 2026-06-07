@@ -994,10 +994,23 @@ smallest → largest:
     `arm64_gas_assemble`, wraps the bytes with `macho.fern`, and the signed
     Mach-O exits 42 — the first time the arm64-darwin path goes from
     **assembly text → runnable signed binary** with no external
-    `as`/`clang`/`ld64`. Next: feed `asm_arm64`'s actual emitted text
-    through this assembler and write the file from the driver (replacing the
-    `clang`/`ld64` shell-out), widening the parsed instruction surface to
-    whatever `asm_arm64` emits.
+    `as`/`clang`/`ld64`.
+  - ✅ **slice 3h — frame prologue/epilogue ops**: the instruction surface
+    a *real function* emits — `stp`/`ldp` with writeback (`[Xn, #off]!`
+    pre / `[Xn], #off` post), single `ldr`/`str` writeback (signed imm9),
+    and the `mov Xd, sp` / `mov sp, Xn` add-immediate alias (ORR can't name
+    SP) — added to `arm64_encode.fern` (encoders pinned vs llvm-mc) and
+    parsed by `arm64_gas.fern` (a `!`-tolerant memory parser + the pre/post
+    operand-count dispatch). Byte-checked by `TestSelfHostArm64FrameGas`
+    and gated end-to-end by **`TestSelfHostArm64DarwinMachOFnGasRuns`**: a
+    Fern program assembles the actual prologue/epilogue + frame idiom the
+    backend emits (`stp` … `mov x29, sp` … push/pop via `str`/`ldr`
+    writeback … `ldp` … `ret`, called by `bl`), wraps it with `macho.fern`,
+    and the signed Mach-O exits 42 — no external tool. Remaining for full
+    wiring: data directives (`.4byte`/`.asciz`/`.align`/`.section`) into a
+    `__DATA`/`__const` blob with `adrp`/`ldr` symbol relocation, `.ltorg`
+    literal pools, then feeding `asm_arm64`'s real output from the driver
+    (replacing the `clang`/`ld64` shell-out).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
