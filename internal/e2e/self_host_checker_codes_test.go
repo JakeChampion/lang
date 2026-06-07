@@ -64,6 +64,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E042": true, // `?` operator on a non-Option/Result operand
 	"E010": true, // user enum shadowing a reserved built-in name
 	"E027": true, // match guard must be boolean
+	"E015": true, // variant pattern payload-binding arity
 	"E040": true, // generic-call type-argument arity mismatch
 }
 
@@ -352,6 +353,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E027: a match-arm guard (`Pat when <expr> =>`) must be boolean.
 		{"match-guard-nonbool", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) when n => { return n; }, _ => { return 0; } } }\n", []string{"E027"}},
 		{"match-guard-bool-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) when n > 0 => { return n; }, _ => { return 0; } } }\n", nil},
+		// E015: variant pattern binding count must match the variant's payload count.
+		{"variant-too-many-bindings", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(a, b) => { return a; }, Nil => { return 0; } } }\n", []string{"E015"}},
+		{"variant-missing-binding", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has => { return 1; }, Nil => { return 0; } } }\n", []string{"E015"}},
+		{"variant-binding-arity-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

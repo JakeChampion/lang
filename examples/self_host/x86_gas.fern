@@ -96,6 +96,97 @@ function x86_gas_reg8(tok: string): i32 {
     return 0 - 1;
 }
 
+// x86_gas_is_xmm reports whether a token names an xmm register.
+function x86_gas_is_xmm(tok: string): boolean {
+    return tok.contains("xmm");
+}
+
+// x86_gas_xmm maps an xmm token (`%xmm0`, `xmm12`, …) to its number 0..15,
+// or -1.
+function x86_gas_xmm(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 37) { // '%'
+        s = s[1:s.len()];
+    }
+    if (s.len() < 4) {
+        return 0 - 1;
+    }
+    if (s[0] != 120 || s[1] != 109 || s[2] != 109) { // "xmm"
+        return 0 - 1;
+    }
+    var v: i32 = 0;
+    var i: i32 = 3;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        if (c >= 48 && c <= 57) {
+            v = v * 10 + (c - 48);
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
+// x86_gas_parse_f64 parses a decimal float literal (optional sign, integer
+// and fraction parts, optional `e`/`E` exponent) into an f64 — used for
+// the `.double` directive's IEEE-754 bytes.
+function x86_gas_parse_f64(s: string): f64 {
+    var i: i32 = 0;
+    var neg: boolean = false;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    } else {
+        if (s.len() > 0 && s[0] == 43) { // '+'
+            i = 1;
+        }
+    }
+    var val: f64 = 0.0;
+    while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        val = val * 10.0 + ((s[i] - 48) as f64);
+        i = i + 1;
+    }
+    if (i < s.len() && s[i] == 46) { // '.'
+        i = i + 1;
+        var scale: f64 = 1.0;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            val = val * 10.0 + ((s[i] - 48) as f64);
+            scale = scale * 10.0;
+            i = i + 1;
+        }
+        val = val / scale;
+    }
+    if (i < s.len() && (s[i] == 101 || s[i] == 69)) { // 'e' / 'E'
+        i = i + 1;
+        var eneg: boolean = false;
+        if (i < s.len() && s[i] == 45) {
+            eneg = true;
+            i = i + 1;
+        } else {
+            if (i < s.len() && s[i] == 43) {
+                i = i + 1;
+            }
+        }
+        var e: i32 = 0;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            e = e * 10 + (s[i] - 48);
+            i = i + 1;
+        }
+        var p: i32 = 0;
+        while (p < e) {
+            if (eneg) {
+                val = val / 10.0;
+            } else {
+                val = val * 10.0;
+            }
+            p = p + 1;
+        }
+    }
+    if (neg) {
+        return 0.0 - val;
+    }
+    return val;
+}
+
 // x86_gas_atoi parses a decimal integer token, tolerating a leading `$`
 // (immediate sigil) and a leading `-`.
 function x86_gas_atoi(tok: string): i32 {
@@ -146,8 +237,19 @@ function x86_gas_parse_mem(op: string): GasMem {
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trim(inner)), disp: d, has_index: false, index: 0, scale: 1 };
 }
 
-// x86_gas_movq dispatches the four movq operand shapes (AT&T src, dst).
+// x86_gas_movq dispatches the movq operand shapes (AT&T src, dst),
+// including the SSE forms movq %gpr,%xmm and movq %xmm,%gpr.
 function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
+    var src_xmm: boolean = x86_gas_is_xmm(src);
+    var dst_xmm: boolean = x86_gas_is_xmm(dst);
+    if (dst_xmm && !src_xmm) { // movq %gpr, %xmm
+        a.code = x86_movq_gpr_to_xmm(a.code, x86_gas_xmm(dst), x86_gas_reg(src));
+        return a;
+    }
+    if (src_xmm && !dst_xmm) { // movq %xmm, %gpr
+        a.code = x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), x86_gas_reg(dst));
+        return a;
+    }
     if (src.len() > 0 && src[0] == 36) { // $imm -> reg
         a.code = x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src));
         return a;
@@ -280,6 +382,19 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "syscall") { a.code = x86_syscall(a.code); return a; }
     if (mnem == "leave") { a.code = x86_leave(a.code); return a; }
     if (mnem == "cqto") { a.code = x86_cqo(a.code); return a; }
+    // setCC <reg8>: store a condition flag as 0/1.
+    if (mnem == "sete" || mnem == "setz") { a.code = x86_setcc_reg8(a.code, 148, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setne" || mnem == "setnz") { a.code = x86_setcc_reg8(a.code, 149, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setl") { a.code = x86_setcc_reg8(a.code, 156, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setle") { a.code = x86_setcc_reg8(a.code, 158, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setg") { a.code = x86_setcc_reg8(a.code, 159, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setge") { a.code = x86_setcc_reg8(a.code, 157, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setb") { a.code = x86_setcc_reg8(a.code, 146, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setbe") { a.code = x86_setcc_reg8(a.code, 150, x86_gas_reg8(rest)); return a; }
+    if (mnem == "seta") { a.code = x86_setcc_reg8(a.code, 151, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setae") { a.code = x86_setcc_reg8(a.code, 147, x86_gas_reg8(rest)); return a; }
+    if (mnem == "sets") { a.code = x86_setcc_reg8(a.code, 152, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setns") { a.code = x86_setcc_reg8(a.code, 153, x86_gas_reg8(rest)); return a; }
     // branch / call: one operand = a label
     if (mnem == "jmp") { return x86_jmp_label(a, rest); }
     if (mnem == "je" || mnem == "jz") { return x86_jcc_label(a, x86_cc_e(), rest); }
@@ -350,6 +465,27 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
     if (mnem == "movb") { return x86_gas_movb(a, src, dst); }
     if (mnem == "movzbq") { return x86_gas_movzbq(a, src, dst); }
+    if (mnem == "movsd") {
+        if (dst.contains("(")) { // store: movsd %xmm, mem
+            var sm: GasMem = x86_gas_parse_mem(dst);
+            a.code = x86_movsd_store(a.code, sm.base, sm.has_index, sm.index, sm.scale, sm.disp, x86_gas_xmm(src));
+            return a;
+        }
+        // load into xmm (dst is xmm)
+        var lm: GasMem = x86_gas_parse_mem(src);
+        if (lm.is_rip) {
+            return x86_movsd_load_rip_label(a, x86_gas_xmm(dst), lm.label);
+        }
+        a.code = x86_movsd_load(a.code, x86_gas_xmm(dst), lm.base, lm.has_index, lm.index, lm.scale, lm.disp);
+        return a;
+    }
+    if (mnem == "addsd") { a.code = x86_sse_rr(a.code, 88, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
+    if (mnem == "subsd") { a.code = x86_sse_rr(a.code, 92, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
+    if (mnem == "mulsd") { a.code = x86_sse_rr(a.code, 89, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
+    if (mnem == "divsd") { a.code = x86_sse_rr(a.code, 94, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
+    if (mnem == "ucomisd") { a.code = x86_ucomisd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)); return a; }
+    if (mnem == "cvttsd2si") { a.code = x86_cvttsd2si(a.code, x86_gas_reg(dst), x86_gas_xmm(src)); return a; }
+    if (mnem == "cvtsi2sd") { a.code = x86_cvtsi2sd(a.code, x86_gas_xmm(dst), x86_gas_reg(src)); return a; }
     if (mnem == "movl") {
         if (src.len() > 0 && src[0] == 36) {
             a.code = x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src));
@@ -384,15 +520,23 @@ function x86_gas_assemble(src: string): X86Asm {
         if (line.len() == 0) {
             continue;
         }
-        // label: `name:`
-        if (line[line.len() - 1] == 58) { // ':'
-            var lname: string = line[0:line.len() - 1];
-            if (section == 1) {
-                a = x86_rodata_label(a, lname);
-            } else {
-                a = x86_label(a, lname);
+        // label prefix: `name:` possibly followed by more on the same
+        // line (asm.fern emits `.L0: .double 84.0`). A label is a single
+        // token (no space / paren / comma) before the first ':'.
+        var colon: i32 = line.index_of(":");
+        if (colon > 0) {
+            var before: string = line[0:colon];
+            if (before.index_of(" ") < 0 && before.index_of("(") < 0 && x86_gas_top_comma(before) < 0) {
+                if (section == 1) {
+                    a = x86_rodata_label(a, before);
+                } else {
+                    a = x86_label(a, before);
+                }
+                line = x86_gas_trim(line[colon + 1:line.len()]);
+                if (line.len() == 0) {
+                    continue;
+                }
             }
-            continue;
         }
         // directive: `.…`
         if (line[0] == 46) { // '.'
@@ -409,8 +553,13 @@ function x86_gas_assemble(src: string): X86Asm {
                     if (line.starts_with(".quad")) {
                         var qv: i32 = x86_gas_atoi(x86_gas_trim(line[6:line.len()]));
                         a = x86_rodata_quad(a, qv, 0);
+                    } else {
+                        if (line.starts_with(".double")) {
+                            var fv: f64 = x86_gas_parse_f64(x86_gas_trim(line[8:line.len()]));
+                            a.rodata = x86_le64_i64(a.rodata, f64_bits(fv));
+                        }
+                        // .globl / .type / .size: ignored
                     }
-                    // .globl / .type / .size: ignored
                 }
             }
             continue;

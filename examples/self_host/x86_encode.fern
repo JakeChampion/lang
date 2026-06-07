@@ -445,6 +445,21 @@ function x86_imul_r64_r64_imm32(buf: i32[], dst: i32, src: i32, imm: i32): i32[]
     return x86_le32(buf, imm);
 }
 
+// x86_setcc_reg8: `set<cc> <reg8>` (0F 90+cc /0) — store the condition
+// flag as a 0/1 byte. `op` is the second opcode byte (e.g. 0x9C setl).
+// reg8 spl..dil (4..7) need a REX to disambiguate from ah..bh.
+function x86_setcc_reg8(buf: i32[], op: i32, reg8: i32): i32[] {
+    var rex: i32 = x86_rex(0, 0, 0, reg8);
+    var force: boolean = (reg8 >= 4 && reg8 <= 7);
+    if (rex != 64 || force) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(op);
+    buf = buf.push(x86_modrm(3, 0, reg8));
+    return buf;
+}
+
 // x86_alu_load_r64: `<op> <dst>, mem` with a memory *source* — the
 // load-form ALU (add 0x03, sub 0x2B, cmp 0x3B; reg=dst, r/m=mem).
 function x86_alu_load_r64(buf: i32[], opcode: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
@@ -453,6 +468,145 @@ function x86_alu_load_r64(buf: i32[], opcode: i32, dst: i32, base: i32, has_inde
     buf = buf.push(x86_rex(1, dst, ix, base));
     buf = buf.push(opcode);
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// ---- SSE double + .double constants (slice 2n) ----
+//
+// asm.fern uses scalar-double SSE for f64: a `.double` constant in
+// .rodata loaded with `movsd sym(%rip)`, the value shuttled to/from a GPR
+// with `movq %xmm,%gpr` / `movq %gpr,%xmm`, arithmetic with
+// addsd/subsd/mulsd/divsd, and int<->float conversions cvttsd2si /
+// cvtsi2sd. xmm registers are numbered 0..15 (REX.R/.B for xmm8..15).
+
+// x86_le64_i64 appends the 8 little-endian bytes of an i64 (e.g. the
+// IEEE-754 bits of a .double constant).
+function x86_le64_i64(buf: i32[], v: i64): i32[] {
+    buf = buf.push((v & 255) as i32);
+    buf = buf.push(((v >> 8) & 255) as i32);
+    buf = buf.push(((v >> 16) & 255) as i32);
+    buf = buf.push(((v >> 24) & 255) as i32);
+    buf = buf.push(((v >> 32) & 255) as i32);
+    buf = buf.push(((v >> 40) & 255) as i32);
+    buf = buf.push(((v >> 48) & 255) as i32);
+    buf = buf.push(((v >> 56) & 255) as i32);
+    return buf;
+}
+
+// x86_movq_gpr_to_xmm: `movq <gpr>, <xmm>` (66 REX.W 0F 6E /r) — move the
+// raw 64 bits from a GPR into an xmm (reg=xmm, r/m=gpr).
+function x86_movq_gpr_to_xmm(buf: i32[], xmm: i32, gpr: i32): i32[] {
+    buf = buf.push(102); // 0x66
+    buf = buf.push(x86_rex(1, xmm, 0, gpr));
+    buf = buf.push(15);  // 0x0F
+    buf = buf.push(110); // 0x6E
+    buf = buf.push(x86_modrm(3, xmm, gpr));
+    return buf;
+}
+
+// x86_movq_xmm_to_gpr: `movq <xmm>, <gpr>` (66 REX.W 0F 7E /r).
+function x86_movq_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
+    buf = buf.push(102); // 0x66
+    buf = buf.push(x86_rex(1, xmm, 0, gpr));
+    buf = buf.push(15);  // 0x0F
+    buf = buf.push(126); // 0x7E
+    buf = buf.push(x86_modrm(3, xmm, gpr));
+    return buf;
+}
+
+// x86_sse_rr: a scalar-double reg-reg op `<op> <dst>, <src>` (F2 0F op /r;
+// addsd 0x58, subsd 0x5C, mulsd 0x59, divsd 0x5E). REX only for xmm8..15.
+function x86_sse_rr(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
+    buf = buf.push(242); // 0xF2
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(opcode);
+    buf = buf.push(x86_modrm(3, dst, src));
+    return buf;
+}
+
+// x86_cvttsd2si: `cvttsd2si <gpr>, <xmm>` (F2 REX.W 0F 2C /r) — truncate a
+// double to a signed 64-bit integer.
+function x86_cvttsd2si(buf: i32[], gpr: i32, xmm: i32): i32[] {
+    buf = buf.push(242); // 0xF2
+    buf = buf.push(x86_rex(1, gpr, 0, xmm));
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(44); // 0x2C
+    buf = buf.push(x86_modrm(3, gpr, xmm));
+    return buf;
+}
+
+// x86_cvtsi2sd: `cvtsi2sd <xmm>, <gpr>` (F2 REX.W 0F 2A /r) — convert a
+// signed 64-bit integer to a double.
+function x86_cvtsi2sd(buf: i32[], xmm: i32, gpr: i32): i32[] {
+    buf = buf.push(242); // 0xF2
+    buf = buf.push(x86_rex(1, xmm, 0, gpr));
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(42); // 0x2A
+    buf = buf.push(x86_modrm(3, xmm, gpr));
+    return buf;
+}
+
+// x86_ucomisd: `ucomisd <a>, <b>` (66 0F 2E /r) — ordered double compare,
+// setting EFLAGS for the setCC / jCC that follow.
+function x86_ucomisd(buf: i32[], a: i32, b: i32): i32[] {
+    buf = buf.push(102); // 0x66
+    var rex: i32 = x86_rex(0, a, 0, b);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(46); // 0x2E
+    buf = buf.push(x86_modrm(3, a, b));
+    return buf;
+}
+
+// x86_movsd_store: `movsd mem, <xmm>` (F2 0F 11 /r) — store a double.
+function x86_movsd_store(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, xmm: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.push(242); // 0xF2
+    var rex: i32 = x86_rex(0, xmm, ix, base);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(17); // 0x11
+    return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
+}
+
+// x86_movsd_load: `movsd <xmm>, mem` (F2 0F 10 /r) — load a double.
+function x86_movsd_load(buf: i32[], xmm: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.push(242); // 0xF2
+    var rex: i32 = x86_rex(0, xmm, ix, base);
+    if (rex != 64) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(15); // 0x0F
+    buf = buf.push(16); // 0x10
+    return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
+}
+
+// x86_movsd_load_rip_label: `movsd <xmm>, sym(%rip)` (F2 0F 10 /r, ModR/M
+// mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
+// uses to load a .double constant from .rodata.
+function x86_movsd_load_rip_label(a: X86Asm, xmm: i32, name: string): X86Asm {
+    a.code = a.code.push(242); // 0xF2
+    if (xmm >= 8) {
+        a.code = a.code.push(x86_rex(0, xmm, 0, 0)); // REX.R
+    }
+    a.code = a.code.push(15); // 0x0F
+    a.code = a.code.push(16); // 0x10
+    a.code = a.code.push(x86_modrm(0, xmm, 5)); // RIP-relative
+    a.code = x86_le32(a.code, 0); // placeholder disp32
+    var patch_off: i32 = a.code.len() - 4;
+    a.fix_offs = a.fix_offs.push(patch_off);
+    a.fix_names = a.fix_names.push(name);
+    return a;
 }
 
 // ---- immediate ALU (slice 2b) ----

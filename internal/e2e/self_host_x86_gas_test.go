@@ -222,6 +222,13 @@ function main(): i32 {
     // 8-bit register parsing (slice 2k):
     if (x86_gas_reg8("%al") != 0 || x86_gas_reg8("%dl") != 2 || x86_gas_reg8("%r8b") != 8) { return 13; }
     if (x86_gas_reg8("%rax") != (0 - 1)) { return 14; }
+    // xmm parsing + float literal parsing (slice 2n):
+    if (x86_gas_xmm("%xmm0") != 0 || x86_gas_xmm("%xmm12") != 12) { return 15; }
+    if (!x86_gas_is_xmm("%xmm3") || x86_gas_is_xmm("%rax")) { return 16; }
+    var fv: f64 = x86_gas_parse_f64("84.5");
+    if (fv < 84.4 || fv > 84.6) { return 17; }
+    var fz: f64 = x86_gas_parse_f64("2.0");
+    if (fz < 1.9 || fz > 2.1) { return 18; }
     return 0;
 }
 `

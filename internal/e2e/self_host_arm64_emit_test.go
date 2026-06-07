@@ -2064,6 +2064,9 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		// false guard falls through to the next arm (the guard reads the binding).
 		{"match-guard-pass", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(8); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 1, ""},
 		{"match-guard-fallthrough", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(3); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 2, ""},
+		// Match expressions (value position): IIFE + statement-match desugar.
+		{"match-expr", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(5); var x: i32 = match (o) { Has(n) => n, Nil => 0 }; return x; }", 5, ""},
+		{"match-expr-other-arm", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Nil; return match (o) { Has(n) => n, Nil => 42 }; }", 42, ""},
 	}
 
 	for _, tc := range cases {
