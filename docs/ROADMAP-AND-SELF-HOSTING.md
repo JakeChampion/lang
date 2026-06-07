@@ -499,13 +499,23 @@ order during `collect_str_locals_stmts` so an intermediate
 `var t = (P{…}, 1); var (p, n) = t;` works too). wasm-only; fixpoint
 byte-identical.
 
-Gated by 482 differential cases as of this writing. What remains for the
-wasm backend to retire the Go wasm path is packaging, not language: the
-**`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
-packaging in `internal/wasm/component`, ported to Fern, on top of this
-core module), and binary wasm encoding
-(today it emits WAT text, runnable directly by
-`wasmtime`).
+Gated by 482 differential cases as of this writing. What remained for the
+wasm backend was packaging, not language — and that packaging is now wired
+into the unified `fern` CLI:
+
+- **`fern -target wasm-bin`** emits runnable **binary** `.wasm` via the
+  self-hosted WAT→binary assembler (`watbin.fern`), not WAT text.
+- **`fern -target wasm-component`** emits a **Component-Model `wasi:cli/run`**
+  component, auto-selecting the framing from the program's WASI usage and
+  covering every wasi:cli/run shape the self-host emit supports (no-I/O,
+  stdout, filesystem read/write/rw, random, env, args, clock wall/mono,
+  stderr, exit, and the fs-paired two-category combos). Unsupported WASI
+  combinations are rejected with a clear error, never a broken component.
+
+The remaining wasm shape is **`wasi:http/incoming-handler`** (native
+`-target wasi-http`), which needs a self-host core emitter that lowers the
+request/response **resource handles** — deferred until the in-progress
+own/borrow resource-handle work lands.
 The core wasi builtins (clock / file / env / random) are now covered.
 
 **Binary-encoder track (started).** Slice 1 landed: `examples/self_host/
@@ -663,6 +673,10 @@ Remaining is packaging, not coverage: wrap the core module in the
 `wasi:cli/run` / `wasi:http` component shapes (the Component-Model binary
 format — the self-host emits a WASI-preview1 command today, so this also
 involves the preview1→preview2 adapter composition the Go backend uses).
+*(Update: the `wasi:cli/run` packaging is now complete and wired into
+`fern -target wasm-component` — see the summary near the top of this
+section. `wasi:http/incoming-handler` remains, pending resource-handle
+lowering.)*
 
 The **component-wrapper track** has started. Investigation of the Go
 backend's `-target wasm` output shows it is preview2-native: the core
