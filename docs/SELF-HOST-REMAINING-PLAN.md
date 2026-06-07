@@ -1002,11 +1002,20 @@ smallest → largest:
     is now table-driven over **arithmetic, while loops, if/else, function
     calls, and recursion** (`fib`) — every case compiles via `asm.fern`,
     assembles through the Fern toolchain, and runs natively exiting 42.
-  - ⬜ remaining: the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
-    `roundsd`, `fldl`/`fstpl`) + `movabsq` (64-bit/hex immediates) for
-    float-using programs, more capstone cases (strings / structs),
-    and finally wiring the front-end into the `fern -target x86-64 -o`
-    driver (so the CLI itself emits an ELF with no external tool).
+  - ✅ **slice 2n — SSE double (f64) support**. Added the scalar-double
+    SSE surface `asm.fern` emits for `f64`: the `.double` directive (a
+    decimal-float parser → `f64_bits` → 8 IEEE-754 bytes in `.rodata`),
+    `movsd sym(%rip)` (+ mem load/store), `movq` xmm↔gpr (`66 REX.W 0F
+    6E/7E`), `addsd`/`subsd`/`mulsd`/`divsd` (`F2 0F 58/5C/59/5E`),
+    `cvttsd2si` / `cvtsi2sd`, and `ucomisd`, plus an xmm register parser.
+    The GAS front-end also learned **same-line `label: directive`**
+    (asm.fern emits `.L0: .double 84.0` on one line). `TestSelfHostX86Capstone`
+    gains a `float` case (`84.0 / 2.0` → 42) that runs natively.
+  - ⬜ remaining: the x87 / rounding float ops (`fldl`/`fstpl`, `roundsd`,
+    `xorpd`) + `movabsq` (64-bit/hex immediates) for the float math
+    builtins, more capstone cases (strings / structs), and finally wiring
+    the front-end into the `fern -target x86-64 -o` driver (so the CLI
+    itself emits an ELF with no external tool).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
