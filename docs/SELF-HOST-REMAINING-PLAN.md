@@ -319,6 +319,21 @@ planned order:
   E022 ("let-else source must be an enum value") surfaces here as E035
   (match-on-non-enum) via the desugar — a follow-up, matching the
   if-let / match-guard precedent.
+- ✅ **Recursive local functions** — `function f(...) { … f(…) … }` inside
+  another function. A non-recursive local already desugars to `var f =
+  function(…){…}` (a closure); a self-recursive one can't see its own name
+  through the closure value. `hoist_local_funcs_module` (a post-parse pass
+  in `module_with_builtins`) lifts a **capture-free** self-recursive local
+  to a top-level function — recursion resolves once it's top-level —
+  reusing all the existing top-level-function machinery (no new AST node,
+  no backend changes). A *capturing* recursive local still errors clearly
+  (lambda-lifting is a follow-up). The pass only rebuilds a body that
+  actually contains a recursive local (the `hl_has_rec_local` precheck), so
+  the self-host's own sources — which use none — pass through untouched and
+  the byte-identical stage-2 fixpoint holds. Surfaced (and required) the
+  arm64/x86 rc-helper below-heap guard fix (#2292): a no-capture closure is
+  a bare code pointer the exit-dec sweep must not rc-dec.
+  `self_host_recursive_local_test.go` (x86-64 + arm64) + wasm cases.
 - ✅ **`switch` / `case`** — desugars in the parser to a nested
   if/else-if chain (multi-value cases OR their `==` comparisons; no
   fall-through) (`self_host_switch_test.go`).
