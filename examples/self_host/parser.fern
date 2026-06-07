@@ -171,7 +171,7 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
 // parsing (arrays / generics / unions) is a later milestone.
-pub struct ParamDecl { name: string, type_name: string }
+pub struct ParamDecl { name: string, type_name: string, own: boolean }
 // Receiver fields capture `function (recv: RecvType) name(…)`
 // — the self-host source uses them heavily for struct methods
 // like `function (p: Par) advance(): Par`. Both fields are
@@ -2121,15 +2121,29 @@ function parse_type_name(p: Par): TypeNameResult {
 function parse_param(p: Par): ParamResult {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
-        return ParamResult { par: p, param: ParamDecl { name: "", type_name: "" } };
+        return ParamResult { par: p, param: ParamDecl { name: "", type_name: "", own: false } };
+    }
+    // `own NAME: TYPE` — the affine-ownership modifier (move-checked by
+    // the checker's E050/E051). `own` is a plain ident to the lexer, so it
+    // only counts as the modifier when another ident (the real name)
+    // follows; a parameter literally named `own` (no name after) is left
+    // as-is.
+    var is_own: boolean = false;
+    if (name == "own") {
+        var probe: Par = p.advance();
+        if (probe.peek_ident().len() > 0) {
+            is_own = true;
+            p = probe;
+            name = p.peek_ident();
+        }
     }
     p = p.advance();
     if (p.peek_punct() != ":") {
-        return ParamResult { par: p, param: ParamDecl { name: name, type_name: "" } };
+        return ParamResult { par: p, param: ParamDecl { name: name, type_name: "", own: is_own } };
     }
     p = p.advance();
     var tr: TypeNameResult = parse_type_name(p);
-    return ParamResult { par: tr.par, param: ParamDecl { name: name, type_name: tr.name } };
+    return ParamResult { par: tr.par, param: ParamDecl { name: name, type_name: tr.name, own: is_own } };
 }
 
 // parse_func_decl consumes `function name(params): ret_type { body }`
@@ -3119,7 +3133,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        nparams = nparams.push(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts) });
+        nparams = nparams.push(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own });
         i = i + 1;
     }
     var notp: string[] = [];
@@ -3429,7 +3443,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             while (pi < lm.params.len()) {
                 var pt: TyIns = mg_ty(lm.params[pi].type_name, gstructs, pcur);
                 pcur = pt.mins;
-                nparams = nparams.push(ParamDecl { name: lm.params[pi].name, type_name: pt.ty });
+                nparams = nparams.push(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own });
                 pi = pi + 1;
             }
             return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts }, rins: pcur };
@@ -3520,7 +3534,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
     while (i < fn.params.len()) {
         var pt: TyIns = mg_ty(fn.params[i].type_name, gstructs, cur);
         cur = pt.mins;
-        nparams = nparams.push(ParamDecl { name: fn.params[i].name, type_name: pt.ty });
+        nparams = nparams.push(ParamDecl { name: fn.params[i].name, type_name: pt.ty, own: fn.params[i].own });
         i = i + 1;
     }
     var rt: TyIns = mg_ty(fn.ret_type, gstructs, cur);
@@ -3554,7 +3568,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     var i: i32 = 0;
     while (i < m.params.len()) {
         var pt: string = to_concrete_struct_ty(subst_ty(m.params[i].type_name, tparams, cts), base, mang, gstructs);
-        nparams = nparams.push(ParamDecl { name: m.params[i].name, type_name: pt });
+        nparams = nparams.push(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own });
         i = i + 1;
     }
     var rt: string = to_concrete_struct_ty(subst_ty(m.ret_type, tparams, cts), base, mang, gstructs);
@@ -4081,7 +4095,7 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
                             var caps: string[] = hl_capture_list(lam, v.name, enclosing);
                             var new_params: ParamDecl[] = lam.params;
                             var ci: i32 = 0;
-                            while (ci < caps.len()) { new_params = new_params.push(ParamDecl { name: caps[ci], type_name: "" }); ci = ci + 1; }
+                            while (ci < caps.len()) { new_params = new_params.push(ParamDecl { name: caps[ci], type_name: "", own: false }); ci = ci + 1; }
                             // Hoist nested recursive locals first; inside the
                             // lifted function the captures are in scope as params.
                             var inner_encl: string[] = hl_param_names(new_params);
@@ -4420,7 +4434,7 @@ pub function insert_resource_drops(mod: Module): Module {
         var rn: string = needed[k];
         var iface2: string = resource_binding_iface(mod.resources, rn);
         var wit2: string = resource_binding_wit(mod.resources, rn);
-        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn }];
+        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true }];
         out_funcs = out_funcs.push(FuncDecl {
             name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
             type_params: no_tp, params: hp, ret_type: "void", body: no_body,
@@ -4522,7 +4536,7 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
     }
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false }];
     return FuncDecl { name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
@@ -4542,7 +4556,7 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
     }
     stmts = stmts.push(s_return(e_number("0", "", false)));
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false }];
     return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
@@ -4594,7 +4608,7 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false }];
     return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
@@ -4641,7 +4655,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false }];
     return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
@@ -4852,7 +4866,7 @@ function parse_impl_decl(p: Par): ImplResult {
             } else {
                 var pt: string = m.params[i].type_name;
                 if (pt == "Self") { pt = impl_type; }
-                newparams = newparams.push(ParamDecl { name: m.params[i].name, type_name: pt });
+                newparams = newparams.push(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own });
             }
             i = i + 1;
         }

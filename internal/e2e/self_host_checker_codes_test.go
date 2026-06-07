@@ -67,6 +67,8 @@ var selfHostImplementedCodes = map[string]bool{
 	"E015": true, // variant pattern payload-binding arity
 	"E040": true, // generic-call type-argument arity mismatch
 	"E054": true, // @export function cannot be generic / a method
+	"E050": true, // use of an owned parameter after it was consumed (move)
+	"E051": true, // argument to an owned parameter must be an owned value
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -363,6 +365,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"export-generic", "@export(\"example:app/run\", \"run\") function run[T](x: T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E054"}},
 		{"export-method", "struct P { x: i32 }\n@export(\"example:app/run\", \"run\") function (p: P) run(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E054"}},
 		{"export-plain-ok", "@export(\"example:app/run\", \"run\") function run(x: i32): i32 { return x; }\nfunction main(): i32 { return 0; }\n", nil},
+		// E050: use of an owned parameter after it was consumed (moved).
+		{"own-call-then-use", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var a: i32 = sink(xs); return sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-double-in-stmt", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs) + sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-match-then-use", "enum Lst { Cons(i32), Nil }\nfunction lsink(l: Lst): i32 { return 0; }\nfunction f(own l: Lst): i32 { var r: i32 = match (l) { Cons(h) => h, Nil => 0 }; return r + lsink(l); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-consume-in-loop", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var i: i32 = 0; while (i < 3) { var a: i32 = sink(xs); i = i + 1; } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-borrow-only-ok", "function f(own xs: i32[]): i32 { return xs[0] + xs[1]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-single-consume-ok", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E051: argument to an owned parameter must be an owned value.
+		{"own-arg-borrowed-param", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(xs: i32[]): i32 { return consume(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-plain-local", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { var xs: i32[] = [1, 2]; return consume(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-fresh-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { return consume([1, 2]); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-forward-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own ys: i32[]): i32 { return consume(ys); }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
