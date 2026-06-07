@@ -88,12 +88,12 @@ pub function encode_function_section(buf: u8[], typeidxs: u32[]): u8[] {
 // table; `max = -1` means "no maximum".
 pub function encode_table_section(buf: u8[], reftype: u8, min: u32, max: i32): u8[] {
     var body: u8[] = leb128.uleb_u32([], 1u32);   // exactly one table
-    body = body.push(reftype);
+    body = body.append(reftype);
     if (max < 0) {
-        body = body.push(0u8);                    // flag: no max
+        body = body.append(0u8);                    // flag: no max
         body = leb128.uleb_u32(body, min);
     } else {
-        body = body.push(1u8);                    // flag: with max
+        body = body.append(1u8);                    // flag: with max
         body = leb128.uleb_u32(body, min);
         body = leb128.uleb_u32(body, max as u32);
     }
@@ -110,10 +110,10 @@ pub function encode_table_section(buf: u8[], reftype: u8, min: u32, max: i32): u
 pub function encode_memory_section(buf: u8[], min_pages: u32, max_pages: i32): u8[] {
     var body: u8[] = leb128.uleb_u32([], 1u32);   // exactly one memory
     if (max_pages < 0) {
-        body = body.push(0u8);                    // flag: no max
+        body = body.append(0u8);                    // flag: no max
         body = leb128.uleb_u32(body, min_pages);
     } else {
-        body = body.push(1u8);                    // flag: with max
+        body = body.append(1u8);                    // flag: with max
         body = leb128.uleb_u32(body, min_pages);
         body = leb128.uleb_u32(body, max_pages as u32);
     }
@@ -131,7 +131,7 @@ pub function encode_export_section(buf: u8[], names: string[], kinds: u8[], indi
     var i: i32 = 0;
     while (i < n) {
         body = encode.put_name(body, names[i]);
-        body = body.push(kinds[i]);
+        body = body.append(kinds[i]);
         body = leb128.uleb_u32(body, indices[i]);
         i = i + 1;
     }
@@ -165,9 +165,9 @@ pub function encode_element_section(buf: u8[], offsets: i32[], funcidxs_per_seg:
     while (i < n) {
         body = leb128.uleb_u32(body, 0u32);          // flag 0: active, table 0, funcref
         // Offset expression: i32.const <offset> ; end
-        body = body.push(65u8);                       // 0x41 i32.const
+        body = body.append(65u8);                       // 0x41 i32.const
         body = leb128.sleb_i32(body, offsets[i]);
-        body = body.push(11u8);                       // 0x0B end
+        body = body.append(11u8);                       // 0x0B end
         // Init vec(funcidx).
         var seg: u32[] = funcidxs_per_seg[i];
         body = leb128.uleb_u32(body, seg.len() as u32);
@@ -214,9 +214,9 @@ pub function encode_data_section(buf: u8[], offsets: i32[], init_bytes: u8[][]):
     while (i < n) {
         body = leb128.uleb_u32(body, 0u32);          // memidx (always 0)
         // Offset expression: i32.const <offset> ; end
-        body = body.push(65u8);                       // 0x41 i32.const
+        body = body.append(65u8);                       // 0x41 i32.const
         body = leb128.sleb_i32(body, offsets[i]);
-        body = body.push(11u8);                       // 0x0B end
+        body = body.append(11u8);                       // 0x0B end
         // Init bytes vec.
         var seg: u8[] = init_bytes[i];
         body = leb128.uleb_u32(body, seg.len() as u32);

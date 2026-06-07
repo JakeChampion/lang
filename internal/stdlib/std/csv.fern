@@ -75,7 +75,7 @@ pub function csv_parse_line(s: string): string[] {
             }
         } else {
             if (c == 44) {
-                out = out.push(field);
+                out = out.append(field);
                 field = "";
                 i = i + 1;
             } else if (c == 34 && field.len() == 0) {
@@ -87,5 +87,5 @@ pub function csv_parse_line(s: string): string[] {
             }
         }
     }
-    return out.push(field);
+    return out.append(field);
 }

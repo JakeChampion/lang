@@ -466,7 +466,7 @@ pub function fuzz_corpus_from_dir(path: string): Result[string[], IoError] {
                         Ok(s) => {
                             if (s.is_file) {
                                 match (read_file(full)) {
-                                    Ok(content) => { seeds = seeds.push(content); },
+                                    Ok(content) => { seeds = seeds.append(content); },
                                     Err(_) => { },
                                 }
                             }
@@ -500,7 +500,7 @@ pub function fuzz_corpus_from_dir_or(path: string, fallback: string[]): string[]
             var out: string[] = fallback;
             var i: i32 = 0;
             while (i < loaded.len()) {
-                out = out.push(loaded[i]);
+                out = out.append(loaded[i]);
                 i = i + 1;
             }
             return out;

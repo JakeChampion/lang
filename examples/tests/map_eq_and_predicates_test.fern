@@ -14,17 +14,17 @@ import "std/test";
 
 function test_map_i32_eq_pass(): Option[string] {
     var a: Map[i32, i32] = map_new(4);
-    a.set(1, 10); a.set(2, 20); a.set(3, 30);
+    a.insert(1, 10); a.insert(2, 20); a.insert(3, 30);
     var b: Map[i32, i32] = map_new(4);
-    b.set(3, 30); b.set(2, 20); b.set(1, 10); // insertion order differs
+    b.insert(3, 30); b.insert(2, 20); b.insert(1, 10); // insertion order differs
     return test.assert_eq_map(a, b);
 }
 
 function test_map_i32_eq_length_mismatch(): Option[string] {
     var a: Map[i32, i32] = map_new(4);
-    a.set(1, 10);
+    a.insert(1, 10);
     var b: Map[i32, i32] = map_new(4);
-    b.set(1, 10); b.set(2, 20);
+    b.insert(1, 10); b.insert(2, 20);
     match (test.assert_eq_map(a, b)) {
         None => { return test.fail("expected length-mismatch"); },
         Some(msg) => {
@@ -38,9 +38,9 @@ function test_map_i32_eq_length_mismatch(): Option[string] {
 
 function test_map_i32_eq_value_mismatch(): Option[string] {
     var a: Map[i32, i32] = map_new(4);
-    a.set(1, 10); a.set(2, 20);
+    a.insert(1, 10); a.insert(2, 20);
     var b: Map[i32, i32] = map_new(4);
-    b.set(1, 10); b.set(2, 99);
+    b.insert(1, 10); b.insert(2, 99);
     match (test.assert_eq_map(a, b)) {
         None => { return test.fail("expected value-mismatch"); },
         Some(msg) => {
@@ -55,9 +55,9 @@ function test_map_i32_eq_value_mismatch(): Option[string] {
 function test_map_i32_eq_disjoint_keys_same_len(): Option[string] {
     // Same length, different key sets — must fail.
     var a: Map[i32, i32] = map_new(4);
-    a.set(1, 10);
+    a.insert(1, 10);
     var b: Map[i32, i32] = map_new(4);
-    b.set(2, 10);
+    b.insert(2, 10);
     match (test.assert_eq_map(a, b)) {
         None => { return test.fail("disjoint same-length should fail"); },
         Some(msg) => {
@@ -77,17 +77,17 @@ function test_map_i32_eq_both_empty(): Option[string] {
 
 function test_map_string_eq_pass(): Option[string] {
     var a: Map[string, string] = map_new(4);
-    a.set("k1", "v1"); a.set("k2", "v2");
+    a.insert("k1", "v1"); a.insert("k2", "v2");
     var b: Map[string, string] = map_new(4);
-    b.set("k2", "v2"); b.set("k1", "v1");
+    b.insert("k2", "v2"); b.insert("k1", "v1");
     return test.assert_eq_map(a, b);
 }
 
 function test_map_string_eq_value_mismatch(): Option[string] {
     var a: Map[string, string] = map_new(4);
-    a.set("k", "alpha");
+    a.insert("k", "alpha");
     var b: Map[string, string] = map_new(4);
-    b.set("k", "beta");
+    b.insert("k", "beta");
     match (test.assert_eq_map(a, b)) {
         None => { return test.fail("expected value-mismatch"); },
         Some(_) => { return None; }

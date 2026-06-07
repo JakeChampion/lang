@@ -375,7 +375,7 @@ const pushLoopFreeSrc = `function build(): i32 {
     var xs: i32[] = [];
     var i: i32 = 0;
     while (i < 200) {
-        xs = xs.push(i);
+        xs = xs.append(i);
         i = i + 1;
     }
     var sum: i32 = 0;

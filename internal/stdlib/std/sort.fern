@@ -44,7 +44,7 @@ pub function sort_i32_asc(arr: i32[]): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;
@@ -71,7 +71,7 @@ pub function sort_i64_asc(arr: i64[]): i64[] {
     var out: i64[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;
@@ -93,7 +93,7 @@ pub function sort_i64_desc(arr: i64[]): i64[] {
     var out: i64[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;
@@ -115,7 +115,7 @@ pub function sort_u32_asc(arr: u32[]): u32[] {
     var out: u32[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;
@@ -137,7 +137,7 @@ pub function sort_u64_asc(arr: u64[]): u64[] {
     var out: u64[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;
@@ -159,7 +159,7 @@ pub function sort_i32_desc(arr: i32[]): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;
@@ -207,7 +207,7 @@ pub function sort_strings_asc(arr: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;
@@ -229,7 +229,7 @@ pub function sort_strings_desc(arr: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;
@@ -275,7 +275,7 @@ pub function sort_strings_asc_ci(arr: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.push(arr[i]);
+        out = out.append(arr[i]);
         i = i + 1;
     }
     var k: i32 = 1;

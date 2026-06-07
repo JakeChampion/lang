@@ -19,9 +19,9 @@ var mapKeysValuesCases = []struct {
 	exit int
 }{
 	{"keys-sum-literal", "function main(): i32 { var m: Map[i32,i32] = Map { 10: 1, 20: 2, 12: 3 }; return m.keys().sum(); }", 42},
-	{"keys-sum-built", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m.set(7, 0); m.set(35, 0); return m.keys().sum(); }", 42},
-	{"values-sum", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m.set(1, 10); m.set(2, 20); return m.values().sum(); }", 30},
-	{"keys-len-string", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.set(\"ab\", 1); m.set(\"c\", 2); return m.keys().len() + 40; }", 42},
+	{"keys-sum-built", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m.insert(7, 0); m.insert(35, 0); return m.keys().sum(); }", 42},
+	{"values-sum", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m.insert(1, 10); m.insert(2, 20); return m.values().sum(); }", 30},
+	{"keys-len-string", "function main(): i32 { var m: Map[string,i32] = map_new(4); m.insert(\"ab\", 1); m.insert(\"c\", 2); return m.keys().len() + 40; }", 42},
 }
 
 // TestSelfHostMapKeysX86_64 — m.keys()/m.values() with the self-hosted

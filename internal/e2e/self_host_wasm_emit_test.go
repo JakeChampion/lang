@@ -229,11 +229,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"arr-for-nested", "function main(): i32 { var a = [1, 2]; var b = [10, 20]; var s = 0; for x in a { for y in b { s = s + x * y; } } return s; }", 90, ""},
 		{"arr-index-assign", "function main(): i32 { var a = [1, 2, 3]; a[1] = 99; return a[1]; }", 99, ""},
 		{"arr-index-assign-sum", "function main(): i32 { var a = [0, 0, 0]; a[0] = 10; a[1] = 20; a[2] = 12; return a[0] + a[1] + a[2]; }", 42, ""},
-		{"arr-push-len", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.push(4); return a.len(); }", 4, ""},
-		{"arr-push-last", "function main(): i32 { var a: i32[] = [10, 20]; a = a.push(99); return a[2]; }", 99, ""},
-		{"arr-push-empty", "function main(): i32 { var a: i32[] = []; a = a.push(42); return a[0]; }", 42, ""},
-		{"arr-push-chain", "function main(): i32 { var a: i32[] = []; a = a.push(1); a = a.push(2); a = a.push(3); return a[0] + a[1] + a[2]; }", 6, ""},
-		{"arr-push-grow", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 10) { a = a.push(i); i = i + 1; } var s = 0; for x in a { s = s + x; } return s; }", 45, ""},
+		{"arr-push-len", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.append(4); return a.len(); }", 4, ""},
+		{"arr-push-last", "function main(): i32 { var a: i32[] = [10, 20]; a = a.append(99); return a[2]; }", 99, ""},
+		{"arr-push-empty", "function main(): i32 { var a: i32[] = []; a = a.append(42); return a[0]; }", 42, ""},
+		{"arr-push-chain", "function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return a[0] + a[1] + a[2]; }", 6, ""},
+		{"arr-push-grow", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 10) { a = a.append(i); i = i + 1; } var s = 0; for x in a { s = s + x; } return s; }", 45, ""},
 		// 64-bit-element arrays (i64[] / f64[]) use 8-byte element slots +
 		// i64/f64 load/store, so values above 2^31 round-trip (the 4-byte
 		// i32 slot would emit an out-of-range (i32.const …) and truncate).
@@ -242,12 +242,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"i64arr-literal-index-large", "function main(): i32 { var xs: i64[] = [5000000000, 42]; if (xs[0] == 5000000000) { return xs[1] as i32; } return 0; }", 42, ""},
 		{"i64arr-for-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98, ""},
 		{"i64arr-set-index-large", "function main(): i32 { var xs: i64[] = [1, 2, 3]; xs[1] = 5000000000; if (xs[1] == 5000000000) { return 7; } return 0; }", 7, ""},
-		{"i64arr-push-grow", "function main(): i32 { var xs: i64[] = [10]; xs = xs.push(20); xs = xs.push(30); var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 60, ""},
+		{"i64arr-push-grow", "function main(): i32 { var xs: i64[] = [10]; xs = xs.append(20); xs = xs.append(30); var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 60, ""},
 		{"i64arr-slice", "function main(): i32 { var xs: i64[] = [10, 20, 30, 40]; var ys = xs[1:3]; return (ys[0] + ys[1]) as i32; }", 50, ""},
 		{"i64arr-param", "function sum(xs: i64[]): i64 { var s: i64 = 0; for v in xs { s = s + v; } return s; } function main(): i32 { var xs: i64[] = [10, 20, 30]; return sum(xs) as i32; }", 60, ""},
 		{"f64arr-for-sum", "function main(): i32 { var xs: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; for v in xs { s = s + v; } return s as i32; }", 7, ""},
 		// i32 arrays must be unaffected by the wide-slot machinery.
-		{"i32arr-noregress-mix", "function main(): i32 { var xs: i32[] = [3, 5, 9]; xs = xs.push(11); var s = 0; for v in xs { s = s + v; } var ys = xs[1:3]; return s + ys[0]; }", 33, ""},
+		{"i32arr-noregress-mix", "function main(): i32 { var xs: i32[] = [3, 5, 9]; xs = xs.append(11); var s = 0; for v in xs { s = s + v; } var ys = xs[1:3]; return s + ys[0]; }", 33, ""},
 		// String arrays (string[]): literal, index, for-in, push, and
 		// element used in string contexts (needs element typing).
 		{"sarr-for-write", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; for s in xs { write(s); } return 0; }", 0, "abc"},
@@ -257,7 +257,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"sarr-elem-concat", "function main(): i32 { var xs = [\"foo\", \"bar\"]; write(xs[0] + xs[1]); return 0; }", 0, "foobar"},
 		{"sarr-for-concat", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; var acc = \"\"; for s in xs { acc = acc + s; } write(acc); return 0; }", 0, "abc"},
 		{"sarr-for-eq", "function main(): i32 { var xs = [\"x\", \"y\", \"z\"]; var n = 0; for s in xs { if (s == \"y\") { n = n + 1; } } return n; }", 1, ""},
-		{"sarr-push", "function main(): i32 { var xs: string[] = [\"a\"]; xs = xs.push(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
+		{"sarr-push", "function main(): i32 { var xs: string[] = [\"a\"]; xs = xs.append(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
 		{"sarr-param", "function first(xs: string[]): string { return xs[0]; } function main(): i32 { write(first([\"hello\", \"world\"])); return 0; }", 0, "hello"},
 		{"sarr-elem-method", "function main(): i32 { var xs = [\"abc\"]; write(xs[0].to_upper()); return 0; }", 0, "ABC"},
 		{"sarr-for-var-method", "function main(): i32 { var xs = [\"ab\", \"cd\"]; for s in xs { write(s.to_upper()); } return 0; }", 0, "ABCD"},
@@ -464,7 +464,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-inferred-compare", "function main(): i32 { var z = 1.5; if (z > 1.0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 
 		// i32-keyed / i32-valued maps. `Map { k: v }` desugars to
-		// map_new_i32(8).set(...).set(...); methods dispatch to the hash
+		// map_new_i32(8).insert(...).insert(...); methods dispatch to the hash
 		// runtime. `.len()` reuses the generic length read (count @ box+0).
 		{"map-get-or", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.get_or(1, 0)); return 0; }", 0, "10"},
 		{"map-get-or-second", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.get_or(2, 0)); return 0; }", 0, "20"},
@@ -472,19 +472,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-has", "function main(): i32 { var m = Map { 5: 1 }; if (m.has(5)) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"map-has-missing", "function main(): i32 { var m = Map { 5: 1 }; if (m.has(6)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
 		{"map-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; print_int(m.len()); return 0; }", 0, "3"},
-		{"map-update-value", "function main(): i32 { var m = Map { 1: 10 }; m = m.set(1, 99); print_int(m.get_or(1, 0)); return 0; }", 0, "99"},
-		{"map-update-keeps-len", "function main(): i32 { var m = Map { 1: 10 }; m = m.set(1, 99); print_int(m.len()); return 0; }", 0, "1"},
+		{"map-update-value", "function main(): i32 { var m = Map { 1: 10 }; m = m.insert(1, 99); print_int(m.get_or(1, 0)); return 0; }", 0, "99"},
+		{"map-update-keeps-len", "function main(): i32 { var m = Map { 1: 10 }; m = m.insert(1, 99); print_int(m.len()); return 0; }", 0, "1"},
 		{"map-get-some", "function main(): i32 { var m = Map { 7: 42 }; match (m.get(7)) { Some(v) => { print_int(v); }, None => { print_int(0); } } return 0; }", 0, "42"},
 		{"map-get-none", "function main(): i32 { var m = Map { 7: 42 }; match (m.get(8)) { Some(v) => { print_int(v); }, None => { print_int(0); print_int(1); } } return 0; }", 0, "01"},
-		{"map-empty-then-set", "function main(): i32 { var m = map_new_i32(8); m = m.set(3, 30); print_int(m.get_or(3, 0)); return 0; }", 0, "30"},
-		{"map-zero-key", "function main(): i32 { var m = map_new_i32(8); m = m.set(0, 123); print_int(m.get_or(0, -1)); return 0; }", 0, "123"},
-		{"map-negative-key", "function main(): i32 { var m = Map { 1: 5 }; m = m.set(-7, 88); print_int(m.get_or(-7, 0)); return 0; }", 0, "88"},
-		{"map-grow-get", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.set(i, i * 2); i = i + 1; } print_int(m.get_or(37, -1)); return 0; }", 0, "74"},
-		{"map-grow-len", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.set(i, i * 2); i = i + 1; } print_int(m.len()); return 0; }", 0, "50"},
-		{"map-overwrite-loop", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.set(1, i); i = i + 1; } print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "91"},
+		{"map-empty-then-set", "function main(): i32 { var m = map_new_i32(8); m = m.insert(3, 30); print_int(m.get_or(3, 0)); return 0; }", 0, "30"},
+		{"map-zero-key", "function main(): i32 { var m = map_new_i32(8); m = m.insert(0, 123); print_int(m.get_or(0, -1)); return 0; }", 0, "123"},
+		{"map-negative-key", "function main(): i32 { var m = Map { 1: 5 }; m = m.insert(-7, 88); print_int(m.get_or(-7, 0)); return 0; }", 0, "88"},
+		{"map-grow-get", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.insert(i, i * 2); i = i + 1; } print_int(m.get_or(37, -1)); return 0; }", 0, "74"},
+		{"map-grow-len", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.insert(i, i * 2); i = i + 1; } print_int(m.len()); return 0; }", 0, "50"},
+		{"map-overwrite-loop", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(1, i); i = i + 1; } print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "91"},
 
 		// String-keyed maps. A `Map { "k": v }` literal desugars to
-		// map_new(8).set(...); keys hash + compare by content (FNV-1a +
+		// map_new(8).insert(...); keys hash + compare by content (FNV-1a +
 		// __fern_streq), so distinct pointers with equal bytes match.
 		{"strmap-get-or", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; print_int(m.get_or(\"a\", 0)); return 0; }", 0, "1"},
 		{"strmap-get-or-second", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; print_int(m.get_or(\"b\", 0)); return 0; }", 0, "2"},
@@ -492,12 +492,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"strmap-has", "function main(): i32 { var m = Map { \"hello\": 1 }; if (m.has(\"hello\")) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"strmap-has-missing", "function main(): i32 { var m = Map { \"hello\": 1 }; if (m.has(\"world\")) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
 		{"strmap-len", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2, \"c\": 3 }; print_int(m.len()); return 0; }", 0, "3"},
-		{"strmap-update", "function main(): i32 { var m = Map { \"a\": 1 }; m = m.set(\"a\", 50); print_int(m.get_or(\"a\", 0)); print_int(m.len()); return 0; }", 0, "501"},
+		{"strmap-update", "function main(): i32 { var m = Map { \"a\": 1 }; m = m.insert(\"a\", 50); print_int(m.get_or(\"a\", 0)); print_int(m.len()); return 0; }", 0, "501"},
 		{"strmap-get-some", "function main(): i32 { var m = Map { \"k\": 42 }; match (m.get(\"k\")) { Some(v) => { print_int(v); }, None => { print_int(0); } } return 0; }", 0, "42"},
 		{"strmap-get-none", "function main(): i32 { var m = Map { \"k\": 42 }; match (m.get(\"x\")) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
-		{"strmap-content-equality", "function main(): i32 { var k = \"h\" + \"i\"; var m = map_new(8); m = m.set(k, 7); print_int(m.get_or(\"hi\", 0)); return 0; }", 0, "7"},
+		{"strmap-content-equality", "function main(): i32 { var k = \"h\" + \"i\"; var m = map_new(8); m = m.insert(k, 7); print_int(m.get_or(\"hi\", 0)); return 0; }", 0, "7"},
 		{"strmap-prefix-distinct", "function main(): i32 { var m = Map { \"ab\": 1, \"abc\": 2 }; print_int(m.get_or(\"ab\", 0)); print_int(m.get_or(\"abc\", 0)); return 0; }", 0, "12"},
-		{"strmap-grow", "function main(): i32 { var m = map_new(8); var i: i32 = 1; while (i <= 20) { m = m.set(\"x\".repeat(i), i); i = i + 1; } print_int(m.get_or(\"x\".repeat(5), -1)); print_int(m.len()); return 0; }", 0, "520"},
+		{"strmap-grow", "function main(): i32 { var m = map_new(8); var i: i32 = 1; while (i <= 20) { m = m.insert(\"x\".repeat(i), i); i = i + 1; } print_int(m.get_or(\"x\".repeat(5), -1)); print_int(m.len()); return 0; }", 0, "520"},
 
 		// String-valued maps. The runtime stores i32 slots (a string is a
 		// pointer), so this is purely value-type tracking: `.get` / `.get_or`
@@ -508,21 +508,21 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"strval-get-some", "function main(): i32 { var m = Map { 1: \"one\", 2: \"two\" }; match (m.get(2)) { Some(v) => { write(v); }, None => { write(\"none\"); } } return 0; }", 0, "two"},
 		{"strval-get-none", "function main(): i32 { var m = Map { 1: \"one\" }; match (m.get(9)) { Some(v) => { write(v); }, None => { write(\"none\"); } } return 0; }", 0, "none"},
 		{"strval-concat", "function main(): i32 { var m = Map { 1: \"one\" }; write(m.get_or(1, \"?\") + \"!\"); return 0; }", 0, "one!"},
-		{"strval-update", "function main(): i32 { var m = Map { 1: \"a\" }; m = m.set(1, \"b\"); write(m.get_or(1, \"?\")); return 0; }", 0, "b"},
-		{"strval-built-value", "function main(): i32 { var m = map_new_i32(8); m = m.set(1, \"x\" + \"y\"); write(m.get_or(1, \"?\")); return 0; }", 0, "xy"},
+		{"strval-update", "function main(): i32 { var m = Map { 1: \"a\" }; m = m.insert(1, \"b\"); write(m.get_or(1, \"?\")); return 0; }", 0, "b"},
+		{"strval-built-value", "function main(): i32 { var m = map_new_i32(8); m = m.insert(1, \"x\" + \"y\"); write(m.get_or(1, \"?\")); return 0; }", 0, "xy"},
 		{"strval-len", "function main(): i32 { var m = Map { 1: \"a\", 2: \"b\" }; print_int(m.len()); return 0; }", 0, "2"},
 
 		// Map .delete — tombstone deletion (used slot → 2; the probe skips
 		// past it, set reclaims it, grow drops it).
-		{"map-delete-has", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m = m.delete(1); if (m.has(1)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
-		{"map-delete-keeps-other", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m = m.delete(1); print_int(m.get_or(2, -1)); return 0; }", 0, "20"},
-		{"map-delete-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; m = m.delete(2); print_int(m.len()); return 0; }", 0, "2"},
-		{"map-delete-missing-noop", "function main(): i32 { var m = Map { 1: 1 }; m = m.delete(99); print_int(m.len()); print_int(m.get_or(1, -1)); return 0; }", 0, "11"},
-		{"map-delete-get-none", "function main(): i32 { var m = Map { 1: 10 }; m = m.delete(1); match (m.get(1)) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
-		{"map-delete-reinsert", "function main(): i32 { var m = Map { 1: 10 }; m = m.delete(1); m = m.set(1, 99); print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "991"},
-		{"map-delete-mid-chain", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.set(i, i); i = i + 1; } m = m.delete(5); print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
-		{"map-delete-all-then-reuse", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.set(i, i); i = i + 1; } i = 0; while (i < 30) { m = m.delete(i); i = i + 1; } print_int(m.len()); m = m.set(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
-		{"strmap-delete", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; m = m.delete(\"a\"); print_int(m.has(\"a\")); print_int(m.get_or(\"b\", -1)); return 0; }", 0, "02"},
+		{"map-delete-has", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m = m.without(1); if (m.has(1)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
+		{"map-delete-keeps-other", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m = m.without(1); print_int(m.get_or(2, -1)); return 0; }", 0, "20"},
+		{"map-delete-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; m = m.without(2); print_int(m.len()); return 0; }", 0, "2"},
+		{"map-delete-missing-noop", "function main(): i32 { var m = Map { 1: 1 }; m = m.without(99); print_int(m.len()); print_int(m.get_or(1, -1)); return 0; }", 0, "11"},
+		{"map-delete-get-none", "function main(): i32 { var m = Map { 1: 10 }; m = m.without(1); match (m.get(1)) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
+		{"map-delete-reinsert", "function main(): i32 { var m = Map { 1: 10 }; m = m.without(1); m = m.insert(1, 99); print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "991"},
+		{"map-delete-mid-chain", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(i, i); i = i + 1; } m = m.without(5); print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
+		{"map-delete-all-then-reuse", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.insert(i, i); i = i + 1; } i = 0; while (i < 30) { m = m.without(i); i = i + 1; } print_int(m.len()); m = m.insert(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
+		{"strmap-delete", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; m = m.without(\"a\"); print_int(m.has(\"a\")); print_int(m.get_or(\"b\", -1)); return 0; }", 0, "02"},
 
 		// Map .keys() / .values() — snapshot arrays (probe order, so tests
 		// assert order-independent facts: lengths and sums).
@@ -530,9 +530,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-values-len", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.values().len()); return 0; }", 0, "2"},
 		{"map-values-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "60"},
 		{"map-keys-sum", "function main(): i32 { var m = Map { 4: 1, 5: 1, 6: 1 }; var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "15"},
-		{"map-values-sum-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m = m.delete(2); var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "40"},
+		{"map-values-sum-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m = m.without(2); var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "40"},
 		{"map-empty-keys-len", "function main(): i32 { var m = map_new_i32(8); print_int(m.keys().len()); return 0; }", 0, "0"},
-		{"map-keys-sum-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.set(i, i); i = i + 1; } var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "210"},
+		{"map-keys-sum-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i); i = i + 1; } var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "210"},
 		{"strmap-keys-charcount", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for k in m.keys() { n = n + k.len(); } print_int(n); return 0; }", 0, "5"},
 		{"strval-values-charcount", "function main(): i32 { var m = Map { 1: \"ab\", 2: \"cde\" }; var n: i32 = 0; for v in m.values() { n = n + v.len(); } print_int(n); return 0; }", 0, "5"},
 
@@ -541,9 +541,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-forkv-sum-both", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var s: i32 = 0; for (k, v) in m { s = s + k + v; } print_int(s); return 0; }", 0, "66"},
 		{"map-forkv-keys-only", "function main(): i32 { var m = Map { 4: 100, 5: 100, 6: 100 }; var s: i32 = 0; for (k, v) in m { s = s + k; } print_int(s); return 0; }", 0, "15"},
 		{"map-forkv-count", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3, 4: 4 }; var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "4"},
-		{"map-forkv-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m = m.delete(2); var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "40"},
+		{"map-forkv-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m = m.without(2); var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "40"},
 		{"map-forkv-empty", "function main(): i32 { var m = map_new_i32(8); var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "0"},
-		{"map-forkv-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.set(i, i * 2); i = i + 1; } var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "420"},
+		{"map-forkv-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i * 2); i = i + 1; } var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "420"},
 		{"map-forkv-break", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; var n: i32 = 0; for (k, v) in m { n = n + 1; if (n == 2) { break; } } print_int(n); return 0; }", 0, "2"},
 		{"strmap-forkv-keylen", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for (k, v) in m { n = n + k.len() + v; } print_int(n); return 0; }", 0, "8"},
 		{"strval-forkv-vallen", "function main(): i32 { var m = Map { 1: \"ab\", 2: \"cde\" }; var n: i32 = 0; for (k, v) in m { n = n + k + v.len(); } print_int(n); return 0; }", 0, "8"},
@@ -725,7 +725,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Integration capstone: a word-frequency counter combining split,
 		// a string-keyed i32-valued map, get_or accumulation, len, and an
 		// f-string — exercising many features together.
-		{"integration-word-count", "function main(): i32 { var text: string = \"the cat sat on the mat the cat ran\"; var words: string[] = text.split(\" \"); var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.set(w, counts.get_or(w, 0) + 1); i = i + 1; } print_int(counts.get_or(\"the\", 0)); print_int(counts.get_or(\"cat\", 0)); print_int(counts.get_or(\"mat\", 0)); write(f\" total={counts.len()}\"); return 0; }", 0, "321 total=6"},
+		{"integration-word-count", "function main(): i32 { var text: string = \"the cat sat on the mat the cat ran\"; var words: string[] = text.split(\" \"); var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.insert(w, counts.get_or(w, 0) + 1); i = i + 1; } print_int(counts.get_or(\"the\", 0)); print_int(counts.get_or(\"cat\", 0)); print_int(counts.get_or(\"mat\", 0)); write(f\" total={counts.len()}\"); return 0; }", 0, "321 total=6"},
 		// Higher-order: a reduce over an array taking an `fn` param, with a
 		// plain lambda and a capturing closure (factor), reported via f-string.
 		{"integration-reduce-closure", "function reduce(xs: i32[], init: i32, f: fn): i32 { var acc: i32 = init; var i: i32 = 0; while (i < xs.len()) { acc = f(acc, xs[i]); i = i + 1; } return acc; } function main(): i32 { var xs = [1, 2, 3, 4, 5]; var factor: i32 = 10; var sum = reduce(xs, 0, function(a: i32, b: i32): i32 { return a + b; }); var scaled = reduce(xs, 0, function(a: i32, b: i32): i32 { return a + b * factor; }); write(f\"sum={sum} scaled={scaled}\"); return 0; }", 0, "sum=15 scaled=150"},
@@ -784,7 +784,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"const-shadowed-by-local", "const X: i32 = 5; function main(): i32 { var X: i32 = 99; print_int(X); return 0; }", 0, "99"},
 		// More combinations (all already worked; locked in as regressions).
 		{"continue-while", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 10) { i = i + 1; if (i % 2 == 0) { continue; } s = s + i; } print_int(s); return 0; }", 0, "25"},
-		{"push-loop", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 5) { xs = xs.push(i * i); i = i + 1; } var s: i32 = 0; for v in xs { s = s + v; } print_int(s); return 0; }", 0, "30"},
+		{"push-loop", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 5) { xs = xs.append(i * i); i = i + 1; } var s: i32 = 0; for v in xs { s = s + v; } print_int(s); return 0; }", 0, "30"},
 		{"nested-struct-method", "struct Inner { v: i32 } function (n: Inner) dbl(): i32 { return n.v * 2; } struct Outer { inner: Inner } function main(): i32 { var o = Outer { inner: Inner { v: 7 } }; print_int(o.inner.dbl()); return 0; }", 0, "14"},
 		{"wildcard-match", "function main(): i32 { var m = Map { 1: 10 }; match (m.get(2)) { Some(v) => { print_int(v); }, _ => { print_int(99); } } return 0; }", 0, "99"},
 		{"string-compare", "function main(): i32 { if (\"apple\" < \"banana\") { print_int(1); } if (\"zebra\" > \"ant\") { print_int(2); } return 0; }", 0, "12"},

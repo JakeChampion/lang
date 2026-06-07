@@ -254,7 +254,7 @@ pub struct EnumDecl { name: string, variant_names: string[], line: i32, col: i32
 function enum_variant_names(variants: StructDecl[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
-    while (i < variants.len()) { out = out.push(variants[i].name); i = i + 1; }
+    while (i < variants.len()) { out = out.append(variants[i].name); i = i + 1; }
     return out;
 }
 
@@ -262,7 +262,7 @@ function enum_variant_names(variants: StructDecl[]): string[] {
 function concat_enums(a: EnumDecl[], b: EnumDecl[]): EnumDecl[] {
     var out: EnumDecl[] = a;
     var i: i32 = 0;
-    while (i < b.len()) { out = out.push(b[i]); i = i + 1; }
+    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
     return out;
 }
 
@@ -473,7 +473,7 @@ struct StmtResult { par: Par, stmt: Stmt }
 
 // parse_map_lit parses a map literal `Map { k0: v0, k1: v1, … }` (the
 // cursor is on the opening `{`) and desugars it to a chained
-// `map_new[_i32](n).set(k0,v0).set(k1,v1)…` — set returns the map, so
+// `map_new[_i32](n).insert(k0,v0).insert(k1,v1)…` — insert returns the map, so
 // the whole thing is one expression. map_new_i32 when the first key is
 // a number literal (integer keys), else map_new (string keys), so the
 // chained .set dispatch picks the right key compare.
@@ -488,8 +488,8 @@ function parse_map_lit(p: Par): ExprResult {
             if (p.peek_punct() == ":") { p = p.advance(); }
             var mve: ExprResult = parse_expr(p);
             p = mve.par;
-            mlk = mlk.push(mke.expr);
-            mlv = mlv.push(mve.expr);
+            mlk = mlk.append(mke.expr);
+            mlv = mlv.append(mve.expr);
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -503,14 +503,14 @@ function parse_map_lit(p: Par): ExprResult {
         }
     }
     var cargs: Expr[] = [];
-    cargs = cargs.push(e_number("8", "", false));
+    cargs = cargs.append(e_number("8", "", false));
     var mbase: Expr = e_call(e_ident(ctor), cargs);
     var mpi: i32 = 0;
     while (mpi < mlk.len()) {
         var sargs: Expr[] = [];
-        sargs = sargs.push(mlk[mpi]);
-        sargs = sargs.push(mlv[mpi]);
-        mbase = e_call(e_field_access(mbase, "set"), sargs);
+        sargs = sargs.append(mlk[mpi]);
+        sargs = sargs.append(mlv[mpi]);
+        mbase = e_call(e_field_access(mbase, "insert"), sargs);
         mpi = mpi + 1;
     }
     return parse_postfix(p, mbase);
@@ -561,8 +561,8 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
             p = p.advance();
             var fv = parse_expr(p);
             p = fv.par;
-            fnames = fnames.push(fn);
-            fvals = fvals.push(fv.expr);
+            fnames = fnames.append(fn);
+            fvals = fvals.append(fv.expr);
             if (p.peek_punct() == ",") {
                 p = p.advance();
                 // Trailing comma before the closing brace is allowed
@@ -607,7 +607,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 while (true) {
                     var ra = parse_expr(p);
                     p = ra.par;
-                    args = args.push(ra.expr);
+                    args = args.append(ra.expr);
                     if (p.peek_punct() == ",") { p = p.advance(); continue; }
                     break;
                 }
@@ -715,6 +715,13 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 var qlook: Par = p.advance();
                 if (qlook.peek_punct() == "}") {
                     qstruct_ok = true;
+                } else if (qlook.peek_punct() == "...") {
+                    // Struct-update spread: `pkg.Type { ...base, f: v }`.
+                    // Mirrors the bare-ident look-ahead below; without
+                    // this the `...` falls through to a field access and
+                    // the `{ … }` is mis-parsed (a qualified-type spread
+                    // such as `asmcore.EmitState { ...s, … }`).
+                    qstruct_ok = true;
                 } else if ((qlook.peek_ident()).len() > 0) {
                     var qlook2: Par = qlook.advance();
                     if (qlook2.peek_punct() == ":") { qstruct_ok = true; }
@@ -817,7 +824,7 @@ function parse_primary(p: Par): ExprResult {
                     while (true) {
                         var pr: ParamResult = parse_param(p);
                         p = pr.par;
-                        params = params.push(pr.param);
+                        params = params.append(pr.param);
                         if (p.peek_punct() == ",") { p = p.advance(); continue; }
                         break;
                     }
@@ -931,8 +938,8 @@ function parse_primary(p: Par): ExprResult {
                         p = p.advance();
                         var fv = parse_expr(p);
                         p = fv.par;
-                        fnames = fnames.push(fname);
-                        fvals = fvals.push(fv.expr);
+                        fnames = fnames.append(fname);
+                        fvals = fvals.append(fv.expr);
                         if (p.peek_punct() == ",") {
                             p = p.advance();
                             // Trailing comma before `}` is allowed.
@@ -968,13 +975,13 @@ function parse_primary(p: Par): ExprResult {
                 p = inner.par;
                 if (p.peek_punct() == ",") {
                     var elems: Expr[] = [];
-                    elems = elems.push(inner.expr);
+                    elems = elems.append(inner.expr);
                     while (p.peek_punct() == ",") {
                         p = p.advance();
                         if (p.peek_punct() == ")") { break; }
                         var er = parse_expr(p);
                         p = er.par;
-                        elems = elems.push(er.expr);
+                        elems = elems.append(er.expr);
                     }
                     if (p.peek_punct() == ")") { p = p.advance(); }
                     return parse_postfix(p, e_tuple(elems));
@@ -990,7 +997,7 @@ function parse_primary(p: Par): ExprResult {
                     while (true) {
                         var er = parse_expr(p);
                         p = er.par;
-                        elems = elems.push(er.expr);
+                        elems = elems.append(er.expr);
                         if (p.peek_punct() == ",") { p = p.advance(); continue; }
                         break;
                     }
@@ -1190,7 +1197,7 @@ function parse_match_expr(p: Par): IfChain {
         var er: ExprResult = parse_expr(p);
         p = er.par;
         if (first) { rt = if_expr_rt(er.expr); first = false; }
-        arms = arms.push(MatchArm { pattern: pr.pattern, body: [s_return(er.expr)], line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        arms = arms.append(MatchArm { pattern: pr.pattern, body: [s_return(er.expr)], line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -1204,7 +1211,7 @@ function pipe_prepend(head: Expr, tail: Expr[]): Expr[] {
     var out: Expr[] = [head];
     var i: i32 = 0;
     while (i < tail.len()) {
-        out = out.push(tail[i]);
+        out = out.append(tail[i]);
         i = i + 1;
     }
     return out;
@@ -1252,7 +1259,7 @@ pub struct BlockResult { par: Par, body: Stmt[] }
 function parse_block(p: Par): BlockResult {
     var body: Stmt[] = [];
     if (p.peek_punct() != "{") {
-        body = body.push(s_unknown("missing { in block"));
+        body = body.append(s_unknown("missing { in block"));
         return BlockResult { par: p, body: body };
     }
     p = p.advance();
@@ -1265,7 +1272,7 @@ function parse_block(p: Par): BlockResult {
             continue;
         }
         p = r.par;
-        body = body.push(r.stmt);
+        body = body.append(r.stmt);
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
     return BlockResult { par: p, body: body };
@@ -1321,7 +1328,7 @@ function parse_pattern(p: Par): PatternResult {
         while (p.peek_punct() != ")" && !p.at_end()) {
             var inner: string = p.peek_ident();
             if (inner.len() > 0) {
-                if (bn == 0) { binding = inner; } else { extra_bindings = extra_bindings.push(inner); }
+                if (bn == 0) { binding = inner; } else { extra_bindings = extra_bindings.append(inner); }
                 bn = bn + 1;
                 p = p.advance();
             } else {
@@ -1384,7 +1391,7 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         }
         var bb: BlockResult = parse_block(p);
         p = bb.par;
-        arms = arms.push(MatchArm { pattern: pr.pattern, body: bb.body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        arms = arms.append(MatchArm { pattern: pr.pattern, body: bb.body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -1419,12 +1426,12 @@ function parse_switch_arms(p: Par, scrut: Expr): BlockResult {
                 && p.peek_punct() != "}" && !p.at_end()) {
             var st: StmtResult = parse_stmt(p);
             p = st.par;
-            body = body.push(st.stmt);
+            body = body.append(st.stmt);
         }
         var rest: BlockResult = parse_switch_arms(p, scrut);
         p = rest.par;
         var arms: Stmt[] = [];
-        arms = arms.push(s_if(cond, body, rest.body));
+        arms = arms.append(s_if(cond, body, rest.body));
         return BlockResult { par: p, body: arms };
     }
     if (kw == "default") {
@@ -1434,7 +1441,7 @@ function parse_switch_arms(p: Par, scrut: Expr): BlockResult {
         while (p.peek_punct() != "}" && !p.at_end()) {
             var ds: StmtResult = parse_stmt(p);
             p = ds.par;
-            dbody = dbody.push(ds.stmt);
+            dbody = dbody.append(ds.stmt);
         }
         return BlockResult { par: p, body: dbody };
     }
@@ -1597,8 +1604,8 @@ function parse_stmt(p: Par): StmtResult {
                 ilelse = ileb.body;
             }
             var ilarms: MatchArm[] = [];
-            ilarms = ilarms.push(MatchArm { pattern: ilpat.pattern, body: ilthen.body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            ilarms = ilarms.push(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            ilarms = ilarms.append(MatchArm { pattern: ilpat.pattern, body: ilthen.body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            ilarms = ilarms.append(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false });
             return StmtResult { par: p, stmt: s_match(ilscrut.expr, ilarms) };
         }
         if (p.peek_punct() != "(") {
@@ -1618,7 +1625,7 @@ function parse_stmt(p: Par): StmtResult {
             if (p.peek_keyword() == "if") {
                 var nested: StmtResult = parse_stmt(p);
                 p = nested.par;
-                else_body = else_body.push(nested.stmt);
+                else_body = else_body.append(nested.stmt);
             } else {
                 var else_blk: BlockResult = parse_block(p);
                 p = else_blk.par;
@@ -1732,7 +1739,7 @@ function parse_stmt(p: Par): StmtResult {
             while (p.peek_punct() != ")" && !p.at_end()) {
                 var bind_inner: string = p.peek_ident();
                 if (bind_inner.len() > 0) {
-                    if (ben == 0) { le_binding = bind_inner; } else { le_extra = le_extra.push(bind_inner); }
+                    if (ben == 0) { le_binding = bind_inner; } else { le_extra = le_extra.append(bind_inner); }
                     ben = ben + 1;
                     p = p.advance();
                 } else {
@@ -1786,12 +1793,12 @@ function parse_stmt(p: Par): StmtResult {
                 var rr: StmtResult = parse_stmt(p);
                 if (rr.par.pos == p.pos) { p = p.advance(); continue; }
                 p = rr.par;
-                rest = rest.push(rr.stmt);
+                rest = rest.append(rr.stmt);
             }
             var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra };
             var le_arms: MatchArm[] = [];
-            le_arms = le_arms.push(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
-            le_arms = le_arms.push(MatchArm { pattern: p_wildcard(), body: le_else.body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+            le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+            le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else.body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
             return StmtResult { par: p, stmt: s_match_at(init.expr, le_arms, vline, vcol) };
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
@@ -1877,9 +1884,9 @@ function parse_stmt(p: Par): StmtResult {
                     irhs = e_binary(iop, e_index(ix.array, ix.index), rhs);
                 }
                 var sargs: Expr[] = [];
-                sargs = sargs.push(ix.array);
-                sargs = sargs.push(ix.index);
-                sargs = sargs.push(irhs);
+                sargs = sargs.append(ix.array);
+                sargs = sargs.append(ix.index);
+                sargs = sargs.append(irhs);
                 return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_index"), sargs)) };
             },
             ExprFieldAccess(fa) => {
@@ -1894,13 +1901,13 @@ function parse_stmt(p: Par): StmtResult {
                     frhs = e_binary(fop, e_field_access(fa.obj, fa.field), rhs);
                 }
                 var fargs: Expr[] = [];
-                fargs = fargs.push(fa.obj);
+                fargs = fargs.append(fa.obj);
                 // Carry the field-access dot position on the field-name
                 // string so the checker can report E048 (assign to an
                 // immutable field) at the dot, matching the Go checker's
                 // FieldAccess position. Codegen ignores the position.
-                fargs = fargs.push(e_string_at(fa.field, fa.line, fa.col));
-                fargs = fargs.push(frhs);
+                fargs = fargs.append(e_string_at(fa.field, fa.line, fa.col));
+                fargs = fargs.append(frhs);
                 return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_field"), fargs)) };
             },
             _ => { return StmtResult { par: p, stmt: s_unknown("lhs of assign must be ident, index, or field") }; }
@@ -1916,7 +1923,7 @@ pub function parse_program(toks: lexer.Token[]): Stmt[] {
     while (!p.at_end()) {
         var r = parse_stmt(p);
         p = r.par;
-        out = out.push(r.stmt);
+        out = out.append(r.stmt);
     }
     return out;
 }
@@ -2224,7 +2231,7 @@ function parse_func_decl(p: Par): FuncResult {
                     if (p.peek_punct() == "+") { p = p.advance(); } else { go = false; }
                 }
             }
-            if (has_bound) { bounded_tps = bounded_tps.push(tpname); }
+            if (has_bound) { bounded_tps = bounded_tps.append(tpname); }
             if (p.peek_punct() == ",") { p = p.advance(); }
         }
         if (p.peek_punct() == "]") { p = p.advance(); }
@@ -2238,7 +2245,7 @@ function parse_func_decl(p: Par): FuncResult {
         while (true) {
             var pr: ParamResult = parse_param(p);
             p = pr.par;
-            params = params.push(pr.param);
+            params = params.append(pr.param);
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -2319,7 +2326,7 @@ function parse_struct_decl(p: Par): StructResult {
             if (gpk == "]") { gd = gd - 1; p = p.advance(); continue; }
             if (gd == 1) {
                 var tpn: string = p.peek_ident();
-                if (tpn.len() > 0) { tparams = tparams.push(tpn); }
+                if (tpn.len() > 0) { tparams = tparams.append(tpn); }
             }
             p = p.advance();
         }
@@ -2334,7 +2341,7 @@ function parse_struct_decl(p: Par): StructResult {
         while (true) {
             var fr: StructFieldResult = parse_struct_field(p);
             p = fr.par;
-            fields = fields.push(fr.field);
+            fields = fields.append(fr.field);
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -2377,7 +2384,7 @@ function parse_type_alias(p: Par): TypeAliasResult {
             break;
         }
         p = p.advance();
-        variants = variants.push(v);
+        variants = variants.append(v);
         if (p.peek_punct() == "|") { p = p.advance(); continue; }
         break;
     }
@@ -2414,7 +2421,7 @@ function parse_enum_decl(p: Par): EnumResult {
             p = p.advance();
             var tr: TypeNameResult = parse_type_name(p);
             p = tr.par;
-            fields = fields.push(StructFieldDecl { name: "__ev", type_name: tr.name });
+            fields = fields.append(StructFieldDecl { name: "__ev", type_name: tr.name });
             while (p.peek_punct() == ",") {
                 p = p.advance();
                 var tr2: TypeNameResult = parse_type_name(p);
@@ -2422,7 +2429,7 @@ function parse_enum_decl(p: Par): EnumResult {
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
         }
-        out = out.push(StructDecl { name: vname, fields: fields, type_params: [], line: 0, col: 0 });
+        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], line: 0, col: 0 });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -2470,7 +2477,7 @@ function parse_const_decl(p: Par): FuncResult {
     p = er.par;
     if (p.peek_punct() == ";") { p = p.advance(); }
     var body: Stmt[] = [];
-    body = body.push(s_return(er.expr));
+    body = body.append(s_return(er.expr));
     var noparams: ParamDecl[] = [];
     var notp: string[] = [];
     return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 } };
@@ -2495,9 +2502,9 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
     if (struct_declared(acc, name)) { return acc; }
     var fields: StructFieldDecl[] = [];
     if (payload_type.len() > 0) {
-        fields = fields.push(StructFieldDecl { name: "__ev", type_name: payload_type });
+        fields = fields.append(StructFieldDecl { name: "__ev", type_name: payload_type });
     }
-    return acc.push(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0 });
+    return acc.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0 });
 }
 
 // inject_builtin_enums adds the variant structs for the enums the
@@ -2528,10 +2535,10 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // that field access emits for is_file / is_dir / size.
     if (!struct_declared(structs, "FileStat")) {
         var fsf: StructFieldDecl[] = [];
-        fsf = fsf.push(StructFieldDecl { name: "is_file", type_name: "boolean" });
-        fsf = fsf.push(StructFieldDecl { name: "is_dir", type_name: "boolean" });
-        fsf = fsf.push(StructFieldDecl { name: "size", type_name: "i32" });
-        structs = structs.push(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0 });
+        fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean" });
+        fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean" });
+        fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i32" });
+        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0 });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess
@@ -2541,10 +2548,10 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // this decl.
     if (!struct_declared(structs, "ProcessResult")) {
         var prf: StructFieldDecl[] = [];
-        prf = prf.push(StructFieldDecl { name: "stdout", type_name: "string" });
-        prf = prf.push(StructFieldDecl { name: "stderr", type_name: "string" });
-        prf = prf.push(StructFieldDecl { name: "exit_code", type_name: "i32" });
-        structs = structs.push(StructDecl { name: "ProcessResult", fields: prf, type_params: [], line: 0, col: 0 });
+        prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string" });
+        prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string" });
+        prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32" });
+        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], line: 0, col: 0 });
     }
     // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
     // are constructed via record literals (e.g. `HeaderMap { names: …,
@@ -2558,24 +2565,24 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // instead so the Go side stays untouched.
     if (!struct_declared(structs, "HeaderMap")) {
         var hmf: StructFieldDecl[] = [];
-        hmf = hmf.push(StructFieldDecl { name: "names", type_name: "string[]" });
-        hmf = hmf.push(StructFieldDecl { name: "values", type_name: "string[]" });
-        structs = structs.push(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], line: 0, col: 0 });
+        hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]" });
+        hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]" });
+        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], line: 0, col: 0 });
     }
     if (!struct_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
-        hrf = hrf.push(StructFieldDecl { name: "method", type_name: "string" });
-        hrf = hrf.push(StructFieldDecl { name: "path", type_name: "string" });
-        hrf = hrf.push(StructFieldDecl { name: "body", type_name: "string" });
-        hrf = hrf.push(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
-        structs = structs.push(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], line: 0, col: 0 });
+        hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string" });
+        hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string" });
+        hrf = hrf.append(StructFieldDecl { name: "body", type_name: "string" });
+        hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
+        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], line: 0, col: 0 });
     }
     if (!struct_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
-        hsf = hsf.push(StructFieldDecl { name: "status", type_name: "i32" });
-        hsf = hsf.push(StructFieldDecl { name: "body", type_name: "string" });
-        hsf = hsf.push(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
-        structs = structs.push(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], line: 0, col: 0 });
+        hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32" });
+        hsf = hsf.append(StructFieldDecl { name: "body", type_name: "string" });
+        hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
+        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], line: 0, col: 0 });
     }
     return structs;
 }
@@ -2609,7 +2616,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
 // MEnv is a tiny var-name -> type-name environment for inference.
 struct MEnv { mnames: string[], mtypes: string[] }
 function (e: MEnv) ebind(n: string, t: string): MEnv {
-    return MEnv { mnames: e.mnames.push(n), mtypes: e.mtypes.push(t) };
+    return MEnv { mnames: e.mnames.append(n), mtypes: e.mtypes.append(t) };
 }
 function (e: MEnv) elook(n: string): string {
     var i: i32 = e.mnames.len() - 1;
@@ -2633,7 +2640,7 @@ function (a: Insts) ihas(n: string, t: string): boolean {
 }
 function (a: Insts) iadd(n: string, t: string): Insts {
     if (a.ihas(n, t)) { return a; }
-    return Insts { inames: a.inames.push(n), itypes: a.itypes.push(t) };
+    return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t) };
 }
 
 struct RExpr { rexpr: Expr, rins: Insts }
@@ -2707,14 +2714,14 @@ function split_top_commas(s: string): string[] {
         if (c == "[" || c == "(") { depth = depth + 1; }
         if (c == "]" || c == ")") { depth = depth - 1; }
         if (depth == 0 && c == "," && i + 1 < s.len() && s[i + 1 : i + 2] == " ") {
-            out = out.push(s[start : i]);
+            out = out.append(s[start : i]);
             i = i + 2;
             start = i;
             continue;
         }
         i = i + 1;
     }
-    out = out.push(s[start : s.len()]);
+    out = out.append(s[start : s.len()]);
     return out;
 }
 
@@ -2727,14 +2734,14 @@ function split_dunder(s: string): string[] {
     var i: i32 = 0;
     while (i + 1 < s.len()) {
         if (s[i : i + 2] == "__") {
-            out = out.push(s[start : i]);
+            out = out.append(s[start : i]);
             i = i + 2;
             start = i;
             continue;
         }
         i = i + 1;
     }
-    out = out.push(s[start : s.len()]);
+    out = out.append(s[start : s.len()]);
     return out;
 }
 
@@ -2881,7 +2888,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
             while (i < c.args.len()) {
                 var ra: RExpr = mono_expr(c.args[i], env, funcs, cur);
                 cur = ra.rins;
-                nargs = nargs.push(ra.rexpr);
+                nargs = nargs.append(ra.rexpr);
                 i = i + 1;
             }
             match (c.callee) {
@@ -2929,7 +2936,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
             while (i < a.elements.len()) {
                 var re: RExpr = mono_expr(a.elements[i], env, funcs, cur);
                 cur = re.rins;
-                els = els.push(re.rexpr);
+                els = els.append(re.rexpr);
                 i = i + 1;
             }
             return RExpr { rexpr: ExprArray { elements: els }, rins: cur };
@@ -2941,7 +2948,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
             while (i < t.elements.len()) {
                 var re: RExpr = mono_expr(t.elements[i], env, funcs, cur);
                 cur = re.rins;
-                els = els.push(re.rexpr);
+                els = els.append(re.rexpr);
                 i = i + 1;
             }
             return RExpr { rexpr: ExprTuple { elements: els }, rins: cur };
@@ -2968,7 +2975,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
             while (i < s.field_values.len()) {
                 var rv: RExpr = mono_expr(s.field_values[i], env, funcs, cur);
                 cur = rv.rins;
-                vals = vals.push(rv.rexpr);
+                vals = vals.append(rv.rexpr);
                 i = i + 1;
             }
             var rb: RExpr = mono_expr(s.base, env, funcs, cur);
@@ -3030,7 +3037,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
             while (i < m.arms.len()) {
                 var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur);
                 cur = ab.rins3;
-                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col }, renv: env, rins2: cur };
@@ -3048,7 +3055,7 @@ function mono_stmts(stmts: Stmt[], env: MEnv, funcs: FuncDecl[], ins: Insts): RS
     var i: i32 = 0;
     while (i < stmts.len()) {
         var rs: RStmtOne = mono_stmt(stmts[i], e2, funcs, cur);
-        out = out.push(rs.rstmt);
+        out = out.append(rs.rstmt);
         e2 = rs.renv;
         cur = rs.rins2;
         i = i + 1;
@@ -3103,20 +3110,20 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.push(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: v.init, line: v.line, col: v.col }); },
-            StmtIf(f) => { out = out.push(StmtIf { cond: f.cond, then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
-            StmtWhile(w) => { out = out.push(StmtWhile { cond: w.cond, body: subst_stmts(w.body, tparams, cts) }); },
-            StmtFor(fr) => { out = out.push(StmtFor { var_name: fr.var_name, iter: fr.iter, body: subst_stmts(fr.body, tparams, cts) }); },
+            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: v.init, line: v.line, col: v.col }); },
+            StmtIf(f) => { out = out.append(StmtIf { cond: f.cond, then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: w.cond, body: subst_stmts(w.body, tparams, cts) }); },
+            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: fr.iter, body: subst_stmts(fr.body, tparams, cts) }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
                 while (j < m.arms.len()) {
-                    arms = arms.push(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: m.arms[j].guard, has_guard: m.arms[j].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: m.arms[j].guard, has_guard: m.arms[j].has_guard });
                     j = j + 1;
                 }
-                out = out.push(StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col });
+                out = out.append(StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col });
             },
-            _ => { out = out.push(st); }
+            _ => { out = out.append(st); }
         }
         i = i + 1;
     }
@@ -3133,7 +3140,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        nparams = nparams.push(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own });
+        nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own });
         i = i + 1;
     }
     var notp: string[] = [];
@@ -3178,7 +3185,7 @@ pub function monomorphize_module(mod: Module): Module {
             var env: MEnv = env_from_params(fd.params);
             var rb: RStmts = mono_stmts(fd.body, env, funcs, ins);
             ins = rb.rins3;
-            rewritten = rewritten.push(FuncDecl {
+            rewritten = rewritten.append(FuncDecl {
                 name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
                 type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rb.rstmts, line: fd.line, col: fd.col,
                 import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count
@@ -3208,7 +3215,7 @@ pub function monomorphize_module(mod: Module): Module {
             var cenv: MEnv = env_from_params(cl.params);
             var crb: RStmts = mono_stmts(cl.body, cenv, funcs, ins);
             ins = crb.rins3;
-            rewritten = rewritten.push(FuncDecl {
+            rewritten = rewritten.append(FuncDecl {
                 name: cl.name, receiver_name: "", receiver_type: "",
                 type_params: cl.type_params, params: cl.params, ret_type: cl.ret_type, body: crb.rstmts, line: cl.line, col: cl.col,
                 import_iface: cl.import_iface, import_wit: cl.import_wit, type_param_count: cl.type_param_count
@@ -3367,7 +3374,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             while (i < c.args.len()) {
                 var ra: RExpr = ms_expr(c.args[i], env, gstructs, funcs, cur);
                 cur = ra.rins;
-                nargs = nargs.push(ra.rexpr);
+                nargs = nargs.append(ra.rexpr);
                 i = i + 1;
             }
             return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
@@ -3379,7 +3386,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             while (i < a.elements.len()) {
                 var re: RExpr = ms_expr(a.elements[i], env, gstructs, funcs, cur);
                 cur = re.rins;
-                els = els.push(re.rexpr);
+                els = els.append(re.rexpr);
                 i = i + 1;
             }
             return RExpr { rexpr: ExprArray { elements: els }, rins: cur };
@@ -3391,7 +3398,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             while (i < t.elements.len()) {
                 var re: RExpr = ms_expr(t.elements[i], env, gstructs, funcs, cur);
                 cur = re.rins;
-                els = els.push(re.rexpr);
+                els = els.append(re.rexpr);
                 i = i + 1;
             }
             return RExpr { rexpr: ExprTuple { elements: els }, rins: cur };
@@ -3418,7 +3425,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             while (i < s.field_values.len()) {
                 var rv: RExpr = ms_expr(s.field_values[i], env, gstructs, funcs, cur);
                 cur = rv.rins;
-                vals = vals.push(rv.rexpr);
+                vals = vals.append(rv.rexpr);
                 i = i + 1;
             }
             var rb: RExpr = ms_expr(s.base, env, gstructs, funcs, cur);
@@ -3443,7 +3450,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             while (pi < lm.params.len()) {
                 var pt: TyIns = mg_ty(lm.params[pi].type_name, gstructs, pcur);
                 pcur = pt.mins;
-                nparams = nparams.push(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own });
+                nparams = nparams.append(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own });
                 pi = pi + 1;
             }
             return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts }, rins: pcur };
@@ -3499,7 +3506,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             while (i < m.arms.len()) {
                 var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur);
                 cur = ab.rins3;
-                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col }, renv: env, rins2: cur };
@@ -3517,7 +3524,7 @@ function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: FuncD
     var i: i32 = 0;
     while (i < stmts.len()) {
         var rs: RStmtOne = ms_stmt(stmts[i], e2, gstructs, funcs, cur);
-        out = out.push(rs.rstmt);
+        out = out.append(rs.rstmt);
         e2 = rs.renv;
         cur = rs.rins2;
         i = i + 1;
@@ -3534,7 +3541,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
     while (i < fn.params.len()) {
         var pt: TyIns = mg_ty(fn.params[i].type_name, gstructs, cur);
         cur = pt.mins;
-        nparams = nparams.push(ParamDecl { name: fn.params[i].name, type_name: pt.ty, own: fn.params[i].own });
+        nparams = nparams.append(ParamDecl { name: fn.params[i].name, type_name: pt.ty, own: fn.params[i].own });
         i = i + 1;
     }
     var rt: TyIns = mg_ty(fn.ret_type, gstructs, cur);
@@ -3568,7 +3575,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     var i: i32 = 0;
     while (i < m.params.len()) {
         var pt: string = to_concrete_struct_ty(subst_ty(m.params[i].type_name, tparams, cts), base, mang, gstructs);
-        nparams = nparams.push(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own });
+        nparams = nparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own });
         i = i + 1;
     }
     var rt: string = to_concrete_struct_ty(subst_ty(m.ret_type, tparams, cts), base, mang, gstructs);
@@ -3589,7 +3596,7 @@ pub function monomorphize_structs(mod: Module): Module {
     var gstructs: StructDecl[] = [];
     var gi: i32 = 0;
     while (gi < mod.structs.len()) {
-        if (mod.structs[gi].type_params.len() > 0) { gstructs = gstructs.push(mod.structs[gi]); }
+        if (mod.structs[gi].type_params.len() > 0) { gstructs = gstructs.append(mod.structs[gi]); }
         gi = gi + 1;
     }
     if (gstructs.len() == 0) { return mod; }
@@ -3607,10 +3614,10 @@ pub function monomorphize_structs(mod: Module): Module {
             while (fj < sd.fields.len()) {
                 var ft: TyIns = mg_ty(sd.fields[fj].type_name, gstructs, ins);
                 ins = ft.mins;
-                nf = nf.push(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty });
+                nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty });
                 fj = fj + 1;
             }
-            nstructs = nstructs.push(StructDecl { name: sd.name, fields: nf, type_params: [], line: sd.line, col: sd.col });
+            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], line: sd.line, col: sd.col });
         }
         si = si + 1;
     }
@@ -3625,7 +3632,7 @@ pub function monomorphize_structs(mod: Module): Module {
         } else {
             var fr: FRes = ms_func(fn, gstructs, mod.funcs, ins);
             ins = fr.fins;
-            nfuncs = nfuncs.push(fr.ffn);
+            nfuncs = nfuncs.append(fr.ffn);
         }
         fi2 = fi2 + 1;
     }
@@ -3654,10 +3661,10 @@ pub function monomorphize_structs(mod: Module): Module {
                 var subbed: string = subst_ty(gd.fields[cfi].type_name, gd.type_params, cts);
                 var ft2: TyIns = mg_ty(subbed, gstructs, ins);
                 ins = ft2.mins;
-                cf = cf.push(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty });
+                cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty });
                 cfi = cfi + 1;
             }
-            nstructs = nstructs.push(StructDecl { name: mang, fields: cf, type_params: [], line: gd.line, col: gd.col });
+            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], line: gd.line, col: gd.col });
             var mi: i32 = 0;
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
@@ -3665,7 +3672,7 @@ pub function monomorphize_structs(mod: Module): Module {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
                     var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins);
                     ins = br2.rins3;
-                    nfuncs = nfuncs.push(FuncDecl {
+                    nfuncs = nfuncs.append(FuncDecl {
                         name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
                         type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts, line: clm.line, col: clm.col,
                         import_iface: clm.import_iface, import_wit: clm.import_wit, type_param_count: clm.type_param_count
@@ -3725,7 +3732,7 @@ function dl_collect_stmts(stmts: Stmt[], actions: Stmt[]): DeferAcc {
     while (i < stmts.len()) {
         var r: DeferAcc = dl_collect_stmt(stmts[i], acc);
         var j: i32 = 0;
-        while (j < r.stmts.len()) { out = out.push(r.stmts[j]); j = j + 1; }
+        while (j < r.stmts.len()) { out = out.append(r.stmts[j]); j = j + 1; }
         acc = r.actions;
         i = i + 1;
     }
@@ -3737,7 +3744,7 @@ function dl_collect_stmt(st: Stmt, actions: Stmt[]): DeferAcc {
         StmtDefer(d) => {
             var setflag: Stmt = s_assign("__dfa" + dl_itoa(actions.len()), e_number("1", "", false));
             var one: Stmt[] = [setflag];
-            return DeferAcc { stmts: one, actions: actions.push(d.action) };
+            return DeferAcc { stmts: one, actions: actions.append(d.action) };
         },
         StmtIf(f) => {
             var tr: DeferAcc = dl_collect_stmts(f.then_body, actions);
@@ -3761,7 +3768,7 @@ function dl_collect_stmt(st: Stmt, actions: Stmt[]): DeferAcc {
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc);
-                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 acc = ar.actions;
                 i = i + 1;
             }
@@ -3782,7 +3789,7 @@ function dl_cleanup(actions: Stmt[]): Stmt[] {
     while (i >= 0) {
         var body1: Stmt[] = [actions[i]];
         var noelse: Stmt[] = [];
-        out = out.push(s_if(e_ident("__dfa" + dl_itoa(i)), body1, noelse));
+        out = out.append(s_if(e_ident("__dfa" + dl_itoa(i)), body1, noelse));
         i = i - 1;
     }
     return out;
@@ -3797,7 +3804,7 @@ function dl_expand_returns(stmts: Stmt[], cleanup: Stmt[]): Stmt[] {
     while (i < stmts.len()) {
         var ex: Stmt[] = dl_expand_return_stmt(stmts[i], cleanup);
         var j: i32 = 0;
-        while (j < ex.len()) { out = out.push(ex[j]); j = j + 1; }
+        while (j < ex.len()) { out = out.append(ex[j]); j = j + 1; }
         i = i + 1;
     }
     return out;
@@ -3812,11 +3819,11 @@ function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
                 _ => {}
             }
             var out: Stmt[] = [];
-            if (!isvoid) { out = out.push(s_assign("__defret", r.value)); }
+            if (!isvoid) { out = out.append(s_assign("__defret", r.value)); }
             var i: i32 = 0;
-            while (i < cleanup.len()) { out = out.push(cleanup[i]); i = i + 1; }
-            if (isvoid) { out = out.push(s_return(r.value)); }
-            else { out = out.push(s_return(e_ident("__defret"))); }
+            while (i < cleanup.len()) { out = out.append(cleanup[i]); i = i + 1; }
+            if (isvoid) { out = out.append(s_return(r.value)); }
+            else { out = out.append(s_return(e_ident("__defret"))); }
             return out;
         },
         StmtIf(f) => {
@@ -3835,7 +3842,7 @@ function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
             var one: Stmt[] = [s_match(m.scrutinee, arms)];
@@ -3862,21 +3869,21 @@ function hl_no_lifts(): CapLift[] { var e: CapLift[] = []; return e; }
 function hl_append_lifts(a: CapLift[], b: CapLift[]): CapLift[] {
     var out: CapLift[] = a;
     var i: i32 = 0;
-    while (i < b.len()) { out = out.push(b[i]); i = i + 1; }
+    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
     return out;
 }
 
 function hl_param_names(params: ParamDecl[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
-    while (i < params.len()) { out = out.push(params[i].name); i = i + 1; }
+    while (i < params.len()) { out = out.append(params[i].name); i = i + 1; }
     return out;
 }
 
 function hl_append_str(a: string[], b: string[]): string[] {
     var out: string[] = a;
     var i: i32 = 0;
-    while (i < b.len()) { out = out.push(b[i]); i = i + 1; }
+    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
     return out;
 }
 
@@ -3885,7 +3892,7 @@ function hl_collect_var_names(stmts: Stmt[]): string[] {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            StmtVar(v) => { out = out.push(v.name); },
+            StmtVar(v) => { out = out.append(v.name); },
             StmtIf(f) => {
                 out = hl_append_str(out, hl_collect_var_names(f.then_body));
                 out = hl_append_str(out, hl_collect_var_names(f.else_body));
@@ -3953,7 +3960,7 @@ function hl_capture_list(lam: ExprLambda, own_name: string, enclosing: string[])
     while (i < enclosing.len()) {
         var e: string = enclosing[i];
         if (e != own_name && !name_in_list(shadow, e) && !name_in_list(caps, e)) {
-            if (stmts_mention(lam.body, e)) { caps = caps.push(e); }
+            if (stmts_mention(lam.body, e)) { caps = caps.append(e); }
         }
         i = i + 1;
     }
@@ -3971,7 +3978,7 @@ function rw_call_expr(e: Expr, fname: string, caps: string[]): Expr {
             var new_callee: Expr = rw_call_expr(c.callee, fname, caps);
             var new_args: Expr[] = [];
             var i: i32 = 0;
-            while (i < c.args.len()) { new_args = new_args.push(rw_call_expr(c.args[i], fname, caps)); i = i + 1; }
+            while (i < c.args.len()) { new_args = new_args.append(rw_call_expr(c.args[i], fname, caps)); i = i + 1; }
             // If this is a call of the lifted function, append the captures.
             var is_target: boolean = false;
             match (c.callee) {
@@ -3980,7 +3987,7 @@ function rw_call_expr(e: Expr, fname: string, caps: string[]): Expr {
             }
             if (is_target) {
                 var k: i32 = 0;
-                while (k < caps.len()) { new_args = new_args.push(e_ident(caps[k])); k = k + 1; }
+                while (k < caps.len()) { new_args = new_args.append(e_ident(caps[k])); k = k + 1; }
             }
             return ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc };
         },
@@ -3989,13 +3996,13 @@ function rw_call_expr(e: Expr, fname: string, caps: string[]): Expr {
         ExprArray(a) => {
             var els: Expr[] = [];
             var i: i32 = 0;
-            while (i < a.elements.len()) { els = els.push(rw_call_expr(a.elements[i], fname, caps)); i = i + 1; }
+            while (i < a.elements.len()) { els = els.append(rw_call_expr(a.elements[i], fname, caps)); i = i + 1; }
             return e_array(els);
         },
         ExprTuple(t) => {
             var els: Expr[] = [];
             var i: i32 = 0;
-            while (i < t.elements.len()) { els = els.push(rw_call_expr(t.elements[i], fname, caps)); i = i + 1; }
+            while (i < t.elements.len()) { els = els.append(rw_call_expr(t.elements[i], fname, caps)); i = i + 1; }
             return e_tuple(els);
         },
         ExprIndex(ix) => { return e_index(rw_call_expr(ix.array, fname, caps), rw_call_expr(ix.index, fname, caps)); },
@@ -4004,7 +4011,7 @@ function rw_call_expr(e: Expr, fname: string, caps: string[]): Expr {
         ExprStructLit(s) => {
             var vals: Expr[] = [];
             var i: i32 = 0;
-            while (i < s.field_values.len()) { vals = vals.push(rw_call_expr(s.field_values[i], fname, caps)); i = i + 1; }
+            while (i < s.field_values.len()) { vals = vals.append(rw_call_expr(s.field_values[i], fname, caps)); i = i + 1; }
             var nb: Expr = s.base;
             if (s.has_base) { nb = rw_call_expr(s.base, fname, caps); }
             return ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: nb, line: s.line, col: s.col };
@@ -4025,28 +4032,28 @@ function rw_call_stmts(stmts: Stmt[], fname: string, caps: string[]): Stmt[] {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            StmtVar(v) => { out = out.push(s_var_at(v.name, v.type_name, rw_call_expr(v.init, fname, caps), v.line, v.col)); },
-            StmtReturn(r) => { out = out.push(s_return_at(rw_call_expr(r.value, fname, caps), r.line, r.col)); },
-            StmtExpr(e) => { out = out.push(s_expr(rw_call_expr(e.value, fname, caps))); },
-            StmtAssign(a) => { out = out.push(s_assign_at(a.target, rw_call_expr(a.value, fname, caps), a.line, a.col, a.target_line, a.target_col)); },
-            StmtIf(f) => { out = out.push(s_if(rw_call_expr(f.cond, fname, caps), rw_call_stmts(f.then_body, fname, caps), rw_call_stmts(f.else_body, fname, caps))); },
-            StmtWhile(w) => { out = out.push(s_while(rw_call_expr(w.cond, fname, caps), rw_call_stmts(w.body, fname, caps))); },
-            StmtFor(fr) => { out = out.push(s_for(fr.var_name, rw_call_expr(fr.iter, fname, caps), rw_call_stmts(fr.body, fname, caps))); },
+            StmtVar(v) => { out = out.append(s_var_at(v.name, v.type_name, rw_call_expr(v.init, fname, caps), v.line, v.col)); },
+            StmtReturn(r) => { out = out.append(s_return_at(rw_call_expr(r.value, fname, caps), r.line, r.col)); },
+            StmtExpr(e) => { out = out.append(s_expr(rw_call_expr(e.value, fname, caps))); },
+            StmtAssign(a) => { out = out.append(s_assign_at(a.target, rw_call_expr(a.value, fname, caps), a.line, a.col, a.target_line, a.target_col)); },
+            StmtIf(f) => { out = out.append(s_if(rw_call_expr(f.cond, fname, caps), rw_call_stmts(f.then_body, fname, caps), rw_call_stmts(f.else_body, fname, caps))); },
+            StmtWhile(w) => { out = out.append(s_while(rw_call_expr(w.cond, fname, caps), rw_call_stmts(w.body, fname, caps))); },
+            StmtFor(fr) => { out = out.append(s_for(fr.var_name, rw_call_expr(fr.iter, fname, caps), rw_call_stmts(fr.body, fname, caps))); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var a: i32 = 0;
                 while (a < m.arms.len()) {
-                    arms = arms.push(MatchArm { pattern: m.arms[a].pattern, body: rw_call_stmts(m.arms[a].body, fname, caps), line: m.arms[a].line, col: m.arms[a].col, guard: rw_call_expr(m.arms[a].guard, fname, caps), has_guard: m.arms[a].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: rw_call_stmts(m.arms[a].body, fname, caps), line: m.arms[a].line, col: m.arms[a].col, guard: rw_call_expr(m.arms[a].guard, fname, caps), has_guard: m.arms[a].has_guard });
                     a = a + 1;
                 }
-                out = out.push(s_match_at(rw_call_expr(m.scrutinee, fname, caps), arms, m.line, m.col));
+                out = out.append(s_match_at(rw_call_expr(m.scrutinee, fname, caps), arms, m.line, m.col));
             },
             StmtDefer(d) => {
                 var one: Stmt[] = [d.action];
                 var rd: Stmt[] = rw_call_stmts(one, fname, caps);
-                if (rd.len() >= 1) { out = out.push(s_defer(rd[0])); }
+                if (rd.len() >= 1) { out = out.append(s_defer(rd[0])); }
             },
-            _ => { out = out.push(stmts[i]); },
+            _ => { out = out.append(stmts[i]); },
         }
         i = i + 1;
     }
@@ -4062,7 +4069,7 @@ function hl_rewrite_match(m: StmtMatch, enclosing: string[], hoisted: FuncDecl[]
         var ar: HoistResult = hl_rewrite(m.arms[a].body, enclosing, acc);
         acc = ar.hoisted;
         acc_lifts = hl_append_lifts(acc_lifts, ar.lifts);
-        arms = arms.push(MatchArm { pattern: m.arms[a].pattern, body: ar.stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: ar.stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
         a = a + 1;
     }
     return HoistResult { stmts: [s_match_at(m.scrutinee, arms, m.line, m.col)], hoisted: acc, lifts: acc_lifts };
@@ -4095,7 +4102,7 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
                             var caps: string[] = hl_capture_list(lam, v.name, enclosing);
                             var new_params: ParamDecl[] = lam.params;
                             var ci: i32 = 0;
-                            while (ci < caps.len()) { new_params = new_params.push(ParamDecl { name: caps[ci], type_name: "", own: false }); ci = ci + 1; }
+                            while (ci < caps.len()) { new_params = new_params.append(ParamDecl { name: caps[ci], type_name: "", own: false }); ci = ci + 1; }
                             // Hoist nested recursive locals first; inside the
                             // lifted function the captures are in scope as params.
                             var inner_encl: string[] = hl_param_names(new_params);
@@ -4107,18 +4114,18 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
                             var lifted_body: Stmt[] = ir.stmts;
                             if (caps.len() > 0) { lifted_body = rw_call_stmts(lifted_body, v.name, caps); }
                             var notp: string[] = [];
-                            acc = acc.push(FuncDecl {
+                            acc = acc.append(FuncDecl {
                                 name: v.name, receiver_name: "", receiver_type: "",
                                 type_params: notp, params: new_params, ret_type: lam.ret_type,
                                 body: lifted_body, line: v.line, col: v.col,
                                 import_iface: "", import_wit: "", type_param_count: 0
                             });
-                            if (caps.len() > 0) { acc_lifts = acc_lifts.push(CapLift { name: v.name, caps: caps }); }
+                            if (caps.len() > 0) { acc_lifts = acc_lifts.append(CapLift { name: v.name, caps: caps }); }
                         }
                     },
                     _ => { }
                 }
-                if (!did_lift) { out = out.push(stmts[i]); }
+                if (!did_lift) { out = out.append(stmts[i]); }
             },
             StmtIf(f) => {
                 var tr: HoistResult = hl_rewrite(f.then_body, enclosing, acc);
@@ -4127,35 +4134,35 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
                 var er: HoistResult = hl_rewrite(f.else_body, enclosing, acc);
                 acc = er.hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, er.lifts);
-                out = out.push(s_if(f.cond, tr.stmts, er.stmts));
+                out = out.append(s_if(f.cond, tr.stmts, er.stmts));
             },
             StmtWhile(w) => {
                 var wr: HoistResult = hl_rewrite(w.body, enclosing, acc);
                 acc = wr.hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, wr.lifts);
-                out = out.push(s_while(w.cond, wr.stmts));
+                out = out.append(s_while(w.cond, wr.stmts));
             },
             StmtFor(fr) => {
                 var fr2: HoistResult = hl_rewrite(fr.body, enclosing, acc);
                 acc = fr2.hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, fr2.lifts);
-                out = out.push(s_for(fr.var_name, fr.iter, fr2.stmts));
+                out = out.append(s_for(fr.var_name, fr.iter, fr2.stmts));
             },
             StmtMatch(m) => {
                 var mr: HoistResult = hl_rewrite_match(m, enclosing, acc);
                 acc = mr.hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, mr.lifts);
                 var km: i32 = 0;
-                while (km < mr.stmts.len()) { out = out.push(mr.stmts[km]); km = km + 1; }
+                while (km < mr.stmts.len()) { out = out.append(mr.stmts[km]); km = km + 1; }
             },
             StmtDefer(d) => {
                 var one: Stmt[] = [d.action];
                 var dr: HoistResult = hl_rewrite(one, enclosing, acc);
                 acc = dr.hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, dr.lifts);
-                if (dr.stmts.len() >= 1) { out = out.push(s_defer(dr.stmts[0])); }
+                if (dr.stmts.len() >= 1) { out = out.append(s_defer(dr.stmts[0])); }
             },
-            _ => { out = out.push(stmts[i]); },
+            _ => { out = out.append(stmts[i]); },
         }
         i = i + 1;
     }
@@ -4189,7 +4196,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
         // Rewrite this body's calls to any lambda-lifted function so the
         // captures are passed at the (now top-level) call sites.
         var fn_body: Stmt[] = hl_apply_lifts(r.stmts, r.lifts);
-        funcs = funcs.push(FuncDecl {
+        funcs = funcs.append(FuncDecl {
             name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
             type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: fn_body,
             line: fn.line, col: fn.col, import_iface: fn.import_iface, import_wit: fn.import_wit,
@@ -4202,7 +4209,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
     hoisted = tr.hoisted;
     var top_body: Stmt[] = hl_apply_lifts(tr.stmts, tr.lifts);
     var j: i32 = 0;
-    while (j < hoisted.len()) { funcs = funcs.push(hoisted[j]); j = j + 1; }
+    while (j < hoisted.len()) { funcs = funcs.append(hoisted[j]); j = j + 1; }
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: top_body, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
@@ -4214,18 +4221,18 @@ function lower_defers_func(fn: FuncDecl): FuncDecl {
     var expanded: Stmt[] = dl_expand_returns(cr.stmts, cleanup);
     var body: Stmt[] = [];
     // Shared return temp + per-defer flags, all i32, initialised to 0.
-    body = body.push(s_var("__defret", "", e_number("0", "", false)));
+    body = body.append(s_var("__defret", "", e_number("0", "", false)));
     var i: i32 = 0;
     while (i < cr.actions.len()) {
-        body = body.push(s_var("__dfa" + dl_itoa(i), "", e_number("0", "", false)));
+        body = body.append(s_var("__dfa" + dl_itoa(i), "", e_number("0", "", false)));
         i = i + 1;
     }
     var k: i32 = 0;
-    while (k < expanded.len()) { body = body.push(expanded[k]); k = k + 1; }
+    while (k < expanded.len()) { body = body.append(expanded[k]); k = k + 1; }
     // Falloff cleanup (a function that returns on every path leaves this
     // unreachable; a void function that falls off runs it).
     var c: i32 = 0;
-    while (c < cleanup.len()) { body = body.push(cleanup[c]); c = c + 1; }
+    while (c < cleanup.len()) { body = body.append(cleanup[c]); c = c + 1; }
     return FuncDecl {
         name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
         type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: body, line: fn.line, col: fn.col,
@@ -4237,7 +4244,7 @@ pub function lower_defers_module(mod: Module): Module {
     var funcs: FuncDecl[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        funcs = funcs.push(lower_defers_func(mod.funcs[i]));
+        funcs = funcs.append(lower_defers_func(mod.funcs[i]));
         i = i + 1;
     }
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
@@ -4400,12 +4407,12 @@ pub function insert_resource_drops(mod: Module): Module {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var f: FuncDecl = mod.funcs[i];
-        if (f.import_iface.len() > 0) { out_funcs = out_funcs.push(f); i = i + 1; continue; }
+        if (f.import_iface.len() > 0) { out_funcs = out_funcs.append(f); i = i + 1; continue; }
         var nbody: Stmt[] = [];
         var j: i32 = 0;
         while (j < f.body.len()) {
             var s: Stmt = f.body[j];
-            nbody = nbody.push(s);
+            nbody = nbody.append(s);
             match (s) {
                 StmtVar(v) => {
                     var res: string = handle_resource_of(v.type_name);
@@ -4415,8 +4422,8 @@ pub function insert_resource_drops(mod: Module): Module {
                             && !handle_returned(f.body, v.name)
                             && !handle_own_consumed(f.body, mod.funcs, v.name)) {
                             var dropcall: Expr = e_call(e_ident(resource_drop_fn_name(res)), [e_ident(v.name)]);
-                            nbody = nbody.push(s_defer(s_expr(dropcall)));
-                            if (!name_in_list(needed, res)) { needed = needed.push(res); }
+                            nbody = nbody.append(s_defer(s_expr(dropcall)));
+                            if (!name_in_list(needed, res)) { needed = needed.append(res); }
                         }
                     }
                 },
@@ -4424,7 +4431,7 @@ pub function insert_resource_drops(mod: Module): Module {
             }
             j = j + 1;
         }
-        out_funcs = out_funcs.push(FuncDecl { ...f, body: nbody });
+        out_funcs = out_funcs.append(FuncDecl { ...f, body: nbody });
         i = i + 1;
     }
     var no_tp: string[] = [];
@@ -4435,7 +4442,7 @@ pub function insert_resource_drops(mod: Module): Module {
         var iface2: string = resource_binding_iface(mod.resources, rn);
         var wit2: string = resource_binding_wit(mod.resources, rn);
         var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true }];
-        out_funcs = out_funcs.push(FuncDecl {
+        out_funcs = out_funcs.append(FuncDecl {
             name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
             type_params: no_tp, params: hp, ret_type: "void", body: no_body,
             line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, type_param_count: 0
@@ -4547,14 +4554,14 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
     while (i < sd.fields.len()) {
         var vn: string = "__c" + dl_itoa(i);
         var cc: Expr = dv_call1(dv_self_field(sd.fields[i].name), "cmp", dv_other_field(sd.fields[i].name));
-        stmts = stmts.push(s_var(vn, "i32", cc));
+        stmts = stmts.append(s_var(vn, "i32", cc));
         var cond: Expr = e_binary("!=", e_ident(vn), e_number("0", "", false));
         var thenb: Stmt[] = [s_return(e_ident(vn))];
         var elseb: Stmt[] = [];
-        stmts = stmts.push(s_if(cond, thenb, elseb));
+        stmts = stmts.append(s_if(cond, thenb, elseb));
         i = i + 1;
     }
-    stmts = stmts.push(s_return(e_number("0", "", false)));
+    stmts = stmts.append(s_return(e_number("0", "", false)));
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false }];
     return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
@@ -4573,9 +4580,9 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
             var e: Expr = e_string(v.name + "(");
             e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_string"));
             e = e_binary("+", e, e_string(")"));
-            arms = arms.push(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         } else {
-            arms = arms.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         }
         i = i + 1;
     }
@@ -4596,13 +4603,13 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
         var inner: MatchArm[] = [];
         if (v.fields.len() > 0) {
             var eqx: Expr = dv_call1(e_ident("__s0"), "eq", e_ident("__o0"));
-            inner = inner.push(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            inner = inner.push(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            arms = arms.push(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         } else {
-            inner = inner.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            inner = inner.push(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            arms = arms.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         }
         i = i + 1;
     }
@@ -4637,20 +4644,20 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
                         var cc: Expr = dv_call1(e_ident("__s0"), "cmp", e_ident("__o0"));
                         var cstmts: Stmt[] = [s_var("__c0", "i32", cc)];
                         var emptyb: Stmt[] = [];
-                        cstmts = cstmts.push(s_if(e_binary("!=", e_ident("__c0"), e_number("0", "", false)), [s_return(e_ident("__c0"))], emptyb));
-                        cstmts = cstmts.push(s_return(e_number("0", "", false)));
+                        cstmts = cstmts.append(s_if(e_binary("!=", e_ident("__c0"), e_number("0", "", false)), [s_return(e_ident("__c0"))], emptyb));
+                        cstmts = cstmts.append(s_return(e_number("0", "", false)));
                         ibody = cstmts;
                     } else {
                         ibody = [s_return(e_number("0", "", false))];
                     }
                 }
             }
-            inner = inner.push(MatchArm { pattern: p_variant(vj.name, ob), body: ibody, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant(vj.name, ob), body: ibody, line: 0, col: 0, guard: e_bool(true), has_guard: false });
             j = j + 1;
         }
         var sb: string = "";
         if (vi.fields.len() > 0) { sb = "__s0"; }
-        arms = arms.push(MatchArm { pattern: p_variant(vi.name, sb), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant(vi.name, sb), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         i = i + 1;
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
@@ -4666,9 +4673,9 @@ function synth_enum_derives(ename: string, variants: StructDecl[], derives: stri
     var di: i32 = 0;
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
-        if (kind == "Display") { funcs = funcs.push(synth_enum_display(ename, variants)); }
-        if (kind == "Eq") { funcs = funcs.push(synth_enum_eq(ename, variants)); }
-        if (kind == "Ord") { funcs = funcs.push(synth_enum_ord(ename, variants)); }
+        if (kind == "Display") { funcs = funcs.append(synth_enum_display(ename, variants)); }
+        if (kind == "Eq") { funcs = funcs.append(synth_enum_eq(ename, variants)); }
+        if (kind == "Ord") { funcs = funcs.append(synth_enum_ord(ename, variants)); }
         di = di + 1;
     }
     return funcs;
@@ -4682,9 +4689,9 @@ function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): Fu
     var di: i32 = 0;
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
-        if (kind == "Display") { funcs = funcs.push(synth_struct_display(sd)); }
-        if (kind == "Eq") { funcs = funcs.push(synth_struct_eq(sd)); }
-        if (kind == "Ord") { funcs = funcs.push(synth_struct_ord(sd)); }
+        if (kind == "Display") { funcs = funcs.append(synth_struct_display(sd)); }
+        if (kind == "Eq") { funcs = funcs.append(synth_struct_eq(sd)); }
+        if (kind == "Ord") { funcs = funcs.append(synth_struct_ord(sd)); }
         di = di + 1;
     }
     return funcs;
@@ -4709,7 +4716,7 @@ function parse_derive_attr(p: Par): DeriveResult {
                 var seg: string = p.peek_ident();
                 if (seg.len() > 0) { tn = tn + "." + seg; p = p.advance(); }
             }
-            derives = derives.push(tn);
+            derives = derives.append(tn);
             if (p.peek_punct() == ",") { p = p.advance(); }
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
@@ -4830,7 +4837,7 @@ function parse_impl_decl(p: Par): ImplResult {
                     if (p.peek_punct() == "+") { p = p.advance(); } else { go2 = false; }
                 }
             }
-            if (bounded) { impl_tps = impl_tps.push(tpn); }
+            if (bounded) { impl_tps = impl_tps.append(tpn); }
             if (p.peek_punct() == ",") { p = p.advance(); }
         }
         if (p.peek_punct() == "]") { p = p.advance(); }
@@ -4866,7 +4873,7 @@ function parse_impl_decl(p: Par): ImplResult {
             } else {
                 var pt: string = m.params[i].type_name;
                 if (pt == "Self") { pt = impl_type; }
-                newparams = newparams.push(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own });
+                newparams = newparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own });
             }
             i = i + 1;
         }
@@ -4880,8 +4887,8 @@ function parse_impl_decl(p: Par): ImplResult {
         // the method declared itself.
         var mtps: string[] = m.type_params;
         var ti: i32 = 0;
-        while (ti < impl_tps.len()) { mtps = mtps.push(impl_tps[ti]); ti = ti + 1; }
-        out = out.push(FuncDecl {
+        while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
+        out = out.append(FuncDecl {
             name: m.name,
             receiver_name: rname,
             receiver_type: impl_type,
@@ -4953,14 +4960,14 @@ pub function parse_module(toks: lexer.Token[]): Module {
                     var ifr: FuncResult = parse_func_decl(p);
                     p = ifr.par;
                     var ifn: FuncDecl = FuncDecl { ...ifr.func, import_iface: iar.iface, import_wit: iar.wit };
-                    funcs = funcs.push(ifn);
+                    funcs = funcs.append(ifn);
                 } else if (p.peek_ident() == "resource") {
                     // `@import(iface, wit) resource Name;` binds a WIT resource
                     // handle type to its WIT identity (P5). Record it so
                     // insert_resource_drops can synthesize the [resource-drop].
                     var rnr: ResourceNameResult = parse_resource_decl_name(p);
                     p = rnr.par;
-                    resources = resources.push(ResourceDecl { name: rnr.name, iface: iar.iface, wit: iar.wit });
+                    resources = resources.append(ResourceDecl { name: rnr.name, iface: iar.iface, wit: iar.wit });
                 }
                 continue;
             }
@@ -4977,8 +4984,8 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 if (xk == "function") {
                     var xfr: FuncResult = parse_func_decl(p);
                     p = xfr.par;
-                    funcs = funcs.push(xfr.func);
-                    exports = exports.push(ExportBinding { func_name: xfr.func.name, iface: ear.iface, wit: ear.wit });
+                    funcs = funcs.append(xfr.func);
+                    exports = exports.append(ExportBinding { func_name: xfr.func.name, iface: ear.iface, wit: ear.wit });
                 }
                 continue;
             }
@@ -4989,7 +4996,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
             if (dk == "struct") {
                 var dsr: StructResult = parse_struct_decl(p);
                 p = dsr.par;
-                structs = structs.push(dsr.decl);
+                structs = structs.append(dsr.decl);
                 funcs = synth_derives(dsr.decl, dr.derives, funcs);
                 continue;
             }
@@ -4998,10 +5005,10 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 var decol: i32 = p.peek_col();
                 var denr: EnumResult = parse_enum_decl(p);
                 p = denr.par;
-                enums = enums.push(EnumDecl { name: denr.name, variant_names: enum_variant_names(denr.variants), line: deline, col: decol });
+                enums = enums.append(EnumDecl { name: denr.name, variant_names: enum_variant_names(denr.variants), line: deline, col: decol });
                 var dei: i32 = 0;
                 while (dei < denr.variants.len()) {
-                    structs = structs.push(denr.variants[dei]);
+                    structs = structs.append(denr.variants[dei]);
                     dei = dei + 1;
                 }
                 // Synthesise variant-wise Display / Eq methods on the
@@ -5014,19 +5021,19 @@ pub function parse_module(toks: lexer.Token[]): Module {
         if (kw == "function") {
             var fr: FuncResult = parse_func_decl(p);
             p = fr.par;
-            funcs = funcs.push(fr.func);
+            funcs = funcs.append(fr.func);
             continue;
         }
         if (kw == "struct") {
             var sr: StructResult = parse_struct_decl(p);
             p = sr.par;
-            structs = structs.push(sr.decl);
+            structs = structs.append(sr.decl);
             continue;
         }
         if (kw == "type") {
             var tr: TypeAliasResult = parse_type_alias(p);
             p = tr.par;
-            aliases = aliases.push(tr.alias);
+            aliases = aliases.append(tr.alias);
             continue;
         }
         if (kw == "enum") {
@@ -5034,10 +5041,10 @@ pub function parse_module(toks: lexer.Token[]): Module {
             var ecol: i32 = p.peek_col();
             var enr: EnumResult = parse_enum_decl(p);
             p = enr.par;
-            enums = enums.push(EnumDecl { name: enr.name, variant_names: enum_variant_names(enr.variants), line: eline, col: ecol });
+            enums = enums.append(EnumDecl { name: enr.name, variant_names: enum_variant_names(enr.variants), line: eline, col: ecol });
             var ei: i32 = 0;
             while (ei < enr.variants.len()) {
-                structs = structs.push(enr.variants[ei]);
+                structs = structs.append(enr.variants[ei]);
                 ei = ei + 1;
             }
             continue;
@@ -5048,13 +5055,13 @@ pub function parse_module(toks: lexer.Token[]): Module {
             // to NAME is lowered to a call (see emit_expr ExprIdent).
             var cr: FuncResult = parse_const_decl(p);
             p = cr.par;
-            funcs = funcs.push(cr.func);
+            funcs = funcs.append(cr.func);
             continue;
         }
         if (kw == "import") {
             var ir: ImportResult = parse_import(p);
             p = ir.par;
-            imports = imports.push(ir.imp);
+            imports = imports.append(ir.imp);
             continue;
         }
         if (kw == "trait") {
@@ -5066,7 +5073,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
             p = imr.par;
             var mi: i32 = 0;
             while (mi < imr.funcs.len()) {
-                funcs = funcs.push(imr.funcs[mi]);
+                funcs = funcs.append(imr.funcs[mi]);
                 mi = mi + 1;
             }
             continue;
@@ -5080,7 +5087,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
             if (pr.peek_ident().len() > 0) {
                 var rnr2: ResourceNameResult = parse_resource_decl_name(p);
                 p = rnr2.par;
-                resources = resources.push(ResourceDecl { name: rnr2.name, iface: "", wit: "" });
+                resources = resources.append(ResourceDecl { name: rnr2.name, iface: "", wit: "" });
                 continue;
             }
         }
@@ -5093,7 +5100,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
             continue;
         }
         p = stmtR.par;
-        top_stmts = top_stmts.push(stmtR.stmt);
+        top_stmts = top_stmts.append(stmtR.stmt);
     }
     return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports };
 }
@@ -5109,19 +5116,19 @@ pub function parse_module(toks: lexer.Token[]): Module {
 pub function merge_module(into: Module, from: Module): Module {
     var nfuncs: FuncDecl[] = into.funcs;
     var fi: i32 = 0;
-    while (fi < from.funcs.len()) { nfuncs = nfuncs.push(from.funcs[fi]); fi = fi + 1; }
+    while (fi < from.funcs.len()) { nfuncs = nfuncs.append(from.funcs[fi]); fi = fi + 1; }
     var nstructs: StructDecl[] = into.structs;
     var si: i32 = 0;
-    while (si < from.structs.len()) { nstructs = nstructs.push(from.structs[si]); si = si + 1; }
+    while (si < from.structs.len()) { nstructs = nstructs.append(from.structs[si]); si = si + 1; }
     var naliases: TypeAlias[] = into.aliases;
     var ai: i32 = 0;
-    while (ai < from.aliases.len()) { naliases = naliases.push(from.aliases[ai]); ai = ai + 1; }
+    while (ai < from.aliases.len()) { naliases = naliases.append(from.aliases[ai]); ai = ai + 1; }
     var nresources: ResourceDecl[] = into.resources;
     var ri: i32 = 0;
-    while (ri < from.resources.len()) { nresources = nresources.push(from.resources[ri]); ri = ri + 1; }
+    while (ri < from.resources.len()) { nresources = nresources.append(from.resources[ri]); ri = ri + 1; }
     var nexports: ExportBinding[] = into.exports;
     var xi: i32 = 0;
-    while (xi < from.exports.len()) { nexports = nexports.push(from.exports[xi]); xi = xi + 1; }
+    while (xi < from.exports.len()) { nexports = nexports.append(from.exports[xi]); xi = xi + 1; }
     return Module {
         funcs: nfuncs,
         structs: nstructs,
@@ -5144,7 +5151,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var fi: i32 = 0;
     while (fi < from.funcs.len()) {
         var fd: FuncDecl = from.funcs[fi];
-        nfuncs = nfuncs.push(FuncDecl {
+        nfuncs = nfuncs.append(FuncDecl {
             name: prefix + "." + fd.name,
             receiver_name: fd.receiver_name,
             receiver_type: fd.receiver_type,
@@ -5160,28 +5167,28 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var si: i32 = 0;
     while (si < from.structs.len()) {
         var sd: StructDecl = from.structs[si];
-        nstructs = nstructs.push(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, line: sd.line, col: sd.col });
+        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, line: sd.line, col: sd.col });
         si = si + 1;
     }
     var naliases: TypeAlias[] = into.aliases;
     var ai: i32 = 0;
     while (ai < from.aliases.len()) {
         var ad: TypeAlias = from.aliases[ai];
-        naliases = naliases.push(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants, line: ad.line, col: ad.col });
+        naliases = naliases.append(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants, line: ad.line, col: ad.col });
         ai = ai + 1;
     }
     var nresources: ResourceDecl[] = into.resources;
     var ri: i32 = 0;
     while (ri < from.resources.len()) {
         var rd: ResourceDecl = from.resources[ri];
-        nresources = nresources.push(ResourceDecl { name: prefix + "." + rd.name, iface: rd.iface, wit: rd.wit });
+        nresources = nresources.append(ResourceDecl { name: prefix + "." + rd.name, iface: rd.iface, wit: rd.wit });
         ri = ri + 1;
     }
     var nexports: ExportBinding[] = into.exports;
     var xi: i32 = 0;
     while (xi < from.exports.len()) {
         var xb: ExportBinding = from.exports[xi];
-        nexports = nexports.push(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit });
+        nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit });
         xi = xi + 1;
     }
     return Module {

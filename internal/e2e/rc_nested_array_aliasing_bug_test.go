@@ -8,7 +8,7 @@ import (
 // TestRCNestedArrayAliasingBug gates a fixed reference-counting bug: an
 // aliasing-built nested-array structure (a ChunkDef[] whose .body is a
 // BodyLine[] of structs with string fields) is consumed by an
-// expand-style function. `def_body.push(body[k])` copies the inner
+// expand-style function. `def_body.append(body[k])` copies the inner
 // BodyLine structs — and their string pointers — out of `body` without
 // an inc (the borrow model), so `body` had to be tainted in
 // computeFreeEligible or its scope-exit deep-drop would free the

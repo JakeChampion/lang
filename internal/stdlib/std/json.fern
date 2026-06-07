@@ -25,7 +25,7 @@
 
 // json_encode walks Map[string, JsonValue] for JObject values
 // via `.iter()` / `.has_next()` / `.key()` / `.value()`;
-// json_parse builds one with `map_new` / `.set(...)`. Declare
+// json_parse builds one with `map_new` / `.insert(...)`. Declare
 // core/map so the receiver methods register under no-prelude
 // and the Map runtime helpers link cleanly.
 import "core/map";
@@ -357,7 +357,7 @@ function __json_p_array(p0: __JsonParser): (JsonValue, __JsonParser) {
         var (elem, pe) = __json_p_value(p);
         p = pe;
         if (p.error != 0) { return (JNull, p); }
-        arr = arr.push(elem);
+        arr = arr.append(elem);
         p = __json_p_skip_ws(p);
         var b: i32 = __json_p_byte(p);
         if (b == 44) {                                  // ','

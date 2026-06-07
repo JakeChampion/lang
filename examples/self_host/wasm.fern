@@ -55,8 +55,8 @@ function (t: StrTable) intern(v: string): StrTable {
     }
     // Block = 4-byte length prefix + the bytes.
     return StrTable {
-        values: t.values.push(v),
-        offsets: t.offsets.push(t.next),
+        values: t.values.append(v),
+        offsets: t.offsets.append(t.next),
         next: t.next + 4 + v.len(),
     };
 }
@@ -218,7 +218,7 @@ function func_param_is_f64(cx: Ctx, fn: string, idx: i32): boolean {    var i: i
 }
 
 // expr_map_rooted is true for an expression whose value is a fresh map:
-// a `map_new_i32(n)` call or a `.set(…)` chain over one. Used at
+// a `map_new_i32(n)` call or a `.insert(…)` chain over one. Used at
 // var-collection time (no Ctx available yet) to seed map_names.
 function expr_map_rooted(e: parser.Expr): boolean {
     match (e) {
@@ -226,7 +226,7 @@ function expr_map_rooted(e: parser.Expr): boolean {
             match (c.callee) {
                 parser.ExprIdent(id) => { return id.name == "map_new_i32" || id.name == "map_new"; },
                 parser.ExprFieldAccess(fa) => {
-                    if (fa.field == "set" || fa.field == "insert") { return expr_map_rooted(fa.obj); }
+                    if (fa.field == "insert") { return expr_map_rooted(fa.obj); }
                     return false;
                 },
                 _ => { return false; },
@@ -246,7 +246,7 @@ function is_map_expr(e: parser.Expr, cx: Ctx): boolean {
             match (c.callee) {
                 parser.ExprIdent(id) => { return id.name == "map_new_i32" || id.name == "map_new"; },
                 parser.ExprFieldAccess(fa) => {
-                    if (fa.field == "set" || fa.field == "insert") { return is_map_expr(fa.obj, cx); }
+                    if (fa.field == "insert") { return is_map_expr(fa.obj, cx); }
                     return false;
                 },
                 _ => { return false; },
@@ -264,7 +264,7 @@ function collect_map_var_names(body: parser.Stmt[], acc: string[]): string[] {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                if (expr_map_rooted(v.init) && !contains_str(acc, v.name)) { acc = acc.push(v.name); }
+                if (expr_map_rooted(v.init) && !contains_str(acc, v.name)) { acc = acc.append(v.name); }
             },
             parser.StmtIf(f) => {
                 acc = collect_map_var_names(f.then_body, acc);
@@ -295,7 +295,7 @@ function is_str_val_map(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
-                    if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
+                    if ((fa.field == "insert") && c.args.len() == 2) {
                         if (is_string_expr(c.args[1], cx)) { return true; }
                         return is_str_val_map(fa.obj, cx);
                     }
@@ -315,7 +315,7 @@ function set_chain_has_str(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
-                    if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
+                    if ((fa.field == "insert") && c.args.len() == 2) {
                         if (is_string_expr(c.args[1], cx)) { return true; }
                         return set_chain_has_str(fa.obj, cx);
                     }
@@ -331,7 +331,7 @@ function set_chain_has_str(e: parser.Expr, cx: Ctx): boolean {
 
 // collect_str_val_map_names returns the subset of map_names whose values
 // are strings, found by scanning every `var`/assignment that builds the
-// map (init chain or `m = m.set(k, "…")`) for a string-typed set value.
+// map (init chain or `m = m.insert(k, "…")`) for a string-typed set value.
 // Run after string locals are known so is_string_expr is accurate.
 function collect_str_val_map_names(body: parser.Stmt[], cx: Ctx, map_names: string[], acc: string[]): string[] {
     var i: i32 = 0;
@@ -339,12 +339,12 @@ function collect_str_val_map_names(body: parser.Stmt[], cx: Ctx, map_names: stri
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (contains_str(map_names, v.name) && !contains_str(acc, v.name) && set_chain_has_str(v.init, cx)) {
-                    acc = acc.push(v.name);
+                    acc = acc.append(v.name);
                 }
             },
             parser.StmtAssign(a) => {
                 if (contains_str(map_names, a.target) && !contains_str(acc, a.target) && set_chain_has_str(a.value, cx)) {
-                    acc = acc.push(a.target);
+                    acc = acc.append(a.target);
                 }
             },
             parser.StmtIf(f) => {
@@ -375,7 +375,7 @@ function map_root_is_str(e: parser.Expr): boolean {
             match (c.callee) {
                 parser.ExprIdent(id) => { return id.name == "map_new"; },
                 parser.ExprFieldAccess(fa) => {
-                    if (fa.field == "set" || fa.field == "insert") { return map_root_is_str(fa.obj); }
+                    if (fa.field == "insert") { return map_root_is_str(fa.obj); }
                     return false;
                 },
                 _ => { return false; },
@@ -405,12 +405,12 @@ function collect_str_key_map_names(body: parser.Stmt[], map_names: string[], acc
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (contains_str(map_names, v.name) && !contains_str(acc, v.name) && map_root_is_str(v.init)) {
-                    acc = acc.push(v.name);
+                    acc = acc.append(v.name);
                 }
             },
             parser.StmtAssign(a) => {
                 if (contains_str(map_names, a.target) && !contains_str(acc, a.target) && map_root_is_str(a.value)) {
-                    acc = acc.push(a.target);
+                    acc = acc.append(a.target);
                 }
             },
             parser.StmtIf(f) => {
@@ -445,7 +445,7 @@ function collect_fn_arr_names(body: parser.Stmt[], acc: string[]): string[] {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                if (v.type_name == "fn[]" && !contains_str(acc, v.name)) { acc = acc.push(v.name); }
+                if (v.type_name == "fn[]" && !contains_str(acc, v.name)) { acc = acc.append(v.name); }
             },
             parser.StmtIf(f) => {
                 acc = collect_fn_arr_names(f.then_body, acc);
@@ -471,7 +471,7 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string
             parser.StmtVar(v) => {
                 match (v.init) {
                     parser.ExprLambda(_) => {
-                        if (!contains_str(acc, v.name)) { acc = acc.push(v.name); }
+                        if (!contains_str(acc, v.name)) { acc = acc.append(v.name); }
                     },
                     parser.ExprCall(c) => {
                         // `var f = g(...)` / `var f = obj.m(...)` where the
@@ -479,12 +479,12 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string
                         match (c.callee) {
                             parser.ExprIdent(cid) => {
                                 if (contains_str(fnrets, cid.name) && !contains_str(acc, v.name)) {
-                                    acc = acc.push(v.name);
+                                    acc = acc.append(v.name);
                                 }
                             },
                             parser.ExprFieldAccess(fa) => {
                                 if (contains_str(fnmeths, fa.field) && !contains_str(acc, v.name)) {
-                                    acc = acc.push(v.name);
+                                    acc = acc.append(v.name);
                                 }
                             },
                             _ => {},
@@ -495,7 +495,7 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string
                         match (ix.array) {
                             parser.ExprIdent(aid) => {
                                 if (contains_str(fnarrs, aid.name) && !contains_str(acc, v.name)) {
-                                    acc = acc.push(v.name);
+                                    acc = acc.append(v.name);
                                 }
                             },
                             _ => {},
@@ -515,7 +515,7 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string
                     match (f.iter) {
                         parser.ExprIdent(iid) => {
                             if (contains_str(fnarrs, iid.name) && !contains_str(acc, f.var_name)) {
-                                acc = acc.push(f.var_name);
+                                acc = acc.append(f.var_name);
                             }
                         },
                         _ => {},
@@ -544,7 +544,7 @@ function fn_returning_func_names(mod_funcs: parser.FuncDecl[]): string[] {
     var i: i32 = 0;
     while (i < mod_funcs.len()) {
         if (mod_funcs[i].ret_type == "fn" && mod_funcs[i].receiver_name.len() == 0) {
-            out = out.push(mod_funcs[i].name);
+            out = out.append(mod_funcs[i].name);
         }
         i = i + 1;
     }
@@ -561,7 +561,7 @@ function fn_returning_method_names(mod_funcs: parser.FuncDecl[]): string[] {
     while (i < mod_funcs.len()) {
         if (mod_funcs[i].ret_type == "fn" && mod_funcs[i].receiver_name.len() > 0
             && !contains_str(out, mod_funcs[i].name)) {
-            out = out.push(mod_funcs[i].name);
+            out = out.append(mod_funcs[i].name);
         }
         i = i + 1;
     }
@@ -572,7 +572,7 @@ function fn_returning_method_names(mod_funcs: parser.FuncDecl[]): string[] {
 // expression / statement list (for lambda capture analysis).
 function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
     match (e) {
-        parser.ExprIdent(id) => { if (!contains_str(acc, id.name)) { acc = acc.push(id.name); } },
+        parser.ExprIdent(id) => { if (!contains_str(acc, id.name)) { acc = acc.append(id.name); } },
         parser.ExprUnary(u) => { acc = collect_idents_expr(u.operand, acc); },
         parser.ExprBinary(b) => {
             acc = collect_idents_expr(b.left, acc);
@@ -618,7 +618,7 @@ function collect_idents_stmts(body: parser.Stmt[], acc: string[]): string[] {
         match (body[i]) {
             parser.StmtVar(v) => { acc = collect_idents_expr(v.init, acc); },
             parser.StmtAssign(a) => {
-                if (!contains_str(acc, a.target)) { acc = acc.push(a.target); }
+                if (!contains_str(acc, a.target)) { acc = acc.append(a.target); }
                 acc = collect_idents_expr(a.value, acc);
             },
             parser.StmtReturn(r) => { acc = collect_idents_expr(r.value, acc); },
@@ -654,7 +654,7 @@ function collect_bound_stmts(body: parser.Stmt[], acc: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
-            parser.StmtVar(v) => { if (!contains_str(acc, v.name)) { acc = acc.push(v.name); } },
+            parser.StmtVar(v) => { if (!contains_str(acc, v.name)) { acc = acc.append(v.name); } },
             parser.StmtIf(f) => {
                 acc = collect_bound_stmts(f.then_body, acc);
                 acc = collect_bound_stmts(f.else_body, acc);
@@ -664,10 +664,10 @@ function collect_bound_stmts(body: parser.Stmt[], acc: string[]): string[] {
                 if (comma_index(f.var_name) >= 0) {
                     var kn: string = before_comma(f.var_name);
                     var vn: string = after_comma(f.var_name);
-                    if (!contains_str(acc, kn)) { acc = acc.push(kn); }
-                    if (!contains_str(acc, vn)) { acc = acc.push(vn); }
+                    if (!contains_str(acc, kn)) { acc = acc.append(kn); }
+                    if (!contains_str(acc, vn)) { acc = acc.append(vn); }
                 } else if (!contains_str(acc, f.var_name)) {
-                    acc = acc.push(f.var_name);
+                    acc = acc.append(f.var_name);
                 }
                 acc = collect_bound_stmts(f.body, acc);
             },
@@ -677,7 +677,7 @@ function collect_bound_stmts(body: parser.Stmt[], acc: string[]): string[] {
                     match (m.arms[k].pattern) {
                         parser.PatVariant(pv) => {
                             if (pv.binding.len() > 0 && pv.binding != "_" && !contains_str(acc, pv.binding)) {
-                                acc = acc.push(pv.binding);
+                                acc = acc.append(pv.binding);
                             }
                         },
                         _ => {},
@@ -700,14 +700,14 @@ function lambda_captures(lm: parser.ExprLambda, cx: Ctx): string[] {
     var refs: string[] = collect_idents_stmts(lm.body, []);
     var bound: string[] = [];
     var pi: i32 = 0;
-    while (pi < lm.params.len()) { bound = bound.push(lm.params[pi].name); pi = pi + 1; }
+    while (pi < lm.params.len()) { bound = bound.append(lm.params[pi].name); pi = pi + 1; }
     bound = collect_bound_stmts(lm.body, bound);
     var caps: string[] = [];
     var ri: i32 = 0;
     while (ri < refs.len()) {
         var nm: string = refs[ri];
         if (!contains_str(bound, nm) && !contains_str(caps, nm) && contains_str(cx.all_locals, nm)) {
-            caps = caps.push(nm);
+            caps = caps.append(nm);
         }
         ri = ri + 1;
     }
@@ -754,7 +754,7 @@ function collect_tuple_locals(body: parser.Stmt[], cx: Ctx): Ctx {
                 match (v.init) {
                     parser.ExprTuple(t) => {
                         if (!contains_str(cx.tup_names, v.name)) {
-                            cx = Ctx { ...cx, tup_names: cx.tup_names.push(v.name), tup_kinds: cx.tup_kinds.push(tuple_kind_string(t.elements, cx)), tup_svtypes: cx.tup_svtypes.push(tuple_svtypes_csv(t.elements, cx)) };
+                            cx = Ctx { ...cx, tup_names: cx.tup_names.append(v.name), tup_kinds: cx.tup_kinds.append(tuple_kind_string(t.elements, cx)), tup_svtypes: cx.tup_svtypes.append(tuple_svtypes_csv(t.elements, cx)) };
                         }
                     },
                     _ => {},
@@ -1512,7 +1512,7 @@ function emit_dyn_dispatch(obj: parser.Expr, field: string, args: parser.Expr[],
     while (i < cx.mr_names.len()) {
         if (cx.mr_names[i] == field && is_struct_type(cx.structs, cx.mr_types[i])
                 && !contains_str(impls, cx.mr_types[i])) {
-            impls = impls.push(cx.mr_types[i]);
+            impls = impls.append(cx.mr_types[i]);
         }
         i = i + 1;
     }
@@ -2074,7 +2074,7 @@ function collect_struct_array_names(body: parser.Stmt[], cx: Ctx, acc: string[])
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
-            parser.StmtVar(v) => { if (sa_elem_decl_type(v, cx).len() > 0) { acc = acc.push(v.name); } },
+            parser.StmtVar(v) => { if (sa_elem_decl_type(v, cx).len() > 0) { acc = acc.append(v.name); } },
             parser.StmtIf(f) => {
                 acc = collect_struct_array_names(f.then_body, cx, acc);
                 acc = collect_struct_array_names(f.else_body, cx, acc);
@@ -2098,7 +2098,7 @@ function collect_struct_array_types(body: parser.Stmt[], cx: Ctx, acc: string[])
         match (body[i]) {
             parser.StmtVar(v) => {
                 var et: string = sa_elem_decl_type(v, cx);
-                if (et.len() > 0) { acc = acc.push(et); }
+                if (et.len() > 0) { acc = acc.append(et); }
             },
             parser.StmtIf(f) => {
                 acc = collect_struct_array_types(f.then_body, cx, acc);
@@ -2609,11 +2609,11 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (fa.field == "len" && c.args.len() == 0) {
                         return "(i32.load " + emit_expr(fa.obj, cx, depth) + ")";
                     }
-                    // `.push(v)` is array-only (strings have no push), so it
+                    // `.append(v)` is array-only (strings have no push), so it
                     // needs no type gate. Returns the (possibly grown) array.
                     // i64[]/f64[] use 8-byte-slot push helpers taking a wide
                     // value.
-                    if (fa.field == "push" && c.args.len() == 1) {
+                    if (fa.field == "append" && c.args.len() == 1) {
                         var pk: string = array_elem_kind(fa.obj, cx);
                         if (pk == "i64") {
                             return "(call $__fern_arr_push_i64 " + emit_expr(fa.obj, cx, depth) + " " + emit_i64(c.args[0], cx, depth) + ")";
@@ -2636,7 +2636,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // the generic length read (count sits at box offset 0).
                     if (is_map_expr(fa.obj, cx)) {
                         var mrecv: string = emit_expr(fa.obj, cx, depth);
-                        if ((fa.field == "set" || fa.field == "insert") && c.args.len() == 2) {
+                        if ((fa.field == "insert") && c.args.len() == 2) {
                             return "(call $__fern_map_set " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + " " + emit_expr(c.args[1], cx, depth + 1) + ")";
                         }
                         if (fa.field == "get" && c.args.len() == 1) {
@@ -2648,7 +2648,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         if (fa.field == "has" && c.args.len() == 1) {
                             return "(call $__fern_map_has " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + ")";
                         }
-                        if ((fa.field == "delete" || fa.field == "without") && c.args.len() == 1) {
+                        if ((fa.field == "without") && c.args.len() == 1) {
                             return "(call $__fern_map_delete " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + ")";
                         }
                         if (fa.field == "keys" && c.args.len() == 0) {
@@ -2900,10 +2900,10 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
                 if (comma_index(v.name) >= 0) {
                     var an: string = before_comma(v.name);
                     var bn: string = after_comma(v.name);
-                    if (!contains_str(acc, an)) { acc = acc.push(an); }
-                    if (!contains_str(acc, bn)) { acc = acc.push(bn); }
+                    if (!contains_str(acc, an)) { acc = acc.append(an); }
+                    if (!contains_str(acc, bn)) { acc = acc.append(bn); }
                 } else if (!contains_str(acc, v.name)) {
-                    acc = acc.push(v.name);
+                    acc = acc.append(v.name);
                 }
             },
             parser.StmtIf(f) => {
@@ -2919,10 +2919,10 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
                 if (comma_index(f.var_name) >= 0) {
                     var kn: string = before_comma(f.var_name);
                     var vn: string = after_comma(f.var_name);
-                    if (!contains_str(acc, kn)) { acc = acc.push(kn); }
-                    if (!contains_str(acc, vn)) { acc = acc.push(vn); }
+                    if (!contains_str(acc, kn)) { acc = acc.append(kn); }
+                    if (!contains_str(acc, vn)) { acc = acc.append(vn); }
                 } else if (!contains_str(acc, f.var_name)) {
-                    acc = acc.push(f.var_name);
+                    acc = acc.append(f.var_name);
                 }
                 acc = collect_locals(f.body, acc);
             },
@@ -2932,7 +2932,7 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
                     match (m.arms[k].pattern) {
                         parser.PatVariant(pv) => {
                             if (pv.binding.len() > 0 && pv.binding != "_" && !contains_str(acc, pv.binding)) {
-                                acc = acc.push(pv.binding);
+                                acc = acc.append(pv.binding);
                             }
                         },
                         _ => {},
@@ -3860,7 +3860,7 @@ function writefile_func(): string {
 // arr_helpers emits the array runtime: $__fern_arr_push appends v to the
 // array, growing geometrically (cap 0 → 4, else ×2) into a fresh block
 // and copying the elements when full. Returns the (possibly new) pointer,
-// matching `xs = xs.push(v)`. Depends on $__fern_alloc.
+// matching `xs = xs.append(v)`. Depends on $__fern_alloc.
 function arr_helpers(): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_push (param $a i32) (param $v i32) (result i32)\n";
@@ -5110,7 +5110,7 @@ function collect_str_funcs(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && mod.funcs[i].ret_type == "string") {
-            out = out.push(mod.funcs[i].name);
+            out = out.append(mod.funcs[i].name);
         }
         i = i + 1;
     }
@@ -5124,7 +5124,7 @@ function collect_str_arr_funcs(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && is_str_array_type(mod.funcs[i].ret_type)) {
-            out = out.push(mod.funcs[i].name);
+            out = out.append(mod.funcs[i].name);
         }
         i = i + 1;
     }
@@ -5148,12 +5148,12 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     var an: string = before_comma(v.name);
                     var at: string = tuple_elem_struct_type(v.init, 0, cx);
                     if (is_struct_type(cx.structs, at)) {
-                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(an), sv_types: cx.sv_types.push(at) };
+                        cx = Ctx { ...cx, sv_names: cx.sv_names.append(an), sv_types: cx.sv_types.append(at) };
                     }
                     var bn: string = after_comma(v.name);
                     var bt: string = tuple_elem_struct_type(v.init, 1, cx);
                     if (is_struct_type(cx.structs, bt)) {
-                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(bn), sv_types: cx.sv_types.push(bt) };
+                        cx = Ctx { ...cx, sv_names: cx.sv_names.append(bn), sv_types: cx.sv_types.append(bt) };
                     }
                 } else {
                     // Record a tuple local's per-element kinds + struct types
@@ -5163,7 +5163,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     match (v.init) {
                         parser.ExprTuple(t) => {
                             if (!contains_str(cx.tup_names, v.name)) {
-                                cx = Ctx { ...cx, tup_names: cx.tup_names.push(v.name), tup_kinds: cx.tup_kinds.push(tuple_kind_string(t.elements, cx)), tup_svtypes: cx.tup_svtypes.push(tuple_svtypes_csv(t.elements, cx)) };
+                                cx = Ctx { ...cx, tup_names: cx.tup_names.append(v.name), tup_kinds: cx.tup_kinds.append(tuple_kind_string(t.elements, cx)), tup_svtypes: cx.tup_svtypes.append(tuple_svtypes_csv(t.elements, cx)) };
                             }
                         },
                         _ => {},
@@ -5175,9 +5175,9 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     var akind: string = arr_kind_of_spelling(v.type_name);
                     if (akind == "i32") { akind = array_elem_kind(v.init, cx); }
                     if (akind == "i64" && !contains_str(cx.i64_arr_names, v.name)) {
-                        cx = Ctx { ...cx, i64_arr_names: cx.i64_arr_names.push(v.name) };
+                        cx = Ctx { ...cx, i64_arr_names: cx.i64_arr_names.append(v.name) };
                     } else if (akind == "f64" && !contains_str(cx.f64_arr_names, v.name)) {
-                        cx = Ctx { ...cx, f64_arr_names: cx.f64_arr_names.push(v.name) };
+                        cx = Ctx { ...cx, f64_arr_names: cx.f64_arr_names.append(v.name) };
                     }
                     // Option/Result-typed var → track its payload type so a
                     // later `match (v)` types the Some/Ok binding.
@@ -5189,13 +5189,13 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     // type when the declared type is neither struct nor enum.
                     if (!is_struct_type(cx.structs, styp) && !is_enum_type_name(cx, styp)) { styp = struct_type_of(v.init, cx); }
                     if (optpay.len() > 0) {
-                        cx = Ctx { ...cx, ol_names: cx.ol_names.push(v.name), ol_payloads: cx.ol_payloads.push(optpay) };
+                        cx = Ctx { ...cx, ol_names: cx.ol_names.append(v.name), ol_payloads: cx.ol_payloads.append(optpay) };
                     } else if (is_struct_type(cx.structs, styp) || is_enum_type_name(cx, styp)) {
-                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(v.name), sv_types: cx.sv_types.push(styp) };
+                        cx = Ctx { ...cx, sv_names: cx.sv_names.append(v.name), sv_types: cx.sv_types.append(styp) };
                     } else if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
-                        cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(v.name) };
+                        cx = Ctx { ...cx, str_arrays: cx.str_arrays.append(v.name) };
                     } else if (v.type_name == "string" || is_string_expr(v.init, cx)) {
-                        cx = Ctx { ...cx, locals: cx.locals.push(v.name) };
+                        cx = Ctx { ...cx, locals: cx.locals.append(v.name) };
                     }
                 }
             },
@@ -5211,19 +5211,19 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     // `for (k, v) in m` — k is a string for a string-keyed
                     // map, v for a string-valued map.
                     if (is_str_key_map(f.iter, cx)) {
-                        cx = Ctx { ...cx, locals: cx.locals.push(before_comma(f.var_name)) };
+                        cx = Ctx { ...cx, locals: cx.locals.append(before_comma(f.var_name)) };
                     }
                     if (is_str_val_map(f.iter, cx)) {
-                        cx = Ctx { ...cx, locals: cx.locals.push(after_comma(f.var_name)) };
+                        cx = Ctx { ...cx, locals: cx.locals.append(after_comma(f.var_name)) };
                     }
                 } else if (is_string_array_expr(f.iter, cx)) {
                     // A `for s in <string[]>` binds s as a string.
-                    cx = Ctx { ...cx, locals: cx.locals.push(f.var_name) };
+                    cx = Ctx { ...cx, locals: cx.locals.append(f.var_name) };
                 } else {
                     // A `for p in <Struct[]>` binds p as that struct.
                     var set: string = struct_array_elem_type(f.iter, cx);
                     if (set.len() > 0) {
-                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(f.var_name), sv_types: cx.sv_types.push(set) };
+                        cx = Ctx { ...cx, sv_names: cx.sv_names.append(f.var_name), sv_types: cx.sv_types.append(set) };
                     }
                 }
                 cx = collect_str_locals_stmts(f.body, cx);
@@ -5239,11 +5239,11 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                         parser.PatVariant(pv) => {
                             if ((pv.type_name == "Some" || pv.type_name == "Ok") && pv.binding.len() > 0 && pv.binding != "_") {
                                 if (pt == "string") {
-                                    cx = Ctx { ...cx, locals: cx.locals.push(pv.binding) };
+                                    cx = Ctx { ...cx, locals: cx.locals.append(pv.binding) };
                                 } else if (is_str_array_type(pt)) {
-                                    cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(pv.binding) };
+                                    cx = Ctx { ...cx, str_arrays: cx.str_arrays.append(pv.binding) };
                                 } else if (is_struct_type(cx.structs, pt)) {
-                                    cx = Ctx { ...cx, sv_names: cx.sv_names.push(pv.binding), sv_types: cx.sv_types.push(pt) };
+                                    cx = Ctx { ...cx, sv_names: cx.sv_names.append(pv.binding), sv_types: cx.sv_types.append(pt) };
                                 }
                             } else if (is_struct_type(cx.structs, pv.type_name) && pv.binding.len() > 0 && pv.binding != "_") {
                                 if (struct_field_index(cx.structs, pv.type_name, "__ev") >= 0) {
@@ -5257,14 +5257,14 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                                     // struct/enum payload as its nominal type.
                                     var paytype: string = struct_field_type(cx.structs, pv.type_name, "__ev");
                                     if (paytype == "string") {
-                                        cx = Ctx { ...cx, locals: cx.locals.push(pv.binding) };
+                                        cx = Ctx { ...cx, locals: cx.locals.append(pv.binding) };
                                     } else if (is_struct_type(cx.structs, paytype) || is_enum_type_name(cx, paytype)) {
-                                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(pv.binding), sv_types: cx.sv_types.push(paytype) };
+                                        cx = Ctx { ...cx, sv_names: cx.sv_names.append(pv.binding), sv_types: cx.sv_types.append(paytype) };
                                     }
                                 } else {
                                     // Struct-union arm `Variant(b)` binds b to
                                     // the value itself, typed as that struct.
-                                    cx = Ctx { ...cx, sv_names: cx.sv_names.push(pv.binding), sv_types: cx.sv_types.push(pv.type_name) };
+                                    cx = Ctx { ...cx, sv_names: cx.sv_names.append(pv.binding), sv_types: cx.sv_types.append(pv.type_name) };
                                 }
                             }
                         },
@@ -5286,13 +5286,13 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var all_locals: string[] = collect_locals(f.body, []);
     var alp: i32 = 0;
     while (alp < f.params.len()) {
-        if (!contains_str(all_locals, f.params[alp].name)) { all_locals = all_locals.push(f.params[alp].name); }
+        if (!contains_str(all_locals, f.params[alp].name)) { all_locals = all_locals.append(f.params[alp].name); }
         alp = alp + 1;
     }
     // A method's receiver is also a local in scope, so a lambda in the
     // method body can capture it (`return function() { … a.field … }`).
     if (f.receiver_name.len() > 0 && !contains_str(all_locals, f.receiver_name)) {
-        all_locals = all_locals.push(f.receiver_name);
+        all_locals = all_locals.append(f.receiver_name);
     }
     // Closure-typed locals/params: `fn` params + vars bound to a lambda
     // or to a call of a function that returns a closure. `fn[]` arrays of
@@ -5301,7 +5301,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var fpa: i32 = 0;
     while (fpa < f.params.len()) {
         if (f.params[fpa].type_name == "fn[]" && !contains_str(fn_arrs, f.params[fpa].name)) {
-            fn_arrs = fn_arrs.push(f.params[fpa].name);
+            fn_arrs = fn_arrs.append(f.params[fpa].name);
         }
         fpa = fpa + 1;
     }
@@ -5309,7 +5309,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var fp: i32 = 0;
     while (fp < f.params.len()) {
         if (f.params[fp].type_name == "fn" && !contains_str(fn_names, f.params[fp].name)) {
-            fn_names = fn_names.push(f.params[fp].name);
+            fn_names = fn_names.append(f.params[fp].name);
         }
         fp = fp + 1;
     }
@@ -5326,44 +5326,44 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var pj: i32 = 0;
     while (pj < f.params.len()) {
         if (f.params[pj].type_name == "i64" && !contains_str(i64_names, f.params[pj].name)) {
-            i64_names = i64_names.push(f.params[pj].name);
+            i64_names = i64_names.append(f.params[pj].name);
         }
         if (is_float_type(f.params[pj].type_name) && !contains_str(f64_names, f.params[pj].name)) {
-            f64_names = f64_names.push(f.params[pj].name);
+            f64_names = f64_names.append(f.params[pj].name);
         }
         if (base_type_name(f.params[pj].type_name) == "Map" && !contains_str(map_names, f.params[pj].name)) {
-            map_names = map_names.push(f.params[pj].name);
+            map_names = map_names.append(f.params[pj].name);
         }
         pj = pj + 1;
     }
     // A method's receiver is a struct-typed local (a generic receiver
     // `Box[T]` / `Box[i32]` strips to its base struct name).
     if (f.receiver_type.len() > 0) {
-        sv_names = sv_names.push(f.receiver_name);
-        sv_types = sv_types.push(base_type_name(f.receiver_type));
+        sv_names = sv_names.append(f.receiver_name);
+        sv_types = sv_types.append(base_type_name(f.receiver_type));
     }
     var i: i32 = 0;
     while (i < f.params.len()) {
         var pop: string = parse_option_payload(f.params[i].type_name);
         if (pop.len() > 0) {
-            ol_names = ol_names.push(f.params[i].name);
-            ol_payloads = ol_payloads.push(pop);
+            ol_names = ol_names.append(f.params[i].name);
+            ol_payloads = ol_payloads.append(pop);
         } else if (is_str_array_type(f.params[i].type_name)) {
-            str_arrays = str_arrays.push(f.params[i].name);
+            str_arrays = str_arrays.append(f.params[i].name);
         } else if (is_struct_type(structs, base_type_name(f.params[i].type_name))) {
             // Generic instantiation `Box[i32]` / param `Box[T]` strips to
             // the base struct name `Box`.
-            sv_names = sv_names.push(f.params[i].name);
-            sv_types = sv_types.push(base_type_name(f.params[i].type_name));
+            sv_names = sv_names.append(f.params[i].name);
+            sv_types = sv_types.append(base_type_name(f.params[i].type_name));
         } else if (f.params[i].type_name == "string") {
-            locals = locals.push(f.params[i].name);
+            locals = locals.append(f.params[i].name);
         }
         i = i + 1;
     }
     // String captures type as string locals inside the lambda body.
     var csi: i32 = 0;
     while (csi < cap_str.len()) {
-        if (!contains_str(locals, cap_str[csi])) { locals = locals.push(cap_str[csi]); }
+        if (!contains_str(locals, cap_str[csi])) { locals = locals.append(cap_str[csi]); }
         csi = csi + 1;
     }
     // Struct captures keep their struct type inside the lambda body, so
@@ -5373,8 +5373,8 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cvi: i32 = 0;
     while (cvi < cap_sv_names.len()) {
         if (!contains_str(sv_names, cap_sv_names[cvi])) {
-            sv_names = sv_names.push(cap_sv_names[cvi]);
-            sv_types = sv_types.push(cap_sv_types[cvi]);
+            sv_names = sv_names.append(cap_sv_names[cvi]);
+            sv_types = sv_types.append(cap_sv_types[cvi]);
         }
         cvi = cvi + 1;
     }
@@ -5384,8 +5384,8 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var f64_arrs: string[] = [];
     var pa: i32 = 0;
     while (pa < f.params.len()) {
-        if (f.params[pa].type_name == "i64[]") { i64_arrs = i64_arrs.push(f.params[pa].name); }
-        if (f.params[pa].type_name == "f64[]" || f.params[pa].type_name == "f32[]") { f64_arrs = f64_arrs.push(f.params[pa].name); }
+        if (f.params[pa].type_name == "i64[]") { i64_arrs = i64_arrs.append(f.params[pa].name); }
+        if (f.params[pa].type_name == "f64[]" || f.params[pa].type_name == "f32[]") { f64_arrs = f64_arrs.append(f.params[pa].name); }
         pa = pa + 1;
     }
     var cx: Ctx = Ctx {
@@ -5420,8 +5420,8 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         if (pt.len() > 2 && pt[pt.len() - 2:pt.len()] == "[]") {
             var pe: string = pt[0:pt.len() - 2];
             if (is_struct_type(structs, pe) && !contains_str(san, f.params[sap].name)) {
-                san = san.push(f.params[sap].name);
-                sat = sat.push(pe);
+                san = san.append(f.params[sap].name);
+                sat = sat.append(pe);
             }
         }
         sap = sap + 1;
@@ -5446,7 +5446,7 @@ function collect_opt_func_names(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && parse_option_payload(mod.funcs[i].ret_type).len() > 0) {
-            out = out.push(mod.funcs[i].name);
+            out = out.append(mod.funcs[i].name);
         }
         i = i + 1;
     }
@@ -5459,7 +5459,7 @@ function collect_method_types(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() > 0) { out = out.push(base_type_name(mod.funcs[i].receiver_type)); }
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(base_type_name(mod.funcs[i].receiver_type)); }
         i = i + 1;
     }
     return out;
@@ -5469,7 +5469,7 @@ function collect_method_names(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() > 0) { out = out.push(mod.funcs[i].name); }
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(mod.funcs[i].name); }
         i = i + 1;
     }
     return out;
@@ -5479,7 +5479,7 @@ function collect_method_rets(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() > 0) { out = out.push(mod.funcs[i].ret_type); }
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(mod.funcs[i].ret_type); }
         i = i + 1;
     }
     return out;
@@ -5491,7 +5491,7 @@ function collect_opt_func_payloads(mod: parser.Module): string[] {
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0) {
             var p: string = parse_option_payload(mod.funcs[i].ret_type);
-            if (p.len() > 0) { out = out.push(p); }
+            if (p.len() > 0) { out = out.append(p); }
         }
         i = i + 1;
     }
@@ -5505,7 +5505,7 @@ function collect_struct_func_names(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && is_struct_type(mod.structs, mod.funcs[i].ret_type)) {
-            out = out.push(mod.funcs[i].name);
+            out = out.append(mod.funcs[i].name);
         }
         i = i + 1;
     }
@@ -5517,7 +5517,7 @@ function collect_struct_func_types(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && is_struct_type(mod.structs, mod.funcs[i].ret_type)) {
-            out = out.push(mod.funcs[i].ret_type);
+            out = out.append(mod.funcs[i].ret_type);
         }
         i = i + 1;
     }
@@ -5540,10 +5540,10 @@ function returns_value(ret_type: string): boolean {
 // lambda cells so nested lambdas keep counting.
 function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): string {
     var ps: parser.ParamDecl[] = [];
-    ps = ps.push(parser.ParamDecl { name: "__env", type_name: "i32", own: false });
+    ps = ps.append(parser.ParamDecl { name: "__env", type_name: "i32", own: false });
     var i: i32 = 0;
     while (i < lm.params.len()) {
-        ps = ps.push(lm.params[i]);
+        ps = ps.append(lm.params[i]);
         i = i + 1;
     }
     var rt: string = lm.ret_type;
@@ -5563,11 +5563,11 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
     var cap_sv_types: string[] = [];
     var ci: i32 = 0;
     while (ci < caps.len()) {
-        if (contains_str(cx.locals, caps[ci])) { cap_str = cap_str.push(caps[ci]); }
+        if (contains_str(cx.locals, caps[ci])) { cap_str = cap_str.append(caps[ci]); }
         var cst: string = struct_type_of(parser.ExprIdent { name: caps[ci], line: 0, col: 0 }, cx);
         if (cst.len() > 0) {
-            cap_sv_names = cap_sv_names.push(caps[ci]);
-            cap_sv_types = cap_sv_types.push(cst);
+            cap_sv_names = cap_sv_names.append(caps[ci]);
+            cap_sv_types = cap_sv_types.append(cst);
         }
         ci = ci + 1;
     }
@@ -5588,7 +5588,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     if (f.receiver_type.len() > 0) {
         fname = base_type_name(f.receiver_type) + "__" + f.name;
         head = head + fname + " (param $" + f.receiver_name + " i32)";
-        pnames = pnames.push(f.receiver_name);
+        pnames = pnames.append(f.receiver_name);
     } else {
         head = head + fname;
     }
@@ -5600,14 +5600,14 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     while (i < f.params.len()) {
         if (f.params[i].type_name == "i64") {
             head = head + " (param $" + f.params[i].name + " i64)";
-            if (!contains_str(i64_set, f.params[i].name)) { i64_set = i64_set.push(f.params[i].name); }
+            if (!contains_str(i64_set, f.params[i].name)) { i64_set = i64_set.append(f.params[i].name); }
         } else if (is_float_type(f.params[i].type_name)) {
             head = head + " (param $" + f.params[i].name + " f64)";
-            if (!contains_str(f64_set, f.params[i].name)) { f64_set = f64_set.push(f.params[i].name); }
+            if (!contains_str(f64_set, f.params[i].name)) { f64_set = f64_set.append(f.params[i].name); }
         } else {
             head = head + " (param $" + f.params[i].name + " i32)";
         }
-        pnames = pnames.push(f.params[i].name);
+        pnames = pnames.append(f.params[i].name);
         i = i + 1;
     }
     var has_result: boolean = returns_value(f.ret_type);
@@ -6032,14 +6032,14 @@ function collect_wide_loop_vars(body: parser.Stmt[], arrs: string[], kind: strin
         match (body[i]) {
             parser.StmtVar(v) => {
                 if ((v.type_name == declty || (kind == "f64" && v.type_name == "f32[]")) && !contains_str(arrs, v.name)) {
-                    arrs = arrs.push(v.name);
+                    arrs = arrs.append(v.name);
                 }
             },
             parser.StmtFor(f) => {
                 if (comma_index(f.var_name) < 0) {
                     match (f.iter) {
                         parser.ExprIdent(id) => {
-                            if (contains_str(arrs, id.name) && !contains_str(acc, f.var_name)) { acc = acc.push(f.var_name); }
+                            if (contains_str(arrs, id.name) && !contains_str(acc, f.var_name)) { acc = acc.append(f.var_name); }
                         },
                         _ => {},
                     }
@@ -6072,8 +6072,8 @@ function wide_array_param_names(f: parser.FuncDecl, kind: string): string[] {
     var i: i32 = 0;
     while (i < f.params.len()) {
         var t: string = f.params[i].type_name;
-        if (kind == "i64" && t == "i64[]") { out = out.push(f.params[i].name); }
-        if (kind == "f64" && (t == "f64[]" || t == "f32[]")) { out = out.push(f.params[i].name); }
+        if (kind == "i64" && t == "i64[]") { out = out.append(f.params[i].name); }
+        if (kind == "f64" && (t == "f64[]" || t == "f32[]")) { out = out.append(f.params[i].name); }
         i = i + 1;
     }
     return out;
@@ -6084,7 +6084,7 @@ function collect_i64_var_names(body: parser.Stmt[], acc: string[]): string[] {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                if (v.type_name == "i64" && !contains_str(acc, v.name)) { acc = acc.push(v.name); }
+                if (v.type_name == "i64" && !contains_str(acc, v.name)) { acc = acc.append(v.name); }
             },
             parser.StmtIf(f) => {
                 acc = collect_i64_var_names(f.then_body, acc);
@@ -6117,7 +6117,7 @@ function collect_i64_func_names(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && mod.funcs[i].ret_type == "i64") {
-            out = out.push(mod.funcs[i].name);
+            out = out.append(mod.funcs[i].name);
         }
         i = i + 1;
     }
@@ -6157,7 +6157,7 @@ function collect_f64_var_names(body: parser.Stmt[], acc: string[]): string[] {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                if ((is_float_type(v.type_name) || var_init_is_f64(v.init)) && !contains_str(acc, v.name)) { acc = acc.push(v.name); }
+                if ((is_float_type(v.type_name) || var_init_is_f64(v.init)) && !contains_str(acc, v.name)) { acc = acc.append(v.name); }
             },
             parser.StmtIf(f) => {
                 acc = collect_f64_var_names(f.then_body, acc);
@@ -6188,7 +6188,7 @@ function collect_f64_func_names(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && is_float_type(mod.funcs[i].ret_type)) {
-            out = out.push(mod.funcs[i].name);
+            out = out.append(mod.funcs[i].name);
         }
         i = i + 1;
     }

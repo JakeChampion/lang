@@ -7,7 +7,7 @@ import (
 )
 
 // Union-of-structs array literals must wrap each element into the union, the
-// same way a single `var n: N = A { … }`, a `return`, or an `arr.push(A { … })`
+// same way a single `var n: N = A { … }`, a `return`, or an `arr.append(A { … })`
 // argument is. Before the fix the checker's ArrayLit case had no union-wrap:
 // `var xs: N[] = [A { … }, B { … }]` stored bare, un-tagged structs, so a later
 // `match` misfired (the interpreter reported "match scrutinee is *interp.Struct,

@@ -126,7 +126,7 @@ function main(): i32 {
 	"array_iterate": `
 function main(): i32 {
 	var xs: i32[] = [1, 2, 3];
-	xs = xs.push(4);
+	xs = xs.append(4);
 	var sum: i32 = 0;
 	for x in xs { sum = sum + x; }
 	return sum;

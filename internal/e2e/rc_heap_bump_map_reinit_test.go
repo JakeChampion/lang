@@ -25,8 +25,8 @@ function main(): i32 {
     var acc: i32 = 0;
     while (i < ` + n + `) {
         var m: Map[i32, i32] = map_new(8);
-        m = m.set(i, i * 2);
-        m = m.set(i + 1, i * 3);
+        m = m.insert(i, i * 2);
+        m = m.insert(i + 1, i * 3);
         acc = acc + m.get_or(i, 0);
         i = i + 1;
     }
@@ -42,8 +42,8 @@ function main(): i32 {
     var acc: i32 = 0;
     while (i < 200) {
         var m: Map[string, i32] = map_new(8);
-        m = m.set("alpha", i);
-        m = m.set("beta", i + 1);
+        m = m.insert("alpha", i);
+        m = m.insert("beta", i + 1);
         acc = acc + m.get_or("alpha", 0) + m.get_or("beta", 0);
         i = i + 1;
     }

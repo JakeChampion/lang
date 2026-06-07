@@ -43,11 +43,7 @@ func TestSelfHostMachO(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	macho, err := os.ReadFile("../../examples/self_host/macho.fern")
-	if err != nil {
-		t.Fatalf("read macho.fern: %v", err)
-	}
-	source := string(macho) + "\n" + machoSelfTestMain
+	source := arm64NativeSrc(t) + "\n" + machoSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {

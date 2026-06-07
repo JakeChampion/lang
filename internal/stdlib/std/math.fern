@@ -30,7 +30,7 @@ pub function range(start: i32, end: i32): i32[] {
     var out: i32[] = [];
     var i: i32 = start;
     while (i < end) {
-        out = out.push(i);
+        out = out.append(i);
         i = i + 1;
     }
     return out;
@@ -44,7 +44,7 @@ pub function range_step(start: i32, end: i32, step: i32): i32[] {
     if (step <= 0) { return out; }
     var i: i32 = start;
     while (i < end) {
-        out = out.push(i);
+        out = out.append(i);
         i = i + step;
     }
     return out;

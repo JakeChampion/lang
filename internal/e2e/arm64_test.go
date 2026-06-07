@@ -350,19 +350,19 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) {
                 i = i + 1;
             }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -614,13 +614,13 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -778,7 +778,7 @@ function main(): i32 {
 }
 
 // Regression for the void-call phantom-push codegen bug.
-// `arr.push(v)` inlines an internal `__memcpy` call which is
+// `arr.append(v)` inlines an internal `__memcpy` call which is
 // VOID-RETURNING in lang's type system. The native backends
 // (arm64 + x86_64) previously pushed rax/x0 unconditionally
 // after every `bl`/`call`, leaving a phantom slot from the
@@ -787,14 +787,14 @@ function main(): i32 {
 // struct-lit field initialiser — corrupting the field address
 // and crashing on the subsequent store. Fixed by gating the
 // post-call push on the callee's return type (void → no push).
-// This shape (struct lit containing arr.push(...)) is the
+// This shape (struct lit containing arr.append(...)) is the
 // minimal trigger.
 func TestArm64StructLitWithArrayPush(t *testing.T) {
 	src := `struct State { vals: i32[] }
 
 function main(): i32 {
     var s: State = State { vals: [10] };
-    s = State { vals: s.vals.push(42) };
+    s = State { vals: s.vals.append(42) };
     return s.vals[0] + s.vals[1];
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -867,35 +867,35 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1001 });
+            toks = toks.append(TokPunct { ch: 1001 });
             i = i + 2;
         } else if (b == 33 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1002 });
+            toks = toks.append(TokPunct { ch: 1002 });
             i = i + 2;
         } else if (b == 60 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1004 });
+            toks = toks.append(TokPunct { ch: 1004 });
             i = i + 2;
         } else if (b == 62 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1006 });
+            toks = toks.append(TokPunct { ch: 1006 });
             i = i + 2;
         } else if (b == 60) {
-            toks = toks.push(TokPunct { ch: 1003 });
+            toks = toks.append(TokPunct { ch: 1003 });
             i = i + 1;
         } else if (b == 62) {
-            toks = toks.push(TokPunct { ch: 1005 });
+            toks = toks.append(TokPunct { ch: 1005 });
             i = i + 1;
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -939,10 +939,10 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
                 cur[0] = cur[0] + 1;
                 return Call { name: name, args: args };
             }
-            args = args.push(parse_expr(toks, cur));
+            args = args.append(parse_expr(toks, cur));
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
                 cur[0] = cur[0] + 1;
-                args = args.push(parse_expr(toks, cur));
+                args = args.append(parse_expr(toks, cur));
             }
             cur[0] = cur[0] + 1;
             return Call { name: name, args: args };
@@ -1026,7 +1026,7 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
         cur[0] = cur[0] + 1;
         body = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
-            body = body.push(parse_stmt(toks, cur));
+            body = body.append(parse_stmt(toks, cur));
         }
         cur[0] = cur[0] + 1;
         return WhileSt { cond: cond, body: body };
@@ -1039,7 +1039,7 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
         cur[0] = cur[0] + 1;   // {
         var thn: Stmt[] = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
-            thn = thn.push(parse_stmt(toks, cur));
+            thn = thn.append(parse_stmt(toks, cur));
         }
         cur[0] = cur[0] + 1;   // }
         // Optional else / else if.
@@ -1049,11 +1049,11 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
             if (expect_kw(toks, cur[0], "if")) {
                 // else if — recursively parse the nested if as
                 // the sole stmt of the else body.
-                els = els.push(parse_stmt(toks, cur));
+                els = els.append(parse_stmt(toks, cur));
             } else {
                 cur[0] = cur[0] + 1;   // {
                 while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
-                    els = els.push(parse_stmt(toks, cur));
+                    els = els.append(parse_stmt(toks, cur));
                 }
                 cur[0] = cur[0] + 1;   // }
             }
@@ -1086,11 +1086,11 @@ function parse_program(src: string): Program {
         cur[0] = cur[0] + 1;
         var params: string[] = [];
         if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
-            params = params.push(tok_ident_name(toks[cur[0]]));
+            params = params.append(tok_ident_name(toks[cur[0]]));
             cur[0] = cur[0] + 1;
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
                 cur[0] = cur[0] + 1;
-                params = params.push(tok_ident_name(toks[cur[0]]));
+                params = params.append(tok_ident_name(toks[cur[0]]));
                 cur[0] = cur[0] + 1;
             }
         }
@@ -1098,14 +1098,14 @@ function parse_program(src: string): Program {
         cur[0] = cur[0] + 1;
         var body: Stmt[] = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
-            body = body.push(parse_stmt(toks, cur));
+            body = body.append(parse_stmt(toks, cur));
         }
         cur[0] = cur[0] + 1;
-        fns = fns.push(FnDef { name: name, params: params, body: body });
+        fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_stmts: Stmt[] = [];
     while (tok_kind(toks[cur[0]]) != 3) {
-        main_stmts = main_stmts.push(parse_stmt(toks, cur));
+        main_stmts = main_stmts.append(parse_stmt(toks, cur));
     }
     return Program { fns: fns, main_stmts: main_stmts };
 }
@@ -1137,8 +1137,8 @@ function env_assign(names: string[], values: i32[], name: string, v: i32): i32[]
             var out: i32[] = [];
             var j: i32 = 0;
             while (j < values.len()) {
-                if (j == i) { out = out.push(v); }
-                else { out = out.push(values[j]); }
+                if (j == i) { out = out.append(v); }
+                else { out = out.append(values[j]); }
                 j = j + 1;
             }
             return out;
@@ -1172,8 +1172,8 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             var fresh_v: i32[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) {
-                fresh_n = fresh_n.push(fns[idx].params[i]);
-                fresh_v = fresh_v.push(eval_expr(c.args[i], names, values, fns));
+                fresh_n = fresh_n.append(fns[idx].params[i]);
+                fresh_v = fresh_v.append(eval_expr(c.args[i], names, values, fns));
                 i = i + 1;
             }
             var inner: StepState = run_block(fns[idx].body, fresh_n, fresh_v, fns);
@@ -1196,8 +1196,8 @@ function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
         VarDecl(vd) => {
             v = eval_expr(vd.value, state.names, state.values, fns);
             return StepState {
-                names: state.names.push(vd.name),
-                values: state.values.push(v),
+                names: state.names.append(vd.name),
+                values: state.values.append(v),
                 done: state.done,
                 result: state.result,
             };
@@ -1385,35 +1385,35 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1001 });   // ==
+            toks = toks.append(TokPunct { ch: 1001 });   // ==
             i = i + 2;
         } else if (b == 33 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1002 });   // !=
+            toks = toks.append(TokPunct { ch: 1002 });   // !=
             i = i + 2;
         } else if (b == 60 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1004 });   // <=
+            toks = toks.append(TokPunct { ch: 1004 });   // <=
             i = i + 2;
         } else if (b == 62 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1006 });   // >=
+            toks = toks.append(TokPunct { ch: 1006 });   // >=
             i = i + 2;
         } else if (b == 60) {
-            toks = toks.push(TokPunct { ch: 1003 });
+            toks = toks.append(TokPunct { ch: 1003 });
             i = i + 1;
         } else if (b == 62) {
-            toks = toks.push(TokPunct { ch: 1005 });
+            toks = toks.append(TokPunct { ch: 1005 });
             i = i + 1;
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -1458,10 +1458,10 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
                 cur[0] = cur[0] + 1;
                 return Call { name: name, args: args };
             }
-            args = args.push(parse_expr(toks, cur));
+            args = args.append(parse_expr(toks, cur));
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
                 cur[0] = cur[0] + 1;   // skip ','
-                args = args.push(parse_expr(toks, cur));
+                args = args.append(parse_expr(toks, cur));
             }
             cur[0] = cur[0] + 1;   // skip ')'
             return Call { name: name, args: args };
@@ -1547,7 +1547,7 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
         cur[0] = cur[0] + 1;   // skip '{'
         body = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
-            body = body.push(parse_stmt(toks, cur));
+            body = body.append(parse_stmt(toks, cur));
         }
         cur[0] = cur[0] + 1;   // skip '}'
         return WhileSt { cond: cond, body: body };
@@ -1560,7 +1560,7 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
         cur[0] = cur[0] + 1;   // skip '{'
         body = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
-            body = body.push(parse_stmt(toks, cur));
+            body = body.append(parse_stmt(toks, cur));
         }
         cur[0] = cur[0] + 1;   // skip '}'
         return IfSt { cond: cond, body: body };
@@ -1594,11 +1594,11 @@ function parse_program(src: string): Program {
         cur[0] = cur[0] + 1;   // skip '('
         var params: string[] = [];
         if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
-            params = params.push(tok_ident_name(toks[cur[0]]));
+            params = params.append(tok_ident_name(toks[cur[0]]));
             cur[0] = cur[0] + 1;
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
                 cur[0] = cur[0] + 1;   // skip ','
-                params = params.push(tok_ident_name(toks[cur[0]]));
+                params = params.append(tok_ident_name(toks[cur[0]]));
                 cur[0] = cur[0] + 1;
             }
         }
@@ -1606,14 +1606,14 @@ function parse_program(src: string): Program {
         cur[0] = cur[0] + 1;   // skip '{'
         var body: Stmt[] = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
-            body = body.push(parse_stmt(toks, cur));
+            body = body.append(parse_stmt(toks, cur));
         }
         cur[0] = cur[0] + 1;   // skip '}'
-        fns = fns.push(FnDef { name: name, params: params, body: body });
+        fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_stmts: Stmt[] = [];
     while (tok_kind(toks[cur[0]]) != 3) {
-        main_stmts = main_stmts.push(parse_stmt(toks, cur));
+        main_stmts = main_stmts.append(parse_stmt(toks, cur));
     }
     return Program { fns: fns, main_stmts: main_stmts };
 }
@@ -1645,8 +1645,8 @@ function env_assign(names: string[], values: i32[], name: string, v: i32): i32[]
             var out: i32[] = [];
             var j: i32 = 0;
             while (j < values.len()) {
-                if (j == i) { out = out.push(v); }
-                else { out = out.push(values[j]); }
+                if (j == i) { out = out.append(v); }
+                else { out = out.append(values[j]); }
                 j = j + 1;
             }
             return out;
@@ -1680,8 +1680,8 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             var fresh_v: i32[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) {
-                fresh_n = fresh_n.push(fns[idx].params[i]);
-                fresh_v = fresh_v.push(eval_expr(c.args[i], names, values, fns));
+                fresh_n = fresh_n.append(fns[idx].params[i]);
+                fresh_v = fresh_v.append(eval_expr(c.args[i], names, values, fns));
                 i = i + 1;
             }
             // Run the function body as a statement block with
@@ -1709,8 +1709,8 @@ function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
         VarDecl(vd) => {
             v = eval_expr(vd.value, state.names, state.values, fns);
             return StepState {
-                names: state.names.push(vd.name),
-                values: state.values.push(v),
+                names: state.names.append(vd.name),
+                values: state.values.append(v),
                 done: state.done,
                 result: state.result,
             };
@@ -1897,35 +1897,35 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1001 });   // ==
+            toks = toks.append(TokPunct { ch: 1001 });   // ==
             i = i + 2;
         } else if (b == 33 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1002 });   // !=
+            toks = toks.append(TokPunct { ch: 1002 });   // !=
             i = i + 2;
         } else if (b == 60 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1004 });   // <=
+            toks = toks.append(TokPunct { ch: 1004 });   // <=
             i = i + 2;
         } else if (b == 62 && i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { ch: 1006 });   // >=
+            toks = toks.append(TokPunct { ch: 1006 });   // >=
             i = i + 2;
         } else if (b == 60) {
-            toks = toks.push(TokPunct { ch: 1003 });   // <
+            toks = toks.append(TokPunct { ch: 1003 });   // <
             i = i + 1;
         } else if (b == 62) {
-            toks = toks.push(TokPunct { ch: 1005 });   // >
+            toks = toks.append(TokPunct { ch: 1005 });   // >
             i = i + 1;
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -2040,7 +2040,7 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
         cur[0] = cur[0] + 1;   // skip '{'
         var body: Stmt[] = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
-            body = body.push(parse_stmt(toks, cur));
+            body = body.append(parse_stmt(toks, cur));
         }
         cur[0] = cur[0] + 1;   // skip '}'
         return WhileSt { cond: cond, body: body };
@@ -2059,7 +2059,7 @@ function parse_program(src: string): Stmt[] {
     var cur: i32[] = [0];
     var stmts: Stmt[] = [];
     while (tok_kind(toks[cur[0]]) != 3) {
-        stmts = stmts.push(parse_stmt(toks, cur));
+        stmts = stmts.append(parse_stmt(toks, cur));
     }
     return stmts;
 }
@@ -2101,8 +2101,8 @@ function env_assign(names: string[], values: i32[], name: string, v: i32): i32[]
             var out: i32[] = [];
             var j: i32 = 0;
             while (j < values.len()) {
-                if (j == i) { out = out.push(v); }
-                else { out = out.push(values[j]); }
+                if (j == i) { out = out.append(v); }
+                else { out = out.append(values[j]); }
                 j = j + 1;
             }
             return out;
@@ -2125,8 +2125,8 @@ function eval_stmt(s: Stmt, state: StepState): StepState {
         VarDecl(vd) => {
             v = eval_expr(vd.value, state.names, state.values);
             return StepState {
-                names: state.names.push(vd.name),
-                values: state.values.push(v),
+                names: state.names.append(vd.name),
+                values: state.values.append(v),
                 done: state.done,
                 result: state.result,
             };
@@ -2296,17 +2296,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -2413,7 +2413,7 @@ function parse_program(src: string): Stmt[] {
     var cur: i32[] = [0];
     var stmts: Stmt[] = [];
     while (tok_kind(toks[cur[0]]) != 3) {
-        stmts = stmts.push(parse_stmt(toks, cur));
+        stmts = stmts.append(parse_stmt(toks, cur));
     }
     return stmts;
 }
@@ -2452,8 +2452,8 @@ function env_assign(names: string[], values: i32[], name: string, v: i32): i32[]
             var out: i32[] = [];
             var j: i32 = 0;
             while (j < values.len()) {
-                if (j == i) { out = out.push(v); }
-                else { out = out.push(values[j]); }
+                if (j == i) { out = out.append(v); }
+                else { out = out.append(values[j]); }
                 j = j + 1;
             }
             return out;
@@ -2481,8 +2481,8 @@ function eval_stmt(s: Stmt, state: StepState): StepState {
         VarDecl(vd) => {
             v = eval_expr(vd.value, state.names, state.values);
             return StepState {
-                names: state.names.push(vd.name),
-                values: state.values.push(v),
+                names: state.names.append(vd.name),
+                values: state.values.append(v),
                 done: state.done,
                 result: state.result,
             };
@@ -2627,17 +2627,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -2744,15 +2744,15 @@ function fold(e: Expr): Expr {
 function compile(e: Expr, ops: Op[]): Op[] {
     match (e) {
         Num(n) => {
-            return ops.push(PushConst { value: n.value });
+            return ops.append(PushConst { value: n.value });
         },
         Var(v) => {
-            return ops.push(Load { name: v.name });
+            return ops.append(Load { name: v.name });
         },
         BinOp(b) => {
             var ops1: Op[] = compile(b.left, ops);
             var ops2: Op[] = compile(b.right, ops1);
-            return ops2.push(Bin { op: b.op });
+            return ops2.append(Bin { op: b.op });
         },
     }
 }
@@ -2779,8 +2779,8 @@ function execute(ops: Op[], names: string[], values: i32[]): i32 {
     var i: i32 = 0;
     while (i < ops.len()) {
         match (ops[i]) {
-            PushConst(p) => { stack = stack.push(p.value); },
-            Load(l) => { stack = stack.push(env_lookup(names, values, l.name)); },
+            PushConst(p) => { stack = stack.append(p.value); },
+            Load(l) => { stack = stack.append(env_lookup(names, values, l.name)); },
             Bin(b) => {
                 var r: i32 = stack[stack.len() - 1];
                 var l: i32 = stack[stack.len() - 2];
@@ -2796,10 +2796,10 @@ function execute(ops: Op[], names: string[], values: i32[]): i32 {
                 var ns: i32[] = [];
                 var j: i32 = 0;
                 while (j < stack.len() - 2) {
-                    ns = ns.push(stack[j]);
+                    ns = ns.append(stack[j]);
                     j = j + 1;
                 }
-                stack = ns.push(out);
+                stack = ns.append(out);
             },
         }
         i = i + 1;
@@ -2965,17 +2965,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -3297,17 +3297,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -3576,17 +3576,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -3887,17 +3887,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -3964,8 +3964,8 @@ function eval(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             var fresh_v: i32[] = [];
             var i: i32 = 0;
             while (i < ce.args.len()) {
-                fresh_n = fresh_n.push(fns[idx].params[i]);
-                fresh_v = fresh_v.push(eval(ce.args[i], names, values, fns));
+                fresh_n = fresh_n.append(fns[idx].params[i]);
+                fresh_v = fresh_v.append(eval(ce.args[i], names, values, fns));
                 i = i + 1;
             }
             return eval(fns[idx].body, fresh_n, fresh_v, fns);
@@ -4033,10 +4033,10 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
                 cur[0] = cur[0] + 1;
                 return Call { name: name, args: args };
             }
-            args = args.push(parse_expr(toks, cur));
+            args = args.append(parse_expr(toks, cur));
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
                 cur[0] = cur[0] + 1;   // skip ','
-                args = args.push(parse_expr(toks, cur));
+                args = args.append(parse_expr(toks, cur));
             }
             cur[0] = cur[0] + 1;   // skip ')'
             return Call { name: name, args: args };
@@ -4062,11 +4062,11 @@ function parse_program(src: string): Program {
         cur[0] = cur[0] + 1;   // skip '('
         var params: string[] = [];
         if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
-            params = params.push(tok_ident_name(toks[cur[0]]));
+            params = params.append(tok_ident_name(toks[cur[0]]));
             cur[0] = cur[0] + 1;
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
                 cur[0] = cur[0] + 1;   // skip ','
-                params = params.push(tok_ident_name(toks[cur[0]]));
+                params = params.append(tok_ident_name(toks[cur[0]]));
                 cur[0] = cur[0] + 1;
             }
         }
@@ -4074,7 +4074,7 @@ function parse_program(src: string): Program {
         cur[0] = cur[0] + 1;   // skip '='
         var body: Expr = parse_expr(toks, cur);
         cur[0] = cur[0] + 1;   // skip ';'
-        fns = fns.push(FnDef { name: name, params: params, body: body });
+        fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_expr: Expr = parse_expr(toks, cur);
     return Program { fns: fns, main_expr: main_expr };
@@ -4193,17 +4193,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha() || b == 95) {
             var start: i32 = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -4368,9 +4368,9 @@ function parse_program(src: string): Program {
         cur[0] = cur[0] + 1;   // skip '='
         var body: Expr = parse_expr(toks, cur);
         cur[0] = cur[0] + 1;   // skip ';'
-        fn_names = fn_names.push(name);
-        fn_params = fn_params.push(param);
-        fn_bodies = fn_bodies.push(body);
+        fn_names = fn_names.append(name);
+        fn_params = fn_params.append(param);
+        fn_bodies = fn_bodies.append(body);
     }
     var main_expr: Expr = parse_expr(toks, cur);
     return Program {
@@ -4476,17 +4476,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha()) {
             var start: i32 = i;
             while (i < n && src[i].is_alnum()) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -4531,8 +4531,8 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
         },
         Let(le) => {
             var v: i32 = eval(le.value, names, values);
-            var n2: string[] = names.push(le.name);
-            var v2: i32[] = values.push(v);
+            var n2: string[] = names.append(le.name);
+            var v2: i32[] = values.append(v);
             return eval(le.body, n2, v2);
         },
         If(ie) => {
@@ -4685,17 +4685,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if ((b == 61 || b == 33 || b == 60 || b == 62) &&
                    i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokDPunct { text: src[i : i + 2] });
+            toks = toks.append(TokDPunct { text: src[i : i + 2] });
             i = i + 2;
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -4877,13 +4877,13 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -5108,36 +5108,36 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
 function main(): i32 {
     // 1 + 2 * 3 → 7 (precedence)
     var t1: Token[] = [];
-    t1 = t1.push(TokInt { value: 1 });
-    t1 = t1.push(TokPunct { ch: 43 });
-    t1 = t1.push(TokInt { value: 2 });
-    t1 = t1.push(TokPunct { ch: 42 });
-    t1 = t1.push(TokInt { value: 3 });
-    t1 = t1.push(TokEof { _pad: 0 });
+    t1 = t1.append(TokInt { value: 1 });
+    t1 = t1.append(TokPunct { ch: 43 });
+    t1 = t1.append(TokInt { value: 2 });
+    t1 = t1.append(TokPunct { ch: 42 });
+    t1 = t1.append(TokInt { value: 3 });
+    t1 = t1.append(TokEof { _pad: 0 });
     var c1: i32[] = [0];
     if (eval(parse_expr(t1, c1)) != 7) { return 1; }
 
     // (1 + 2) * 3 → 9 (parens override)
     var t2: Token[] = [];
-    t2 = t2.push(TokPunct { ch: 40 });
-    t2 = t2.push(TokInt { value: 1 });
-    t2 = t2.push(TokPunct { ch: 43 });
-    t2 = t2.push(TokInt { value: 2 });
-    t2 = t2.push(TokPunct { ch: 41 });
-    t2 = t2.push(TokPunct { ch: 42 });
-    t2 = t2.push(TokInt { value: 3 });
-    t2 = t2.push(TokEof { _pad: 0 });
+    t2 = t2.append(TokPunct { ch: 40 });
+    t2 = t2.append(TokInt { value: 1 });
+    t2 = t2.append(TokPunct { ch: 43 });
+    t2 = t2.append(TokInt { value: 2 });
+    t2 = t2.append(TokPunct { ch: 41 });
+    t2 = t2.append(TokPunct { ch: 42 });
+    t2 = t2.append(TokInt { value: 3 });
+    t2 = t2.append(TokEof { _pad: 0 });
     var c2: i32[] = [0];
     if (eval(parse_expr(t2, c2)) != 9) { return 2; }
 
     // 10 - 4 - 2 → 4 (left-associativity)
     var t3: Token[] = [];
-    t3 = t3.push(TokInt { value: 10 });
-    t3 = t3.push(TokPunct { ch: 45 });
-    t3 = t3.push(TokInt { value: 4 });
-    t3 = t3.push(TokPunct { ch: 45 });
-    t3 = t3.push(TokInt { value: 2 });
-    t3 = t3.push(TokEof { _pad: 0 });
+    t3 = t3.append(TokInt { value: 10 });
+    t3 = t3.append(TokPunct { ch: 45 });
+    t3 = t3.append(TokInt { value: 4 });
+    t3 = t3.append(TokPunct { ch: 45 });
+    t3 = t3.append(TokInt { value: 2 });
+    t3 = t3.append(TokEof { _pad: 0 });
     var c3: i32[] = [0];
     if (eval(parse_expr(t3, c3)) != 4) { return 3; }
     return 0;
@@ -5213,20 +5213,20 @@ function tokenize(src: string): Token[] {
                 while (i < n && src[i].is_digit()) { i = i + 1; }
             }
             if (isFloat) {
-                toks = toks.push(TokFloat { text: src[start:i] });
+                toks = toks.append(TokFloat { text: src[start:i] });
             } else {
-                toks = toks.push(TokInt { value: numV });
+                toks = toks.append(TokInt { value: numV });
             }
         } else if (b.is_alpha() || b == 95) {
             start = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { text: src[i:i + 1] });
+            toks = toks.append(TokPunct { text: src[i:i + 1] });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -5429,14 +5429,14 @@ function tokenize(src: string): Token[] {
                 }
             }
             if (i < n) { i = i + 1; }   // closing "
-            toks = toks.push(TokStr { value: s });
+            toks = toks.append(TokStr { value: s });
         } else if (b.is_digit()) {
             numV = 0;
             while (i < n && src[i].is_digit()) {
                 numV = numV * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: numV });
+            toks = toks.append(TokInt { value: numV });
         } else if (b.is_alpha() || b == 95) {
             start = i;
             while (i < n && (src[i].is_alnum() || src[i] == 95)) {
@@ -5444,16 +5444,16 @@ function tokenize(src: string): Token[] {
             }
             var name: string = src[start:i];
             if (is_keyword(name)) {
-                toks = toks.push(TokKw { name: name });
+                toks = toks.append(TokKw { name: name });
             } else {
-                toks = toks.push(TokIdent { name: name });
+                toks = toks.append(TokIdent { name: name });
             }
         } else {
-            toks = toks.push(TokPunct { text: src[i:i + 1] });
+            toks = toks.append(TokPunct { text: src[i:i + 1] });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -5620,7 +5620,7 @@ function tokenize(src: string): Token[] {
             i = i + 1;
         } else if (b == 48 && i + 1 < n && (src[i + 1] == 120 || src[i + 1] == 88)) {
             if (i + 2 >= n || !src[i + 2].is_hex_digit()) {
-                toks = toks.push(TokInt { value: 0, base: 10, suffix: "" });
+                toks = toks.append(TokInt { value: 0, base: 10, suffix: "" });
                 i = i + 1;
             } else {
                 i = i + 2;
@@ -5631,7 +5631,7 @@ function tokenize(src: string): Token[] {
                 }
                 numSfx = read_num_suffix(src, i);
                 if (numSfx.len() > 0) { i = i + numSfx.len(); }
-                toks = toks.push(TokInt { value: numV, base: 16, suffix: numSfx });
+                toks = toks.append(TokInt { value: numV, base: 16, suffix: numSfx });
             }
         } else if (b.is_digit()) {
             numV = 0;
@@ -5641,22 +5641,22 @@ function tokenize(src: string): Token[] {
             }
             numSfx = read_num_suffix(src, i);
             if (numSfx.len() > 0) { i = i + numSfx.len(); }
-            toks = toks.push(TokInt { value: numV, base: 10, suffix: numSfx });
+            toks = toks.append(TokInt { value: numV, base: 10, suffix: numSfx });
         } else if (b.is_alpha()) {
             var start: i32 = i;
             while (i < n && src[i].is_alnum()) { i = i + 1; }
             var name: string = src[start:i];
             if (is_keyword(name)) {
-                toks = toks.push(TokKw { name: name });
+                toks = toks.append(TokKw { name: name });
             } else {
-                toks = toks.push(TokIdent { name: name });
+                toks = toks.append(TokIdent { name: name });
             }
         } else {
-            toks = toks.push(TokPunct { text: src[i : i + 1] });
+            toks = toks.append(TokPunct { text: src[i : i + 1] });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -5771,22 +5771,22 @@ function tokenize(src: string): Token[] {
             }
             var sfx: string = read_num_suffix(src, i);
             if (sfx.len() > 0) { i = i + sfx.len(); }
-            toks = toks.push(TokInt { value: v, suffix: sfx });
+            toks = toks.append(TokInt { value: v, suffix: sfx });
         } else if (b.is_alpha()) {
             var start: i32 = i;
             while (i < n && src[i].is_alnum()) { i = i + 1; }
             var name: string = src[start:i];
             if (is_keyword(name)) {
-                toks = toks.push(TokKw { name: name });
+                toks = toks.append(TokKw { name: name });
             } else {
-                toks = toks.push(TokIdent { name: name });
+                toks = toks.append(TokIdent { name: name });
             }
         } else {
-            toks = toks.push(TokPunct { text: src[i : i + 1] });
+            toks = toks.append(TokPunct { text: src[i : i + 1] });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -5918,36 +5918,36 @@ function tokenize(src: string): Token[] {
                 }
             }
             if (i < n) { i = i + 1; }
-            toks = toks.push(TokStr { value: out });
+            toks = toks.append(TokStr { value: out });
         } else if (b.is_digit()) {
             var v: i32 = 0;
             while (i < n && src[i].is_digit()) {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (b.is_alpha()) {
             var start: i32 = i;
             while (i < n && src[i].is_alnum()) { i = i + 1; }
             var name: string = src[start:i];
             if (is_keyword(name)) {
-                toks = toks.push(TokKw { name: name });
+                toks = toks.append(TokKw { name: name });
             } else {
-                toks = toks.push(TokIdent { name: name });
+                toks = toks.append(TokIdent { name: name });
             }
         } else if ((b == 61 || b == 33 || b == 60 || b == 62) &&
                    i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { text: src[i : i + 2] });
+            toks = toks.append(TokPunct { text: src[i : i + 2] });
             i = i + 2;
         } else if (b == 61 && i + 1 < n && src[i + 1] == 62) {
-            toks = toks.push(TokPunct { text: src[i : i + 2] });
+            toks = toks.append(TokPunct { text: src[i : i + 2] });
             i = i + 2;
         } else {
-            toks = toks.push(TokPunct { text: src[i : i + 1] });
+            toks = toks.append(TokPunct { text: src[i : i + 1] });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -6060,36 +6060,36 @@ function tokenize(src: string): Token[] {
                 }
             }
             if (i < n) { i = i + 1; }
-            toks = toks.push(TokStr { value: out });
+            toks = toks.append(TokStr { value: out });
         } else if (is_digit(b)) {
             var v: i32 = 0;
             while (i < n && is_digit(src[i])) {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (is_alpha(b)) {
             var start: i32 = i;
             while (i < n && is_alnum(src[i])) { i = i + 1; }
             var name: string = src[start:i];
             if (is_keyword(name)) {
-                toks = toks.push(TokKw { name: name });
+                toks = toks.append(TokKw { name: name });
             } else {
-                toks = toks.push(TokIdent { name: name });
+                toks = toks.append(TokIdent { name: name });
             }
         } else if ((b == 61 || b == 33 || b == 60 || b == 62) &&
                    i + 1 < n && src[i + 1] == 61) {
-            toks = toks.push(TokPunct { text: src[i : i + 2] });
+            toks = toks.append(TokPunct { text: src[i : i + 2] });
             i = i + 2;
         } else if (b == 61 && i + 1 < n && src[i + 1] == 62) {
-            toks = toks.push(TokPunct { text: src[i : i + 2] });
+            toks = toks.append(TokPunct { text: src[i : i + 2] });
             i = i + 2;
         } else {
-            toks = toks.push(TokPunct { text: src[i : i + 1] });
+            toks = toks.append(TokPunct { text: src[i : i + 1] });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -6256,17 +6256,17 @@ function tokenize(src: string): Token[] {
                 v = v * 10 + (src[i] - 48);
                 i = i + 1;
             }
-            toks = toks.push(TokInt { value: v });
+            toks = toks.append(TokInt { value: v });
         } else if (is_alpha(b)) {
             var start: i32 = i;
             while (i < n && is_alnum(src[i])) { i = i + 1; }
-            toks = toks.push(TokIdent { name: src[start:i] });
+            toks = toks.append(TokIdent { name: src[start:i] });
         } else {
-            toks = toks.push(TokPunct { ch: b });
+            toks = toks.append(TokPunct { ch: b });
             i = i + 1;
         }
     }
-    toks = toks.push(TokEof { _pad: 0 });
+    toks = toks.append(TokEof { _pad: 0 });
     return toks;
 }
 
@@ -6347,7 +6347,7 @@ function main(): i32 {
 
 // `s.lines()` on arm64 — exercises the prelude function over
 // the two-word ABI: `s[i]` byte indexing, `s[lo:hi]` slicing,
-// `out.push(line)`, and the array-result return path.
+// `out.append(line)`, and the array-result return path.
 // Runtime template substitution via the prelude format()
 // function. Walks fmt and replaces each {} placeholder with
 // args[i]. Mirrors Python str.format() / Rust format!()
@@ -8849,8 +8849,8 @@ func TestArm64Map(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.set(1, 100);
-    m.set(2, 200);
+    m.insert(1, 100);
+    m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
 		{`import "core/no_prelude";
@@ -8859,7 +8859,7 @@ function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 8) {
-        m.set(i, i * 10);
+        m.insert(i, i * 10);
         i = i + 1;
     }
     if (m.len() != 8) { return 1; }
@@ -8870,9 +8870,9 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("alpha", 1);
-    m.set("beta", 2);
-    m.set("gamma", 3);
+    m.insert("alpha", 1);
+    m.insert("beta", 2);
+    m.insert("gamma", 3);
     return m.get_or("beta", -1) + m.len();
 }`, 5},
 	} {
@@ -8909,7 +8909,7 @@ func TestArm64MapGetMatch(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.set(7, 42);
+    m.insert(7, 42);
     match (m.get(7)) {
         Some(v) => { return v; },
         None => { return 0; }
@@ -8930,7 +8930,7 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("hello", 42);
+    m.insert("hello", 42);
     match (m.get("hello")) {
         Some(v) => { return v; },
         None => { return 0; }
@@ -8949,7 +8949,7 @@ function main(): i32 {
 // End-to-end exercise of the word-frequency pipeline that was
 // segfaulting on natives before the Map.get + match pair-form
 // fix. The shape: tokenize input → `Map[string, i32]` count
-// table populated via `m.set(key, n + 1)` inside the
+// table populated via `m.insert(key, n + 1)` inside the
 // `Some(n) => …, None => …` match arm → snapshot keys +
 // values via `.keys() / .values()` → print rows. The match
 // branch inside the counting loop was the exact pattern
@@ -8970,7 +8970,7 @@ function tokenize(s: string): string[] {
     if (i < sLen) { b = s[i]; }
     var is_break: boolean = i == sLen || b == 32;
     if (is_break) {
-      if (i > start) { out = out.push(s[start:i]); }
+      if (i > start) { out = out.append(s[start:i]); }
       start = i + 1;
     }
     i = i + 1;
@@ -8984,8 +8984,8 @@ function main(): i32 {
   while (i < words.len()) {
     var w: string = words[i];
     match (counts.get(w)) {
-      Some(n) => { counts.set(w, n + 1); },
-      None    => { counts.set(w, 1); }
+      Some(n) => { counts.insert(w, n + 1); },
+      None    => { counts.insert(w, 1); }
     }
     i = i + 1;
   }
@@ -10225,7 +10225,7 @@ func TestArm64GenericLocalMapType(t *testing.T) {
 import "core/map";
 function mk[V](v: V): Map[string, V] {
     var m: Map[string, V] = map_new(0);
-    m.set("k", v);
+    m.insert("k", v);
     return m;
 }
 function main(): i32 {
@@ -10883,8 +10883,8 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// semantics so the receiver must be reassigned.
 		{"arrpush", `function main(): i32 {
     var xs: i32[] = [];
-    xs = xs.push(7);
-    xs = xs.push(35);
+    xs = xs.append(7);
+    xs = xs.append(35);
     return xs[0] + xs[1];
 }`, 42},
 		// Stdout builtins — print(s) lowers to two write(2)s
@@ -10934,8 +10934,8 @@ import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
-    m.set(1, 100);
-    m.set(2, 200);
+    m.insert(1, 100);
+    m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
 		// random_bytes(n) — Darwin getentropy path
@@ -10955,8 +10955,8 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("hello", 42);
-    m.set("world", 99);
+    m.insert("hello", 42);
+    m.insert("world", 99);
     return m.get_or("world", 0);
 }`, 99},
 		// Map[i32, string] — string values. get_or returns
@@ -10970,8 +10970,8 @@ import "std/i32";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, string] = map_new(4);
-    m.set(1, "abc");
-    m.set(2, "abcdef");
+    m.insert(1, "abc");
+    m.insert(2, "abcdef");
     return (m.get_or(2, "")).len();
 }`, 6},
 		// Map[string, string] — both key and value are
@@ -10983,8 +10983,8 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[string, string] = map_new(4);
-    m.set("k1", "ab");
-    m.set("k2", "abcde");
+    m.insert("k1", "ab");
+    m.insert("k2", "abcde");
     return (m.get_or("k2", "")).len();
 }`, 5},
 		// Iteration over Map[string, i32] via has_next /
@@ -10997,9 +10997,9 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("a", 10);
-    m.set("b", 20);
-    m.set("c", 30);
+    m.insert("a", 10);
+    m.insert("b", 20);
+    m.insert("c", 30);
     var it: MapIter[string, i32] = m.iter();
     var sum: i32 = 0;
     while (it.has_next()) {
@@ -11018,11 +11018,11 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("a", 1);
-    m.set("b", 2);
-    m.set("c", 3);
-    m.delete("b");
-    m.delete("c");
+    m.insert("a", 1);
+    m.insert("b", 2);
+    m.insert("c", 3);
+    m.without("b");
+    m.without("c");
     return m.get_or("a", 0) * 10 + m.len();
 }`, 11},
 		// Option[string] payload — the Some(s) variant now
@@ -11090,9 +11090,9 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
-    m.set("alpha", 1);
-    m.set("beta", 2);
-    m.set("gamma", 3);
+    m.insert("alpha", 1);
+    m.insert("beta", 2);
+    m.insert("gamma", 3);
     var ks: string[] = m.keys();
     var i: i32 = 0;
     var total: i32 = 0;
@@ -11111,9 +11111,9 @@ import "core/map";
 import "std/string";
 function main(): i32 {
     var m: Map[i32, string] = map_new(4);
-    m.set(1, "one");
-    m.set(2, "two");
-    m.set(3, "three");
+    m.insert(1, "one");
+    m.insert(2, "two");
+    m.insert(3, "three");
     var vs: string[] = m.values();
     var i: i32 = 0;
     var total: i32 = 0;
@@ -11143,8 +11143,8 @@ function main(): i32 {
     var m: Map[i32, string] = map_new(4);
     var v1: string = "alp" + "ha";
     var v2: string = "be" + "ta";
-    m.set(1, v1);
-    m.set(2, v2);
+    m.insert(1, v1);
+    m.insert(2, v2);
     return (m.get_or(1, "")).len() + (m.get_or(2, "")).len();
 }`, 9},
 	}
@@ -12132,35 +12132,35 @@ func TestArm64WideScalarMap(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.set(1i64, 100);
+    m.insert(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
 		{"Map[i32, f64]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
-    m.set(1, 3.14);
+    m.insert(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
 		{"Map[i64, string]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i64, string] = map_new(4);
-    m.set(1i64, "hello");
+    m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
 		{"Map[string, i64]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i64] = map_new(4);
-    m.set("hello", 42i64);
+    m.insert("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
 		{"Map[u64, i32]", `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
-    m.set(1u64, 100);
+    m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
 		{"distinct high-bit i64 keys", `import "core/no_prelude";
@@ -12169,8 +12169,8 @@ function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
     var k1: i64 = 0i64;
     var k2: i64 = 1i64 << 33i64;
-    m.set(k1, 1);
-    m.set(k2, 2);
+    m.insert(k1, 1);
+    m.insert(k2, 2);
     var v1: i32 = m.get_or(k1, 99);
     var v2: i32 = m.get_or(k2, 99);
     return v1 + v2;
@@ -12187,8 +12187,8 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
-    m.set(1i64, 10);
-    m.set(1000000000000i64, 20);
+    m.insert(1i64, 10);
+    m.insert(1000000000000i64, 20);
     var keys: i64[] = m.keys();
     if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
@@ -12759,10 +12759,10 @@ func TestArm64FeatureParity(t *testing.T) {
 		{"defer_basic", `import "core/no_prelude";
 import "core/map";
 function inner(trace: Map[string, i32]): i32 {
-    trace.set("body-start", 1);
-    defer trace.set("first-defer", 10);
-    defer trace.set("second-defer", 20);
-    trace.set("body-end", 2);
+    trace.insert("body-start", 1);
+    defer trace.insert("first-defer", 10);
+    defer trace.insert("second-defer", 20);
+    trace.insert("body-end", 2);
     return 42;
 }
 function main(): i32 {
@@ -13035,7 +13035,7 @@ func TestArm64HeapAddressFits32Bits(t *testing.T) {
 
 // Phase 1d-iii: `y = x;` reassignment also bumps the rc on x.
 // The motivating parser.fern shape is `nfuncs = into.funcs;`
-// followed by an in-loop `nfuncs = nfuncs.push(...);` — the
+// followed by an in-loop `nfuncs = nfuncs.append(...);` — the
 // first assignment is an alias (FieldAccess RHS), the second
 // rebinds with a fresh push result. Here we test the explicit
 // `y = x;` form directly.
@@ -13144,9 +13144,9 @@ func TestArm64RcUnderflowDetector(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a", 1);
-    m = m.set("b", 2);
-    m = m.set("a", 9);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    m = m.insert("a", 9);
     return __rc_underflow_count() * 100
          + (m.len() - 2)
          + (m.get_or("a", 0) - 9);
@@ -13299,7 +13299,7 @@ function main(): i32 {
 	}
 }
 
-// Phase 2: arr.push(v) checks rc + cap. When rc==1 and cap >
+// Phase 2: arr.append(v) checks rc + cap. When rc==1 and cap >
 // len, the helper mutates in place — the returned pointer
 // equals the input pointer. First push of a 3-element literal
 // must copy (cap=3, oldLen=3, no spare cap); the SECOND push
@@ -13309,9 +13309,9 @@ function main(): i32 {
 func TestArm64ArrayPushInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20];
-    xs = xs.push(30);          // copy: cap=2, len=2, no spare
+    xs = xs.append(30);          // copy: cap=2, len=2, no spare
     var addr_before: usize = xs as usize;
-    xs = xs.push(40);          // in-place: cap=6, len=3, spare!
+    xs = xs.append(40);          // in-place: cap=6, len=3, spare!
     var addr_after: usize = xs as usize;
     if (addr_before != addr_after) { return 1; }
     if (xs.len() != 4) { return 2; }
@@ -13329,9 +13329,9 @@ func TestArm64ArrayPushInPlaceFastPath(t *testing.T) {
 func TestArm64ArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20];
-    xs = xs.push(30);          // copy, cap now 6
+    xs = xs.append(30);          // copy, cap now 6
     var ys = xs;               // alias, rc=2
-    ys = ys.push(40);          // must COPY (rc>1)
+    ys = ys.append(40);          // must COPY (rc>1)
     if (xs.len() != 3) { return 1; }   // xs unchanged
     if (xs[0] != 10) { return 2; }
     if (ys.len() != 4) { return 3; }
@@ -13517,17 +13517,17 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 }
 
 // Phase 2c: Map.set is now value-returning. Callers can use
-// the `m = m.set(k, v)` idiom for explicit value semantics;
-// the existing `m.set(k, v)` statement form still works
+// the `m = m.insert(k, v)` idiom for explicit value semantics;
+// the existing `m.insert(k, v)` statement form still works
 // (return discarded).
 func TestArm64MapSetReturnsMap(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a", 1);
-    m = m.set("b", 2);
-    m = m.set("c", 3);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    m = m.insert("c", 3);
     if (m.get_or("a", 0) != 1) { return 1; }
     if (m.get_or("b", 0) != 2) { return 2; }
     if (m.get_or("c", 0) != 3) { return 3; }
@@ -13560,54 +13560,54 @@ function main(): i32 {
 	}
 }
 
-// Phase 2b: explicit value-returning `arr.set(i, v)` method.
+// Phase 2b: explicit value-returning `arr.with(i, v)` method.
 // Self-assign idiom — same shape as the `arr[i] = v` desugar
 // would emit, but expression-position so it composes.
 func TestArm64ArraySetSelfAssign(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
-    xs = xs.set(1, 999);
+    xs = xs.with(1, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 999) { return 2; }
     if (xs[2] != 30) { return 3; }
     return 0;
 }`
 	if _, code := compileAndRunArm64(t, src); code != 0 {
-		t.Errorf("got exit %d, want 0 (xs = xs.set(1, 999))", code)
+		t.Errorf("got exit %d, want 0 (xs = xs.with(1, 999))", code)
 	}
 }
 
-// Phase 2b: aliased `arr.set` must copy. The original holder
+// Phase 2b: aliased `arr.with` must copy. The original holder
 // stays unchanged.
 func TestArm64ArraySetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var ys = xs;                    // Phase 1d-i: xs.rc = 2
-    ys = ys.set(0, 999);            // rc>1 → copy. xs unchanged.
+    ys = ys.with(0, 999);            // rc>1 → copy. xs unchanged.
     if (xs[0] != 10) { return 1; }
     if (ys[0] != 999) { return 2; }
     return 0;
 }`
 	if _, code := compileAndRunArm64(t, src); code != 0 {
-		t.Errorf("got exit %d, want 0 (aliased arr.set must copy)", code)
+		t.Errorf("got exit %d, want 0 (aliased arr.with must copy)", code)
 	}
 }
 
-// Phase 2c: m.delete(k) returns (Map[K,V], bool).
+// Phase 2c: m.without(k) returns (Map[K,V], bool).
 // Tests tuple destructuring, bool-field access, and statement-position discard.
 func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("a", 1);
-    m = m.set("b", 2);
-    m = m.set("c", 3);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    m = m.insert("c", 3);
     // Bool field access on call result.
-    if (!m.delete("b").1) { return 1; }   // "b" present → true
-    if (m.delete("z").1)  { return 2; }   // "z" missing → false
+    if (!m.without("b").1) { return 1; }   // "b" present → true
+    if (m.without("z").1)  { return 2; }   // "z" missing → false
     // Tuple destructuring: m2 is the updated map, ok is the found-flag.
-    var (m2, ok) = m.delete("a");
+    var (m2, ok) = m.without("a");
     if (!ok) { return 3; }
     if (m2.has("a")) { return 4; }
     if (!m2.has("c")) { return 5; }
@@ -13619,20 +13619,20 @@ function main(): i32 {
 	}
 }
 
-// Phase 2c: m.clear() returns Map[K,V].
+// Phase 2c: m.cleared() returns Map[K,V].
 func TestArm64MapClearReturnsMap(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
-    m = m.set("x", 10);
-    m = m.set("y", 20);
+    m = m.insert("x", 10);
+    m = m.insert("y", 20);
     if (m.len() != 2) { return 1; }
-    m = m.clear();
+    m = m.cleared();
     if (m.len() != 0) { return 2; }
     if (m.has("x")) { return 3; }
     // Re-insert after clear must work.
-    m = m.set("z", 99);
+    m = m.insert("z", 99);
     if (m.len() != 1) { return 4; }
     if (m.get_or("z", 0) != 99) { return 5; }
     return 0;
@@ -13644,15 +13644,15 @@ function main(): i32 {
 
 // Phase 2d: Map.set copy-on-write — arm64 sibling of
 // TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
-// has rc=2, so m2.set(...) copies and leaves m1 intact.
+// has rc=2, so m2.insert(...) copies and leaves m1 intact.
 func TestArm64MapSetAliasedCopies(t *testing.T) {
 	src := `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.set("a", 1);                 // in-place (rc==1)
+    m1.insert("a", 1);                 // in-place (rc==1)
     var m2 = m1;                    // alias → rc=2
-    m2 = m2.set("a", 999);          // rc>1 → copy; m1 unchanged
+    m2 = m2.insert("a", 999);          // rc>1 → copy; m1 unchanged
     if (m1.get_or("a", 0) != 1)   { return 1; }
     if (m2.get_or("a", 0) != 999) { return 2; }
     return 0;
@@ -13669,17 +13669,17 @@ func TestArm64MapDeleteClearAliasedCopies(t *testing.T) {
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
-    m1.set("a", 1);
-    m1.set("b", 2);
+    m1.insert("a", 1);
+    m1.insert("b", 2);
     var m2 = m1;                       // alias → rc=2
-    var (m3, ok) = m2.delete("a");     // rc>1 → copy; m1/m2 intact
+    var (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }
     if (m1.len() != 2)  { return 2; }
     if (!m1.has("a"))   { return 3; }
     if (m3.len() != 1)  { return 4; }
     if (m3.has("a"))    { return 5; }
     var m4 = m1;                       // alias → rc=2
-    m4 = m4.clear();                   // rc>1 → copy; m1 intact
+    m4 = m4.cleared();                   // rc>1 → copy; m1 intact
     if (m1.len() != 2)  { return 6; }
     if (m4.len() != 0)  { return 7; }
     return 0;
@@ -13775,12 +13775,12 @@ function main(): i32 {
     // Var declaration: K=string, V=i32
     var a: Map[string, i32] = Map {};
     if (a.len() != 0) { return 1; }
-    a = a.set("k", 42);
+    a = a.insert("k", 42);
     if (a.get_or("k", 0) != 42) { return 2; }
     // Var declaration: K=i32, V=string
     var b: Map[i32, string] = Map {};
     if (b.len() != 0) { return 3; }
-    b = b.set(7, "hello");
+    b = b.insert(7, "hello");
     if (!b.has(7)) { return 4; }
     // Function argument
     if (take(Map {}) != 0) { return 5; }
@@ -13851,28 +13851,28 @@ struct P { x: i32, y: i32 }
 function main(): i32 {
     // tuple value
     var mt: Map[string, (i32, i32)] = Map {};
-    mt = mt.set("a", (3, 4));
+    mt = mt.insert("a", (3, 4));
     match (mt.get("a")) {
         Some(p) => { if (p.0 + p.1 != 7) { return 1; } },
         None => { return 2; }
     }
     // struct value
     var ms: Map[string, P] = Map {};
-    ms = ms.set("a", P { x: 3, y: 4 });
+    ms = ms.insert("a", P { x: 3, y: 4 });
     match (ms.get("a")) {
         Some(s) => { if (s.x + s.y != 7) { return 3; } },
         None => { return 4; }
     }
     // array value
     var ma: Map[i32, i32[]] = Map {};
-    ma = ma.set(1, [10, 20, 30]);
+    ma = ma.insert(1, [10, 20, 30]);
     match (ma.get(1)) {
         Some(arr) => { if (arr[0] + arr[2] != 40) { return 5; } },
         None => { return 6; }
     }
     // i32 value (regression guard — must still work after usize fix)
     var mi: Map[string, i32] = Map {};
-    mi = mi.set("a", 42);
+    mi = mi.insert("a", 42);
     match (mi.get("a")) {
         Some(v) => { if (v != 42) { return 7; } },
         None => { return 8; }

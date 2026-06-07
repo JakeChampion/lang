@@ -502,7 +502,7 @@ func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 		var acc: i32[] = [];
 		var outer = function (): i32 {
 			var inner = function (): i32 {
-				acc = acc.push(1);
+				acc = acc.append(1);
 				return acc.len();
 			};
 			return inner();
@@ -849,13 +849,13 @@ func TestNumericLiteralSuffixesRejectMismatch(t *testing.T) {
 	}
 }
 
-// `arr.push(v)` is a generic method on T[]. The receiver's Elem
+// `arr.append(v)` is a generic method on T[]. The receiver's Elem
 // flows into the registered ParamType("T") signature, so the
 // argument and return types substitute correctly.
 func TestArrayPushTypechecks(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var xs: string[] = []; xs = xs.push("a"); return xs.len(); }`,
-		`function f(): i32 { var xs: i32[] = [1, 2]; xs = xs.push(3); return xs[2]; }`,
+		`function f(): i32 { var xs: string[] = []; xs = xs.append("a"); return xs.len(); }`,
+		`function f(): i32 { var xs: i32[] = [1, 2]; xs = xs.append(3); return xs[2]; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -872,8 +872,8 @@ func TestArrayPushTypechecks(t *testing.T) {
 // up yet.
 func TestArrayPushI64StridePasses(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var xs: i64[] = [1i64, 2i64]; xs = xs.push(3i64); return 0; }`,
-		`function f(): i32 { var xs: u64[] = [1u64]; xs = xs.push(2u64); return 0; }`,
+		`function f(): i32 { var xs: i64[] = [1i64, 2i64]; xs = xs.append(3i64); return 0; }`,
+		`function f(): i32 { var xs: u64[] = [1u64]; xs = xs.append(2u64); return 0; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -882,7 +882,7 @@ func TestArrayPushI64StridePasses(t *testing.T) {
 }
 
 func TestArrayPushF64StridePasses(t *testing.T) {
-	src := `function f(): i32 { var xs: f64[] = [1.0f64]; xs = xs.push(2.0f64); return 0; }`
+	src := `function f(): i32 { var xs: f64[] = [1.0f64]; xs = xs.append(2.0f64); return 0; }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -892,10 +892,10 @@ func TestArrayPushF64StridePasses(t *testing.T) {
 // each route to their own lang-prelude append helper.
 func TestArrayPushSubI32StridePasses(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var xs: u8[] = []; xs = xs.push(7u8); return 0; }`,
-		`function f(): i32 { var xs: i8[] = []; xs = xs.push(7i8); return 0; }`,
-		`function f(): i32 { var xs: u16[] = []; xs = xs.push(300u16); return 0; }`,
-		`function f(): i32 { var xs: i16[] = []; xs = xs.push((0i16 - 1i16)); return 0; }`,
+		`function f(): i32 { var xs: u8[] = []; xs = xs.append(7u8); return 0; }`,
+		`function f(): i32 { var xs: i8[] = []; xs = xs.append(7i8); return 0; }`,
+		`function f(): i32 { var xs: u16[] = []; xs = xs.append(300u16); return 0; }`,
+		`function f(): i32 { var xs: i16[] = []; xs = xs.append((0i16 - 1i16)); return 0; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: unexpected error %v", src, err)
@@ -905,7 +905,7 @@ func TestArrayPushSubI32StridePasses(t *testing.T) {
 
 // Argument type must match the receiver's Elem.
 func TestArrayPushRejectsArgTypeMismatch(t *testing.T) {
-	src := `function f(): i32 { var xs: string[] = []; xs = xs.push(1); return xs.len(); }`
+	src := `function f(): i32 { var xs: string[] = []; xs = xs.append(1); return xs.len(); }`
 	if err := checkSource(t, src); err == nil {
 		t.Error("expected error: pushing i32 onto string[]")
 	}
@@ -1542,7 +1542,7 @@ function main(): i32 {
 //
 // The probe checks for representative methods drawn from
 // the existing prelude (one synthetic + one IR-discovered)
-// plus the canonical hand-registered `Array.push` which
+// plus the canonical hand-registered `Array.append` which
 // must continue to work despite being skipped by the
 // auto-discovery loop.
 func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
@@ -1550,7 +1550,7 @@ func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
 	// `__method_Array_*` functions are supplied inline here — the
 	// same shape std/array ships. Auto-discovery should register
 	// each as an `Array.<name>` method without a hand-written
-	// entry in checker.go, while the synthetic `Array.push`
+	// entry in checker.go, while the synthetic `Array.append`
 	// (registered by hand, IR-intercepted) keeps working.
 	prog, err := parser.Parse(`function __method_Array_join(xs: i32[], sep: string): string { return ""; }
 function __method_Array_sum(xs: i32[]): i32 { return 0; }
@@ -1565,8 +1565,11 @@ function main(): i32 { return 0; }`)
 	cases := []struct {
 		key, mangled string
 	}{
-		// Synthetic, registered by hand (IR-intercepted).
-		{"Array.push", "__method_Array_push"},
+		// Synthetic, registered by hand (IR-intercepted). The
+		// value-returning `append` is the public spelling; the
+		// mutable-looking `push` name was withdrawn (the mangled
+		// lowering __method_Array_push is unchanged).
+		{"Array.append", "__method_Array_push"},
 		// Discovered from naming convention — these are
 		// implemented as ordinary prelude functions whose
 		// declarations would otherwise be invisible to the

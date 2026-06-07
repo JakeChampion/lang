@@ -82,7 +82,7 @@ func witSectionSelfTestMain(t *testing.T) string {
 function wit_bytes_of(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
     return o;
 }
 function main(): i32 {
@@ -253,7 +253,7 @@ const witWorldSelfTestMain = `
 function wit_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
     return o;
 }
 function wit_eq2(a: i32[], b: i32[]): boolean {
@@ -325,7 +325,7 @@ const witLiftSelfTestMain = `
 function wit_lift_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
     return o;
 }
 function main(): i32 {
@@ -421,7 +421,7 @@ const witEmitSelfTestMain = `
 function wit_emit_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
     return o;
 }
 function main(): i32 {
@@ -490,7 +490,7 @@ const witClassifySelfTestMain = `
 function wit_cl_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
     return o;
 }
 function wit_ck(tb: i32[], iface: string, fn: string, want: i32, id: i32): i32 {
@@ -565,7 +565,7 @@ const witLayoutSelfTestMain = `
 function wit_ly_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
     return o;
 }
 function main(): i32 {

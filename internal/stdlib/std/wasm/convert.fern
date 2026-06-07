@@ -22,43 +22,43 @@
 // — the production wasm backend uses the trapping variants.
 
 // ---- Integer width conversion ---------------------------------
-pub function inst_i32_wrap_i64(buf: u8[]): u8[]     { return buf.push(167u8); }  // 0xA7
-pub function inst_i64_extend_i32_s(buf: u8[]): u8[] { return buf.push(172u8); }  // 0xAC
-pub function inst_i64_extend_i32_u(buf: u8[]): u8[] { return buf.push(173u8); }  // 0xAD
+pub function inst_i32_wrap_i64(buf: u8[]): u8[]     { return buf.append(167u8); }  // 0xA7
+pub function inst_i64_extend_i32_s(buf: u8[]): u8[] { return buf.append(172u8); }  // 0xAC
+pub function inst_i64_extend_i32_u(buf: u8[]): u8[] { return buf.append(173u8); }  // 0xAD
 
 // ---- Float to integer (trapping) ------------------------------
-pub function inst_i32_trunc_f32_s(buf: u8[]): u8[] { return buf.push(168u8); }  // 0xA8
-pub function inst_i32_trunc_f32_u(buf: u8[]): u8[] { return buf.push(169u8); }  // 0xA9
-pub function inst_i32_trunc_f64_s(buf: u8[]): u8[] { return buf.push(170u8); }  // 0xAA
-pub function inst_i32_trunc_f64_u(buf: u8[]): u8[] { return buf.push(171u8); }  // 0xAB
-pub function inst_i64_trunc_f32_s(buf: u8[]): u8[] { return buf.push(174u8); }  // 0xAE
-pub function inst_i64_trunc_f32_u(buf: u8[]): u8[] { return buf.push(175u8); }  // 0xAF
-pub function inst_i64_trunc_f64_s(buf: u8[]): u8[] { return buf.push(176u8); }  // 0xB0
-pub function inst_i64_trunc_f64_u(buf: u8[]): u8[] { return buf.push(177u8); }  // 0xB1
+pub function inst_i32_trunc_f32_s(buf: u8[]): u8[] { return buf.append(168u8); }  // 0xA8
+pub function inst_i32_trunc_f32_u(buf: u8[]): u8[] { return buf.append(169u8); }  // 0xA9
+pub function inst_i32_trunc_f64_s(buf: u8[]): u8[] { return buf.append(170u8); }  // 0xAA
+pub function inst_i32_trunc_f64_u(buf: u8[]): u8[] { return buf.append(171u8); }  // 0xAB
+pub function inst_i64_trunc_f32_s(buf: u8[]): u8[] { return buf.append(174u8); }  // 0xAE
+pub function inst_i64_trunc_f32_u(buf: u8[]): u8[] { return buf.append(175u8); }  // 0xAF
+pub function inst_i64_trunc_f64_s(buf: u8[]): u8[] { return buf.append(176u8); }  // 0xB0
+pub function inst_i64_trunc_f64_u(buf: u8[]): u8[] { return buf.append(177u8); }  // 0xB1
 
 // ---- Integer to float -----------------------------------------
-pub function inst_f32_convert_i32_s(buf: u8[]): u8[] { return buf.push(178u8); }  // 0xB2
-pub function inst_f32_convert_i32_u(buf: u8[]): u8[] { return buf.push(179u8); }  // 0xB3
-pub function inst_f32_convert_i64_s(buf: u8[]): u8[] { return buf.push(180u8); }  // 0xB4
-pub function inst_f32_convert_i64_u(buf: u8[]): u8[] { return buf.push(181u8); }  // 0xB5
-pub function inst_f64_convert_i32_s(buf: u8[]): u8[] { return buf.push(183u8); }  // 0xB7
-pub function inst_f64_convert_i32_u(buf: u8[]): u8[] { return buf.push(184u8); }  // 0xB8
-pub function inst_f64_convert_i64_s(buf: u8[]): u8[] { return buf.push(185u8); }  // 0xB9
-pub function inst_f64_convert_i64_u(buf: u8[]): u8[] { return buf.push(186u8); }  // 0xBA
+pub function inst_f32_convert_i32_s(buf: u8[]): u8[] { return buf.append(178u8); }  // 0xB2
+pub function inst_f32_convert_i32_u(buf: u8[]): u8[] { return buf.append(179u8); }  // 0xB3
+pub function inst_f32_convert_i64_s(buf: u8[]): u8[] { return buf.append(180u8); }  // 0xB4
+pub function inst_f32_convert_i64_u(buf: u8[]): u8[] { return buf.append(181u8); }  // 0xB5
+pub function inst_f64_convert_i32_s(buf: u8[]): u8[] { return buf.append(183u8); }  // 0xB7
+pub function inst_f64_convert_i32_u(buf: u8[]): u8[] { return buf.append(184u8); }  // 0xB8
+pub function inst_f64_convert_i64_s(buf: u8[]): u8[] { return buf.append(185u8); }  // 0xB9
+pub function inst_f64_convert_i64_u(buf: u8[]): u8[] { return buf.append(186u8); }  // 0xBA
 
 // ---- Float width ----------------------------------------------
-pub function inst_f32_demote_f64(buf: u8[]): u8[]  { return buf.push(182u8); }  // 0xB6
-pub function inst_f64_promote_f32(buf: u8[]): u8[] { return buf.push(187u8); }  // 0xBB
+pub function inst_f32_demote_f64(buf: u8[]): u8[]  { return buf.append(182u8); }  // 0xB6
+pub function inst_f64_promote_f32(buf: u8[]): u8[] { return buf.append(187u8); }  // 0xBB
 
 // ---- Reinterpret ----------------------------------------------
 //
 // No conversion — the same 32 / 64 bits leave the stack with a
 // different type label. Useful for inspecting f32 / f64 bit
 // patterns or constructing them from u32 / u64.
-pub function inst_i32_reinterpret_f32(buf: u8[]): u8[] { return buf.push(188u8); }  // 0xBC
-pub function inst_i64_reinterpret_f64(buf: u8[]): u8[] { return buf.push(189u8); }  // 0xBD
-pub function inst_f32_reinterpret_i32(buf: u8[]): u8[] { return buf.push(190u8); }  // 0xBE
-pub function inst_f64_reinterpret_i64(buf: u8[]): u8[] { return buf.push(191u8); }  // 0xBF
+pub function inst_i32_reinterpret_f32(buf: u8[]): u8[] { return buf.append(188u8); }  // 0xBC
+pub function inst_i64_reinterpret_f64(buf: u8[]): u8[] { return buf.append(189u8); }  // 0xBD
+pub function inst_f32_reinterpret_i32(buf: u8[]): u8[] { return buf.append(190u8); }  // 0xBE
+pub function inst_f64_reinterpret_i64(buf: u8[]): u8[] { return buf.append(191u8); }  // 0xBF
 
 // ---- Sign-extension -------------------------------------------
 //
@@ -66,8 +66,8 @@ pub function inst_f64_reinterpret_i64(buf: u8[]): u8[] { return buf.push(191u8);
 // proposal). Universally available in production engines today.
 // They sign-extend the low 8 / 16 / 32 bits of the operand,
 // filling the remaining bits with the sign.
-pub function inst_i32_extend8_s(buf: u8[]): u8[]  { return buf.push(192u8); }  // 0xC0
-pub function inst_i32_extend16_s(buf: u8[]): u8[] { return buf.push(193u8); }  // 0xC1
-pub function inst_i64_extend8_s(buf: u8[]): u8[]  { return buf.push(194u8); }  // 0xC2
-pub function inst_i64_extend16_s(buf: u8[]): u8[] { return buf.push(195u8); }  // 0xC3
-pub function inst_i64_extend32_s(buf: u8[]): u8[] { return buf.push(196u8); }  // 0xC4
+pub function inst_i32_extend8_s(buf: u8[]): u8[]  { return buf.append(192u8); }  // 0xC0
+pub function inst_i32_extend16_s(buf: u8[]): u8[] { return buf.append(193u8); }  // 0xC1
+pub function inst_i64_extend8_s(buf: u8[]): u8[]  { return buf.append(194u8); }  // 0xC2
+pub function inst_i64_extend16_s(buf: u8[]): u8[] { return buf.append(195u8); }  // 0xC3
+pub function inst_i64_extend32_s(buf: u8[]): u8[] { return buf.append(196u8); }  // 0xC4
