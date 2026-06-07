@@ -337,8 +337,21 @@ world-driven composer (P2) wires it.
      stay green). Gated by `TestTrampolineFixupModuleForParamsResults_Validates`
      and the now-single-function string-param e2e above. This is also a
      prerequisite for **P5** resource methods (which return `result<_, error>`).
-   - Still rejected (next slices): non-string composite **parameters**
-     (arrays/records), non-u8 array results (`i32[]` …), and
+   - **`u8[]` parameter — ✅ done (Go).** A `u8[]` argument lowers to the
+     canonical `list<u8>` `(ptr, len)`. Unlike a `string` (an SSO pair the
+     wrapper normalizes to a heap buffer), a Fern `u8[]` is already a pointer to
+     contiguous 1-byte elements with the count at `ptr-4`, so the param wrapper
+     forwards `(ptr, load(ptr-4))` zero-copy. The Fern-side flattening (one
+     pointer slot) differs from the canonical one (two i32s), so the raw import
+     spec uses `canonicalExternParamValtypes` while the wrapper keeps the Fern
+     signature. `buildExternStringParamWrapper` generalised to
+     `buildExternMemParamWrapper` (string + u8[] params mix freely). Gated by
+     `TestExternListU8ParamCustomProvider` (a `sum-bytes: func(data: list<u8>)
+     -> u32` provider sums `[10,20,30]` = 60) + `TestEmitExternListU8Param`.
+     Self-host port is a follow-up (the self-hosted `extern_wrappers` still
+     handles only string params).
+   - Still rejected (next slices): non-u8 array **parameters** (`i32[]` …) and
+     record parameters; non-u8 array results (`i32[]` …); and
      record/tuple/variant/option/result. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an

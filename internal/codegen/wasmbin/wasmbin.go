@@ -968,6 +968,30 @@ func paramValtypes(params []ast.Param) ([]byte, error) {
 	return out, nil
 }
 
+// canonicalExternParamValtypes flattens an `@import` extern's parameters to the
+// core valtypes the *raw* component import carries (the host-facing canonical
+// ABI), as opposed to paramValtypes, which gives the Fern-side flattening that
+// a param wrapper consumes. They differ only for `u8[]`: a Fern array value is
+// a single element pointer (one slot), but a canonical `list<u8>` parameter is
+// `(ptr, len)` — two i32s. A `string` is two slots either way (its Fern
+// (data, len) pair already lines up with ptr+len once normalized).
+func canonicalExternParamValtypes(params []ast.Param) ([]byte, error) {
+	var out []byte
+	for _, p := range params {
+		switch {
+		case isStringType(p.Type) || isU8ArrayType(p.Type):
+			out = append(out, encode.ValtypeI32, encode.ValtypeI32)
+		default:
+			vt, err := valtypeFor(p.Type)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, vt)
+		}
+	}
+	return out, nil
+}
+
 // resultValtypes returns the wasm result valtype vector for an IR
 // function's return type. Void → empty; scalar → one slot;
 // string → two slots (multi-value return for the (data, len) pair).
