@@ -330,6 +330,86 @@ function x86_mov_store_r64_idx(buf: i32[], base: i32, index: i32, scale: i32, di
     return x86_emit_mem_idx(buf, src, base, index, scale, disp);
 }
 
+// ---- byte ops (slice 2k) ----
+//
+// Byte (8-bit) memory ops reuse the ModR/M + SIB encoding (x86_emit_mem /
+// _idx) with byte opcodes and a W=0 REX that's emitted only when needed
+// (an extended reg/base/index, or — for a byte register operand — when it
+// is spl..dil (4..7), which require a REX to disambiguate from ah..bh).
+// movzbq's destination is 64-bit, so it always carries REX.W.
+
+// x86_byte_mem_rex emits the (optional) REX for a byte memory op.
+function x86_byte_mem_rex(buf: i32[], w: i32, reg: i32, has_index: boolean, index: i32, base: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    var rex: i32 = x86_rex(w, reg, ix, base);
+    var force: boolean = (w == 0 && reg >= 4 && reg <= 7); // spl..dil
+    if (rex != 64 || force) {
+        buf = buf.push(rex);
+    }
+    return buf;
+}
+
+// x86_byte_mem_operand appends the ModR/M (+SIB+disp), index or not.
+function x86_byte_mem_operand(buf: i32[], reg: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    if (has_index) {
+        return x86_emit_mem_idx(buf, reg, base, index, scale, disp);
+    }
+    return x86_emit_mem(buf, reg, base, disp);
+}
+
+// x86_movb_imm_mem: `movb $imm8, mem` (0xC6 /0 ib).
+function x86_movb_imm_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
+    buf = x86_byte_mem_rex(buf, 0, 0, has_index, index, base);
+    buf = buf.push(198); // 0xC6
+    buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
+    return buf.push(imm & 255);
+}
+
+// x86_movb_reg_mem: `movb <reg8>, mem` (0x88 /r) — byte store.
+function x86_movb_reg_mem(buf: i32[], reg8: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    buf = x86_byte_mem_rex(buf, 0, reg8, has_index, index, base);
+    buf = buf.push(136); // 0x88
+    return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
+}
+
+// x86_movb_mem_reg: `movb mem, <reg8>` (0x8A /r) — byte load.
+function x86_movb_mem_reg(buf: i32[], reg8: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    buf = x86_byte_mem_rex(buf, 0, reg8, has_index, index, base);
+    buf = buf.push(138); // 0x8A
+    return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
+}
+
+// x86_movzbq_mem: `movzbq mem, <dst64>` (REX.W 0F B6 /r) — zero-extend a
+// byte load into a 64-bit register.
+function x86_movzbq_mem(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    buf = x86_byte_mem_rex(buf, 1, dst, has_index, index, base);
+    buf = buf.push(15);  // 0x0F
+    buf = buf.push(182); // 0xB6
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// x86_movzbq_reg: `movzbq <src8>, <dst64>` (REX.W 0F B6 /r, reg-direct).
+function x86_movzbq_reg(buf: i32[], dst: i32, src8: i32): i32[] {
+    buf = buf.push(x86_rex(1, dst, 0, src8));
+    buf = buf.push(15);  // 0x0F
+    buf = buf.push(182); // 0xB6
+    buf = buf.push(x86_modrm(3, dst, src8));
+    return buf;
+}
+
+// x86_cmpb_imm_reg8: `cmpb $imm8, <reg8>` (0x80 /7 ib).
+function x86_cmpb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
+    var rex: i32 = x86_rex(0, 0, 0, reg8);
+    var force: boolean = (reg8 >= 4 && reg8 <= 7);
+    if (rex != 64 || force) {
+        buf = buf.push(rex);
+    }
+    buf = buf.push(128); // 0x80
+    buf = buf.push(x86_modrm(3, 7, reg8));
+    return buf.push(imm & 255);
+}
+
 // ---- immediate ALU (slice 2b) ----
 
 // x86_alu_r64_imm32 encodes the `<op> <reg>, imm32` group-1 form:

@@ -106,6 +106,18 @@ func TestSelfHostX86GasIndexRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasindex42", x86GasIndexDriverMain, 42)
 }
 
+// TestSelfHostX86GasByteImmRuns exercises movb $imm + movzbq: store byte 42
+// to [rsp], zero-extend-load it, exit 42.
+func TestSelfHostX86GasByteImmRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasbyteimm42", x86GasByteImmDriverMain, 42)
+}
+
+// TestSelfHostX86GasByteRegRuns exercises movb %reg8 + movzbq into an
+// extended register: store %cl to [rsp], load into %r8, exit 42.
+func TestSelfHostX86GasByteRegRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasbytereg42", x86GasByteRegDriverMain, 42)
+}
+
 // runX86GasNativeDriver concatenates x86_encode.fern + x86_gas.fern +
 // elf.fern + driverMain, compiles it through the self-host wasm emitter,
 // runs the WAT under wasmtime to get the raw ELF the driver assembled and
@@ -207,6 +219,9 @@ function main(): i32 {
     if (!mi.has_index || mi.base != 12 || mi.index != 15 || mi.scale != 1) { return 11; }
     var mi2: GasMem = x86_gas_parse_mem("8(%rsp,%rcx,8)");
     if (!mi2.has_index || mi2.base != 4 || mi2.index != 1 || mi2.scale != 8 || mi2.disp != 8) { return 12; }
+    // 8-bit register parsing (slice 2k):
+    if (x86_gas_reg8("%al") != 0 || x86_gas_reg8("%dl") != 2 || x86_gas_reg8("%r8b") != 8) { return 13; }
+    if (x86_gas_reg8("%rax") != (0 - 1)) { return 14; }
     return 0;
 }
 `
@@ -289,6 +304,26 @@ function main(): i32 {
 const x86GasIndexDriverMain = `
 function main(): i32 {
     var src: string = "\tsubq $64, %rsp\n\tmovq $42, %rax\n\tmovq $2, %rcx\n\tmovq %rax, (%rsp,%rcx,8)\n\tmovq (%rsp,%rcx,8), %rdi\n\taddq $64, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasByteImmDriverMain: movb $42, (%rsp) ; movzbq (%rsp), %rdi.
+const x86GasByteImmDriverMain = `
+function main(): i32 {
+    var src: string = "\tsubq $16, %rsp\n\tmovb $42, (%rsp)\n\tmovzbq (%rsp), %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasByteRegDriverMain: movb %cl, (%rsp) ; movzbq (%rsp), %r8.
+const x86GasByteRegDriverMain = `
+function main(): i32 {
+    var src: string = "\tsubq $16, %rsp\n\tmovq $42, %rcx\n\tmovb %cl, (%rsp)\n\tmovzbq (%rsp), %r8\n\tmovq %r8, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
