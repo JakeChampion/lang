@@ -1,0 +1,2042 @@
+// examples/self_host/arm64_native.fern — the arm64-darwin native-binary
+// backend as a single module: the AArch64 machine-code encoder + named-
+// label assembler (was arm64_encode.fern), the GAS-text assembler + data/
+// symbol relocation (was arm64_gas.fern), and the ad-hoc-signed Mach-O
+// writer + SHA-256 (was macho.fern). Merged into one module so the unified
+// fern CLI can `import "./arm64_native"` and drive emit -> assemble ->
+// Mach-O without cross-module bare references. The pieces stay logically
+// separable; the section banners below mark the former file boundaries.
+
+// ============================================================
+// PART 1 — AArch64 encoder + named-label assembler
+// ============================================================
+
+// examples/self_host/arm64_encode.fern — a self-hosted AArch64 (arm64)
+// machine-code encoder: one function per instruction form, each appending
+// the 4-byte fixed-width little-endian encoding to an `i32[]` byte buffer.
+// It is the arm64 counterpart of x86_encode.fern and the assembler half of
+// the arm64-darwin native-binary path (the container half is macho.fern),
+// mirroring the Go reference internal/native/arm64/arm64.go.
+//
+// AArch64 instructions are all exactly 32 bits, little-endian. Each
+// encoder is pinned byte-for-byte against the Go reference (itself pinned
+// against `llvm-mc -triple=aarch64 --show-encoding`). This is a tiny
+// starting subset — enough to assemble an `exit(N)` program end-to-end
+// (MOVZ + SVC) and small integer arithmetic — so the Mach-O writer and the
+// encode -> wrap -> run pipeline can be proven before the full instruction
+// surface lands.
+//
+// Conventions (matching x86_encode.fern / elf.fern):
+//   * A byte buffer is an `i32[]` of values in 0..255; each encoder appends
+//     to it and returns the (possibly grown) buffer (`buf = f(buf, …)`).
+//   * Instruction *word* helpers (`arm64_*_word`) return the 32-bit
+//     encoding in an i64 (so the 0xD2…/0xF2…/0xAA… bases stay positive);
+//     the append wrappers thread the byte buffer.
+//   * This module is import-free so the native emitter can `import
+//     "./arm64_encode"` and the unit test can concatenate it with a driver.
+
+// ---- register name helpers (5-bit register numbers) ----
+function arm64_x0(): i32 { return 0; }
+function arm64_x1(): i32 { return 1; }
+function arm64_x2(): i32 { return 2; }
+function arm64_x16(): i32 { return 16; }
+function arm64_lr(): i32 { return 30; } // x30, the link register
+function arm64_xzr(): i32 { return 31; }
+
+// ---- byte emitter ----
+
+// arm64_le32 appends a 32-bit instruction word (held in an i64),
+// little-endian.
+function arm64_le32(buf: i32[], v: i64): i32[] {
+    buf = buf.append((v & 255) as i32);
+    buf = buf.append(((v >> 8) & 255) as i32);
+    buf = buf.append(((v >> 16) & 255) as i32);
+    buf = buf.append(((v >> 24) & 255) as i32);
+    return buf;
+}
+
+// ---- move-wide family ----
+
+// arm64_movz_word encodes `movz Xd, #imm16, lsl #shift` (move-wide-zero):
+// load imm16 into the given 16-bit slot of Xd, zeroing the rest. shift
+// must be one of 0, 16, 32, 48.
+//   sf=1 opc=10 100101 hw(2) imm16(16) Rd(5) -> 0xD2800000 | hw<<21 | imm16<<5 | Rd
+function arm64_movz_word(rd: i32, imm16: i32, shift: i32): i64 {
+    var hw: i64 = ((shift / 16) & 3) as i64;
+    return 0xd2800000 | (hw << 21) | (((imm16 & 0xffff) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_movk_word encodes `movk Xd, #imm16, lsl #shift` (move-wide-keep):
+// write imm16 into one 16-bit slot of Xd, leaving the rest unchanged.
+//   sf=1 opc=11 -> base 0xF2800000.
+function arm64_movk_word(rd: i32, imm16: i32, shift: i32): i64 {
+    var hw: i64 = ((shift / 16) & 3) as i64;
+    return 0xf2800000 | (hw << 21) | (((imm16 & 0xffff) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_movn_word encodes `movn Xd, #imm16, lsl #shift` (move-wide-not):
+// load the bitwise complement of (imm16 << shift) into Xd.
+//   sf=1 opc=00 -> base 0x92800000.
+function arm64_movn_word(rd: i32, imm16: i32, shift: i32): i64 {
+    var hw: i64 = ((shift / 16) & 3) as i64;
+    return 0x92800000 | (hw << 21) | (((imm16 & 0xffff) as i64) << 5) | ((rd & 31) as i64);
+}
+
+function arm64_movz(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
+    return arm64_le32(buf, arm64_movz_word(rd, imm16, shift));
+}
+function arm64_movk(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
+    return arm64_le32(buf, arm64_movk_word(rd, imm16, shift));
+}
+function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
+    return arm64_le32(buf, arm64_movn_word(rd, imm16, shift));
+}
+
+// ---- add / sub (immediate) ----
+
+// arm64_addimm_word encodes `add Xd, Xn, #imm12` (64-bit, no lsl #12).
+//   sf=1 op=0 S=0 100010 sh=0 imm12 Rn Rd -> 0x91000000 | imm12<<10 | Rn<<5 | Rd
+function arm64_addimm_word(rd: i32, rn: i32, imm12: i32): i64 {
+    return 0x91000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_subimm_word encodes `sub Xd, Xn, #imm12` (64-bit) — base 0xD1000000.
+function arm64_subimm_word(rd: i32, rn: i32, imm12: i32): i64 {
+    return 0xd1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+function arm64_addimm(buf: i32[], rd: i32, rn: i32, imm12: i32): i32[] {
+    return arm64_le32(buf, arm64_addimm_word(rd, rn, imm12));
+}
+function arm64_subimm(buf: i32[], rd: i32, rn: i32, imm12: i32): i32[] {
+    return arm64_le32(buf, arm64_subimm_word(rd, rn, imm12));
+}
+
+// ---- add / sub / mov (register) ----
+
+// arm64_addreg_word encodes `add Xd, Xn, Xm` (shifted-register, zero shift).
+//   sf=1 op=0 S=0 01011 -> 0x8B000000 | Rm<<16 | Rn<<5 | Rd
+function arm64_addreg_word(rd: i32, rn: i32, rm: i32): i64 {
+    return 0x8b000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_subreg_word encodes `sub Xd, Xn, Xm` -> base 0xCB000000.
+function arm64_subreg_word(rd: i32, rn: i32, rm: i32): i64 {
+    return 0xcb000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_movreg_word encodes `mov Xd, Xm` — AArch64 spells it
+// `orr Xd, XZR, Xm` -> 0xAA000000 | Rm<<16 | 31<<5 | Rd.
+function arm64_movreg_word(rd: i32, rm: i32): i64 {
+    return 0xaa000000 | (((rm & 31) as i64) << 16) | (31 << 5) | ((rd & 31) as i64);
+}
+
+function arm64_addreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_addreg_word(rd, rn, rm));
+}
+function arm64_subreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_subreg_word(rd, rn, rm));
+}
+function arm64_movreg(buf: i32[], rd: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_movreg_word(rd, rm));
+}
+
+// ---- system / control ----
+
+// arm64_svc_word encodes `svc #imm16` -> 0xD4000001 | imm16<<5.
+// The Darwin syscall trap is `svc #0x80`.
+function arm64_svc_word(imm16: i32): i64 {
+    return 0xd4000001 | (((imm16 & 0xffff) as i64) << 5);
+}
+
+// arm64_ret_word encodes `ret Xn` (default x30) -> 0xD65F0000 | Rn<<5.
+function arm64_ret_word(rn: i32): i64 {
+    return 0xd65f0000 | (((rn & 31) as i64) << 5);
+}
+
+function arm64_svc(buf: i32[], imm16: i32): i32[] {
+    return arm64_le32(buf, arm64_svc_word(imm16));
+}
+function arm64_ret(buf: i32[], rn: i32): i32[] {
+    return arm64_le32(buf, arm64_ret_word(rn));
+}
+
+// ---- compare (subs to XZR) ----
+
+// arm64_cmpreg_word encodes `cmp Xn, Xm` — AArch64 spells it
+// `subs XZR, Xn, Xm` (shifted-register, zero shift) -> sets NZCV.
+//   0xEB000000 | Rm<<16 | Rn<<5 | 31
+function arm64_cmpreg_word(rn: i32, rm: i32): i64 {
+    return 0xeb000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | 31;
+}
+
+// arm64_cmpimm_word encodes `cmp Xn, #imm12` — `subs XZR, Xn, #imm12`.
+//   0xF1000000 | imm12<<10 | Rn<<5 | 31
+function arm64_cmpimm_word(rn: i32, imm12: i32): i64 {
+    return 0xf1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | 31;
+}
+
+function arm64_cmpreg(buf: i32[], rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_cmpreg_word(rn, rm));
+}
+function arm64_cmpimm(buf: i32[], rn: i32, imm12: i32): i32[] {
+    return arm64_le32(buf, arm64_cmpimm_word(rn, imm12));
+}
+
+// ---- condition codes (the 4-bit cond field of B.cond) ----
+function arm64_eq(): i32 { return 0; }   // ==
+function arm64_ne(): i32 { return 1; }   // !=
+function arm64_ge(): i32 { return 10; }  // >= (signed)
+function arm64_lt(): i32 { return 11; }  // <  (signed)
+function arm64_gt(): i32 { return 12; }  // >  (signed)
+function arm64_le(): i32 { return 13; }  // <= (signed)
+
+// ---- branches ----
+//
+// Branch targets are PC-relative byte deltas (target - branch_site),
+// always a multiple of 4; the encoders divide by 4 to form the immediate.
+// A *backward* branch (the bottom of a loop) knows its target offset when
+// it is emitted, so the byte delta is `target_off - buf.len()`; forward
+// branches await the label/fixup pass (a later slice).
+
+// arm64_b_word encodes `b <rel>` -> 0x14000000 | imm26, imm26 = rel/4
+// as a signed 26-bit field.
+function arm64_b_word(rel: i32): i64 {
+    return 0x14000000 | (((rel >> 2) & 0x3ffffff) as i64);
+}
+
+// arm64_bcond_word encodes `b.<cond> <rel>` -> 0x54000000 | imm19<<5 |
+// cond, imm19 = rel/4 as a signed 19-bit field.
+function arm64_bcond_word(cond: i32, rel: i32): i64 {
+    return 0x54000000 | ((((rel >> 2) & 0x7ffff) as i64) << 5) | ((cond & 15) as i64);
+}
+
+// arm64_cbz_word / arm64_cbnz_word encode `cbz/cbnz Xt, <rel>` (compare
+// the register against zero and branch) -> 0xB4000000 / 0xB5000000 |
+// imm19<<5 | Rt. No flags needed (they test the register directly).
+function arm64_cbz_word(rt: i32, rel: i32): i64 {
+    return 0xb4000000 | ((((rel >> 2) & 0x7ffff) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_cbnz_word(rt: i32, rel: i32): i64 {
+    return 0xb5000000 | ((((rel >> 2) & 0x7ffff) as i64) << 5) | ((rt & 31) as i64);
+}
+
+function arm64_b(buf: i32[], rel: i32): i32[] {
+    return arm64_le32(buf, arm64_b_word(rel));
+}
+function arm64_bcond(buf: i32[], cond: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_bcond_word(cond, rel));
+}
+function arm64_cbz(buf: i32[], rt: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_cbz_word(rt, rel));
+}
+function arm64_cbnz(buf: i32[], rt: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_cbnz_word(rt, rel));
+}
+
+// ---- forward references (placeholder + patch) ----
+//
+// A forward branch is emitted with a zero displacement (a placeholder),
+// its byte offset recorded; once the target label's offset is known, the
+// immediate field is spliced in with a patch helper. Unlike the backward
+// case there is no label table yet — the driver tracks the one offset it
+// needs. arm64 branch displacements are relative to the branch instruction
+// itself, so the byte delta is simply `target_off - branch_off`.
+
+// arm64_rel returns the PC-relative byte delta from a branch at branch_off
+// to target_off.
+function arm64_rel(target_off: i32, branch_off: i32): i32 {
+    return target_off - branch_off;
+}
+
+// arm64_read_word reads the little-endian 32-bit instruction word at byte
+// offset `at` (held in an i64 so the top bit stays positive).
+function arm64_read_word(buf: i32[], at: i32): i64 {
+    return (buf[at] as i64)
+        | ((buf[at + 1] as i64) << 8)
+        | ((buf[at + 2] as i64) << 16)
+        | ((buf[at + 3] as i64) << 24);
+}
+
+// arm64_write_word overwrites the 4 little-endian bytes of the instruction
+// word at byte offset `at`.
+function arm64_write_word(buf: i32[], at: i32, w: i64): i32[] {
+    buf[at] = (w & 255) as i32;
+    buf[at + 1] = ((w >> 8) & 255) as i32;
+    buf[at + 2] = ((w >> 16) & 255) as i32;
+    buf[at + 3] = ((w >> 24) & 255) as i32;
+    return buf;
+}
+
+// arm64_patch_b splices a rel into the imm26 field of a `b` placeholder at
+// byte offset `at`, preserving the top 6 opcode bits.
+function arm64_patch_b(buf: i32[], at: i32, rel: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xfc000000) | (((rel >> 2) & 0x3ffffff) as i64);
+    return arm64_write_word(buf, at, w);
+}
+
+// arm64_patch_b19 splices a rel into the imm19 field (bits 23:5) of a
+// `b.cond` / `cbz` / `cbnz` placeholder at byte offset `at`, preserving
+// the opcode plus the cond/Rt bits (the masked-out 0xff00001f).
+function arm64_patch_b19(buf: i32[], at: i32, rel: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xff00001f) | ((((rel >> 2) & 0x7ffff) as i64) << 5);
+    return arm64_write_word(buf, at, w);
+}
+
+// ---- bl (branch-with-link, the call instruction) ----
+
+// arm64_bl_word encodes `bl <rel>` -> 0x94000000 | imm26 (rel/4). It sets
+// x30 = address of the following instruction; `ret` returns through x30.
+function arm64_bl_word(rel: i32): i64 {
+    return 0x94000000 | (((rel >> 2) & 0x3ffffff) as i64);
+}
+function arm64_bl(buf: i32[], rel: i32): i32[] {
+    return arm64_le32(buf, arm64_bl_word(rel));
+}
+
+// ============================================================
+// named-label assembler
+// ============================================================
+//
+// Arm64Asm threads the code buffer plus a label table (name -> byte
+// offset) and a fixup queue for branches whose target is not yet placed.
+// It is the arm64 counterpart of X86Asm in x86_encode.fern. Branch
+// displacements are PC-relative to the branch instruction itself, so a
+// fixup records the instruction's byte offset and resolve patches with
+// rel = target_off - instr_off. fix_kinds distinguishes the immediate
+// field: 0 = imm26 (b / bl), 1 = imm19 (b.cond / cbz / cbnz).
+
+pub struct Arm64Asm {
+    code: i32[],
+    lab_names: string[],
+    lab_offs: i32[],
+    fix_offs: i32[],
+    fix_names: string[],
+    fix_kinds: i32[],
+}
+
+// arm64_asm_new returns an empty assembler state.
+function arm64_asm_new(): Arm64Asm {
+    return Arm64Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [], fix_kinds: [] };
+}
+
+// arm64_asm_label records `name` at the current code offset.
+function arm64_asm_label(a: Arm64Asm, name: string): Arm64Asm {
+    a.lab_names = a.lab_names.append(name);
+    a.lab_offs = a.lab_offs.append(a.code.len());
+    return a;
+}
+
+// arm64_asm_label_off returns the byte offset of label `name`, or -1 if it
+// has not been placed yet.
+function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
+    var i: i32 = 0;
+    while (i < a.lab_names.len()) {
+        if (a.lab_names[i] == name) {
+            return a.lab_offs[i];
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// arm64_asm_fixup_or_patch handles a branch placeholder just emitted into
+// a.code (its instruction word at a.code.len()-4). `kind` selects the
+// immediate field. If the target label is already placed, patch now;
+// otherwise queue a fixup for arm64_asm_resolve.
+function arm64_asm_fixup_or_patch(a: Arm64Asm, name: string, kind: i32): Arm64Asm {
+    var at: i32 = a.code.len() - 4;
+    var target: i32 = arm64_asm_label_off(a, name);
+    if (target >= 0) {
+        if (kind == 1) {
+            a.code = arm64_patch_b19(a.code, at, target - at);
+        } else if (kind == 2) {
+            a.code = arm64_patch_b14(a.code, at, target - at);
+        } else {
+            a.code = arm64_patch_b(a.code, at, target - at);
+        }
+    } else {
+        a.fix_offs = a.fix_offs.append(at);
+        a.fix_names = a.fix_names.append(name);
+        a.fix_kinds = a.fix_kinds.append(kind);
+    }
+    return a;
+}
+
+// arm64_asm_b / arm64_asm_bl emit an unconditional branch / call to a
+// (possibly forward) label.
+function arm64_asm_b(a: Arm64Asm, name: string): Arm64Asm {
+    a.code = arm64_b(a.code, 0);
+    return arm64_asm_fixup_or_patch(a, name, 0);
+}
+function arm64_asm_bl(a: Arm64Asm, name: string): Arm64Asm {
+    a.code = arm64_bl(a.code, 0);
+    return arm64_asm_fixup_or_patch(a, name, 0);
+}
+
+// arm64_asm_bcond / arm64_asm_cbz / arm64_asm_cbnz emit a conditional
+// branch to a (possibly forward) label.
+function arm64_asm_bcond(a: Arm64Asm, cond: i32, name: string): Arm64Asm {
+    a.code = arm64_bcond(a.code, cond, 0);
+    return arm64_asm_fixup_or_patch(a, name, 1);
+}
+function arm64_asm_cbz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
+    a.code = arm64_cbz(a.code, rt, 0);
+    return arm64_asm_fixup_or_patch(a, name, 1);
+}
+function arm64_asm_cbnz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
+    a.code = arm64_cbnz(a.code, rt, 0);
+    return arm64_asm_fixup_or_patch(a, name, 1);
+}
+
+// arm64_asm_resolve patches every queued (forward) fixup now that all
+// labels are placed. Call once after emitting the whole program;
+// afterwards a.code is the final .text.
+function arm64_asm_resolve(a: Arm64Asm): Arm64Asm {
+    var i: i32 = 0;
+    while (i < a.fix_offs.len()) {
+        var at: i32 = a.fix_offs[i];
+        var target: i32 = arm64_asm_label_off(a, a.fix_names[i]);
+        if (a.fix_kinds[i] == 1) {
+            a.code = arm64_patch_b19(a.code, at, target - at);
+        } else if (a.fix_kinds[i] == 2) {
+            a.code = arm64_patch_b14(a.code, at, target - at);
+        } else {
+            a.code = arm64_patch_b(a.code, at, target - at);
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// ---- load / store (64-bit, unsigned scaled immediate) ----
+//
+// The base+offset forms `ldr/str Xt, [Xn, #off]`. The 12-bit immediate is
+// scaled by 8 (the access size), so `off` must be a multiple of 8 in
+// 0..32760. Register 31 names SP here (the stack pointer), not XZR — used
+// for spills to the stack frame.
+//   str: (3<<30)|0x39000000              = 0xF9000000
+//   ldr: 0xF9000000 | 0x00400000          = 0xF9400000
+//        | (off/8)<<10 | Rn<<5 | Rt
+
+function arm64_sp(): i32 { return 31; } // SP in load/store + add/sub-imm context
+
+function arm64_str_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf9000000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf9400000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+
+function arm64_str(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_str_word(rt, rn, off));
+}
+function arm64_ldr(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_ldr_word(rt, rn, off));
+}
+
+// ---- PC-relative page addressing (@PAGE / @PAGEOFF) ----
+//
+// A 64-bit constant in __DATA is addressed in two steps, exactly as ld64's
+// @PAGE / @PAGEOFF relocations resolve:
+//   adrp Xn, sym@PAGE      ; Xn = (PC & ~0xFFF) + (page_delta << 12)
+//   ldr  Xt, [Xn, #off]    ; off = sym & 0xFFF  (the @PAGEOFF)
+// page_delta is the signed 4 KiB-page distance between the symbol and the
+// adrp instruction, computed from the fixed addresses macho.fern lays the
+// image out at (macho_text_vaddr / macho_data_vaddr — the SegmentAddrs
+// parity). Because both segments share the 16 KiB Mach-O page alignment,
+// @PAGEOFF is always 4 KiB-aligned here, but the math is general.
+
+// arm64_page_delta returns the 4 KiB-page delta from the adrp instruction
+// at `adrp_addr` to the target at `target_addr` (the adrp immediate).
+function arm64_page_delta(target_addr: i64, adrp_addr: i64): i32 {
+    return ((target_addr >> 12) - (adrp_addr >> 12)) as i32;
+}
+
+// arm64_page_off returns the in-page byte offset of `addr` (the @PAGEOFF).
+function arm64_page_off(addr: i64): i32 {
+    return (addr & 0xfff) as i32;
+}
+
+// arm64_adrp_word encodes `adrp Xd, #page_delta` -> 0x90000000 |
+// immlo<<29 | immhi<<5 | Rd, where the 21-bit page delta splits into
+// immlo (bits 1:0) and immhi (bits 20:2).
+function arm64_adrp_word(rd: i32, page_delta: i32): i64 {
+    var immlo: i64 = (page_delta & 3) as i64;
+    var immhi: i64 = ((page_delta >> 2) & 0x7ffff) as i64;
+    return 0x90000000 | (immlo << 29) | (immhi << 5) | ((rd & 31) as i64);
+}
+function arm64_adrp(buf: i32[], rd: i32, page_delta: i32): i32[] {
+    return arm64_le32(buf, arm64_adrp_word(rd, page_delta));
+}
+
+// arm64_patch_adrp splices a page_delta into an `adrp` placeholder at byte
+// offset `at`, preserving the opcode + Rd (masked-out 0x9f00001f).
+function arm64_patch_adrp(buf: i32[], at: i32, page_delta: i32): i32[] {
+    var immlo: i64 = (page_delta & 3) as i64;
+    var immhi: i64 = ((page_delta >> 2) & 0x7ffff) as i64;
+    var w: i64 = (arm64_read_word(buf, at) & 0x9f00001f) | (immlo << 29) | (immhi << 5);
+    return arm64_write_word(buf, at, w);
+}
+
+// arm64_patch_ldr_off splices a (scaled) byte offset into the imm12 field
+// (bits 21:10) of an `ldr` placeholder at byte offset `at`, preserving the
+// opcode + Rt/Rn (masked-out 0xffc003ff).
+function arm64_patch_ldr_off(buf: i32[], at: i32, off: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xffc003ff) | ((((off / 8) & 0xfff) as i64) << 10);
+    return arm64_write_word(buf, at, w);
+}
+
+// ---- frame pair load/store (the prologue/epilogue idiom) ----
+//
+// stp/ldp with writeback: `stp Xt, Xt2, [Xn, #off]!` (pre-index) saves the
+// callee-saved pair while bumping SP; `ldp Xt, Xt2, [Xn], #off`
+// (post-index) restores them and unwinds. off is a signed multiple of 8,
+// scaled to the 7-bit immediate. (64-bit forms; verified vs llvm-mc.)
+
+function arm64_stp_pre_word(rt: i32, rt2: i32, rn: i32, off: i32): i64 {
+    var imm7: i64 = ((off / 8) & 0x7f) as i64;
+    return 0xa9800000 | (imm7 << 15) | (((rt2 & 31) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldp_post_word(rt: i32, rt2: i32, rn: i32, off: i32): i64 {
+    var imm7: i64 = ((off / 8) & 0x7f) as i64;
+    return 0xa8c00000 | (imm7 << 15) | (((rt2 & 31) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_stp_pre(buf: i32[], rt: i32, rt2: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_stp_pre_word(rt, rt2, rn, off));
+}
+function arm64_ldp_post(buf: i32[], rt: i32, rt2: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_ldp_post_word(rt, rt2, rn, off));
+}
+
+// ---- single load/store with writeback (signed 9-bit unscaled imm9) ----
+//
+// `str Xt, [Xn, #off]!` (pre) / `ldr Xt, [Xn], #off` (post) and the two
+// mirror forms — the bare push/pop idiom. imm9 is a signed byte offset
+// (NOT scaled). Index bits 11:10: pre = 0b11, post = 0b01.
+//   base: (3<<30)|0x38000000 | (load?0x00400000)
+
+function arm64_str_pre_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf8000000 | (((off & 0x1ff) as i64) << 12) | 0xc00 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_str_post_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf8000000 | (((off & 0x1ff) as i64) << 12) | 0x400 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_pre_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf8400000 | (((off & 0x1ff) as i64) << 12) | 0xc00 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_post_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf8400000 | (((off & 0x1ff) as i64) << 12) | 0x400 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_str_pre(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_str_pre_word(rt, rn, off));
+}
+function arm64_str_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_str_post_word(rt, rn, off));
+}
+function arm64_ldr_pre(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_ldr_pre_word(rt, rn, off));
+}
+function arm64_ldr_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_ldr_post_word(rt, rn, off));
+}
+
+// arm64_patch_addimm_off splices an unscaled 12-bit immediate into the
+// imm12 field (bits 21:10) of an `add` (immediate) placeholder — used for
+// `add Xd, Xn, sym@PAGEOFF`, preserving the opcode + Rd/Rn (0xffc003ff).
+function arm64_patch_addimm_off(buf: i32[], at: i32, off: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xffc003ff) | (((off & 0xfff) as i64) << 10);
+    return arm64_write_word(buf, at, w);
+}
+
+// ---- bitfield extract + negate + test-bit branch ----
+
+// arm64_ubfx_word encodes `ubfx Xd, Xn, #lsb, #width` (unsigned bitfield
+// extract) — the UBFM alias with immr=lsb, imms=lsb+width-1.
+//   0xD3400000 | immr<<16 | imms<<10 | Rn<<5 | Rd
+function arm64_ubfx_word(rd: i32, rn: i32, lsb: i32, width: i32): i64 {
+    var immr: i64 = (lsb & 63) as i64;
+    var imms: i64 = ((lsb + width - 1) & 63) as i64;
+    return 0xd3400000 | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+function arm64_ubfx(buf: i32[], rd: i32, rn: i32, lsb: i32, width: i32): i32[] {
+    return arm64_le32(buf, arm64_ubfx_word(rd, rn, lsb, width));
+}
+
+// arm64_neg emits `neg Xd, Xm` — the `sub Xd, XZR, Xm` alias.
+function arm64_neg(buf: i32[], rd: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_subreg_word(rd, 31, rm));
+}
+
+// arm64_tbz_word / arm64_tbnz_word encode `tbz/tbnz Xt, #bit, <rel>` —
+// test bit `bit` and branch if zero / nonzero. rel is a PC-relative byte
+// delta (÷4 -> signed imm14 at bits 18:5). The tested bit splits into b5
+// (bit 31) and b40 (bits 23:19).
+//   tbz base 0x36000000, tbnz base 0x37000000.
+function arm64_tbz_word(rt: i32, bit: i32, rel: i32): i64 {
+    var b5: i64 = ((bit >> 5) & 1) as i64;
+    var b40: i64 = (bit & 31) as i64;
+    return 0x36000000 | (b5 << 31) | (b40 << 19) | ((((rel >> 2) & 0x3fff) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_tbnz_word(rt: i32, bit: i32, rel: i32): i64 {
+    var b5: i64 = ((bit >> 5) & 1) as i64;
+    var b40: i64 = (bit & 31) as i64;
+    return 0x37000000 | (b5 << 31) | (b40 << 19) | ((((rel >> 2) & 0x3fff) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_tbz(buf: i32[], rt: i32, bit: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_tbz_word(rt, bit, rel));
+}
+function arm64_tbnz(buf: i32[], rt: i32, bit: i32, rel: i32): i32[] {
+    return arm64_le32(buf, arm64_tbnz_word(rt, bit, rel));
+}
+
+// arm64_patch_b14 splices a rel into the imm14 field (bits 18:5) of a
+// `tbz`/`tbnz` placeholder, preserving the opcode + b5/b40/Rt (mask
+// 0xfff8001f).
+function arm64_patch_b14(buf: i32[], at: i32, rel: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xfff8001f) | ((((rel >> 2) & 0x3fff) as i64) << 5);
+    return arm64_write_word(buf, at, w);
+}
+
+// arm64_asm_tbz / arm64_asm_tbnz emit a test-bit branch to a (possibly
+// forward) label (fixup kind 2 = imm14).
+function arm64_asm_tbz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
+    a.code = arm64_tbz(a.code, rt, bit, 0);
+    return arm64_asm_fixup_or_patch(a, name, 2);
+}
+function arm64_asm_tbnz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
+    a.code = arm64_tbnz(a.code, rt, bit, 0);
+    return arm64_asm_fixup_or_patch(a, name, 2);
+}
+
+// ---- multiply, unscaled load/store, conditional-set ----
+
+// arm64_mul encodes `mul Xd, Xn, Xm` — the `madd Xd, Xn, Xm, XZR` alias.
+//   0x9B000000 | Rm<<16 | (31<<10 = Ra=XZR) | Rn<<5 | Rd
+function arm64_mul(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    var w: i64 = 0x9b000000 | (((rm & 31) as i64) << 16) | (31 << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    return arm64_le32(buf, w);
+}
+
+// arm64_ldur / arm64_stur encode `ldur/stur Xt, [Xn, #off]` — the unscaled
+// signed-imm9 load/store (no writeback, no scaling), the form the backend
+// uses for frame-slot access. 0xF8400000 / 0xF8000000 | imm9<<12 | Rn<<5 | Rt.
+function arm64_ldur(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    var w: i64 = 0xf8400000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+    return arm64_le32(buf, w);
+}
+function arm64_stur(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    var w: i64 = 0xf8000000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+    return arm64_le32(buf, w);
+}
+
+// arm64_cset encodes `cset Xd, <cond>` — `csinc Xd, XZR, XZR, invert(cond)`
+// (set Xd to 1 if cond holds, else 0). The condition is inverted (cond^1).
+//   0x9A800400 | (31<<16) | invcond<<12 | (31<<5) | Rd
+function arm64_cset(buf: i32[], rd: i32, cond: i32): i32[] {
+    var w: i64 = 0x9a800400 | (31 << 16) | ((((cond ^ 1) & 15) as i64) << 12) | (31 << 5) | ((rd & 31) as i64);
+    return arm64_le32(buf, w);
+}
+
+// ---- shifts (immediate), cmn, csel, and ----
+
+// arm64_lsl_imm / arm64_lsr_imm encode `lsl/lsr Rd, Rn, #sh` — the UBFM
+// aliases. `w` selects the 32-bit form (sf=0, base 0x53000000); else the
+// 64-bit form (base 0xD3400000, N=1 folded in). lsl uses immr=(width-sh),
+// imms=(width-1-sh); lsr uses immr=sh, imms=width-1.
+function arm64_lsl_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {
+    var width: i32 = 64;
+    var base: i64 = 0xd3400000;
+    if (w) { width = 32; base = 0x53000000; }
+    var immr: i64 = ((width - sh) & (width - 1)) as i64;
+    var imms: i64 = ((width - 1 - sh) & 63) as i64;
+    return arm64_le32(buf, base | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+function arm64_lsr_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {
+    var width: i32 = 64;
+    var base: i64 = 0xd3400000;
+    if (w) { width = 32; base = 0x53000000; }
+    var immr: i64 = (sh & (width - 1)) as i64;
+    var imms: i64 = ((width - 1) & 63) as i64;
+    return arm64_le32(buf, base | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// arm64_cmn_imm encodes `cmn Xn, #imm12` — `adds XZR, Xn, #imm12`.
+function arm64_cmn_imm(buf: i32[], rn: i32, imm12: i32): i32[] {
+    return arm64_le32(buf, 0xb1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | 31);
+}
+
+// arm64_csel encodes `csel Xd, Xn, Xm, <cond>`.
+//   0x9A800000 | Rm<<16 | cond<<12 | Rn<<5 | Rd
+function arm64_csel(buf: i32[], rd: i32, rn: i32, rm: i32, cond: i32): i32[] {
+    return arm64_le32(buf, 0x9a800000 | (((rm & 31) as i64) << 16) | (((cond & 15) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// arm64_andreg encodes `and Xd, Xn, Xm` (logical shifted-register, zero shift).
+function arm64_andreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, 0x8a000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// ---- AArch64 bitmask (logical) immediate encoder ----
+//
+// A port of the Go reference's encodeBitmask (internal/native/arm64), for
+// the 64-bit `and/orr/eor Xd, Xn, #imm` immediate forms. Returns the
+// (N, immr, imms) fields and whether `imm` is a legal bitmask immediate.
+// Pinned vs llvm-mc. The few i64 bit-twiddles Fern lacks natively are
+// provided below (logical shift right, ctz, clz) — `>>` is arithmetic, so
+// logical shifts mask off the sign-extended high bits.
+
+struct Arm64Bm {
+    n: i32,
+    immr: i32,
+    imms: i32,
+    ok: boolean,
+}
+
+// arm64_bm_lowmask returns the low-k-bits-set mask (k in 0..64).
+function arm64_bm_lowmask(k: i32): i64 {
+    if (k <= 0) { return 0; }
+    if (k >= 64) { return 0 - 1; }
+    return (1 << k) - 1;
+}
+
+// arm64_bm_lsr is a logical (unsigned) shift right of a 64-bit value.
+function arm64_bm_lsr(x: i64, n: i32): i64 {
+    if (n <= 0) { return x; }
+    if (n >= 64) { return 0; }
+    return (x >> n) & arm64_bm_lowmask(64 - n);
+}
+
+// arm64_bm_ctz / arm64_bm_clz count trailing / leading zero bits of a
+// nonzero 64-bit value (64 if zero). Bit i is `(x >> i) & 1` — masking the
+// low bit is correct regardless of the shift's sign behaviour.
+function arm64_bm_ctz(x: i64): i32 {
+    var i: i32 = 0;
+    while (i < 64) {
+        if (((x >> i) & 1) == 1) { return i; }
+        i = i + 1;
+    }
+    return 64;
+}
+function arm64_bm_clz(x: i64): i32 {
+    var i: i32 = 0;
+    while (i < 64) {
+        if (((x >> (63 - i)) & 1) == 1) { return i; }
+        i = i + 1;
+    }
+    return 64;
+}
+
+// arm64_bm_isshifted is true when v is a contiguous run of low ones
+// (v != 0 and v+1 is a power of two): ((v-1)|v)+1 has no bits in common
+// with ((v-1)|v).
+function arm64_bm_isshifted(v: i64): boolean {
+    if (v == 0) { return false; }
+    var m: i64 = (v - 1) | v;
+    return ((m + 1) & m) == 0;
+}
+
+// arm64_encode_bitmask encodes a 64-bit `imm` as an AArch64 logical
+// immediate (N, immr, imms). ok=false if imm is not a legal bitmask value.
+function arm64_encode_bitmask(imm: i64): Arm64Bm {
+    if (imm == 0 || imm == (0 - 1)) {
+        return Arm64Bm { n: 0, immr: 0, imms: 0, ok: false };
+    }
+    var size: i32 = 64;
+    var done: boolean = false;
+    while (!done) {
+        size = size / 2;
+        var m: i64 = arm64_bm_lowmask(size);
+        if ((imm & m) != (arm64_bm_lsr(imm, size) & m)) {
+            size = size * 2;
+            done = true;
+        } else if (size <= 2) {
+            done = true;
+        }
+    }
+    var allones: i64 = 0 - 1;
+    var mask: i64 = arm64_bm_lsr(allones, 64 - size);
+    imm = imm & mask;
+    var i: i32 = 0;
+    var cto: i32 = 0;
+    if (arm64_bm_isshifted(imm)) {
+        i = arm64_bm_ctz(imm);
+        cto = arm64_bm_ctz(arm64_bm_lsr(imm, i) ^ allones);
+    } else {
+        imm = imm | (mask ^ allones);
+        if (!arm64_bm_isshifted(imm ^ allones)) {
+            return Arm64Bm { n: 0, immr: 0, imms: 0, ok: false };
+        }
+        var clo: i32 = arm64_bm_clz(imm ^ allones);
+        i = 64 - clo;
+        cto = clo + arm64_bm_ctz(imm ^ allones) - (64 - size);
+    }
+    var immr: i32 = (size - i) & (size - 1);
+    var nimms: i32 = ((size - 1) ^ (0 - 1)) << 1;
+    nimms = nimms | (cto - 1);
+    var nbit: i32 = ((nimms >> 6) & 1) ^ 1;
+    var imms: i32 = nimms & 0x3f;
+    return Arm64Bm { n: nbit, immr: immr, imms: imms, ok: true };
+}
+
+// arm64_and_imm_ok reports whether `imm` (sign-extended from the parsed
+// i32) is a legal `and` bitmask immediate.
+function arm64_and_imm_ok(imm: i32): boolean {
+    return arm64_encode_bitmask(imm as i64).ok;
+}
+
+// arm64_and_imm encodes `and Xd, Xn, #imm` (logical immediate). Callers
+// must check arm64_and_imm_ok(imm) first.
+function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32): i32[] {
+    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
+    return arm64_le32(buf, 0x92000000 | ((bm.n as i64) << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// ============================================================
+// PART 2 — GAS-text assembler + data/symbol relocation
+// ============================================================
+
+// examples/self_host/arm64_gas.fern — a self-hosted AArch64 GAS-text
+// assembler: it parses an assembly-text subset into machine-code bytes via
+// the arm64_encode.fern encoders + named-label assembler (Arm64Asm). It is
+// the arm64 counterpart of x86_gas.fern and the text->bytes step that lets
+// the arm64-darwin native path turn `asm_arm64`-style assembly into a
+// runnable Mach-O (via macho.fern) with no external `as`/`clang`.
+//
+// This module `import`s nothing but depends on the names defined in
+// arm64_encode.fern (the encoders + Arm64Asm), so a build / test
+// concatenates the two (plus macho.fern) the same way the x86 gas slices
+// concatenate x86_encode.fern.
+//
+// Supported subset (the canonical AArch64 GAS spellings):
+//   mov Xd, #imm | mov Xd, Xm | movz/movk Xd, #imm{, lsl #s}
+//   add/sub Xd, Xn, #imm | add/sub Xd, Xn, Xm
+//   cmp Xn, #imm | cmp Xn, Xm
+//   ldr/str Xt, [Xn{, #off}]
+//   b/bl <label> | b.<cond> <label> | cbz/cbnz Xt, <label>
+//   svc #imm | ret
+// Directives: .text (others ignored); `name:` labels; `//` line comments.
+
+// ---- text helpers ----
+
+// arm64_gas_trim strips leading/trailing ASCII spaces and tabs.
+function arm64_gas_trim(s: string): string {
+    var i: i32 = 0;
+    while (i < s.len() && (s[i] == 32 || s[i] == 9)) {
+        i = i + 1;
+    }
+    var j: i32 = s.len();
+    while (j > i && (s[j - 1] == 32 || s[j - 1] == 9)) {
+        j = j - 1;
+    }
+    return s[i:j];
+}
+
+// arm64_gas_atoi parses a signed integer token: optional '-', decimal or
+// `0x…` hex. Two's-complement wrap gives the right bits for negatives.
+function arm64_gas_atoi(tok: string): i32 {
+    var s: string = tok;
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    }
+    var v: i32 = 0;
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i];
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + d; }
+            i = i + 1;
+        }
+    } else {
+        while (i < s.len()) {
+            var c2: i32 = s[i];
+            if (c2 >= 48 && c2 <= 57) { v = v * 10 + (c2 - 48); }
+            i = i + 1;
+        }
+    }
+    if (neg) {
+        return 0 - v;
+    }
+    return v;
+}
+
+// arm64_gas_imm parses an immediate operand `#N` (decimal or 0x hex,
+// optional '-'); the leading '#' is dropped.
+function arm64_gas_imm(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    if (s.len() > 0 && s[0] == 35) { // '#'
+        s = s[1:s.len()];
+    }
+    return arm64_gas_atoi(s);
+}
+
+// arm64_gas_reg parses a register token: x0..x30, plus the aliases sp / lr
+// / xzr (and the w… 32-bit names map to the same number). Defaults to 0.
+function arm64_gas_reg(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    if (s == "sp") { return 31; }
+    if (s == "xzr" || s == "wzr") { return 31; }
+    if (s == "lr") { return 30; }
+    if (s.len() >= 2 && (s[0] == 120 || s[0] == 119)) { // 'x' / 'w'
+        return arm64_gas_atoi(s[1:s.len()]);
+    }
+    return 0;
+}
+
+// arm64_gas_cond maps a condition suffix (the `eq` in `b.eq`) to its 4-bit
+// code, matching arm64_encode's arm64_eq/ne/ge/lt/gt/le.
+function arm64_gas_cond(s: string): i32 {
+    if (s == "eq") { return 0; }
+    if (s == "ne") { return 1; }
+    if (s == "cs" || s == "hs") { return 2; }  // carry set / unsigned >=
+    if (s == "cc" || s == "lo") { return 3; }  // carry clear / unsigned <
+    if (s == "mi") { return 4; }               // negative
+    if (s == "pl") { return 5; }               // non-negative
+    if (s == "vs") { return 6; }               // overflow set
+    if (s == "vc") { return 7; }               // overflow clear
+    if (s == "hi") { return 8; }               // unsigned >
+    if (s == "ls") { return 9; }               // unsigned <=
+    if (s == "ge") { return 10; }
+    if (s == "lt") { return 11; }
+    if (s == "gt") { return 12; }
+    if (s == "le") { return 13; }
+    if (s == "al") { return 14; }              // always
+    return 0;
+}
+
+// arm64_gas_is_cond reports whether a 2-letter suffix is a condition code
+// (so `b<cc>` no-dot aliases like bhi/blt/bne can be told from b/bl/br).
+function arm64_gas_is_cond(s: string): boolean {
+    return s == "eq" || s == "ne" || s == "cs" || s == "hs" || s == "cc" || s == "lo"
+        || s == "mi" || s == "pl" || s == "vs" || s == "vc" || s == "hi" || s == "ls"
+        || s == "ge" || s == "lt" || s == "gt" || s == "le" || s == "al";
+}
+
+// arm64_gas_is_w reports whether a register token names a 32-bit w-register.
+function arm64_gas_is_w(tok: string): boolean {
+    var s: string = arm64_gas_trim(tok);
+    return s.len() >= 1 && s[0] == 119; // 'w'
+}
+
+// arm64_gas_operands splits an operand list on top-level commas, ignoring
+// commas inside `[ … ]` (so a memory operand stays one token).
+function arm64_gas_operands(rest: string): string[] {
+    var out: string[] = [];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < rest.len()) {
+        var c: i32 = rest[i];
+        if (c == 91) { depth = depth + 1; }        // '['
+        else if (c == 93) { depth = depth - 1; }   // ']'
+        else if (c == 44 && depth == 0) {           // ','
+            out = out.append(arm64_gas_trim(rest[start:i]));
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    var last: string = arm64_gas_trim(rest[start:rest.len()]);
+    if (last.len() > 0) {
+        out = out.append(last);
+    }
+    return out;
+}
+
+// Arm64Mem is a parsed `[Xn{, #off}]` memory operand.
+struct Arm64Mem {
+    base: i32,
+    off: i32,
+}
+
+// arm64_gas_mem parses `[Xn]` or `[Xn, #off]`, tolerating a trailing `!`
+// (pre-index writeback marker — detect it separately with
+// arm64_gas_has_bang).
+function arm64_gas_mem(op: string): Arm64Mem {
+    var s: string = arm64_gas_trim(op);
+    var lb: i32 = s.index_of("[");
+    var rb: i32 = s.index_of("]");
+    var inner: string = s;
+    if (lb >= 0 && rb > lb) {
+        inner = s[lb + 1:rb];
+    }
+    var parts: string[] = arm64_gas_operands(inner);
+    var base: i32 = arm64_gas_reg(parts[0]);
+    var off: i32 = 0;
+    if (parts.len() > 1) {
+        off = arm64_gas_imm(parts[1]);
+    }
+    return Arm64Mem { base: base, off: off };
+}
+
+// arm64_gas_has_bang reports whether an operand carries the `!` pre-index
+// writeback marker.
+function arm64_gas_has_bang(op: string): boolean {
+    return op.index_of("!") >= 0;
+}
+
+// arm64_gas_lsl_amount parses a `lsl #N` shift operand (the `lsl #16` of a
+// movk); returns 0 if it is not recognised.
+function arm64_gas_lsl_amount(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    var h: i32 = s.index_of("#");
+    if (h < 0) {
+        return 0;
+    }
+    return arm64_gas_atoi(arm64_gas_trim(s[h + 1:s.len()]));
+}
+
+// ---- instruction dispatch ----
+
+// arm64_gas_emit assembles one mnemonic + operand string into a.code (or
+// queues a label fixup). Unknown mnemonics are ignored.
+function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
+    if (mnem == "ret") {
+        a.code = arm64_ret(a.code, arm64_lr());
+        return a;
+    }
+    var ops: string[] = arm64_gas_operands(rest);
+    if (mnem == "svc") {
+        a.code = arm64_svc(a.code, arm64_gas_imm(ops[0]));
+        return a;
+    }
+    if (mnem == "b") {
+        return arm64_asm_b(a, ops[0]);
+    }
+    if (mnem == "bl") {
+        return arm64_asm_bl(a, ops[0]);
+    }
+    if (mnem == "cbz") {
+        return arm64_asm_cbz(a, arm64_gas_reg(ops[0]), ops[1]);
+    }
+    if (mnem == "cbnz") {
+        return arm64_asm_cbnz(a, arm64_gas_reg(ops[0]), ops[1]);
+    }
+    // b.<cond>
+    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { // 'b' '.'
+        return arm64_asm_bcond(a, arm64_gas_cond(mnem[2:mnem.len()]), ops[0]);
+    }
+    // b<cond> (no-dot GAS alias: bhi / blt / bne / …)
+    if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) {
+        return arm64_asm_bcond(a, arm64_gas_cond(mnem[1:3]), ops[0]);
+    }
+    if (mnem == "mov" || mnem == "movz") {
+        var rd: i32 = arm64_gas_reg(ops[0]);
+        if (ops[1].len() > 0 && ops[1][0] == 35) { // '#'
+            a.code = arm64_movz(a.code, rd, arm64_gas_imm(ops[1]), 0);
+        } else if (arm64_gas_trim(ops[0]) == "sp" || arm64_gas_trim(ops[1]) == "sp") {
+            // `mov Xd, sp` / `mov sp, Xn` is the `add Xd, Xn, #0` alias
+            // (ORR can't name SP).
+            a.code = arm64_addimm(a.code, rd, arm64_gas_reg(ops[1]), 0);
+        } else {
+            a.code = arm64_movreg(a.code, rd, arm64_gas_reg(ops[1]));
+        }
+        return a;
+    }
+    if (mnem == "movk") {
+        var sh: i32 = 0;
+        if (ops.len() > 2) {
+            sh = arm64_gas_lsl_amount(ops[2]);
+        }
+        a.code = arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh);
+        return a;
+    }
+    if (mnem == "add") {
+        var ad: i32 = arm64_gas_reg(ops[0]);
+        var an: i32 = arm64_gas_reg(ops[1]);
+        if (ops[2].len() > 0 && ops[2][0] == 35) {
+            a.code = arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2]));
+        } else {
+            a.code = arm64_addreg(a.code, ad, an, arm64_gas_reg(ops[2]));
+        }
+        return a;
+    }
+    if (mnem == "sub") {
+        var sd: i32 = arm64_gas_reg(ops[0]);
+        var sn: i32 = arm64_gas_reg(ops[1]);
+        if (ops[2].len() > 0 && ops[2][0] == 35) {
+            a.code = arm64_subimm(a.code, sd, sn, arm64_gas_imm(ops[2]));
+        } else {
+            a.code = arm64_subreg(a.code, sd, sn, arm64_gas_reg(ops[2]));
+        }
+        return a;
+    }
+    if (mnem == "cmp") {
+        var cn: i32 = arm64_gas_reg(ops[0]);
+        if (ops[1].len() > 0 && ops[1][0] == 35) {
+            a.code = arm64_cmpimm(a.code, cn, arm64_gas_imm(ops[1]));
+        } else {
+            a.code = arm64_cmpreg(a.code, cn, arm64_gas_reg(ops[1]));
+        }
+        return a;
+    }
+    if (mnem == "ldr" || mnem == "str") {
+        var rt: i32 = arm64_gas_reg(ops[0]);
+        if (ops.len() >= 3) {
+            // post-index: `ldr Xt, [Xn], #off` (ops[1]="[Xn]", ops[2]="#off")
+            var pb: i32 = arm64_gas_mem(ops[1]).base;
+            var po: i32 = arm64_gas_imm(ops[2]);
+            if (mnem == "ldr") { a.code = arm64_ldr_post(a.code, rt, pb, po); }
+            else { a.code = arm64_str_post(a.code, rt, pb, po); }
+            return a;
+        }
+        var m: Arm64Mem = arm64_gas_mem(ops[1]);
+        if (arm64_gas_has_bang(ops[1])) {
+            // pre-index writeback: `[Xn, #off]!`
+            if (mnem == "ldr") { a.code = arm64_ldr_pre(a.code, rt, m.base, m.off); }
+            else { a.code = arm64_str_pre(a.code, rt, m.base, m.off); }
+        } else {
+            if (mnem == "ldr") { a.code = arm64_ldr(a.code, rt, m.base, m.off); }
+            else { a.code = arm64_str(a.code, rt, m.base, m.off); }
+        }
+        return a;
+    }
+    if (mnem == "stp") {
+        // prologue form: `stp Xt, Xt2, [Xn, #off]!` (pre-index)
+        var sm: Arm64Mem = arm64_gas_mem(ops[2]);
+        a.code = arm64_stp_pre(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), sm.base, sm.off);
+        return a;
+    }
+    if (mnem == "ldp") {
+        // epilogue form: `ldp Xt, Xt2, [Xn], #off` (post-index)
+        var lb: i32 = arm64_gas_mem(ops[2]).base;
+        var lo: i32 = arm64_gas_imm(ops[3]);
+        a.code = arm64_ldp_post(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), lb, lo);
+        return a;
+    }
+    if (mnem == "neg") {
+        a.code = arm64_neg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]));
+        return a;
+    }
+    if (mnem == "ubfx") {
+        a.code = arm64_ubfx(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_imm(ops[3]));
+        return a;
+    }
+    if (mnem == "tbnz") {
+        return arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
+    }
+    if (mnem == "tbz") {
+        return arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
+    }
+    if (mnem == "mul") {
+        a.code = arm64_mul(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]));
+        return a;
+    }
+    if (mnem == "ldur") {
+        var um: Arm64Mem = arm64_gas_mem(ops[1]);
+        a.code = arm64_ldur(a.code, arm64_gas_reg(ops[0]), um.base, um.off);
+        return a;
+    }
+    if (mnem == "stur") {
+        var sm2: Arm64Mem = arm64_gas_mem(ops[1]);
+        a.code = arm64_stur(a.code, arm64_gas_reg(ops[0]), sm2.base, sm2.off);
+        return a;
+    }
+    if (mnem == "cset") {
+        a.code = arm64_cset(a.code, arm64_gas_reg(ops[0]), arm64_gas_cond(ops[1]));
+        return a;
+    }
+    if (mnem == "lsl") {
+        a.code = arm64_lsl_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0]));
+        return a;
+    }
+    if (mnem == "lsr") {
+        a.code = arm64_lsr_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0]));
+        return a;
+    }
+    if (mnem == "cmn") {
+        a.code = arm64_cmn_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]));
+        return a;
+    }
+    if (mnem == "csel") {
+        a.code = arm64_csel(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]));
+        return a;
+    }
+    if (mnem == "and") {
+        // register form only here; `and Xd, Xn, #imm` is handled in the
+        // program loop (it needs the unknown-immediate guard).
+        a.code = arm64_andreg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]));
+        return a;
+    }
+    return a; // unknown mnemonic — ignored
+}
+
+// ============================================================
+// data section + named-symbol (@PAGE/@PAGEOFF) relocation
+// ============================================================
+//
+// Arm64GasProg extends the text assembler (Arm64Asm) with a `__DATA`/
+// `__const` blob, a data-symbol table (name -> offset within the blob),
+// and a queue of page fixups: adrp `sym@PAGE` and ldr/add `sym@PAGEOFF`
+// references whose immediates can only be resolved once the final segment
+// addresses are known (macho.fern lays __TEXT and __DATA at separate
+// page-aligned vaddrs). arm64_gas_program parses; arm64_gas_link patches.
+
+pub struct Arm64GasProg {
+    asm: Arm64Asm,
+    data: i32[],
+    dlab_names: string[],
+    dlab_offs: i32[],
+    pf_sites: i32[],    // byte offset of the instruction to patch in .text
+    pf_syms: string[],  // target data symbol
+    pf_kinds: i32[],    // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
+    unknown: string[],  // mnemonics the assembler did not recognise
+}
+
+function arm64_gas_prog_new(): Arm64GasProg {
+    return Arm64GasProg {
+        asm: arm64_asm_new(), data: [],
+        dlab_names: [], dlab_offs: [],
+        pf_sites: [], pf_syms: [], pf_kinds: [],
+        unknown: [],
+    };
+}
+
+// arm64_gas_known reports whether a mnemonic is handled by the assembler
+// (so the program loop can record anything silently dropped). adrp / and
+// the @PAGEOFF forms of ldr / add are handled in the program loop itself.
+function arm64_gas_known(mnem: string): boolean {
+    if (mnem == "mov" || mnem == "movz" || mnem == "movk" || mnem == "movn") { return true; }
+    if (mnem == "add" || mnem == "sub" || mnem == "cmp" || mnem == "neg" || mnem == "mul") { return true; }
+    if (mnem == "ldr" || mnem == "str" || mnem == "ldur" || mnem == "stur") { return true; }
+    if (mnem == "stp" || mnem == "ldp") { return true; }
+    if (mnem == "b" || mnem == "bl" || mnem == "ret" || mnem == "svc") { return true; }
+    if (mnem == "cbz" || mnem == "cbnz" || mnem == "tbz" || mnem == "tbnz") { return true; }
+    if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp") { return true; }
+    if (mnem == "lsl" || mnem == "lsr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
+    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
+    if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
+    return false;
+}
+
+// arm64_gas_dlabel_off returns the data-blob offset of a data symbol, or
+// -1 if it is not defined.
+function arm64_gas_dlabel_off(p: Arm64GasProg, name: string): i32 {
+    var i: i32 = 0;
+    while (i < p.dlab_names.len()) {
+        if (p.dlab_names[i] == name) {
+            return p.dlab_offs[i];
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// arm64_gas_strip_at returns the symbol portion of a `sym@PAGE` /
+// `sym@PAGEOFF` operand (everything before the '@'), trimmed.
+function arm64_gas_strip_at(tok: string): string {
+    var s: string = arm64_gas_trim(tok);
+    var at: i32 = s.index_of("@");
+    if (at >= 0) {
+        s = s[0:at];
+    }
+    return arm64_gas_trim(s);
+}
+
+// arm64_gas_data_le appends `n` little-endian bytes of `v` to the data blob.
+function arm64_gas_data_le(p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
+    var i: i32 = 0;
+    while (i < n) {
+        p.data = p.data.append(((v >> (i * 8)) & 255) as i32);
+        i = i + 1;
+    }
+    return p;
+}
+
+// arm64_gas_data_asciz appends a `.asciz "…"` string + NUL to the data
+// blob, decoding the common \n \t \0 \\ escapes.
+function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
+    var q1: i32 = line.index_of("\"");
+    if (q1 < 0) {
+        p.data = p.data.append(0);
+        return p;
+    }
+    var i: i32 = q1 + 1;
+    while (i < line.len() && line[i] != 34) { // until closing '"'
+        var c: i32 = line[i];
+        if (c == 92 && i + 1 < line.len()) { // '\'
+            var e: i32 = line[i + 1];
+            if (e == 110) { c = 10; }       // \n
+            else if (e == 116) { c = 9; }   // \t
+            else if (e == 48) { c = 0; }    // \0
+            else { c = e; }                 // \\ , \"
+            i = i + 1;
+        }
+        p.data = p.data.append(c);
+        i = i + 1;
+    }
+    p.data = p.data.append(0); // .asciz NUL terminator
+    return p;
+}
+
+// arm64_gas_data_align pads the data blob to a 2^n byte boundary.
+function arm64_gas_data_align(p: Arm64GasProg, n: i32): Arm64GasProg {
+    var a: i32 = 1;
+    var k: i32 = 0;
+    while (k < n) { a = a * 2; k = k + 1; }
+    while ((p.data.len() % a) != 0) {
+        p.data = p.data.append(0);
+    }
+    return p;
+}
+
+// arm64_gas_data_directive handles a `.`-directive inside a data section.
+function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
+    if (line.starts_with(".quad")) {
+        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 8);
+    }
+    if (line.starts_with(".4byte") || line.starts_with(".word")) {
+        var off: i32 = 6;
+        if (line.starts_with(".word")) { off = 5; }
+        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[off:line.len()])) as i64, 4);
+    }
+    if (line.starts_with(".byte")) {
+        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 1);
+    }
+    if (line.starts_with(".asciz") || line.starts_with(".string")) {
+        return arm64_gas_data_asciz(p, line);
+    }
+    if (line.starts_with(".align") || line.starts_with(".p2align") || line.starts_with(".balign")) {
+        var sp: i32 = line.index_of(" ");
+        if (sp >= 0) {
+            return arm64_gas_data_align(p, arm64_gas_atoi(arm64_gas_trim(line[sp + 1:line.len()])));
+        }
+    }
+    return p; // other directives ignored
+}
+
+// ---- the assemble loop ----
+
+// arm64_gas_program parses a GAS-text program (one statement per line)
+// into an Arm64GasProg: .text code (forward branches resolved), a data
+// blob, a data-symbol table, and a queue of @PAGE/@PAGEOFF fixups (left
+// for arm64_gas_link). The first .text label must sit at offset 0, since
+// macho.fern enters at the first text byte.
+pub function arm64_gas_program(src: string): Arm64GasProg {
+    var p: Arm64GasProg = arm64_gas_prog_new();
+    var section: i32 = 0; // 0 = .text, 1 = data (__const / __data)
+    var lines: string[] = src.split("\n");
+    var li: i32 = 0;
+    while (li < lines.len()) {
+        var raw: string = lines[li];
+        li = li + 1;
+        var cm: i32 = raw.index_of("//");
+        if (cm >= 0) {
+            raw = raw[0:cm];
+        }
+        var line: string = arm64_gas_trim(raw);
+        if (line.len() == 0) {
+            continue;
+        }
+        // label prefix `name:`
+        var colon: i32 = line.index_of(":");
+        if (colon > 0) {
+            var before: string = line[0:colon];
+            if (before.index_of(" ") < 0 && before.index_of(",") < 0) {
+                if (section == 1) {
+                    p.dlab_names = p.dlab_names.append(before);
+                    p.dlab_offs = p.dlab_offs.append(p.data.len());
+                } else {
+                    p.asm = arm64_asm_label(p.asm, before);
+                }
+                line = arm64_gas_trim(line[colon + 1:line.len()]);
+                if (line.len() == 0) {
+                    continue;
+                }
+            }
+        }
+        // directives
+        if (line[0] == 46) { // '.'
+            if (line == ".text") {
+                section = 0;
+            } else if (line.starts_with(".section")) {
+                if (line.contains("__const") || line.contains("__DATA") || line.contains(".data") || line.contains(".rodata")) {
+                    section = 1;
+                } else {
+                    section = 0;
+                }
+            } else if (line.starts_with(".data")) {
+                section = 1;
+            } else if (section == 1) {
+                p = arm64_gas_data_directive(p, line);
+            }
+            continue;
+        }
+        // mnemonic + operands
+        var sp: i32 = line.index_of(" ");
+        var mnem: string = line;
+        var rest: string = "";
+        if (sp >= 0) {
+            mnem = line[0:sp];
+            rest = arm64_gas_trim(line[sp + 1:line.len()]);
+        }
+        // @PAGE / @PAGEOFF symbol references queue a fixup; everything else
+        // assembles directly into .text.
+        if (mnem == "adrp") {
+            var aops: string[] = arm64_gas_operands(rest);
+            var aas: Arm64Asm = p.asm;
+            aas.code = arm64_adrp(aas.code, arm64_gas_reg(aops[0]), 0);
+            p.asm = aas;
+            p.pf_sites = p.pf_sites.append(aas.code.len() - 4);
+            p.pf_syms = p.pf_syms.append(arm64_gas_strip_at(aops[1]));
+            p.pf_kinds = p.pf_kinds.append(0);
+            continue;
+        }
+        if (mnem == "ldr" && rest.index_of("@PAGEOFF") >= 0) {
+            var lops: string[] = arm64_gas_operands(rest);
+            var lm: Arm64Mem = arm64_gas_mem(lops[1]); // base reg; off symbolic
+            // symbol is the bracket's second operand, before '@'
+            var linner: string = lops[1];
+            var lb: i32 = linner.index_of("[");
+            var rb: i32 = linner.index_of("]");
+            var lparts: string[] = arm64_gas_operands(linner[lb + 1:rb]);
+            var las: Arm64Asm = p.asm;
+            las.code = arm64_ldr(las.code, arm64_gas_reg(lops[0]), lm.base, 0);
+            p.asm = las;
+            p.pf_sites = p.pf_sites.append(las.code.len() - 4);
+            p.pf_syms = p.pf_syms.append(arm64_gas_strip_at(lparts[1]));
+            p.pf_kinds = p.pf_kinds.append(1);
+            continue;
+        }
+        if (mnem == "add" && rest.index_of("@PAGEOFF") >= 0) {
+            var dops: string[] = arm64_gas_operands(rest);
+            var das: Arm64Asm = p.asm;
+            das.code = arm64_addimm(das.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0);
+            p.asm = das;
+            p.pf_sites = p.pf_sites.append(das.code.len() - 4);
+            p.pf_syms = p.pf_syms.append(arm64_gas_strip_at(dops[2]));
+            p.pf_kinds = p.pf_kinds.append(2);
+            continue;
+        }
+        // `and Xd, Xn, #imm` (logical immediate) needs a verified bitmask
+        // encoding; an unsupported immediate is recorded (never silently
+        // mis-encoded). Register-form `and` falls through to emit.
+        if (mnem == "and" && rest.index_of("#") >= 0) {
+            var nops: string[] = arm64_gas_operands(rest);
+            var nimm: i32 = arm64_gas_imm(nops[2]);
+            if (arm64_and_imm_ok(nimm)) {
+                var aand: Arm64Asm = p.asm;
+                aand.code = arm64_and_imm(aand.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm);
+                p.asm = aand;
+            } else {
+                p.unknown = p.unknown.append("and#");
+            }
+            continue;
+        }
+        if (!arm64_gas_known(mnem)) {
+            p.unknown = p.unknown.append(mnem);
+        }
+        p.asm = arm64_gas_emit(p.asm, mnem, rest);
+    }
+    p.asm = arm64_asm_resolve(p.asm);
+    return p;
+}
+
+// arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the
+// final __TEXT / __DATA segment addresses are known (the caller supplies
+// them from macho.fern's macho_text_vaddr / macho_data_vaddr). After this,
+// p.asm.code + p.data are the final sections.
+pub function arm64_gas_link(p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
+    var aw: Arm64Asm = p.asm;
+    var i: i32 = 0;
+    while (i < p.pf_sites.len()) {
+        var site: i32 = p.pf_sites[i];
+        var target: i64 = data_vaddr + (arm64_gas_dlabel_off(p, p.pf_syms[i]) as i64);
+        var kind: i32 = p.pf_kinds[i];
+        if (kind == 0) {
+            var adrp_addr: i64 = text_vaddr + (site as i64);
+            aw.code = arm64_patch_adrp(aw.code, site, arm64_page_delta(target, adrp_addr));
+        } else if (kind == 1) {
+            aw.code = arm64_patch_ldr_off(aw.code, site, arm64_page_off(target));
+        } else {
+            aw.code = arm64_patch_addimm_off(aw.code, site, arm64_page_off(target));
+        }
+        i = i + 1;
+    }
+    p.asm = aw;
+    return p;
+}
+
+// arm64_gas_assemble parses a text-only program (no data section / symbol
+// relocation) and returns the resolved .text — the back-compat entry the
+// earlier slices use.
+function arm64_gas_assemble(src: string): Arm64Asm {
+    return arm64_gas_program(src).asm;
+}
+
+// ============================================================
+// PART 3 — Mach-O writer + ad-hoc SHA-256 signature
+// ============================================================
+
+// examples/self_host/macho.fern — a minimal static, ad-hoc-signed arm64
+// Mach-O executable writer for the self-hosted *native* backend. This is
+// the Darwin counterpart of elf.fern (Linux): the container half of the
+// native-binary path that aims to remove the external `clang` / `ld64`
+// link step the self-host currently shells out to for arm64-darwin
+// (mirroring the Go reference internal/native/macho/*.go).
+//
+// The image is a fixed-address, non-PIE executable: __PAGEZERO, an r-x
+// __TEXT segment holding the Mach-O header + load commands + machine
+// code, an optional r/w __DATA segment (rodata + writable globals,
+// merged), and a __LINKEDIT segment carrying an ad-hoc code signature.
+// Apple Silicon's kernel refuses to execute an unsigned arm64 binary, so
+// the signature is mandatory; "ad-hoc" means there is no CMS/certificate
+// — the CodeDirectory's SHA-256 page hashes are the identity.
+//
+// Execution starts via LC_UNIXTHREAD (the kernel sets PC directly), not
+// LC_MAIN (which needs dyld). The code generator's `_main` entry calls
+// `main` and then exits with a raw `svc #0x80`, so it never returns —
+// exactly what a thread-state entry needs.
+//
+// Conventions (matching elf.fern):
+//   * A byte buffer is an `i32[]` of values in 0..255; each helper appends
+//     to it and returns the (possibly grown) buffer (`buf = f(buf, …)`).
+//   * This module is intentionally **import-free** so (a) the native
+//     emitter can `import "./macho"` and (b) the unit test can concatenate
+//     this file with a driver `main()` and feed the whole thing to the
+//     single-module wasm_run driver.
+//   * Mach-O headers/load-commands are little-endian (arm64 host); the
+//     code-signing blobs are big-endian. Both emitters live here.
+//
+// References: Apple's loader.h / cs_blobs.h, and FIPS 180-4 (SHA-256).
+
+// ============================================================
+// SHA-256 (FIPS 180-4)
+// ============================================================
+//
+// The ad-hoc code signature hashes each 4 KiB page of the image with
+// SHA-256. We have no stdlib here, so a self-contained implementation
+// lives in this module. Words are carried in i64 values kept in the range
+// [0, 2^32); every arithmetic result is masked back with `& 0xffffffff`,
+// so the signed-i64 `>>` (arithmetic) shift acts as a logical shift on the
+// always-positive words.
+
+// sha256_rotr rotates a 32-bit word right by n (1..31) bits.
+function sha256_rotr(x: i64, n: i32): i64 {
+    return ((x >> n) | (x << (32 - n))) & 0xffffffff;
+}
+
+// sha256_shr is a logical right shift of a 32-bit word by n bits.
+function sha256_shr(x: i64, n: i32): i64 {
+    return (x >> n) & 0xffffffff;
+}
+
+function sha256_ssig0(x: i64): i64 {
+    return (sha256_rotr(x, 7) ^ sha256_rotr(x, 18) ^ sha256_shr(x, 3)) & 0xffffffff;
+}
+
+function sha256_ssig1(x: i64): i64 {
+    return (sha256_rotr(x, 17) ^ sha256_rotr(x, 19) ^ sha256_shr(x, 10)) & 0xffffffff;
+}
+
+function sha256_bsig0(x: i64): i64 {
+    return (sha256_rotr(x, 2) ^ sha256_rotr(x, 13) ^ sha256_rotr(x, 22)) & 0xffffffff;
+}
+
+function sha256_bsig1(x: i64): i64 {
+    return (sha256_rotr(x, 6) ^ sha256_rotr(x, 11) ^ sha256_rotr(x, 25)) & 0xffffffff;
+}
+
+// sha256_ch is the choose function: (x & y) ^ (~x & z).
+function sha256_ch(x: i64, y: i64, z: i64): i64 {
+    return ((x & y) ^ ((x ^ 0xffffffff) & z)) & 0xffffffff;
+}
+
+// sha256_maj is the majority function: (x & y) ^ (x & z) ^ (y & z).
+function sha256_maj(x: i64, y: i64, z: i64): i64 {
+    return ((x & y) ^ (x & z) ^ (y & z)) & 0xffffffff;
+}
+
+// sha256_k returns the 64 round constants K (the first 32 bits of the
+// fractional parts of the cube roots of the first 64 primes).
+function sha256_k(): i64[] {
+    var k: i64[] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ];
+    return k;
+}
+
+// macho_be32_word appends a 32-bit word (held in an i64) big-endian.
+function macho_be32_word(buf: i32[], v: i64): i32[] {
+    buf = buf.append(((v >> 24) & 255) as i32);
+    buf = buf.append(((v >> 16) & 255) as i32);
+    buf = buf.append(((v >> 8) & 255) as i32);
+    buf = buf.append((v & 255) as i32);
+    return buf;
+}
+
+// sha256_bytes returns the 32-byte SHA-256 digest of data[start:start+n]
+// as an i32[] of bytes.
+function sha256_bytes(data: i32[], start: i32, n: i32): i32[] {
+    // ---- pre-processing: pad to a multiple of 64 bytes ----
+    var m: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        m = m.append(data[start + i]);
+        i = i + 1;
+    }
+    m = m.append(128); // the single 0x80 bit
+    while ((m.len() % 64) != 56) {
+        m = m.append(0);
+    }
+    // 64-bit big-endian message length in bits.
+    var bits: i64 = (n as i64) * 8;
+    var bb: i32 = 7;
+    while (bb >= 0) {
+        m = m.append(((bits >> (bb * 8)) & 255) as i32);
+        bb = bb - 1;
+    }
+
+    var k: i64[] = sha256_k();
+
+    // ---- initial hash value (fractional cube... square roots of primes) ----
+    var h0: i64 = 0x6a09e667;
+    var h1: i64 = 0xbb67ae85;
+    var h2: i64 = 0x3c6ef372;
+    var h3: i64 = 0xa54ff53a;
+    var h4: i64 = 0x510e527f;
+    var h5: i64 = 0x9b05688c;
+    var h6: i64 = 0x1f83d9ab;
+    var h7: i64 = 0x5be0cd19;
+
+    var blocks: i32 = m.len() / 64;
+    var blk: i32 = 0;
+    while (blk < blocks) {
+        var base: i32 = blk * 64;
+
+        // ---- message schedule W[0..63] ----
+        var w: i64[] = [];
+        var t: i32 = 0;
+        while (t < 16) {
+            var p: i32 = base + t * 4;
+            var word: i64 = ((m[p] as i64) << 24)
+                | ((m[p + 1] as i64) << 16)
+                | ((m[p + 2] as i64) << 8)
+                | (m[p + 3] as i64);
+            w = w.append(word & 0xffffffff);
+            t = t + 1;
+        }
+        while (t < 64) {
+            var s0: i64 = sha256_ssig0(w[t - 15]);
+            var s1: i64 = sha256_ssig1(w[t - 2]);
+            var wt: i64 = (s1 + w[t - 7] + s0 + w[t - 16]) & 0xffffffff;
+            w = w.append(wt);
+            t = t + 1;
+        }
+
+        // ---- compression ----
+        var a: i64 = h0;
+        var b: i64 = h1;
+        var c: i64 = h2;
+        var d: i64 = h3;
+        var e: i64 = h4;
+        var f: i64 = h5;
+        var g: i64 = h6;
+        var hh: i64 = h7;
+
+        var r: i32 = 0;
+        while (r < 64) {
+            var t1: i64 = (hh + sha256_bsig1(e) + sha256_ch(e, f, g) + k[r] + w[r]) & 0xffffffff;
+            var t2: i64 = (sha256_bsig0(a) + sha256_maj(a, b, c)) & 0xffffffff;
+            hh = g;
+            g = f;
+            f = e;
+            e = (d + t1) & 0xffffffff;
+            d = c;
+            c = b;
+            b = a;
+            a = (t1 + t2) & 0xffffffff;
+            r = r + 1;
+        }
+
+        h0 = (h0 + a) & 0xffffffff;
+        h1 = (h1 + b) & 0xffffffff;
+        h2 = (h2 + c) & 0xffffffff;
+        h3 = (h3 + d) & 0xffffffff;
+        h4 = (h4 + e) & 0xffffffff;
+        h5 = (h5 + f) & 0xffffffff;
+        h6 = (h6 + g) & 0xffffffff;
+        h7 = (h7 + hh) & 0xffffffff;
+
+        blk = blk + 1;
+    }
+
+    var out: i32[] = [];
+    out = macho_be32_word(out, h0);
+    out = macho_be32_word(out, h1);
+    out = macho_be32_word(out, h2);
+    out = macho_be32_word(out, h3);
+    out = macho_be32_word(out, h4);
+    out = macho_be32_word(out, h5);
+    out = macho_be32_word(out, h6);
+    out = macho_be32_word(out, h7);
+    return out;
+}
+
+// ============================================================
+// byte emitters + buffer helpers
+// ============================================================
+
+// macho_le32 appends the low 4 bytes of `v`, little-endian.
+function macho_le32(buf: i32[], v: i32): i32[] {
+    buf = buf.append(v & 255);
+    buf = buf.append((v >> 8) & 255);
+    buf = buf.append((v >> 16) & 255);
+    buf = buf.append((v >> 24) & 255);
+    return buf;
+}
+
+// macho_le64 appends the 8 bytes of a 64-bit `v`, little-endian.
+function macho_le64(buf: i32[], v: i64): i32[] {
+    var b: i32 = 0;
+    while (b < 8) {
+        buf = buf.append(((v >> (b * 8)) & 255) as i32);
+        b = b + 1;
+    }
+    return buf;
+}
+
+// macho_be32 appends the low 4 bytes of `v`, big-endian (for code-signing
+// blobs, which are big-endian on disk).
+function macho_be32(buf: i32[], v: i32): i32[] {
+    buf = buf.append((v >> 24) & 255);
+    buf = buf.append((v >> 16) & 255);
+    buf = buf.append((v >> 8) & 255);
+    buf = buf.append(v & 255);
+    return buf;
+}
+
+// macho_be64 appends the 8 bytes of a 64-bit `v`, big-endian.
+function macho_be64(buf: i32[], v: i64): i32[] {
+    var b: i32 = 7;
+    while (b >= 0) {
+        buf = buf.append(((v >> (b * 8)) & 255) as i32);
+        b = b - 1;
+    }
+    return buf;
+}
+
+// macho_name16 writes a 16-byte, NUL-padded segment/section name.
+function macho_name16(buf: i32[], s: string): i32[] {
+    var i: i32 = 0;
+    while (i < s.len()) {
+        buf = buf.append(s[i]);
+        i = i + 1;
+    }
+    while (i < 16) {
+        buf = buf.append(0);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// macho_zeros appends `n` zero bytes.
+function macho_zeros(buf: i32[], n: i32): i32[] {
+    var i: i32 = 0;
+    while (i < n) {
+        buf = buf.append(0);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// macho_cat appends every byte of `src` to `buf`.
+function macho_cat(buf: i32[], src: i32[]): i32[] {
+    var i: i32 = 0;
+    while (i < src.len()) {
+        buf = buf.append(src[i]);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// macho_pad_to appends zero bytes until the buffer length reaches `n`.
+function macho_pad_to(buf: i32[], n: i32): i32[] {
+    while (buf.len() < n) {
+        buf = buf.append(0);
+    }
+    return buf;
+}
+
+// ============================================================
+// fixed-layout constants
+// ============================================================
+
+// macho_page_size is the 16 KiB Mach-O segment alignment on arm64.
+function macho_page_size(): i32 { return 16384; }
+
+// macho_base_vaddr is the __TEXT load address (just past __PAGEZERO).
+function macho_base_vaddr(): i64 { return 0x100000000; }
+
+// macho_align_up rounds n up to a multiple of the power-of-two a.
+function macho_align_up(n: i32, a: i32): i32 {
+    return (n + a - 1) & (0 - a);
+}
+
+// macho_load_cmds_len is the total size of all load commands: __PAGEZERO
+// + __TEXT (1 section) + optional __DATA (1 section) + __LINKEDIT +
+// LC_UNIXTHREAD + LC_CODE_SIGNATURE. (segCmd=72, section=80,
+// unixThread=288, codeSig=16.)
+function macho_load_cmds_len(has_data: boolean): i32 {
+    var n: i32 = 72 + (72 + 80) + 72; // PAGEZERO + TEXT(1 sect) + LINKEDIT
+    if (has_data) {
+        n = n + (72 + 80); // DATA(1 sect)
+    }
+    n = n + 288 + 16; // LC_UNIXTHREAD + LC_CODE_SIGNATURE
+    return n;
+}
+
+// macho_text_off is the file offset of code within __TEXT (after the
+// Mach-O header + load commands). A native assembler needs this to
+// resolve @PAGE / @PAGEOFF references before the same blobs are laid out
+// here at the same address.
+function macho_text_off(has_data: boolean): i32 {
+    return 32 + macho_load_cmds_len(has_data);
+}
+
+// macho_text_vaddr returns the address of the first code byte (== entry)
+// for the given code/data sizes.
+pub function macho_text_vaddr(text_len: i32, data_len: i32): i64 {
+    var has_data: boolean = data_len > 0;
+    return macho_base_vaddr() + (macho_text_off(has_data) as i64);
+}
+
+// macho_data_vaddr returns the __DATA segment base for the given
+// code/data sizes (0 if there is no data).
+pub function macho_data_vaddr(text_len: i32, data_len: i32): i64 {
+    if (data_len <= 0) {
+        return 0;
+    }
+    var has_data: boolean = true;
+    var text_off: i32 = macho_text_off(has_data);
+    var text_vmsize: i32 = macho_align_up(text_off + text_len, macho_page_size());
+    return macho_base_vaddr() + (text_vmsize as i64);
+}
+
+// ============================================================
+// load-command writers
+// ============================================================
+
+// macho_seg writes an LC_SEGMENT_64 command header for nsects sections.
+function macho_seg(buf: i32[], name: string, vmaddr: i64, vmsize: i64, fileoff: i64, filesize: i64, maxprot: i32, initprot: i32, nsects: i32): i32[] {
+    buf = macho_le32(buf, 25); // LC_SEGMENT_64 = 0x19
+    buf = macho_le32(buf, 72 + nsects * 80);
+    buf = macho_name16(buf, name);
+    buf = macho_le64(buf, vmaddr);
+    buf = macho_le64(buf, vmsize);
+    buf = macho_le64(buf, fileoff);
+    buf = macho_le64(buf, filesize);
+    buf = macho_le32(buf, maxprot);
+    buf = macho_le32(buf, initprot);
+    buf = macho_le32(buf, nsects);
+    buf = macho_le32(buf, 0); // flags
+    return buf;
+}
+
+// macho_sect writes a section_64 record.
+function macho_sect(buf: i32[], sect: string, seg: string, addr: i64, size: i32, offset: i32, align: i32, flags: i32): i32[] {
+    buf = macho_name16(buf, sect);
+    buf = macho_name16(buf, seg);
+    buf = macho_le64(buf, addr);
+    buf = macho_le64(buf, size as i64);
+    buf = macho_le32(buf, offset);
+    buf = macho_le32(buf, align);
+    buf = macho_le32(buf, 0); // reloff
+    buf = macho_le32(buf, 0); // nreloc
+    buf = macho_le32(buf, flags);
+    buf = macho_le32(buf, 0); // reserved1
+    buf = macho_le32(buf, 0); // reserved2
+    buf = macho_le32(buf, 0); // reserved3
+    return buf;
+}
+
+// ============================================================
+// code signature
+// ============================================================
+
+// macho_sig_len computes the signature length analytically (it depends
+// only on code_limit and the identifier length, not on the content), so
+// the LC_CODE_SIGNATURE command + __LINKEDIT sizing can be emitted before
+// the hashes are known.
+function macho_sig_len(code_limit: i32, ident_len: i32): i32 {
+    var id_len: i32 = ident_len + 1; // + NUL terminator
+    var hash_off: i32 = 88 + id_len; // cdHeaderLen + identifier
+    var n_slots: i32 = (code_limit + 4095) / 4096;
+    var cd_len: i32 = hash_off + n_slots * 32;
+    return 20 + cd_len; // SuperBlob header (12) + 1 BlobIndex (8) + CD
+}
+
+// macho_code_signature builds an ad-hoc CSMAGIC_EMBEDDED_SIGNATURE
+// SuperBlob containing one CodeDirectory whose code-slot hashes are
+// SHA-256 of each 4 KiB page of content[0:code_limit]. exec_seg_limit is
+// the size of the executable (__TEXT) segment.
+function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i32, ident: string): i32[] {
+    var id_len: i32 = ident.len() + 1;
+    var hash_off: i32 = 88 + id_len;
+    var n_slots: i32 = (code_limit + 4095) / 4096;
+    var cd_len: i32 = hash_off + n_slots * 32;
+    var total: i32 = 20 + cd_len;
+
+    var sb: i32[] = [];
+    // ---- SuperBlob header + one BlobIndex ----
+    sb = macho_be32(sb, 0xfade0cc0); // CSMAGIC_EMBEDDED_SIGNATURE
+    sb = macho_be32(sb, total);
+    sb = macho_be32(sb, 1);          // sub-blob count
+    sb = macho_be32(sb, 0);          // CSSLOT_CODEDIRECTORY
+    sb = macho_be32(sb, 20);         // offset of the CodeDirectory
+
+    // ---- CodeDirectory ----
+    sb = macho_be32(sb, 0xfade0c02); // CSMAGIC_CODEDIRECTORY
+    sb = macho_be32(sb, cd_len);
+    sb = macho_be32(sb, 0x20400);    // version (supports execSeg fields)
+    sb = macho_be32(sb, 2);          // CS_ADHOC
+    sb = macho_be32(sb, hash_off);   // hashOffset
+    sb = macho_be32(sb, 88);         // identOffset
+    sb = macho_be32(sb, 0);          // nSpecialSlots
+    sb = macho_be32(sb, n_slots);    // nCodeSlots
+    sb = macho_be32(sb, code_limit); // codeLimit
+    sb = sb.append(32);                // hashSize (SHA-256)
+    sb = sb.append(2);                 // hashType = SHA-256
+    sb = sb.append(0);                 // platform
+    sb = sb.append(12);                // log2(pageSize) = 4096
+    sb = macho_zeros(sb, 24);        // spare2 / scatter / team / spare3 / codeLimit64
+    sb = macho_be64(sb, 0);          // execSegBase
+    sb = macho_be64(sb, exec_seg_limit as i64); // execSegLimit
+    sb = macho_be64(sb, 1);          // execSegFlags = CS_EXECSEG_MAIN_BINARY
+
+    // identifier + NUL
+    var i: i32 = 0;
+    while (i < ident.len()) {
+        sb = sb.append(ident[i]);
+        i = i + 1;
+    }
+    sb = sb.append(0);
+
+    // page hashes
+    var slot: i32 = 0;
+    while (slot < n_slots) {
+        var pstart: i32 = slot * 4096;
+        var pend: i32 = pstart + 4096;
+        if (pend > code_limit) {
+            pend = code_limit;
+        }
+        var dig: i32[] = sha256_bytes(content, pstart, pend - pstart);
+        var j: i32 = 0;
+        while (j < 32) {
+            sb = sb.append(dig[j]);
+            j = j + 1;
+        }
+        slot = slot + 1;
+    }
+    return sb;
+}
+
+// ============================================================
+// the image writer
+// ============================================================
+
+// macho_static_executable wraps machine code and a data blob into a
+// runnable, ad-hoc-signed static arm64 Mach-O executable. Code occupies
+// the r-x __TEXT segment; data (read-only constants + writable globals,
+// merged by the assembler) occupies a r/w __DATA segment. Execution
+// begins at the first code byte (the code generator's `_main`). `ident`
+// is the ad-hoc signing identifier (any short string).
+pub function macho_static_executable(text: i32[], data: i32[], ident: string): i32[] {
+    var has_data: boolean = data.len() > 0;
+    var text_len: i32 = text.len();
+    var data_len: i32 = data.len();
+    var text_off: i32 = macho_text_off(has_data);
+    var page: i32 = macho_page_size();
+    var text_vmsize: i32 = macho_align_up(text_off + text_len, page);
+    var data_file_len: i32 = 0;
+    if (has_data) {
+        data_file_len = macho_align_up(data_len, page);
+    }
+    var code_limit: i32 = text_vmsize + data_file_len;
+
+    var base: i64 = macho_base_vaddr();
+    var text_vaddr: i64 = base + (text_off as i64);
+    var data_vaddr: i64 = base + (text_vmsize as i64);
+    var linkedit_vaddr: i64 = data_vaddr + (data_file_len as i64);
+
+    var sig_len: i32 = macho_sig_len(code_limit, ident.len());
+    var linkedit_vmsize: i32 = macho_align_up(sig_len, page);
+
+    var ncmds: i32 = 5;
+    if (has_data) {
+        ncmds = 6;
+    }
+    var sizeofcmds: i32 = macho_load_cmds_len(has_data);
+
+    var buf: i32[] = [];
+
+    // ---- Mach-O header (32 bytes) ----
+    buf = macho_le32(buf, 0xfeedfacf); // MH_MAGIC_64
+    buf = macho_le32(buf, 0x0100000c); // CPU_TYPE_ARM64
+    buf = macho_le32(buf, 0);          // CPU_SUBTYPE_ARM64_ALL
+    buf = macho_le32(buf, 2);          // MH_EXECUTE
+    buf = macho_le32(buf, ncmds);
+    buf = macho_le32(buf, sizeofcmds);
+    buf = macho_le32(buf, 1);          // MH_NOUNDEFS
+    buf = macho_le32(buf, 0);          // reserved
+
+    // ---- __PAGEZERO ----
+    buf = macho_seg(buf, "__PAGEZERO", 0, base, 0, 0, 0, 0, 0);
+
+    // ---- __TEXT (r-x), 1 section ----
+    buf = macho_seg(buf, "__TEXT", base, text_vmsize as i64, 0, text_vmsize as i64, 5, 5, 1);
+    // flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+    buf = macho_sect(buf, "__text", "__TEXT", text_vaddr, text_len, text_off, 2, 0x80000400);
+
+    // ---- __DATA (r/w), 1 section (optional) ----
+    if (has_data) {
+        buf = macho_seg(buf, "__DATA", data_vaddr, data_file_len as i64, text_vmsize as i64, data_file_len as i64, 3, 3, 1);
+        buf = macho_sect(buf, "__data", "__DATA", data_vaddr, data_len, text_vmsize, 3, 0);
+    }
+
+    // ---- __LINKEDIT (r) ----
+    buf = macho_seg(buf, "__LINKEDIT", linkedit_vaddr, linkedit_vmsize as i64, code_limit as i64, sig_len as i64, 1, 1, 0);
+
+    // ---- LC_UNIXTHREAD ----
+    buf = macho_le32(buf, 5);   // LC_UNIXTHREAD
+    buf = macho_le32(buf, 288); // cmdsize
+    buf = macho_le32(buf, 6);   // ARM_THREAD_STATE64
+    buf = macho_le32(buf, 68);  // count (uint32 units)
+    // arm_thread_state64: x0..x28 (29), fp, lr, sp (32 u64) then pc, cpsr.
+    buf = macho_zeros(buf, 256);       // x0..x28, fp, lr, sp
+    buf = macho_le64(buf, text_vaddr); // pc (the 33rd u64) == entry
+    buf = macho_zeros(buf, 8);         // cpsr + pad
+
+    // ---- LC_CODE_SIGNATURE ----
+    buf = macho_le32(buf, 29);         // LC_CODE_SIGNATURE = 0x1d
+    buf = macho_le32(buf, 16);         // cmdsize
+    buf = macho_le32(buf, code_limit); // dataoff
+    buf = macho_le32(buf, sig_len);    // datasize
+
+    // buf is now exactly text_off bytes (header + load commands).
+
+    // ---- code + data ----
+    buf = macho_cat(buf, text);
+    buf = macho_pad_to(buf, text_vmsize);
+    if (has_data) {
+        buf = macho_cat(buf, data);
+        buf = macho_pad_to(buf, code_limit);
+    }
+    // buf length is now code_limit; sign it and append the signature.
+    var sig: i32[] = macho_code_signature(buf, code_limit, text_vmsize, ident);
+    buf = macho_cat(buf, sig);
+    return buf;
+}

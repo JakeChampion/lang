@@ -39,15 +39,7 @@ func TestSelfHostArm64Gas(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/arm64_encode.fern")
-	if err != nil {
-		t.Fatalf("read arm64_encode.fern: %v", err)
-	}
-	gas, err := os.ReadFile("../../examples/self_host/arm64_gas.fern")
-	if err != nil {
-		t.Fatalf("read arm64_gas.fern: %v", err)
-	}
-	source := string(enc) + "\n" + string(gas) + "\n" + arm64GasSelfTestMain
+	source := arm64NativeSrc(t) + "\n" + arm64GasSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -90,19 +82,7 @@ func TestSelfHostArm64DarwinMachOGasRuns(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/arm64_encode.fern")
-	if err != nil {
-		t.Fatalf("read arm64_encode.fern: %v", err)
-	}
-	gas, err := os.ReadFile("../../examples/self_host/arm64_gas.fern")
-	if err != nil {
-		t.Fatalf("read arm64_gas.fern: %v", err)
-	}
-	machoSrc, err := os.ReadFile("../../examples/self_host/macho.fern")
-	if err != nil {
-		t.Fatalf("read macho.fern: %v", err)
-	}
-	source := string(enc) + "\n" + string(gas) + "\n" + string(machoSrc) + "\n" + arm64MachOGasDriverMain
+	source := arm64NativeSrc(t) + "\n" + arm64MachOGasDriverMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {

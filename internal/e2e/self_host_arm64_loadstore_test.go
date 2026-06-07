@@ -33,11 +33,7 @@ func TestSelfHostArm64LoadStore(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/arm64_encode.fern")
-	if err != nil {
-		t.Fatalf("read arm64_encode.fern: %v", err)
-	}
-	source := string(enc) + "\n" + arm64LoadStoreSelfTestMain
+	source := arm64NativeSrc(t) + "\n" + arm64LoadStoreSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -79,15 +75,7 @@ func TestSelfHostArm64DarwinMachOFrameRuns(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/arm64_encode.fern")
-	if err != nil {
-		t.Fatalf("read arm64_encode.fern: %v", err)
-	}
-	machoSrc, err := os.ReadFile("../../examples/self_host/macho.fern")
-	if err != nil {
-		t.Fatalf("read macho.fern: %v", err)
-	}
-	source := string(enc) + "\n" + string(machoSrc) + "\n" + arm64MachOFrameDriverMain
+	source := arm64NativeSrc(t) + "\n" + arm64MachOFrameDriverMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {

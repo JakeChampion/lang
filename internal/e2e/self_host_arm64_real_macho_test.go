@@ -47,9 +47,6 @@ func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc := string(mustRead(t, "../../examples/self_host/arm64_encode.fern"))
-	gas := string(mustRead(t, "../../examples/self_host/arm64_gas.fern"))
-	machoSrc := string(mustRead(t, "../../examples/self_host/macho.fern"))
 
 	cases := []struct {
 		name     string
@@ -80,7 +77,7 @@ func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
 				t.Fatalf("emit: %v", err)
 			}
 
-			source := enc + "\n" + gas + "\n" + machoSrc + "\n" + asmToMachoDriver(asm)
+			source := arm64NativeSrc(t) + "\n" + asmToMachoDriver(asm)
 			wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes for the real-asm driver")
