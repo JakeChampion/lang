@@ -88,6 +88,18 @@ func TestSelfHostX86GasDivRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasdiv42", x86GasDivDriverMain, 42)
 }
 
+// TestSelfHostX86GasExtRegRuns exercises extended registers r8-r15 in
+// arithmetic (imulq %r13,%r12; 6*7=42) — REX.R/.B on reg-reg + B8 imm.
+func TestSelfHostX86GasExtRegRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasext42", x86GasExtRegDriverMain, 42)
+}
+
+// TestSelfHostX86GasExtMemRuns exercises extended registers in memory ops:
+// store r8 to [rsp] (SIB) and load it into r9, exit(r9) = 42.
+func TestSelfHostX86GasExtMemRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasextmem42", x86GasExtMemDriverMain, 42)
+}
+
 // runX86GasNativeDriver concatenates x86_encode.fern + x86_gas.fern +
 // elf.fern + driverMain, compiles it through the self-host wasm emitter,
 // runs the WAT under wasmtime to get the raw ELF the driver assembled and
@@ -234,6 +246,26 @@ function main(): i32 {
 const x86GasDivDriverMain = `
 function main(): i32 {
     var src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasExtRegDriverMain: extended-register arithmetic (imulq %r13,%r12).
+const x86GasExtRegDriverMain = `
+function main(): i32 {
+    var src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasExtMemDriverMain: store r8 to [rsp], reload into r9, exit(r9)=42.
+const x86GasExtMemDriverMain = `
+function main(): i32 {
+    var src: string = "\tsubq $16, %rsp\n\tmovq $42, %r8\n\tmovq %r8, (%rsp)\n\tmovq (%rsp), %r9\n\tmovq %r9, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
     var a: X86Asm = x86_gas_assemble(src);
     write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;

@@ -355,6 +355,26 @@ function main(): i32 {
     if (kk.len() != 2 || kk[0] != 72 || kk[1] != 153) { return 40; }
     var ll: i32[] = x86_shl_r64_imm8([], x86_rax(), 3); // 48 C1 E0 03
     if (ll.len() != 4 || ll[1] != 193 || ll[2] != 224 || ll[3] != 3) { return 41; }
+    // slice 2i extended registers r8..r15 (verified vs as/objdump):
+    if (x86_rex(1, 0, 0, 0) != 72 || x86_rex(1, 12, 0, 13) != 77 || x86_rex(0, 0, 0, 12) != 65) { return 42; }
+    var ra: i32[] = x86_mov_r64_r64([], 13, 12); // mov r13,r12 -> 4D 89 E5
+    if (ra.len() != 3 || ra[0] != 77 || ra[1] != 137 || ra[2] != 229) { return 43; }
+    var rb: i32[] = x86_add_r64_r64([], x86_rax(), 12); // add rax,r12 -> 4C 01 E0
+    if (rb[0] != 76 || rb[1] != 1 || rb[2] != 224) { return 44; }
+    var rc: i32[] = x86_mov_r64_r64([], 8, x86_rax()); // mov r8,rax -> 49 89 C0
+    if (rc[0] != 73 || rc[1] != 137 || rc[2] != 192) { return 45; }
+    var rd: i32[] = x86_push_r64([], 12); // push r12 -> 41 54
+    if (rd.len() != 2 || rd[0] != 65 || rd[1] != 84) { return 46; }
+    var re: i32[] = x86_pop_r64([], 13); // pop r13 -> 41 5D
+    if (re.len() != 2 || re[0] != 65 || re[1] != 93) { return 47; }
+    var rf: i32[] = x86_inc_r64([], 12); // inc r12 -> 49 FF C4
+    if (rf[0] != 73 || rf[1] != 255 || rf[2] != 196) { return 48; }
+    var rg: i32[] = x86_mov_load_r64([], x86_rax(), 13, 0); // mov rax,[r13] -> 49 8B 45 00
+    if (rg.len() != 4 || rg[0] != 73 || rg[1] != 139 || rg[2] != 69 || rg[3] != 0) { return 49; }
+    var rh: i32[] = x86_mov_store_r64([], 12, 0, x86_rax()); // mov [r12],rax -> 49 89 04 24
+    if (rh.len() != 4 || rh[0] != 73 || rh[1] != 137 || rh[2] != 4 || rh[3] != 36) { return 50; }
+    var rk: i32[] = x86_imul_r64_r64([], 8, 9); // imul r8,r9 -> 4D 0F AF C1
+    if (rk.len() != 4 || rk[0] != 77 || rk[1] != 15 || rk[2] != 175 || rk[3] != 193) { return 51; }
     return 0;
 }
 `

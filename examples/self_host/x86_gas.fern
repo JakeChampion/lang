@@ -56,6 +56,14 @@ function x86_gas_reg(tok: string): i32 {
     if (s == "rbp") { return 5; }
     if (s == "rsi") { return 6; }
     if (s == "rdi") { return 7; }
+    if (s == "r8") { return 8; }
+    if (s == "r9") { return 9; }
+    if (s == "r10") { return 10; }
+    if (s == "r11") { return 11; }
+    if (s == "r12") { return 12; }
+    if (s == "r13") { return 13; }
+    if (s == "r14") { return 14; }
+    if (s == "r15") { return 15; }
     return 0 - 1;
 }
 
