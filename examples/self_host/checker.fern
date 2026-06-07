@@ -1796,7 +1796,27 @@ function lret_expr(e: parser.Expr, cur: Scope, unions: UnionSig[], self_name: st
         },
         parser.ExprUnary(u) => { out = lret_expr(u.operand, cur, unions, ""); },
         parser.ExprCall(c) => {
-            out = lret_expr(c.callee, cur, unions, "");
+            // An immediately-invoked lambda — (function(): RT { … })() — is
+            // how the parser desugars a `match` / `if` used in value
+            // position. Its RT is a COARSE heuristic tag (if_expr_rt picks it
+            // from the first arm's literal shape, defaulting to "i32"), NOT a
+            // user-declared return type — so running ret_diags against it
+            // would false-positive E002 whenever the arms aren't i32-literals
+            // (e.g. a match returning strings, or an arm that's a call). Skip
+            // the IIFE's own return check; still recurse into its body for any
+            // genuinely-nested lambdas.
+            match (c.callee) {
+                parser.ExprLambda(lm) => {
+                    var lsc: Scope = cur;
+                    var pi: i32 = 0;
+                    while (pi < lm.params.len()) {
+                        lsc = lsc.bind(lm.params[pi].name, type_from_name_with_structs_unions(lm.params[pi].type_name, cur.structs, cur.unions));
+                        pi = pi + 1;
+                    }
+                    out = append_diags(out, lret_stmts(lm.body, lsc, unions));
+                },
+                _ => { out = append_diags(out, lret_expr(c.callee, cur, unions, "")); }
+            }
             var i: i32 = 0;
             while (i < c.args.len()) { out = append_diags(out, lret_expr(c.args[i], cur, unions, "")); i = i + 1; }
         },

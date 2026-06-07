@@ -401,6 +401,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"lambda-nested-lambda-mismatch", "function main(): i32 { var f = function(): i32 { var g = function(): i32 { return \"x\"; }; return g(); }; return f(); }\n", []string{"E002"}},
 		{"lambda-no-rettype-ok", "function main(): i32 { var f = function() { return; }; return 0; }\n", nil},
 		{"rec-local-capture-ret-mismatch", "function main(): i32 { var base: string = \"x\"; function f(n: i32): i32 { if (n <= 0) { return base; } return f(n - 1); } return f(3); }\n", []string{"E002"}},
+		// A `match` / `if` used in value position is desugared by the parser
+		// into an IIFE — (function(): RT { … })() — whose RT is a coarse
+		// heuristic tag (if_expr_rt, defaulting to "i32"). The lambda-body
+		// E002 pass must NOT check those synthesized returns against that
+		// tag, or a valid string-valued match/if-expression (whose first arm
+		// isn't a string literal, so RT mis-tags as "i32") false-positives.
+		{"match-expr-string-arms-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var a: string = \"p\"; var b: string = \"q\"; var o: O = Nil; var s: string = match (o) { Has(n) => a, Nil => b }; return 0; }\n", nil},
+		{"if-expr-string-arms-ok", "function main(): i32 { var a: string = \"p\"; var b: string = \"q\"; var s: string = if (1 < 2) { a } else { b }; return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
