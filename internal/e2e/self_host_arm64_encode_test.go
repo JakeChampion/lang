@@ -10,6 +10,17 @@ import (
 	"testing"
 )
 
+// arm64NativeSrc returns the merged arm64-darwin native backend module
+// (encoder + GAS assembler + Mach-O writer), the single source the
+// self-host CLI imports and the e2e self-tests concatenate with a driver.
+func arm64NativeSrc(t *testing.T) string {
+	b, err := os.ReadFile("../../examples/self_host/arm64_native.fern")
+	if err != nil {
+		t.Fatalf("read arm64_native.fern: %v", err)
+	}
+	return string(b)
+}
+
 // TestSelfHostArm64Encode exercises the self-hosted AArch64 machine-code
 // encoder (examples/self_host/arm64_encode.fern) — the assembler half of
 // the arm64-darwin native-binary path (the container half is macho.fern),
@@ -39,11 +50,7 @@ func TestSelfHostArm64Encode(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/arm64_encode.fern")
-	if err != nil {
-		t.Fatalf("read arm64_encode.fern: %v", err)
-	}
-	source := string(enc) + "\n" + arm64EncodeSelfTestMain
+	source := arm64NativeSrc(t) + "\n" + arm64EncodeSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -92,15 +99,7 @@ func TestSelfHostArm64DarwinMachOExitRuns(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/arm64_encode.fern")
-	if err != nil {
-		t.Fatalf("read arm64_encode.fern: %v", err)
-	}
-	machoSrc, err := os.ReadFile("../../examples/self_host/macho.fern")
-	if err != nil {
-		t.Fatalf("read macho.fern: %v", err)
-	}
-	source := string(enc) + "\n" + string(machoSrc) + "\n" + arm64MachOExitDriverMain
+	source := arm64NativeSrc(t) + "\n" + arm64MachOExitDriverMain
 
 	// Stage 1: compile the driver to WAT via the self-host emitter.
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))

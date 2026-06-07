@@ -1093,8 +1093,20 @@ smallest → largest:
     vs llvm-mc across a spread of masks (`#-16`, `#-256`, `#7`, `#0xff`,
     `#1`, `#0xf`) plus the legality cases (0 / all-ones / non-bitmask
     rejected) in `TestSelfHostArm64Bitmask`; the `and #imm` guard now keys
-    on `arm64_and_imm_ok`. Remaining: wire emit → assemble → write-file
-    into the CLI driver behind a flag (the architectural finale).
+    on `arm64_and_imm_ok`.
+  - ✅ **slice 3n — merge into one module (`arm64_native.fern`)**: the
+    three import-free files (`arm64_encode` / `arm64_gas` / `macho`) were
+    designed to be *concatenated* in the self-tests, so they reference each
+    other by bare name — which the module loader can't resolve across files
+    (it needs `pub` exports + qualified refs). To let the unified `fern`
+    CLI `import` the assembler+writer, the three are merged into a single
+    `examples/self_host/arm64_native.fern` (same-module bare refs keep
+    working; `pub` on the CLI-facing entry points — `arm64_gas_program` /
+    `arm64_gas_link` / `macho_static_executable` / `macho_text_vaddr` /
+    `macho_data_vaddr` + the `Arm64Asm` / `Arm64GasProg` structs). The
+    e2e self-tests now concatenate the one module via an `arm64NativeSrc`
+    helper; behaviour-preserving (all arm64/Mach-O tests stay green). Next:
+    wire `fern.fern`'s `-target arm64-darwin` to emit → assemble → Mach-O.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
