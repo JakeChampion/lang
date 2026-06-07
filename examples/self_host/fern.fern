@@ -459,6 +459,16 @@ function main(): i32 {
             comp = watbin.component_full_io_eprint(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
         } else if (shape == 14) {
             comp = watbin.component_full_io_exit(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+        } else if (shape == 10) {
+            comp = watbin.component_full_io_fs_read_env(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+        } else if (shape == 11) {
+            comp = watbin.component_full_io_fs_rw_env(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+        } else if (shape == 12) {
+            comp = watbin.component_full_io_random_write(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+        } else if (shape == 15) {
+            comp = watbin.component_full_io_fs_args_read(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+        } else if (shape == 16) {
+            comp = watbin.component_full_io_fs_rw_args(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
         } else {
             comp = watbin.component_full(watbin.wat_to_binary(wasm.emit_module_run(full)));
         }
