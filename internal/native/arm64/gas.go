@@ -209,9 +209,9 @@ func assembleInsn(a *Assembler, line string) error {
 	case "bl":
 		return one(ops, func(s string) { a.BL(s) })
 	case "cbz":
-		return regLabel(a, ops, a.CBZ)
+		return regLabelWidth(a, ops, a.CBZ, a.CBZW)
 	case "cbnz":
-		return regLabel(a, ops, a.CBNZ)
+		return regLabelWidth(a, ops, a.CBNZ, a.CBNZW)
 	case "tbz":
 		return asmTestBranch(a, ops, a.TBZ)
 	case "tbnz":
@@ -1449,6 +1449,34 @@ func regLabel(a *Assembler, ops []string, f func(uint32, string)) error {
 	}
 	f(r, ops[1])
 	return nil
+}
+
+// regLabelWidth is regLabel for the cbz/cbnz family, where the operand
+// register's `w`/`x` prefix selects the 32-bit (sf=0) vs 64-bit (sf=1)
+// compare — GNU as honours this, and a wrong sf bit silently compares the
+// wrong number of bytes. parseReg drops the prefix, so we look at it here
+// and dispatch to the 32-bit (`w`) or 64-bit (`x`) emitter accordingly.
+func regLabelWidth(a *Assembler, ops []string, f64, f32 func(uint32, string)) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("expects a register and a label")
+	}
+	r, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	if isWReg(ops[0]) {
+		f32(r, ops[1])
+	} else {
+		f64(r, ops[1])
+	}
+	return nil
+}
+
+// isWReg reports whether a register operand names a 32-bit `w` register
+// (including `wzr`), as opposed to a 64-bit `x` register.
+func isWReg(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "wzr" || (len(s) >= 2 && s[0] == 'w')
 }
 
 func splitMnemonic(line string) (mnem, rest string) {
