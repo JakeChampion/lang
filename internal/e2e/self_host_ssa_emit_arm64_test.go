@@ -215,6 +215,21 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"streq-dispatch", "function kind(s: string): i32 { if (s == \"add\") { return 1; } if (s == \"sub\") { return 2; } return 0; } function main(): i32 { return kind(\"sub\") + 10 * kind(\"add\"); }", 12},
 		// enums + match: a variant-dispatching helper (tag + payload fields).
 		{"match-area", "struct Circle { r: i32 } struct Square { side: i32 } type Shape = Circle | Square; function area(sh: Shape): i32 { match (sh) { Circle(c) => { return c.r * c.r * 3; }, Square(s) => { return s.side * s.side; } } return 0; } function main(): i32 { var a: Shape = Circle { r: 4 }; var b: Shape = Square { side: 5 }; return area(a) + area(b); }", 73},
+		// f64 floats: `.double` rodata + FP regs (fadd / fcmp+cset / scvtf /
+		// fcvtzs / fneg), f64 call ABI (d0… params, d0 result). Results cast to
+		// i32 to surface as the exit code.
+		{"float-add", "function main(): i32 { var x = 1.5; var y = x + 2.5; return y as i32; }", 4},
+		{"float-chain", "function main(): i32 { var x = 1.5; var y = x + 2.5; var z = y * 2.0; return z as i32; }", 8},
+		{"float-sub", "function main(): i32 { var a = 5.5; var b = 2.5; return (a - b) as i32; }", 3},
+		{"float-div", "function main(): i32 { var a = 9.0; var b = 2.0; return (a / b) as i32; }", 4},
+		{"float-neg", "function main(): i32 { var a = 4.0; var b = 0.0 - a; return (0.0 - b) as i32; }", 4},
+		{"int-to-float", "function main(): i32 { var n = 7; var x = n as f64; return (x + 0.5) as i32; }", 7},
+		{"float-compare-gt", "function main(): i32 { var a = 3.5; if (a > 2.0) { return 1; } return 0; }", 1},
+		{"float-compare-le", "function main(): i32 { var a = 2.0; if (a <= 2.0) { return 1; } return 0; }", 1},
+		{"float-loop", "function main(): i32 { var sum = 0.0; var i = 0; while (i < 4) { sum = sum + 1.5; i = i + 1; } return sum as i32; }", 6},
+		{"float-param", "function half(x: f64): f64 { return x / 2.0; } function main(): i32 { return half(9.0) as i32; }", 4},
+		{"float-two-args", "function add(a: f64, b: f64): f64 { return a + b; } function main(): i32 { return add(3.5, 3.5) as i32; }", 7},
+		{"float-recursion", "function pow2(n: i32): f64 { if (n <= 0) { return 1.0; } return pow2(n - 1) * 2.0; } function main(): i32 { return (pow2(3) - 2.0) as i32; }", 6},
 	}
 
 	// run assembles arm64 `asm` (under qemu) and asserts the exit code.

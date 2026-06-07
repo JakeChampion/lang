@@ -175,10 +175,17 @@ matching cases in every backend's differential matrix):
     `f64.lt` / `f64.neg` / `f64.convert_i32_s` / `i32.trunc_f64_s`
     (wasm is typed, so no width bookkeeping). `supported()` admits
     `const_float`, and the wasm emit driver runs `mark_float_calls`.
-  - **Phase 3c-arm64 (next):** the **arm64** (NEON/FP `d` registers, the
-    same value class) SSA float path — the last backend, bringing f64 to
-    parity across all three. Until then arm64 float programs fall back to
-    the AST emitter (gated by `ssa.any_float`).
+  - **Phase 3c-arm64 ✅ (landed — arm64 SSA floats):** `ssa_arm64` lowers
+    f64 with the FP `d` registers — `.double` rodata via adrp/ldr, `fadd` /
+    `fsub` / `fmul` / `fdiv`, `fcmp` + `cset` (the FP condition codes:
+    `<`→mi so NaN is false), `fneg`, `scvtf` (i32→f64), `fcvtzs` (f64→i32),
+    and the AAPCS64 call ABI (d0… params, d0 result). The arm64
+    `ssa.any_float` fallback gate is removed.
+
+  **f64 is now at parity across all three backends** (x86-64, arm64,
+  wasm) — locals, arithmetic, comparison, casts, loop/if phis, and the
+  full call ABI (params / returns / args / recursion). Gated by float
+  cases in `TestSelfHostSSAEmit{X86_64,Arm64,Wasm}`.
 - **Generics by erasure** in `build_func` (the AST emitters already do
   this).
 - **`...base` struct spread**, remaining **`match` patterns**, **tagged
