@@ -469,3 +469,57 @@ function arm64_patch_ldr_off(buf: i32[], at: i32, off: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xffc003ff) | ((((off / 8) & 0xfff) as i64) << 10);
     return arm64_write_word(buf, at, w);
 }
+
+// ---- frame pair load/store (the prologue/epilogue idiom) ----
+//
+// stp/ldp with writeback: `stp Xt, Xt2, [Xn, #off]!` (pre-index) saves the
+// callee-saved pair while bumping SP; `ldp Xt, Xt2, [Xn], #off`
+// (post-index) restores them and unwinds. off is a signed multiple of 8,
+// scaled to the 7-bit immediate. (64-bit forms; verified vs llvm-mc.)
+
+function arm64_stp_pre_word(rt: i32, rt2: i32, rn: i32, off: i32): i64 {
+    var imm7: i64 = ((off / 8) & 0x7f) as i64;
+    return 0xa9800000 | (imm7 << 15) | (((rt2 & 31) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldp_post_word(rt: i32, rt2: i32, rn: i32, off: i32): i64 {
+    var imm7: i64 = ((off / 8) & 0x7f) as i64;
+    return 0xa8c00000 | (imm7 << 15) | (((rt2 & 31) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_stp_pre(buf: i32[], rt: i32, rt2: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_stp_pre_word(rt, rt2, rn, off));
+}
+function arm64_ldp_post(buf: i32[], rt: i32, rt2: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_ldp_post_word(rt, rt2, rn, off));
+}
+
+// ---- single load/store with writeback (signed 9-bit unscaled imm9) ----
+//
+// `str Xt, [Xn, #off]!` (pre) / `ldr Xt, [Xn], #off` (post) and the two
+// mirror forms — the bare push/pop idiom. imm9 is a signed byte offset
+// (NOT scaled). Index bits 11:10: pre = 0b11, post = 0b01.
+//   base: (3<<30)|0x38000000 | (load?0x00400000)
+
+function arm64_str_pre_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf8000000 | (((off & 0x1ff) as i64) << 12) | 0xc00 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_str_post_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf8000000 | (((off & 0x1ff) as i64) << 12) | 0x400 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_pre_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf8400000 | (((off & 0x1ff) as i64) << 12) | 0xc00 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_post_word(rt: i32, rn: i32, off: i32): i64 {
+    return 0xf8400000 | (((off & 0x1ff) as i64) << 12) | 0x400 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_str_pre(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_str_pre_word(rt, rn, off));
+}
+function arm64_str_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_str_post_word(rt, rn, off));
+}
+function arm64_ldr_pre(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_ldr_pre_word(rt, rn, off));
+}
+function arm64_ldr_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, arm64_ldr_post_word(rt, rn, off));
+}
