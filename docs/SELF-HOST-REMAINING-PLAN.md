@@ -1070,11 +1070,21 @@ smallest → largest:
     silently-missing ops — `mul` (MADD alias), `ldur`/`stur` (unscaled
     frame load/store), and `cset` (CSINC alias) — now added (pinned vs
     llvm-mc). The arm64-darwin path now assembles real compiler output to a
-    runnable signed binary with no `as`/`clang`/`ld64`. Remaining: wire it
-    into the CLI driver (emit → assemble → write file) behind a flag, and
-    widen coverage as more language features exercise new instructions —
-    the `unknown`-guard makes each gap a hard failure rather than a silent
-    miscompile.
+    runnable signed binary with no `as`/`clang`/`ld64`.
+  - ✅ **slice 3l — coverage widening (strings / structs / arrays /
+    options)**: drove `TestSelfHostArm64DarwinMachORealAsm` with richer
+    real programs — `Option`/`match`, string concat, a struct method, an
+    array sum loop — and added every instruction their real asm needs
+    (each gap surfaced by the `unknown`-guard, then encoded + pinned vs
+    llvm-mc): `lsl`/`lsr` immediate (x + w forms, UBFM aliases), `cmn`
+    (ADDS-to-XZR), `csel`, register `and`, the no-dot branch aliases
+    (`bhi`/`blt`/`bne`/…), and `and Xd, Xn, #imm` for the 16-byte alloc
+    alignment mask (`#-16`, fields verified vs llvm-mc; an unsupported
+    bitmask immediate is recorded by the guard, never mis-encoded — a full
+    AArch64 bitmask-immediate encoder is the follow-up). The capstone now
+    assembles 7 real programs (incl. the heap/alloc prologue) to valid
+    arm64 Mach-O. Remaining: the full bitmask-immediate encoder; then wire
+    emit → assemble → write-file into the CLI driver behind a flag.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
