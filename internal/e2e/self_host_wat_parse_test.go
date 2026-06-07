@@ -35,15 +35,11 @@ func TestSelfHostWatParse(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	lex, err := os.ReadFile("../../examples/self_host/wat_lex.fern")
+	watbin, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read wat_lex.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
-	parse, err := os.ReadFile("../../examples/self_host/wat_parse.fern")
-	if err != nil {
-		t.Fatalf("read wat_parse.fern: %v", err)
-	}
-	source := string(lex) + "\n" + string(parse) + "\n" + watParseSelfTestMain
+	source := string(watbin) + "\n" + watParseSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {

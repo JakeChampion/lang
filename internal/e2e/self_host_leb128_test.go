@@ -8,10 +8,10 @@ import (
 )
 
 // TestSelfHostLEB128 exercises the self-hosted binary-wasm LEB128 byte
-// encoders (examples/self_host/leb128.fern) — the first slice of the
-// binary wasm backend (the WAT-text emitter is wasm.fern).
+// encoders, which live in examples/self_host/watbin.fern (the WAT-text
+// emitter is wasm.fern).
 //
-// leb128.fern is intentionally import-free, so this test reads it from
+// watbin.fern is a single import-free module, so this test reads it from
 // disk and concatenates it with a self-test main() that encodes the
 // textbook LEB128 vectors and asserts the resulting bytes, then runs the
 // combined program through the existing self-host wasm pipeline
@@ -36,9 +36,9 @@ func TestSelfHostLEB128(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	source := string(leb) + "\n" + leb128SelfTestMain
 

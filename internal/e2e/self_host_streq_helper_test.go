@@ -33,9 +33,9 @@ func TestSelfHostStreqHelperGap(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	// No string literals anywhere; strings come from string_from_bytes and
 	// string-typed values, and are compared with ==.

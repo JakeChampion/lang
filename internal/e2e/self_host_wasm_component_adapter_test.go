@@ -55,7 +55,7 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 	// The binary core assembler (read target.wat, emit_binary, print bytes)
 	// — shared with TestSelfHostWasmBinary (asmReadFileDriver).
 	var asmSrc strings.Builder
-	for _, name := range []string{"leb128.fern", "wat_lex.fern", "wat_parse.fern", "wat_encode.fern", "wat_emit_bin.fern"} {
+	for _, name := range []string{"watbin.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
