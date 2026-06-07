@@ -1643,6 +1643,23 @@ function emit_call(c: parser.ExprCall, s: EmitState): EmitState {
                 s = s.mark_arr_push();
                 return s;
             }
+            // m.delete(k) / m.without(k) → tuple (map, existed). See
+            // the x86-64 mirror in asm.fern for the contract.
+            if (is_map(prim_recv) && (fa.field == "delete" || fa.field == "without") && c.args.len() == 1) {
+                var kk_del: string = "0";
+                if (map_key_is_i32(prim_recv)) { kk_del = "1"; }
+                s = emit_expr(fa.obj, s);
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x1, [sp], #16\n");   // k
+                s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+                s = s.write("    mov x2, #" + kk_del + "\n");   // keykind
+                s = s.write("    bl __fern_map_delete\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                s = s.mark_str_eq();
+                s = s.mark_arr_push();
+                return s;
+            }
             if (is_map(prim_recv) && fa.field == "get" && c.args.len() == 1) {
                 var kk_get: string = "0";
                 if (map_key_is_i32(prim_recv)) { kk_get = "1"; }
@@ -8266,6 +8283,93 @@ function emit_runtime(s: EmitState, darwin: boolean): EmitState {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_set, .-__fern_map_set\n");
+
+        // __fern_map_delete(x0 = mapbox, x1 = key, x2 = keykind) →
+        // tuple box [mapbox, existed]. Order-preserving shift-remove of the
+        // parallel keys[]/values[]; x19-x24 survive __fern_str_eq and
+        // __fern_alloc (callee-saved). Mirror of asm.fern's x86-64 helper.
+        s = s.write(".globl __fern_map_delete\n");
+        s = s.write(".type __fern_map_delete, %function\n");
+        s = s.write("__fern_map_delete:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // mapbox
+        s = s.write("    mov x20, x1\n");           // key
+        s = s.write("    mov x21, x2\n");           // keykind (1 = i32)
+        s = s.write("    ldr x22, [x19]\n");        // keys arr
+        s = s.write("    mov x23, #0\n");           // i
+        s = s.write("    cbnz x21, .Lmd_loop_i32\n");
+        s = s.write(".Lmd_loop:\n");                 // string-key search
+        s = s.write("    ldr x9, [x22]\n");         // keys.len
+        s = s.write("    cmp x23, x9\n");
+        s = s.write("    b.ge .Lmd_notfound\n");
+        s = s.write("    add x9, x23, #1\n");
+        s = s.write("    ldr x0, [x22, x9, lsl #3]\n");  // keys[i+1]
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    cbnz x0, .Lmd_found\n");
+        s = s.write("    add x23, x23, #1\n");
+        s = s.write("    b .Lmd_loop\n");
+        s = s.write(".Lmd_loop_i32:\n");             // i32-key search
+        s = s.write("    ldr x9, [x22]\n");
+        s = s.write("    cmp x23, x9\n");
+        s = s.write("    b.ge .Lmd_notfound\n");
+        s = s.write("    add x9, x23, #1\n");
+        s = s.write("    ldr x9, [x22, x9, lsl #3]\n");
+        s = s.write("    cmp x9, x20\n");
+        s = s.write("    b.eq .Lmd_found\n");
+        s = s.write("    add x23, x23, #1\n");
+        s = s.write("    b .Lmd_loop_i32\n");
+        s = s.write(".Lmd_found:\n");
+        s = s.write("    ldr x22, [x19]\n");         // keys arr
+        s = s.write("    ldr x21, [x22]\n");         // n (keykind no longer needed)
+        s = s.write("    mov x10, x23\n");           // j = i
+        s = s.write(".Lmd_kshift:\n");
+        s = s.write("    sub x9, x21, #1\n");        // n-1
+        s = s.write("    cmp x10, x9\n");
+        s = s.write("    b.ge .Lmd_kdone\n");
+        s = s.write("    add x9, x10, #2\n");        // j+2
+        s = s.write("    ldr x11, [x22, x9, lsl #3]\n");
+        s = s.write("    add x9, x10, #1\n");        // j+1
+        s = s.write("    str x11, [x22, x9, lsl #3]\n");
+        s = s.write("    add x10, x10, #1\n");
+        s = s.write("    b .Lmd_kshift\n");
+        s = s.write(".Lmd_kdone:\n");
+        s = s.write("    sub x9, x21, #1\n");
+        s = s.write("    str x9, [x22]\n");          // keys.len = n-1
+        s = s.write("    ldr x22, [x19, #8]\n");     // values arr
+        s = s.write("    mov x10, x23\n");           // j = i
+        s = s.write(".Lmd_vshift:\n");
+        s = s.write("    sub x9, x21, #1\n");
+        s = s.write("    cmp x10, x9\n");
+        s = s.write("    b.ge .Lmd_vdone\n");
+        s = s.write("    add x9, x10, #2\n");
+        s = s.write("    ldr x11, [x22, x9, lsl #3]\n");
+        s = s.write("    add x9, x10, #1\n");
+        s = s.write("    str x11, [x22, x9, lsl #3]\n");
+        s = s.write("    add x10, x10, #1\n");
+        s = s.write("    b .Lmd_vshift\n");
+        s = s.write(".Lmd_vdone:\n");
+        s = s.write("    sub x9, x21, #1\n");
+        s = s.write("    str x9, [x22]\n");          // values.len = n-1
+        s = s.write("    mov x24, #1\n");            // existed = 1
+        s = s.write("    b .Lmd_build\n");
+        s = s.write(".Lmd_notfound:\n");
+        s = s.write("    mov x24, #0\n");            // existed = 0
+        s = s.write(".Lmd_build:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");          // 2-slot tuple box
+        s = s.write("    str x19, [x0]\n");          // tuple[0] = mapbox
+        s = s.write("    str x24, [x0, #8]\n");      // tuple[1] = existed
+        s = s.write("    ldp x23, x24, [sp], #16\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_map_delete, .-__fern_map_delete\n");
 
         // __fern_map_get(x0 = mapbox, x1 = key) → Option[V]:
         // Some(values[i]) on hit, None otherwise.

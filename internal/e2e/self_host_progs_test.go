@@ -39,13 +39,18 @@ var selfHostProgCases = []struct {
 function (p: Pair) swapped(): (Pair, i32) { return (Pair { hi: p.lo, lo: p.hi }, p.hi); }
 function main(): i32 { var p: Pair = Pair { hi: 7, lo: 3 }; var (q, old) = p.swapped(); return q.hi + q.lo + old; }`, 17},
 
-	// NOTE: map `without` ≡ `delete` is recognised by the self-host
-	// front-end (it compiles), and the tuple-destructure inference above
-	// types its `(Map, bool)` result. It is not exercised here because
-	// the *direct-asm* self-host backend has no map-delete emission yet
-	// (a separate runtime gap, independent of this inference fix); the
-	// `without`→`delete` path is covered on the Go backend by the
-	// `pure_collection_aliases` fixture.
+	// Map.delete / without return (map, existed); destructured and
+	// re-queried, exercising both the runtime helper and the
+	// tuple-destructure inference. m={1:10,2:20}; delete(1) → existed,
+	// m2={2:20}; m2.get_or(2,-1)=20.
+	{"map-delete", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.delete(1); if (!ex) { return 70; } return m2.get_or(2,-1); }`, 20},
+	// without ≡ delete: {1:10}; existed; m2.get_or(1,-1)=10 and the
+	// removed key reads the default (-1+1=0): total 10.
+	{"map-without", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.without(2); if (!ex) { return 70; } return m2.get_or(1,-1) + (m2.get_or(2,-1) + 1); }`, 10},
+	// Deleting an absent key reports existed=false; the map is unchanged.
+	{"map-without-absent", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); var (m2, ex) = m.without(9); if (ex) { return 1; } return m2.get_or(1,-1); }`, 10},
+	// String-keyed delete: shift over the string-compare search path.
+	{"smap-delete", `function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert("a",10); m = m.insert("b",20); var (m2, ex) = m.delete("a"); if (!ex) { return 70; } return m2.get_or("b",-1) + (m2.get_or("a",-1) + 1); }`, 20},
 }
 
 // TestSelfHostProgsX86_64 compiles each program with the self-hosted
