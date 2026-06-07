@@ -225,9 +225,6 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     // core integer ops); anything it can't lower yet falls back to the AST
     // wasm emitter rather than emitting broken WAT.
     if (target == "wasm" && !ssa_wasm.supported(sfuncs)) { return SsaResult { asm: "", ok: false }; }
-    // f64 is lowered from the IR on x86-64 only so far; keep float programs on
-    // the AST emitter for arm64 (the XMM/NEON path is a follow-up).
-    if (target == "arm64" && ssa.any_float(sfuncs)) { return SsaResult { asm: "", ok: false }; }
     var asm: string = "";
     if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, true); }
     else if (target == "wasm") { asm = ssa_wasm.emit_program(sfuncs); }

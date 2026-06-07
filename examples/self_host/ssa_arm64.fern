@@ -176,7 +176,33 @@ function store_reg(reg_of: i32[], v: i32, src: string, width: i32, out: string):
     return out + "    str " + src + ", " + slot(v) + "\n";
 }
 
-function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): string {
+// fconst_label is the .rodata label for a const_float value (unique per
+// function + value id). f_arith / f_cc map float operators to AArch64 FP
+// instructions / fcmp condition codes (a<b → mi: unordered/NaN yields false).
+function fconst_label(fname: string, result: i32): string {
+    return ".LCf_" + fname + "_" + i32_to_string(result);
+}
+function f_arith(op: string): string {
+    if (op == "+") { return "fadd"; }
+    if (op == "-") { return "fsub"; }
+    if (op == "*") { return "fmul"; }
+    return "fdiv";
+}
+function f_cc(op: string): string {
+    if (op == "<") { return "mi"; }
+    if (op == "<=") { return "ls"; }
+    if (op == ">") { return "gt"; }
+    if (op == ">=") { return "ge"; }
+    if (op == "==") { return "eq"; }
+    return "ne";
+}
+
+function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[], fname: string, out: string): string {
+    if (ins.kind == "const_float") {
+        out = out + "    adrp x9, " + fconst_label(fname, ins.result) + "\n";
+        out = out + "    ldr d0, [x9, :lo12:" + fconst_label(fname, ins.result) + "]\n";
+        return out + "    str d0, " + slot(ins.result) + "\n";
+    }
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
         out = emit_const(ins.imm, "w9", out);
         return store_res(reg_of, widths, ins.result, "a", out);
@@ -186,29 +212,69 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "binary") {
+        // Float arithmetic (f64 result) and comparison (f64 operands, i32
+        // result) over the values' stack slots, using the d registers.
+        if (isfloat[ins.result] == 1) {
+            out = out + "    ldr d0, " + slot(ins.args[0]) + "\n    ldr d1, " + slot(ins.args[1]) + "\n";
+            out = out + "    " + f_arith(ins.str) + " d0, d0, d1\n";
+            return out + "    str d0, " + slot(ins.result) + "\n";
+        }
+        if (isfloat[ins.args[0]] == 1) {
+            out = out + "    ldr d0, " + slot(ins.args[0]) + "\n    ldr d1, " + slot(ins.args[1]) + "\n";
+            out = out + "    fcmp d0, d1\n    cset w9, " + f_cc(ins.str) + "\n";
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         out = load_op(reg_of, widths, ins.args[1], "c", out);
         out = emit_binary(ins.str, out);
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "unary") {
+        if (ins.str == "-" && isfloat[ins.args[0]] == 1) {
+            out = out + "    ldr d0, " + slot(ins.args[0]) + "\n    fneg d0, d0\n";
+            return out + "    str d0, " + slot(ins.result) + "\n";
+        }
+        if (ins.str == "as_f64") {
+            out = out + "    ldr w9, " + slot(ins.args[0]) + "\n    scvtf d0, w9\n";
+            return out + "    str d0, " + slot(ins.result) + "\n";
+        }
+        if (ins.str == "as_i32") {
+            if (isfloat[ins.args[0]] == 1) {
+                out = out + "    ldr d0, " + slot(ins.args[0]) + "\n    fcvtzs w9, d0\n";
+                return store_res(reg_of, widths, ins.result, "a", out);
+            }
+            out = load_op(reg_of, widths, ins.args[0], "a", out);
+            return store_res(reg_of, widths, ins.result, "a", out);
+        }
         out = load_op(reg_of, widths, ins.args[0], "a", out);
         if (ins.str == "-") { out = out + "    neg w9, w9\n"; }
         else { out = out + "    cmp w9, #0\n    cset w9, eq\n"; }
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "call") {
+        // AAPCS64: integer/pointer args fill x0…, f64 args fill d0… (two
+        // independent sequences).
+        var ii: i32 = 0;
+        var fi: i32 = 0;
         var i: i32 = 0;
-        while (i < ins.args.len() && i < 8) {
-            var aw: i32 = widths[ins.args[i]];
-            if (reg_of[ins.args[i]] >= 0) {
-                out = out + "    mov " + argreg_w(i, aw) + ", " + regn(reg_of, ins.args[i], aw) + "\n";
+        while (i < ins.args.len()) {
+            if (isfloat[ins.args[i]] == 1) {
+                out = out + "    ldr d" + i32_to_string(fi) + ", " + slot(ins.args[i]) + "\n";
+                fi = fi + 1;
             } else {
-                out = out + "    ldr " + argreg_w(i, aw) + ", " + slot(ins.args[i]) + "\n";
+                var aw: i32 = widths[ins.args[i]];
+                if (reg_of[ins.args[i]] >= 0) {
+                    out = out + "    mov " + argreg_w(ii, aw) + ", " + regn(reg_of, ins.args[i], aw) + "\n";
+                } else {
+                    out = out + "    ldr " + argreg_w(ii, aw) + ", " + slot(ins.args[i]) + "\n";
+                }
+                ii = ii + 1;
             }
             i = i + 1;
         }
         out = out + "    bl __fn_" + ins.str + "\n";
+        // f64-returning call → result in d0; else w0/x0.
+        if (isfloat[ins.result] == 1) { return out + "    str d0, " + slot(ins.result) + "\n"; }
         var rsrc: string = "w0";
         if (widths[ins.result] == 64) { rsrc = "x0"; }
         return store_reg(reg_of, ins.result, rsrc, widths[ins.result], out);
@@ -324,9 +390,16 @@ function blk_label(name: string, id: i32): string {
     return ".L_" + name + "_" + i32_to_string(id);
 }
 
-function emit_term(f: ssa.SFunc, reg_of: i32[], widths: i32[], blk: ssa.SBlock, out: string): string {
+function emit_term(f: ssa.SFunc, reg_of: i32[], widths: i32[], isfloat: i32[], blk: ssa.SBlock, out: string): string {
     var t: ssa.STerm = blk.term;
     if (t.kind == "ret") {
+        // An f64 return goes in d0; otherwise w0/x0.
+        if (isfloat[t.value] == 1) {
+            out = out + "    ldr d0, " + slot(t.value) + "\n";
+            out = out + "    mov sp, x29\n";
+            out = out + "    ldp x29, x30, [sp], #16\n";
+            return out + "    ret\n";
+        }
         var w: i32 = widths[t.value];
         var dst: string = "w0";
         if (w == 64) { dst = "x0"; }
@@ -350,19 +423,37 @@ function emit_term(f: ssa.SFunc, reg_of: i32[], widths: i32[], blk: ssa.SBlock, 
 
 pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var widths: i32[] = ssa.compute_widths(f);
-    // Collect asm fragments in a string[] (amortised-O(1) push) and join once
-    // at the end; emit_inst / emit_term append to their `out` arg and never
-    // read it, so passing "" returns just that piece's contribution.
+    var isfloat: i32[] = ssa.compute_isfloat(f);
+    // f64 values occupy 8 bytes, so the generic copy / phi-edge moves (width-
+    // driven ldr/str) must use the x registers to carry all 8 bytes; the FP
+    // paths use d0/d1 directly.
+    var wmerged: i32[] = [];
+    var wi: i32 = 0;
+    while (wi < widths.len()) {
+        if (isfloat[wi] == 1) { wmerged = wmerged.push(64); } else { wmerged = wmerged.push(widths[wi]); }
+        wi = wi + 1;
+    }
+    widths = wmerged;
     var chunks: string[] = [];
     chunks = chunks.push("__fn_" + f.name + ":\n");
     chunks = chunks.push("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { chunks = chunks.push("    sub sp, sp, #" + i32_to_string(frame) + "\n"); }
+    // Spill incoming args: f64 params arrive in d0…, integer/pointer params in
+    // x0… (two AAPCS64 sequences).
     var p: i32 = 0;
+    var iip: i32 = 0;
+    var fip: i32 = 0;
     while (p < f.nparams) {
-        var pw: i32 = widths[p];
-        chunks = chunks.push(store_reg(reg_of, p, argreg_w(p, pw), pw, ""));
+        if (isfloat[p] == 1) {
+            chunks = chunks.push("    str d" + i32_to_string(fip) + ", " + slot(p) + "\n");
+            fip = fip + 1;
+        } else {
+            var pw: i32 = widths[p];
+            chunks = chunks.push(store_reg(reg_of, p, argreg_w(iip, pw), pw, ""));
+            iip = iip + 1;
+        }
         p = p + 1;
     }
     var bi: i32 = 0;
@@ -373,14 +464,48 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
         while (k < blk.insts.len()) {
             var ins: ssa.SInst = blk.insts[k];
             if (ins.kind != "param" && ins.kind != "phi") {
-                chunks = chunks.push(emit_inst(ins, reg_of, widths, ""));
+                chunks = chunks.push(emit_inst(ins, reg_of, widths, isfloat, f.name, ""));
             }
             k = k + 1;
         }
-        chunks = chunks.push(emit_term(f, reg_of, widths, blk, ""));
+        chunks = chunks.push(emit_term(f, reg_of, widths, isfloat, blk, ""));
         bi = bi + 1;
     }
     return str_join_chunks(chunks);
+}
+
+// func_has_float reports whether any value in f is an f64 — such a function
+// is emitted with everything stack-spilled (regalloc_none) so the FP paths
+// can address every value by its slot.
+function func_has_float(f: ssa.SFunc): boolean {
+    var fl: i32[] = ssa.compute_isfloat(f);
+    var i: i32 = 0;
+    while (i < fl.len()) { if (fl[i] == 1) { return true; } i = i + 1; }
+    return false;
+}
+
+// emit_float_consts emits a .rodata `.double` for every const_float across
+// all functions, labelled by fconst_label so emit_inst can load it.
+function emit_float_consts(funcs: ssa.SFunc[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var bi: i32 = 0;
+        while (bi < funcs[i].blocks.len()) {
+            var blk: ssa.SBlock = funcs[i].blocks[bi];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: ssa.SInst = blk.insts[k];
+                if (ins.kind == "const_float") {
+                    out = out + "    .align 8\n" + fconst_label(funcs[i].name, ins.result) + ":\n    .double " + ins.str + "\n";
+                }
+                k = k + 1;
+            }
+            bi = bi + 1;
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
@@ -388,6 +513,9 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     // Heap: a 16 MiB zero-initialised arena and an 8-byte bump pointer.
     out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 16777216\n";
     out = out + "    .data\n__fern_ssa_hp:\n    .quad 0\n";
+    // f64 literals as .rodata .double constants (the assembler computes bits).
+    var fconsts: string = emit_float_consts(funcs);
+    if (fconsts.len() > 0) { out = out + "    .section .rodata\n" + fconsts; }
     out = out + "    .text\n";
     // Collect each function body, then join once — a left fold here is
     // O(total²) and OOMs on a whole compiler's worth of asm.
@@ -395,7 +523,9 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var i: i32 = 0;
     while (i < funcs.len()) {
         var reg_of: i32[] = ssa.regalloc_none(funcs[i]);
-        if (use_regalloc) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
+        // A float function keeps every value in its slot (the FP paths address
+        // slots directly), so skip register allocation for it.
+        if (use_regalloc && !func_has_float(funcs[i])) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
         chunks = chunks.push(emit_func(funcs[i], reg_of));
         i = i + 1;
     }
