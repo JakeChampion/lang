@@ -851,12 +851,30 @@ smallest → largest:
   `e_type`/`e_machine`, `e_entry` = 0x400078, the single PT_LOAD,
   `p_flags`, sizes, body placement + data alignment) for both the arm64
   R+X and x86-64 R+W+X shapes.
-- ⬜ **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
+- 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
-  + `x87.go` + `rodata.go`). The largest slice; covers the integer +
-  SSE + x87 instruction surface `asm.fern` emits, label / rip-relative
-  relocation resolution against `elf_text_vaddr`, and the `.rodata`
-  section.
+  + `x87.go` + `rodata.go`). The largest piece; built up in slices.
+  - ✅ **slice 2a — encoding primitives + integer/syscall subset**:
+    `examples/self_host/x86_encode.fern` (`i32[]` byte-buffer convention;
+    REX.W prefix, ModR/M direct form, imm32/disp32 LE) with the
+    instruction encoders `mov r32, imm32` / `mov r64, r64` /
+    `add`/`sub r64, r64` / `push`/`pop r64` / `syscall` / `ret`, each
+    byte-checked against `as`/objdump (`TestSelfHostX86Encode`). Gated
+    end-to-end by `TestSelfHostX86ElfExitRuns`, the first true proof of
+    the track: a Fern program assembles `exit(42)` to machine code,
+    wraps it with `elf.fern`, and the binary **runs natively on x86-64**
+    (exit 42) — no external assembler or linker.
+  - ⬜ remaining: the full integer ALU + memory (ModR/M memory forms,
+    SIB, disp8/32), control flow (jmp/jcc/call + rel32 relocation
+    against `elf_text_vaddr`), SSE + x87 floats, `.rodata` + rip-relative
+    symbol addressing, and the text parser (`asm.fern` GAS text → these
+    encoders).
+
+  *Found on the way (latent, not fixed here):* the self-host **wasm
+  checker doesn't flag arg-count mismatches** — calling a 1-param
+  function with 2 args silently mis-compiled (it dropped the body in an
+  early draft of the exit driver) where the Go checker errors `E004`.
+  Separate subsystem (self-host checker), tracked for a follow-up.
 - ⬜ **arm64 assembler** — GAS aarch64 text → AArch64 bytes, mirroring
   `internal/native/arm64/asm.go` + `gas.go` + `gasprog.go`
   (adrp / `:lo12:` PC-relative resolution against `elf_text_vaddr`).
