@@ -528,8 +528,21 @@ world-driven composer (P2) wires it.
      `TestSelfHostExportStringResultRunsViaConsumer`: the self-host emits the
      wrapper, the Go composer lifts it, and a Fern consumer reads `"hi"` under
      wasmtime. **P6 string-result exports are now complete in both compilers.**
-   - **Slice 5d (next) — string/list PARAMS** (the realloc lift + a wrapper that
-     materialises the incoming bytes into the Fern string), in both compilers.
+   - **Slice 5d — string parameter exports (Go). ✅ Done.** `liftExport` now
+     accepts a string parameter and lifts with the realloc lift
+     (`PutCanonSectionLiftWithMemoryRealloc`): the canonical ABI materialises the
+     incoming bytes in the core memory via `cabi_realloc`, then passes
+     `(ptr,len)` — which maps directly to wasmbin's two-word string, so no
+     wrapper is needed (vs. the string-*result* wrapper). `ComposeExportsFromWorld`
+     aliases `cabi_realloc` when any export has a string param
+     (`exportNeedsRealloc`). Gated by `TestExportStringParamRunsViaConsumer`: a
+     Fern `@export len_of(s: string): i32 { return s.len(); }` reactor, and a
+     Fern consumer calling `len_of("hello") == 5`, link + run under wasmtime.
+   - **Slice 5d self-host + slice 6 (next)**: the self-host string-param wrapper
+     (its single-word `[len][bytes]` string needs `(ptr,len)` → block), then
+     **resource-typed exports** — the piece that lets `wasi:http`'s
+     `incoming-handler#handle` become a plain `@export`, unblocking retiring the
+     built-in HTTP world.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.

@@ -77,10 +77,11 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		{"recur", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\nfunction main(): i32 { return fib(9) + 8; }\n", 42, ""},
 		{"float", "function main(): i32 { var x: f64 = 84.0; var y: f64 = 2.0; var z: f64 = x / y; return z as i32; }\n", 42, ""},
 		{"string", "function main(): i32 { write(\"hi!\"); return 0; }\n", 0, "hi!"},
-		// Heap programs (struct/array/map) additionally need a `.bss` section
-		// + ELF p_memsz>p_filesz for asm.fern's 1 GB `__fern_heap`; tracked as
-		// the next slice. Their instructions are byte-verified in
-		// TestSelfHostX86Encode. See docs/SELF-HOST-REMAINING-PLAN.md.
+		// Heap programs: their asm is the whole alloc/memcpy runtime (~32 KB)
+		// with a `.bss` heap (`__fern_heap: .skip 1 GB`) accessed via
+		// rip-relative movq — the full instruction + data-section surface.
+		{"struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p = P { x: 40, y: 2 }; return p.x + p.y; }\n", 42, ""},
+		{"array", "function main(): i32 { var a = [10, 20, 12]; var s = 0; var i = 0; while (i < 3) { s = s + a[i]; i = i + 1; } return s; }\n", 42, ""},
 	}
 
 	for _, tc := range cases {
@@ -142,7 +143,7 @@ function main(): i32 {
         Ok(asmtext) => {
             var a: X86Asm = x86_gas_assemble(asmtext);
             var entry: i32 = x86_label_off(a, "_start");
-            write(string_from_bytes(elf_static_executable_data_x86_at(a.code, a.rodata, entry)));
+            write(string_from_bytes(elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, entry)));
             return 0;
         }
     }

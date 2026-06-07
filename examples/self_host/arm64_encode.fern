@@ -220,3 +220,52 @@ function arm64_cbz(buf: i32[], rt: i32, rel: i32): i32[] {
 function arm64_cbnz(buf: i32[], rt: i32, rel: i32): i32[] {
     return arm64_le32(buf, arm64_cbnz_word(rt, rel));
 }
+
+// ---- forward references (placeholder + patch) ----
+//
+// A forward branch is emitted with a zero displacement (a placeholder),
+// its byte offset recorded; once the target label's offset is known, the
+// immediate field is spliced in with a patch helper. Unlike the backward
+// case there is no label table yet — the driver tracks the one offset it
+// needs. arm64 branch displacements are relative to the branch instruction
+// itself, so the byte delta is simply `target_off - branch_off`.
+
+// arm64_rel returns the PC-relative byte delta from a branch at branch_off
+// to target_off.
+function arm64_rel(target_off: i32, branch_off: i32): i32 {
+    return target_off - branch_off;
+}
+
+// arm64_read_word reads the little-endian 32-bit instruction word at byte
+// offset `at` (held in an i64 so the top bit stays positive).
+function arm64_read_word(buf: i32[], at: i32): i64 {
+    return (buf[at] as i64)
+        | ((buf[at + 1] as i64) << 8)
+        | ((buf[at + 2] as i64) << 16)
+        | ((buf[at + 3] as i64) << 24);
+}
+
+// arm64_write_word overwrites the 4 little-endian bytes of the instruction
+// word at byte offset `at`.
+function arm64_write_word(buf: i32[], at: i32, w: i64): i32[] {
+    buf[at] = (w & 255) as i32;
+    buf[at + 1] = ((w >> 8) & 255) as i32;
+    buf[at + 2] = ((w >> 16) & 255) as i32;
+    buf[at + 3] = ((w >> 24) & 255) as i32;
+    return buf;
+}
+
+// arm64_patch_b splices a rel into the imm26 field of a `b` placeholder at
+// byte offset `at`, preserving the top 6 opcode bits.
+function arm64_patch_b(buf: i32[], at: i32, rel: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xfc000000) | (((rel >> 2) & 0x3ffffff) as i64);
+    return arm64_write_word(buf, at, w);
+}
+
+// arm64_patch_b19 splices a rel into the imm19 field (bits 23:5) of a
+// `b.cond` / `cbz` / `cbnz` placeholder at byte offset `at`, preserving
+// the opcode plus the cond/Rt bits (the masked-out 0xff00001f).
+function arm64_patch_b19(buf: i32[], at: i32, rel: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xff00001f) | ((((rel >> 2) & 0x7ffff) as i64) << 5);
+    return arm64_write_word(buf, at, w);
+}

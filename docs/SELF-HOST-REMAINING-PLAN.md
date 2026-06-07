@@ -935,6 +935,19 @@ smallest → largest:
     program assembles a `6 × 7` loop (`add`/`sub` + a backward `cbnz`),
     wraps it with `macho.fern`, and the signed Mach-O exits 42 — still no
     external tool. Forward references / named labels are the next slice.
+  - ✅ **slice 3c — forward references (placeholder + patch)**: a forward
+    branch is emitted with a zero displacement, its byte offset recorded,
+    then the immediate is spliced in once the target is known —
+    `arm64_rel` (byte delta) + `arm64_patch_b` (imm26) / `arm64_patch_b19`
+    (imm19, shared by `b.cond`/`cbz`/`cbnz`), the splicers preserving the
+    opcode/cond/Rt bits via a read-modify-write of the 4-byte word.
+    Byte-checked by `TestSelfHostArm64ForwardRefs` and gated end-to-end by
+    **`TestSelfHostArm64DarwinMachOMaxRuns`**: a Fern program assembles
+    `max(42, 17)` (`cmp; b.ge done; mov; done:`) where the *taken* forward
+    `b.ge` skips the `mov`, wraps it with `macho.fern`, and the signed
+    Mach-O exits 42 — no external tool. A named-label table over these
+    primitives (so multiple forward labels + calls resolve by name) is the
+    next slice.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
@@ -1148,18 +1161,24 @@ smallest → largest:
          (`48 8B`/`89` + ModR/M rm=101 + deferred fixup). All byte-checked.
     With these, the struct asm now **assembles** (no corruption); the
     remaining gap is purely data-section support (next).
-  - 🔧 **struct/array/map capstone — gated on `.bss` + ELF memsz.**
+  - ✅ **slice 2t — `.bss` section + ELF memsz → HEAP PROGRAMS RUN.**
     `asm.fern` declares its globals in `.section .bss` (`.align 8`,
     `__fern_heap_ptr: .quad 0`, `__fern_heap: .skip 1073741824` — a **1 GB**
-    heap, `__fern_envp: .quad 0`) and rip-addresses them. To assemble heap
-    programs the front-end needs: a `.bss`/`.data` section + the `.align` /
-    `.skip` / `.quad` directives + bss label addresses, and `elf.fern` must
-    support **`p_memsz > p_filesz`** (the 1 GB bss is zero-init memory, not
-    file bytes) so rip refs to bss globals resolve. That's the next slice;
-    after it the heap-program cases (and ultimately the compiler's own
-    source → a native fixpoint) light up.
+    heap) and rip-addresses them. Added: a third section in the front-end
+    (`.section .bss`/`.data`), the `.align` / `.skip` / section-aware
+    `.quad` directives, `.bss` labels (`x86_bss_label` / `x86_bss_skip`,
+    a running `bss_size`), `x86_final_off` placing `.bss` labels past
+    `.rodata`, and `elf_static_executable_bss_x86_at` / `elf_image_entry_bss`
+    setting **`p_memsz = p_filesz + bss`** (the 1 GB bss is zero-init
+    memory, not file bytes). **`TestSelfHostX86Capstone` now runs `struct`
+    and `array` natively (exit 42)** — heap-using programs compile
+    `asm.fern` → `x86_gas` → `elf` → a runnable ELF with **no external `as`
+    or `ld`**. The capstone now spans arithmetic / control-flow / calls /
+    recursion / float / string / **struct / array**.
   - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
-    transcendental math builtins, and the CLI wiring (blocked above).
+    transcendental math builtins; broadening the capstone toward
+    progressively larger programs (and ultimately `asm.fern`'s own output
+    → a native self-host fixpoint); and the CLI wiring (blocked above).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

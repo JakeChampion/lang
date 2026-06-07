@@ -122,7 +122,16 @@ function elf_image(body: i32[], flags: i32, machine: i32): i32[] {
 // entry is a label other than the first instruction (e.g. asm.fern emits
 // `__fn_main` before `_start`, so the entry is `_start`'s offset).
 function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32): i32[] {
-    var total: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
+    return elf_image_entry_bss(body, flags, machine, entry_off, 0);
+}
+
+// elf_image_entry_bss is elf_image_entry plus a trailing .bss of `bss`
+// bytes: the segment's p_memsz exceeds p_filesz by `bss`, so the loader
+// zero-fills that region in memory without it occupying any file bytes
+// (this is how asm.fern's 1 GB `__fern_heap` is reserved).
+function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i32, bss: i32): i32[] {
+    var filesz: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
+    var memsz: i64 = filesz + (bss as i64);
     var entry: i64 = (elf_text_vaddr() + entry_off) as i64;
     var zero64: i64 = 0;
 
@@ -162,8 +171,8 @@ function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32):
     buf = elf_le64(buf, zero64);                  // p_offset
     buf = elf_le64(buf, elf_base_vaddr() as i64); // p_vaddr
     buf = elf_le64(buf, elf_base_vaddr() as i64); // p_paddr
-    buf = elf_le64(buf, total);                   // p_filesz
-    buf = elf_le64(buf, total);                   // p_memsz
+    buf = elf_le64(buf, filesz);                  // p_filesz
+    buf = elf_le64(buf, memsz);                   // p_memsz (incl. .bss)
     buf = elf_le64(buf, elf_page_align() as i64); // p_align
 
     return elf_cat(buf, body);
@@ -216,4 +225,16 @@ function elf_static_executable_data_x86_at(text: i32[], data: i32[], entry_off: 
     body = elf_pad_to_8(body);
     body = elf_cat(body, data);
     return elf_image_entry(body, 7, elf_em_x86_64(), entry_off); // PF_R | PF_W | PF_X
+}
+
+// elf_static_executable_bss_x86_at is elf_static_executable_data_x86_at
+// plus a trailing zero-init .bss of `bss` bytes (R+W+X). The .bss lives in
+// memory just past the file content (p_memsz = p_filesz + bss); rip-
+// relative refs to .bss globals resolve into it. This is the form a real
+// program needs — asm.fern reserves its heap as `__fern_heap: .skip 1GB`.
+function elf_static_executable_bss_x86_at(text: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
+    var body: i32[] = elf_cat([], text);
+    body = elf_pad_to_8(body);
+    body = elf_cat(body, data);
+    return elf_image_entry_bss(body, 7, elf_em_x86_64(), entry_off, bss); // PF_R | PF_W | PF_X
 }
