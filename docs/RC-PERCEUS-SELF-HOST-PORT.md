@@ -477,3 +477,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   reassign-inc + dec-on-overwrite + balanced exit sweep). Next: Phase 3
   (size-class freelist + flip free on, gated on a corpus-wide clean
   detector after the drift fix) and the arm64/wasm mirrors of 0a/0b/1d.
+- 2026-06-07: **Phase 0a + 0b (array centralization + rc-header
+  layout), arm64 — SHIPPED.** Mirrored the x86-64 array work to
+  `asm_arm64.fern`: added `__fern_arr_box(x0=cap) -> data ptr` (rc
+  layout — base `[cap, rc, len, e…]`, data = base+16, rc at `[data-8]`,
+  cap at `[data-16]`; clobbers only x0/x1/x2 like the arm64
+  `__fern_alloc`) and routed all 11 array allocation sites through it
+  (literal, str_split, read-dir builder, `__fern_alloc_u8`,
+  `__fern_args`, push grow, slice, concat, reverse, str_bytes,
+  str_chars). The single `cap` reader in `__fern_arr_push` moved
+  `[x19,#-8]` → `[x19,#-16]`. The raw exec `argv` buffer (not a Fern
+  array) is left inline. arm64 arrays now carry live `rc=1` headers,
+  matching x86-64's Phase-0b state. inc/dec not wired on arm64 yet
+  (Phase 1d mirror is the follow-up), so behaviour is unchanged
+  (+8 bytes/array). Verified under qemu-aarch64: the RC runtime, array,
+  array-method, string, map, json, struct, closure, generics, bytes,
+  tuple self-host suites + the byte-identical arm64 self-bootstrap
+  (`TestSelfHostFixpointArm64` / `TestSelfHostStage2FixedPointArm64`).
+  The shared `asmcore` analyses (needs_rc_inc_on_alias, ty_is_array_like,
+  n_params) are already in place, so the arm64 1d wiring reuses them.

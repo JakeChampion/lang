@@ -2527,20 +2527,13 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 s = emit_expr(a.elements[ai], s);
                 ai = ai + 1;
             }
-            // Layout with a hidden capacity word: alloc
-            // [cap, len, e0, …] at base B and return B+8, so readers
-            // see the classic [len@0, e_i@(i+1)*8] layout while
-            // __fern_arr_push finds cap at -8 and can grow
-            // geometrically. cap = len for a literal (first push
+            // Allocate via __fern_arr_box (rc-header layout): the data
+            // ptr reads as the classic [len@0, e_i@(i+1)*8] while rc is
+            // at -8 and cap at -16. cap = len for a literal (first push
             // reallocs, then doubles).
-            var a_bytes: i32 = (n_elems + 2) * 8;
-            s = s.write("    mov x0, #" + asmcore.i32_to_string(a_bytes) + "\n");
-            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    mov x0, #" + asmcore.i32_to_string(n_elems) + "\n");   // cap = element count
+            s = s.write("    bl __fern_arr_box\n");   // -> data ptr in x0 (cap + len written)
             s = s.mark_heap();
-            s = s.write("    mov x1, #" + asmcore.i32_to_string(n_elems) + "\n");
-            s = s.write("    str x1, [x0]\n");        // cap at base
-            s = s.write("    add x0, x0, #8\n");      // shift to returned ptr (base+8)
-            s = s.write("    str x1, [x0]\n");        // len at base+8
             var aj: i32 = n_elems - 1;
             while (aj >= 0) {
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -4350,18 +4343,10 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    add x25, x25, #1\n");
         s = s.write("    b .Lsplit_cl\n");
         s = s.write(".Lsplit_count_done:\n");
-        // Allocate array: 16 (cap + len words) + (count+1)*8 bytes.
-        s = s.write("    add x0, x21, #1\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    add x0, x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        // cap at base, shift to base+8, store returned ptr + len
-        // (hidden-cap layout; see __fern_arr_push).
-        s = s.write("    add x1, x21, #1\n");        // len = count + 1
-        s = s.write("    str x1, [x0]\n");           // cap
-        s = s.write("    add x0, x0, #8\n");
-        s = s.write("    mov x22, x0\n");            // returned arr ptr (base+8)
-        s = s.write("    str x1, [x22]\n");          // len
+        // Allocate the result string[] via __fern_arr_box (cap = count+1).
+        s = s.write("    add x0, x21, #1\n");        // cap = count + 1
+        s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)
+        s = s.write("    mov x22, x0\n");            // returned arr ptr
         s = s.write("    mov x23, #0\n");
         s = s.write("    mov x24, #0\n");
         s = s.write("    ldr x4, [x19]\n");
@@ -4529,6 +4514,35 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    mov x0, #137\n");
         s = s.write("    svc #0\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
+
+        // __fern_arr_box(x0 = cap element count) -> x0 = array data
+        // pointer. Centralises the array box layout (mirrors the x86-64
+        // backend; docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 0a/0b).
+        // Perceus rc-header layout: base = [cap, rc, len, e0, ...]; the
+        // returned data pointer is base+16 (at the len slot), so rc is
+        // at [data-8] (the uniform offset __fern_rc_inc/dec/is_unique
+        // read), cap at [data-16], and element i stays at [data+(i+1)*8]
+        // — unchanged from the pre-rc layout (readers index off data).
+        // Inits rc = 1, writes cap and len = cap; callers overwrite len
+        // when it differs (push) and fill the elements. Clobbers only
+        // x0/x1/x2 — exactly what __fern_alloc already clobbers — so it
+        // is a drop-in at every call site.
+        s = s.write("__fern_arr_box:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    str x0, [sp, #-16]!\n");      // save cap (16B aligned)
+        s = s.write("    add x0, x0, #3\n");           // cap + 3 header words (cap, rc, len)
+        s = s.write("    lsl x0, x0, #3\n");           // * 8 bytes
+        s = s.write("    bl __fern_alloc\n");          // base in x0
+        s = s.write("    ldr x1, [sp]\n");             // reload cap
+        s = s.write("    str x1, [x0]\n");             // cap at base+0   (= data-16)
+        s = s.write("    mov w2, #1\n");
+        s = s.write("    str w2, [x0, #8]\n");         // rc = 1 at base+8 (= data-8)
+        s = s.write("    str x1, [x0, #16]\n");        // len = cap at base+16 (= data)
+        s = s.write("    add x0, x0, #16\n");          // data ptr = base+16
+        s = s.write("    add sp, sp, #16\n");          // pop saved cap
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
 
         // Global string-builder primitive — the amortised-O(1) output
         // accumulator (strbuf_reset / strbuf_append / strbuf_take).
@@ -5451,12 +5465,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    add x19, x19, x11\n");
         s = s.write("    b .Lrd_c1\n");
         s = s.write(".Lrd_c1d:\n");
-        s = s.write("    add x0, x23, #2\n");        // (count+2)*8
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x23, [x0]\n");          // cap
-        s = s.write("    add x0, x0, #8\n");
-        s = s.write("    str x23, [x0]\n");          // len
+        s = s.write("    mov x0, x23\n");            // cap = count
+        s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)
         s = s.write("    mov x20, x0\n");            // array ptr P
         // pass 2: fill
         s = s.write("    mov x19, #0\n");            // offset
@@ -6566,12 +6576,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    mov x19, x0\n");           // n
-        s = s.write("    add x0, x19, #2\n");       // (n+2)*8 bytes
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x19, [x0]\n");          // cap
-        s = s.write("    add x0, x0, #8\n");
-        s = s.write("    str x19, [x0]\n");          // len
+        s = s.write("    mov x0, x19\n");           // cap = n
+        s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
@@ -7298,13 +7304,9 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    adrp x19, __fern_argc\n");
         s = s.write("    add x19, x19, :lo12:__fern_argc\n");
         s = s.write("    ldr x19, [x19]\n");        // argc
-        s = s.write("    add x0, x19, #2\n");       // (argc+2)*8 bytes
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x19, [x0]\n");         // cap
-        s = s.write("    add x0, x0, #8\n");
-        s = s.write("    str x19, [x0]\n");         // len
-        s = s.write("    mov x20, x0\n");           // arr (base+8)
+        s = s.write("    mov x0, x19\n");           // cap = argc
+        s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
+        s = s.write("    mov x20, x0\n");           // arr data ptr
         s = s.write("    mov x21, #0\n");           // i
         s = s.write(".Largs_loop:\n");
         s = s.write("    cmp x21, x19\n");
@@ -7323,11 +7325,11 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    ret\n");
     }
     // __fern_arr_push: append an 8-byte payload to an array.
-    // x0 = arr ptr (returned form, [len@0, e_i@(i+1)*8]; capacity
-    // hidden at -8), x1 = value. Amortised O(1): mutate in place when
-    // len < cap, else alloc a doubled buffer ([cap, len, …] at base
-    // B, returned B+8), copy, return the new pointer. Mirrors the
-    // x86-64 emitter; replaces the old O(N²) fresh-copy-every-push.
+    // x0 = arr ptr (returned form, [len@0, e_i@(i+1)*8]; rc hidden at
+    // -8, capacity at -16), x1 = value. Amortised O(1): mutate in place
+    // when len < cap, else alloc a doubled buffer via __fern_arr_box,
+    // copy, return the new pointer. Mirrors the x86-64 emitter;
+    // replaces the old O(N²) fresh-copy-every-push.
     if (s.has_need("arr_push")) {
         s = s.write("__fern_arr_push:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -7337,7 +7339,7 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    mov x19, x0\n");           // arr ptr
         s = s.write("    mov x20, x1\n");           // value
         s = s.write("    ldr x21, [x19]\n");        // len
-        s = s.write("    ldur x22, [x19, #-8]\n");  // cap (hidden at -8)
+        s = s.write("    ldur x22, [x19, #-16]\n"); // cap (hidden at -16; rc at -8)
         s = s.write("    cmp x21, x22\n");
         s = s.write("    b.ge .Larr_push_grow\n");  // len >= cap → grow
         // In place: store value at slot (len+1), bump len.
@@ -7357,13 +7359,10 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    lsl x2, x22, #1\n");
         s = s.write(".Larr_push_cap:\n");
         s = s.write("    mov x22, x2\n");           // x22 = newcap
-        s = s.write("    add x0, x2, #2\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");        // base in x0
-        s = s.write("    str x22, [x0]\n");          // cap at base
-        s = s.write("    add x0, x0, #8\n");         // returned ptr = base+8
+        s = s.write("    mov x0, x2\n");            // cap = newcap
+        s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len=cap written)
         s = s.write("    add x1, x21, #1\n");
-        s = s.write("    str x1, [x0]\n");           // new len = old+1
+        s = s.write("    str x1, [x0]\n");           // new len = old+1 (overwrite box's len)
         // Copy old elements (slots 1..len) from old arr to new.
         s = s.write("    mov x2, #1\n");
         s = s.write(".Larr_push_copy:\n");
@@ -7398,14 +7397,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    mov x20, x1\n");           // start
         s = s.write("    mov x21, x2\n");           // end
         s = s.write("    sub x22, x21, x20\n");     // new len = end - start
-        // alloc (new_len + 2) * 8 bytes (extra word for the hidden cap)
-        s = s.write("    add x0, x22, #2\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        // cap at base, then shift to base+8 and write len (see __fern_arr_push)
-        s = s.write("    str x22, [x0]\n");          // cap
-        s = s.write("    add x0, x0, #8\n");
-        s = s.write("    str x22, [x0]\n");          // len
+        s = s.write("    mov x0, x22\n");            // cap = new len
+        s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)
         // copy elements: i from 0 to new_len, dst[i+1] = src[start + i + 1]
         s = s.write("    mov x3, #0\n");            // i
         s = s.write(".Larr_slice_loop:\n");
@@ -7437,16 +7430,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    mov x20, x1\n");           // arr B
         s = s.write("    ldr x21, [x19]\n");        // a_len
         s = s.write("    ldr x22, [x20]\n");        // b_len
-        // alloc (a_len + b_len + 2) * 8 (extra word for the hidden cap)
-        s = s.write("    add x0, x21, x22\n");
-        s = s.write("    add x0, x0, #2\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        // cap at base, shift to base+8, then len (see __fern_arr_push)
-        s = s.write("    add x1, x21, x22\n");
-        s = s.write("    str x1, [x0]\n");           // cap
-        s = s.write("    add x0, x0, #8\n");
-        s = s.write("    str x1, [x0]\n");           // len
+        s = s.write("    add x0, x21, x22\n");       // cap = a_len + b_len
+        s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)
         // copy A's elements
         s = s.write("    mov x2, #0\n");            // i
         s = s.write(".Larr_concat_a:\n");
@@ -7485,13 +7470,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    mov x19, x0\n");           // src
         s = s.write("    ldr x20, [x19]\n");        // len
-        // alloc (len + 2) * 8 bytes (extra word for the hidden cap)
-        s = s.write("    add x0, x20, #2\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x20, [x0]\n");          // cap
-        s = s.write("    add x0, x0, #8\n");
-        s = s.write("    str x20, [x0]\n");          // len
+        s = s.write("    mov x0, x20\n");           // cap = len
+        s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
         // for i in 0..len: dst[i+1] = src[len - i]
         s = s.write("    mov x1, #0\n");            // i
         s = s.write(".Larr_rev_loop:\n");
@@ -7662,14 +7642,9 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    stp x21, x22, [sp, #-16]!\n");
         s = s.write("    ldr x19, [x0]\n");         // src data
         s = s.write("    ldr x20, [x0, #8]\n");     // src len
-        // alloc (len + 2) * 8 (extra word for the hidden cap)
-        s = s.write("    add x0, x20, #2\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x20, [x0]\n");          // cap
-        s = s.write("    add x0, x0, #8\n");         // shift to base+8
-        s = s.write("    mov x21, x0\n");           // arr
-        s = s.write("    str x20, [x21]\n");        // arr.len
+        s = s.write("    mov x0, x20\n");           // cap = len
+        s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
+        s = s.write("    mov x21, x0\n");           // arr data ptr
         s = s.write("    mov x22, #0\n");           // i
         s = s.write(".Lbytes_loop:\n");
         s = s.write("    cmp x22, x20\n");
@@ -7701,14 +7676,9 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    mov x19, x0\n");           // src box
         s = s.write("    ldr x20, [x19]\n");        // src data
         s = s.write("    ldr x21, [x19, #8]\n");    // src len
-        // alloc array (len + 2) * 8 bytes (extra word for the hidden cap)
-        s = s.write("    add x0, x21, #2\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x21, [x0]\n");          // cap
-        s = s.write("    add x0, x0, #8\n");         // shift to base+8
-        s = s.write("    mov x22, x0\n");           // arr
-        s = s.write("    str x21, [x22]\n");        // arr.len
+        s = s.write("    mov x0, x21\n");           // cap = src len
+        s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
+        s = s.write("    mov x22, x0\n");           // arr data ptr
         s = s.write("    mov x23, #0\n");           // i
         s = s.write(".Lchars_loop:\n");
         s = s.write("    cmp x23, x21\n");
