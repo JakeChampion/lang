@@ -145,6 +145,15 @@ func TestSelfHostX86LabelProgramRuns(t *testing.T) {
 	runX86NativeDriver(t, "label42", x86ElfLabelDriverMain, 42)
 }
 
+// TestSelfHostX86FrameRuns is the end-to-end proof of the memory operands
+// (slice 2e): a Fern program assembles a stack-frame round-trip — set up
+// rbp, store 42 to [rbp-8], clobber the register, reload it, tear the
+// frame down — exercising mov reg,reg (rbp/rsp), push/pop, sub rsp, and
+// rbp-relative store/load, then runs natively on x86-64 exiting 42.
+func TestSelfHostX86FrameRuns(t *testing.T) {
+	runX86NativeDriver(t, "frame42", x86ElfFrameDriverMain, 42)
+}
+
 // runX86NativeDriver compiles x86_encode.fern + elf.fern + driverMain
 // through the self-host wasm emitter, runs the resulting WAT under
 // wasmtime to obtain the raw ELF the Fern program assembled and wrote to
@@ -291,6 +300,26 @@ function main(): i32 {
     var s: i32[] = x86_jmp_rel32([], 0);
     s = x86_patch_rel32(s, 1, 0 - 27);
     if (s.len() != 5 || s[0] != 233 || s[1] != 229 || s[2] != 255 || s[3] != 255 || s[4] != 255) { return 22; }
+    // mov rax, [rbp-8] -> 48 8B 45 F8 (mod=01 disp8, rm=rbp)
+    var t: i32[] = x86_mov_load_r64([], x86_rax(), x86_rbp(), 0 - 8);
+    if (t.len() != 4 || t[0] != 72 || t[1] != 139 || t[2] != 69 || t[3] != 248) { return 23; }
+    // mov [rbp-8], rax -> 48 89 45 F8
+    var u: i32[] = x86_mov_store_r64([], x86_rbp(), 0 - 8, x86_rax());
+    if (u.len() != 4 || u[0] != 72 || u[1] != 137 || u[2] != 69 || u[3] != 248) { return 24; }
+    // mov rax, [rsp+16] -> 48 8B 44 24 10 (SIB escape for rsp)
+    var v2: i32[] = x86_mov_load_r64([], x86_rax(), x86_rsp(), 16);
+    if (v2.len() != 5 || v2[0] != 72 || v2[1] != 139 || v2[2] != 68 || v2[3] != 36 || v2[4] != 16) { return 25; }
+    // mov rax, [rcx] -> 48 8B 01 (mod=00, no disp)
+    var w: i32[] = x86_mov_load_r64([], x86_rax(), x86_rcx(), 0);
+    if (w.len() != 3 || w[0] != 72 || w[1] != 139 || w[2] != 1) { return 26; }
+    // mov rax, [rbp] -> 48 8B 45 00 (rbp forces mod=01 disp8=0)
+    var x: i32[] = x86_mov_load_r64([], x86_rax(), x86_rbp(), 0);
+    if (x.len() != 4 || x[0] != 72 || x[1] != 139 || x[2] != 69 || x[3] != 0) { return 27; }
+    // mov rax, [rcx+512] -> 48 8B 81 00 02 00 00 (mod=10 disp32)
+    var y: i32[] = x86_mov_load_r64([], x86_rax(), x86_rcx(), 512);
+    if (y.len() != 7 || y[0] != 72 || y[1] != 139 || y[2] != 129 || y[3] != 0 || y[4] != 2 || y[5] != 0 || y[6] != 0) { return 28; }
+    // sib byte for [rsp]: scale=0,index=4,base=4 -> 0x24 (36)
+    if (x86_sib(0, 4, 4) != 36) { return 29; }
     return 0;
 }
 `
@@ -455,6 +484,35 @@ function main(): i32 {
     a.code = x86_ret(a.code);
     a = x86_resolve(a);
     var bin: i32[] = elf_static_executable_x86(a.code);
+    write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86ElfFrameDriverMain assembles a stack-frame round-trip:
+//
+//	push rbp ; mov rbp, rsp ; sub rsp, 16
+//	rax = 42 ; [rbp-8] = rax ; rax = 0 ; rax = [rbp-8]
+//	mov rsp, rbp ; pop rbp ; exit(rax)
+//
+// The value survives only via the store/reload through [rbp-8], so a wrong
+// memory encoding would not exit 42.
+const x86ElfFrameDriverMain = `
+function main(): i32 {
+    var code: i32[] = [];
+    code = x86_push_r64(code, x86_rbp());
+    code = x86_mov_r64_r64(code, x86_rbp(), x86_rsp());          // mov rbp, rsp
+    code = x86_sub_r64_imm32(code, x86_rsp(), 16);              // sub rsp, 16
+    code = x86_mov_r32_imm32(code, x86_rax(), 42);
+    code = x86_mov_store_r64(code, x86_rbp(), 0 - 8, x86_rax()); // [rbp-8] = rax
+    code = x86_mov_r32_imm32(code, x86_rax(), 0);               // clobber
+    code = x86_mov_load_r64(code, x86_rax(), x86_rbp(), 0 - 8);  // rax = [rbp-8]
+    code = x86_mov_r64_r64(code, x86_rsp(), x86_rbp());          // mov rsp, rbp
+    code = x86_pop_r64(code, x86_rbp());
+    code = x86_mov_r64_r64(code, x86_rdi(), x86_rax());          // exit code = rax
+    code = x86_mov_r32_imm32(code, x86_rax(), 60);
+    code = x86_syscall(code);
+    var bin: i32[] = elf_static_executable_x86(code);
     write(string_from_bytes(bin));
     return 0;
 }

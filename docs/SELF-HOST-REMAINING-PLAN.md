@@ -912,9 +912,16 @@ smallest → largest:
     (`TestSelfHostX86LabelProgramRuns`: a two-routine program — `main`
     calls `compute`, which loops to 42 and returns — assembled entirely
     through the label API, runs natively exiting 42).
-  - ⬜ remaining: memory operands (ModR/M memory forms, SIB, disp8/32),
-    SSE + x87 floats, `.rodata` + rip-relative symbol addressing, and the
-    text parser (`asm.fern` GAS text → these encoders + the label API).
+  - ✅ **slice 2e — memory operands**: `mov r64, [base+disp]` /
+    `mov [base+disp], r64` (`0x8B`/`0x89` /r) via `x86_emit_mem` + `x86_sib`,
+    handling the mod 00/01/10 disp sizing and the two special cases —
+    `rsp` (SIB escape) and `rbp` (no mod=00 form, so `[rbp]` is mod=01
+    disp8=0). Byte-checked (`TestSelfHostX86Encode`) and run end-to-end
+    (`TestSelfHostX86FrameRuns`: a stack-frame round-trip — store 42 to
+    `[rbp-8]`, clobber, reload, exit — runs natively exiting 42).
+  - ⬜ remaining: SSE + x87 floats, `.rodata` + rip-relative symbol
+    addressing, and the text parser (`asm.fern` GAS text → these encoders
+    + the label API).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
