@@ -105,6 +105,17 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	if opts.PrintMainResult {
 		treeshakeExtras = []string{"int_to_string", "int__int_to_string"}
 	}
+	// P6: an `@export` function is a world-export root — keep it (and don't let
+	// it be inlined away) even when no Fern code calls it, so the composer can
+	// lift the surfaced core export. Collected from the AST here because
+	// prog.Exports is only populated later, inside ir.LowerWith.
+	var exportRoots []string
+	for _, fn := range prog.Funcs {
+		if fn.ExportIface != "" {
+			exportRoots = append(exportRoots, fn.Name)
+		}
+	}
+	treeshakeExtras = append(treeshakeExtras, exportRoots...)
 	if opts.HttpHandler {
 		// `handle` is called by the wrapper but the treeshake
 		// walker doesn't see the call (the wrapper lives in
@@ -164,6 +175,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	if opts.HttpHandler {
 		liveExtras = append(liveExtras, "handle", "__method_HeaderMap_append")
 	}
+	liveExtras = append(liveExtras, exportRoots...)
 	if live := ir.LiveFunctionsWithAliases(ip, CallDirectAliases, liveExtras...); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {

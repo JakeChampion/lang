@@ -745,6 +745,21 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 		m.ExportIdxs = append(m.ExportIdxs, startFuncIdx)
 	}
+	// P6: surface a core export `<iface>#<wit-name>` for each `@export`
+	// function so the world-driven composer can alias + lift it as the named
+	// world export (docs/WIT-BRING-YOUR-OWN.md). The function is also exported
+	// under its plain name above; this adds the WIT-id alias the composer keys
+	// off. Additive — a program with no `@export` emits nothing here, so its
+	// bytes are unchanged.
+	for _, exp := range prog.Exports {
+		idx, ok := funcIdx[exp.Name]
+		if !ok {
+			return nil, fmt.Errorf("wasmbin: @export %q: function not found", exp.Name)
+		}
+		m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+		m.ExportIdxs = append(m.ExportIdxs, idx)
+	}
 	if opts.SynthCliRun {
 		mainIdx, ok := funcIdx["main"]
 		if !ok {

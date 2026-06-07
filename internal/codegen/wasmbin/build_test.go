@@ -1025,3 +1025,31 @@ function main(): i32 {
 		t.Errorf("default build has preview-2 exit import without opt-in")
 	}
 }
+
+// TestBuildExportSurfacesCoreExport — P6: an `@export("iface","name")` function
+// surfaces a core export `iface#name` (the WIT-id alias the world-driven
+// composer lifts as the named world export), in addition to the plain-name
+// export. docs/WIT-BRING-YOUR-OWN.md.
+func TestBuildExportSurfacesCoreExport(t *testing.T) {
+	src := `import "core/no_prelude";
+@export("local:test/math@0.1.0", "add")
+function add(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 { return add(2, 3); }
+`
+	prog, info := loadAndCheckModule(t, src)
+	bin, err := BuildWithOptions(prog, info, BuildOptions{
+		ForceMemorySection: true,
+		Preview2WASI:       true,
+		SynthCliRun:        true,
+	})
+	if err != nil {
+		t.Fatalf("Build (@export): %v", err)
+	}
+	if !exportExists(t, bin, "local:test/math@0.1.0#add") {
+		t.Fatal("module missing the @export WIT-id core export local:test/math@0.1.0#add")
+	}
+	// The plain-name export is still present (defined functions export by name).
+	if !exportExists(t, bin, "add") {
+		t.Fatal("module missing the plain-name export add")
+	}
+}
