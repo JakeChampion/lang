@@ -1233,27 +1233,153 @@ function export_func_ret(mod: parser.Module, name: string): string {
     return "";
 }
 
+// export_func_params returns the parameter list of the free function `name`.
+function export_func_params(mod: parser.Module, name: string): parser.ParamDecl[] {
+    var none: parser.ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0 && mod.funcs[i].name == name) {
+            return mod.funcs[i].params;
+        }
+        i = i + 1;
+    }
+    return none;
+}
+
+// export_has_string_param reports whether any parameter is a string.
+function export_has_string_param(params: parser.ParamDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (params[i].type_name == "string") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// build_export_wrapper emits the core wrapper bridging the canonical ABI of a
+// composite-signature `@export` to the Fern function (P6 —
+// docs/WIT-BRING-YOUR-OWN.md). A string parameter arrives as canonical
+// `(ptr,len)` core params, which the wrapper copies into a fresh `[len][bytes]`
+// block the Fern function expects; a string result is a `[len][bytes]` pointer
+// the wrapper repacks into the canonical `[ptr,len]` return area. Scalars pass
+// through. Local indices: wrapper params 0..W-1, then one block local per
+// string param, then a loop counter, then (string result) $s + $ra.
+function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: string): string {
+    var w_slots: i32 = 0;
+    var nstr: i32 = 0;
+    var j: i32 = 0;
+    while (j < params.len()) {
+        if (params[j].type_name == "string") { w_slots = w_slots + 2; nstr = nstr + 1; }
+        else { w_slots = w_slots + 1; }
+        j = j + 1;
+    }
+    var str_result: boolean = ret == "string";
+    var i_local: i32 = w_slots + nstr;
+    var s_local: i32 = w_slots + nstr + 1;
+    var ra_local: i32 = w_slots + nstr + 2;
+
+    var head: string = "  (func $__xwrap_" + fname;
+    j = 0;
+    while (j < params.len()) {
+        if (params[j].type_name == "string") { head = head + " (param i32) (param i32)"; }
+        else { head = head + " (param " + wat_extern_valtype(params[j].type_name) + ")"; }
+        j = j + 1;
+    }
+    if (str_result) { head = head + " (result i32)"; }
+    else if (returns_value(ret)) { head = head + " (result " + wat_extern_valtype(ret) + ")"; }
+    head = head + "\n";
+
+    var nlocals: i32 = nstr + 1;
+    if (str_result) { nlocals = nlocals + 2; }
+    var locals: string = "    ";
+    var k: i32 = 0;
+    while (k < nlocals) { locals = locals + "(local i32) "; k = k + 1; }
+    locals = locals + "\n";
+
+    var body: string = "";
+    var wp: i32 = 0;   // running wrapper-param index
+    var blk: i32 = w_slots;
+    var callargs: string = "";
+    j = 0;
+    while (j < params.len()) {
+        if (params[j].type_name == "string") {
+            var lenI: i32 = wp + 1;
+            var blkS: string = i32_to_string(blk);
+            var iS: string = i32_to_string(i_local);
+            var lenS: string = i32_to_string(lenI);
+            var ptrS: string = i32_to_string(wp);
+            var jS: string = i32_to_string(j);
+            body = body + "    (local.set " + blkS + " (call $__fern_alloc (i32.add (i32.const 4) (local.get " + lenS + "))))\n";
+            body = body + "    (i32.store (local.get " + blkS + ") (local.get " + lenS + "))\n";
+            body = body + "    (local.set " + iS + " (i32.const 0))\n";
+            body = body + "    (block $d" + jS + " (loop $c" + jS + "\n";
+            body = body + "      (br_if $d" + jS + " (i32.ge_u (local.get " + iS + ") (local.get " + lenS + ")))\n";
+            body = body + "      (i32.store8 (i32.add (i32.add (local.get " + blkS + ") (i32.const 4)) (local.get " + iS + ")) (i32.load8_u (i32.add (local.get " + ptrS + ") (local.get " + iS + "))))\n";
+            body = body + "      (local.set " + iS + " (i32.add (local.get " + iS + ") (i32.const 1)))\n";
+            body = body + "      (br $c" + jS + ")))\n";
+            callargs = callargs + " (local.get " + blkS + ")";
+            blk = blk + 1;
+            wp = wp + 2;
+        } else {
+            callargs = callargs + " (local.get " + i32_to_string(wp) + ")";
+            wp = wp + 1;
+        }
+        j = j + 1;
+    }
+    if (str_result) {
+        var sS: string = i32_to_string(s_local);
+        var raS: string = i32_to_string(ra_local);
+        body = body + "    (local.set " + sS + " (call $" + fname + callargs + "))\n";
+        body = body + "    (local.set " + raS + " (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
+        body = body + "    (i32.store (local.get " + raS + ") (i32.add (local.get " + sS + ") (i32.const 4)))\n";
+        body = body + "    (i32.store (i32.add (local.get " + raS + ") (i32.const 4)) (i32.load (local.get " + sS + ")))\n";
+        body = body + "    (local.get " + raS + "))\n";
+    } else {
+        body = body + "    (call $" + fname + callargs + "))\n";
+    }
+    return head + locals + body;
+}
+
+// export_needs_heap reports whether any `@export` has a string parameter or a
+// string result — its wrapper uses __fern_alloc to build the [len][bytes] block
+// / canonical return area, so the heap allocator must be emitted (P6).
+function export_needs_heap(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < mod.exports.len()) {
+        var nm: string = mod.exports[i].func_name;
+        if (export_func_ret(mod, nm) == "string" || export_has_string_param(export_func_params(mod, nm))) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// export_needs_realloc reports whether any `@export` has a string parameter —
+// the canonical realloc lift materialises the incoming bytes via cabi_realloc,
+// so the core must emit + export it (P6).
+function export_needs_realloc(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < mod.exports.len()) {
+        if (export_has_string_param(export_func_params(mod, mod.exports[i].func_name))) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function extern_exports(mod: parser.Module): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < mod.exports.len()) {
         var x: parser.ExportBinding = mod.exports[i];
-        if (export_func_ret(mod, x.func_name) == "string") {
-            // A string-RESULT export: the Fern function returns a pointer to a
-            // `[len][bytes]` block, but the canonical ABI for `func() -> string`
-            // returns a pointer to a `[data_ptr, byte_len]` return area (the Go
-            // world-driven composer's memory lift reads it). Surface a wrapper
-            // that repacks. (Scalar params on a string-result export are a later
-            // refinement; the composer rejects string params for now.)
-            var w: string = "$__xwrap_" + x.func_name;
-            out = out + "  (func " + w + " (result i32)\n";
-            out = out + "    (local $s i32) (local $ra i32)\n";
-            out = out + "    (local.set $s (call $" + x.func_name + "))\n";
-            out = out + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
-            out = out + "    (i32.store (local.get $ra) (i32.add (local.get $s) (i32.const 4)))\n";
-            out = out + "    (i32.store (i32.add (local.get $ra) (i32.const 4)) (i32.load (local.get $s)))\n";
-            out = out + "    (local.get $ra))\n";
-            out = out + "  (export \"" + x.iface + "#" + x.wit + "\" (func " + w + "))\n";
+        var ret: string = export_func_ret(mod, x.func_name);
+        var params: parser.ParamDecl[] = export_func_params(mod, x.func_name);
+        if (ret == "string" || export_has_string_param(params)) {
+            // Composite signature: surface a wrapper that bridges the canonical
+            // ABI (string params materialised as [len][bytes] blocks, a string
+            // result repacked into the [ptr,len] return area) to the Fern func.
+            out = out + build_export_wrapper(x.func_name, params, ret);
+            out = out + "  (export \"" + x.iface + "#" + x.wit + "\" (func $__xwrap_" + x.func_name + "))\n";
         } else {
             out = out + "  (export \"" + x.iface + "#" + x.wit + "\" (func $" + x.func_name + "))\n";
         }
@@ -6591,7 +6717,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_options: boolean = module_uses_options(mod);
     var has_maps: boolean = module_calls(mod, "map_new_i32") || module_calls(mod, "map_new");
     var has_tostring: boolean = module_uses_tostring(mod);
-    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || (component && io)) {
+    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || export_needs_heap(mod) || (component && io)) {
         out = out + heap_alloc_helpers(tab.next + 16 + heap_extra);
     }
     // component-io: the $fd_write shim over the preview2 stdout stream, so
@@ -6652,7 +6778,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // component-io-fs: the canonical-ABI realloc the fs lists need; a
     // string/list<u8>-returning extern (P4c) needs it too so the host can
     // materialize the returned bytes.
-    if (fs || (io && (has_env || has_args)) || has_extern_str) { out = out + cabi_realloc_helper(); }
+    if (fs || (io && (has_env || has_args)) || has_extern_str || export_needs_realloc(mod)) { out = out + cabi_realloc_helper(); }
     // P4c: the lift wrappers for string/list<u8>-returning `@import` externs.
     if (needs_extern_wrappers) { out = out + extern_wrappers(mod); }
 

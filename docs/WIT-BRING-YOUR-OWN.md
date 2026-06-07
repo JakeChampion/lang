@@ -538,11 +538,22 @@ world-driven composer (P2) wires it.
      (`exportNeedsRealloc`). Gated by `TestExportStringParamRunsViaConsumer`: a
      Fern `@export len_of(s: string): i32 { return s.len(); }` reactor, and a
      Fern consumer calling `len_of("hello") == 5`, link + run under wasmtime.
-   - **Slice 5d self-host + slice 6 (next)**: the self-host string-param wrapper
-     (its single-word `[len][bytes]` string needs `(ptr,len)` → block), then
-     **resource-typed exports** — the piece that lets `wasi:http`'s
-     `incoming-handler#handle` become a plain `@export`, unblocking retiring the
-     built-in HTTP world.
+   - **Slice 5d self-host — string-param export. ✅ Done.** `wasm.fern`'s
+     `extern_exports` now emits a unified wrapper (`build_export_wrapper`) for
+     any composite-signature export: a string parameter (canonical `(ptr,len)`)
+     is copied into a fresh `[len][bytes]` block the Fern func expects, and a
+     string result is repacked into the `[ptr,len]` return area — scalars pass
+     through. The heap allocator (`export_needs_heap`) and `cabi_realloc`
+     (`export_needs_realloc`) are emitted when an export needs them. Gated by
+     `TestSelfHostExportStringParamRunsViaConsumer` (self-host emits the wrapper,
+     Go composer lifts with realloc, consumer's `len_of("hello")==5` runs under
+     wasmtime). **P6 string param+result exports are now complete in both
+     compilers.**
+   - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
+     `own<T>` (the inverse of the import resource handling) — the piece that lets
+     `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`
+     / `own<response-outparam>`) become a plain `@export`, unblocking retiring
+     the built-in HTTP world.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
