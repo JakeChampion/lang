@@ -561,6 +561,22 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "i", Type: ast.NumberType{}},
 			},
 		},
+		// Cell[T] — a single-slot mutable heap box, the sanctioned
+		// mutable-state primitive for the immutable-data world
+		// (docs/CELL-TYPE-PLAN.md). `T` is restricted to cycle-free
+		// types (E057) so a cell can never reconstruct a reference
+		// cycle — v1 is scalars only (string and the rest wait on the
+		// owning-slot RC integration). The field is an opaque scalar
+		// slot; cell_new / get / set are IR-lowered to a one-element
+		// heap box (alloc + load/store at offset 0) so Perceus RCs the
+		// box itself with no per-slot RC.
+		{
+			Name:       "Cell",
+			TypeParams: []string{"T"},
+			Fields: []ast.Param{
+				{Name: "value", Type: ast.NumberType{}},
+			},
+		},
 		// Url — return type of `url_parse(s)`. Holds the
 		// component pieces of an absolute or relative URL.
 		// `port = 0` means unspecified (parser defaults
@@ -1450,6 +1466,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["__method_slice_len"] = &ast.FuncType{
 		Params: []ast.Type{ast.SliceType{Elem: sliceElemParam}},
 		Result: ast.NumberType{},
+	}
+
+	// Cell[T] — single-slot mutable box (docs/CELL-TYPE-PLAN.md).
+	// `cell_new(v)` returns a Cell with no Args (like map_new, the
+	// destination type drives T); `get` reads the slot, `set` writes
+	// it in place and returns void (so `c.set(v);` is a normal
+	// statement, not an E055 discard). All three are IR-intercepted.
+	cellParam := ast.ParamType{Name: "T"}
+	cellT := ast.StructType{Name: "Cell", Args: []ast.Type{cellParam}}
+	c.info.FuncSigs["cell_new"] = &ast.FuncType{
+		Params: []ast.Type{cellParam},
+		Result: ast.StructType{Name: "Cell"},
+	}
+	c.info.Methods["Cell.get"] = "__method_Cell_get"
+	c.info.FuncSigs["__method_Cell_get"] = &ast.FuncType{
+		Params: []ast.Type{cellT},
+		Result: cellParam,
+	}
+	c.info.Methods["Cell.set"] = "__method_Cell_set"
+	c.info.FuncSigs["__method_Cell_set"] = &ast.FuncType{
+		Params: []ast.Type{cellT, cellParam},
+		Result: ast.VoidType{},
 	}
 
 	// Auto-discover the remaining Array methods from the
@@ -3274,6 +3312,21 @@ func isVoidReturn(t ast.Type) bool {
 // type position. It's nil outside of enum-body contexts. When
 // the name is in `params`, we always rewrite to ParamType —
 // the parameter wins over a same-named enum or struct.
+// isCellElemType reports whether T is permitted as Cell[T] (E057). v1 is
+// cycle-free *scalars* only — they hold no pointer so a cell over them can
+// never be part of a reference cycle, and the slot needs no RC. `string`
+// and richer cycle-free types follow once the owning-slot RC integration
+// lands (docs/CELL-TYPE-PLAN.md). An unresolved generic param is allowed
+// through here (there's no v1 generic-Cell use; monomorph-time checking is
+// a follow-up) so generic signatures still resolve.
+func isCellElemType(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.ParamType:
+		return true
+	}
+	return false
+}
+
 func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 	if slot == nil || *slot == nil {
 		return
@@ -3329,6 +3382,17 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 			if len(sd.TypeParams) != len(args) {
 				c.errfCode(sd.P, "E019", "struct %s has %d type parameter(s), %d supplied",
 					t.Name, len(sd.TypeParams), len(args))
+			}
+			// E057: a Cell[T] is only sound for a cycle-free T — a cell
+			// over a reference type could reconstruct a reference cycle,
+			// which is exactly what the immutable-data model forbids so
+			// Perceus RC needs no cycle collector (docs/CELL-TYPE-PLAN.md
+			// §1-2). v1 allows scalars only; string and richer cycle-free
+			// types wait on the owning-slot RC integration.
+			if t.Name == "Cell" && len(args) == 1 && !isCellElemType(args[0]) {
+				c.errfCode(sd.P, "E057",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool); a reference type could form a cycle, which immutable data structures forbid",
+					args[0])
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
 			return
@@ -6243,6 +6307,28 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "map_new" {
 			c.needCoreMap(n.P)
 		}
+		// `cell_new(v)` — the Cell[T] constructor (docs/CELL-TYPE-PLAN.md).
+		// T is inferred from the argument (no destination relaxation needed:
+		// the value drives T), stamped on n.TypeArgs for the IR, and checked
+		// cycle-free (E057). Returns Cell[T].
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
+			if len(n.Args) != 1 {
+				c.errfCode(n.P, "E004", "cell_new expects 1 argument, got %d", len(n.Args))
+				return ast.StructType{Name: "Cell"}
+			}
+			at := c.checkExpr(n.Args[0], s)
+			at = postSettleType(n.Args[0], at)
+			if at == nil {
+				return ast.StructType{Name: "Cell"}
+			}
+			if !isCellElemType(at) {
+				c.errfCode(n.Args[0].Pos(), "E057",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool); a reference type could form a cycle, which immutable data structures forbid",
+					at)
+			}
+			n.TypeArgs = []ast.Type{at}
+			return ast.StructType{Name: "Cell", Args: []ast.Type{at}}
+		}
 		// Variant constructor: `Some(x)` / `Square(2.0, 3.0)`.
 		// Resolved purely by name so we can type the result as
 		// the owning enum and check argument count + payload
@@ -7445,7 +7531,11 @@ func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
 // runtime. The monomorpher skips these so the helper-method
 // dispatch keeps working unchanged.
 func isRuntimeGenericStruct(name string) bool {
-	return name == "Map" || name == "MapIter"
+	// Map / MapIter share one struct + helper set across all (K, V) via a
+	// runtime keyKind tag; Cell is IR-intercepted (a single opaque box for
+	// every T). None are monomorphised — cloning would split their
+	// dispatch across mangled names the lowering doesn't know about.
+	return name == "Map" || name == "MapIter" || name == "Cell"
 }
 
 // stampStructTypeArgs flows TypeArgs from a destination struct

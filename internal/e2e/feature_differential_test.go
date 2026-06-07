@@ -478,6 +478,36 @@ function main(): i32 {
     match (xs.min_max()) { Some(p) => { print(p.0.to_string() + ".." + p.1.to_string()); }, None => {} }
     return 0;
 }`},
+		// ---- Cell[T] (docs/CELL-TYPE-PLAN.md) ----
+		// get / set round-trip: (0+5)*2 = 10, identical on every backend.
+		{"cell_get_set", `import "std/i32";
+function main(): i32 {
+    var c: Cell[i32] = cell_new(0);
+    c.set(c.get() + 5);
+    c.set(c.get() * 2);
+    print(c.get().to_string());
+    return 0;
+}`},
+		// Shared mutation: passing the cell to a function and mutating it
+		// there is visible to the caller (the deliberate shared-mutable-state
+		// semantics) — 10 bumped three times → 13.
+		{"cell_shared_mutation", `import "std/i32";
+function bump(c: Cell[i32]) { c.set(c.get() + 1); }
+function main(): i32 {
+    var c: Cell[i32] = cell_new(10);
+    bump(c); bump(c); bump(c);
+    print(c.get().to_string());
+    return 0;
+}`},
+		// A cell as a loop accumulator (the counter idiom) — sum 1..=5 = 15.
+		{"cell_accumulator", `import "std/i32";
+function main(): i32 {
+    var acc: Cell[i32] = cell_new(0);
+    var i: i32 = 1;
+    while (i <= 5) { acc.set(acc.get() + i); i = i + 1; }
+    print(acc.get().to_string());
+    return 0;
+}`},
 	}
 	for _, c := range cases {
 		c := c
