@@ -473,6 +473,9 @@ function main(): i32 {
     if (tl.len() != 2 || tl[0] != 243 || tl[1] != 170) { return 93; }
     var tm: i32[] = x86_cld([]); // FC
     if (tm.len() != 1 || tm[0] != 252) { return 94; }
+    // movsd reg-reg: movsd %xmm0,%xmm3 -> F2 0F 10 D8
+    var tn: i32[] = x86_movsd_rr([], 3, 0);
+    if (tn.len() != 4 || tn[0] != 242 || tn[1] != 15 || tn[2] != 16 || tn[3] != 216) { return 95; }
     return 0;
 }
 `
@@ -627,6 +630,13 @@ function main(): i32 {
     if (d.rodata.len() != 8 || d.rodata[0] != 42 || d.rodata[1] != 0 || d.rodata[7] != 0) { return 11; }
     // x86_align8 rounds up to the .text/.rodata boundary.
     if (x86_align8(10) != 16 || x86_align8(16) != 16 || x86_align8(0) != 0) { return 12; }
+    // rip-relative movq load/store: movq G(%rip),%rax -> 48 8B 05 <d>;
+    // movq %rcx,G(%rip) -> 48 89 0D <d>.
+    var e2: X86Asm = x86_asm_new();
+    e2 = x86_mov_load_rip_label(e2, x86_rax(), "G");
+    if (e2.code.len() != 7 || e2.code[0] != 72 || e2.code[1] != 139 || e2.code[2] != 5) { return 13; }
+    e2 = x86_mov_store_rip_label(e2, x86_rcx(), "G");
+    if (e2.code[7] != 72 || e2.code[8] != 137 || e2.code[9] != 13) { return 14; }
     return 0;
 }
 `

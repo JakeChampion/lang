@@ -1099,16 +1099,34 @@ smallest → largest:
       2. **`args()` alignment** — `__fern_args` does a layout-dependent
          unaligned i32 read that traps under wasmtime ("Pointer not aligned
          to 4"). The driver sidesteps it by reading a fixed path, not argv.
-      3. **`emit_module` heap doesn't grow** — `__fern_alloc` traps at the
-         initial 16 pages (1 MB) instead of `memory.grow`ing (the grow
-         landed only on the binary-encoder path, slice 4j). With no GC, the
-         assembler's transient allocations exhaust 1 MB when assembling a
-         heap program's ~32 KB asm → OOB trap.
-  - 🔧 **struct/array/map capstone — gated on (3)**. The instruction
-    encoders they need are byte-verified (`TestSelfHostX86Encode`), but the
-    end-to-end native run needs the `emit_module` allocator to grow (bug 3)
-    so the 32 KB asm assembles; then the heap-program cases (and ultimately
-    the compiler's own source → a native fixpoint) light up.
+      3. (initially suspected `__fern_alloc` not growing — **ruled out**:
+         it does `memory.grow`, and bumping the initial memory didn't help.
+         The real blockers were the two assembler bugs in slice 2s below.)
+  - ✅ **slice 2s — heap-program assembler bugs (found via bisection)**.
+    Bisecting the struct program's asm pinned two real bugs that corrupted
+    / mis-encoded heap-program assembly:
+      1. **`movsd %xmm,%xmm` (reg-reg)** wasn't handled — it fell into the
+         load branch, which called `parse_mem("%xmm0")`; `parse_mem`'s
+         `op[0:lp]` with `lp = index_of("(") = -1` built a corrupt slice
+         (`op[0:-1]`) → heap corruption → trap. Fixed with `x86_movsd_rr`
+         (`F2 0F 10 /r`) + a `parse_mem` guard for the no-`(` case.
+      2. **rip-relative `movq`** — `movq sym(%rip), %rax` / `movq %rax,
+         sym(%rip)` (the heap-pointer global access in `__fern_alloc`) was
+         encoded as `mov rax, [rax]` (the `is_rip` flag was ignored). Fixed
+         with `x86_mov_load_rip_label` / `x86_mov_store_rip_label`
+         (`48 8B`/`89` + ModR/M rm=101 + deferred fixup). All byte-checked.
+    With these, the struct asm now **assembles** (no corruption); the
+    remaining gap is purely data-section support (next).
+  - 🔧 **struct/array/map capstone — gated on `.bss` + ELF memsz.**
+    `asm.fern` declares its globals in `.section .bss` (`.align 8`,
+    `__fern_heap_ptr: .quad 0`, `__fern_heap: .skip 1073741824` — a **1 GB**
+    heap, `__fern_envp: .quad 0`) and rip-addresses them. To assemble heap
+    programs the front-end needs: a `.bss`/`.data` section + the `.align` /
+    `.skip` / `.quad` directives + bss label addresses, and `elf.fern` must
+    support **`p_memsz > p_filesz`** (the 1 GB bss is zero-init memory, not
+    file bytes) so rip refs to bss globals resolve. That's the next slice;
+    after it the heap-program cases (and ultimately the compiler's own
+    source → a native fixpoint) light up.
   - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
     transcendental math builtins, and the CLI wiring (blocked above).
 
