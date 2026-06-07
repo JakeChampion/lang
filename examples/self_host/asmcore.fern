@@ -334,7 +334,13 @@ pub struct EmitState {
     // in ExprCall(ExprFieldAccess(...), args).
     funcs: parser.FuncDecl[],
     // local_types: parallel to local_names. See asm.fern.
-    local_types: Ty[]
+    local_types: Ty[],
+    // n_params: count of leading local_names slots that are the
+    // function's receiver + parameters (bound first by emit_function).
+    // The Perceus function-exit dec sweep skips these — parameters are
+    // BORROWED (the caller still owns them), so the callee must not
+    // release them. Set per function after the params are bound.
+    n_params: i32
 }
 
 pub function new_state(): EmitState {
@@ -356,7 +362,8 @@ pub function new_state(): EmitState {
         loop_exit_labels: lex,
         loop_cont_labels: lcn,
         funcs: fns,
-        local_types: lts
+        local_types: lts,
+        n_params: 0
     };
 }
 
@@ -1648,6 +1655,13 @@ pub function (s: EmitState) reset_locals(): EmitState {
 
 pub function (s: EmitState) enter_function(): EmitState {
     return EmitState { ...s, in_function: true };
+}
+
+// set_n_params records the receiver+parameter slot count so the
+// Perceus function-exit dec sweep can skip borrowed params. Called by
+// emit_function once the params are bound.
+pub function (s: EmitState) set_n_params(n: i32): EmitState {
+    return EmitState { ...s, n_params: n };
 }
 
 pub function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): EmitState {

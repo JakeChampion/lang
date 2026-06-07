@@ -3170,17 +3170,58 @@ function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32)
     return s;
 }
 
+// emit_array_exit_dec emits the Perceus function-exit release sweep:
+// release (dec) each array-typed LOCAL slot, skipping the leading
+// n_params receiver+parameter slots (params are BORROWED — the caller
+// still owns them). Slot for local index i is at -8*(i+1)(%rbp). The
+// dec helper short-circuits null / low-address / sentinel, so an
+// unassigned (zero-init) slot or a non-pointer is a no-op. Clobbers
+// %rax/%rcx — callers needing a live value across the sweep save it
+// first. Emitted at every in-function return + the fallback exit.
+function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
+    var i: i32 = s.n_params;
+    var any: boolean = false;
+    while (i < s.local_names.len()) {
+        if (asmcore.ty_is_array_like(s.local_types[i])) {
+            var off: i32 = 0 - 8 * (i + 1);
+            s = s.write("    pushq " + asmcore.i32_to_string(off) + "(%rbp)\n");  // slot value as dec arg
+            s = s.write("    call __fn___fern_rc_dec\n");
+            s = s.write("    addq $8, %rsp\n");
+            any = true;
+        }
+        i = i + 1;
+    }
+    if (any) { s = s.mark_heap(); }
+    return s;
+}
+
 function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
     match (stmt) {
         // StmtDefer is lowered away (parser.lower_defers) before emit; this
         // arm only satisfies exhaustiveness.
         parser.StmtDefer(_) => { return s.write("    # unsupported: StmtDefer survived lowering\n"); },
         parser.StmtReturn(r) => {
+            // Capture whether we're returning an rc-tracked array BEFORE
+            // emitting (the type oracle reads the current locals).
+            var ret_is_arr: boolean = asmcore.ty_is_array_like(asmcore.infer_expr_type(r.value, s));
             s = emit_expr(r.value, s);
             if (s.in_function) {
-                // Function return: result in %rax, restore
-                // caller's frame, ret.
+                // Function return: result in %rax. Perceus exit: if the
+                // result is an array we hand to the caller, retain it so
+                // it survives the local release sweep (which dec's its
+                // slot); then sweep the array locals, then restore the
+                // result and ret. Net rc for the returned buffer is
+                // unchanged for the caller.
                 s = s.write("    popq %rax\n");
+                if (ret_is_arr) {
+                    s = s.mark_heap();
+                    s = s.write("    pushq %rax\n");
+                    s = s.write("    call __fn___fern_rc_inc\n");
+                    s = s.write("    addq $8, %rsp\n");
+                }
+                s = s.write("    pushq %rax\n");        // save result across the sweep
+                s = emit_array_exit_dec(s);
+                s = s.write("    popq %rax\n");          // restore result
                 s = s.write("    leave\n");
                 s = s.write("    ret\n");
             } else {
@@ -3603,6 +3644,20 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
         if (bytes % 16 != 0) { bytes = bytes + 8; }
         s = s.write("    subq $" + asmcore.i32_to_string(bytes) + ", %rsp\n");
     }
+    // Zero-init the body-local slots (Perceus exit-sweep safety): a
+    // `var` decl skipped on this path leaves its slot readable by the
+    // release sweep, which must see NULL (the dec helper no-ops) rather
+    // than stack garbage. Body locals are indices [argc, total_locals),
+    // the contiguous range [-total_locals*8 .. -argc*8) from %rbp; the
+    // param slots (filled below) are above it and untouched. rep stosq
+    // clobbers rax/rcx/rdi, which are dead here (before the param copy).
+    if (n_body_locals > 0) {
+        s = s.write("    leaq " + asmcore.i32_to_string(0 - total_locals * 8) + "(%rbp), %rdi\n");
+        s = s.write("    movq $" + asmcore.i32_to_string(n_body_locals) + ", %rcx\n");
+        s = s.write("    xorq %rax, %rax\n");
+        s = s.write("    cld\n");
+        s = s.write("    rep stosq\n");
+    }
     // Fresh locals table for this function's scope; keep the
     // monotonic label_n + in_function flag.
     s = s.reset_locals();
@@ -3629,6 +3684,9 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
         s = s.write("    movq %rax, " + asmcore.i32_to_string(local_off) + "(%rbp) # param " + fd.params[i].name + "\n");
         i = i + 1;
     }
+    // Record the receiver+param slot boundary so the Perceus exit
+    // sweep releases only LOCALS, not the borrowed params.
+    s = s.set_n_params(argc);
     // Body. Any StmtReturn inside lowers to leave + ret
     // (because in_function is set).
     var bi: i32 = 0;
@@ -3637,7 +3695,10 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
         bi = bi + 1;
     }
     // Fallback: implicit `return 0;` so falling off the end
-    // doesn't run into the next function's label.
+    // doesn't run into the next function's label. Release the array
+    // locals first (Perceus exit sweep) — the 0 return is not an array,
+    // so no retain is needed; the sweep clobbers %rax before we set it.
+    s = emit_array_exit_dec(s);
     s = s.write("    movq $0, %rax\n");
     s = s.write("    leave\n");
     s = s.write("    ret\n");

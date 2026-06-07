@@ -245,3 +245,78 @@ func TestSelfHostRcReassignX86_64(t *testing.T) {
 		}
 	})
 }
+
+// Phase 1d (cont.): the function-exit dec sweep releases every array
+// LOCAL at each return / fall-through (borrowed params are skipped); an
+// array returned to the caller is retained so it survives the sweep,
+// and body-local slots are zero-inited so a skipped `var` is a no-op.
+// With free off this is observably a no-op on values; we check
+// value-correctness across calls (incl. returning an array and passing
+// a borrowed array), a clean over-release detector, and the emission of
+// the zero-init + the release sweep. Mirrors
+// docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 1d.
+func TestSelfHostRcExitSweepX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Return an array: retained past the exit sweep so the caller's
+		// reference is live.
+		{"return-array", "function make(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; } function main(): i32 { var ys = make(); return ys[0] + ys[2]; }", 4},
+		// Borrowed array param: not released by the callee's sweep, so it
+		// stays usable in the caller; detector clean.
+		{"borrowed-param", "function sum2(a: i32[]): i32 { return a[0] + a[1]; } function main(): i32 { var xs: i32[] = [7, 8]; var r = sum2(xs); return r + xs[0] + __fern_rc_underflow_count(); }", 22},
+		// A function with array locals + alias, called repeatedly: each
+		// call balances inc (alias) against the exit sweep, so the
+		// over-release detector stays 0.
+		{"exit-sweep-no-underflow", "function f(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; } function main(): i32 { var a = f(); var b = f(); var c = f(); return __fern_rc_underflow_count(); }", 0},
+		// An array local declared inside a not-taken branch: the
+		// zero-inited slot makes the exit sweep a no-op (no spurious
+		// release), detector clean.
+		{"branch-local-zeroinit", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __fern_rc_underflow_count(); }", 6},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+
+	// Emission: a function with an array local zero-inits its body slots
+	// (rep stosq) and releases the local at exit (__fern_rc_dec sweep).
+	t.Run("emits-zeroinit-and-sweep", func(t *testing.T) {
+		asm := string(runCapture(t, gcc, runner, driverBin,
+			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; return xs[0]; }")))
+		if !strings.Contains(asm, "rep stosq") {
+			t.Errorf("expected body-local zero-init (rep stosq) in a function with locals")
+		}
+		if !strings.Contains(asm, "call __fn___fern_rc_dec") {
+			t.Errorf("expected the exit-dec sweep (__fern_rc_dec) for the array local")
+		}
+	})
+}
