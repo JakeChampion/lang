@@ -664,22 +664,117 @@ function arm64_andreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
     return arm64_le32(buf, 0x8a000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
 
-// arm64_and_imm_nimms returns the encoded (N<<12 | immr<<6 | imms) bitmask
-// fields for a supported `and Xd, Xn, #imm` immediate, or -1 if the
-// immediate is not in the verified table. (A full AArch64 bitmask-immediate
-// encoder is a follow-up; the codegen's only and-immediate today is the
-// 16-byte alloc alignment mask `#-16`.) Fields verified vs llvm-mc.
-function arm64_and_imm_fields(imm: i32): i32 {
-    if (imm == (0 - 16)) { return (1 << 12) | (60 << 6) | 59; } // #-16: N=1 immr=60 imms=59
-    return 0 - 1;
+// ---- AArch64 bitmask (logical) immediate encoder ----
+//
+// A port of the Go reference's encodeBitmask (internal/native/arm64), for
+// the 64-bit `and/orr/eor Xd, Xn, #imm` immediate forms. Returns the
+// (N, immr, imms) fields and whether `imm` is a legal bitmask immediate.
+// Pinned vs llvm-mc. The few i64 bit-twiddles Fern lacks natively are
+// provided below (logical shift right, ctz, clz) — `>>` is arithmetic, so
+// logical shifts mask off the sign-extended high bits.
+
+struct Arm64Bm {
+    n: i32,
+    immr: i32,
+    imms: i32,
+    ok: boolean,
 }
 
-// arm64_and_imm encodes `and Xd, Xn, #imm` for a supported immediate.
-// Callers must check arm64_and_imm_fields(imm) >= 0 first.
+// arm64_bm_lowmask returns the low-k-bits-set mask (k in 0..64).
+function arm64_bm_lowmask(k: i32): i64 {
+    if (k <= 0) { return 0; }
+    if (k >= 64) { return 0 - 1; }
+    return (1 << k) - 1;
+}
+
+// arm64_bm_lsr is a logical (unsigned) shift right of a 64-bit value.
+function arm64_bm_lsr(x: i64, n: i32): i64 {
+    if (n <= 0) { return x; }
+    if (n >= 64) { return 0; }
+    return (x >> n) & arm64_bm_lowmask(64 - n);
+}
+
+// arm64_bm_ctz / arm64_bm_clz count trailing / leading zero bits of a
+// nonzero 64-bit value (64 if zero). Bit i is `(x >> i) & 1` — masking the
+// low bit is correct regardless of the shift's sign behaviour.
+function arm64_bm_ctz(x: i64): i32 {
+    var i: i32 = 0;
+    while (i < 64) {
+        if (((x >> i) & 1) == 1) { return i; }
+        i = i + 1;
+    }
+    return 64;
+}
+function arm64_bm_clz(x: i64): i32 {
+    var i: i32 = 0;
+    while (i < 64) {
+        if (((x >> (63 - i)) & 1) == 1) { return i; }
+        i = i + 1;
+    }
+    return 64;
+}
+
+// arm64_bm_isshifted is true when v is a contiguous run of low ones
+// (v != 0 and v+1 is a power of two): ((v-1)|v)+1 has no bits in common
+// with ((v-1)|v).
+function arm64_bm_isshifted(v: i64): boolean {
+    if (v == 0) { return false; }
+    var m: i64 = (v - 1) | v;
+    return ((m + 1) & m) == 0;
+}
+
+// arm64_encode_bitmask encodes a 64-bit `imm` as an AArch64 logical
+// immediate (N, immr, imms). ok=false if imm is not a legal bitmask value.
+function arm64_encode_bitmask(imm: i64): Arm64Bm {
+    if (imm == 0 || imm == (0 - 1)) {
+        return Arm64Bm { n: 0, immr: 0, imms: 0, ok: false };
+    }
+    var size: i32 = 64;
+    var done: boolean = false;
+    while (!done) {
+        size = size / 2;
+        var m: i64 = arm64_bm_lowmask(size);
+        if ((imm & m) != (arm64_bm_lsr(imm, size) & m)) {
+            size = size * 2;
+            done = true;
+        } else if (size <= 2) {
+            done = true;
+        }
+    }
+    var allones: i64 = 0 - 1;
+    var mask: i64 = arm64_bm_lsr(allones, 64 - size);
+    imm = imm & mask;
+    var i: i32 = 0;
+    var cto: i32 = 0;
+    if (arm64_bm_isshifted(imm)) {
+        i = arm64_bm_ctz(imm);
+        cto = arm64_bm_ctz(arm64_bm_lsr(imm, i) ^ allones);
+    } else {
+        imm = imm | (mask ^ allones);
+        if (!arm64_bm_isshifted(imm ^ allones)) {
+            return Arm64Bm { n: 0, immr: 0, imms: 0, ok: false };
+        }
+        var clo: i32 = arm64_bm_clz(imm ^ allones);
+        i = 64 - clo;
+        cto = clo + arm64_bm_ctz(imm ^ allones) - (64 - size);
+    }
+    var immr: i32 = (size - i) & (size - 1);
+    var nimms: i32 = ((size - 1) ^ (0 - 1)) << 1;
+    nimms = nimms | (cto - 1);
+    var nbit: i32 = ((nimms >> 6) & 1) ^ 1;
+    var imms: i32 = nimms & 0x3f;
+    return Arm64Bm { n: nbit, immr: immr, imms: imms, ok: true };
+}
+
+// arm64_and_imm_ok reports whether `imm` (sign-extended from the parsed
+// i32) is a legal `and` bitmask immediate.
+function arm64_and_imm_ok(imm: i32): boolean {
+    return arm64_encode_bitmask(imm as i64).ok;
+}
+
+// arm64_and_imm encodes `and Xd, Xn, #imm` (logical immediate). Callers
+// must check arm64_and_imm_ok(imm) first.
 function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32): i32[] {
-    var f: i32 = arm64_and_imm_fields(imm);
-    var nbit: i64 = ((f >> 12) & 1) as i64;
-    var immr: i64 = ((f >> 6) & 63) as i64;
-    var imms: i64 = (f & 63) as i64;
-    return arm64_le32(buf, 0x92000000 | (nbit << 22) | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
+    return arm64_le32(buf, 0x92000000 | ((bm.n as i64) << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
