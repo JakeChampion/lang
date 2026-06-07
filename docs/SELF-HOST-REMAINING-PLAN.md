@@ -1262,17 +1262,24 @@ smallest → largest:
     reads multi-hundred-KB asm intact (ELF size scales with input). No
     regression across the wasm / CLI / capstone suites. (This is unrelated
     to the spurious "bugs" of 2x — it's an actual, reproduced defect.)
-  - 🔧 **assembler-at-scale correctness** — with large asm now delivered
-    intact, programs of ~150+ functions assemble to a correctly-sized ELF
-    but compute the **wrong result** (e.g. a 150-fn sum returns 85, not
-    150). A separate, newly-surfaced bug at scale (candidate causes: the
-    O(n²) linear label lookup, or a fixup/offset issue once there are many
-    labels). Needs bisection; it's the next blocker on the road to a native
-    self-host fixpoint.
+  - ✅ **assembler-at-scale correctness — verified, NO bug** (the "150-fn →
+    85" claim was spurious). With large asm now delivered intact, the
+    self-host assembler was probed at 40 / 150 / 400 / 600 functions
+    (up to ~124 KB asm) and **matches gcc's assembly of the same `.s`
+    byte-for-result on every size**. The earlier "nfn=400 returns 144, want
+    400" reading was simply the **Unix 8-bit exit-code truncation**
+    (400 & 0xFF == 144), not a miscompile — and the "150 → 85" figure came
+    from a malformed test program (the `f32`/`f64` reserved-keyword function
+    names of 2x), not the assembler. Guarded by `TestSelfHostX86ScaleProbe`
+    (`self_host_x86_scale_probe_test.go`), which keeps each result < 256 so
+    the exit code is unmasked and cross-checks every case against gcc.
+    There is no O(n²)-label or fixup defect at scale. **Lesson (recurring):**
+    verify the test program is valid Fern and account for exit-code masking
+    before declaring an assembler/wasm bug.
   - ⬜ remaining: the x87 transcendentals (`fldl`/`fstpl` + `fsin`/`fcos`/…)
-    for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; the
-    assembler-at-scale bug above (then `asm.fern`'s own output → a native
-    self-host fixpoint); and the CLI wiring (blocked above).
+    for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; assembling
+    `asm.fern`'s own output → a native self-host fixpoint; and the CLI
+    wiring (blocked above).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
