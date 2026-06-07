@@ -43,18 +43,18 @@ function values_as_jarray(values: string[]): JsonValue {
 // (if any) + every value of `tag`.
 function describe(path: string, q: Map[string, string[]]): JsonValue {
   var out: Map[string, JsonValue] = map_new(4);
-  out.set("path", JString(path));
+  out = out.insert("path", JString(path));
   match (q.get("q")) {
     Some(qs) => {
       if (qs.len() > 0) {
-        out.set("q", JString(qs[0]));
+        out = out.insert("q", JString(qs[0]));
       }
     },
     None => {}
   }
   match (q.get("tag")) {
     Some(tags) => {
-      out.set("tags", values_as_jarray(tags));
+      out = out.insert("tags", values_as_jarray(tags));
     },
     None => {}
   }

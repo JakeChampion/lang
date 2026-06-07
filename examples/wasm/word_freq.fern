@@ -99,10 +99,10 @@ function main(): i32 {
     var w: string = words[i];
     match (counts.get(w)) {
       Some(n) => {
-        counts.set(w, n + 1);
+        counts = counts.insert(w, n + 1);
       },
       None => {
-        counts.set(w, 1);
+        counts = counts.insert(w, 1);
       }
     }
     i = i + 1;
