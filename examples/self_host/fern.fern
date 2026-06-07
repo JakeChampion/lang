@@ -445,6 +445,20 @@ function main(): i32 {
             comp = watbin.component_full_io_fs_write(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
         } else if (shape == 4) {
             comp = watbin.component_full_io_fs_rw(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+        } else if (shape == 5) {
+            comp = watbin.component_full_io_random(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+        } else if (shape == 6) {
+            comp = watbin.component_full_io_env(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+        } else if (shape == 7) {
+            comp = watbin.component_full_io_args(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+        } else if (shape == 8) {
+            comp = watbin.component_full_io_clock(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+        } else if (shape == 9) {
+            comp = watbin.component_full_io_clock_mono(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+        } else if (shape == 13) {
+            comp = watbin.component_full_io_eprint(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+        } else if (shape == 14) {
+            comp = watbin.component_full_io_exit(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
         } else {
             comp = watbin.component_full(watbin.wat_to_binary(wasm.emit_module_run(full)));
         }

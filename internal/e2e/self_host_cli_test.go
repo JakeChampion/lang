@@ -1024,17 +1024,94 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("emit-target-wasm-component-wasi", func(t *testing.T) {
+		// Single-category WASI wasi:cli/run shapes: env / args / clock /
+		// random / stderr / exit. Each maps to its component_full_io_* wrap.
+		wasmtime, err := exec.LookPath("wasmtime")
+		if err != nil {
+			t.Skip("wasmtime not on PATH; skipping -target wasm-component wasi")
+		}
+		wasmtools, _ := exec.LookPath("wasm-tools")
+		build := func(t *testing.T, name, src string) string {
+			t.Helper()
+			srcPath := filepath.Join(dir, "compw_"+name+".fern")
+			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			outPath := filepath.Join(dir, "compw_"+name+".wasm")
+			_, code := runDriver(t, "-target", "wasm-component", "-o", outPath, srcPath)
+			if code != 0 {
+				t.Fatalf("%s: -target wasm-component exited %d, want 0", name, code)
+			}
+			if wasmtools != "" {
+				if out, err := exec.Command(wasmtools, "validate", "--features", "component-model", outPath).CombinedOutput(); err != nil {
+					t.Fatalf("%s: wasm-tools validate failed: %v\n%s", name, err, out)
+				}
+			}
+			return outPath
+		}
+
+		envBin := build(t, "env", "function main(): i32 { match (env(\"API_KEY\")) { Some(v) => { write(v); return 0; }, None => { write(\"MISS\"); return 1; } } }\n")
+		if out, _ := exec.Command(wasmtime, "run", "--env", "API_KEY=sk-xyz", envBin).Output(); string(out) != "sk-xyz" {
+			t.Errorf("env: stdout = %q, want %q", string(out), "sk-xyz")
+		}
+
+		argsBin := build(t, "args", "function main(): i32 { print_int(args().len()); return 0; }\n")
+		if out, _ := exec.Command(wasmtime, "run", argsBin, "one", "two").Output(); string(out) != "3" {
+			t.Errorf("args: stdout = %q, want %q (argv0 + 2)", string(out), "3")
+		}
+
+		clockBin := build(t, "clock", "function main(): i32 { var t: i64 = now_unix_ms(); if (t > 0) { write(\"ok\"); return 0; } return 1; }\n")
+		if out, _ := exec.Command(wasmtime, "run", clockBin).Output(); string(out) != "ok" {
+			t.Errorf("clock: stdout = %q, want %q", string(out), "ok")
+		}
+
+		monoBin := build(t, "mono", "function main(): i32 { var t: i64 = monotonic_ns(); if (t > 0) { write(\"ok\"); return 0; } return 1; }\n")
+		if out, _ := exec.Command(wasmtime, "run", monoBin).Output(); string(out) != "ok" {
+			t.Errorf("clock-mono: stdout = %q, want %q", string(out), "ok")
+		}
+
+		rndBin := build(t, "rnd", "function main(): i32 { var x: i32 = random_i32(); if (x == x) { write(\"ok\"); return 0; } return 1; }\n")
+		if out, _ := exec.Command(wasmtime, "run", rndBin).Output(); string(out) != "ok" {
+			t.Errorf("random: stdout = %q, want %q", string(out), "ok")
+		}
+
+		epBin := build(t, "eprint", "function main(): i32 { eprint(\"to stderr\"); return 0; }\n")
+		{
+			cmd := exec.Command(wasmtime, "run", epBin)
+			var eb strings.Builder
+			cmd.Stderr = &eb
+			_ = cmd.Run()
+			if !strings.Contains(eb.String(), "to stderr") {
+				t.Errorf("eprint: stderr = %q, want it to contain %q", eb.String(), "to stderr")
+			}
+		}
+
+		exitBin := build(t, "exit", "function main(): i32 { write(\"before\"); exit(0); return 0; }\n")
+		{
+			cmd := exec.Command(wasmtime, "run", exitBin)
+			out, _ := cmd.Output()
+			if string(out) != "before" {
+				t.Errorf("exit: stdout = %q, want %q", string(out), "before")
+			}
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Errorf("exit: exit code = %d, want 0", code)
+			}
+		}
+	})
+
 	t.Run("wasm-component-rejects-unsupported", func(t *testing.T) {
-		// A program using WASI the component path doesn't wrap yet (here env)
-		// must be rejected with a clear error, not a broken component.
-		srcPath := filepath.Join(dir, "comp_env.fern")
-		src := "function main(): i32 { match (env(\"X\")) { Some(v) => { return 0; }, None => { return 1; } } }\n"
+		// A program mixing two WASI categories (env + args) has no single
+		// wrap yet, so it must be rejected with a clear error rather than
+		// emitting a broken component.
+		srcPath := filepath.Join(dir, "comp_multi.fern")
+		src := "function main(): i32 { var n = args().len(); match (env(\"X\")) { Some(v) => { return n; }, None => { return n + 1; } } }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		_, code := runDriver(t, "-target", "wasm-component", "-o", filepath.Join(dir, "comp_env.wasm"), srcPath)
+		_, code := runDriver(t, "-target", "wasm-component", "-o", filepath.Join(dir, "comp_multi.wasm"), srcPath)
 		if code != 2 {
-			t.Errorf("wasm-component on an env program exited %d, want 2 (rejected)", code)
+			t.Errorf("wasm-component on a multi-WASI program exited %d, want 2 (rejected)", code)
 		}
 	})
 
