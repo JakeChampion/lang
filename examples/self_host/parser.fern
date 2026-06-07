@@ -1781,6 +1781,17 @@ function parse_type_name(p: Par): TypeNameResult {
         var dinner: TypeNameResult = parse_type_name(p);
         return TypeNameResult { par: dinner.par, name: "dyn " + dinner.name };
     }
+    // WIT resource-handle type `own R` / `borrow R` (P5 —
+    // docs/WIT-BRING-YOUR-OWN.md). A handle is an opaque i32 at the canonical
+    // ABI, so the self-host erases it to "i32" (mirroring the Go ir.LowerWith
+    // handle-erasure): consume the inner resource type and return "i32". The
+    // owned/borrowed distinction and the resource binding are checker-/drop-
+    // slice concerns the emitter doesn't need here.
+    if (base == "own" || base == "borrow") {
+        p = p.advance(); // consume `own` / `borrow`
+        var hinner: TypeNameResult = parse_type_name(p);
+        return TypeNameResult { par: hinner.par, name: "i32" };
+    }
     if (base.len() == 0) {
         // Tuple type `(T1, T2, …)`. The self-host stores types
         // coarsely, so consume the balanced parens and return a
@@ -3954,6 +3965,18 @@ function parse_import_attr(p: Par): ImportAttrResult {
     return ImportAttrResult { par: p, iface: iface, wit: wit, is_import: true };
 }
 
+// skip_resource_decl consumes `resource Name;` (the contextual `resource`
+// identifier is at the cursor) and returns the advanced parser. The self-host
+// erases WIT resource handles to i32 (own/borrow → i32 in parse_type_name), so
+// the declaration carries no info the emitter needs in this slice — it is
+// consumed and discarded. See docs/WIT-BRING-YOUR-OWN.md (P5).
+function skip_resource_decl(p: Par): Par {
+    p = p.advance(); // `resource`
+    if (p.peek_ident().len() > 0) { p = p.advance(); } // Name
+    if (p.peek_punct() == ";") { p = p.advance(); }
+    return p;
+}
+
 // parse_impl_decl consumes `impl Trait for Type { <function>… }`.
 // Each method is desugared into an ordinary receiver-method
 // FuncDecl — its first `self: Self` parameter becomes the receiver
@@ -4116,6 +4139,10 @@ pub function parse_module(toks: lexer.Token[]): Module {
                     p = ifr.par;
                     var ifn: FuncDecl = FuncDecl { ...ifr.func, import_iface: iar.iface, import_wit: iar.wit };
                     funcs = funcs.push(ifn);
+                } else if (p.peek_ident() == "resource") {
+                    // `@import(...) resource Name;` binds a WIT resource handle
+                    // type (P5). Consumed + discarded — handles erase to i32.
+                    p = skip_resource_decl(p);
                 }
                 continue;
             }
@@ -4207,6 +4234,17 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 mi = mi + 1;
             }
             continue;
+        }
+        // `resource Name;` — a top-level WIT resource-handle declaration (P5).
+        // `resource` is a contextual identifier (not a keyword), so dispatch
+        // here when it's followed by a name. Consumed + discarded; handles
+        // erase to i32. See docs/WIT-BRING-YOUR-OWN.md.
+        if (p.peek_ident() == "resource") {
+            var pr: Par = p.advance();
+            if (pr.peek_ident().len() > 0) {
+                p = skip_resource_decl(p);
+                continue;
+            }
         }
         var stmtR: StmtResult = parse_stmt(p);
         // Guarantee forward progress: if a malformed top-level token (e.g.

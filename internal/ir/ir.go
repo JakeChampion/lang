@@ -778,6 +778,12 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	if err := rejectDynTrait(prog); err != nil {
 		return nil, err
 	}
+	// Erase WIT resource handles (`own R` / `borrow R`) to plain i32 before
+	// any lowering reads a type: a handle is an opaque scalar at the canonical
+	// ABI and the checker has already enforced its type-safety (P5 —
+	// docs/WIT-BRING-YOUR-OWN.md). This is the single choke point, so no
+	// backend's width/op classification ever sees a HandleType.
+	eraseHandleTypes(prog, info)
 	// Rename shadowed local variables so each Var declaration
 	// in a function carries a name that's globally unique
 	// within the function. The IR's per-name `b.locals` slot

@@ -2272,6 +2272,69 @@ function main(): i32 {
 	}
 }
 
+// WIT resource handles (P5 — docs/WIT-BRING-YOUR-OWN.md): a `resource`
+// declaration introduces a nominal handle type; `own R` / `borrow R` (and a
+// bare resource name, which means owned) type-check, an owned handle coerces
+// to a borrow of the same resource, and a plain i32 is NOT a handle.
+func TestResourceHandleChecker(t *testing.T) {
+	const prelude = `@import("wasi:io/poll@0.2.0", "pollable")
+resource Pollable;
+
+@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
+function subscribe(ns: u64): own Pollable;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.ready")
+function ready(h: borrow Pollable): boolean;
+`
+	// Accepted: own handle from subscribe, lent (own → borrow) to ready.
+	if err := checkSource(t, prelude+`
+function main(): i32 {
+	var p: own Pollable = subscribe(0 as u64);
+	if (ready(p)) { return 1; }
+	return 0;
+}`); err != nil {
+		t.Fatalf("valid resource-handle use should check: %v", err)
+	}
+	// Accepted: a bare resource name is an owned handle.
+	if err := checkSource(t, prelude+`
+function main(): i32 {
+	var p: Pollable = subscribe(0 as u64);
+	if (ready(p)) { return 1; }
+	return 0;
+}`); err != nil {
+		t.Fatalf("bare resource name (owned handle) should check: %v", err)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"unknown resource",
+			`function f(h: borrow Bogus): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"unknown resource"},
+		{"plain i32 is not a handle",
+			prelude + `function main(): i32 {
+	var n: i32 = 7;
+	if (ready(n)) { return 1; }
+	return 0;
+}`,
+			"expected borrow Pollable, got i32"},
+		{"handle is not a plain i32",
+			prelude + `function main(): i32 {
+	var p: own Pollable = subscribe(0 as u64);
+	var n: i32 = p;
+	return n;
+}`,
+			"cannot"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
 // Calling an extern @import function with the wrong argument arity is a
 // checker error, exactly like an ordinary function.
 func TestExternImportArityMismatch(t *testing.T) {

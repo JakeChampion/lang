@@ -247,6 +247,7 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 		combined.Consts = append(combined.Consts, mod.prog.Consts...)
 		combined.Traits = append(combined.Traits, mod.prog.Traits...)
 		combined.Impls = append(combined.Impls, mod.prog.Impls...)
+		combined.Resources = append(combined.Resources, mod.prog.Resources...)
 		combined.Comments = append(combined.Comments, mod.prog.Comments...)
 	}
 	return combined, nil
@@ -677,6 +678,7 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 		combined.Consts = append(combined.Consts, mod.prog.Consts...)
 		combined.Traits = append(combined.Traits, mod.prog.Traits...)
 		combined.Impls = append(combined.Impls, mod.prog.Impls...)
+		combined.Resources = append(combined.Resources, mod.prog.Resources...)
 		combined.Comments = append(combined.Comments, mod.prog.Comments...)
 		// TypeRefs is a parser-recorded side table the LSP uses
 		// for hover / definition on type annotations. Merging

@@ -54,6 +54,13 @@ type Info struct {
 	// (the variant's index in the variant slice) and the payload
 	// shapes via this map.
 	Enums map[string]*ast.EnumDecl
+	// Resources maps a `resource Name;` declaration's name to its decl —
+	// nominal WIT resource-handle types (P5 — docs/WIT-BRING-YOUR-OWN.md).
+	// resolveType reclassifies a bare resource-name reference to an owned
+	// ast.HandleType, and validateResourceHandles checks that every `own R` /
+	// `borrow R` names a registered resource. Empty for programs with no
+	// `resource` declarations.
+	Resources map[string]*ast.ResourceDecl
 	// Methods maps `<StructName>.<MethodName>` to the mangled
 	// top-level function name the receiver-rewriting pass introduces
 	// (`__method_<StructName>_<MethodName>`). Call-site rewriting
@@ -683,6 +690,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			FuncSigs:            map[string]*ast.FuncType{},
 			Structs:             map[string]*ast.StructDecl{},
 			Enums:               map[string]*ast.EnumDecl{},
+			Resources:           map[string]*ast.ResourceDecl{},
 			Methods:             map[string]string{},
 			MethodSources:       map[string]string{},
 			ModuleImports:       prog.ModuleImports,
@@ -833,6 +841,27 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				payloads: v.Payloads,
 			})
 		}
+	}
+
+	// Register every `resource Name;` declaration (P5 WIT resource-handle
+	// types — docs/WIT-BRING-YOUR-OWN.md) before signatures resolve, so that
+	// `own Name` / `borrow Name` references and bare resource-name references
+	// resolve. A resource name shares the nominal namespace with structs and
+	// enums, so a collision is a redeclaration error.
+	for _, rd := range prog.Resources {
+		if _, dup := c.info.Resources[rd.Name]; dup {
+			c.errfCode(rd.P, "E006", "resource %q redeclared", rd.Name)
+			continue
+		}
+		if _, isStruct := c.info.Structs[rd.Name]; isStruct {
+			c.errfCode(rd.P, "E006", "resource %q conflicts with a struct of the same name", rd.Name)
+			continue
+		}
+		if _, isEnum := c.info.Enums[rd.Name]; isEnum {
+			c.errfCode(rd.P, "E006", "resource %q conflicts with an enum of the same name", rd.Name)
+			continue
+		}
+		c.info.Resources[rd.Name] = rd
 	}
 
 	// Now that the enum set is known, walk every type position in
@@ -1965,6 +1994,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// type-level errors — the per-call dispatch path assumes validity.
 	// See docs/DYN-TRAITS.md.
 	c.validateDynTraitTypes(prog)
+	c.validateResourceHandles(prog)
 
 	// Second pass: check bodies. Per-function cancellation
 	// checkpoint — the LSP can cancel a long type-check
@@ -2107,6 +2137,66 @@ func forEachDynTrait(t ast.Type, fn func(string)) {
 	case ast.EnumType:
 		for _, a := range x.Args {
 			forEachDynTrait(a, fn)
+		}
+	}
+}
+
+// forEachHandle invokes fn for every resource HandleType (`own R` /
+// `borrow R`) nested anywhere in t. Drives the resource-handle validation
+// pass (P5 — docs/WIT-BRING-YOUR-OWN.md).
+func forEachHandle(t ast.Type, fn func(ast.HandleType)) {
+	switch x := t.(type) {
+	case ast.HandleType:
+		fn(x)
+	case ast.ArrayType:
+		forEachHandle(x.Elem, fn)
+	case ast.SliceType:
+		forEachHandle(x.Elem, fn)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			forEachHandle(e, fn)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			forEachHandle(p, fn)
+		}
+		forEachHandle(x.Result, fn)
+	case ast.StructType:
+		for _, a := range x.Args {
+			forEachHandle(a, fn)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			forEachHandle(a, fn)
+		}
+	}
+}
+
+// validateResourceHandles is the sole reporter of resource-handle type-level
+// errors: every `own R` / `borrow R` must name a declared `resource`. It walks
+// every function signature (params + return) and local var annotation, once,
+// reporting each unknown resource a single time. Mirrors validateDynTraitTypes
+// (P5 — docs/WIT-BRING-YOUR-OWN.md).
+func (c *checker) validateResourceHandles(prog *ast.Program) {
+	reported := map[string]bool{}
+	visit := func(t ast.Type, pos ast.Position) {
+		forEachHandle(t, func(h ast.HandleType) {
+			if reported[h.Resource] {
+				return
+			}
+			if _, ok := c.info.Resources[h.Resource]; !ok {
+				reported[h.Resource] = true
+				c.errfCode(pos, "E021", "unknown resource %q in handle type %q", demangle(h.Resource), h.String())
+			}
+		})
+	}
+	for _, fn := range prog.Funcs {
+		for _, p := range fn.Params {
+			visit(p.Type, fn.P)
+		}
+		visit(fn.ReturnType, fn.P)
+		if fn.Body != nil {
+			c.walkVarTypes(fn.Body, visit)
 		}
 	}
 }
@@ -3147,6 +3237,15 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 			*slot = ast.EnumType{Name: t.Name}
 			return
 		}
+		// A bare resource name (`Pollable`) in type position is an owned
+		// handle — reclassify so body-checking sees a HandleType (P5).
+		// `own Pollable` / `borrow Pollable` already arrive as HandleType
+		// from the parser. Resource names can't take type arguments, so a
+		// `R[...]` form falls through to the struct/enum arity path below.
+		if _, isResource := c.info.Resources[t.Name]; isResource && len(t.Args) == 0 {
+			*slot = ast.HandleType{Resource: t.Name}
+			return
+		}
 		// Already a StructType — recurse into Args (populated
 		// when the type came back through resolveType for a
 		// generic struct's instantiation).
@@ -3629,6 +3728,20 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 		if tn, ok := methodTypeName(src); ok {
 			return c.info.Impls[dt.Trait][tn]
 		}
+		return false
+	}
+	// WIT resource handles (P5 — docs/WIT-BRING-YOUR-OWN.md): an owned handle
+	// `own R` coerces to a borrow `borrow R` of the same resource (you may
+	// lend what you own). The reverse (a borrow flowing where an owned handle
+	// is required) and any handle ↔ non-handle conversion stay rejected — a
+	// plain i32 can't masquerade as a handle. Same-handle equality is already
+	// covered by ast.Equal above.
+	if dh, ok := dst.(ast.HandleType); ok {
+		sh, isHandle := src.(ast.HandleType)
+		return isHandle && dh.Borrowed && !sh.Borrowed && dh.Resource == sh.Resource
+	}
+	if _, ok := src.(ast.HandleType); ok {
+		// A handle never flows into a non-handle destination.
 		return false
 	}
 	// Pointer-shaped values ↔ usize, and usize ↔ i32 / i64. These
