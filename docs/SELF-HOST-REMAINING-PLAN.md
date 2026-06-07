@@ -1122,14 +1122,18 @@ smallest → largest:
     backend; spreading a *local* is fine. Worked around by binding a local
     copy in the 14 affected `arm64_native` functions; the backend bug itself
     wants a dedicated fix.
-    **Blocker B — instruction coverage.** The self-host `asm_arm64` emitter's
-    *actual* darwin output uses runtime instructions `arm64_native` doesn't
-    encode yet (`udiv`, …) — the `unknown`-guard reports them cleanly. So
-    flipping `-target arm64-darwin` to the in-Fern path is deferred until
-    that coverage lands (otherwise it would regress programs the `clang`
-    path compiles). The Go-front-end-compat module + workaround land first;
-    the branch flip + flagship-test rework follow once `asm_arm64`'s darwin
-    surface is fully covered.
+    **Blocker B — instruction coverage.** The self-host `asm_arm64` emitter
+    emits its *full* runtime (incl. float helpers) for **every** program, so
+    even `return 42`'s darwin asm uses ~32 mnemonics `arm64_native` must
+    cover. Progress (byte-checked vs llvm-mc, `TestSelfHostArm64IntRuntime`):
+    the **integer / load-store / system batch** — `orr`, `subs` (reg/imm),
+    `udiv`/`sdiv`/`msub`, `rev16`, `ldrb`/`strb`/`ldrh`/`strh`/`ldrsw`, and
+    `mrs` of the clock sysregs (`cntvct_el0`/`cntfrq_el0`, unknown sysregs
+    guarded). **Remaining:** the f64 family (`fadd`/`fsub`/`fmul`/`fdiv`/
+    `fneg`/`fcmp`/`fmov`/`fcvtzs`/`scvtf`/`frinta` — needs d-register
+    parsing). Once that lands, `arm64_native` assembles `asm_arm64`'s real
+    darwin output and `-target arm64-darwin` can flip to the in-Fern path
+    (+ flagship-test rework) without regressing the `clang` path.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
