@@ -834,6 +834,19 @@ function parse_primary(p: Par): ExprResult {
                 p = lblk.par;
                 return parse_postfix(p, e_lambda(params, lret, lblk.body));
             }
+            if (x.name == "match") {
+                // match-expression in value position: desugar to an
+                // immediately-invoked closure wrapping a statement-match whose
+                // arms `return` (see parse_match_expr), reusing the existing
+                // match + lambda codegen. Route through parse_postfix so
+                // `(match …).method()` chains.
+                var mc: IfChain = parse_match_expr(p);
+                var mno_params: ParamDecl[] = [];
+                var mlam_body: Stmt[] = [mc.stmt];
+                var mno_args: Expr[] = [];
+                var miife: Expr = e_call(e_lambda(mno_params, mc.rt, mlam_body), mno_args);
+                return parse_postfix(mc.par, miife);
+            }
             if (x.name == "if") {
                 // if-expression in value position: desugar to an
                 // immediately-invoked closure (see parse_if_chain). Route
@@ -1139,6 +1152,50 @@ function parse_if_chain(p: Par): IfChain {
         else_body = [s_return(elser.expr)];
     }
     return IfChain { par: p, stmt: s_if(condr.expr, then_body, else_body), rt: rt };
+}
+
+// parse_match_expr parses `match (e) { Pat => E, Pat when C => E, … }` in value
+// position into a StmtMatch whose arms `return` their (bare) expression, plus a
+// return-type tag for the IIFE. parse_primary wraps the result in an IIFE
+// (`(function(): RT { <stmt> })()`), so it reuses the statement-match + lambda
+// codegen every backend already supports — no new AST node, so all backends
+// get match-expressions at once (mirrors parse_if_chain).
+function parse_match_expr(p: Par): IfChain {
+    var mkline: i32 = p.peek_line();
+    var mkcol: i32 = p.peek_col();
+    p = p.advance();                              // `match`
+    if (p.peek_punct() == "(") { p = p.advance(); }
+    var sr: ExprResult = parse_expr(p);
+    p = sr.par;
+    if (p.peek_punct() == ")") { p = p.advance(); }
+    var arms: MatchArm[] = [];
+    var rt: string = "i32";
+    var first: boolean = true;
+    if (p.peek_punct() == "{") { p = p.advance(); }
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        var aline: i32 = p.peek_line();
+        var acol: i32 = p.peek_col();
+        var pr: PatternResult = parse_pattern(p);
+        p = pr.par;
+        var arm_guard: Expr = e_bool(true);
+        var arm_has_guard: boolean = false;
+        if (p.peek_keyword() == "when") {
+            p = p.advance();
+            var gr: ExprResult = parse_expr(p);
+            p = gr.par;
+            arm_guard = gr.expr;
+            arm_has_guard = true;
+        }
+        if (p.peek_punct() == "=>") { p = p.advance(); }
+        var er: ExprResult = parse_expr(p);
+        p = er.par;
+        if (first) { rt = if_expr_rt(er.expr); first = false; }
+        arms = arms.push(MatchArm { pattern: pr.pattern, body: [s_return(er.expr)], line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+        break;
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return IfChain { par: p, stmt: s_match_at(sr.expr, arms, mkline, mkcol), rt: rt };
 }
 
 // pipe_prepend builds [head] ++ tail — the argument list for a piped

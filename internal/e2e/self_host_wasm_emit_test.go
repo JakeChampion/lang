@@ -297,6 +297,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// false guard falls through to the next arm (the guard reads the binding).
 		{"match-guard-pass", "function mk(): Option[i32] { return Some(8); } function main(): i32 { match (mk()) { Some(v) when v > 5 => { return 1; }, _ => { return 2; } } return 0; }", 1, ""},
 		{"match-guard-fallthrough", "function mk(): Option[i32] { return Some(3); } function main(): i32 { match (mk()) { Some(v) when v > 5 => { return 1; }, _ => { return 2; } } return 0; }", 2, ""},
+		// Match expressions (value position): desugar to an IIFE + statement-match.
+		{"match-expr", "function mk(): Option[i32] { return Some(5); } function main(): i32 { var x: i32 = match (mk()) { Some(n) => n, None => 0 }; return x; }", 5, ""},
+		{"match-expr-other-arm", "function mk(): Option[i32] { return None; } function main(): i32 { return match (mk()) { Some(n) => n, None => 42 }; }", 42, ""},
 		{"opt-local", "function main(): i32 { var o: Option[i32] = Some(5); match (o) { Some(v) => { return v * 2; }, None => { return 0; } } return 1; }", 10, ""},
 		{"opt-string-write", "function name(): Option[i32] { return Some(0); } function main(): i32 { match (name()) { Some(v) => { write(\"got\"); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "got"},
 		{"opt-in-if", "function lookup(k: i32): Option[i32] { if (k == 1) { return Some(100); } return None; } function main(): i32 { var sum = 0; match (lookup(1)) { Some(v) => { sum = sum + v; }, None => {} } match (lookup(2)) { Some(v) => { sum = sum + v; }, None => { sum = sum + 1; } } return sum; }", 101, ""},

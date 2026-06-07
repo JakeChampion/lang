@@ -2512,6 +2512,11 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		// pattern binding.
 		{"match-guard-pass", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(8); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 1, "", ""},
 		{"match-guard-fallthrough", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(3); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 2, "", ""},
+		// Match expressions (`match (e) { Pat => E, … }` in value position):
+		// desugar to an IIFE wrapping a statement-match with `return` arms.
+		{"match-expr", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(5); var x: i32 = match (o) { Has(n) => n, Nil => 0 }; return x; }", 5, "", ""},
+		{"match-expr-other-arm", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Nil; var x: i32 = match (o) { Has(n) => n, Nil => 42 }; return x; }", 42, "", ""},
+		{"match-expr-arith", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(20); return match (o) { Has(n) => n + 1, Nil => 0 } + 1; }", 22, "", ""},
 	}
 
 	for _, tc := range cases {
