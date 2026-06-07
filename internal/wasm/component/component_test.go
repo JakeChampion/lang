@@ -115,6 +115,28 @@ func TestPutCanonResourceDrop_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutCanonSectionLiftWithMemory_Bytes pins the canon-lift-with-memory entry
+// (P6 composite exports): section 8, body = vec(1) | 0x00 lift | 0x00 subtag |
+// funcidx | opts vec(1) | 0x03 memory | memidx | typeidx. Opts precede the
+// typeidx for a lift (unlike the no-opts form's bare typeidx).
+func TestPutCanonSectionLiftWithMemory_Bytes(t *testing.T) {
+	got := component.PutCanonSectionLiftWithMemory(nil, 1, 2, 0)
+	want := []byte{0x08, 0x08, 0x01, 0x00, 0x00, 0x01, 0x01, 0x03, 0x00, 0x02}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonSectionLiftWithMemory(1,2,0) = % x, want % x", got, want)
+	}
+}
+
+// TestPutCanonSectionLiftWithMemoryRealloc_Bytes pins the lift-with-memory+realloc
+// entry (string/list PARAM exports): opts vec(2) = memory + realloc, then typeidx.
+func TestPutCanonSectionLiftWithMemoryRealloc_Bytes(t *testing.T) {
+	got := component.PutCanonSectionLiftWithMemoryRealloc(nil, 1, 2, 0, 3)
+	want := []byte{0x08, 0x0a, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03, 0x00, 0x04, 0x03, 0x02}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonSectionLiftWithMemoryRealloc(1,2,0,3) = % x, want % x", got, want)
+	}
+}
+
 // TestPutCanonResourceDrop_Validates composes a component that
 // imports wasi:io/error (whose `error` resource it aliases) and
 // lowers a resource.drop for it — confirming wasm-tools accepts the

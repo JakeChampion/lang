@@ -2719,6 +2719,47 @@ func PutCanonSectionLiftNoOpts(buf []byte, coreFuncIdx uint32, typeidx uint32) [
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonSectionLiftWithMemory emits a canon-lift entry carrying the `memory`
+// canonical-ABI option — the inverse of PutCanonSectionLowerWithMemory. A lift
+// needs `memory` when the lifted function's signature carries a string / list:
+// the canonical ABI reads (and, with realloc, writes) the bytes in the core
+// module's linear memory. This covers a string/list RESULT export (the lift
+// reads the core's returned (ptr,len)). Opts precede the typeidx for a lift
+// (mirroring PutCanonSectionLiftNoOpts's field order). P6 composite exports —
+// docs/WIT-BRING-YOUR-OWN.md.
+func PutCanonSectionLiftWithMemory(buf []byte, coreFuncIdx uint32, typeidx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // canon-lift
+	body = append(body, 0x00)      // function-lift sub-tag
+	body = leb128.UlebU64(body, uint64(coreFuncIdx))
+	body = leb128.UlebU64(body, 1) // opts vec(1)
+	body = append(body, 0x03)      // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonSectionLiftWithMemoryRealloc emits a canon-lift entry carrying both
+// `memory` and `realloc`. The realloc option is needed when the lifted function
+// takes a string / list PARAMETER: the canonical ABI allocates space in the
+// core module's linear memory (via cabi_realloc) to materialise the incoming
+// bytes before calling the core func. P6 composite exports.
+func PutCanonSectionLiftWithMemoryRealloc(buf []byte, coreFuncIdx uint32, typeidx uint32, memIdx uint32, reallocFuncIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // canon-lift
+	body = append(body, 0x00)      // function-lift sub-tag
+	body = leb128.UlebU64(body, uint64(coreFuncIdx))
+	body = leb128.UlebU64(body, 2) // opts vec(2)
+	body = append(body, 0x03)      // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	body = append(body, 0x04) // canonopt: realloc
+	body = leb128.UlebU64(body, uint64(reallocFuncIdx))
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutExportSectionOneFunc emits a component-level export section
 // with one entry that exposes a component-level function under the
 // given name. Mirrors `put_export_section_one_func`.
