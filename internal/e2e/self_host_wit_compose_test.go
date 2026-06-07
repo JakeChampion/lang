@@ -67,7 +67,7 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
 	var src strings.Builder
-	for _, name := range []string{"leb128.fern", "wat_encode.fern", "wat_component.fern", "wit_decode.fern", "wit_compose.fern"} {
+	for _, name := range []string{"watbin.fern", "wat_component.fern", "wit_decode.fern", "wit_compose.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -203,7 +203,7 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
 	var src strings.Builder
-	for _, name := range []string{"leb128.fern", "wat_encode.fern", "wat_component.fern", "wit_decode.fern", "wit_compose.fern"} {
+	for _, name := range []string{"watbin.fern", "wat_component.fern", "wit_decode.fern", "wit_compose.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

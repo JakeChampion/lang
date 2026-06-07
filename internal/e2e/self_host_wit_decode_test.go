@@ -38,9 +38,9 @@ func TestSelfHostWitSectionRoundTrip(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
 	if err != nil {
@@ -123,9 +123,9 @@ func TestSelfHostWitValtypeRoundTrip(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
 	if err != nil {
@@ -207,9 +207,9 @@ func TestSelfHostWitWorldRoundTrip(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
 	if err != nil {
@@ -296,9 +296,9 @@ func TestSelfHostWitWorldLift(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
 	if err != nil {
@@ -380,9 +380,9 @@ func TestSelfHostWitEmitWorldImports(t *testing.T) {
 		t.Fatalf("EmitWorldImports: %v", err)
 	}
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
 	if err != nil {
@@ -461,9 +461,9 @@ func TestSelfHostWitClassify(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
 	if err != nil {
@@ -536,9 +536,9 @@ func TestSelfHostWitPrefixLayout(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
 	if err != nil {

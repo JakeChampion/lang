@@ -36,15 +36,11 @@ func TestSelfHostWatEncode(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	watbin, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read leb128.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
-	enc, err := os.ReadFile("../../examples/self_host/wat_encode.fern")
-	if err != nil {
-		t.Fatalf("read wat_encode.fern: %v", err)
-	}
-	source := string(leb) + "\n" + string(enc) + "\n" + watEncodeSelfTestMain
+	source := string(watbin) + "\n" + watEncodeSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {

@@ -1,9 +1,12 @@
 // examples/self_host/watbin.fern — the self-hosted WAT->binary wasm
-// assembler as a single importable module. Merged from the former
-// leb128 / wat_lex / wat_parse / wat_encode / wat_emit_bin slices so
-// fern.fern can `import` it (cross-module refs need qualification, but
-// a single module keeps every internal reference bare). The lone public
-// entry is wat_to_binary(); everything else is module-internal.
+// assembler as a single importable module: the canonical home for the
+// LEB128 encoders, the WAT lexer/parser, and the binary opcode/section
+// encoder. It is ONE module on purpose — cross-module references need
+// qualification (`mod.Name`), but a single module keeps every internal
+// reference bare, which is also what the encoder's stdin-concatenation
+// unit tests rely on. The lone public entry is wat_to_binary(); the rest
+// is module-internal. The per-stage sections below (LEB128 / wat_lex /
+// wat_parse / wat_encode / wat_emit_bin) keep their original headers.
 
 // examples/self_host/leb128.fern — LEB128 byte encoders for the
 // self-hosted *binary* wasm emitter (the first slice of the binary
