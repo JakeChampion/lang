@@ -496,3 +496,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (`TestSelfHostFixpointArm64` / `TestSelfHostStage2FixedPointArm64`).
   The shared `asmcore` analyses (needs_rc_inc_on_alias, ty_is_array_like,
   n_params) are already in place, so the arm64 1d wiring reuses them.
+- 2026-06-07: **Phase 1d (array inc/dec wiring), arm64 — SHIPPED.
+  arm64 array RC is now at full parity with x86-64.** Mirrored the
+  Phase-1d emission into `asm_arm64.fern` (the shared `asmcore`
+  analyses were already in place): alias retain in `StmtVar`,
+  reassign-inc + dec-on-overwrite in `StmtAssign`, the function-exit
+  release sweep (`emit_array_exit_dec`) at every return + fall-through,
+  body-local zero-init (a small `str xzr` loop — arm64 has no
+  `rep stosq`), `set_n_params` for the borrow boundary, and the
+  array-return retain in `StmtReturn`. The arm64 rc-inc/dec call shape
+  is `str x0,[sp,#-16]!; bl __fn___fern_rc_{inc,dec}; add sp,sp,#16`
+  (frameless helper, arg at `[sp]`, ptr back in x0). Verified under
+  qemu-aarch64: `TestSelfHostRcArm64` (alias / reassign / field-alias /
+  return-array / borrowed-param / exit-sweep-no-underflow /
+  branch-local-zeroinit) + the array / array-method / string / map /
+  json / struct / closure / generics / tuple / bytes suites + the
+  byte-identical arm64 self-bootstrap (`TestSelfHostFixpointArm64` /
+  `TestSelfHostStage2FixedPointArm64`). Both production asm backends now
+  have the complete balanced Phase-1 array RC lifecycle. Remaining:
+  wasm backend (`wasm.fern`), Phase 1e (strings/structs/enums/closures/
+  tuples), and Phase 3 (freelist + free, after the self-reassign drift
+  fix) — the reclamation win.

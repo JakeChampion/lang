@@ -2943,6 +2943,31 @@ function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32)
     return s;
 }
 
+// emit_array_exit_dec — the arm64 Perceus function-exit release sweep
+// (mirror of the x86-64 emitter). Releases (dec) each array-typed LOCAL
+// slot, skipping the leading n_params receiver+param slots (borrowed).
+// Slot for local index i is at [x29, -8*(i+1)]. The dec helper
+// short-circuits null / low-address / sentinel, so an unassigned
+// (zero-init) slot is a no-op. Clobbers x0 (and the dec helper's
+// temps); callers needing a live value across the sweep save it first.
+function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
+    var i: i32 = s.n_params;
+    var any: boolean = false;
+    while (i < s.local_names.len()) {
+        if (asmcore.ty_is_array_like(s.local_types[i])) {
+            var off: i32 = 0 - 8 * (i + 1);
+            s = s.frame_ldr("x0", off);                 // slot value
+            s = s.write("    str x0, [sp, #-16]!\n");    // dec arg
+            s = s.write("    bl __fn___fern_rc_dec\n");
+            s = s.write("    add sp, sp, #16\n");
+            any = true;
+        }
+        i = i + 1;
+    }
+    if (any) { s = s.mark_heap(); }
+    return s;
+}
+
 function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
     match (stmt) {
         // StmtDefer is lowered away (parser.lower_defers) before emit; this
@@ -2951,13 +2976,25 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         parser.StmtSwitch(_) => { return emit_stmt(parser.desugar_switch_in_stmt(stmt), s); },
         parser.StmtDefer(_) => { return s.write("    // unsupported: StmtDefer survived lowering\n"); },
         parser.StmtReturn(r) => {
+            var ret_is_arr: boolean = asmcore.ty_is_array_like(asmcore.infer_expr_type(r.value, s));
             s = emit_expr(r.value, s);
             if (s.in_function) {
-                // Function return: pop value to x0, restore
-                // x29/x30 from the saved pair, ret to caller.
-                // `mov sp, x29` undoes whatever sub sp the
-                // prologue did; ldp post-indexes sp by 16.
+                // Function return: pop value to x0. Perceus exit: retain
+                // an array result so it survives the local release sweep
+                // (which dec's its slot), then sweep, then restore the
+                // result and ret. Net rc for the returned buffer is
+                // unchanged for the caller. `mov sp, x29` undoes the
+                // prologue's sub sp; ldp post-indexes sp by 16.
                 s = s.write("    ldr x0, [sp], #16\n");
+                if (ret_is_arr) {
+                    s = s.mark_heap();
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    bl __fn___fern_rc_inc\n");
+                    s = s.write("    add sp, sp, #16\n");
+                }
+                s = s.write("    str x0, [sp, #-16]!\n");   // save result across the sweep
+                s = emit_array_exit_dec(s);
+                s = s.write("    ldr x0, [sp], #16\n");      // restore result
                 s = s.write("    mov sp, x29\n");
                 s = s.write("    ldp x29, x30, [sp], #16\n");
                 s = s.write("    ret\n");
@@ -3046,10 +3083,19 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             if (v.type_name.len() > 0) {
                 ity = asmcore.ty_from_name(v.type_name);
             }
+            // Perceus inc (Phase 1d): `var y = x` aliasing an rc-tracked
+            // array retains the buffer; a fresh literal/call is owned.
+            var alias_inc: boolean = asmcore.needs_rc_inc_on_alias(v.init, s);
             s = emit_expr(v.init, s);
             s = s.bind_local_typed(v.name, ity);
             var off: i32 = s.lookup_local(v.name);
             s = s.write("    ldr x0, [sp], #16\n");
+            if (alias_inc) {
+                s = s.mark_heap();
+                s = s.write("    str x0, [sp, #-16]!\n");   // arg for __fern_rc_inc ([sp])
+                s = s.write("    bl __fn___fern_rc_inc\n");  // returns the ptr in x0
+                s = s.write("    add sp, sp, #16\n");
+            }
             s = s.frame_str("x0", off);
             return s;
         },
@@ -3058,9 +3104,29 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    // unresolved assign: " + a.target + "\n");
                 return s;
             }
+            // Perceus inc/dec (Phase 1d): retain the new reference when
+            // `y = x` aliases an rc-tracked array, and release the OLD
+            // value the slot held (dec-on-overwrite).
+            var reassign_inc: boolean = asmcore.needs_rc_inc_on_alias(a.value, s);
+            var target_is_arr: boolean = asmcore.ty_is_array_like(s.local_type_of(a.target));
             s = emit_expr(a.value, s);
             var off: i32 = s.lookup_local(a.target);
-            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");          // new value
+            if (reassign_inc) {
+                s = s.mark_heap();
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.write("    bl __fn___fern_rc_inc\n");   // retain new (ptr back in x0)
+                s = s.write("    add sp, sp, #16\n");
+            }
+            if (target_is_arr) {
+                s = s.mark_heap();
+                s = s.write("    str x0, [sp, #-16]!\n");     // save new value across the dec
+                s = s.frame_ldr("x0", off);                   // OLD value
+                s = s.write("    str x0, [sp, #-16]!\n");     // dec arg
+                s = s.write("    bl __fn___fern_rc_dec\n");
+                s = s.write("    add sp, sp, #16\n");         // pop dec arg
+                s = s.write("    ldr x0, [sp], #16\n");       // restore new value
+            }
             s = s.frame_str("x0", off);
             return s;
         },
@@ -3294,6 +3360,23 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
         if (bytes % 16 != 0) { bytes = bytes + 8; }
         s = s.write("    sub sp, sp, #" + asmcore.i32_to_string(bytes) + "\n");
     }
+    // Zero-init the body-local slots (Perceus exit-sweep safety): a
+    // `var` skipped on the current path must read NULL (dec no-op), not
+    // stack garbage. Body locals are slots [argc, total_locals), the
+    // range [x29-total_locals*8 .. x29-argc*8); param slots are above
+    // and untouched. x9/x10 are dead here (before the param copy).
+    if (n_body_locals > 0) {
+        var zl: asmcore.LabelOut = asmcore.fresh_label(s); s = zl.state;
+        var zd: asmcore.LabelOut = asmcore.fresh_label(s); s = zd.state;
+        s = s.write("    sub x9, x29, #" + asmcore.i32_to_string(total_locals * 8) + "\n");
+        s = s.write("    mov x10, #" + asmcore.i32_to_string(n_body_locals) + "\n");
+        s = s.write(zl.name + ":\n");
+        s = s.write("    cbz x10, " + zd.name + "\n");
+        s = s.write("    str xzr, [x9], #8\n");
+        s = s.write("    sub x10, x10, #1\n");
+        s = s.write("    b " + zl.name + "\n");
+        s = s.write(zd.name + ":\n");
+    }
     s = s.reset_locals();
     s = s.enter_function();
     // For methods: receiver sits at +16(x29), params at
@@ -3317,13 +3400,18 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
         s = s.frame_str("x0", local_off);
         i = i + 1;
     }
+    // Receiver+param slot boundary for the Perceus exit sweep (params
+    // are borrowed — released by the caller, not here).
+    s = s.set_n_params(argc);
     var bi: i32 = 0;
     while (bi < fd.body.len()) {
         s = emit_stmt(fd.body[bi], s);
         bi = bi + 1;
     }
-    // Fallback: implicit `return 0;` so falling off the end
-    // doesn't run into the next function's label.
+    // Fallback: implicit `return 0;` so falling off the end doesn't run
+    // into the next function's label. Release the array locals first
+    // (Perceus exit sweep); the 0 return is not an array, so no retain.
+    s = emit_array_exit_dec(s);
     s = s.write("    mov x0, #0\n");
     s = s.write("    mov sp, x29\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");

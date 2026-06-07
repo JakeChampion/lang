@@ -320,3 +320,52 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		}
 	})
 }
+
+// Phase 1d arm64 parity: the array inc/dec wiring (alias retain,
+// reassign-inc + dec-on-overwrite, function-exit release sweep with
+// zero-init + array-return retain) mirrored into asm_arm64.fern. Run
+// under qemu-aarch64. Value-correctness (free off → RC is a no-op on
+// values) + a clean over-release detector across the lifecycle.
+func TestSelfHostRcArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"alias-read-both", "function main(): i32 { var xs: i32[] = [10, 20, 30]; var ys = xs; return ys[1] + xs[0]; }", 30},
+		{"reassign-to-alias", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = [4, 5, 6]; ys = xs; return ys[0] + ys[2]; }", 4},
+		{"field-alias", "struct H { items: i32[] } function main(): i32 { var h: H = H { items: [11, 22, 33] }; var y = h.items; return y[1] + h.items[2]; }", 55},
+		{"return-array", "function make(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; } function main(): i32 { var ys = make(); return ys[0] + ys[2]; }", 4},
+		{"borrowed-param", "function sum2(a: i32[]): i32 { return a[0] + a[1]; } function main(): i32 { var xs: i32[] = [7, 8]; var r = sum2(xs); return r + xs[0] + __fern_rc_underflow_count(); }", 22},
+		{"exit-sweep-no-underflow", "function f(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; } function main(): i32 { var a = f(); var b = f(); var c = f(); return __fern_rc_underflow_count(); }", 0},
+		{"branch-local-zeroinit", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __fern_rc_underflow_count(); }", 6},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host arm64 compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
+			cmd := runArm64Bin(qemu, progBin)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
