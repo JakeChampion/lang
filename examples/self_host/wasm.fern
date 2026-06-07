@@ -5984,12 +5984,22 @@ function module_uses_clocks(mod: parser.Module): boolean {
 // framing doesn't provide. exit routes to the io shape because the no-I/O
 // framing doesn't wire a terminator (see emit_module_run's exit handling).
 pub function component_shape(mod: parser.Module): i32 {
-    if (module_calls(mod, "eprint") || module_calls(mod, "read_file") || module_calls(mod, "write_file")
+    // Unsupported WASI (no wrapped wasi:cli/run framing yet) -> reject so we
+    // never emit a component whose imports the framing can't satisfy.
+    if (module_calls(mod, "eprint")
         || module_calls(mod, "random_bytes") || module_calls(mod, "random_i32")
         || module_calls(mod, "env") || module_calls(mod, "args")
         || module_uses_clocks(mod)) {
         return 0 - 1;
     }
+    // Filesystem shapes (read / write / read+write), all over the stdout io
+    // core: emit_module_run_io_fs auto-emits the read and/or write imports,
+    // paired with the matching component_full_io_fs* wrap.
+    var r: boolean = module_calls(mod, "read_file");
+    var w: boolean = module_calls(mod, "write_file");
+    if (r && w) { return 4; }
+    if (w) { return 3; }
+    if (r) { return 2; }
     if (module_calls(mod, "print") || module_calls(mod, "write") || module_calls(mod, "putchar")
         || module_calls(mod, "print_int") || module_calls(mod, "exit")) {
         return 1;

@@ -961,18 +961,80 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("emit-target-wasm-component-fs", func(t *testing.T) {
+		// Filesystem wasi:cli/run components: read (component_full_io_fs),
+		// write (component_full_io_fs_write), and read+write
+		// (component_full_io_fs_rw). Run under wasmtime with a preopened dir.
+		wasmtime, err := exec.LookPath("wasmtime")
+		if err != nil {
+			t.Skip("wasmtime not on PATH; skipping -target wasm-component fs")
+		}
+		wasmtools, _ := exec.LookPath("wasm-tools")
+		build := func(t *testing.T, name, src string) string {
+			t.Helper()
+			srcPath := filepath.Join(dir, "compfs_"+name+".fern")
+			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			outPath := filepath.Join(dir, "compfs_"+name+".wasm")
+			_, code := runDriver(t, "-target", "wasm-component", "-o", outPath, srcPath)
+			if code != 0 {
+				t.Fatalf("%s: -target wasm-component exited %d, want 0", name, code)
+			}
+			if wasmtools != "" {
+				if out, err := exec.Command(wasmtools, "validate", "--features", "component-model", outPath).CombinedOutput(); err != nil {
+					t.Fatalf("%s: wasm-tools validate failed: %v\n%s", name, err, out)
+				}
+			}
+			return outPath
+		}
+
+		// read: print a preopened file's contents.
+		fsDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(fsDir, "in.txt"), []byte("hello fs"), 0o644); err != nil {
+			t.Fatalf("write in.txt: %v", err)
+		}
+		readBin := build(t, "read", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } }\n")
+		out, _ := exec.Command(wasmtime, "run", "--dir", fsDir+"::/", readBin).Output()
+		if string(out) != "hello fs" {
+			t.Errorf("read: component stdout = %q, want %q", string(out), "hello fs")
+		}
+
+		// write: create a file, then verify its contents.
+		writeBin := build(t, "write", "function main(): i32 { match (write_file(\"out.txt\", \"written\")) { Some(e) => { return 1; }, None => {} } return 0; }\n")
+		wDir := t.TempDir()
+		if ec := exec.Command(wasmtime, "run", "--dir", wDir+"::/", writeBin).Run(); ec != nil {
+			t.Fatalf("write: wasmtime run failed: %v", ec)
+		}
+		if got, err := os.ReadFile(filepath.Join(wDir, "out.txt")); err != nil || string(got) != "written" {
+			t.Errorf("write: out.txt = %q (err %v), want %q", string(got), err, "written")
+		}
+
+		// read+write: copy in.txt -> out.txt.
+		rwBin := build(t, "rw", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (write_file(\"out.txt\", s)) { Some(e) => { return 2; }, None => {} } return 0; }, Err(e) => { return 1; } } }\n")
+		rwDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(rwDir, "in.txt"), []byte("copy me"), 0o644); err != nil {
+			t.Fatalf("write in.txt: %v", err)
+		}
+		if ec := exec.Command(wasmtime, "run", "--dir", rwDir+"::/", rwBin).Run(); ec != nil {
+			t.Fatalf("rw: wasmtime run failed: %v", ec)
+		}
+		if got, err := os.ReadFile(filepath.Join(rwDir, "out.txt")); err != nil || string(got) != "copy me" {
+			t.Errorf("rw: out.txt = %q (err %v), want %q", string(got), err, "copy me")
+		}
+	})
+
 	t.Run("wasm-component-rejects-unsupported", func(t *testing.T) {
-		// A program using WASI the component path doesn't wrap yet (here a
-		// file read) must be rejected with a clear error, not a broken
-		// component.
-		srcPath := filepath.Join(dir, "comp_fs.fern")
-		src := "function main(): i32 { match (read_file(\"x\")) { Ok(s) => { return 0; }, Err(e) => { return 1; } } }\n"
+		// A program using WASI the component path doesn't wrap yet (here env)
+		// must be rejected with a clear error, not a broken component.
+		srcPath := filepath.Join(dir, "comp_env.fern")
+		src := "function main(): i32 { match (env(\"X\")) { Some(v) => { return 0; }, None => { return 1; } } }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		_, code := runDriver(t, "-target", "wasm-component", "-o", filepath.Join(dir, "comp_fs.wasm"), srcPath)
+		_, code := runDriver(t, "-target", "wasm-component", "-o", filepath.Join(dir, "comp_env.wasm"), srcPath)
 		if code != 2 {
-			t.Errorf("wasm-component on an fs program exited %d, want 2 (rejected)", code)
+			t.Errorf("wasm-component on an env program exited %d, want 2 (rejected)", code)
 		}
 	})
 
