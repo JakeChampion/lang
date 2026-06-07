@@ -1262,11 +1262,41 @@ smallest → largest:
     driver comment. The driver keeps its single-arm `Ok` + fixed-path form
     (simplest; the file always exists), now for clarity rather than to
     dodge a bug.
+  - ✅ **slice 2y — `read_file` 64 KiB truncation fix (a REAL wasm bug)**.
+    Pushing the capstone toward larger programs (toward assembling
+    `asm.fern`'s own output) hit a hard ceiling at ~64 KiB of asm. Root
+    cause, verified directly: the self-host wasm preview1 `read_file`
+    (`wasm.fern` `readfile_func`) used a **fixed 64 KiB buffer** — once the
+    read offset reached 64 KiB the iovec length went to 0, `fd_read`
+    returned 0, and the loop mistook a full buffer for EOF, silently
+    truncating any larger file (a 140 KB / 300 KB file both read back as
+    64 KB). Fixed by growing the buffer in 64 KiB chunks (the bump
+    allocator hands out contiguous bytes and nothing else allocates during
+    the read loop, so each extension lands right after the buffer; room is
+    ensured *before* each read so a full buffer is never mistaken for EOF).
+    Now large files round-trip — `TestSelfHostWasmReadFileLarge` reads a
+    200 KB file and checks bytes past the boundary; the capstone assembler
+    reads multi-hundred-KB asm intact (ELF size scales with input). No
+    regression across the wasm / CLI / capstone suites. (This is unrelated
+    to the spurious "bugs" of 2x — it's an actual, reproduced defect.)
+  - ✅ **assembler-at-scale correctness — verified, NO bug** (the "150-fn →
+    85" claim was spurious). With large asm now delivered intact, the
+    self-host assembler was probed at 40 / 150 / 400 / 600 functions
+    (up to ~124 KB asm) and **matches gcc's assembly of the same `.s`
+    byte-for-result on every size**. The earlier "nfn=400 returns 144, want
+    400" reading was simply the **Unix 8-bit exit-code truncation**
+    (400 & 0xFF == 144), not a miscompile — and the "150 → 85" figure came
+    from a malformed test program (the `f32`/`f64` reserved-keyword function
+    names of 2x), not the assembler. Guarded by `TestSelfHostX86ScaleProbe`
+    (`self_host_x86_scale_probe_test.go`), which keeps each result < 256 so
+    the exit code is unmasked and cross-checks every case against gcc.
+    There is no O(n²)-label or fixup defect at scale. **Lesson (recurring):**
+    verify the test program is valid Fern and account for exit-code masking
+    before declaring an assembler/wasm bug.
   - ⬜ remaining: the x87 transcendentals (`fldl`/`fstpl` + `fsin`/`fcos`/…)
-    for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; broadening
-    the capstone toward progressively larger / multi-module programs (and
-    ultimately `asm.fern`'s own output → a native self-host fixpoint); and
-    the CLI wiring (blocked above).
+    for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; assembling
+    `asm.fern`'s own output → a native self-host fixpoint; and the CLI
+    wiring (blocked above).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
