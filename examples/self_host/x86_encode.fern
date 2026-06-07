@@ -227,3 +227,98 @@ function x86_patch_rel32(buf: i32[], at: i32, rel: i32): i32[] {
 function x86_rel_to(target_off: i32, patch_off: i32): i32 {
     return target_off - (patch_off + 4);
 }
+
+// ---- named-label assembler (slice 2d) ----
+//
+// A reusable label/fixup table over the patch primitive: this is the API
+// a text assembler (asm.fern GAS text -> bytes) calls instead of doing
+// offset bookkeeping by hand. Branches name a label; backward labels (the
+// target already has an offset) are patched immediately, forward ones are
+// queued and resolved by x86_resolve once every label is placed.
+//
+// State lives in an X86Asm struct: the code buffer, parallel label
+// name/offset arrays (linear lookup — label counts per function are
+// small), and parallel fixup patch-offset / target-name arrays. Raw
+// instructions still go straight through the encoders into `a.code`
+// (`a.code = x86_mov_r32_imm32(a.code, ...)`); only branches that target a
+// label go through this layer.
+
+struct X86Asm {
+    code: i32[],
+    lab_names: string[],
+    lab_offs: i32[],
+    fix_offs: i32[],
+    fix_names: string[],
+}
+
+// x86_asm_new returns an empty assembler state.
+function x86_asm_new(): X86Asm {
+    return X86Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [] };
+}
+
+// x86_label records `name` as pointing at the current code offset.
+function x86_label(a: X86Asm, name: string): X86Asm {
+    a.lab_names = a.lab_names.push(name);
+    a.lab_offs = a.lab_offs.push(a.code.len());
+    return a;
+}
+
+// x86_label_off returns the recorded offset of `name`, or -1 if it has
+// not been placed yet (a forward reference).
+function x86_label_off(a: X86Asm, name: string): i32 {
+    var i: i32 = 0;
+    while (i < a.lab_names.len()) {
+        if (a.lab_names[i] == name) {
+            return a.lab_offs[i];
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// x86_fixup_or_patch handles the rel32 of a branch placeholder just
+// emitted into a.code: the rel32 field starts at a.code.len()-4. If the
+// label is already placed, patch immediately; otherwise queue a fixup.
+function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
+    var patch_off: i32 = a.code.len() - 4;
+    var target: i32 = x86_label_off(a, name);
+    if (target >= 0) {
+        a.code = x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off));
+    } else {
+        a.fix_offs = a.fix_offs.push(patch_off);
+        a.fix_names = a.fix_names.push(name);
+    }
+    return a;
+}
+
+// x86_jcc_label emits a conditional jump to a (possibly forward) label.
+function x86_jcc_label(a: X86Asm, cc: i32, name: string): X86Asm {
+    a.code = x86_jcc_rel32(a.code, cc, 0); // placeholder rel32
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_jmp_label emits an unconditional jump to a label.
+function x86_jmp_label(a: X86Asm, name: string): X86Asm {
+    a.code = x86_jmp_rel32(a.code, 0);
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_call_label emits a call to a label.
+function x86_call_label(a: X86Asm, name: string): X86Asm {
+    a.code = x86_call_rel32(a.code, 0);
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_resolve patches every queued forward fixup now that all labels are
+// placed. Call once after emitting the whole program; returns the state
+// whose `a.code` is the final machine code.
+function x86_resolve(a: X86Asm): X86Asm {
+    var i: i32 = 0;
+    while (i < a.fix_offs.len()) {
+        var patch_off: i32 = a.fix_offs[i];
+        var target: i32 = x86_label_off(a, a.fix_names[i]);
+        a.code = x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off));
+        i = i + 1;
+    }
+    return a;
+}

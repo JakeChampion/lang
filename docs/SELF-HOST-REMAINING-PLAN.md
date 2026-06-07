@@ -901,11 +901,20 @@ smallest → largest:
     `TestSelfHostX86MaxRuns` (forward `jge` over an else-arm → max(42,17))
     and `TestSelfHostX86CallRuns` (forward `call` to a later subroutine +
     `ret`).
-  - ⬜ remaining: a **named-label table** over the patch primitive (string
-    label → offset + a deferred-fixup list, for the text parser), memory
-    operands (ModR/M memory forms, SIB, disp8/32), SSE + x87 floats,
-    `.rodata` + rip-relative symbol addressing, and the text parser
-    (`asm.fern` GAS text → these encoders).
+  - ✅ **slice 2d — named-label assembler**: an `X86Asm` struct (code
+    buffer + parallel label name/offset arrays + a forward-fixup list) with
+    `x86_label` / `x86_jcc_label` / `x86_jmp_label` / `x86_call_label` /
+    `x86_resolve`. Branches name a label; backward targets patch
+    immediately, forward ones queue and `x86_resolve` patches them via
+    `x86_patch_rel32`. This is the API the GAS-text parser will call
+    instead of hand bookkeeping. Byte-checked (`TestSelfHostX86Labels`:
+    forward/backward branch + call + lookup) and run end-to-end
+    (`TestSelfHostX86LabelProgramRuns`: a two-routine program — `main`
+    calls `compute`, which loops to 42 and returns — assembled entirely
+    through the label API, runs natively exiting 42).
+  - ⬜ remaining: memory operands (ModR/M memory forms, SIB, disp8/32),
+    SSE + x87 floats, `.rodata` + rip-relative symbol addressing, and the
+    text parser (`asm.fern` GAS text → these encoders + the label API).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
