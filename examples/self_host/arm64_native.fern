@@ -859,6 +859,26 @@ function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32): i32[] {
     return arm64_le32(buf, 0x92000000 | ((bm.n as i64) << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
 
+// eor (exclusive-or). asm_arm64 emits the register form `eor Rd, Rn, Rm`
+// (e.g. XOR of two values) and the immediate form `eor Xd, Xn, #imm` (the
+// boolean-not idiom `x ^ 1`). Register: 64-bit base 0xca000000, 32-bit
+// 0x4a000000 (w clears sf). Immediate: 0xd2000000 + the logical-bitmask
+// (N,immr,imms), same encoder + validity check as `and #imm`. (Verified vs
+// llvm-mc: eor x0,x0,x1 = 0xca010000, eor w9,w9,w10 = 0x4a0a0129,
+// eor x0,x1,#1 = 0xd2400020.)
+function arm64_eor(buf: i32[], rd: i32, rn: i32, rm: i32, w: boolean): i32[] {
+    var base: i64 = 0xca000000;
+    if (w) { base = 0x4a000000; }
+    return arm64_le32(buf, base | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+function arm64_eor_imm_ok(imm: i32): boolean {
+    return arm64_encode_bitmask(imm as i64).ok;
+}
+function arm64_eor_imm(buf: i32[], rd: i32, rn: i32, imm: i32): i32[] {
+    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
+    return arm64_le32(buf, 0xd2000000 | ((bm.n as i64) << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
 // ---- orr / subs / divide / multiply-subtract / rev16 ----
 //
 // The integer-runtime ops the self-host asm_arm64 emitter uses beyond the
@@ -1451,6 +1471,12 @@ function arm64_gas_emit(a0: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_orr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
         return a;
     }
+    if (mnem == "eor") {
+        // register form only here; `eor Xd, Xn, #imm` is handled in the
+        // program loop (it needs the bitmask-immediate guard).
+        a = Arm64Asm { ...a, code: arm64_eor(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
+        return a;
+    }
     if (mnem == "subs") {
         if (ops[2].len() > 0 && ops[2][0] == 35) { // '#'
             a = Arm64Asm { ...a, code: arm64_subsimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2])) };
@@ -1568,7 +1594,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "cbz" || mnem == "cbnz" || mnem == "tbz" || mnem == "tbnz") { return true; }
     if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw") { return true; }
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
-    if (mnem == "orr" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16") { return true; }
+    if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16") { return true; }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "mrs") { return true; } // sysreg validity checked in the program loop
     if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fneg" || mnem == "fcmp" || mnem == "frinta" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "scvtf") { return true; }
@@ -1791,6 +1817,20 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 p = Arm64GasProg { ...p, asm: aand };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("and#") };
+            }
+            continue;
+        }
+        // `eor Xd, Xn, #imm` (logical immediate) — same verified-bitmask path
+        // as `and #imm`. Register-form `eor` falls through to emit.
+        if (mnem == "eor" && arm64_str_indexof(rest, "#") >= 0) {
+            var eops: string[] = arm64_gas_operands(rest);
+            var eimm: i32 = arm64_gas_imm(eops[2]);
+            if (arm64_eor_imm_ok(eimm)) {
+                var aeor: Arm64Asm = p.asm;
+                aeor = Arm64Asm { ...aeor, code: arm64_eor_imm(aeor.code, arm64_gas_reg(eops[0]), arm64_gas_reg(eops[1]), eimm) };
+                p = Arm64GasProg { ...p, asm: aeor };
+            } else {
+                p = Arm64GasProg { ...p, unknown: p.unknown.append("eor#") };
             }
             continue;
         }

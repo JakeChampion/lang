@@ -23,6 +23,9 @@ import (
 //     (LSLV/LSRV/ASRV), 64- and 32-bit. The old `lsl`/`lsr` handlers only
 //     parsed the `#imm` form (mis-encoding the register form); `asr` was
 //     wholly unknown.
+//   - `eor Rd, Rn, Rm` (register, 64/32-bit) and `eor Xd, Xn, #imm` (the
+//     logical-immediate boolean-not idiom) — both were unknown; the
+//     immediate goes through the same verified-bitmask path as `and #imm`.
 //
 // Expected bytes pinned against llvm-mc. Run through the self-host wasm
 // pipeline; exit 0 = all pass, else the 1-based failing check id.
@@ -102,6 +105,15 @@ function main(): i32 {
     // lsl immediate form still works: lsl x0, x0, #3 -> 0xD37DF000 -> 00 F0 7D D3
     var m: Arm64Asm = arm64_gas_assemble("lsl x0, x0, #3");
     if (m.code[0] != 0 || m.code[1] != 240 || m.code[2] != 125 || m.code[3] != 211) { return 13; }
+    // eor x0, x0, x1 (register, 64-bit) -> 0xCA010000 -> 00 00 01 CA
+    var n: Arm64Asm = arm64_gas_assemble("eor x0, x0, x1");
+    if (n.code[0] != 0 || n.code[1] != 0 || n.code[2] != 1 || n.code[3] != 202) { return 14; }
+    // eor w9, w9, w10 (register, 32-bit) -> 0x4A0A0129 -> 29 01 0A 4A
+    var o: Arm64Asm = arm64_gas_assemble("eor w9, w9, w10");
+    if (o.code[0] != 41 || o.code[1] != 1 || o.code[2] != 10 || o.code[3] != 74) { return 15; }
+    // eor x0, x1, #1 (logical immediate, boolean-not idiom) -> 0xD2400020 -> 20 00 40 D2
+    var q: Arm64Asm = arm64_gas_assemble("eor x0, x1, #1");
+    if (q.code[0] != 32 || q.code[1] != 0 || q.code[2] != 64 || q.code[3] != 210) { return 16; }
     return 0;
 }
 `
