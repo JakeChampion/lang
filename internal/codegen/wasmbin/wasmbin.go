@@ -1021,39 +1021,40 @@ func externScalarType(t ast.Type) bool {
 	return false
 }
 
-// isScalarArrayParamType reports whether t is an array of a fixed-width integer
-// element of 32 bits or fewer (`u8[]`, `i16[]`, `i32[]`, …) — the arrays that
-// lower zero-copy to a canonical `list<T>` (ptr, len) as an `@import`
-// parameter. A Fern array value is the element pointer, with the element count
-// in the i32 prefix at `ptr-4` and elements packed at native stride, so it's
-// already a valid canonical payload (the count is the element count, matching
-// the canonical list length). The element pointer sits 4 bytes past the block
-// base, so it's 4-byte aligned — enough for elements ≤ 4 bytes. 64-bit element
-// arrays (8-byte alignment), float arrays, and bool arrays (whose Fern stride
-// differs from the canonical 1-byte `list<bool>`) are left to later slices.
+// isScalarArrayParamType reports whether t is an array of a fixed-width numeric
+// element of ≤4 bytes (`u8[]`, `i16[]`, `i32[]`, `u32[]`, `f32[]`) — the arrays
+// that lower zero-copy to a canonical `list<T>` (ptr, len) as an `@import`
+// parameter (and lift the same way as a result). A Fern array value is the
+// element pointer, with the element count in the i32 prefix at `ptr-4` and
+// elements packed at native stride, so it's already a valid canonical payload
+// (the count is the element count, matching the canonical list length). The
+// element pointer sits 4 bytes past the block base, so it's 4-byte aligned —
+// enough for elements ≤ 4 bytes. 8-byte element arrays (`i64[]`/`u64[]`/
+// `f64[]`, which need 8-byte alignment the element pointer can't guarantee) and
+// bool arrays (whose Fern stride differs from the canonical 1-byte `list<bool>`)
+// are left to later slices.
 func isScalarArrayParamType(t ast.Type) bool {
 	at, ok := t.(ast.ArrayType)
 	if !ok {
 		return false
 	}
-	n, ok := at.Elem.(ast.NumberType)
-	return ok && n.NormalWidth() <= 32
+	switch at.Elem.(type) {
+	case ast.NumberType, ast.FloatType:
+		return ast.ElemSizeBytesFor(at.Elem, 4) <= 4
+	}
+	return false
 }
 
 // scalarArrayElemStride returns the element size in bytes of a scalar array
 // type accepted by isScalarArrayParamType (1 for u8/i8, 2 for i16/u16, 4 for
-// i32/u32). Used to size the materialized Fern array and the host-byte copy for
-// a `list<T>` result.
+// i32/u32/f32). Used to size the materialized Fern array and the host-byte copy
+// for a `list<T>` result.
 func scalarArrayElemStride(t ast.Type) uint32 {
 	at, ok := t.(ast.ArrayType)
 	if !ok {
 		return 1
 	}
-	n, ok := at.Elem.(ast.NumberType)
-	if !ok {
-		return 1
-	}
-	return uint32(n.NormalWidth() / 8)
+	return uint32(ast.ElemSizeBytesFor(at.Elem, 4))
 }
 
 // localValtypes returns the wasm valtype vector for an IR function's

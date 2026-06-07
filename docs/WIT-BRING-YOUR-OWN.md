@@ -337,40 +337,33 @@ world-driven composer (P2) wires it.
      stay green). Gated by `TestTrampolineFixupModuleForParamsResults_Validates`
      and the now-single-function string-param e2e above. This is also a
      prerequisite for **P5** resource methods (which return `result<_, error>`).
-   - **Integer-array parameters (`u8[]`, `i32[]`, …) — ✅ done (Go).** An
-     integer-array argument of ≤32-bit elements lowers to the canonical
-     `list<T>` `(ptr, len)`. Unlike a `string` (an SSO pair the wrapper
-     normalizes to a heap buffer), a Fern array is already a pointer to elements
-     packed at native stride, with the element count at `ptr-4`, so the param
-     wrapper forwards `(ptr, load(ptr-4))` zero-copy — the count prefix is the
-     element count, which is the canonical list length for any element width.
-     The Fern-side flattening (one pointer slot) differs from the canonical one
-     (two i32s), so the raw import spec uses `canonicalExternParamValtypes`
-     while the wrapper keeps the Fern signature.
-     `buildExternStringParamWrapper` generalised to `buildExternMemParamWrapper`
-     (string + integer-array params mix freely); the type gate is
-     `isScalarArrayParamType`. Gated by `TestExternListU8ParamCustomProvider`
-     (`sum-bytes: func(data: list<u8>)`), `TestExternListI32ParamCustomProvider`
-     (`sum-i32: func(data: list<s32>)`, confirming the 4-byte-stride layout
-     matches), and `TestEmitExternListU8Param`. The element pointer is only
-     4-byte aligned (4 bytes past the block base), so **64-bit** element arrays
-     (8-byte alignment), **float** arrays, and **bool** arrays (Fern stride ≠
-     canonical 1-byte `list<bool>`) are deferred. Self-host port is also a
-     follow-up (the self-hosted `extern_wrappers` still handles only strings).
-   - **Integer-array results (`u8[]`, `i32[]`, …) — ✅ done (Go).** An extern
-     returning a canonical `list<T>` of ≤32-bit integer elements lifts into a
-     Fern `T[]`. The result wrapper (`buildExternListResultWrapper`, generalised
-     from the u8-only one by an element-`stride` parameter) allocates the
-     length-prefixed array and memory.copys `count*stride` host bytes past the
-     prefix; the u8 path (stride 1) emits the same bytes as before. The shared
-     `isScalarArrayParamType` gate now drives both the param and result
-     dispatch. Gated by `TestExternListI32ResultCustomProvider` (an `iota:
-     func(n: u32) -> list<s32>` provider, lifted to `i32[]` and indexed) +
-     `TestEmitExternU8ArrayResult`.
-   - Still rejected (next slices): 64-bit / float / bool array **parameters and
-     results**, and record parameters; record/tuple/variant/option/result. The
-     multi-component harness (`TestExternImportCustomProvider`) is the test
-     vehicle for these.
+   - **Numeric ≤4-byte array params + results (`u8[]`, `i32[]`, `f32[]`, …) — ✅
+     done (Go).** A numeric-array argument or result whose element is ≤4 bytes
+     (`u8`/`i8`/`i16`/`u16`/`i32`/`u32`/`f32`) maps to a canonical `list<T>`.
+     Params: a Fern array is already a pointer to elements packed at native
+     stride with the count at `ptr-4`, so the param wrapper forwards
+     `(ptr, load(ptr-4))` zero-copy. Results: `buildExternListResultWrapper`
+     (generalised from the u8-only one by an element-`stride` parameter)
+     allocates the length-prefixed array and `memory.copy`s `count*stride` host
+     bytes; the u8 path (stride 1) emits the same bytes as before. The Fern-side
+     flattening (one pointer slot) differs from the canonical one (two i32s), so
+     the raw import spec uses `canonicalExternParamValtypes` while the wrapper
+     keeps the Fern signature. `buildExternStringParamWrapper` generalised to
+     `buildExternMemParamWrapper`; the shared gate is `isScalarArrayParamType`
+     (≤4-byte `NumberType`/`FloatType` element). Gated by
+     `TestExternListU8ParamCustomProvider`, `TestExternListI32ParamCustomProvider`,
+     `TestExternListF32ParamCustomProvider` (params),
+     `TestExternListI32ResultCustomProvider` (result), and
+     `TestEmitExternListU8Param`/`TestEmitExternU8ArrayResult`. **8-byte element
+     arrays** (`i64[]`/`u64[]`/`f64[]`) stay rejected: a Fern array's element
+     pointer is 4 bytes past the block base, so it's only 4-byte aligned and
+     can't satisfy the canonical 8-byte `list` alignment without a layout change
+     (or a copy-to-aligned-buffer wrapper). **bool** arrays (Fern stride ≠
+     canonical 1-byte `list<bool>`) and the self-host port are also follow-ups.
+   - Still rejected (next slices): 8-byte (i64/u64/f64) and bool array
+     parameters and results; record parameters; and
+     record/tuple/variant/option/result. The multi-component harness
+     (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
