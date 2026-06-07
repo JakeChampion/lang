@@ -675,8 +675,12 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "cmove" || mnem == "cmovz") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_e(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
     if (mnem == "cmovne" || mnem == "cmovnz") { a.code = x86_cmovcc_r64_r64(a.code, x86_cc_ne(), x86_gas_reg(dst), x86_gas_reg(src)); return a; }
     if (mnem == "movslq") {
-        var sm: GasMem = x86_gas_parse_mem(src);
-        a.code = x86_movslq_load(a.code, x86_gas_reg(dst), sm.base, sm.has_index, sm.index, sm.scale, sm.disp);
+        if (src.contains("(")) {
+            var sm: GasMem = x86_gas_parse_mem(src);
+            a.code = x86_movslq_load(a.code, x86_gas_reg(dst), sm.base, sm.has_index, sm.index, sm.scale, sm.disp);
+        } else {
+            a.code = x86_movslq_rr(a.code, x86_gas_reg(dst), x86_gas_reg32(src));
+        }
         return a;
     }
     if (mnem == "movzwq") {

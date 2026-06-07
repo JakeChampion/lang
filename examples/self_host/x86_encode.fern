@@ -830,6 +830,15 @@ function x86_movslq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, in
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
+// x86_movslq_rr: `movslq <src32>, <dst64>` (REX.W 0x63 /r, reg-direct) —
+// sign-extend a 32-bit register into a 64-bit one (asm.fern widens the
+// i32 `.len()` result with `movslq %eax, %rax`).
+function x86_movslq_rr(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.push(x86_rex(1, dst, 0, src));
+    buf = buf.push(99); // 0x63
+    return buf.push(x86_modrm(3, dst, src));
+}
+
 // x86_movzwq_load: `movzwq mem, <dst>` (REX.W 0F B7 /r) — zero-extend a
 // 16-bit memory operand into a 64-bit register.
 function x86_movzwq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
