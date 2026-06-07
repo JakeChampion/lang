@@ -552,8 +552,13 @@ function emit_str_consts(funcs: ssa.SFunc[]): string {
 
 pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var out: string = "    .globl _start\n";
-    // Heap: a 16 MiB zero-initialised arena and an 8-byte bump pointer.
-    out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 16777216\n";
+    // Heap: a 1 GiB zero-initialised arena and an 8-byte bump pointer.
+    // Leak-everything (no reclamation yet — Perceus RC is a separate track),
+    // so it is sized like the AST backend's __fern_heap to leave room for a
+    // self-hosted SSA compiler to process a real source bundle. It is .bss
+    // (demand-zero): the large reservation costs nothing on disk and no
+    // resident memory until touched.
+    out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 1073741824\n";
     out = out + "    .data\n__fern_ssa_hp:\n    .quad 0\n";
     // String literals as static [len, bytes…] .data constants.
     out = out + emit_str_consts(funcs);
