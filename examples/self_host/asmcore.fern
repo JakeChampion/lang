@@ -929,13 +929,19 @@ pub function ty_is_array_like(t: Ty): boolean {
 // (the Perceus inc site). Ported from the native compiler's
 // needsRcIncOnAlias (internal/ir/ir.go), scoped to arrays for Phase 1d
 // — strings / structs / enums / closures / tuples join in Phase 1e.
-// Fires only for an Ident READ of an array-typed local (a fresh array
-// literal or a call result is already uniquely owned at rc=1 and is NOT
-// re-incremented). FieldAccess / Index aliases (var y = h.items / m[i])
-// are a later sub-slice.
+// Fires for a READ of an array-typed value that already has an owner:
+//   - an Ident (var y = x),
+//   - a struct field (var y = h.items),
+//   - an index load (var y = m[i], m an array of arrays).
+// A fresh array literal or a call result is already uniquely owned at
+// rc=1 and is NOT re-incremented. A spurious inc on a mis-inferred
+// non-array is harmless — the rc-inc helper's null / low-address /
+// sentinel guards short-circuit — so this is robust to inference gaps.
 pub function needs_rc_inc_on_alias(e: parser.Expr, s: EmitState): boolean {
     match (e) {
         parser.ExprIdent(id) => { return ty_is_array_like(s.local_type_of(id.name)); },
+        parser.ExprFieldAccess(_) => { return ty_is_array_like(infer_expr_type(e, s)); },
+        parser.ExprIndex(_) => { return ty_is_array_like(infer_expr_type(e, s)); },
         _ => { return false; }
     }
     return false;

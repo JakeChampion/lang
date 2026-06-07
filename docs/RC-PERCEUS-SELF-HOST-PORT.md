@@ -440,3 +440,14 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Next: the function-exit dec sweep (zero-init rc locals + per-return
   sweep, excluding borrowed params) — the other half of balance — then
   the remaining inc sites and the arm64/wasm mirrors.
+- 2026-06-07: **Phase 1d (field/index alias inc), x86-64 — SHIPPED.**
+  Extended the shared `needs_rc_inc_on_alias` to also fire on
+  `ExprFieldAccess` / `ExprIndex` reads whose inferred type is an array
+  (`var y = h.items`, `var y = m[i]` for an array-of-arrays), using
+  `infer_expr_type`. Picked up automatically by both `StmtVar` and
+  `StmtAssign` (no backend edits). Robust: a spurious inc on a
+  mis-inferred non-array is harmless (the rc-inc guards short-circuit).
+  inc-only → detector-clean. Tests: `alias-struct-field` +
+  `emits-retain-at-field-alias`; struct / json / map self-host suites
+  (which lean on field-access aliases) + bootstrap/fixpoint green. The
+  alias-inc family now covers ident + field + index reads.

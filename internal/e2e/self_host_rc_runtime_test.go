@@ -137,6 +137,9 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 		// An aliasing program leaves the over-release detector at 0
 		// (inc-only: rc only grows, never crosses 0).
 		{"alias-no-underflow", "function main(): i32 { var xs: i32[] = [5, 6, 7]; var ys = xs; var zs = ys; return __fern_rc_underflow_count(); }", 0},
+		// Aliasing an array struct field (var y = h.items) retains the
+		// field's buffer; reads stay correct.
+		{"alias-struct-field", "struct H { items: i32[] } function main(): i32 { var h: H = H { items: [11, 22, 33] }; var y = h.items; return y[1] + h.items[2]; }", 55},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,6 +168,15 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; }"))
 		if !strings.Contains(string(asm), "call __fn___fern_rc_inc") {
 			t.Errorf("expected a retain (__fern_rc_inc) at the array alias; not found in emitted asm")
+		}
+	})
+
+	// Emission: aliasing an array struct field also retains.
+	t.Run("emits-retain-at-field-alias", func(t *testing.T) {
+		asm := runCapture(t, gcc, runner, driverBin,
+			[]byte("struct H { items: i32[] } function main(): i32 { var h: H = H { items: [1, 2] }; var y = h.items; return y[0]; }"))
+		if !strings.Contains(string(asm), "call __fn___fern_rc_inc") {
+			t.Errorf("expected a retain (__fern_rc_inc) at the struct-field array alias; not found in emitted asm")
 		}
 	})
 }
