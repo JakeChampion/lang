@@ -6114,12 +6114,38 @@ function collect_i64_func_names(mod: parser.Module): string[] {
 
 // collect_f64_var_names / collect_f64_func_names mirror the i64 collectors
 // for floating-point (f64 / f32 / float) bindings and return types.
+// var_init_is_f64 detects, without a Ctx, an initialiser that evaluates to
+// f64 from its structure alone: a float literal, a negation / float arith
+// over such, or an `as f64` cast. Used so an un-annotated `var z = 1.5`
+// declares its local as f64 (matching the f64 value the emitter stores) —
+// otherwise the local defaults to i32 and the module fails to validate
+// (i32 local <- f64.const). Cases needing type context (an f64-returning
+// call, an f64-typed var read) still want an explicit `: f64` annotation,
+// as before.
+function var_init_is_f64(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprNumber(n) => { return n.is_float; },
+        parser.ExprUnary(u) => {
+            if (is_cast_op(u.op)) { return is_float_type(cast_target(u.op)); }
+            if (u.op == "-") { return var_init_is_f64(u.operand); }
+            return false;
+        },
+        parser.ExprBinary(b) => {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+                return var_init_is_f64(b.left) || var_init_is_f64(b.right);
+            }
+            return false;
+        },
+        _ => { return false; },
+    }
+}
+
 function collect_f64_var_names(body: parser.Stmt[], acc: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                if (is_float_type(v.type_name) && !contains_str(acc, v.name)) { acc = acc.push(v.name); }
+                if ((is_float_type(v.type_name) || var_init_is_f64(v.init)) && !contains_str(acc, v.name)) { acc = acc.push(v.name); }
             },
             parser.StmtIf(f) => {
                 acc = collect_f64_var_names(f.then_body, acc);
