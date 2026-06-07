@@ -135,4 +135,40 @@ func TestSelfHostMultiModuleCompiler(t *testing.T) {
 	if code := pcmd.ProcessState.ExitCode(); code != 42 {
 		t.Errorf("self-hosted multi-module compile of a.add(19,23) exited %d, want 42", code)
 	}
+
+	// stage 3: a struct-update spread over a CROSS-MODULE-qualified type
+	// (`b.P { ...p, y: 40 }`). Guards the parser fix that taught the
+	// qualified-postfix look-ahead to accept a leading `...` (previously
+	// `pkg.Type { ...base }` mis-parsed as a field access + stray block,
+	// emitting an unresolved ident and a zeroed box). Without the fix this
+	// exits 0; with it, 1 + 40 = 41.
+	prog3 := "///MODULE b\n" +
+		"pub struct P { x: i32, y: i32 }\n" +
+		"pub function mk(): P { return P { x: 1, y: 2 }; }\n" +
+		"function main(): i32 { return 0; }\n" +
+		"///MODULE main\n" +
+		"import \"./b\";\n" +
+		"function main(): i32 { var p: b.P = b.mk(); var q: b.P = b.P { ...p, y: 40 }; return q.x + q.y; }\n"
+	prog3Asm := runCapture(t, gcc, runner, compilerBin, []byte(prog3))
+	if len(prog3Asm) == 0 {
+		t.Fatal("stage 3: multi-module compiler produced 0 bytes for qualified spread")
+	}
+	prog3AsmPath := filepath.Join(dir, "prog3.s")
+	prog3Bin := filepath.Join(dir, "prog3")
+	if err := os.WriteFile(prog3AsmPath, prog3Asm, 0o644); err != nil {
+		t.Fatalf("write prog3 asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", prog3AsmPath, "-o", prog3Bin).CombinedOutput(); err != nil {
+		t.Fatalf("stage 3: gcc on qualified-spread program: %v\n%s", err, out)
+	}
+	var p3cmd *exec.Cmd
+	if len(runner) == 0 {
+		p3cmd = exec.Command(prog3Bin)
+	} else {
+		p3cmd = exec.Command(runner[0], append(runner[1:], prog3Bin)...)
+	}
+	_, _ = p3cmd.CombinedOutput()
+	if code := p3cmd.ProcessState.ExitCode(); code != 41 {
+		t.Errorf("self-hosted qualified-type struct-update spread exited %d, want 41", code)
+	}
 }
