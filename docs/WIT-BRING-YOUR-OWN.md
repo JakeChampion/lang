@@ -472,9 +472,22 @@ world-driven composer (P2) wires it.
      Fern reactor's `@export add` and a separate Fern consumer that `@import`s
      and calls it are linked with `wasm-tools compose` and **run under wasmtime**
      (`add(20,3)==23`) — the lifted export is callable across the boundary.
-   - **Slice 4 (next) — composite export signatures** (strings / lists / records
-     via the memory+realloc lift) **+ the self-host port** (surface the
-     `iface#wit-name` core export from `wasm.fern`).
+   - **Slice 4 — self-host export port. ✅ Done.** The self-host now surfaces
+     the `iface#wit-name` core export for `@export` functions so the Go
+     world-driven composer lifts it. `parser.fern` records each `@export`
+     binding on a new `Module.exports` side-list (`ExportBinding{func_name,
+     iface, wit}` — kept off `FuncDecl` to avoid rippling through every literal,
+     mirroring `resources`), threaded through every `Module` constructor
+     (`monomorphize_*`, `lower_defers_module`, `merge_module*`, `bundle`,
+     `module_with_builtins`, constfold/flatten); `wasm.fern` `extern_exports`
+     emits `(export "iface#wit" (func $name))` for each. Gated by
+     `TestSelfHostExportScalarRunsViaConsumer`: the self-host emits the exporter
+     core, the Go composer lifts it, and a Fern consumer links + runs it under
+     wasmtime (`add(20,3)==23`). **P6's scalar export path is complete in both
+     compilers.**
+   - **Slice 5 (next) — composite export signatures**: strings / lists / records
+     across the export boundary (the memory+realloc lift, mirroring the
+     import-side composite work).
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
