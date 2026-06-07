@@ -1559,6 +1559,23 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.mark_arr_push();
         return s;
     }
+    // Built-in `.with(i, v)` on arrays — value-returning element set (the
+    // replacement for `arr[i] = v`). In-place store yielding the same array
+    // (leak-everything heap, no aliasing); mirrors __set_index but leaves
+    // the array on the stack.
+    if (fa.field == "with" && c.args.len() == 2
+            && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    ldr x2, [sp], #16\n");   // val
+        s = s.write("    ldr x1, [sp], #16\n");   // idx
+        s = s.write("    ldr x0, [sp], #16\n");   // arr
+        s = s.write("    add x1, x1, #1\n");       // skip len prefix
+        s = s.write("    str x2, [x0, x1, lsl #3]\n");
+        s = s.write("    str x0, [sp, #-16]!\n");  // value-returning: the array
+        return s;
+    }
     // Built-in `.reverse()` on arrays — returns
     // a fresh array with elements in opposite
     // order. Same 8-byte payload assumption as

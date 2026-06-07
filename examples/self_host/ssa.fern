@@ -713,6 +713,34 @@ function build_expr(e: parser.Expr, s: BState): BState {
                             return s.emit(SInst { kind: "call", result: s.cur_id(), args: uargs, imm: 0, str: usym });
                         }
                     }
+                    // Built-in `.with(i, v)` on arrays — value-returning
+                    // element set (`arr = arr.with(i, v)`, the replacement for
+                    // `arr[i] = v`). Lower to a store_elem at idx+1 (offset 0 is
+                    // the length prefix), then yield a copy of the receiver so
+                    // the surrounding reassignment threads the array.
+                    if (fa.field == "with" && c.args.len() == 2) {
+                        s = build_expr(fa.obj, s);
+                        if (!s.ok) { return s; }
+                        var wptr: i32 = s.cur_id();
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var widx: i32 = s.cur_id();
+                        s = s.kconst(1);
+                        var wone: i32 = s.cur_id();
+                        s = s.fresh();
+                        var wba: i32[] = [widx, wone];
+                        s = s.emit(SInst { kind: "binary", result: s.cur_id(), args: wba, imm: 0, str: "+" });
+                        var widx1: i32 = s.cur_id();
+                        s = build_expr(c.args[1], s);
+                        if (!s.ok) { return s; }
+                        var wval: i32 = s.cur_id();
+                        s = s.fresh();
+                        var wsa: i32[] = [wptr, widx1, wval];
+                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: wsa, imm: 0, str: "" });
+                        s = s.fresh();
+                        var wcp: i32[] = [wptr];
+                        return s.emit(SInst { kind: "copy", result: s.cur_id(), args: wcp, imm: 0, str: "" });
+                    }
                     // Map methods (i32-keyed maps): set / get_or / has, and
                     // len on a Map receiver. The parser desugars a `Map { … }`
                     // literal to map_new_i32(8).insert(k0,v0)… and user code calls
