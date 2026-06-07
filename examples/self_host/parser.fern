@@ -1854,7 +1854,8 @@ function parse_stmt(p: Par): StmtResult {
         // Dispatch on the lvalue shape: bare ident → StmtAssign;
         // `arr[idx]` → desugar to the builtin __set_index(arr, idx,
         // value) (an expression statement) so no new Stmt node is
-        // needed. Compound `arr[idx] += y` is not supported (rare).
+        // needed. Compound `arr[idx] += y` reads the element back (see
+        // the ExprIndex arm below); field compounds work the same way.
         match (e.expr) {
             ExprIdent(id) => {
                 var rhs2: Expr = rhs;
