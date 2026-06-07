@@ -1166,19 +1166,13 @@ smallest → largest:
     `wasmtime --dir`) instead of embedding it as a string literal, so the
     driver compiles **once** and the (previously OOMing) embedded-asm size
     no longer bloats it. All seven small-program cases run through it.
-    Getting there flushed out **three pre-existing self-host wasm bugs**
-    (all in `wasm.fern`/runtime, none in the assembler), now documented for
-    follow-up:
-      1. **match-on-`Result`, second arm** — `Ok(s)=>…; Err(e)=>…` (or any
-         second arm, incl. `_`) emits an undeclared local (`local.get $e`,
-         building an `Err` box) in `emit_module`'s WAT; `Option` match is
-         fine. The driver sidesteps it with a single-arm `Ok` match.
-      2. **`args()` alignment** — `__fern_args` does a layout-dependent
-         unaligned i32 read that traps under wasmtime ("Pointer not aligned
-         to 4"). The driver sidesteps it by reading a fixed path, not argv.
-      3. (initially suspected `__fern_alloc` not growing — **ruled out**:
-         it does `memory.grow`, and bumping the initial memory didn't help.
-         The real blockers were the two assembler bugs in slice 2s below.)
+    (While building this I *suspected* three self-host wasm bugs — a
+    match-on-`Result` second-arm codegen bug, an `args()` alignment trap,
+    and `__fern_alloc` not growing — but **all three were spurious**, later
+    retracted in slice 2x: the first two were my own malformed test
+    programs (a `match` written without commas between arms, and invalid
+    map/empty-Map syntax), and the heap-grow one never reproduced. No
+    `wasm.fern` bug was involved.)
   - ✅ **slice 2s — heap-program assembler bugs (found via bisection)**.
     Bisecting the struct program's asm pinned two real bugs that corrupted
     / mis-encoded heap-program assembly:
@@ -1239,6 +1233,18 @@ smallest → largest:
     builtins (used by `std/math`) do emit the encoders, so a `std/math`
     program would exercise them once multi-module assembly is in the
     capstone.
+  - ✅ **slice 2x — retract the spurious "wasm bugs"**. Verified the two
+    `wasm.fern` "bugs" from slice 2r were **my malformed test programs**,
+    not real bugs: a properly-comma'd two-arm `match (read_file(p)) {
+    Ok(s) => …, Err(e) => … }` compiles + runs fine (the passing
+    differential cases `result-ok`/`result-err` always had the commas;
+    mine omitted them), and `args()` works in well-formed code (the earlier
+    trap was downstream of the comma-less match in the same driver). The
+    map "bug" (slice 2v) was likewise invalid syntax. So **no self-host
+    wasm bug was ever involved** — corrected the plan doc + the capstone
+    driver comment. The driver keeps its single-arm `Ok` + fixed-path form
+    (simplest; the file always exists), now for clarity rather than to
+    dodge a bug.
   - ⬜ remaining: the x87 transcendentals (`fldl`/`fstpl` + `fsin`/`fcos`/…)
     for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; broadening
     the capstone toward progressively larger / multi-module programs (and
