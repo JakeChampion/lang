@@ -1755,6 +1755,122 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
     return out;
 }
 
+// lret_expr walks an expression looking for lambdas and, for each one
+// that declares a return type, checks the lambda body's `return`s against
+// THAT type (not the enclosing function's) by reusing ret_diags. This is
+// the lambda-body counterpart of the top-level ret_diags pass: ret_diags
+// itself recurses through if/while/for/match/defer sub-bodies but stops at
+// a lambda boundary (a nested function has its own return contract), so
+// without this pass a `var f = function(): i32 { return "x"; }` would go
+// unflagged. The lambda's scope is the surrounding scope plus its params
+// (lexical capture keeps free idents resolving outward); when `self_name`
+// is non-empty the lambda is a recursive local (`var f = function…`) and
+// its own name is pre-bound to its function type so a self-call inside the
+// body resolves rather than inferring unknown. After checking the lambda's
+// own returns it recurses into the body via lret_stmts for nested lambdas.
+function lret_expr(e: parser.Expr, cur: Scope, unions: UnionSig[], self_name: string): Diag[] {
+    var out: Diag[] = [];
+    match (e) {
+        parser.ExprLambda(lm) => {
+            var pts: Type[] = [];
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) {
+                pts = pts.append(type_from_name_with_structs_unions(lm.params[pi].type_name, cur.structs, cur.unions));
+                pi = pi + 1;
+            }
+            var rt: Type = type_from_name_with_structs_unions(lm.ret_type, cur.structs, cur.unions);
+            var lsc: Scope = cur;
+            if (self_name.len() > 0) { lsc = lsc.bind(self_name, t_func(pts, rt)); }
+            var bi: i32 = 0;
+            while (bi < lm.params.len()) {
+                lsc = lsc.bind(lm.params[bi].name, pts[bi]);
+                bi = bi + 1;
+            }
+            if (lm.ret_type.len() > 0) {
+                out = append_diags(out, ret_diags(lm.body, lsc, rt, unions));
+            }
+            out = append_diags(out, lret_stmts(lm.body, lsc, unions));
+        },
+        parser.ExprBinary(b) => {
+            out = append_diags(lret_expr(b.left, cur, unions, ""), lret_expr(b.right, cur, unions, ""));
+        },
+        parser.ExprUnary(u) => { out = lret_expr(u.operand, cur, unions, ""); },
+        parser.ExprCall(c) => {
+            out = lret_expr(c.callee, cur, unions, "");
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = append_diags(out, lret_expr(c.args[i], cur, unions, "")); i = i + 1; }
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, lret_expr(a.elements[i], cur, unions, "")); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, lret_expr(t.elements[i], cur, unions, "")); i = i + 1; }
+        },
+        parser.ExprIndex(ix) => {
+            out = append_diags(lret_expr(ix.array, cur, unions, ""), lret_expr(ix.index, cur, unions, ""));
+        },
+        parser.ExprSlice(s2) => {
+            out = append_diags(lret_expr(s2.array, cur, unions, ""), append_diags(lret_expr(s2.start, cur, unions, ""), lret_expr(s2.end, cur, unions, "")));
+        },
+        parser.ExprFieldAccess(fa) => { out = lret_expr(fa.obj, cur, unions, ""); },
+        parser.ExprStructLit(sl) => {
+            var fv: i32 = 0;
+            while (fv < sl.field_values.len()) { out = append_diags(out, lret_expr(sl.field_values[fv], cur, unions, "")); fv = fv + 1; }
+            if (sl.has_base) { out = append_diags(out, lret_expr(sl.base, cur, unions, "")); }
+        },
+        _ => { }
+    }
+    return out;
+}
+
+// lret_stmts walks a statement list, threading scope (so a lambda sees
+// `var`s declared earlier in the same block, exactly as ret_diags does)
+// and dispatching every contained expression through lret_expr. A
+// `var f = function…` passes its own name as self_name so a recursive
+// local resolves inside its body.
+function lret_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => { out = append_diags(out, lret_expr(v.init, cur, unions, v.name)); },
+            parser.StmtReturn(r) => { out = append_diags(out, lret_expr(r.value, cur, unions, "")); },
+            parser.StmtExpr(x) => { out = append_diags(out, lret_expr(x.value, cur, unions, "")); },
+            parser.StmtAssign(a) => { out = append_diags(out, lret_expr(a.value, cur, unions, "")); },
+            parser.StmtIf(f) => {
+                out = append_diags(out, lret_expr(f.cond, cur, unions, ""));
+                out = append_diags(out, lret_stmts(f.then_body, cur, unions));
+                out = append_diags(out, lret_stmts(f.else_body, cur, unions));
+            },
+            parser.StmtWhile(w) => {
+                out = append_diags(out, lret_expr(w.cond, cur, unions, ""));
+                out = append_diags(out, lret_stmts(w.body, cur, unions));
+            },
+            parser.StmtFor(fr) => {
+                out = append_diags(out, lret_expr(fr.iter, cur, unions, ""));
+                out = append_diags(out, lret_stmts(fr.body, cur, unions));
+            },
+            parser.StmtMatch(m) => {
+                out = append_diags(out, lret_expr(m.scrutinee, cur, unions, ""));
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, lret_stmts(m.arms[a].body, cur, unions)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, lret_stmts(one, cur, unions));
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
 // name_in reports whether `n` is one of `names`.
 function name_in(names: string[], n: string): boolean {
     var i: i32 = 0;
@@ -3840,6 +3956,12 @@ pub function check_module(mod: parser.Module): ModuleTypes {
                 body_diags = body_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
             }
         }
+        // E002 (lambda bodies): return-type mismatch inside a lambda is
+        // checked against the lambda's own declared return type, not the
+        // enclosing function's. Runs for every function (even void ones —
+        // a lambda can be declared anywhere), scope-threaded so a lambda
+        // sees earlier locals.
+        body_diags = append_diags(body_diags, lret_stmts(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
         // E005: struct literal missing a declared field (any expression in
         // the body, struct table is module-global so no scope needed).
         body_diags = append_diags(body_diags, stmts_slit_diags(mod.funcs[i].body, structs));
@@ -3878,6 +4000,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         top_tys = top_tys.append(r.ty);
         j = j + 1;
     }
+    body_diags = append_diags(body_diags, lret_stmts(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));
     body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));
     body_diags = append_diags(body_diags, stmts_call_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
     body_diags = append_diags(body_diags, stmts_assign_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));

@@ -388,6 +388,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cap-assign-scalar-ok", "function main(): i32 { var n: i32 = 1; var f = function(): i32 { n = 2; return n; }; return f(); }\n", nil},
 		{"cap-read-ref-ok", "function main(): i32 { var s: string = \"x\"; var f = function(): i32 { return s.len(); }; return f(); }\n", nil},
 		{"cap-assign-local-ok", "function main(): i32 { var f = function(): i32 { var t: string = \"a\"; t = \"b\"; return 0; }; return f(); }\n", nil},
+		// E002 inside lambda bodies: a lambda's `return` is checked against
+		// the lambda's OWN declared return type, not the enclosing function's
+		// (ret_diags stops at the lambda boundary). lret_stmts/lret_expr fill
+		// that gap.
+		{"lambda-ret-mismatch", "function main(): i32 { var f = function(): i32 { return \"x\"; }; return f(); }\n", []string{"E002"}},
+		{"lambda-ret-ok", "function main(): i32 { var f = function(): i32 { return 5; }; return f(); }\n", nil},
+		{"lambda-in-void-fn", "function g() { var f = function(): i32 { return \"x\"; }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"lambda-nested-if-mismatch", "function main(): i32 { var f = function(): i32 { if (1 < 2) { return \"x\"; } return 1; }; return f(); }\n", []string{"E002"}},
+		{"lambda-bare-return", "function main(): i32 { var f = function(): i32 { return; }; return f(); }\n", []string{"E012"}},
+		{"lambda-arg-mismatch", "function run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(function(): i32 { return \"x\"; }); }\n", []string{"E002"}},
+		{"lambda-nested-lambda-mismatch", "function main(): i32 { var f = function(): i32 { var g = function(): i32 { return \"x\"; }; return g(); }; return f(); }\n", []string{"E002"}},
+		{"lambda-no-rettype-ok", "function main(): i32 { var f = function() { return; }; return 0; }\n", nil},
+		{"rec-local-capture-ret-mismatch", "function main(): i32 { var base: string = \"x\"; function f(n: i32): i32 { if (n <= 0) { return base; } return f(n - 1); } return f(3); }\n", []string{"E002"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
