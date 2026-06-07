@@ -4597,7 +4597,10 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 		}
 	}
 	cases := map[string]*ir.Program{
-		"array param":               mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: i32()}}}, i32()),
+		// i64[] is still rejected: only ≤32-bit integer-array params lower yet
+		// (64-bit elements need 8-byte alignment the Fern element pointer
+		// doesn't guarantee). i32[]/u8[] params ARE accepted now (P4c).
+		"i64 array param":           mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: ast.NumberType{Width: 64}}}}, i32()),
 		"array result":              mk(nil, ast.ArrayType{Elem: i32()}),
 		"string param + str result": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, ast.StringType{}),
 	}

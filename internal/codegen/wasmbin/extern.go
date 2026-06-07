@@ -171,8 +171,10 @@ func buildExternMemParamWrapper(params []ast.Param, rawImport string) func(map[s
 				body = inst.InstLocalGet(body, bufL)
 				body = inst.InstLocalGet(body, byteLenL)
 				slot += 2
-			case isU8ArrayType(p.Type):
-				// (ptr, len) = (elemPtr, load(elemPtr-4)).
+			case isScalarArrayParamType(p.Type):
+				// (ptr, len) = (elemPtr, load(elemPtr-4)). The count prefix holds
+				// the element count, which is the canonical list length for any
+				// element width; the elements are already packed at native stride.
 				body = inst.InstLocalGet(body, slot) // ptr
 				body = inst.InstLocalGet(body, slot)
 				body = inst.InstI32Const(body, 4)
