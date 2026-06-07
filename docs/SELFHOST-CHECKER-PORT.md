@@ -652,18 +652,42 @@ same code(s) the Go checker does — restricted to
   match/if desugars to an IIFE, but the checker now recognises that shape
   and unifies the arm types. E045 (map literal key type) shipped too — see
   Slice 71: the literal desugars to a `map_new[_i32]().insert()` chain, and
-  the checker recognises that chain to check the first key's type. The
-  genuinely-remaining codes are E025 (switch-on-float / case-type — the
-  parser desugars `switch` to an if/else chain, so the shape is lost and,
-  unlike map literals, the desugared `==` comparisons can't be told apart
-  from a hand-written if-chain; needs a real `StmtSwitch` node + a desugar
-  relocated after checking), E044 (typed closure captures — Go only emits
-  it for a captured `void`/generic-placeholder value, near-unreachable),
-  E023 (unknown-enum scrutinee — already surfaces as E035 here), and E032
-  (`use` binding inference) / E053 (`fip` allocation analysis) — each
-  needing a language feature or analysis the self-host doesn't yet model
-  end-to-end. (E050/E051 owned-parameter move checking and E049
-  captured-reference reassignment are now done — see below.)
+  the checker recognises that chain to check the first key's type. E025
+  (switch-on-float / case-value type) shipped too — see Slice 72: `switch`
+  now parses to a real `StmtSwitch` node (desugared to the if/else chain
+  only at emit), so the checker sees the shape. The genuinely-remaining
+  codes are E044 (typed closure captures — Go only emits it for a captured
+  `void`/generic-placeholder value, near-unreachable), E023 (unknown-enum
+  scrutinee — already surfaces as E035 here), and E032 (`use` binding
+  inference) / E053 (`fip` allocation analysis) — each needing a language
+  feature or analysis the self-host doesn't yet model end-to-end.
+  (E050/E051 owned-parameter move checking and E049 captured-reference
+  reassignment are now done — see below.)
+- **Slice 72 (done): E025 — switch scrutinee / case value types.** Unlike
+  the other desugar-blocked codes, a `switch`'s lowered `scrut == value`
+  comparisons can't be told apart from a hand-written if-chain, and the
+  existing E041 (`==` on mismatched types) actively fires on them — so
+  recognising the desugar was impossible. Instead `switch` now parses to a
+  real **`StmtSwitch`** node (a transient node like `StmtDefer`): the type
+  checker sees it intact, and `desugar_switches_module` (run from
+  `module_with_builtins` for the emit paths, and on-the-fly in `eval_stmt`
+  for the interpreter) lowers every `StmtSwitch` to the same nested
+  if/else-if chain the backends already consume — so no backend lowers one
+  at runtime (their arms exist only for exhaustiveness, mirroring
+  `StmtDefer`). `switch_diags` emits E025 for a float scrutinee or a case
+  value whose type isn't equal to the scrutinee's, and `block_exits` learns
+  that a switch exits only with a `default` whose every arm exits (E052
+  parity). The other coded body-walkers (E001/E002/E003/E005/…), which
+  don't know `StmtSwitch`, run on a **switch-flattened diagnostic form**
+  (`switch_diag_block`: scrutinee + case values as expression statements,
+  each body as an `if (true) { … }` block — no synthetic `==`, so E041
+  never mis-fires) so case-body / scrutinee / case-value diagnostics are
+  still caught. The fixpoint bundle uses no `switch`, so the parser change
+  is byte-identical (verified). Gated by 8 corpus cases (float → E025,
+  case-type → E025, i32/string/multi-value ok, no-default → E052,
+  all-return ok, an undefined name in a case body → E001), cross-checked
+  against Go, plus the existing switch e2e suites (x86/arm64/wasm/interp)
+  and the byte-identical stage-2 fixpoint.
 - **Slice 71 (done): E045 — map literal key type.** A map literal
   `Map { k: v, … }` is desugared by the parser to
   `map_new[_i32](n).insert(k0, v0).insert(…)…`; the FIRST key fixes the

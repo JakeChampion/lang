@@ -1101,6 +1101,24 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
     match (st) {
         // StmtDefer is lowered away before emit; check its action.
         parser.StmtDefer(d) => { return check_stmt(d.action, s); },
+        // StmtSwitch is desugared to an if-chain before emit, but the checker
+        // sees it intact so it can flag E025 (see switch_diags). Type the
+        // scrutinee + each case value and check every case / default body in
+        // the surrounding scope (switch binds no names of its own).
+        parser.StmtSwitch(sw) => {
+            check_expr(sw.scrutinee, s);
+            var ok: boolean = true;
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                var vi: i32 = 0;
+                while (vi < sw.cases[ci].values.len()) { check_expr(sw.cases[ci].values[vi], s); vi = vi + 1; }
+                if (!check_block(sw.cases[ci].body, s)) { ok = false; }
+                ci = ci + 1;
+            }
+            if (sw.has_default) { if (!check_block(sw.default_body, s)) { ok = false; } }
+            if (!ok) { return CheckResult { scope: s, ty: t_unknown("switch: ill-typed body") }; }
+            return CheckResult { scope: s, ty: t_bool() };
+        },
         parser.StmtVar(v) => {
             // A local function `function f(...) { ... }` desugars to
             // `var f = function(...) { ... }`; its own name must be in
@@ -2386,9 +2404,148 @@ function block_exits(stmts: parser.Stmt[]): boolean {
             }
             return true;
         },
+        parser.StmtSwitch(sw) => {
+            // A switch exits only if it has a `default` (else an unmatched
+            // scrutinee falls through) and every case body + the default
+            // body exits — matching the Go checker's funcBodyExits.
+            if (!sw.has_default) { return false; }
+            var i: i32 = 0;
+            while (i < sw.cases.len()) {
+                if (!block_exits(sw.cases[i].body)) { return false; }
+                i = i + 1;
+            }
+            return block_exits(sw.default_body);
+        },
         _ => { return false; }
     }
     return false;
+}
+
+// ============ E025: switch scrutinee / case value types ============
+//
+// A `switch` is desugared to an if/else-if chain before emit, but the type
+// checker sees the StmtSwitch intact (the desugared `scrut == value`
+// comparisons would otherwise read as E041 mismatches, not E025). switch_e025
+// flags E025 when the scrutinee is a float (switch's exact-match semantics
+// aren't defined for floats) or when a case value's type isn't EQUAL to the
+// scrutinee's — both matching the Go checker. stmts_switch_diags threads
+// scope (so the scrutinee + case values resolve) and recurses through every
+// nested body to catch nested switches.
+function switch_e025(sw: parser.StmtSwitch, s: Scope): Diag[] {
+    var out: Diag[] = [];
+    var scrut_ty: Type = check_expr(sw.scrutinee, s);
+    var is_float: boolean = false;
+    match (scrut_ty) {
+        TypeFloat(_) => { is_float = true; },
+        _ => { }
+    }
+    if (is_float) {
+        out = out.append(dg_at("E025", "switch on float values is not supported", expr_line(sw.scrutinee), expr_col(sw.scrutinee)));
+    }
+    var ci: i32 = 0;
+    while (ci < sw.cases.len()) {
+        var vi: i32 = 0;
+        while (vi < sw.cases[ci].values.len()) {
+            var vt: Type = check_expr(sw.cases[ci].values[vi], s);
+            if (!is_unknown(scrut_ty) && !is_unknown(vt) && !type_eq(vt, scrut_ty)) {
+                out = out.append(dg_at("E025", "case value type " + type_label(vt) + ", expected " + type_label(scrut_ty), expr_line(sw.cases[ci].values[vi]), expr_col(sw.cases[ci].values[vi])));
+            }
+            vi = vi + 1;
+        }
+        ci = ci + 1;
+    }
+    return out;
+}
+
+function stmts_switch_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtSwitch(sw) => {
+                out = append_diags(out, switch_e025(sw, cur));
+                var ci: i32 = 0;
+                while (ci < sw.cases.len()) { out = append_diags(out, stmts_switch_diags(sw.cases[ci].body, cur)); ci = ci + 1; }
+                if (sw.has_default) { out = append_diags(out, stmts_switch_diags(sw.default_body, cur)); }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, stmts_switch_diags(f.then_body, cur));
+                out = append_diags(out, stmts_switch_diags(f.else_body, cur));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, stmts_switch_diags(w.body, cur)); },
+            parser.StmtFor(fr) => { out = append_diags(out, stmts_switch_diags(fr.body, cur)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, stmts_switch_diags(m.arms[a].body, cur)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => { var one: parser.Stmt[] = [d.action]; out = append_diags(out, stmts_switch_diags(one, cur)); },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
+// switch_diag_block rewrites a statement block into a "diagnostic form" in
+// which every StmtSwitch is FLATTENED so the other coded-diagnostic passes
+// (E001/E002/E003/E005/…) — which don't know the StmtSwitch shape — still
+// see the scrutinee, each case value, and every case / default body. The
+// scrutinee and case values become bare expression statements (so undefined
+// names and bad types in them are caught), and each body becomes an
+// `if (true) { … }` block (walked like any other, with no synthetic
+// `scrut == value` comparison — which would mis-fire E041 where E025 is the
+// correct code; E025 itself is emitted separately by stmts_switch_diags on
+// the original tree). check_func_body, stmts_switch_diags and block_exits
+// keep using the ORIGINAL tree; only the coded body-walkers run on this
+// form. Recurses through nested bodies so nested switches flatten too.
+function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var nobody: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtSwitch(sw) => {
+                out = out.append(parser.StmtExpr { value: sw.scrutinee });
+                var ci: i32 = 0;
+                while (ci < sw.cases.len()) {
+                    var vi: i32 = 0;
+                    while (vi < sw.cases[ci].values.len()) {
+                        out = out.append(parser.StmtExpr { value: sw.cases[ci].values[vi] });
+                        vi = vi + 1;
+                    }
+                    out = out.append(parser.StmtIf { cond: parser.ExprBool { value: true }, then_body: switch_diag_block(sw.cases[ci].body), else_body: nobody });
+                    ci = ci + 1;
+                }
+                if (sw.has_default) {
+                    out = out.append(parser.StmtIf { cond: parser.ExprBool { value: true }, then_body: switch_diag_block(sw.default_body), else_body: nobody });
+                }
+            },
+            parser.StmtIf(f) => { out = out.append(parser.StmtIf { cond: f.cond, then_body: switch_diag_block(f.then_body), else_body: switch_diag_block(f.else_body) }); },
+            parser.StmtWhile(w) => { out = out.append(parser.StmtWhile { cond: w.cond, body: switch_diag_block(w.body) }); },
+            parser.StmtFor(fr) => { out = out.append(parser.StmtFor { var_name: fr.var_name, iter: fr.iter, body: switch_diag_block(fr.body) }); },
+            parser.StmtMatch(m) => {
+                var arms: parser.MatchArm[] = [];
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    arms = arms.append(parser.MatchArm { pattern: m.arms[a].pattern, body: switch_diag_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                    a = a + 1;
+                }
+                out = out.append(parser.StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col });
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                var rec: parser.Stmt[] = switch_diag_block(one);
+                out = out.append(parser.StmtDefer { action: rec[0] });
+            },
+            _ => { out = out.append(st); }
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // with in_loop = true, while `if` / `match` / `defer` pass the flag
@@ -4385,11 +4542,16 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) { well_typed = false; }
+        // Diagnostic form of the body: switches flattened so the coded
+        // body-walkers below (which don't know StmtSwitch) still see the
+        // scrutinee, case values and case/default bodies. E025 (stmts_switch_
+        // diags) and E052 (block_exits) keep using the original tree.
+        var dbody: parser.Stmt[] = switch_diag_block(mod.funcs[i].body);
         // E002: return-type mismatch, per function (recursing into nested
         // blocks). Only meaningful when a return type is declared.
         if (mod.funcs[i].ret_type.len() > 0) {
             var fsc: Scope = build_func_scope(mod.funcs[i], sigs, structs, unions, methods);
-            body_diags = append_diags(body_diags, ret_diags(mod.funcs[i].body, fsc, fsc.ret_type, unions));
+            body_diags = append_diags(body_diags, ret_diags(dbody, fsc, fsc.ret_type, unions));
             // E052: a non-void function whose body can fall off the end
             // without returning, reported at the function declaration.
             if (!block_exits(mod.funcs[i].body)) {
@@ -4401,25 +4563,27 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         // enclosing function's. Runs for every function (even void ones —
         // a lambda can be declared anywhere), scope-threaded so a lambda
         // sees earlier locals.
-        body_diags = append_diags(body_diags, lret_stmts(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
+        body_diags = append_diags(body_diags, lret_stmts(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
         // E031: match/if-expression arms must have compatible types
         // (scope-threaded so an arm sees earlier locals + its payload).
-        body_diags = append_diags(body_diags, mx_stmts(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions, mod.enums));
+        body_diags = append_diags(body_diags, mx_stmts(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions, mod.enums));
+        // E025: switch-on-float / case value type mismatch (original tree).
+        body_diags = append_diags(body_diags, stmts_switch_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
         // E005: struct literal missing a declared field (any expression in
         // the body, struct table is module-global so no scope needed).
-        body_diags = append_diags(body_diags, stmts_slit_diags(mod.funcs[i].body, structs));
+        body_diags = append_diags(body_diags, stmts_slit_diags(dbody, structs));
         // E004: free-function call arity (scope-threaded so a shadowing
         // local isn't mistaken for the function).
-        body_diags = append_diags(body_diags, stmts_call_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
+        body_diags = append_diags(body_diags, stmts_call_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
         // E003: assignment / annotated-var type mismatch (scope-threaded).
-        body_diags = append_diags(body_diags, stmts_assign_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
+        body_diags = append_diags(body_diags, stmts_assign_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
         // E011: break / continue outside a loop (structural, no scope).
-        body_diags = append_diags(body_diags, loop_diags(mod.funcs[i].body, false));
+        body_diags = append_diags(body_diags, loop_diags(dbody, false));
         // E013: duplicate `var` in the same block (structural, no scope).
-        body_diags = append_diags(body_diags, dupvar_diags(mod.funcs[i].body));
+        body_diags = append_diags(body_diags, dupvar_diags(dbody));
         // E026 / E028: structural match-arm errors (wildcard order, dup
         // variant).
-        body_diags = append_diags(body_diags, match_diags(mod.funcs[i].body, structs));
+        body_diags = append_diags(body_diags, match_diags(dbody, structs));
         // E019: explicit type-argument arity on a generic-struct reference
         // in a parameter type.
         var pai2: i32 = 0;
@@ -4429,7 +4593,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         }
         // E036: unqualified reference to a variant shared by 2+ enums.
         if (ambig.len() > 0) {
-            body_diags = append_diags(body_diags, vref_stmts(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), ambig));
+            body_diags = append_diags(body_diags, vref_stmts(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), ambig));
         }
         i = i + 1;
     }
@@ -4443,17 +4607,21 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         top_tys = top_tys.append(r.ty);
         j = j + 1;
     }
-    body_diags = append_diags(body_diags, lret_stmts(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));
-    body_diags = append_diags(body_diags, mx_stmts(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions, mod.enums));
-    body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));
-    body_diags = append_diags(body_diags, stmts_call_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
-    body_diags = append_diags(body_diags, stmts_assign_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));
+    // E025 keeps the original top-level tree; the coded body-walkers use the
+    // switch-flattened diagnostic form (see switch_diag_block).
+    body_diags = append_diags(body_diags, stmts_switch_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
+    var dtop: parser.Stmt[] = switch_diag_block(mod.top_stmts);
+    body_diags = append_diags(body_diags, lret_stmts(dtop, new_scope_full(sigs, structs, unions, methods), unions));
+    body_diags = append_diags(body_diags, mx_stmts(dtop, new_scope_full(sigs, structs, unions, methods), unions, mod.enums));
+    body_diags = append_diags(body_diags, stmts_slit_diags(dtop, structs));
+    body_diags = append_diags(body_diags, stmts_call_diags(dtop, new_scope_full(sigs, structs, unions, methods)));
+    body_diags = append_diags(body_diags, stmts_assign_diags(dtop, new_scope_full(sigs, structs, unions, methods), unions));
     if (ambig.len() > 0) {
-        body_diags = append_diags(body_diags, vref_stmts(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), ambig));
+        body_diags = append_diags(body_diags, vref_stmts(dtop, new_scope_full(sigs, structs, unions, methods), ambig));
     }
-    body_diags = append_diags(body_diags, loop_diags(mod.top_stmts, false));
-    body_diags = append_diags(body_diags, dupvar_diags(mod.top_stmts));
-    body_diags = append_diags(body_diags, match_diags(mod.top_stmts, structs));
+    body_diags = append_diags(body_diags, loop_diags(dtop, false));
+    body_diags = append_diags(body_diags, dupvar_diags(dtop));
+    body_diags = append_diags(body_diags, match_diags(dtop, structs));
     // E019: generic-struct type-argument arity in struct field types.
     var sfi: i32 = 0;
     while (sfi < mod.structs.len()) {
@@ -4464,7 +4632,12 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         }
         sfi = sfi + 1;
     }
-    var dd: Diag[] = append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod));
+    // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
+    // for move / capture analysis; give them the switch-lowered module so
+    // case bodies are analysed (they emit no `==`-sensitive code, so the real
+    // if-chain desugar is fine here).
+    var sw_mod: parser.Module = parser.desugar_switches_module(mod);
+    var dd: Diag[] = append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(sw_mod)), e049_diags(sw_mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }

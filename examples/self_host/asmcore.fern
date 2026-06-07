@@ -162,8 +162,10 @@ pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
 
 pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
-        // StmtDefer is eliminated by lower_defers before emit; the arm is
-        // here for exhaustiveness and recurses defensively.
+        // StmtDefer / StmtSwitch are eliminated before emit (lower_defers /
+        // desugar_switches); the arms are here for exhaustiveness and recurse
+        // defensively on the lowered form.
+        parser.StmtSwitch(_) => { return collect_idents_stmt(parser.desugar_switch_in_stmt(st), acc); },
         parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
         parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
         parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
@@ -223,6 +225,7 @@ pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 
 pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
+        parser.StmtSwitch(_) => { return collect_bound_stmt(parser.desugar_switch_in_stmt(st), acc); },
         parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
         parser.StmtVar(v) => { return acc.append(v.name); },
         parser.StmtReturn(_) => { return acc; },

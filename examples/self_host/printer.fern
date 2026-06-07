@@ -212,6 +212,26 @@ function print_match(m: parser.StmtMatch, depth: i32): string {
 function print_stmt(st: parser.Stmt, depth: i32): string {
     var pad: string = indent_str(depth);
     match (st) {
+        parser.StmtSwitch(sw) => {
+            var out: string = pad + "switch (" + print_expr(sw.scrutinee) + ") {\n";
+            var cpad: string = indent_str(depth + 1);
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                out = out + cpad + "case ";
+                var vi: i32 = 0;
+                while (vi < sw.cases[ci].values.len()) {
+                    if (vi > 0) { out = out + ", "; }
+                    out = out + print_expr(sw.cases[ci].values[vi]);
+                    vi = vi + 1;
+                }
+                out = out + ": " + print_block(sw.cases[ci].body, depth + 1) + "\n";
+                ci = ci + 1;
+            }
+            if (sw.has_default) {
+                out = out + cpad + "default: " + print_block(sw.default_body, depth + 1) + "\n";
+            }
+            return out + pad + "}\n";
+        },
         parser.StmtDefer(d) => { return pad + "defer " + print_stmt(d.action, 0); },
         parser.StmtVar(v) => {
             var ann: string = "";
