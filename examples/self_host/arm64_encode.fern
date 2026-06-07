@@ -417,3 +417,55 @@ function arm64_str(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 function arm64_ldr(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
     return arm64_le32(buf, arm64_ldr_word(rt, rn, off));
 }
+
+// ---- PC-relative page addressing (@PAGE / @PAGEOFF) ----
+//
+// A 64-bit constant in __DATA is addressed in two steps, exactly as ld64's
+// @PAGE / @PAGEOFF relocations resolve:
+//   adrp Xn, sym@PAGE      ; Xn = (PC & ~0xFFF) + (page_delta << 12)
+//   ldr  Xt, [Xn, #off]    ; off = sym & 0xFFF  (the @PAGEOFF)
+// page_delta is the signed 4 KiB-page distance between the symbol and the
+// adrp instruction, computed from the fixed addresses macho.fern lays the
+// image out at (macho_text_vaddr / macho_data_vaddr — the SegmentAddrs
+// parity). Because both segments share the 16 KiB Mach-O page alignment,
+// @PAGEOFF is always 4 KiB-aligned here, but the math is general.
+
+// arm64_page_delta returns the 4 KiB-page delta from the adrp instruction
+// at `adrp_addr` to the target at `target_addr` (the adrp immediate).
+function arm64_page_delta(target_addr: i64, adrp_addr: i64): i32 {
+    return ((target_addr >> 12) - (adrp_addr >> 12)) as i32;
+}
+
+// arm64_page_off returns the in-page byte offset of `addr` (the @PAGEOFF).
+function arm64_page_off(addr: i64): i32 {
+    return (addr & 0xfff) as i32;
+}
+
+// arm64_adrp_word encodes `adrp Xd, #page_delta` -> 0x90000000 |
+// immlo<<29 | immhi<<5 | Rd, where the 21-bit page delta splits into
+// immlo (bits 1:0) and immhi (bits 20:2).
+function arm64_adrp_word(rd: i32, page_delta: i32): i64 {
+    var immlo: i64 = (page_delta & 3) as i64;
+    var immhi: i64 = ((page_delta >> 2) & 0x7ffff) as i64;
+    return 0x90000000 | (immlo << 29) | (immhi << 5) | ((rd & 31) as i64);
+}
+function arm64_adrp(buf: i32[], rd: i32, page_delta: i32): i32[] {
+    return arm64_le32(buf, arm64_adrp_word(rd, page_delta));
+}
+
+// arm64_patch_adrp splices a page_delta into an `adrp` placeholder at byte
+// offset `at`, preserving the opcode + Rd (masked-out 0x9f00001f).
+function arm64_patch_adrp(buf: i32[], at: i32, page_delta: i32): i32[] {
+    var immlo: i64 = (page_delta & 3) as i64;
+    var immhi: i64 = ((page_delta >> 2) & 0x7ffff) as i64;
+    var w: i64 = (arm64_read_word(buf, at) & 0x9f00001f) | (immlo << 29) | (immhi << 5);
+    return arm64_write_word(buf, at, w);
+}
+
+// arm64_patch_ldr_off splices a (scaled) byte offset into the imm12 field
+// (bits 21:10) of an `ldr` placeholder at byte offset `at`, preserving the
+// opcode + Rt/Rn (masked-out 0xffc003ff).
+function arm64_patch_ldr_off(buf: i32[], at: i32, off: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xffc003ff) | ((((off / 8) & 0xfff) as i64) << 10);
+    return arm64_write_word(buf, at, w);
+}
