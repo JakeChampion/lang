@@ -144,9 +144,17 @@ flow rather than driving manual CI checks after the fact.
   **x86-64** equivalents (fixpoint, checker, CLI, e2e) plus the WASM
   tests, which give the same signal far faster; CI runs the full arm64
   matrix on every push. Reach for qemu locally only to **debug** a
-  specific arm64 failure CI surfaced, not as a pre-push gate. (The
-  backends are kept in lockstep, so an x86-64-green change is almost
-  always arm64-green; CI is the backstop.)
+  specific arm64 failure CI surfaced, not as a pre-push gate. (The two
+  self-host asm backends now **share** their entire target-independent
+  frontend — the `Ty` type system, type inference, the pre-codegen
+  checker, and `EmitState` + its state methods — via
+  `examples/self_host/asmcore.fern`, which both `asm.fern` (x86-64) and
+  `asm_arm64.fern` import. That half can't drift; only the `emit_*`
+  instruction-selection layer is hand-maintained in parallel. So an
+  x86-64-green change is almost always arm64-green; CI is the backstop.
+  When editing inference/checker/`Ty`/`EmitState`, edit `asmcore.fern`
+  once — it is *not* mirrored in the backends anymore. Anything compiling
+  `asm.fern`/`asm_arm64.fern` must also provide `asmcore.fern`.)
 - **Every new feature ships with tests.** Parser-time desugar →
   parser test. Checker rule → checker test. Runtime behaviour →
   e2e test. No "the next PR will add coverage."
