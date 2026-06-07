@@ -1120,8 +1120,16 @@ smallest → largest:
     **Blocker A — Go x86 backend bug.** A struct **spread-update of a
     function *parameter*** miscompiles (segfault) under the Go x86 reference
     backend; spreading a *local* is fine. Worked around by binding a local
-    copy in the 14 affected `arm64_native` functions; the backend bug itself
-    wants a dedicated fix.
+    copy in every such `arm64_native` function (incl. `arm64_gas_link`,
+    found last). `TestSelfHostArm64NativeViaGoBackend` now assembles real
+    darwin asm for `return 42` / `fib` / `print` through arm64_native
+    compiled by the **Go x86 backend** (the CLI's backend) into valid
+    Mach-O — it segfaults without the local-copy fixes, so it guards the
+    class. The backend bug itself still wants a dedicated fix; a *second*,
+    separate Go-x86 miscompile aborts string/heap-heavy programs (e.g.
+    `concat`) and currently blocks the `-target arm64-darwin` flip (the
+    in-Fern assembler is proven correct for `concat` via the wasm path, so
+    the abort is in the surrounding Go-x86 codegen, not `arm64_native`).
     **Blocker B — instruction coverage.** The self-host `asm_arm64` emitter
     emits its *full* runtime (incl. float helpers) for **every** program, so
     even `return 42`'s darwin asm uses ~32 mnemonics `arm64_native` must
