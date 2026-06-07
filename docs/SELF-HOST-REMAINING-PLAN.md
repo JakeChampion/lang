@@ -819,3 +819,53 @@ planned order:
 Aside (Go backend, separate subsystem): the Go *native* backend
 mishandles compound assignment to a struct field (`a.v += n`) — fixed in
 the parser (PR allowing FieldAccess lvalues in the compound path).
+
+---
+
+## Native binary emission — no external assembler / linker
+
+The end goal is a **fully self-hosted toolchain with zero external
+tools**. The wasm backend already reaches this: the self-host emits
+runnable binary wasm + Component-Model components in Fern
+(`leb128.fern` → `wat_lex.fern` → `wat_parse.fern` → `wat_encode.fern`
+→ `wat_emit_bin.fern` → `wat_component.fern`), no `wasm-tools`. The
+**native** path is the remaining gap: the self-host emits `.s` *text*
+(`asm.fern` / `asm_arm64.fern`) and shells out to `clang` / `gcc` /
+`as` / `ld` / `lld` to assemble + link.
+
+This is a **port, not an invention** — the Go bootstrap already emits
+native binaries in-process, so each slice mirrors a Go reference. Like
+the wasm binary track, every slice is independently testable through the
+wasm self-test harness (concatenate the import-free module + a self-test
+`main()`, run under `wasmtime`, assert via exit code). Ordered
+smallest → largest:
+
+- ✅ **ELF-64 writer** — `examples/self_host/elf.fern`, mirroring
+  `internal/native/elf/elf.go`. Static, non-PIE, single `PT_LOAD`
+  images for x86-64 + arm64 Linux: `elf_static_executable` /
+  `_x86` (R+X) and `elf_static_executable_data` / `_x86` (R+W+X, .text
+  8-byte-padded then data). Byte buffer is the same `i32[]`-of-0..255
+  convention as `leb128.fern`; 8-byte fields via `elf_le64` (i64).
+  Gated by `internal/e2e/self_host_elf_test.go` (`TestSelfHostELF`),
+  asserting the fixed header + program-header layout (magic, class,
+  `e_type`/`e_machine`, `e_entry` = 0x400078, the single PT_LOAD,
+  `p_flags`, sizes, body placement + data alignment) for both the arm64
+  R+X and x86-64 R+W+X shapes.
+- ⬜ **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
+  mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
+  + `x87.go` + `rodata.go`). The largest slice; covers the integer +
+  SSE + x87 instruction surface `asm.fern` emits, label / rip-relative
+  relocation resolution against `elf_text_vaddr`, and the `.rodata`
+  section.
+- ⬜ **arm64 assembler** — GAS aarch64 text → AArch64 bytes, mirroring
+  `internal/native/arm64/asm.go` + `gas.go` + `gasprog.go`
+  (adrp / `:lo12:` PC-relative resolution against `elf_text_vaddr`).
+- ⬜ **Mach-O writer + ad-hoc code signature** — for arm64-darwin,
+  mirroring `internal/native/macho/` (`image.go` / `macho.go` /
+  `sign.go`). Apple Silicon refuses unsigned binaries, so the ad-hoc
+  `LC_CODE_SIGNATURE` blob is mandatory, not optional.
+
+Wiring (final slice): the self-host driver routes `asm.fern` → x86-64
+assembler → `elf.fern` → write `0o755` (and the arm64 / Darwin
+equivalents), dropping the external link step. `examples/self_host/
+disasm.fern` doubles as a cross-check for the emitted-bytes assemblers.

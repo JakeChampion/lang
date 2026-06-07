@@ -1,0 +1,201 @@
+// examples/self_host/elf.fern — a minimal static, non-PIE ELF-64
+// executable writer for the self-hosted *native* backend. This is the
+// container half of the native-binary path that aims to remove the
+// external `gcc` / `ld` link step the self-host currently shells out to
+// for x86-64 / arm64 Linux (mirroring the Go reference
+// internal/native/elf/elf.go).
+//
+// Because a Fern program links to one self-contained blob
+// (`-static -nostdlib`: no archives, no shared objects, no relocations
+// against external symbols, no PLT/GOT) the "linker" is trivial: lay the
+// headers + .text out at a fixed virtual address and point e_entry at the
+// first instruction. There are no section headers (the kernel loader
+// needs only the program headers) and a single PT_LOAD maps the whole
+// file. Reference: the ELF-64 gABI.
+//
+// Conventions (matching leb128.fern / wat_encode.fern):
+//   * A byte buffer is an `i32[]` of values in 0..255; each helper appends
+//     to it and returns the (possibly grown) buffer (`buf = f(buf, …)`).
+//   * This module is intentionally **import-free** so (a) the native
+//     emitter can `import "./elf"` and (b) the unit test can concatenate
+//     this file with a driver `main()` and feed the whole thing to the
+//     single-module wasm_run driver.
+//   * 8-byte ELF fields are written via elf_le64 (an i64 value); the
+//     values we emit are all small (addresses < 2^31, sizes), but the
+//     full 8 bytes are always laid down per the ELF-64 layout.
+
+// ---- fixed layout constants (see internal/native/elf/elf.go) ----
+
+// elf_eh_size is the ELF-64 header size (e_ehsize).
+function elf_eh_size(): i32 { return 64; }
+
+// elf_ph_size is the ELF-64 program-header entry size (e_phentsize).
+function elf_ph_size(): i32 { return 56; }
+
+// elf_base_vaddr is the load address (0x400000), a multiple of the page
+// alignment below.
+function elf_base_vaddr(): i32 { return 4194304; }
+
+// elf_page_align is the arm64 max page size (16 KiB) used for p_align.
+function elf_page_align(): i32 { return 65536; }
+
+// elf_em_aarch64 is EM_AARCH64 (e_machine).
+function elf_em_aarch64(): i32 { return 183; }
+
+// elf_em_x86_64 is EM_X86_64 (e_machine).
+function elf_em_x86_64(): i32 { return 62; }
+
+// elf_text_vaddr is the virtual address at which .text begins in the
+// single-segment image (just past the ELF header + one program header).
+// A native assembler needs this to resolve PC-relative symbol references
+// (adrp / :lo12: on arm64, rip-relative on x86-64).
+function elf_text_vaddr(): i32 {
+    return elf_base_vaddr() + elf_eh_size() + elf_ph_size();
+}
+
+// ---- little-endian byte emitters ----
+
+// elf_le16 appends the low 2 bytes of `v`, little-endian.
+function elf_le16(buf: i32[], v: i32): i32[] {
+    buf = buf.push(v & 255);
+    buf = buf.push((v >> 8) & 255);
+    return buf;
+}
+
+// elf_le32 appends the 4 bytes of `v`, little-endian.
+function elf_le32(buf: i32[], v: i32): i32[] {
+    buf = buf.push(v & 255);
+    buf = buf.push((v >> 8) & 255);
+    buf = buf.push((v >> 16) & 255);
+    buf = buf.push((v >> 24) & 255);
+    return buf;
+}
+
+// elf_le64 appends the 8 bytes of a 64-bit `v`, little-endian. `>>` is an
+// arithmetic shift; the `& 255` after each shift discards any
+// sign-extended high bits, so the result is correct for any value.
+function elf_le64(buf: i32[], v: i64): i32[] {
+    buf = buf.push((v & 255) as i32);
+    buf = buf.push(((v >> 8) & 255) as i32);
+    buf = buf.push(((v >> 16) & 255) as i32);
+    buf = buf.push(((v >> 24) & 255) as i32);
+    buf = buf.push(((v >> 32) & 255) as i32);
+    buf = buf.push(((v >> 40) & 255) as i32);
+    buf = buf.push(((v >> 48) & 255) as i32);
+    buf = buf.push(((v >> 56) & 255) as i32);
+    return buf;
+}
+
+// ---- buffer helpers ----
+
+// elf_cat appends every byte of `src` to `buf`.
+function elf_cat(buf: i32[], src: i32[]): i32[] {
+    var i: i32 = 0;
+    while (i < src.len()) {
+        buf = buf.push(src[i]);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// elf_pad_to_8 appends zero bytes until the buffer length is a multiple
+// of 8 (so the data blob lands 8-byte aligned after .text).
+function elf_pad_to_8(b: i32[]): i32[] {
+    while ((b.len() % 8) != 0) {
+        b = b.push(0);
+    }
+    return b;
+}
+
+// ---- the image writer ----
+
+// elf_image emits the ELF header + one PT_LOAD (with the given p_flags)
+// covering the whole file, followed by `body`. `machine` selects
+// e_machine (EM_AARCH64 / EM_X86_64). Entry is the first instruction of
+// .text (elf_text_vaddr).
+function elf_image(body: i32[], flags: i32, machine: i32): i32[] {
+    var total: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
+    var entry: i64 = elf_text_vaddr() as i64;
+    var zero64: i64 = 0;
+
+    var buf: i32[] = [];
+
+    // ---- ELF-64 header (64 bytes) ----
+    buf = buf.push(127);  // 0x7f  EI_MAG0
+    buf = buf.push(69);   // 'E'   EI_MAG1
+    buf = buf.push(76);   // 'L'   EI_MAG2
+    buf = buf.push(70);   // 'F'   EI_MAG3
+    buf = buf.push(2);    // EI_CLASS = ELFCLASS64
+    buf = buf.push(1);    // EI_DATA  = ELFDATA2LSB
+    buf = buf.push(1);    // EI_VERSION = EV_CURRENT
+    buf = buf.push(0);    // EI_OSABI = SysV
+    var p: i32 = 0;       // EI_PAD (8 bytes)
+    while (p < 8) {
+        buf = buf.push(0);
+        p = p + 1;
+    }
+    buf = elf_le16(buf, 2);                       // e_type    = ET_EXEC
+    buf = elf_le16(buf, machine);                 // e_machine
+    buf = elf_le32(buf, 1);                       // e_version = EV_CURRENT
+    buf = elf_le64(buf, entry);                   // e_entry
+    buf = elf_le64(buf, elf_eh_size() as i64);    // e_phoff (PHs follow the EH)
+    buf = elf_le64(buf, zero64);                  // e_shoff (no section headers)
+    buf = elf_le32(buf, 0);                       // e_flags
+    buf = elf_le16(buf, elf_eh_size());           // e_ehsize
+    buf = elf_le16(buf, elf_ph_size());           // e_phentsize
+    buf = elf_le16(buf, 1);                       // e_phnum
+    buf = elf_le16(buf, 0);                       // e_shentsize
+    buf = elf_le16(buf, 0);                       // e_shnum
+    buf = elf_le16(buf, 0);                       // e_shstrndx
+
+    // ---- Program header (56 bytes): one PT_LOAD covering the file ----
+    buf = elf_le32(buf, 1);                       // p_type  = PT_LOAD
+    buf = elf_le32(buf, flags);                   // p_flags
+    buf = elf_le64(buf, zero64);                  // p_offset
+    buf = elf_le64(buf, elf_base_vaddr() as i64); // p_vaddr
+    buf = elf_le64(buf, elf_base_vaddr() as i64); // p_paddr
+    buf = elf_le64(buf, total);                   // p_filesz
+    buf = elf_le64(buf, total);                   // p_memsz
+    buf = elf_le64(buf, elf_page_align() as i64); // p_align
+
+    return elf_cat(buf, body);
+}
+
+// ---- public wrappers ----
+
+// elf_static_executable wraps a flat .text blob into a runnable static
+// ELF-64 executable for arm64 Linux (R+X). Execution begins at the first
+// byte of text; the program provides its own startup and exits via a
+// syscall (no libc / crt0).
+function elf_static_executable(text: i32[]): i32[] {
+    return elf_image(text, 5, elf_em_aarch64()); // PF_R | PF_X
+}
+
+// elf_static_executable_x86 is the x86-64 counterpart of
+// elf_static_executable (R+X).
+function elf_static_executable_x86(text: i32[]): i32[] {
+    return elf_image(text, 5, elf_em_x86_64()); // PF_R | PF_X
+}
+
+// elf_static_executable_data wraps .text + a data blob (rodata followed
+// by the zero-initialised .bss globals an assembler appends) into a
+// runnable static ELF-64 executable for arm64 Linux. Both live in a
+// single PT_LOAD, with the data placed 8-byte aligned after .text. The
+// segment is mapped R+W+X: the .bss globals must be writable and a single
+// segment keeps the loader simple.
+function elf_static_executable_data(text: i32[], data: i32[]): i32[] {
+    var body: i32[] = elf_cat([], text);
+    body = elf_pad_to_8(body);
+    body = elf_cat(body, data);
+    return elf_image(body, 7, elf_em_aarch64()); // PF_R | PF_W | PF_X
+}
+
+// elf_static_executable_data_x86 is the x86-64 counterpart of
+// elf_static_executable_data (R+W+X), identical single-segment layout,
+// only e_machine differs (EM_X86_64).
+function elf_static_executable_data_x86(text: i32[], data: i32[]): i32[] {
+    var body: i32[] = elf_cat([], text);
+    body = elf_pad_to_8(body);
+    body = elf_cat(body, data);
+    return elf_image(body, 7, elf_em_x86_64()); // PF_R | PF_W | PF_X
+}
