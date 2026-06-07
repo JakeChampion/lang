@@ -2024,7 +2024,26 @@ function type_arity_diag(t: string, structs: parser.StructDecl[]): Diag[] {
 // needed): E026 when a wildcard `_` arm isn't the last arm, and E028 when
 // a variant pattern repeats one covered by an earlier arm. Recurses into
 // nested blocks + arm bodies.
-function match_diags(stmts: parser.Stmt[]): Diag[] {
+// variant_payload_count returns 1 for a payload-bearing enum variant — its
+// synthesized struct carries the `__ev` marker field — and -1 otherwise (skip
+// the E015 check). A struct WITHOUT `__ev` is ambiguous: it could be a
+// no-payload enum variant (`Nil`) OR a struct-union member (`type U = A | B`,
+// where `A(a)` binds the whole struct, not a payload), and the two aren't
+// distinguishable here, so we conservatively skip rather than risk a false
+// E015. The self-host models at most one payload per variant.
+function variant_payload_count(name: string, structs: StructSig[]): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) {
+            if (name_in(structs[i].field_names, "__ev")) { return 1; }
+            return 0 - 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
     var out: Diag[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -2046,22 +2065,32 @@ function match_diags(stmts: parser.Stmt[]): Diag[] {
                                 } else {
                                     seen = seen.push(pv.type_name);
                                 }
+                                // E015: payload-binding arity. A known variant's
+                                // binding count must equal its payload count.
+                                var pc: i32 = variant_payload_count(pv.type_name, structs);
+                                if (pc >= 0) {
+                                    var nb: i32 = pv.extra_bindings.len();
+                                    if (pv.binding.len() > 0) { nb = nb + 1; }
+                                    if (nb != pc) {
+                                        out = out.push(dg_at("E015", "variant " + pv.type_name + " has " + itoa_nn(pc) + " payload(s), got " + itoa_nn(nb) + " binding(s)", m.arms[a].line, m.arms[a].col));
+                                    }
+                                }
                             }
                         },
                     }
-                    out = append_diags(out, match_diags(m.arms[a].body));
+                    out = append_diags(out, match_diags(m.arms[a].body, structs));
                     a = a + 1;
                 }
             },
             parser.StmtIf(f) => {
-                out = append_diags(out, match_diags(f.then_body));
-                out = append_diags(out, match_diags(f.else_body));
+                out = append_diags(out, match_diags(f.then_body, structs));
+                out = append_diags(out, match_diags(f.else_body, structs));
             },
-            parser.StmtWhile(w) => { out = append_diags(out, match_diags(w.body)); },
-            parser.StmtFor(fr) => { out = append_diags(out, match_diags(fr.body)); },
+            parser.StmtWhile(w) => { out = append_diags(out, match_diags(w.body, structs)); },
+            parser.StmtFor(fr) => { out = append_diags(out, match_diags(fr.body, structs)); },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                out = append_diags(out, match_diags(one));
+                out = append_diags(out, match_diags(one, structs));
             },
             _ => { }
         }
@@ -3231,7 +3260,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         body_diags = append_diags(body_diags, dupvar_diags(mod.funcs[i].body));
         // E026 / E028: structural match-arm errors (wildcard order, dup
         // variant).
-        body_diags = append_diags(body_diags, match_diags(mod.funcs[i].body));
+        body_diags = append_diags(body_diags, match_diags(mod.funcs[i].body, structs));
         // E019: explicit type-argument arity on a generic-struct reference
         // in a parameter type.
         var pai2: i32 = 0;
@@ -3263,7 +3292,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     body_diags = append_diags(body_diags, loop_diags(mod.top_stmts, false));
     body_diags = append_diags(body_diags, dupvar_diags(mod.top_stmts));
-    body_diags = append_diags(body_diags, match_diags(mod.top_stmts));
+    body_diags = append_diags(body_diags, match_diags(mod.top_stmts, structs));
     // E019: generic-struct type-argument arity in struct field types.
     var sfi: i32 = 0;
     while (sfi < mod.structs.len()) {
