@@ -1039,13 +1039,23 @@ smallest → largest:
     `x86_gas_atoi64`) and the conditional jumps `js`/`jns`/`ja`/`jae`/`jb`/
     `jbe`/`jp` (new `x86_cc_*` codes feeding the existing jcc encoder).
     Byte-checked vs `as`/objdump.
-  - 🔧 **runtime batch, remaining (parts 2–3)** — needed before a heap
-    program (`struct`/array/map) assembles: 32-bit ALU (`movl` reg-reg /
-    load / store, `addl`/`cmpl`/`andl $imm`, `shrl $imm`), `testb`,
-    `cmovl`, `movslq`/`movzwq` (extends), then `rep movsb`/`rep stosb` +
-    `cld` (memcpy/memset) and `xorpd`. Once these land, add struct/array
-    capstone cases — the milestone is assembling arbitrary `asm.fern`
-    output (eventually the compiler's own → a native fixpoint).
+  - ✅ **slice 2q — runtime batch part 2 (rest of the integer +
+    string-op surface)**. Added 32-bit ALU (`movl` reg-reg / load / store,
+    `addl`/`subl`/`andl`/`orl`/`xorl`/`cmpl` imm+reg via `x86_alu_r32_imm32`
+    / `x86_binop_r32_r32`, `shrl $imm`), `testb` (imm + reg-reg), `cmov<cc>`
+    (`0F 40+cc`), `movslq` / `movzwq` (sign/zero-extend loads), the string
+    ops `rep stosb` / `rep movsb` + `cld` (memset/memcpy) and `xorpd` (xmm
+    zeroing), plus a 32-bit register parser. With slice 2p this covers the
+    **full instruction surface `asm.fern`'s heap/alloc/memcpy/map runtime
+    emits**. Byte-checked vs `as`/objdump (13 new cases).
+  - 🔧 **capstone harness scaling — struct/array run blocked.** The
+    encoders are proven, but the capstone embeds the program's emitted asm
+    as a Fern *string literal* in the driver, and a heap program's asm is
+    the whole runtime (huge) — compiling that driver OOMs the self-host's
+    bump heap (exit 137). Fix: have the driver `read_file` the asm at
+    runtime (a small constant driver) under `wasmtime --dir`, instead of
+    embedding it. Then struct/array/map capstone cases (and eventually the
+    compiler's own source) can run natively.
   - ⬜ also remaining: x87 float ops (`fldl`/`fstpl`, `roundsd`) for the
     transcendental math builtins, and the CLI wiring (blocked above).
 
