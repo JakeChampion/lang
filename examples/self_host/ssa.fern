@@ -125,58 +125,74 @@ pub struct BState {
     ok: boolean,
     lc: LoopCtx,
     structs: parser.StructDecl[],
+    // Per-function var-type overlay (locals / params / lambda "fn:" markers).
+    // Starts EMPTY and only grows with this function's own declarations.
     vt_names: string[],
-    vt_types: string[]
+    vt_types: string[],
+    // The shared, module-wide signature seed (every global "gfn:…" / receiver
+    // method "…#…"). Read-only and never appended to, so it is referenced by
+    // every BState rather than copied per function — get_var_type consults it
+    // only after the local overlay misses. Installing it as the overlay base
+    // (the old behaviour) made the first set_var_type copy the whole seed,
+    // an O(functions²) allocation that dominated a whole-compiler SSA build.
+    seed: Seed
 }
 
-function mk_bs(name: string, nparams: i32, nvals: i32, next_blk: i32, blocks: SBlock[], cur: SBlock, vn: string[], vv: i32[], ok: boolean, lc: LoopCtx, structs: parser.StructDecl[], vtn: string[], vtt: string[]): BState {
-    return BState { name: name, nparams: nparams, nvals: nvals, next_blk: next_blk, blocks: blocks, cur: cur, var_names: vn, var_vals: vv, ok: ok, lc: lc, structs: structs, vt_names: vtn, vt_types: vtt };
+function mk_bs(name: string, nparams: i32, nvals: i32, next_blk: i32, blocks: SBlock[], cur: SBlock, vn: string[], vv: i32[], ok: boolean, lc: LoopCtx, structs: parser.StructDecl[], vtn: string[], vtt: string[], sd: Seed): BState {
+    return BState { name: name, nparams: nparams, nvals: nvals, next_blk: next_blk, blocks: blocks, cur: cur, var_names: vn, var_vals: vv, ok: ok, lc: lc, structs: structs, vt_names: vtn, vt_types: vtt, seed: sd };
 }
 function (s: BState) with_lc(lc: LoopCtx): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 // set_var_type records (append-only) a variable's struct type for later
 // field-offset resolution; a variable's type is fixed, so this map is not
 // part of the snapshot/restore env that build_if / build_while manage.
 function (s: BState) set_var_type(name: string, ty: string): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names.append(name), s.vt_types.append(ty));
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names.append(name), s.vt_types.append(ty), s.seed);
 }
 function (s: BState) get_var_type(name: string): string {
-    var i: i32 = s.vt_names.len() - 1;   // last wins
+    // The local overlay wins (last-declared first), then the shared seed.
+    // Equivalent to the old single seed-prefixed list scanned end→start.
+    var i: i32 = s.vt_names.len() - 1;
     while (i >= 0) {
         if (s.vt_names[i] == name) { return s.vt_types[i]; }
         i = i - 1;
+    }
+    var j: i32 = s.seed.names.len() - 1;
+    while (j >= 0) {
+        if (s.seed.names[j] == name) { return s.seed.types[j]; }
+        j = j - 1;
     }
     return "";
 }
 
 // fresh allocates a new value id (read it back with cur_id()).
 function (s: BState) fresh(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals + 1, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals + 1, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 function (s: BState) cur_id(): i32 { return s.nvals - 1; }
 
 // emit appends an instruction to the current block.
 function (s: BState) emit(inst: SInst): BState {
     var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts.append(inst), term: s.cur.term, preds: s.cur.preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 
 // set_term sets the current block's terminator (does not close it).
 function (s: BState) set_term(term: STerm): BState {
     var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts, term: term, preds: s.cur.preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 
 // close_cur pushes the current block into the finished list.
 function (s: BState) close_cur(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.append(s.cur), s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.append(s.cur), s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 
 // open_block makes a fresh empty block (with the given preds) current.
 function (s: BState) open_block(id: i32, preds: i32[]): BState {
     var nb: SBlock = SBlock { id: id, insts: [], term: t_none(), preds: preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nb, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nb, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 
 function (s: BState) terminated(): boolean { return s.cur.term.kind != ""; }
@@ -191,11 +207,11 @@ function (s: BState) set_var(name: string, val: i32): BState {
                 if (j == i) { nv = nv.append(val); } else { nv = nv.append(s.var_vals[j]); }
                 j = j + 1;
             }
-            return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, nv, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+            return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, nv, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
         }
         i = i + 1;
     }
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.append(name), s.var_vals.append(val), s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.append(name), s.var_vals.append(val), s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 function (s: BState) get_var(name: string): i32 {
     var i: i32 = 0;
@@ -208,13 +224,13 @@ function (s: BState) get_var(name: string): i32 {
 // set_env replaces the whole variable environment (used to restore a
 // snapshot or install a branch's outgoing env at a merge).
 function (s: BState) set_env(vn: string[], vv: i32[]): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, vn, vv, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, vn, vv, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 function (s: BState) bump_blk(n: i32): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk + n, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk + n, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 function (s: BState) fail(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, false, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, false, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 
 // record_break / record_continue snapshot the current block id and the
@@ -1505,7 +1521,7 @@ function append_header_latches(s: BState, header_id: i32, phi_vars: i32[], phi_r
         nb = nb.append(blk);
         i = i + 1;
     }
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, nb, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, nb, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types, s.seed);
 }
 
 // build_while lowers `while (cond) { body }` to a loop:
@@ -2085,8 +2101,14 @@ pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[]
     // receiver methods "<recv>#<name>" → "m:<sym>:<ret>") is precomputed once
     // per module and installed as the initial vt here — a param / local of the
     // same name shadows it (last-wins lookup), so the per-function receiver /
-    // param types appended below win.
-    var s: BState = mk_bs(sym, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, seed.names, seed.types);
+    // param types appended below win. The seed is held read-only in its own
+    // BState field (not installed as the overlay base), so a per-function
+    // set_var_type appends to an initially-empty local list instead of copying
+    // the whole module signature table — the O(functions²) allocation that
+    // dominated a whole-compiler SSA build.
+    var vt0_names: string[] = [];
+    var vt0_types: string[] = [];
+    var s: BState = mk_bs(sym, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, vt0_names, vt0_types, seed);
     // The receiver's type, so field access / method calls on it resolve.
     if (fd.receiver_type.len() > 0) { s = s.set_var_type(fd.receiver_name, fd.receiver_type); }
     // Record struct- / string- / Map-typed params' types for field-access,
@@ -2183,9 +2205,31 @@ function rewrite_term(t: STerm, resolved: i32[]): STerm {
     return t;
 }
 
+// has_copy reports whether f contains any `copy` instruction. build_func
+// emits copies, but copy_propagate deletes them all in the first optimize
+// round, so every later round (and any already-copy-free function) can skip
+// the full O(n) rebuild entirely — a no-GC allocation saving that compounds
+// across the ~4000 functions of a whole-compiler SSA build.
+function has_copy(f: SFunc): boolean {
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            if (blk.insts[k].kind == "copy") { return true; }
+            k = k + 1;
+        }
+        bi = bi + 1;
+    }
+    return false;
+}
+
 // copy_propagate threads every operand through the chain of `copy`
 // aliases to its real definition, then deletes the copy instructions.
 function copy_propagate(f: SFunc): SFunc {
+    // No copies → nothing to propagate or delete; the rebuild would be an
+    // identity deep-copy, so return f untouched (no allocation).
+    if (!has_copy(f)) { return f; }
     // ct[i] = the value a `copy` at id i aliases, or -1 if id i is not a copy.
     var ct: i32[] = [];
     var i: i32 = 0;
@@ -2809,7 +2853,26 @@ pub function any_float(funcs: SFunc[]): boolean {
 // (its name is in ptr_ret), so compute_widths gives the call result 64-bit
 // width. Run after build_func, before optimise/emit. Leaves other insts
 // untouched.
+// any_call_named reports whether f contains a `call` whose target name is
+// in `names`. The mark_*_calls passes use it to skip their full rebuild when
+// no call needs tagging (the common case for leaf / call-free functions).
+function any_call_named(f: SFunc, names: string[]): boolean {
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            if (ins.kind == "call" && index_of_str(names, ins.str) >= 0) { return true; }
+            k = k + 1;
+        }
+        bi = bi + 1;
+    }
+    return false;
+}
+
 pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
+    if (!any_call_named(f, ptr_ret)) { return f; }
     var nblocks: SBlock[] = [];
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
@@ -2835,6 +2898,7 @@ pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
 // result as a 64-bit float (returned in xmm0). Run after mark_ptr_calls
 // (float and pointer returns are disjoint, so the marks don't collide).
 pub function mark_float_calls(f: SFunc, float_ret: string[]): SFunc {
+    if (!any_call_named(f, float_ret)) { return f; }
     var nblocks: SBlock[] = [];
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
