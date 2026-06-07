@@ -26,7 +26,8 @@ func TestWorldInterfaces(t *testing.T) {
 		"wasi:clocks/wall-clock@0.2.0", "wasi:filesystem/types@0.2.0",
 		"wasi:filesystem/preopens@0.2.0", "wasi:sockets/network@0.2.0",
 		"wasi:sockets/instance-network@0.2.0", "wasi:sockets/tcp@0.2.0",
-		"wasi:sockets/tcp-create-socket@0.2.0", "wasi:random/random@0.2.0",
+		"wasi:sockets/tcp-create-socket@0.2.0", "wasi:sockets/udp@0.2.0",
+		"wasi:sockets/udp-create-socket@0.2.0", "wasi:random/random@0.2.0",
 	}
 	if len(order) != len(wantOrder) {
 		t.Fatalf("interface count = %d, want %d (%v)", len(order), len(wantOrder), order)
@@ -53,6 +54,17 @@ func TestWorldInterfaces(t *testing.T) {
 	checkInv(t, byName, "wasi:cli/environment@0.2.0", []string{"get-arguments", "get-environment"}, nil)
 	checkInv(t, byName, "wasi:cli/exit@0.2.0", []string{"exit"}, nil)
 	checkInv(t, byName, "wasi:clocks/monotonic-clock@0.2.0", []string{"now"}, nil)
+	checkInv(t, byName, "wasi:sockets/udp-create-socket@0.2.0", []string{"create-udp-socket"}, nil)
+	checkInv(t, byName, "wasi:sockets/udp@0.2.0",
+		[]string{
+			"[method]outgoing-datagram-stream.check-send",
+			"[method]outgoing-datagram-stream.send",
+			"[method]outgoing-datagram-stream.subscribe",
+			"[method]udp-socket.start-bind",
+			"[method]udp-socket.finish-bind",
+			"[method]udp-socket.stream",
+		},
+		[]string{"incoming-datagram-stream", "outgoing-datagram-stream", "udp-socket"})
 }
 
 func checkInv(t *testing.T, by map[string]WorldInterface, name string, funcs, resources []string) {

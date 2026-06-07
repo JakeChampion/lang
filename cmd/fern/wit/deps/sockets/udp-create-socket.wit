@@ -1,0 +1,8 @@
+package wasi:sockets@0.2.0;
+
+interface udp-create-socket {
+    use network.{ip-address-family, error-code};
+    use udp.{udp-socket};
+
+    create-udp-socket: func(address-family: ip-address-family) -> result<udp-socket, error-code>;
+}
