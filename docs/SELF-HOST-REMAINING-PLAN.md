@@ -1125,11 +1125,11 @@ smallest → largest:
     darwin asm for `return 42` / `fib` / `print` through arm64_native
     compiled by the **Go x86 backend** (the CLI's backend) into valid
     Mach-O — it segfaults without the local-copy fixes, so it guards the
-    class. The backend bug itself still wants a dedicated fix; a *second*,
-    separate Go-x86 miscompile aborts string/heap-heavy programs (e.g.
-    `concat`) and currently blocks the `-target arm64-darwin` flip (the
-    in-Fern assembler is proven correct for `concat` via the wasm path, so
-    the abort is in the surrounding Go-x86 codegen, not `arm64_native`).
+    class. The backend bug itself still wants a dedicated fix. **The
+    "second Go-x86 miscompile" turned out to be a misdiagnosis** — see
+    slice 3p: the `concat` abort was a real missing-instruction gap in
+    `arm64_native` (the signed-offset `ldp` form indexing `ops[3]` out of
+    range), not a Go-x86 codegen bug. Fixing it removed the flip blocker.
     **Blocker B — instruction coverage.** The self-host `asm_arm64` emitter
     emits its *full* runtime (incl. float helpers) for **every** program, so
     even `return 42`'s darwin asm uses ~32 mnemonics `arm64_native` must
@@ -1150,6 +1150,32 @@ smallest → largest:
     to the no-clang flow; cover any feature-specific instructions the wider
     case list surfaces (the `unknown`-guard makes each a hard failure); and,
     separately, fix the Go x86 param-spread backend miscompile.
+  - ✅ **slice 3p — large-frame pair forms + register shifts + `sxtw`
+    (flip blocker removed)**: the `concat` exit-134 abort previously
+    attributed to a "second Go-x86 miscompile" was bisected (gdb
+    `catch syscall exit_group` → `arm64_gas_emit`; minimal trigger
+    `ldp x27, x28, [sp, #80]`) to a **real gap in `arm64_native`**: the
+    `ldp` handler only parsed the 4-operand post-index form
+    (`ldp Xt, Xt2, [Xn], #off`) and read `ops[3]` — but `asm_arm64` emits
+    the 3-operand **signed-offset** form `ldp Xt, Xt2, [Xn, #off]` for
+    large frames (callee-saved regs spilled/reloaded at fixed offsets after
+    one `sub/add sp`), so `ops[3]` was an out-of-range index (the bump
+    runtime's bounds check exits 134, which reads as SIGABRT). A sweep of
+    diverse programs surfaced three more gaps: the `stp Xt, Xt2, [Xn, #off]`
+    offset form was silently **mis-encoded as pre-index** (writeback); the
+    register (variable) shifts `lsl/lsr/asr Rd, Rn, Rm` (LSLV/LSRV/ASRV,
+    64- and 32-bit) were unhandled (`lsl`/`lsr` mis-routed through the
+    `#imm` encoder, `asr` wholly unknown); and `sxtw Xd, Wn` (i32→i64
+    widening, the SBFM alias) was unknown. All four fixed with byte-pinned
+    encoders (`arm64_stp_off`/`arm64_ldp_off`, `arm64_lslv`/`arm64_lsrv`/
+    `arm64_asrv`, `arm64_sxtw`) and added to the known-mnemonic guard.
+    Byte-checked vs llvm-mc by **`TestSelfHostArm64OffsetPairGas`**;
+    guarded end-to-end by **`TestSelfHostArm64NativeViaGoBackend`** (now
+    spans `concat` / `i64math` / `bitwise`, which exercise these forms and
+    previously aborted). This unblocks the `-target arm64-darwin` flip —
+    the in-Fern assembler now produces a valid Mach-O for the real
+    `asm_arm64` output of every program in the sweep under the CLI's Go x86
+    backend, with zero unknowns and no bounds aborts.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

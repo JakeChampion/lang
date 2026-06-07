@@ -27,10 +27,15 @@ import (
 // segfaults. Here we assert the in-Fern assembler + Mach-O writer produce a
 // valid arm64 MH_EXECUTE for real compiler output under the Go x86 backend.
 //
-// Scoped to the programs that assemble cleanly under the Go x86 backend
-// today; heap/string-heavy programs (e.g. string concat) hit a *separate*
-// Go x86 backend miscompile in the surrounding driver and are out of scope
-// until that is fixed — see SELF-HOST-REMAINING-PLAN.md (slice 3o).
+// The cases deliberately span the instruction forms a real compiler emits:
+// string concat (the signed-offset `stp/ldp [sp, #off]` large-frame forms),
+// i64 math (`sxtw`), and bitwise ops (the register `lsl/lsr/asr` shifts).
+// Those forms were originally unhandled by arm64_native — the `ldp` offset
+// form indexed ops[3] out of range (a bounds abort that *looked* like a Go
+// x86 backend miscompile but was a real assembler gap), `stp [sp,#off]` was
+// silently mis-encoded as pre-index, and the register shifts / `sxtw` were
+// missing — see SELF-HOST-REMAINING-PLAN.md (slice 3p) and the byte-pinned
+// TestSelfHostArm64OffsetPairGas.
 func TestSelfHostArm64NativeViaGoBackend(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -56,6 +61,9 @@ func TestSelfHostArm64NativeViaGoBackend(t *testing.T) {
 		{"exit42", `function main(): i32 { return 42; }`},
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(10); }`},
 		{"print", `function main(): i32 { print("hi"); return 0; }`},
+		{"concat", `function main(): i32 { var s: string = "a"; s = s + "b"; print(s); return 0; }`},
+		{"i64math", `function main(): i32 { var a: i64 = 1000000; var b: i64 = 7; var c: i64 = a*b + a/b; return (c % 256) as i32; }`},
+		{"bitwise", `function main(): i32 { var a: i32 = 240; var b: i32 = 15; var c: i32 = (a & b) | (a << 2); var d: i32 = c >> 1; return d % 256; }`},
 	}
 
 	for _, c := range cases {
