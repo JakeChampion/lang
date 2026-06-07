@@ -173,1040 +173,15 @@ function emit_fn_value(name: string, s: asmcore.EmitState): asmcore.EmitState {
 // emit_call lowers a parser.ExprCall (the `c` payload). Split out
 // of emit_expr's match so the dispatch reads as a table and this
 // arm — the largest by far — is independently navigable.
-function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState {
-    var name: string = "";
-    // Inline-lambda call (IIFE), e.g. an if-expression desugar
-    // `(function(): T { … })()`. Emit the closure box, push the
-    // args above it, then invoke via the closure convention (box
-    // ptr in x9, args at +16, +32, …) — same as the local-closure
-    // path below, but the box comes from the inline lambda rather
-    // than a frame slot.
-    match (c.callee) {
-        parser.ExprLambda(_) => {
-            s = emit_expr(c.callee, s);          // push closure box
-            var la: i32 = c.args.len() - 1;
-            while (la >= 0) {
-                s = emit_expr(c.args[la], s);
-                la = la - 1;
-            }
-            s = s.write("    ldr x9, [sp, #" + asmcore.i32_to_string(c.args.len() * 16) + "]\n"); // box ptr
-            s = s.write("    ldr x2, [x9]\n");
-            s = s.write("    blr x2\n");
-            s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n"); // pop args + box
-            s = s.write("    str x0, [sp, #-16]!\n");
-            return s;
-        },
-        _ => {}
-    }
-    match (c.callee) {
-        parser.ExprIdent(id) => { name = id.name; },
-        parser.ExprFieldAccess(fa) => {
-            // Reader.read_chunk(n) — read up to n bytes from
-            // the receiver fd; Some(string) on a non-empty
-            // read, None at EOF. Receiver is a Reader (fd).
-            if (fa.field == "read_chunk" && c.args.len() == 1) {
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");   // n
-                s = s.write("    ldr x0, [sp], #16\n");   // fd
-                s = s.write("    bl __fern_reader_read_chunk\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                return s;
-            }
-            // Reader.close() — close the receiver fd; always
-            // returns None (the IoError arm is unused here).
-            if (fa.field == "close" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");   // fd
-                s = s.write("    bl __fern_reader_close\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                return s;
-            }
-            // Primitive-receiver fast path: see
-            // asm.fern for rationale.
-            var prim_recv: asmcore.Ty = asmcore.infer_expr_type(fa.obj, s);
-            // Map methods (string-keyed). set → map; get →
-            // Option[V]; has → bool; len → i32. Mirror of
-            // asm.fern's x86-64 dispatch.
-            if (asmcore.is_map(prim_recv) && (fa.field == "insert") && c.args.len() == 2) {
-                var kk_set: string = "0";
-                if (asmcore.map_key_is_i32(prim_recv)) { kk_set = "1"; }
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = emit_expr(c.args[1], s);
-                s = s.write("    ldr x2, [sp], #16\n");   // v
-                s = s.write("    ldr x1, [sp], #16\n");   // k
-                s = s.write("    ldr x0, [sp], #16\n");   // mapbox
-                s = s.write("    mov x3, #" + kk_set + "\n");   // keykind
-                s = s.write("    bl __fern_map_set\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                s = s.mark_str_eq();
-                s = s.mark_arr_push();
-                return s;
-            }
-            // m.without(k) → tuple (map, existed). See
-            // the x86-64 mirror in asm.fern for the contract.
-            if (asmcore.is_map(prim_recv) && (fa.field == "without") && c.args.len() == 1) {
-                var kk_del: string = "0";
-                if (asmcore.map_key_is_i32(prim_recv)) { kk_del = "1"; }
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");   // k
-                s = s.write("    ldr x0, [sp], #16\n");   // mapbox
-                s = s.write("    mov x2, #" + kk_del + "\n");   // keykind
-                s = s.write("    bl __fern_map_delete\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                s = s.mark_str_eq();
-                s = s.mark_arr_push();
-                return s;
-            }
-            if (asmcore.is_map(prim_recv) && fa.field == "get" && c.args.len() == 1) {
-                var kk_get: string = "0";
-                if (asmcore.map_key_is_i32(prim_recv)) { kk_get = "1"; }
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");   // k
-                s = s.write("    ldr x0, [sp], #16\n");   // mapbox
-                s = s.write("    mov x2, #" + kk_get + "\n");   // keykind
-                s = s.write("    bl __fern_map_get\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                s = s.mark_str_eq();
-                s = s.mark_arr_push();
-                return s;
-            }
-            // m.get_or(k, default) — see asm.fern. Inline as
-            // __fern_map_get + Some/None branch on the tag.
-            if (asmcore.is_map(prim_recv) && fa.field == "get_or" && c.args.len() == 2) {
-                var kk_or: string = "0";
-                if (asmcore.map_key_is_i32(prim_recv)) { kk_or = "1"; }
-                var or_lbl: i32 = s.label_n;
-                s = asmcore.EmitState { ...s, label_n: s.label_n + 2 };
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = emit_expr(c.args[1], s);
-                // stack: [default, k, mapbox] (top down).
-                s = s.write("    ldr x3, [sp], #16\n");   // default
-                s = s.write("    ldr x1, [sp], #16\n");   // k
-                s = s.write("    ldr x0, [sp], #16\n");   // mapbox
-                s = s.write("    str x3, [sp, #-16]!\n"); // save default
-                s = s.write("    mov x2, #" + kk_or + "\n");
-                s = s.write("    bl __fern_map_get\n");   // x0 = Option box
-                s = s.write("    ldr x3, [sp], #16\n");   // restore default
-                s = s.write("    ldr x4, [x0]\n");
-                s = s.write("    cbnz x4, .Lgo_def_" + asmcore.i32_to_string(or_lbl) + "\n");
-                s = s.write("    ldr x0, [x0, #8]\n");
-                s = s.write("    b .Lgo_end_" + asmcore.i32_to_string(or_lbl) + "\n");
-                s = s.write(".Lgo_def_" + asmcore.i32_to_string(or_lbl) + ":\n");
-                s = s.write("    mov x0, x3\n");
-                s = s.write(".Lgo_end_" + asmcore.i32_to_string(or_lbl) + ":\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                s = s.mark_str_eq();
-                s = s.mark_arr_push();
-                return s;
-            }
-            if (asmcore.is_map(prim_recv) && fa.field == "has" && c.args.len() == 1) {
-                var kk_has: string = "0";
-                if (asmcore.map_key_is_i32(prim_recv)) { kk_has = "1"; }
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");   // k
-                s = s.write("    ldr x0, [sp], #16\n");   // mapbox
-                s = s.write("    mov x2, #" + kk_has + "\n");   // keykind
-                s = s.write("    bl __fern_map_has\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_str_eq();
-                s = s.mark_arr_push();
-                return s;
-            }
-            if (asmcore.is_map(prim_recv) && fa.field == "len" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    ldr x0, [x0]\n");        // keys arr
-                s = s.write("    ldr x0, [x0]\n");        // keys.len
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                s = s.mark_str_eq();
-                s = s.mark_arr_push();
-                return s;
-            }
-            // m.keys() / m.values() — see asm.fern; the box holds
-            // the parallel arrays at offset 0/8.
-            if (asmcore.is_map(prim_recv) && fa.field == "keys" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    ldr x0, [x0]\n");        // keys arr
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            if (asmcore.is_map(prim_recv) && fa.field == "values" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    ldr x0, [x0, #8]\n");    // values arr
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            // Map iteration — mirror of asm.fern. Iterator box
-            // [map_ptr @0, cursor @8] over the parallel arrays.
-            if (asmcore.is_map(prim_recv) && fa.field == "iter" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);                 // map ptr
-                s = s.write("    mov x0, #16\n");
-                s = s.write("    bl __fern_alloc\n");
-                s = s.mark_heap();
-                s = s.write("    ldr x1, [sp], #16\n");   // map ptr
-                s = s.write("    str x1, [x0]\n");        // map @0
-                s = s.write("    mov x1, #0\n");
-                s = s.write("    str x1, [x0, #8]\n");    // cursor @8
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            if (asmcore.is_mapiter(prim_recv) && fa.field == "has_next" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");   // iter
-                s = s.write("    ldr x1, [x0, #8]\n");    // cursor
-                s = s.write("    ldr x2, [x0]\n");        // map
-                s = s.write("    ldr x2, [x2]\n");        // keys arr
-                s = s.write("    ldr x2, [x2]\n");        // keys.len
-                s = s.write("    cmp x1, x2\n");
-                s = s.write("    cset x0, lt\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            if (asmcore.is_mapiter(prim_recv) && fa.field == "key" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    ldr x1, [x0, #8]\n");    // cursor
-                s = s.write("    ldr x2, [x0]\n");        // map
-                s = s.write("    ldr x2, [x2]\n");        // keys arr
-                s = s.write("    add x1, x1, #1\n");
-                s = s.write("    ldr x0, [x2, x1, lsl #3]\n");  // keys[cursor+1]
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            if (asmcore.is_mapiter(prim_recv) && fa.field == "value" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    ldr x1, [x0, #8]\n");    // cursor
-                s = s.write("    ldr x2, [x0]\n");        // map
-                s = s.write("    ldr x2, [x2, #8]\n");    // values arr
-                s = s.write("    add x1, x1, #1\n");
-                s = s.write("    ldr x0, [x2, x1, lsl #3]\n");  // values[cursor+1]
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            if (asmcore.is_mapiter(prim_recv) && fa.field == "advance" && c.args.len() == 0) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");   // iter
-                s = s.write("    ldr x1, [x0, #8]\n");    // cursor
-                s = s.write("    add x1, x1, #1\n");
-                s = s.write("    str x1, [x0, #8]\n");
-                s = s.write("    mov x0, #0\n");
-                s = s.write("    str x0, [sp, #-16]!\n"); // dummy result
-                return s;
-            }
-            // Built-in `.to_string()` on i32 and string —
-            // i32 routes to the existing runtime helper,
-            // string returns the receiver unchanged. The
-            // generic path below would chase a
-            // `__fn_i32.to_string` symbol that no FuncDecl
-            // emits, producing a link error.
-            if (fa.field == "to_string" && c.args.len() == 0
-                    && (asmcore.is_int_tag(prim_recv) || asmcore.ty_is_string(prim_recv))) {
-                s = emit_expr(fa.obj, s);
-                if (asmcore.is_int_tag(prim_recv)) {
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_i32_to_string\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_i32_to_string();
-                }
-                return s;
-            }
-            // `.to_string()` on f64 / f32 — 8-byte IEEE-754 bits
-            // routed to the fixed-precision runtime helper (15
-            // trimmed fractional digits, matching std/float).
-            // mark_heap because the helper allocates.
-            if (fa.field == "to_string" && c.args.len() == 0
-                    && asmcore.ty_is_f64(prim_recv)) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_f64_to_string\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                return s;
-            }
-            // Built-in `.len()` / `.is_empty()` on
-            // strings and arrays. Inline — they read
-            // the length word directly.
-            if (fa.field == "len" && c.args.len() == 0
-                    && (asmcore.ty_is_string(prim_recv)
-                        || asmcore.is_int_array_tag(prim_recv)
-                        || asmcore.ty_is_array_string(prim_recv)
-                        || asmcore.ty_is_array(prim_recv))) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                if (asmcore.ty_is_string(prim_recv)) {
-                    s = s.write("    ldr x0, [x0, #8]\n");
-                } else {
-                    s = s.write("    ldr x0, [x0]\n");
-                }
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            if (fa.field == "is_empty" && c.args.len() == 0
-                    && (asmcore.ty_is_string(prim_recv)
-                        || asmcore.is_int_array_tag(prim_recv)
-                        || asmcore.ty_is_array_string(prim_recv)
-                        || asmcore.ty_is_array(prim_recv))) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                if (asmcore.ty_is_string(prim_recv)) {
-                    s = s.write("    ldr x0, [x0, #8]\n");
-                } else {
-                    s = s.write("    ldr x0, [x0]\n");
-                }
-                s = s.write("    cmp x0, #0\n");
-                s = s.write("    cset x0, eq\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            // Built-in i32 numeric methods. Inline — no
-            // runtime helper needed.
-            if (asmcore.ty_is_i32(prim_recv)) {
-                if (fa.field == "abs" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    // cneg: conditional negate. If x0 < 0
-                    // set x0 = -x0, else keep.
-                    s = s.write("    cmp x0, #0\n");
-                    s = s.write("    cneg x0, x0, lt\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "min" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    cmp x0, x1\n");
-                    s = s.write("    csel x0, x0, x1, lt\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "gcd" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");   // other
-                    s = s.write("    ldr x0, [sp], #16\n");   // n
-                    s = s.write("    bl __fern_i32_gcd\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_heap();
-                    return s;
-                }
-                if (fa.field == "lcm" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");   // other
-                    s = s.write("    ldr x0, [sp], #16\n");   // n
-                    s = s.write("    bl __fern_i32_lcm\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_heap();
-                    return s;
-                }
-                if (fa.field == "max" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    cmp x0, x1\n");
-                    s = s.write("    csel x0, x0, x1, gt\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "clamp" && c.args.len() == 2) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = emit_expr(c.args[1], s);
-                    s = s.write("    ldr x2, [sp], #16\n");   // hi
-                    s = s.write("    ldr x1, [sp], #16\n");   // lo
-                    s = s.write("    ldr x0, [sp], #16\n");   // n
-                    // n = max(n, lo) — keep n if n > lo, else lo
-                    s = s.write("    cmp x0, x1\n");
-                    s = s.write("    csel x0, x0, x1, gt\n");
-                    // n = min(n, hi) — keep n if n < hi, else hi
-                    s = s.write("    cmp x0, x2\n");
-                    s = s.write("    csel x0, x0, x2, lt\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "pow" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_i32_pow\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_i32_pow();
-                    return s;
-                }
-                if (fa.field == "sign" && c.args.len() == 0) {
-                    // sign(n) = 1 if n>0, -1 if n<0, 0 if 0.
-                    // Computed as `(n>0) - (n<0)`.
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    cmp x0, #0\n");
-                    s = s.write("    cset x1, gt\n");
-                    s = s.write("    cset x2, lt\n");
-                    s = s.write("    sub x0, x1, x2\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_even" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    and x0, x0, #1\n");
-                    s = s.write("    eor x0, x0, #1\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_odd" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    and x0, x0, #1\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_zero" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    cmp x0, #0\n");
-                    s = s.write("    cset x0, eq\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_positive" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    cmp x0, #0\n");
-                    s = s.write("    cset x0, gt\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_negative" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    cmp x0, #0\n");
-                    s = s.write("    cset x0, lt\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                // ASCII byte-classification + case methods
-                // (mirror std/i32). `lo<=b<=hi` → `sub #lo;
-                // cmp #(hi-lo); cset ls` (unsigned); case ops
-                // use csel.
-                if (fa.field == "is_digit" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    sub x0, x0, #48\n");
-                    s = s.write("    cmp x0, #9\n");
-                    s = s.write("    cset x0, ls\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_lower" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    sub x0, x0, #97\n");
-                    s = s.write("    cmp x0, #25\n");
-                    s = s.write("    cset x0, ls\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_upper" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    sub x0, x0, #65\n");
-                    s = s.write("    cmp x0, #25\n");
-                    s = s.write("    cset x0, ls\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if ((fa.field == "is_alpha" || fa.field == "is_letter") && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x1, [sp], #16\n");   // b
-                    s = s.write("    sub x0, x1, #65\n");
-                    s = s.write("    cmp x0, #25\n");
-                    s = s.write("    cset x2, ls\n");          // upper
-                    s = s.write("    sub x0, x1, #97\n");
-                    s = s.write("    cmp x0, #25\n");
-                    s = s.write("    cset x0, ls\n");          // lower
-                    s = s.write("    orr x0, x0, x2\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_alnum" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x1, [sp], #16\n");   // b
-                    s = s.write("    sub x0, x1, #48\n");
-                    s = s.write("    cmp x0, #9\n");
-                    s = s.write("    cset x2, ls\n");          // digit
-                    s = s.write("    sub x0, x1, #65\n");
-                    s = s.write("    cmp x0, #25\n");
-                    s = s.write("    cset x3, ls\n");          // upper
-                    s = s.write("    orr x2, x2, x3\n");
-                    s = s.write("    sub x0, x1, #97\n");
-                    s = s.write("    cmp x0, #25\n");
-                    s = s.write("    cset x0, ls\n");          // lower
-                    s = s.write("    orr x0, x0, x2\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "is_hex_digit" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x1, [sp], #16\n");   // b
-                    s = s.write("    sub x0, x1, #48\n");
-                    s = s.write("    cmp x0, #9\n");
-                    s = s.write("    cset x2, ls\n");          // 0-9
-                    s = s.write("    sub x0, x1, #65\n");
-                    s = s.write("    cmp x0, #5\n");
-                    s = s.write("    cset x3, ls\n");          // A-F
-                    s = s.write("    orr x2, x2, x3\n");
-                    s = s.write("    sub x0, x1, #97\n");
-                    s = s.write("    cmp x0, #5\n");
-                    s = s.write("    cset x0, ls\n");          // a-f
-                    s = s.write("    orr x0, x0, x2\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "to_lower" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    sub x1, x0, #65\n");
-                    s = s.write("    cmp x1, #25\n");           // uppercase?
-                    s = s.write("    add x2, x0, #32\n");
-                    s = s.write("    csel x0, x2, x0, ls\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "to_upper" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    sub x1, x0, #97\n");
-                    s = s.write("    cmp x1, #25\n");           // lowercase?
-                    s = s.write("    sub x2, x0, #32\n");
-                    s = s.write("    csel x0, x2, x0, ls\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                // to_ascii_string() — a 1-byte string from the
-                // byte value (no range check; valid bytes).
-                if (fa.field == "to_ascii_string" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    // x4/x5 survive __fern_alloc (it uses x0-x3).
-                    s = s.write("    ldr x4, [sp], #16\n");   // byte
-                    s = s.write("    mov x0, #1\n");
-                    s = s.write("    bl __fern_alloc\n");
-                    s = s.write("    strb w4, [x0]\n");
-                    s = s.write("    mov x5, x0\n");          // data ptr
-                    s = s.write("    mov x0, #16\n");
-                    s = s.write("    bl __fern_alloc\n");
-                    s = s.write("    str x5, [x0]\n");        // data@0
-                    s = s.write("    mov x1, #1\n");
-                    s = s.write("    str x1, [x0, #8]\n");    // len@8
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_heap();
-                    return s;
-                }
-            }
-            // Built-in `.append(x)` on arrays — append a
-            // single 8-byte payload (i32 or string-box
-            // ptr; both are 8 bytes in the operand-stack
-            // representation). Returns a fresh array.
-            if (fa.field == "append" && c.args.len() == 1
-                    && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_arr_push\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_arr_push();
-                return s;
-            }
-            // Built-in `.reverse()` on arrays — returns
-            // a fresh array with elements in opposite
-            // order. Same 8-byte payload assumption as
-            // `.push` / `.slice`; works for both i32[]
-            // and string[].
-            if (fa.field == "reverse" && c.args.len() == 0
-                    && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_arr_reverse\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_arr_reverse();
-                return s;
-            }
-            // Built-in `.concat(other)` on arrays — fresh
-            // array of length `a.len + b.len`. Caller is
-            // responsible for both arrays being the same
-            // element type (the helper just copies 8-byte
-            // payloads, so layout-compatible types — i32[]
-            // and string[] — both work).
-            if (fa.field == "concat" && c.args.len() == 1
-                    && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_arr_concat\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_arr_concat();
-                return s;
-            }
-            // Built-in `.first()` / `.last()` on arrays —
-            // O(1) element access. UB on empty arrays.
-            if (fa.field == "first" && c.args.len() == 0
-                    && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    ldr x0, [x0, #8]\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            if (fa.field == "last" && c.args.len() == 0
-                    && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    ldr x1, [x0]\n");
-                s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            // Built-in `.join(sep)` on string arrays —
-            // concatenates all elements with `sep` between
-            // them. Empty array → empty string. Single
-            // element → that element.
-            if (fa.field == "join" && c.args.len() == 1
-                    && asmcore.ty_is_array_string(prim_recv)) {
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_arr_str_join\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_arr_str_join();
-                return s;
-            }
-            // Built-in `.index_of(s)` / `.contains(s)` on
-            // string arrays — uses `__fern_str_eq` per
-            // element so content equality matches even
-            // when the .rodata slots differ.
-            if ((fa.field == "index_of" || fa.field == "contains")
-                    && c.args.len() == 1 && asmcore.ty_is_array_string(prim_recv)) {
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_arr_str_index_of\n");
-                if (fa.field == "contains") {
-                    s = s.write("    cmp x0, #0\n");
-                    s = s.write("    cset x0, ge\n");
-                }
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_arr_str_index_of();
-                return s;
-            }
-            // Built-in `.sum()` on i32 arrays — returns
-            // the sum of all elements (0 if empty).
-            if (fa.field == "sum" && c.args.len() == 0
-                    && asmcore.ty_is_array_i32(prim_recv)) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_arr_i32_sum\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_arr_i32_sum();
-                return s;
-            }
-            // Built-in `.product()` on i32 arrays —
-            // returns the product of all elements (1 if
-            // empty, matching the empty-product identity).
-            if (fa.field == "product" && c.args.len() == 0
-                    && asmcore.ty_is_array_i32(prim_recv)) {
-                s = emit_expr(fa.obj, s);
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_arr_i32_product\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_arr_i32_product();
-                return s;
-            }
-            // Built-in `.min()` / `.max()` on i32 arrays →
-            // Option[i32]: Some(extremum) when non-empty, None on
-            // an empty array. Mirror of asm.fern.
-            if ((fa.field == "min" || fa.field == "max")
-                    && c.args.len() == 0 && asmcore.ty_is_array_i32(prim_recv)) {
-                s = emit_expr(fa.obj, s);
-                var mm_none: asmcore.LabelOut = asmcore.fresh_label(s);
-                s = mm_none.state;
-                var mm_end: asmcore.LabelOut = asmcore.fresh_label(s);
-                s = mm_end.state;
-                s = s.write("    ldr x0, [sp], #16\n");   // arr
-                s = s.write("    ldr x1, [x0]\n");         // len
-                s = s.write("    cbz x1, " + mm_none.name + "\n");
-                if (fa.field == "min") {
-                    s = s.write("    bl __fern_arr_i32_min\n");
-                } else {
-                    s = s.write("    bl __fern_arr_i32_max\n");
-                }
-                s = s.write("    str x0, [sp, #-16]!\n");  // save extremum
-                s = s.write("    mov x0, #16\n");
-                s = s.write("    bl __fern_alloc\n");
-                s = s.write("    ldr x1, [sp], #16\n");
-                s = s.write("    mov x2, #0\n");
-                s = s.write("    str x2, [x0]\n");         // Some tag
-                s = s.write("    str x1, [x0, #8]\n");     // payload
-                s = s.write("    b " + mm_end.name + "\n");
-                s = s.write(mm_none.name + ":\n");
-                s = s.write("    mov x0, #16\n");
-                s = s.write("    bl __fern_alloc\n");
-                s = s.write("    mov x1, #1\n");
-                s = s.write("    str x1, [x0]\n");         // None tag
-                s = s.write(mm_end.name + ":\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_heap();
-                s = s.mark_arr_i32_min_max();
-                return s;
-            }
-            // Built-in `.index_of(x)` / `.contains(x)` on
-            // i32 arrays — linear search for `x`. Returns
-            // the index for `index_of`, the >= 0 test for
-            // `contains`. Strings use a separate path
-            // (above) that calls `__fern_str_eq`; i32
-            // just uses register compare.
-            if ((fa.field == "index_of" || fa.field == "contains")
-                    && c.args.len() == 1 && asmcore.ty_is_array_i32(prim_recv)) {
-                s = emit_expr(fa.obj, s);
-                s = emit_expr(c.args[0], s);
-                s = s.write("    ldr x1, [sp], #16\n");
-                s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __fern_arr_i32_index_of\n");
-                if (fa.field == "contains") {
-                    s = s.write("    cmp x0, #0\n");
-                    s = s.write("    cset x0, ge\n");
-                }
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.mark_arr_i32_index_of();
-                return s;
-            }
-            // Built-in string methods that mirror existing
-            // free-function builtins. The free-function
-            // dispatch below already knows the assembly
-            // — we just route receiver-first form into
-            // the same emit shape so users can write
-            // `s.split(",")` instead of `str_split(s, ",")`.
-            if (asmcore.ty_is_string(prim_recv)) {
-                if (fa.field == "chars" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_chars\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_chars();
-                    return s;
-                }
-                if (fa.field == "bytes" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_bytes\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_bytes();
-                    return s;
-                }
-                // `s.as_bytes()` — see asm.fern. Returns the
-                // same fresh u8[] as bytes() (no zero-copy slice
-                // in the slot-array representation).
-                if (fa.field == "as_bytes" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_bytes\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_bytes();
-                    return s;
-                }
-                if (fa.field == "reverse" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_reverse\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_reverse();
-                    return s;
-                }
-                if (fa.field == "first_byte" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    ldr x0, [x0]\n");
-                    s = s.write("    ldrb w0, [x0]\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "last_byte" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    ldr x1, [x0, #8]\n");
-                    s = s.write("    ldr x0, [x0]\n");
-                    s = s.write("    sub x1, x1, #1\n");
-                    s = s.write("    ldrb w0, [x0, x1]\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
-                }
-                if (fa.field == "lines" && c.args.len() == 0) {
-                    // `s.lines()` — split on '\n', drop trailing
-                    // empty when s is empty or ends with '\n'.
-                    // See asm.fern for rationale.
-                    s = emit_expr(fa.obj, s);
-                    // Compute trim_flag (0 or 1) into x10:
-                    //   trim = (s.len == 0) || (s[s.len - 1] == '\n')
-                    s = s.write("    ldr x9, [sp]\n");          // peek s box
-                    s = s.write("    ldr x10, [x9]\n");         // s data
-                    s = s.write("    ldr x11, [x9, #8]\n");     // s len
-                    s = s.write("    mov x12, #1\n");           // default trim = 1
-                    s = s.write("    cbz x11, .Llines_have_" + asmcore.i32_to_string(s.label_n) + "\n");
-                    s = s.write("    sub x13, x11, #1\n");
-                    s = s.write("    ldrb w14, [x10, x13]\n");
-                    s = s.write("    cmp w14, #10\n");
-                    s = s.write("    cset x12, eq\n");
-                    s = s.write(".Llines_have_" + asmcore.i32_to_string(s.label_n) + ":\n");
-                    s = s.write("    str x12, [sp, #-16]!\n");  // save trim_flag
-                    var ln_lbl: i32 = s.label_n;
-                    s = asmcore.EmitState { ...s, label_n: s.label_n + 1 };
-                    var lo_ln: asmcore.StringLitOut = asmcore.add_string_lit(s, "\n");
-                    s = lo_ln.state;
-                    s = s.write("    mov x0, #16\n");
-                    s = s.write("    bl __fern_alloc\n");
-                    s = s.write("    adrp x1, .S" + asmcore.i32_to_string(lo_ln.idx) + "\n");
-                    s = s.write("    add x1, x1, :lo12:.S" + asmcore.i32_to_string(lo_ln.idx) + "\n");
-                    s = s.write("    str x1, [x0]\n");
-                    s = s.write("    mov x1, #1\n");
-                    s = s.write("    str x1, [x0, #8]\n");
-                    s = s.write("    mov x1, x0\n");            // delim → x1
-                    // stack: [trim_flag, s_box]. Pop trim, pop s, push trim, call.
-                    s = s.write("    ldr x9, [sp], #16\n");     // trim_flag
-                    s = s.write("    ldr x0, [sp], #16\n");     // s box
-                    s = s.write("    str x9, [sp, #-16]!\n");   // re-save trim
-                    s = s.write("    bl __fern_str_split\n");   // x0 = array
-                    s = s.write("    ldr x9, [sp], #16\n");     // restore trim
-                    s = s.write("    ldr x10, [x0]\n");
-                    s = s.write("    sub x10, x10, x9\n");
-                    s = s.write("    str x10, [x0]\n");          // array.len -= trim
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    s = s.mark_heap();
-                    return s;
-                }
-                if (fa.field == "split" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_split\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    s = s.mark_heap();
-                    return s;
-                }
-                if (fa.field == "contains" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_index_of\n");
-                    s = s.write("    cmp x0, #0\n");
-                    s = s.write("    cset x0, ge\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    return s;
-                }
-                if (fa.field == "starts_with" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_starts_with\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    return s;
-                }
-                if (fa.field == "ends_with" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_ends_with\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    return s;
-                }
-                if (fa.field == "index_of" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_index_of\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    return s;
-                }
-                if (fa.field == "trim" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_trim\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    s = s.mark_heap();
-                    return s;
-                }
-                if (fa.field == "to_upper" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_to_upper\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    s = s.mark_heap();
-                    return s;
-                }
-                if (fa.field == "to_lower" && c.args.len() == 0) {
-                    s = emit_expr(fa.obj, s);
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_to_lower\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    s = s.mark_heap();
-                    return s;
-                }
-                if (fa.field == "repeat" && c.args.len() == 1) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_repeat\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    s = s.mark_heap();
-                    return s;
-                }
-                if (fa.field == "replace" && c.args.len() == 2) {
-                    s = emit_expr(fa.obj, s);
-                    s = emit_expr(c.args[0], s);
-                    s = emit_expr(c.args[1], s);
-                    s = s.write("    ldr x2, [sp], #16\n");
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_replace\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.mark_str_search();
-                    s = s.mark_heap();
-                    return s;
-                }
-            }
-            if (asmcore.ty_is_string(prim_recv) || asmcore.is_int_tag(prim_recv) || asmcore.ty_is_bool(prim_recv) || asmcore.ty_is_f64(prim_recv)) {
-                var pmi: i32 = c.args.len() - 1;
-                while (pmi >= 0) {
-                    s = emit_expr(c.args[pmi], s);
-                    pmi = pmi - 1;
-                }
-                s = emit_expr(fa.obj, s);
-                s = s.write("    bl __fn_" + asmcore.sanitize_label(asmcore.ty_tag(prim_recv) + "." + fa.field) + "\n");
-                s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
-            }
-            // Method call mirror of asm.fern. Push args
-            // right-to-left then push the receiver, so
-            // receiver lands at +16(x29) and arg[0] at
-            // +32(x29) in the callee. Dispatch on the
-            // receiver's shape pointer.
-            var mi: i32 = c.args.len() - 1;
-            while (mi >= 0) {
-                // Mirror the free-function `fn`-arg boxing.
-                // See asm.fern for rationale.
-                var fvn: string = asmcore.arg_fn_value_name(c.args[mi], fa.field, mi, s);
-                if (fvn.len() > 0) { s = emit_fn_value(fvn, s); }
-                else { s = emit_expr(c.args[mi], s); }
-                mi = mi - 1;
-            }
-            s = emit_expr(fa.obj, s);
-            // Peek receiver pointer (top of stack).
-            s = s.write("    ldr x0, [sp]\n");
-            s = s.write("    ldr x1, [x0]\n");
-            var m_end_lbl: i32 = s.label_n;
-            s = asmcore.EmitState { ...s, label_n: s.label_n + 1 };
-            var fdi: i32 = 0;
-            while (fdi < s.funcs.len()) {
-                var fd_m: parser.FuncDecl = s.funcs[fdi];
-                // Struct / enum-variant receiver types only — an
-                // enum-type receiver method is handled in the
-                // fallback below. See the x86-64 backend.
-                if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
-                        && asmcore.is_struct_decl_name(asmcore.base_type_name(fd_m.receiver_type), s)) {
-                    var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, asmcore.base_type_name(fd_m.receiver_type));
-                    s = arm_lit.state;
-                    var next_l: asmcore.LabelOut = asmcore.fresh_label(s);
-                    s = next_l.state;
-                    s = s.write("    adrp x2, .S" + asmcore.i32_to_string(arm_lit.idx) + "\n");
-                    s = s.write("    add x2, x2, :lo12:.S" + asmcore.i32_to_string(arm_lit.idx) + "\n");
-                    s = s.write("    cmp x1, x2\n");
-                    s = s.write("    b.ne " + next_l.name + "\n");
-                    s = s.write("    bl __fn_" + asmcore.sanitize_label(asmcore.base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
-                    s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.write("    b .Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + "\n");
-                    s = s.write(next_l.name + ":\n");
-                }
-                fdi = fdi + 1;
-            }
-            // Enum-receiver fallback: the variant value matched no
-            // struct arm; call the enum method (its `match (self)`
-            // dispatches on the variant). First such method wins.
-            var enum_recv: string = "";
-            var efi: i32 = 0;
-            while (efi < s.funcs.len()) {
-                var efd: parser.FuncDecl = s.funcs[efi];
-                if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
-                        && asmcore.is_enum_recv(asmcore.base_type_name(efd.receiver_type), s)) {
-                    enum_recv = asmcore.base_type_name(efd.receiver_type);
-                }
-                efi = efi + 1;
-            }
-            if (enum_recv.len() > 0) {
-                s = s.write("    bl __fn_" + asmcore.sanitize_label(enum_recv + "." + fa.field) + "\n");
-                s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.write(".Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + ":\n");
-                return s;
-            }
-            s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n");
-            s = s.write("    mov x0, #-1\n");
-            s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.write(".Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + ":\n");
-            return s;
-        },
-        _ => {
-            s = s.write("    // call target not ident\n");
-            s = s.write("    mov x0, #0\n");
-            s = s.write("    str x0, [sp, #-16]!\n");
-            return s;
-        }
-    }
-    // print(str_literal) — builtin lowering to write(1,
-    // ptr, len). Compile-time we already know the
-    // literal's bytes, so we intern it in `.rodata`,
-    // load its address via adrp+add, set the length, and
-    // syscall directly.
-    // len(arr) — load the length prefix at offset 0.
-    // Same semantics as the x86-64 backend.
+// CallOut signals whether try_emit_builtin handled the call.
+struct CallOut { state: asmcore.EmitState, done: boolean }
+
+// try_emit_builtin lowers a builtin/intrinsic free call by name
+// (print, len, str_*, map_new, Some/Ok/Err, f64 intrinsics, strbuf,
+// …). Returns done=true when it emitted the call; done=false (with
+// the state untouched) when `name` is not a builtin, so emit_call
+// falls through to the closure / generic user-call path.
+function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState): CallOut {
     if (name == "len" && c.args.len() == 1) {
         // Dispatch on operand type: string box → load
         // len at +8; array box → load len at +0.
@@ -1219,7 +194,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
             s = s.write("    ldr x0, [x0]\n");
         }
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // `write(s)` == `print(s)` here (the self-host print
     // runtime has no trailing newline); the bootstrap driver
@@ -1244,7 +219,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
                 s = s.write("    svc #0\n");
                 s = s.write("    mov x0, #0\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
+                return CallOut { state: s, done: true };
             },
             _ => { }
         }
@@ -1269,7 +244,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
             s = s.write("    mov x0, #0\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.mark_str_print();
-            return s;
+            return CallOut { state: s, done: true };
         }
     }
     // eprint(s) — same as print but writes to stderr.
@@ -1288,7 +263,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
                 s = s.write("    svc #0\n");
                 s = s.write("    mov x0, #0\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
-                return s;
+                return CallOut { state: s, done: true };
             },
             _ => { }
         }
@@ -1300,7 +275,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
             s = s.write("    mov x0, #0\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.mark_eprint();
-            return s;
+            return CallOut { state: s, done: true };
         }
     }
     // print_int(i32_expr) — builtin lowering to a call into
@@ -1313,7 +288,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    mov x0, #0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_print_int();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "eprint_int" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1324,7 +299,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_i32_to_string();
         s = s.mark_eprint();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "exit" && c.args.len() == 1) {
         // sys_exit is syscall #93 on aarch64.
@@ -1334,7 +309,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    svc #0\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "args_count" && c.args.len() == 0) {
         s = s.write("    adrp x0, __fern_argc\n");
@@ -1342,7 +317,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    ldr x0, [x0]\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_args();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // args() — the full language's argv accessor: returns a
     // string[] of all command-line arguments (argv[0] first).
@@ -1350,7 +325,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_args\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_args();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "arg_at" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1358,7 +333,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_arg_at\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_args();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_split" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
@@ -1369,7 +344,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // read_int() — builtin no-arg call to the read_int
     // helper. Returns the value in x0; push to rt-stack.
@@ -1377,14 +352,14 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_read_int\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_read_int();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // read_line() — no-arg builtin. Returns string box.
     if (name == "read_line" && c.args.len() == 0) {
         s = s.write("    bl __fern_read_line\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_read_line();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // read_all_stdin() — read fd 0 to EOF into one box (loops
     // the read syscall, unlike read_line's single read).
@@ -1393,7 +368,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_read_all_stdin\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_read_line();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // read_file(path) — read the whole named file. Returns
     // Result[string, IoError]: Ok(contents) / Err(_). Matches
@@ -1404,7 +379,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_read_file\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // write_file(path, content) — write content to the named
     // file. Returns Option[IoError]: None ok, Some(_) on error.
@@ -1416,7 +391,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_write_file\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // now_unix_ms() — wall-clock milliseconds since the Unix
     // epoch (clock_gettime(CLOCK_REALTIME)). Returns an i64 in
@@ -1424,7 +399,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
     if (name == "now_unix_ms" && c.args.len() == 0) {
         s = s.write("    bl __fern_now_unix_ms\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // monotonic_ns() — nanoseconds from a monotonic clock
     // (clock_gettime(CLOCK_MONOTONIC)). For elapsed-time
@@ -1432,7 +407,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
     if (name == "monotonic_ns" && c.args.len() == 0) {
         s = s.write("    bl __fern_monotonic_ns\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // sleep_ms / remove_file / f{32,64}_bits / f{32,64}_from_bits —
     // see asm.fern for the rationale; the same shape ports cleanly.
@@ -1442,7 +417,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_sleep_ms\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "remove_file" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1450,7 +425,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_remove_file\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // subprocess(cmd, args, stdin) → ProcessResult. Mirror of
     // the x86 dispatch in asm.fern. Args (left to right) reach
@@ -1465,7 +440,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_subprocess\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // TCP primitives — the raw sockets layer std/tcp.fern's
     // tcp_serve() builds the HTTP edge-handler loop on. All return
@@ -1478,7 +453,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_tcp_listen\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "tcp_accept" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1486,7 +461,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_tcp_accept\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "tcp_recv" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
@@ -1496,7 +471,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_tcp_recv\n");
         s = s.write("    str x0, [sp, #-16]!\n"); // string box
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "tcp_send" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
@@ -1506,7 +481,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_tcp_send\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "tcp_close" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1514,7 +489,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_tcp_close\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // udp_send(host, port, data) → i32 — one-shot IPv4 datagram.
     // Args reach the helper in x0 (host box) / x1 (port) / x2
@@ -1529,7 +504,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_udp_send\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // temp_dir(prefix) — make a uniquely-named directory under
     // /tmp. Returns Result[string]: Ok(path) or Err(_). The
@@ -1541,7 +516,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_temp_dir\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // stat(path) — file metadata. Returns Result[FileStat]:
     // Ok(FileStat{is_file, is_dir, size}) or Err(_).
@@ -1551,7 +526,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_stat\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // read_dir(path) — list a directory's base-name children.
     // Returns Result[string[]]: Ok(names) or Err(_).
@@ -1561,7 +536,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_read_dir\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // remove_dir_all(path) — recursive rm -rf. Returns
     // Option[IoError]: None ok, Some(_) on error.
@@ -1571,10 +546,10 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_remove_dir_all\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if ((name == "f64_bits" || name == "f64_from_bits") && c.args.len() == 1) {
-        return emit_expr(c.args[0], s);
+        return CallOut { state: emit_expr(c.args[0], s), done: true };
     }
     if (name == "f32_bits" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1584,7 +559,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    fmov w0, s0\n");
         s = s.write("    sxtw x0, w0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "f32_from_bits" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1593,7 +568,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    fcvt d0, s0\n");
         s = s.write("    fmov x0, d0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // env(name) — look up an environment variable. Returns
     // Option[string]: Some(value) if set, None otherwise.
@@ -1603,7 +578,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_env\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // Filesystem builtins (mirror of asm.fern): each lowers to
     // a `bl __fern_<name>` runtime helper that handles the
@@ -1616,7 +591,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_temp_dir\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "read_dir" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1624,7 +599,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_read_dir\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "stat" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1632,7 +607,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_stat\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "remove_dir_all" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1640,7 +615,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_remove_dir_all\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // f64 math intrinsics — the cheap subset that lowers to a
     // single FP instruction. The -nostdlib native backends
@@ -1662,7 +637,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         else { s = s.write("    frinta d0, d0\n"); }
         s = s.write("    fmov x0, d0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // f64 transcendentals — arm64 has no transcendental
     // instructions, so these are polynomial-approximation
@@ -1679,7 +654,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         else { s = s.write("    bl __fern_log_f64\n"); }
         s = s.write("    fmov x0, d0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // pow(x, y) = exp(y·log x) — d0 = x, d1 = y.
     if (name == "__pow_f64" && c.args.len() == 2) {
@@ -1692,7 +667,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_pow_f64\n");
         s = s.write("    fmov x0, d0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // __alloc_u8(n) — fresh zeroed byte array of n elements
     // (8-byte slots, cap header).
@@ -1702,7 +677,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_alloc_u8\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // __memcpy(dst, src, n) — raw byte copy (byte loop). See
     // asm.fern: only reached from std/string's dead bytes()
@@ -1727,7 +702,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write(mdone.name + ":\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // string_from_bytes(arr) — pack each element's low byte
     // into a fresh string.
@@ -1737,7 +712,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_string_from_bytes\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // map_new(n) — fresh empty Map. The capacity hint is
     // evaluated for side effects then ignored.
@@ -1749,7 +724,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.mark_heap();
         s = s.mark_str_eq();
         s = s.mark_arr_push();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // random_bytes(n) — string of n random bytes (getrandom).
     if (name == "random_bytes" && c.args.len() == 1) {
@@ -1758,7 +733,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_random_bytes\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // __set_index(arr, idx, val) — array element assignment
     // (desugar of `arr[idx] = val`). Pushes a dummy result.
@@ -1773,7 +748,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x2, [x0, x1, lsl #3]\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // __set_field(obj, "field", val) — desugar of
     // `obj.field = val`. Mirrors asm.fern: shape-dispatch and
@@ -1818,14 +793,14 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write(sf_end.name + ":\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // stdin() — returns a Reader (its fd; 0 for stdin).
     // read_chunk / close take the fd value directly.
     if (name == "stdin" && c.args.len() == 0) {
         s = s.write("    mov x0, #0\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // Some(x) — wrap a payload in an Option. Heap box
     // [tag=0 @0, payload @8]; the matching None has tag 1.
@@ -1839,7 +814,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x2, [x0]\n");         // tag = Some
         s = s.write("    str x1, [x0, #8]\n");     // payload
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // Ok(x) / Err(x) — Result wrapper. Same box shape as
     // Option: tag @0, payload @8. Ok = 0 / Err = 1. See asm.fern.
@@ -1857,7 +832,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x2, [x0]\n");
         s = s.write("    str x1, [x0, #8]\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // Enum variant constructor with payload: `Circle(x)`. Heap
     // box [shape_ptr @0, payload @8] — see asm.fern.
@@ -1874,7 +849,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x2, [x0]\n");         // shape ptr
         s = s.write("    str x1, [x0, #8]\n");     // payload
         s = s.write("    str x0, [sp, #-16]!\n");
-        return s;
+        return CallOut { state: s, done: true };
     }
     // i32_to_string(n) — decimal text → string box.
     if (name == "i32_to_string" && c.args.len() == 1) {
@@ -1883,7 +858,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_i32_to_string\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_i32_to_string();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // `int.int_to_string(n)` → __fern_i32_to_string. See asm.fern.
     if (name == "int__int_to_string" && c.args.len() == 1) {
@@ -1892,7 +867,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_i32_to_string\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_i32_to_string();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // str_to_i32(s) — parse string box to i32.
     if (name == "str_to_i32" && c.args.len() == 1) {
@@ -1901,7 +876,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_str_to_i32\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_to_i32();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // str_starts_with / str_contains / str_index_of —
     // shared __fern_str_starts_with + __fern_str_index_of
@@ -1914,7 +889,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_str_starts_with\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_ends_with" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
@@ -1924,7 +899,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_str_ends_with\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_contains" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
@@ -1936,7 +911,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    cset x0, ge\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_index_of" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
@@ -1946,7 +921,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_str_index_of\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_trim" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1955,7 +930,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_to_upper" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1964,7 +939,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_to_lower" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -1973,7 +948,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_repeat" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
@@ -1984,7 +959,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "str_replace" && c.args.len() == 3) {
         s = emit_expr(c.args[0], s);
@@ -1997,7 +972,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "chr" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -2006,7 +981,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     // strbuf_reset() / strbuf_append(s) / strbuf_take() —
     // the global string-builder primitive. The Go backend
@@ -2022,7 +997,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_strbuf_reset\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "strbuf_append" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
@@ -2030,14 +1005,1065 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
         s = s.write("    bl __fern_strbuf_append\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
-        return s;
+        return CallOut { state: s, done: true };
     }
     if (name == "strbuf_take" && c.args.len() == 0) {
         s = s.write("    bl __fern_strbuf_take\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
+        return CallOut { state: s, done: true };
+    }
+    return CallOut { state: s, done: false };
+}
+
+// emit_method_call lowers a method / field-access call
+// (obj.method(args)): the reader, map, string and array
+// intrinsics plus the runtime shape-pointer dispatch over
+// struct + enum receiver methods. Split out of emit_call's
+// callee match; the arm always handles the call (a no-match
+// pushes the -1 sentinel), so this returns EmitState directly.
+function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asmcore.EmitState): asmcore.EmitState {
+    // Reader.read_chunk(n) — read up to n bytes from
+    // the receiver fd; Some(string) on a non-empty
+    // read, None at EOF. Receiver is a Reader (fd).
+    if (fa.field == "read_chunk" && c.args.len() == 1) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");   // n
+        s = s.write("    ldr x0, [sp], #16\n");   // fd
+        s = s.write("    bl __fern_reader_read_chunk\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
         return s;
     }
+    // Reader.close() — close the receiver fd; always
+    // returns None (the IoError arm is unused here).
+    if (fa.field == "close" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");   // fd
+        s = s.write("    bl __fern_reader_close\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        return s;
+    }
+    // Primitive-receiver fast path: see
+    // asm.fern for rationale.
+    var prim_recv: asmcore.Ty = asmcore.infer_expr_type(fa.obj, s);
+    // Map methods (string-keyed). set → map; get →
+    // Option[V]; has → bool; len → i32. Mirror of
+    // asm.fern's x86-64 dispatch.
+    if (asmcore.is_map(prim_recv) && (fa.field == "insert") && c.args.len() == 2) {
+        var kk_set: string = "0";
+        if (asmcore.map_key_is_i32(prim_recv)) { kk_set = "1"; }
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    ldr x2, [sp], #16\n");   // v
+        s = s.write("    ldr x1, [sp], #16\n");   // k
+        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+        s = s.write("    mov x3, #" + kk_set + "\n");   // keykind
+        s = s.write("    bl __fern_map_set\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        s = s.mark_str_eq();
+        s = s.mark_arr_push();
+        return s;
+    }
+    // m.without(k) → tuple (map, existed). See
+    // the x86-64 mirror in asm.fern for the contract.
+    if (asmcore.is_map(prim_recv) && (fa.field == "without") && c.args.len() == 1) {
+        var kk_del: string = "0";
+        if (asmcore.map_key_is_i32(prim_recv)) { kk_del = "1"; }
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");   // k
+        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+        s = s.write("    mov x2, #" + kk_del + "\n");   // keykind
+        s = s.write("    bl __fern_map_delete\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        s = s.mark_str_eq();
+        s = s.mark_arr_push();
+        return s;
+    }
+    if (asmcore.is_map(prim_recv) && fa.field == "get" && c.args.len() == 1) {
+        var kk_get: string = "0";
+        if (asmcore.map_key_is_i32(prim_recv)) { kk_get = "1"; }
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");   // k
+        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+        s = s.write("    mov x2, #" + kk_get + "\n");   // keykind
+        s = s.write("    bl __fern_map_get\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        s = s.mark_str_eq();
+        s = s.mark_arr_push();
+        return s;
+    }
+    // m.get_or(k, default) — see asm.fern. Inline as
+    // __fern_map_get + Some/None branch on the tag.
+    if (asmcore.is_map(prim_recv) && fa.field == "get_or" && c.args.len() == 2) {
+        var kk_or: string = "0";
+        if (asmcore.map_key_is_i32(prim_recv)) { kk_or = "1"; }
+        var or_lbl: i32 = s.label_n;
+        s = asmcore.EmitState { ...s, label_n: s.label_n + 2 };
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        // stack: [default, k, mapbox] (top down).
+        s = s.write("    ldr x3, [sp], #16\n");   // default
+        s = s.write("    ldr x1, [sp], #16\n");   // k
+        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+        s = s.write("    str x3, [sp, #-16]!\n"); // save default
+        s = s.write("    mov x2, #" + kk_or + "\n");
+        s = s.write("    bl __fern_map_get\n");   // x0 = Option box
+        s = s.write("    ldr x3, [sp], #16\n");   // restore default
+        s = s.write("    ldr x4, [x0]\n");
+        s = s.write("    cbnz x4, .Lgo_def_" + asmcore.i32_to_string(or_lbl) + "\n");
+        s = s.write("    ldr x0, [x0, #8]\n");
+        s = s.write("    b .Lgo_end_" + asmcore.i32_to_string(or_lbl) + "\n");
+        s = s.write(".Lgo_def_" + asmcore.i32_to_string(or_lbl) + ":\n");
+        s = s.write("    mov x0, x3\n");
+        s = s.write(".Lgo_end_" + asmcore.i32_to_string(or_lbl) + ":\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        s = s.mark_str_eq();
+        s = s.mark_arr_push();
+        return s;
+    }
+    if (asmcore.is_map(prim_recv) && fa.field == "has" && c.args.len() == 1) {
+        var kk_has: string = "0";
+        if (asmcore.map_key_is_i32(prim_recv)) { kk_has = "1"; }
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");   // k
+        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+        s = s.write("    mov x2, #" + kk_has + "\n");   // keykind
+        s = s.write("    bl __fern_map_has\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_str_eq();
+        s = s.mark_arr_push();
+        return s;
+    }
+    if (asmcore.is_map(prim_recv) && fa.field == "len" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x0, [x0]\n");        // keys arr
+        s = s.write("    ldr x0, [x0]\n");        // keys.len
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        s = s.mark_str_eq();
+        s = s.mark_arr_push();
+        return s;
+    }
+    // m.keys() / m.values() — see asm.fern; the box holds
+    // the parallel arrays at offset 0/8.
+    if (asmcore.is_map(prim_recv) && fa.field == "keys" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x0, [x0]\n");        // keys arr
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    if (asmcore.is_map(prim_recv) && fa.field == "values" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x0, [x0, #8]\n");    // values arr
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    // Map iteration — mirror of asm.fern. Iterator box
+    // [map_ptr @0, cursor @8] over the parallel arrays.
+    if (asmcore.is_map(prim_recv) && fa.field == "iter" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);                 // map ptr
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.mark_heap();
+        s = s.write("    ldr x1, [sp], #16\n");   // map ptr
+        s = s.write("    str x1, [x0]\n");        // map @0
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0, #8]\n");    // cursor @8
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    if (asmcore.is_mapiter(prim_recv) && fa.field == "has_next" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");   // iter
+        s = s.write("    ldr x1, [x0, #8]\n");    // cursor
+        s = s.write("    ldr x2, [x0]\n");        // map
+        s = s.write("    ldr x2, [x2]\n");        // keys arr
+        s = s.write("    ldr x2, [x2]\n");        // keys.len
+        s = s.write("    cmp x1, x2\n");
+        s = s.write("    cset x0, lt\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    if (asmcore.is_mapiter(prim_recv) && fa.field == "key" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x1, [x0, #8]\n");    // cursor
+        s = s.write("    ldr x2, [x0]\n");        // map
+        s = s.write("    ldr x2, [x2]\n");        // keys arr
+        s = s.write("    add x1, x1, #1\n");
+        s = s.write("    ldr x0, [x2, x1, lsl #3]\n");  // keys[cursor+1]
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    if (asmcore.is_mapiter(prim_recv) && fa.field == "value" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x1, [x0, #8]\n");    // cursor
+        s = s.write("    ldr x2, [x0]\n");        // map
+        s = s.write("    ldr x2, [x2, #8]\n");    // values arr
+        s = s.write("    add x1, x1, #1\n");
+        s = s.write("    ldr x0, [x2, x1, lsl #3]\n");  // values[cursor+1]
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    if (asmcore.is_mapiter(prim_recv) && fa.field == "advance" && c.args.len() == 0) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");   // iter
+        s = s.write("    ldr x1, [x0, #8]\n");    // cursor
+        s = s.write("    add x1, x1, #1\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    str x0, [sp, #-16]!\n"); // dummy result
+        return s;
+    }
+    // Built-in `.to_string()` on i32 and string —
+    // i32 routes to the existing runtime helper,
+    // string returns the receiver unchanged. The
+    // generic path below would chase a
+    // `__fn_i32.to_string` symbol that no FuncDecl
+    // emits, producing a link error.
+    if (fa.field == "to_string" && c.args.len() == 0
+            && (asmcore.is_int_tag(prim_recv) || asmcore.ty_is_string(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        if (asmcore.is_int_tag(prim_recv)) {
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_i32_to_string\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_i32_to_string();
+        }
+        return s;
+    }
+    // `.to_string()` on f64 / f32 — 8-byte IEEE-754 bits
+    // routed to the fixed-precision runtime helper (15
+    // trimmed fractional digits, matching std/float).
+    // mark_heap because the helper allocates.
+    if (fa.field == "to_string" && c.args.len() == 0
+            && asmcore.ty_is_f64(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_f64_to_string\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        return s;
+    }
+    // Built-in `.len()` / `.is_empty()` on
+    // strings and arrays. Inline — they read
+    // the length word directly.
+    if (fa.field == "len" && c.args.len() == 0
+            && (asmcore.ty_is_string(prim_recv)
+                || asmcore.is_int_array_tag(prim_recv)
+                || asmcore.ty_is_array_string(prim_recv)
+                || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        if (asmcore.ty_is_string(prim_recv)) {
+            s = s.write("    ldr x0, [x0, #8]\n");
+        } else {
+            s = s.write("    ldr x0, [x0]\n");
+        }
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    if (fa.field == "is_empty" && c.args.len() == 0
+            && (asmcore.ty_is_string(prim_recv)
+                || asmcore.is_int_array_tag(prim_recv)
+                || asmcore.ty_is_array_string(prim_recv)
+                || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        if (asmcore.ty_is_string(prim_recv)) {
+            s = s.write("    ldr x0, [x0, #8]\n");
+        } else {
+            s = s.write("    ldr x0, [x0]\n");
+        }
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    cset x0, eq\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    // Built-in i32 numeric methods. Inline — no
+    // runtime helper needed.
+    if (asmcore.ty_is_i32(prim_recv)) {
+        if (fa.field == "abs" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            // cneg: conditional negate. If x0 < 0
+            // set x0 = -x0, else keep.
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    cneg x0, x0, lt\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "min" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    cmp x0, x1\n");
+            s = s.write("    csel x0, x0, x1, lt\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "gcd" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");   // other
+            s = s.write("    ldr x0, [sp], #16\n");   // n
+            s = s.write("    bl __fern_i32_gcd\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_heap();
+            return s;
+        }
+        if (fa.field == "lcm" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");   // other
+            s = s.write("    ldr x0, [sp], #16\n");   // n
+            s = s.write("    bl __fern_i32_lcm\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_heap();
+            return s;
+        }
+        if (fa.field == "max" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    cmp x0, x1\n");
+            s = s.write("    csel x0, x0, x1, gt\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "clamp" && c.args.len() == 2) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = emit_expr(c.args[1], s);
+            s = s.write("    ldr x2, [sp], #16\n");   // hi
+            s = s.write("    ldr x1, [sp], #16\n");   // lo
+            s = s.write("    ldr x0, [sp], #16\n");   // n
+            // n = max(n, lo) — keep n if n > lo, else lo
+            s = s.write("    cmp x0, x1\n");
+            s = s.write("    csel x0, x0, x1, gt\n");
+            // n = min(n, hi) — keep n if n < hi, else hi
+            s = s.write("    cmp x0, x2\n");
+            s = s.write("    csel x0, x0, x2, lt\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "pow" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_i32_pow\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_i32_pow();
+            return s;
+        }
+        if (fa.field == "sign" && c.args.len() == 0) {
+            // sign(n) = 1 if n>0, -1 if n<0, 0 if 0.
+            // Computed as `(n>0) - (n<0)`.
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    cset x1, gt\n");
+            s = s.write("    cset x2, lt\n");
+            s = s.write("    sub x0, x1, x2\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_even" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    and x0, x0, #1\n");
+            s = s.write("    eor x0, x0, #1\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_odd" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    and x0, x0, #1\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_zero" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    cset x0, eq\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_positive" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    cset x0, gt\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_negative" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    cset x0, lt\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        // ASCII byte-classification + case methods
+        // (mirror std/i32). `lo<=b<=hi` → `sub #lo;
+        // cmp #(hi-lo); cset ls` (unsigned); case ops
+        // use csel.
+        if (fa.field == "is_digit" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    sub x0, x0, #48\n");
+            s = s.write("    cmp x0, #9\n");
+            s = s.write("    cset x0, ls\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_lower" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    sub x0, x0, #97\n");
+            s = s.write("    cmp x0, #25\n");
+            s = s.write("    cset x0, ls\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_upper" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    sub x0, x0, #65\n");
+            s = s.write("    cmp x0, #25\n");
+            s = s.write("    cset x0, ls\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if ((fa.field == "is_alpha" || fa.field == "is_letter") && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x1, [sp], #16\n");   // b
+            s = s.write("    sub x0, x1, #65\n");
+            s = s.write("    cmp x0, #25\n");
+            s = s.write("    cset x2, ls\n");          // upper
+            s = s.write("    sub x0, x1, #97\n");
+            s = s.write("    cmp x0, #25\n");
+            s = s.write("    cset x0, ls\n");          // lower
+            s = s.write("    orr x0, x0, x2\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_alnum" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x1, [sp], #16\n");   // b
+            s = s.write("    sub x0, x1, #48\n");
+            s = s.write("    cmp x0, #9\n");
+            s = s.write("    cset x2, ls\n");          // digit
+            s = s.write("    sub x0, x1, #65\n");
+            s = s.write("    cmp x0, #25\n");
+            s = s.write("    cset x3, ls\n");          // upper
+            s = s.write("    orr x2, x2, x3\n");
+            s = s.write("    sub x0, x1, #97\n");
+            s = s.write("    cmp x0, #25\n");
+            s = s.write("    cset x0, ls\n");          // lower
+            s = s.write("    orr x0, x0, x2\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "is_hex_digit" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x1, [sp], #16\n");   // b
+            s = s.write("    sub x0, x1, #48\n");
+            s = s.write("    cmp x0, #9\n");
+            s = s.write("    cset x2, ls\n");          // 0-9
+            s = s.write("    sub x0, x1, #65\n");
+            s = s.write("    cmp x0, #5\n");
+            s = s.write("    cset x3, ls\n");          // A-F
+            s = s.write("    orr x2, x2, x3\n");
+            s = s.write("    sub x0, x1, #97\n");
+            s = s.write("    cmp x0, #5\n");
+            s = s.write("    cset x0, ls\n");          // a-f
+            s = s.write("    orr x0, x0, x2\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "to_lower" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    sub x1, x0, #65\n");
+            s = s.write("    cmp x1, #25\n");           // uppercase?
+            s = s.write("    add x2, x0, #32\n");
+            s = s.write("    csel x0, x2, x0, ls\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "to_upper" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    sub x1, x0, #97\n");
+            s = s.write("    cmp x1, #25\n");           // lowercase?
+            s = s.write("    sub x2, x0, #32\n");
+            s = s.write("    csel x0, x2, x0, ls\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        // to_ascii_string() — a 1-byte string from the
+        // byte value (no range check; valid bytes).
+        if (fa.field == "to_ascii_string" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            // x4/x5 survive __fern_alloc (it uses x0-x3).
+            s = s.write("    ldr x4, [sp], #16\n");   // byte
+            s = s.write("    mov x0, #1\n");
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    strb w4, [x0]\n");
+            s = s.write("    mov x5, x0\n");          // data ptr
+            s = s.write("    mov x0, #16\n");
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    str x5, [x0]\n");        // data@0
+            s = s.write("    mov x1, #1\n");
+            s = s.write("    str x1, [x0, #8]\n");    // len@8
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_heap();
+            return s;
+        }
+    }
+    // Built-in `.append(x)` on arrays — append a
+    // single 8-byte payload (i32 or string-box
+    // ptr; both are 8 bytes in the operand-stack
+    // representation). Returns a fresh array.
+    if (fa.field == "append" && c.args.len() == 1
+            && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_arr_push\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_arr_push();
+        return s;
+    }
+    // Built-in `.reverse()` on arrays — returns
+    // a fresh array with elements in opposite
+    // order. Same 8-byte payload assumption as
+    // `.push` / `.slice`; works for both i32[]
+    // and string[].
+    if (fa.field == "reverse" && c.args.len() == 0
+            && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_arr_reverse\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_arr_reverse();
+        return s;
+    }
+    // Built-in `.concat(other)` on arrays — fresh
+    // array of length `a.len + b.len`. Caller is
+    // responsible for both arrays being the same
+    // element type (the helper just copies 8-byte
+    // payloads, so layout-compatible types — i32[]
+    // and string[] — both work).
+    if (fa.field == "concat" && c.args.len() == 1
+            && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_arr_concat\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_arr_concat();
+        return s;
+    }
+    // Built-in `.first()` / `.last()` on arrays —
+    // O(1) element access. UB on empty arrays.
+    if (fa.field == "first" && c.args.len() == 0
+            && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x0, [x0, #8]\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    if (fa.field == "last" && c.args.len() == 0
+            && (asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv) || asmcore.ty_is_array(prim_recv))) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x1, [x0]\n");
+        s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    // Built-in `.join(sep)` on string arrays —
+    // concatenates all elements with `sep` between
+    // them. Empty array → empty string. Single
+    // element → that element.
+    if (fa.field == "join" && c.args.len() == 1
+            && asmcore.ty_is_array_string(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_arr_str_join\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_arr_str_join();
+        return s;
+    }
+    // Built-in `.index_of(s)` / `.contains(s)` on
+    // string arrays — uses `__fern_str_eq` per
+    // element so content equality matches even
+    // when the .rodata slots differ.
+    if ((fa.field == "index_of" || fa.field == "contains")
+            && c.args.len() == 1 && asmcore.ty_is_array_string(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_arr_str_index_of\n");
+        if (fa.field == "contains") {
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    cset x0, ge\n");
+        }
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_arr_str_index_of();
+        return s;
+    }
+    // Built-in `.sum()` on i32 arrays — returns
+    // the sum of all elements (0 if empty).
+    if (fa.field == "sum" && c.args.len() == 0
+            && asmcore.ty_is_array_i32(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_arr_i32_sum\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_arr_i32_sum();
+        return s;
+    }
+    // Built-in `.product()` on i32 arrays —
+    // returns the product of all elements (1 if
+    // empty, matching the empty-product identity).
+    if (fa.field == "product" && c.args.len() == 0
+            && asmcore.ty_is_array_i32(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_arr_i32_product\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_arr_i32_product();
+        return s;
+    }
+    // Built-in `.min()` / `.max()` on i32 arrays →
+    // Option[i32]: Some(extremum) when non-empty, None on
+    // an empty array. Mirror of asm.fern.
+    if ((fa.field == "min" || fa.field == "max")
+            && c.args.len() == 0 && asmcore.ty_is_array_i32(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        var mm_none: asmcore.LabelOut = asmcore.fresh_label(s);
+        s = mm_none.state;
+        var mm_end: asmcore.LabelOut = asmcore.fresh_label(s);
+        s = mm_end.state;
+        s = s.write("    ldr x0, [sp], #16\n");   // arr
+        s = s.write("    ldr x1, [x0]\n");         // len
+        s = s.write("    cbz x1, " + mm_none.name + "\n");
+        if (fa.field == "min") {
+            s = s.write("    bl __fern_arr_i32_min\n");
+        } else {
+            s = s.write("    bl __fern_arr_i32_max\n");
+        }
+        s = s.write("    str x0, [sp, #-16]!\n");  // save extremum
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    ldr x1, [sp], #16\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    str x2, [x0]\n");         // Some tag
+        s = s.write("    str x1, [x0, #8]\n");     // payload
+        s = s.write("    b " + mm_end.name + "\n");
+        s = s.write(mm_none.name + ":\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0]\n");         // None tag
+        s = s.write(mm_end.name + ":\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        s = s.mark_arr_i32_min_max();
+        return s;
+    }
+    // Built-in `.index_of(x)` / `.contains(x)` on
+    // i32 arrays — linear search for `x`. Returns
+    // the index for `index_of`, the >= 0 test for
+    // `contains`. Strings use a separate path
+    // (above) that calls `__fern_str_eq`; i32
+    // just uses register compare.
+    if ((fa.field == "index_of" || fa.field == "contains")
+            && c.args.len() == 1 && asmcore.ty_is_array_i32(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x1, [sp], #16\n");
+        s = s.write("    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_arr_i32_index_of\n");
+        if (fa.field == "contains") {
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    cset x0, ge\n");
+        }
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_arr_i32_index_of();
+        return s;
+    }
+    // Built-in string methods that mirror existing
+    // free-function builtins. The free-function
+    // dispatch below already knows the assembly
+    // — we just route receiver-first form into
+    // the same emit shape so users can write
+    // `s.split(",")` instead of `str_split(s, ",")`.
+    if (asmcore.ty_is_string(prim_recv)) {
+        if (fa.field == "chars" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_chars\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_chars();
+            return s;
+        }
+        if (fa.field == "bytes" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_bytes\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_bytes();
+            return s;
+        }
+        // `s.as_bytes()` — see asm.fern. Returns the
+        // same fresh u8[] as bytes() (no zero-copy slice
+        // in the slot-array representation).
+        if (fa.field == "as_bytes" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_bytes\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_bytes();
+            return s;
+        }
+        if (fa.field == "reverse" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_reverse\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_reverse();
+            return s;
+        }
+        if (fa.field == "first_byte" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    ldr x0, [x0]\n");
+            s = s.write("    ldrb w0, [x0]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "last_byte" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    ldr x1, [x0, #8]\n");
+            s = s.write("    ldr x0, [x0]\n");
+            s = s.write("    sub x1, x1, #1\n");
+            s = s.write("    ldrb w0, [x0, x1]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+        if (fa.field == "lines" && c.args.len() == 0) {
+            // `s.lines()` — split on '\n', drop trailing
+            // empty when s is empty or ends with '\n'.
+            // See asm.fern for rationale.
+            s = emit_expr(fa.obj, s);
+            // Compute trim_flag (0 or 1) into x10:
+            //   trim = (s.len == 0) || (s[s.len - 1] == '\n')
+            s = s.write("    ldr x9, [sp]\n");          // peek s box
+            s = s.write("    ldr x10, [x9]\n");         // s data
+            s = s.write("    ldr x11, [x9, #8]\n");     // s len
+            s = s.write("    mov x12, #1\n");           // default trim = 1
+            s = s.write("    cbz x11, .Llines_have_" + asmcore.i32_to_string(s.label_n) + "\n");
+            s = s.write("    sub x13, x11, #1\n");
+            s = s.write("    ldrb w14, [x10, x13]\n");
+            s = s.write("    cmp w14, #10\n");
+            s = s.write("    cset x12, eq\n");
+            s = s.write(".Llines_have_" + asmcore.i32_to_string(s.label_n) + ":\n");
+            s = s.write("    str x12, [sp, #-16]!\n");  // save trim_flag
+            var ln_lbl: i32 = s.label_n;
+            s = asmcore.EmitState { ...s, label_n: s.label_n + 1 };
+            var lo_ln: asmcore.StringLitOut = asmcore.add_string_lit(s, "\n");
+            s = lo_ln.state;
+            s = s.write("    mov x0, #16\n");
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    adrp x1, .S" + asmcore.i32_to_string(lo_ln.idx) + "\n");
+            s = s.write("    add x1, x1, :lo12:.S" + asmcore.i32_to_string(lo_ln.idx) + "\n");
+            s = s.write("    str x1, [x0]\n");
+            s = s.write("    mov x1, #1\n");
+            s = s.write("    str x1, [x0, #8]\n");
+            s = s.write("    mov x1, x0\n");            // delim → x1
+            // stack: [trim_flag, s_box]. Pop trim, pop s, push trim, call.
+            s = s.write("    ldr x9, [sp], #16\n");     // trim_flag
+            s = s.write("    ldr x0, [sp], #16\n");     // s box
+            s = s.write("    str x9, [sp, #-16]!\n");   // re-save trim
+            s = s.write("    bl __fern_str_split\n");   // x0 = array
+            s = s.write("    ldr x9, [sp], #16\n");     // restore trim
+            s = s.write("    ldr x10, [x0]\n");
+            s = s.write("    sub x10, x10, x9\n");
+            s = s.write("    str x10, [x0]\n");          // array.len -= trim
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            s = s.mark_heap();
+            return s;
+        }
+        if (fa.field == "split" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_split\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            s = s.mark_heap();
+            return s;
+        }
+        if (fa.field == "contains" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_index_of\n");
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    cset x0, ge\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            return s;
+        }
+        if (fa.field == "starts_with" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_starts_with\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            return s;
+        }
+        if (fa.field == "ends_with" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_ends_with\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            return s;
+        }
+        if (fa.field == "index_of" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_index_of\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            return s;
+        }
+        if (fa.field == "trim" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_trim\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            s = s.mark_heap();
+            return s;
+        }
+        if (fa.field == "to_upper" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_to_upper\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            s = s.mark_heap();
+            return s;
+        }
+        if (fa.field == "to_lower" && c.args.len() == 0) {
+            s = emit_expr(fa.obj, s);
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_to_lower\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            s = s.mark_heap();
+            return s;
+        }
+        if (fa.field == "repeat" && c.args.len() == 1) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_repeat\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            s = s.mark_heap();
+            return s;
+        }
+        if (fa.field == "replace" && c.args.len() == 2) {
+            s = emit_expr(fa.obj, s);
+            s = emit_expr(c.args[0], s);
+            s = emit_expr(c.args[1], s);
+            s = s.write("    ldr x2, [sp], #16\n");
+            s = s.write("    ldr x1, [sp], #16\n");
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    bl __fern_str_replace\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.mark_str_search();
+            s = s.mark_heap();
+            return s;
+        }
+    }
+    if (asmcore.ty_is_string(prim_recv) || asmcore.is_int_tag(prim_recv) || asmcore.ty_is_bool(prim_recv) || asmcore.ty_is_f64(prim_recv)) {
+        var pmi: i32 = c.args.len() - 1;
+        while (pmi >= 0) {
+            s = emit_expr(c.args[pmi], s);
+            pmi = pmi - 1;
+        }
+        s = emit_expr(fa.obj, s);
+        s = s.write("    bl __fn_" + asmcore.sanitize_label(asmcore.ty_tag(prim_recv) + "." + fa.field) + "\n");
+        s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return s;
+    }
+    // Method call mirror of asm.fern. Push args
+    // right-to-left then push the receiver, so
+    // receiver lands at +16(x29) and arg[0] at
+    // +32(x29) in the callee. Dispatch on the
+    // receiver's shape pointer.
+    var mi: i32 = c.args.len() - 1;
+    while (mi >= 0) {
+        // Mirror the free-function `fn`-arg boxing.
+        // See asm.fern for rationale.
+        var fvn: string = asmcore.arg_fn_value_name(c.args[mi], fa.field, mi, s);
+        if (fvn.len() > 0) { s = emit_fn_value(fvn, s); }
+        else { s = emit_expr(c.args[mi], s); }
+        mi = mi - 1;
+    }
+    s = emit_expr(fa.obj, s);
+    // Peek receiver pointer (top of stack).
+    s = s.write("    ldr x0, [sp]\n");
+    s = s.write("    ldr x1, [x0]\n");
+    var m_end_lbl: i32 = s.label_n;
+    s = asmcore.EmitState { ...s, label_n: s.label_n + 1 };
+    var fdi: i32 = 0;
+    while (fdi < s.funcs.len()) {
+        var fd_m: parser.FuncDecl = s.funcs[fdi];
+        // Struct / enum-variant receiver types only — an
+        // enum-type receiver method is handled in the
+        // fallback below. See the x86-64 backend.
+        if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
+                && asmcore.is_struct_decl_name(asmcore.base_type_name(fd_m.receiver_type), s)) {
+            var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, asmcore.base_type_name(fd_m.receiver_type));
+            s = arm_lit.state;
+            var next_l: asmcore.LabelOut = asmcore.fresh_label(s);
+            s = next_l.state;
+            s = s.write("    adrp x2, .S" + asmcore.i32_to_string(arm_lit.idx) + "\n");
+            s = s.write("    add x2, x2, :lo12:.S" + asmcore.i32_to_string(arm_lit.idx) + "\n");
+            s = s.write("    cmp x1, x2\n");
+            s = s.write("    b.ne " + next_l.name + "\n");
+            s = s.write("    bl __fn_" + asmcore.sanitize_label(asmcore.base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
+            s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    b .Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + "\n");
+            s = s.write(next_l.name + ":\n");
+        }
+        fdi = fdi + 1;
+    }
+    // Enum-receiver fallback: the variant value matched no
+    // struct arm; call the enum method (its `match (self)`
+    // dispatches on the variant). First such method wins.
+    var enum_recv: string = "";
+    var efi: i32 = 0;
+    while (efi < s.funcs.len()) {
+        var efd: parser.FuncDecl = s.funcs[efi];
+        if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
+                && asmcore.is_enum_recv(asmcore.base_type_name(efd.receiver_type), s)) {
+            enum_recv = asmcore.base_type_name(efd.receiver_type);
+        }
+        efi = efi + 1;
+    }
+    if (enum_recv.len() > 0) {
+        s = s.write("    bl __fn_" + asmcore.sanitize_label(enum_recv + "." + fa.field) + "\n");
+        s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write(".Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + ":\n");
+        return s;
+    }
+    s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n");
+    s = s.write("    mov x0, #-1\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write(".Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + ":\n");
+    return s;
+    return s;
+}
+
+function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState {
+    var name: string = "";
+    // Inline-lambda call (IIFE), e.g. an if-expression desugar
+    // `(function(): T { … })()`. Emit the closure box, push the
+    // args above it, then invoke via the closure convention (box
+    // ptr in x9, args at +16, +32, …) — same as the local-closure
+    // path below, but the box comes from the inline lambda rather
+    // than a frame slot.
+    match (c.callee) {
+        parser.ExprLambda(_) => {
+            s = emit_expr(c.callee, s);          // push closure box
+            var la: i32 = c.args.len() - 1;
+            while (la >= 0) {
+                s = emit_expr(c.args[la], s);
+                la = la - 1;
+            }
+            s = s.write("    ldr x9, [sp, #" + asmcore.i32_to_string(c.args.len() * 16) + "]\n"); // box ptr
+            s = s.write("    ldr x2, [x9]\n");
+            s = s.write("    blr x2\n");
+            s = s.write("    add sp, sp, #" + asmcore.i32_to_string((c.args.len() + 1) * 16) + "\n"); // pop args + box
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        },
+        _ => {}
+    }
+    match (c.callee) {
+        parser.ExprIdent(id) => { name = id.name; },
+        parser.ExprFieldAccess(fa) => {
+            return emit_method_call(c, fa, s);
+        },
+        _ => {
+            s = s.write("    // call target not ident\n");
+            s = s.write("    mov x0, #0\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            return s;
+        }
+    }
+    // print(str_literal) — builtin lowering to write(1,
+    // ptr, len). Compile-time we already know the
+    // literal's bytes, so we intern it in `.rodata`,
+    // load its address via adrp+add, set the length, and
+    // syscall directly.
+    // len(arr) — load the length prefix at offset 0.
+    // Same semantics as the x86-64 backend.
+    var bo: CallOut = try_emit_builtin(c, name, s);
+    s = bo.state;
+    if (bo.done) { return s; }
     // Closure call: callee ident resolves to a local
     // holding a closure box ptr. See asm.fern for the
     // calling convention rationale.
