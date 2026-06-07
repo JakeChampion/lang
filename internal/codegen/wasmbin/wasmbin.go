@@ -971,16 +971,21 @@ func paramValtypes(params []ast.Param) ([]byte, error) {
 // canonicalExternParamValtypes flattens an `@import` extern's parameters to the
 // core valtypes the *raw* component import carries (the host-facing canonical
 // ABI), as opposed to paramValtypes, which gives the Fern-side flattening that
-// a param wrapper consumes. They differ only for `u8[]`: a Fern array value is
-// a single element pointer (one slot), but a canonical `list<u8>` parameter is
-// `(ptr, len)` — two i32s. A `string` is two slots either way (its Fern
+// a param wrapper consumes. They differ for `u8[]` (a Fern array is a single
+// element pointer, but a canonical `list<u8>` is `(ptr, len)` — two i32s) and
+// records (a Fern struct is one pointer, but a canonical `record` flattens to
+// its fields' core types). A `string` is two slots either way (its Fern
 // (data, len) pair already lines up with ptr+len once normalized).
-func canonicalExternParamValtypes(params []ast.Param) ([]byte, error) {
+func canonicalExternParamValtypes(ex *ir.ExternFunc) ([]byte, error) {
 	var out []byte
-	for _, p := range params {
+	for i, p := range ex.Params {
 		switch {
 		case isStringType(p.Type) || isScalarArrayParamType(p.Type):
 			out = append(out, encode.ValtypeI32, encode.ValtypeI32)
+		case ex.ParamRecords[i] != nil:
+			for _, f := range ex.ParamRecords[i] {
+				out = append(out, externRecordFieldValtype(f.Type))
+			}
 		default:
 			vt, err := valtypeFor(p.Type)
 			if err != nil {
@@ -1039,6 +1044,27 @@ func isScalarArrayParamType(t ast.Type) bool {
 		return true
 	}
 	return false
+}
+
+// externRecordFieldValtype returns the flat core valtype a record field
+// flattens to in the canonical ABI: i64 for a 64-bit integer, f64 for a 64-bit
+// float, f32 for a 32-bit float, i32 for everything else (32-bit integers). It
+// matches the load op the record-param wrapper uses and the field's storage
+// slot, so the flattened import signature and the wrapper agree.
+func externRecordFieldValtype(t ast.Type) byte {
+	switch x := t.(type) {
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return encode.ValtypeI64
+		}
+		return encode.ValtypeI32
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return encode.ValtypeF64
+		}
+		return encode.ValtypeF32
+	}
+	return encode.ValtypeI32
 }
 
 // scalarArrayElemStride returns the element size in bytes of a scalar array

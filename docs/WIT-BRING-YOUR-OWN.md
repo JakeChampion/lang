@@ -362,9 +362,25 @@ world-driven composer (P2) wires it.
      **bool** arrays stay rejected (a Fern bool is 4 bytes but the canonical
      `list<bool>` element is 1 byte — stride mismatch); the self-host port is a
      follow-up.
-   - Still rejected (next slices): bool array parameters and results; record
-     parameters; and record/tuple/variant/option/result. The multi-component
-     harness (`TestExternImportCustomProvider`) is the test vehicle for these.
+   - **Record (struct) parameters — ✅ done (Go).** A Fern struct passed to an
+     `@import` extern whose WIT signature takes a `record` flattens to its
+     fields' core types (the canonical ABI passes a small record inline). The
+     field layout — each field's offset from the struct value + its type — is
+     precomputed during IR lowering (`ir.ExternFunc.ParamRecords`, where
+     `info.Structs` is in scope; the wasm backend has no `info`), and the param
+     wrapper loads each field off the struct value and pushes it in declaration
+     order. `canonicalExternParamValtypes` flattens the record to the field
+     valtypes for the raw import. Scoped to records of ≤16 fields, each a 32-/
+     64-bit integer or float (sub-word ints, bool, strings, arrays, and nested
+     records are deferred — a struct param outside this shape is rejected with a
+     clear message). Gated by `TestExternRecordParamCustomProvider` (a
+     `record point { x: s32, y: s32 }` summed) and
+     `TestExternRecordParamWideCustomProvider` (a mixed `record mix { a: s32,
+     b: s64 }`, exercising the i64 field's 8-byte offset + i64 flat valtype).
+   - Still rejected (next slices): record *results*; tuple / variant / option /
+     result params and results; bool arrays; sub-word / nested-record fields;
+     and the self-host port. The multi-component harness
+     (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
