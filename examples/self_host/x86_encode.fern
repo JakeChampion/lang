@@ -111,6 +111,69 @@ function x86_ret(buf: i32[]): i32[] {
     return buf.push(195); // 0xC3
 }
 
+// ---- memory operands (slice 2e) ----
+//
+// A memory operand `[base + disp]` is encoded by the ModR/M byte's mod/rm
+// fields plus an optional SIB byte and displacement. Two registers need
+// special handling:
+//   * rsp (rm=100) is the SIB escape — any `[rsp + …]` needs a SIB byte
+//     (scale=0, index=100=none, base=100=rsp);
+//   * rbp (rm=101) can't use mod=00 (that encoding means RIP-relative), so
+//     `[rbp]` is emitted as mod=01 with a zero disp8.
+// mod selects the displacement size: 00 = none, 01 = disp8, 10 = disp32.
+// Slice 2e covers the base registers (0..7); index/scale addressing is a
+// later need.
+
+// x86_sib builds a SIB byte: (scale << 6) | (index << 3) | base.
+function x86_sib(scale: i32, index: i32, base: i32): i32 {
+    return ((scale & 3) << 6) | ((index & 7) << 3) | (base & 7);
+}
+
+// x86_emit_mem appends the ModR/M (+ optional SIB + displacement) for a
+// memory operand `[base + disp]` with the given ModR/M `reg` field (the
+// other operand — a register for load/store).
+function x86_emit_mem(buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
+    var b: i32 = base & 7;
+    var is_rsp: boolean = (b == 4); // SIB escape
+    var is_rbp: boolean = (b == 5); // no mod=00 form
+
+    var md: i32 = 2;        // default: disp32
+    var has_disp8: boolean = false;
+    if (disp == 0 && !is_rbp) {
+        md = 0;             // no displacement
+    } else if (disp >= (0 - 128) && disp <= 127) {
+        md = 1;             // disp8
+        has_disp8 = true;
+    }
+
+    buf = buf.push(x86_modrm(md, reg, b));
+    if (is_rsp) {
+        buf = buf.push(x86_sib(0, 4, 4)); // [rsp], no index
+    }
+    if (has_disp8) {
+        buf = buf.push(disp & 255);
+    } else {
+        if (md == 2) {
+            buf = x86_le32(buf, disp);
+        }
+    }
+    return buf;
+}
+
+// x86_mov_load_r64: `mov <dst>, [base + disp]` — REX.W + 0x8B /r.
+function x86_mov_load_r64(buf: i32[], dst: i32, base: i32, disp: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(139); // 0x8B
+    return x86_emit_mem(buf, dst, base, disp);
+}
+
+// x86_mov_store_r64: `mov [base + disp], <src>` — REX.W + 0x89 /r.
+function x86_mov_store_r64(buf: i32[], base: i32, disp: i32, src: i32): i32[] {
+    buf = buf.push(x86_rex_w());
+    buf = buf.push(137); // 0x89
+    return x86_emit_mem(buf, src, base, disp);
+}
+
 // ---- immediate ALU (slice 2b) ----
 
 // x86_alu_r64_imm32 encodes the `<op> <reg>, imm32` group-1 form:
