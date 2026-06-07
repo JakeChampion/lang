@@ -485,9 +485,19 @@ world-driven composer (P2) wires it.
      core, the Go composer lifts it, and a Fern consumer links + runs it under
      wasmtime (`add(20,3)==23`). **P6's scalar export path is complete in both
      compilers.**
-   - **Slice 5 (next) — composite export signatures**: strings / lists / records
-     across the export boundary (the memory+realloc lift, mirroring the
-     import-side composite work).
+   - **Slice 5a — memory/realloc lift encoders. ✅ Done (Go).** The
+     byte-identity foundation for composite exports: `PutCanonSectionLiftWithMemory`
+     (string/list RESULT — the lift reads the core's returned `(ptr,len)`) and
+     `PutCanonSectionLiftWithMemoryRealloc` (string/list PARAM — the lift uses
+     `cabi_realloc` to materialise incoming bytes in core memory), the inverse of
+     the existing lower-with-memory encoders. Opts precede the typeidx for a
+     lift. Byte-pinned by `TestPutCanonSectionLiftWithMemory_Bytes` /
+     `…Realloc_Bytes` (the project's encoding-before-wiring discipline).
+   - **Slice 5b (next) — wire composite exports**: a wasmbin wrapper adapting a
+     string/list-typed `@export` function to the canonical return-area / param
+     ABI, the composer using the memory lift (aliasing the core memory +
+     cabi_realloc), and an e2e composing a string-returning export with a
+     consumer + running it. Then the self-host port.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
