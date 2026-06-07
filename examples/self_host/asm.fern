@@ -6365,6 +6365,19 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                         // Wildcard always matches — no dispatch.
                     }
                 }
+                // Guard: a `Pat when <expr> =>` arm runs its body only if the
+                // guard is true. The binding (if any) is already in scope, so
+                // the guard may reference it (`Has(n) when n > 0`). A false
+                // guard jumps to the next arm — the same target as a pattern
+                // mismatch — so it falls through correctly (and an all-guards-
+                // fail match falls through to the end, like a non-exhaustive
+                // match).
+                if (arm.has_guard) {
+                    s = emit_expr(arm.guard, s);
+                    s = s.write("    popq %rax\n");
+                    s = s.write("    testq %rax, %rax\n");
+                    s = s.write("    jz .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
+                }
                 // Emit the arm body.
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) {

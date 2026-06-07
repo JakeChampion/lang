@@ -2507,6 +2507,11 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"a||b|",
 			"",
 		},
+		// Match-arm guards (`Pat when <expr> =>`): a true guard runs the arm;
+		// a false guard falls through to the next arm. The guard reads the
+		// pattern binding.
+		{"match-guard-pass", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(8); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 1, "", ""},
+		{"match-guard-fallthrough", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(3); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 2, "", ""},
 	}
 
 	for _, tc := range cases {
