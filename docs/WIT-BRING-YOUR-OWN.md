@@ -350,6 +350,20 @@ world-driven composer (P2) wires it.
      component without the test harness. No-extern programs keep the legacy
      path unchanged. Gated by `TestExternImportViaCLI` (scalar + u8[] externs +
      a built-in `write`, composed by the CLI binary and run under wasmtime).
+   - **World coverage — env / args / exit / monotonic clock — ✅ done.** The
+     `fern` world (`cmd/fern/wit/fern.wit`, embedded as `fern.bin`) originally
+     declared only the stdio / filesystem / TCP / random interfaces, so an
+     extern program that *also* used a built-in routed through the world path
+     (`args()`, `env()`, `exit`, monotonic `now()`) failed to compose with
+     "core imports interface … not declared by the world". The world now also
+     imports `wasi:cli/environment`, `wasi:cli/exit`, and
+     `wasi:clocks/monotonic-clock`, so those built-ins lower through
+     `ComposeFromWorldAuto` (env / args are `KindMemRealloc` list returns; exit
+     / monotonic are `KindNoOpt`) exactly as the legacy registry lowers them.
+     Gated by `TestExternImportWithBuiltinEnvArgsViaCLI` (an extern +
+     `args()` + `env()`, run under wasmtime). UDP is the one remaining
+     built-in the world doesn't yet cover — niche for the extern path, so
+     deferred.
    - **Custom (non-WASI) interface + provider — ✅ done (Go).** The headline
      BYO-WIT capability: a Fern program `@import`s a *fully custom* interface
      (`local:test/answer@0.1.0`, defined by the user, unknown to the compiler)

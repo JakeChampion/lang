@@ -1,7 +1,9 @@
 // WIT worlds for the Fern components. Two flavours:
 //
 //   - `fern` is the CLI world: imports the preview-2 interfaces
-//     the WASM backend emits natively, runs `_start` once via
+//     the WASM backend emits natively (stdio, args / env via
+//     wasi:cli/environment, exit, monotonic clock, filesystem,
+//     TCP sockets, random), runs `_start` once via
 //     wasi:cli/run.run (wired through the preview-1 adapter).
 //   - `http` is the HTTP-handler world: same imports as `fern`
 //     plus wasi:http/types, and EXPORTS
@@ -14,8 +16,11 @@ world fern {
     import wasi:cli/stdin@0.2.0;
     import wasi:cli/stdout@0.2.0;
     import wasi:cli/stderr@0.2.0;
+    import wasi:cli/environment@0.2.0;
+    import wasi:cli/exit@0.2.0;
     import wasi:io/streams@0.2.0;
     import wasi:io/poll@0.2.0;
+    import wasi:clocks/monotonic-clock@0.2.0;
     import wasi:filesystem/types@0.2.0;
     import wasi:filesystem/preopens@0.2.0;
     import wasi:sockets/network@0.2.0;
