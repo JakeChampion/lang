@@ -858,10 +858,12 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add("__fern_alloc")
 			helpers.add("__bytes_to_lang_string")
 			helpers.add("cabi_realloc")
-		case isU8ArrayType(ret):
-			// list<u8> result lifted into a Fern u8[] (P4c): same canonical
-			// return-area lowering, but a zero-copy __slice_make over the host
-			// bytes (u8 is 1-byte stride) instead of a copying string lift.
+		case isScalarArrayParamType(ret):
+			// list<T> result (integer element ≤32-bit) lifted into a Fern T[]
+			// (P4c): canonical return-area lowering, then the result wrapper
+			// allocates the length-prefixed array and copies the host bytes
+			// (count*stride) past the prefix. u8[] (stride 1) is the original
+			// case; i32[] etc. copy wider elements at native stride.
 			rawName := ex.Name + "$import"
 			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
 			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
@@ -869,13 +871,13 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			wrappers[ex.Name] = runtimeHelperSpec{
 				params:  params,
 				results: []byte{encode.ValtypeI32},
-				body:    buildExternListU8ResultWrapper(len(ex.Params), rawName),
+				body:    buildExternListResultWrapper(len(ex.Params), rawName, scalarArrayElemStride(ret)),
 			}
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")
 			helpers.add("cabi_realloc")
 		default:
-			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar and string/list<u8> results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
+			return nil, nil, fmt.Errorf("@import %q (%s/%s): return type %s is not supported yet — only scalar, string, and integer-array (u8[]/i32[]/…) results are (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 		}
 	}
 	return specs, wrappers, nil

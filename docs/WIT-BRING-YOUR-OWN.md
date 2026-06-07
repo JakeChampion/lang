@@ -357,10 +357,20 @@ world-driven composer (P2) wires it.
      (8-byte alignment), **float** arrays, and **bool** arrays (Fern stride ≠
      canonical 1-byte `list<bool>`) are deferred. Self-host port is also a
      follow-up (the self-hosted `extern_wrappers` still handles only strings).
-   - Still rejected (next slices): 64-bit / float / bool array **parameters**
-     and record parameters; non-u8 array results (`i32[]` …); and
-     record/tuple/variant/option/result. The multi-component harness
-     (`TestExternImportCustomProvider`) is the test vehicle for these.
+   - **Integer-array results (`u8[]`, `i32[]`, …) — ✅ done (Go).** An extern
+     returning a canonical `list<T>` of ≤32-bit integer elements lifts into a
+     Fern `T[]`. The result wrapper (`buildExternListResultWrapper`, generalised
+     from the u8-only one by an element-`stride` parameter) allocates the
+     length-prefixed array and memory.copys `count*stride` host bytes past the
+     prefix; the u8 path (stride 1) emits the same bytes as before. The shared
+     `isScalarArrayParamType` gate now drives both the param and result
+     dispatch. Gated by `TestExternListI32ResultCustomProvider` (an `iota:
+     func(n: u32) -> list<s32>` provider, lifted to `i32[]` and indexed) +
+     `TestEmitExternU8ArrayResult`.
+   - Still rejected (next slices): 64-bit / float / bool array **parameters and
+     results**, and record parameters; record/tuple/variant/option/result. The
+     multi-component harness (`TestExternImportCustomProvider`) is the test
+     vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern

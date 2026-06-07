@@ -66,17 +66,19 @@ func buildExternStringResultWrapper(nparams int, rawImport string) func(map[stri
 	}
 }
 
-// buildExternListU8ResultWrapper is the u8[] counterpart of the string-result
-// wrapper: it lowers a `list<u8>` result the same way (canonical return area),
-// then materializes a Fern `u8[]` array. A native array is length-prefixed —
-// the value is a pointer to the elements with the count at `ptr-4` — so the
-// wrapper allocates `4 + n`, stores the count, memory.copys the host bytes
-// (u8 = 1-byte stride) just past it, and returns the element pointer. Wrapper
-// type is (scalar params…) -> i32.
+// buildExternListResultWrapper is the integer-array counterpart of the
+// string-result wrapper: it lowers a `list<T>` result the same way (canonical
+// return area), then materializes a Fern `T[]` array. A native array is
+// length-prefixed — the value is a pointer to the elements with the element
+// count at `ptr-4` — so the wrapper allocates `4 + count*stride`, stores the
+// element count, memory.copys the host bytes (`count*stride` of them) just past
+// it, and returns the element pointer. `stride` is the element size in bytes (1
+// for u8, 4 for i32, …); a stride of 1 emits the same bytes as the original
+// u8-only wrapper. Wrapper type is (scalar params…) -> i32.
 //
-// Locals after the params: 0:$rb (return area) 1:$dp (host data) 2:$n (len)
+// Locals after the params: 0:$rb (return area) 1:$dp (host data) 2:$n (count)
 // 3:$arr (array block base).
-func buildExternListU8ResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
+func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
 		imp := idxs[rawImport]
@@ -84,6 +86,18 @@ func buildExternListU8ResultWrapper(nparams int, rawImport string) func(map[stri
 		dp := uint32(nparams + 1)
 		n := uint32(nparams + 2)
 		arr := uint32(nparams + 3)
+
+		// pushByteLen leaves `count*stride` (the byte length) on the stack. For
+		// stride 1 it's just the count, so the u8 path is byte-for-byte the old
+		// wrapper (no multiply emitted).
+		pushByteLen := func(b []byte) []byte {
+			b = inst.InstLocalGet(b, n)
+			if stride != 1 {
+				b = inst.InstI32Const(b, int32(stride))
+				b = numeric.InstI32Mul(b)
+			}
+			return b
+		}
 
 		var body []byte
 		// rb = (__fern_alloc(12) + 3) & ~3 — 4-byte aligned return area.
@@ -99,28 +113,28 @@ func buildExternListU8ResultWrapper(nparams int, rawImport string) func(map[stri
 		}
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
-		// dp = load(rb+0); n = load(rb+4).
+		// dp = load(rb+0); n = load(rb+4) (element count).
 		body = inst.InstLocalGet(body, rb)
 		body = memory.InstI32Load(body, 2, 0)
 		body = inst.InstLocalSet(body, dp)
 		body = inst.InstLocalGet(body, rb)
 		body = memory.InstI32Load(body, 2, 4)
 		body = inst.InstLocalSet(body, n)
-		// arr = __fern_alloc(4 + n); store count at arr; copy bytes to arr+4.
+		// arr = __fern_alloc(4 + count*stride); store count; copy bytes to arr+4.
 		body = inst.InstI32Const(body, 4)
-		body = inst.InstLocalGet(body, n)
+		body = pushByteLen(body)
 		body = numeric.InstI32Add(body)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalSet(body, arr)
 		body = inst.InstLocalGet(body, arr)
 		body = inst.InstLocalGet(body, n)
 		body = memory.InstI32Store(body, 2, 0) // count @ arr+0
-		// memory.copy(arr+4, dp, n)
+		// memory.copy(arr+4, dp, count*stride)
 		body = inst.InstLocalGet(body, arr)
 		body = inst.InstI32Const(body, 4)
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalGet(body, dp)
-		body = inst.InstLocalGet(body, n)
+		body = pushByteLen(body)
 		body = memory.InstMemoryCopy(body)
 		// return arr + 4 (pointer to elements; count lives at ptr-4).
 		body = inst.InstLocalGet(body, arr)
