@@ -170,10 +170,15 @@ matching cases in every backend's differential matrix):
     (`param str="f64"`; a `mark_float_calls` pass tags f64-returning calls
     `imm=2` so the result is read from xmm0). Float functions now cross
     call boundaries on x86-64 — params, returns, recursion, mixed args.
-  - **Phase 3c (next):** the **arm64** (NEON/FP) and **wasm** SSA float
-    paths, to bring f64 to parity across all three backends. Until then
-    arm64 / wasm float programs fall back to the AST emitter (gated by
-    `ssa.any_float` / `ssa_wasm.supported`).
+  - **Phase 3c-wasm ✅ (landed — wasm SSA floats):** `ssa_wasm` lowers f64
+    to native wasm types — f64 locals / params / results, `f64.add` /
+    `f64.lt` / `f64.neg` / `f64.convert_i32_s` / `i32.trunc_f64_s`
+    (wasm is typed, so no width bookkeeping). `supported()` admits
+    `const_float`, and the wasm emit driver runs `mark_float_calls`.
+  - **Phase 3c-arm64 (next):** the **arm64** (NEON/FP `d` registers, the
+    same value class) SSA float path — the last backend, bringing f64 to
+    parity across all three. Until then arm64 float programs fall back to
+    the AST emitter (gated by `ssa.any_float`).
 - **Generics by erasure** in `build_func` (the AST emitters already do
   this).
 - **`...base` struct spread**, remaining **`match` patterns**, **tagged
