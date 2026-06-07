@@ -134,7 +134,10 @@ function wasm_binop(op: string, a: string, b: string): string {
 
 // emit_inst lowers one value-defining instruction to a `(local.set …)`.
 // param and phi are handled elsewhere (wasm params / predecessor edges).
-function emit_inst(ins: ssa.SInst, fnnames: string[]): string {
+function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
+    if (ins.kind == "const_float") {
+        return "    (local.set " + i32_to_string(ins.result) + " (f64.const " + ins.str + "))\n";
+    }
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
         return "    (local.set " + i32_to_string(ins.result) + " (i32.const " + i32_to_string(ins.imm) + "))\n";
     }
@@ -142,9 +145,28 @@ function emit_inst(ins: ssa.SInst, fnnames: string[]): string {
         return "    (local.set " + i32_to_string(ins.result) + " " + loc(ins.args[0]) + ")\n";
     }
     if (ins.kind == "binary") {
+        // Float arithmetic (f64 result) / comparison (f64 operands, i32 result).
+        if (isfloat[ins.result] == 1) {
+            return "    (local.set " + i32_to_string(ins.result) + " (" + wasm_fbinop(ins.str) + " " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
+        }
+        if (isfloat[ins.args[0]] == 1) {
+            return "    (local.set " + i32_to_string(ins.result) + " (" + wasm_fcmp(ins.str) + " " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
+        }
         return "    (local.set " + i32_to_string(ins.result) + " " + wasm_binop(ins.str, loc(ins.args[0]), loc(ins.args[1])) + ")\n";
     }
     if (ins.kind == "unary") {
+        if (ins.str == "-" && isfloat[ins.args[0]] == 1) {
+            return "    (local.set " + i32_to_string(ins.result) + " (f64.neg " + loc(ins.args[0]) + "))\n";
+        }
+        if (ins.str == "as_f64") {
+            return "    (local.set " + i32_to_string(ins.result) + " (f64.convert_i32_s " + loc(ins.args[0]) + "))\n";
+        }
+        if (ins.str == "as_i32") {
+            if (isfloat[ins.args[0]] == 1) {
+                return "    (local.set " + i32_to_string(ins.result) + " (i32.trunc_f64_s " + loc(ins.args[0]) + "))\n";
+            }
+            return "    (local.set " + i32_to_string(ins.result) + " " + loc(ins.args[0]) + ")\n";
+        }
         if (ins.str == "-") {
             return "    (local.set " + i32_to_string(ins.result) + " (i32.sub (i32.const 0) " + loc(ins.args[0]) + "))\n";
         }
@@ -253,32 +275,71 @@ function emit_term(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
 }
 
 // emit_block emits one block's value instructions then its terminator.
-function emit_block(f: ssa.SFunc, blk: ssa.SBlock, pc: i32, fnnames: string[]): string {
+function emit_block(f: ssa.SFunc, blk: ssa.SBlock, pc: i32, fnnames: string[], isfloat: i32[]): string {
     var out: string = "";
     var k: i32 = 0;
     while (k < blk.insts.len()) {
         var ins: ssa.SInst = blk.insts[k];
         if (ins.kind != "param" && ins.kind != "phi") {
-            out = out + emit_inst(ins, fnnames);
+            out = out + emit_inst(ins, fnnames, isfloat);
         }
         k = k + 1;
     }
     return out + emit_term(f, blk, pc);
 }
 
+// func_returns_float reports whether the function's `ret` yields an f64 (so
+// its wasm signature is `(result f64)`).
+function func_returns_float(f: ssa.SFunc, isfloat: i32[]): boolean {
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var t: ssa.STerm = f.blocks[bi].term;
+        if (t.kind == "ret" && isfloat[t.value] == 1) { return true; }
+        bi = bi + 1;
+    }
+    return false;
+}
+
+// wasm_fbinop / wasm_fcmp map float arithmetic / comparison operators to
+// their f64 wasm instructions (comparisons yield i32).
+function wasm_fbinop(op: string): string {
+    if (op == "+") { return "f64.add"; }
+    if (op == "-") { return "f64.sub"; }
+    if (op == "*") { return "f64.mul"; }
+    return "f64.div";
+}
+function wasm_fcmp(op: string): string {
+    if (op == "<") { return "f64.lt"; }
+    if (op == "<=") { return "f64.le"; }
+    if (op == ">") { return "f64.gt"; }
+    if (op == ">=") { return "f64.ge"; }
+    if (op == "==") { return "f64.eq"; }
+    return "f64.ne";
+}
+
 // emit_func lowers one SSA function to a `$__fn_<name>` wasm function.
 // fnnames is the function-table layout (for funcaddr slot indices).
 pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
+    var isfloat: i32[] = ssa.compute_isfloat(f);
+    var returns_float: boolean = func_returns_float(f, isfloat);
     var chunks: string[] = [];
+    // f64 params / result / locals get the f64 wasm type (wasm is typed, so
+    // each value's local carries its kind directly — no width bookkeeping).
     var sig: string = "  (func $__fn_" + f.name;
     var p: i32 = 0;
-    while (p < f.nparams) { sig = sig + " (param i32)"; p = p + 1; }
-    sig = sig + " (result i32)\n";
+    while (p < f.nparams) {
+        if (isfloat[p] == 1) { sig = sig + " (param f64)"; } else { sig = sig + " (param i32)"; }
+        p = p + 1;
+    }
+    if (returns_float) { sig = sig + " (result f64)\n"; } else { sig = sig + " (result i32)\n"; }
     chunks = chunks.push(sig);
     // Locals: SSA value ids nparams..nvals-1, then the dispatch state $pc at
     // index nvals.
     var v: i32 = f.nparams;
-    while (v < f.nvals) { chunks = chunks.push("    (local i32)\n"); v = v + 1; }
+    while (v < f.nvals) {
+        if (isfloat[v] == 1) { chunks = chunks.push("    (local f64)\n"); } else { chunks = chunks.push("    (local i32)\n"); }
+        v = v + 1;
+    }
     chunks = chunks.push("    (local i32) ;; $pc\n");
     var pc: i32 = f.nvals;
     var nb: i32 = f.blocks.len();
@@ -300,7 +361,7 @@ pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
     bi = 0;
     while (bi < nb) {
         chunks = chunks.push("    ) ;; blk" + i32_to_string(bi) + "\n");
-        chunks = chunks.push(emit_block(f, f.blocks[bi], pc, fnnames));
+        chunks = chunks.push(emit_block(f, f.blocks[bi], pc, fnnames, isfloat));
         bi = bi + 1;
     }
     chunks = chunks.push("    ))\n");           // close loop + exit
@@ -316,7 +377,8 @@ function inst_supported(kind: string): boolean {
         || kind == "unary" || kind == "call" || kind == "param" || kind == "copy"
         || kind == "phi" || kind == "alloc" || kind == "load_elem"
         || kind == "store_elem" || kind == "concat" || kind == "streq"
-        || kind == "print" || kind == "funcaddr" || kind == "call_indirect";
+        || kind == "print" || kind == "funcaddr" || kind == "call_indirect"
+        || kind == "const_float";
 }
 
 // supported reports whether every instruction in every function is in the

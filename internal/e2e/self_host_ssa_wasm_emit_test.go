@@ -22,11 +22,11 @@ import (
 // binary / unary / call / phi over ret / br / brif), the heap (alloc /
 // load_elem / store_elem) — arrays, strings, structs, tuples, methods,
 // i32 maps, struct-union match, push / slice — string build / equality
-// (concat / streq), print (bytes + trailing newline via fd_write), and
-// closures (funcaddr / call_indirect via a function table). The backend now
-// covers the whole SSA subset; the cases are a subset of
-// TestSelfHostSSAEmitX86_64's matrix, with all wanted values < 126
-// (wasmtime's WASI exit range).
+// (concat / streq), print (bytes + trailing newline via fd_write), closures
+// (funcaddr / call_indirect via a function table), and f64 floats (f64
+// locals / params / results + ops). The backend now covers the whole SSA
+// subset; the cases are a subset of TestSelfHostSSAEmitX86_64's matrix, with
+// all wanted values < 126 (wasmtime's WASI exit range).
 func TestSelfHostSSAEmitWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host SSA→wasm e2e")
@@ -147,6 +147,18 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		{"closure-escape-arg", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var k = 100; var add_k = function (n: i32): i32 { return n + k; }; return apply(add_k, 5); }", 105},
 		{"closure-escape-return", "function adder(a: i32): (i32) => i32 { var f = function (b: i32): i32 { return a + b; }; return f; } function main(): i32 { var add10 = adder(10); var add20 = adder(20); return add10(5) + add20(7); }", 42},
 		{"closure-capture-multicall", "function main(): i32 { var k = 10; var f = function (x: i32): i32 { return x + k; }; return f(1) + f(2); }", 23},
+		// f64 floats: f64 locals/params/results map to wasm f64 locals + ops
+		// (f64.add / f64.lt / f64.convert_i32_s / i32.trunc_f64_s). Results cast
+		// to i32 to surface as the exit code.
+		{"float-add", "function main(): i32 { var x = 1.5; var y = x + 2.5; return y as i32; }", 4},
+		{"float-chain", "function main(): i32 { var x = 1.5; var y = x + 2.5; var z = y * 2.0; return z as i32; }", 8},
+		{"float-compare", "function main(): i32 { var a = 3.5; if (a > 2.0) { return 1; } return 0; }", 1},
+		{"int-to-float", "function main(): i32 { var n = 7; var x = n as f64; return (x + 0.5) as i32; }", 7},
+		{"float-loop", "function main(): i32 { var sum = 0.0; var i = 0; while (i < 4) { sum = sum + 1.5; i = i + 1; } return sum as i32; }", 6},
+		{"float-neg", "function main(): i32 { var a = 4.0; var b = 0.0 - a; return (0.0 - b) as i32; }", 4},
+		{"float-param", "function half(x: f64): f64 { return x / 2.0; } function main(): i32 { return half(9.0) as i32; }", 4},
+		{"float-two-args", "function add(a: f64, b: f64): f64 { return a + b; } function main(): i32 { return add(3.5, 3.5) as i32; }", 7},
+		{"float-recursion", "function pow2(n: i32): f64 { if (n <= 0) { return 1.0; } return pow2(n - 1) * 2.0; } function main(): i32 { return (pow2(3) - 2.0) as i32; }", 6},
 	}
 
 	for _, tc := range cases {
