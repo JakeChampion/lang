@@ -3925,32 +3925,6 @@ function hl_captures(lam: ExprLambda, own_name: string, enclosing: string[]): bo
     return false;
 }
 
-function hl_lift_var(v: StmtVar, enclosing: string[], hoisted: FuncDecl[]): HoistResult {
-    var none: Stmt[] = [];
-    match (v.init) {
-        ExprLambda(lam) => {
-            if (stmts_mention(lam.body, v.name)) {
-                if (hl_captures(lam, v.name, enclosing)) {
-                    return HoistResult { stmts: [s_unknown("recursive local function with captures is not yet supported: " + v.name)], hoisted: hoisted };
-                }
-                var inner_encl: string[] = hl_param_names(lam.params);
-                inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
-                var ir: HoistResult = hl_rewrite(lam.body, inner_encl, hoisted);
-                var notp: string[] = [];
-                var fd: FuncDecl = FuncDecl {
-                    name: v.name, receiver_name: "", receiver_type: "",
-                    type_params: notp, params: lam.params, ret_type: lam.ret_type,
-                    body: ir.stmts, line: v.line, col: v.col,
-                    import_iface: "", import_wit: "", type_param_count: 0
-                };
-                return HoistResult { stmts: none, hoisted: ir.hoisted.push(fd) };
-            }
-        },
-        _ => { }
-    }
-    return HoistResult { stmts: [v], hoisted: hoisted };
-}
-
 function hl_rewrite_match(m: StmtMatch, enclosing: string[], hoisted: FuncDecl[]): HoistResult {
     var arms: MatchArm[] = [];
     var acc: FuncDecl[] = hoisted;
@@ -3975,10 +3949,34 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
     while (i < stmts.len()) {
         match (stmts[i]) {
             StmtVar(v) => {
-                var lr: HoistResult = hl_lift_var(v, enclosing, acc);
-                acc = lr.hoisted;
-                var k: i32 = 0;
-                while (k < lr.stmts.len()) { out = out.push(lr.stmts[k]); k = k + 1; }
+                // A self-recursive local function (`var f = <lambda
+                // mentioning f>`) is lifted out; everything else passes
+                // through as the ORIGINAL stmts[i] (re-wrapping the
+                // unwrapped payload via `[v]` would drop it).
+                var did_lift: boolean = false;
+                match (v.init) {
+                    ExprLambda(lam) => {
+                        if (stmts_mention(lam.body, v.name)) {
+                            did_lift = true;
+                            if (hl_captures(lam, v.name, enclosing)) {
+                                out = out.push(s_unknown("recursive local function with captures is not yet supported: " + v.name));
+                            } else {
+                                var inner_encl: string[] = hl_param_names(lam.params);
+                                inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
+                                var ir: HoistResult = hl_rewrite(lam.body, inner_encl, acc);
+                                var notp: string[] = [];
+                                acc = ir.hoisted.push(FuncDecl {
+                                    name: v.name, receiver_name: "", receiver_type: "",
+                                    type_params: notp, params: lam.params, ret_type: lam.ret_type,
+                                    body: ir.stmts, line: v.line, col: v.col,
+                                    import_iface: "", import_wit: "", type_param_count: 0
+                                });
+                            }
+                        }
+                    },
+                    _ => { }
+                }
+                if (!did_lift) { out = out.push(stmts[i]); }
             },
             StmtIf(f) => {
                 var tr: HoistResult = hl_rewrite(f.then_body, enclosing, acc);

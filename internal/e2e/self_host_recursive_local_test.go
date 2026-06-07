@@ -22,6 +22,11 @@ var recursiveLocalCases = []struct {
 	{"factorial", "function main(): i32 { function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } return fact(5); }", 120},
 	{"fib", "function main(): i32 { function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } return fib(10); }", 55},
 	{"calls-toplevel", "function dbl(x: i32): i32 { return x * 2; } function main(): i32 { function sumto(n: i32): i32 { if (n <= 0) { return 0; } return dbl(1) + sumto(n - 1); } return sumto(5); }", 10},
+	// Statements *around* the hoisted recursive local must survive the
+	// rebuild (regression: the lift dropped non-lifted `var`s that shared
+	// the body). A plain var before it, and a capturing closure alongside.
+	{"var-before", "function main(): i32 { var x: i32 = 5; function r(n: i32): i32 { if (n <= 0) { return 0; } return r(n - 1); } return x + r(3); }", 5},
+	{"with-sibling-closure", "function main(): i32 { var base: i32 = 100; var add = function(x: i32): i32 { return x + base; }; function cd(n: i32): i32 { if (n <= 0) { return 0; } return 1 + cd(n - 1); } return add(cd(5) + 17); }", 122},
 }
 
 // TestSelfHostRecursiveLocalX86_64 — recursive local hoisting via the
