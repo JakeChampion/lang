@@ -429,6 +429,7 @@ func New() *Interp {
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
+	i.Builtins["__method_Array_set"] = &Builtin{Fn: builtinArraySet}
 	// Map builtins. `map_new(cap)` returns an empty Map; the
 	// per-method shims walk the parallel-slice representation
 	// directly. Mirror the codegen surface from the checker's
@@ -872,6 +873,33 @@ func builtinArrayPush(_ *Interp, args []Value) (Value, error) {
 	out := make(Array, len(arr)+1)
 	copy(out, arr)
 	out[len(arr)] = args[1]
+	return out, nil
+}
+
+// builtinArraySet is the value-returning element set behind
+// `arr.set(i, v)` / `arr.with(i, v)` — codegen lowers it to the CoW
+// `__fern_arr_cow_inplace` shape (a possibly-fresh array with element
+// i replaced); the interpreter mirrors that with a fresh Go slice so
+// the source array stays untouched. Receiver-as-first-arg, matching
+// the codegen surface registered in checker.go.
+func builtinArraySet(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("__method_Array_set: expected 3 args (arr, i, v), got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("__method_Array_set: receiver must be array, got %T", args[0])
+	}
+	idx, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("__method_Array_set: index must be number, got %T", args[1])
+	}
+	if idx < 0 || int(idx) >= len(arr) {
+		return nil, fmt.Errorf("__method_Array_set: index %d out of range [0, %d)", int(idx), len(arr))
+	}
+	out := make(Array, len(arr))
+	copy(out, arr)
+	out[int(idx)] = args[2]
 	return out, nil
 }
 

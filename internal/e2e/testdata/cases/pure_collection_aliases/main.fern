@@ -1,0 +1,36 @@
+import "core/no_prelude";
+import "core/map";
+// Pure (immutable-looking) collection API aliases
+// (docs/PURE-COLLECTION-API-PLAN.md §3a). Exercises the
+// value-returning names — Map.insert / Map.without / Map.cleared and
+// Array.append / Array.with — each of which lowers to the same builtin
+// as its mutable-looking sibling. Reassignment form throughout.
+function main(): i32 {
+    // Map.insert — value-returning set (with overwrite).
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(7, 40);
+    m = m.insert(11, 99);
+    m = m.insert(7, 2);              // overwrite 7 -> 2
+    var v7: i32 = m.get_or(7, -1);  // 2
+
+    // Map.without — value-returning delete; returns (Map, existed).
+    var (m2, existed) = m.without(11);
+    if (!existed) { return 91; }
+    if (m2.has(11)) { return 92; }
+    var total: i32 = v7 + m2.len();  // 2 + 1 = 3
+
+    // Array.append + Array.with — value-returning push / element set.
+    var a: i32[] = [];
+    a = a.append(10);
+    a = a.append(20);
+    a = a.with(0, 30);               // [30, 20]
+    total = total + a[0] + a[1] + a.len();  // 3 + 30 + 20 + 2 = 55
+
+    // Map.cleared — value-returning clear.
+    var m3: Map[i32, i32] = map_new(4);
+    m3 = m3.insert(1, 1);
+    m3 = m3.cleared();
+    total = total + m3.len();        // + 0 = 55
+
+    return total;
+}
