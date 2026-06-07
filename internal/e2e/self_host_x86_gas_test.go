@@ -73,6 +73,21 @@ func TestSelfHostX86GasRodataRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasrodata42", x86GasRodataDriverMain, 42)
 }
 
+// TestSelfHostX86GasMulRuns assembles `imulq` (6 * 7 = 42) end-to-end.
+func TestSelfHostX86GasMulRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasmul42", x86GasMulDriverMain, 42)
+}
+
+// TestSelfHostX86GasIncShlRuns assembles incq + shlq ((5+1)<<3 - 6 = 42).
+func TestSelfHostX86GasIncShlRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasincshl42", x86GasIncShlDriverMain, 42)
+}
+
+// TestSelfHostX86GasDivRuns assembles cqto + idivq (84 / 2 = 42).
+func TestSelfHostX86GasDivRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasdiv42", x86GasDivDriverMain, 42)
+}
+
 // runX86GasNativeDriver concatenates x86_encode.fern + x86_gas.fern +
 // elf.fern + driverMain, compiles it through the self-host wasm emitter,
 // runs the WAT under wasmtime to get the raw ELF the driver assembled and
@@ -191,6 +206,36 @@ function main(): i32 {
     var a: X86Asm = x86_gas_assemble(src);
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
     write(string_from_bytes(bin));
+    return 0;
+}
+`
+
+// x86GasMulDriverMain: imulq (6 * 7 = 42).
+const x86GasMulDriverMain = `
+function main(): i32 {
+    var src: string = "\tmovq $6, %rax\n\tmovq $7, %rcx\n\timulq %rcx, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasIncShlDriverMain: incq + shlq ((5+1)<<3 - 6 = 48 - 6 = 42).
+const x86GasIncShlDriverMain = `
+function main(): i32 {
+    var src: string = "\tmovq $5, %rax\n\tincq %rax\n\tshlq $3, %rax\n\tsubq $6, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasDivDriverMain: cqto + idivq (84 / 2 = 42).
+const x86GasDivDriverMain = `
+function main(): i32 {
+    var src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    write(string_from_bytes(elf_static_executable_data_x86(a.code, a.rodata)));
     return 0;
 }
 `

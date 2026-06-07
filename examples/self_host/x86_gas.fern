@@ -147,12 +147,24 @@ function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
     return a;
 }
 
+// x86_gas_logic dispatches andq/orq/xorq: `$imm, %reg` uses the group-1
+// imm32 form (slash 4/1/6), `%reg, %reg` the reg-reg opcode (0x21/09/31).
+function x86_gas_logic(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) {
+        a.code = x86_alu_r64_imm32(a.code, imm_slash, x86_gas_reg(dst), x86_gas_atoi(src));
+        return a;
+    }
+    a.code = x86_binop_r64_r64(a.code, regop, x86_gas_reg(dst), x86_gas_reg(src));
+    return a;
+}
+
 // x86_gas_emit assembles one instruction line (mnemonic + operand text).
 function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // zero-operand
     if (mnem == "ret") { a.code = x86_ret(a.code); return a; }
     if (mnem == "syscall") { a.code = x86_syscall(a.code); return a; }
     if (mnem == "leave") { a.code = x86_leave(a.code); return a; }
+    if (mnem == "cqto") { a.code = x86_cqo(a.code); return a; }
     // branch / call: one operand = a label
     if (mnem == "jmp") { return x86_jmp_label(a, rest); }
     if (mnem == "je" || mnem == "jz") { return x86_jcc_label(a, x86_cc_e(), rest); }
@@ -165,6 +177,11 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // one-operand register
     if (mnem == "pushq") { a.code = x86_push_r64(a.code, x86_gas_reg(rest)); return a; }
     if (mnem == "popq") { a.code = x86_pop_r64(a.code, x86_gas_reg(rest)); return a; }
+    if (mnem == "incq") { a.code = x86_inc_r64(a.code, x86_gas_reg(rest)); return a; }
+    if (mnem == "decq") { a.code = x86_dec_r64(a.code, x86_gas_reg(rest)); return a; }
+    if (mnem == "negq") { a.code = x86_neg_r64(a.code, x86_gas_reg(rest)); return a; }
+    if (mnem == "divq") { a.code = x86_div_r64(a.code, x86_gas_reg(rest)); return a; }
+    if (mnem == "idivq") { a.code = x86_idiv_r64(a.code, x86_gas_reg(rest)); return a; }
     // two-operand (split on the first comma)
     var ci: i32 = rest.index_of(",");
     if (ci < 0) {
@@ -180,6 +197,12 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "addq") { return x86_gas_alu(a, 0, src, dst); }
     if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
     if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
+    if (mnem == "testq") { a.code = x86_test_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "imulq") { a.code = x86_imul_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)); return a; }
+    if (mnem == "shlq") { a.code = x86_shl_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)); return a; }
+    if (mnem == "andq") { return x86_gas_logic(a, 4, 33, src, dst); }
+    if (mnem == "orq") { return x86_gas_logic(a, 1, 9, src, dst); }
+    if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
     return a; // unsupported mnemonic: skip (grown in later slices)
 }
 
