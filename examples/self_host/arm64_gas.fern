@@ -134,20 +134,30 @@ struct Arm64Mem {
     off: i32,
 }
 
-// arm64_gas_mem parses `[Xn]` or `[Xn, #off]`.
+// arm64_gas_mem parses `[Xn]` or `[Xn, #off]`, tolerating a trailing `!`
+// (pre-index writeback marker — detect it separately with
+// arm64_gas_has_bang).
 function arm64_gas_mem(op: string): Arm64Mem {
     var s: string = arm64_gas_trim(op);
-    // drop the surrounding [ ]
-    if (s.len() >= 2 && s[0] == 91) {
-        s = s[1:s.len() - 1];
+    var lb: i32 = s.index_of("[");
+    var rb: i32 = s.index_of("]");
+    var inner: string = s;
+    if (lb >= 0 && rb > lb) {
+        inner = s[lb + 1:rb];
     }
-    var parts: string[] = arm64_gas_operands(s);
+    var parts: string[] = arm64_gas_operands(inner);
     var base: i32 = arm64_gas_reg(parts[0]);
     var off: i32 = 0;
     if (parts.len() > 1) {
         off = arm64_gas_imm(parts[1]);
     }
     return Arm64Mem { base: base, off: off };
+}
+
+// arm64_gas_has_bang reports whether an operand carries the `!` pre-index
+// writeback marker.
+function arm64_gas_has_bang(op: string): boolean {
+    return op.index_of("!") >= 0;
 }
 
 // arm64_gas_lsl_amount parses a `lsl #N` shift operand (the `lsl #16` of a
@@ -195,6 +205,10 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var rd: i32 = arm64_gas_reg(ops[0]);
         if (ops[1].len() > 0 && ops[1][0] == 35) { // '#'
             a.code = arm64_movz(a.code, rd, arm64_gas_imm(ops[1]), 0);
+        } else if (arm64_gas_trim(ops[0]) == "sp" || arm64_gas_trim(ops[1]) == "sp") {
+            // `mov Xd, sp` / `mov sp, Xn` is the `add Xd, Xn, #0` alias
+            // (ORR can't name SP).
+            a.code = arm64_addimm(a.code, rd, arm64_gas_reg(ops[1]), 0);
         } else {
             a.code = arm64_movreg(a.code, rd, arm64_gas_reg(ops[1]));
         }
@@ -237,33 +251,183 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         }
         return a;
     }
-    if (mnem == "ldr") {
-        var lm: Arm64Mem = arm64_gas_mem(ops[1]);
-        a.code = arm64_ldr(a.code, arm64_gas_reg(ops[0]), lm.base, lm.off);
+    if (mnem == "ldr" || mnem == "str") {
+        var rt: i32 = arm64_gas_reg(ops[0]);
+        if (ops.len() >= 3) {
+            // post-index: `ldr Xt, [Xn], #off` (ops[1]="[Xn]", ops[2]="#off")
+            var pb: i32 = arm64_gas_mem(ops[1]).base;
+            var po: i32 = arm64_gas_imm(ops[2]);
+            if (mnem == "ldr") { a.code = arm64_ldr_post(a.code, rt, pb, po); }
+            else { a.code = arm64_str_post(a.code, rt, pb, po); }
+            return a;
+        }
+        var m: Arm64Mem = arm64_gas_mem(ops[1]);
+        if (arm64_gas_has_bang(ops[1])) {
+            // pre-index writeback: `[Xn, #off]!`
+            if (mnem == "ldr") { a.code = arm64_ldr_pre(a.code, rt, m.base, m.off); }
+            else { a.code = arm64_str_pre(a.code, rt, m.base, m.off); }
+        } else {
+            if (mnem == "ldr") { a.code = arm64_ldr(a.code, rt, m.base, m.off); }
+            else { a.code = arm64_str(a.code, rt, m.base, m.off); }
+        }
         return a;
     }
-    if (mnem == "str") {
-        var sm: Arm64Mem = arm64_gas_mem(ops[1]);
-        a.code = arm64_str(a.code, arm64_gas_reg(ops[0]), sm.base, sm.off);
+    if (mnem == "stp") {
+        // prologue form: `stp Xt, Xt2, [Xn, #off]!` (pre-index)
+        var sm: Arm64Mem = arm64_gas_mem(ops[2]);
+        a.code = arm64_stp_pre(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), sm.base, sm.off);
+        return a;
+    }
+    if (mnem == "ldp") {
+        // epilogue form: `ldp Xt, Xt2, [Xn], #off` (post-index)
+        var lb: i32 = arm64_gas_mem(ops[2]).base;
+        var lo: i32 = arm64_gas_imm(ops[3]);
+        a.code = arm64_ldp_post(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), lb, lo);
         return a;
     }
     return a; // unknown mnemonic — ignored
 }
 
+// ============================================================
+// data section + named-symbol (@PAGE/@PAGEOFF) relocation
+// ============================================================
+//
+// Arm64GasProg extends the text assembler (Arm64Asm) with a `__DATA`/
+// `__const` blob, a data-symbol table (name -> offset within the blob),
+// and a queue of page fixups: adrp `sym@PAGE` and ldr/add `sym@PAGEOFF`
+// references whose immediates can only be resolved once the final segment
+// addresses are known (macho.fern lays __TEXT and __DATA at separate
+// page-aligned vaddrs). arm64_gas_program parses; arm64_gas_link patches.
+
+struct Arm64GasProg {
+    asm: Arm64Asm,
+    data: i32[],
+    dlab_names: string[],
+    dlab_offs: i32[],
+    pf_sites: i32[],   // byte offset of the instruction to patch in .text
+    pf_syms: string[], // target data symbol
+    pf_kinds: i32[],   // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
+}
+
+function arm64_gas_prog_new(): Arm64GasProg {
+    return Arm64GasProg {
+        asm: arm64_asm_new(), data: [],
+        dlab_names: [], dlab_offs: [],
+        pf_sites: [], pf_syms: [], pf_kinds: [],
+    };
+}
+
+// arm64_gas_dlabel_off returns the data-blob offset of a data symbol, or
+// -1 if it is not defined.
+function arm64_gas_dlabel_off(p: Arm64GasProg, name: string): i32 {
+    var i: i32 = 0;
+    while (i < p.dlab_names.len()) {
+        if (p.dlab_names[i] == name) {
+            return p.dlab_offs[i];
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// arm64_gas_strip_at returns the symbol portion of a `sym@PAGE` /
+// `sym@PAGEOFF` operand (everything before the '@'), trimmed.
+function arm64_gas_strip_at(tok: string): string {
+    var s: string = arm64_gas_trim(tok);
+    var at: i32 = s.index_of("@");
+    if (at >= 0) {
+        s = s[0:at];
+    }
+    return arm64_gas_trim(s);
+}
+
+// arm64_gas_data_le appends `n` little-endian bytes of `v` to the data blob.
+function arm64_gas_data_le(p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
+    var i: i32 = 0;
+    while (i < n) {
+        p.data = p.data.push(((v >> (i * 8)) & 255) as i32);
+        i = i + 1;
+    }
+    return p;
+}
+
+// arm64_gas_data_asciz appends a `.asciz "…"` string + NUL to the data
+// blob, decoding the common \n \t \0 \\ escapes.
+function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
+    var q1: i32 = line.index_of("\"");
+    if (q1 < 0) {
+        p.data = p.data.push(0);
+        return p;
+    }
+    var i: i32 = q1 + 1;
+    while (i < line.len() && line[i] != 34) { // until closing '"'
+        var c: i32 = line[i];
+        if (c == 92 && i + 1 < line.len()) { // '\'
+            var e: i32 = line[i + 1];
+            if (e == 110) { c = 10; }       // \n
+            else if (e == 116) { c = 9; }   // \t
+            else if (e == 48) { c = 0; }    // \0
+            else { c = e; }                 // \\ , \"
+            i = i + 1;
+        }
+        p.data = p.data.push(c);
+        i = i + 1;
+    }
+    p.data = p.data.push(0); // .asciz NUL terminator
+    return p;
+}
+
+// arm64_gas_data_align pads the data blob to a 2^n byte boundary.
+function arm64_gas_data_align(p: Arm64GasProg, n: i32): Arm64GasProg {
+    var a: i32 = 1;
+    var k: i32 = 0;
+    while (k < n) { a = a * 2; k = k + 1; }
+    while ((p.data.len() % a) != 0) {
+        p.data = p.data.push(0);
+    }
+    return p;
+}
+
+// arm64_gas_data_directive handles a `.`-directive inside a data section.
+function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
+    if (line.starts_with(".quad")) {
+        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 8);
+    }
+    if (line.starts_with(".4byte") || line.starts_with(".word")) {
+        var off: i32 = 6;
+        if (line.starts_with(".word")) { off = 5; }
+        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[off:line.len()])) as i64, 4);
+    }
+    if (line.starts_with(".byte")) {
+        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 1);
+    }
+    if (line.starts_with(".asciz") || line.starts_with(".string")) {
+        return arm64_gas_data_asciz(p, line);
+    }
+    if (line.starts_with(".align") || line.starts_with(".p2align") || line.starts_with(".balign")) {
+        var sp: i32 = line.index_of(" ");
+        if (sp >= 0) {
+            return arm64_gas_data_align(p, arm64_gas_atoi(arm64_gas_trim(line[sp + 1:line.len()])));
+        }
+    }
+    return p; // other directives ignored
+}
+
 // ---- the assemble loop ----
 
-// arm64_gas_assemble parses a GAS-text program (one statement per line)
-// into an Arm64Asm, resolving forward branches at the end. The resulting
-// a.code is the final .text. `_main` (or whatever label is first) must sit
-// at offset 0, since macho.fern enters at the first text byte.
-function arm64_gas_assemble(src: string): Arm64Asm {
-    var a: Arm64Asm = arm64_asm_new();
+// arm64_gas_program parses a GAS-text program (one statement per line)
+// into an Arm64GasProg: .text code (forward branches resolved), a data
+// blob, a data-symbol table, and a queue of @PAGE/@PAGEOFF fixups (left
+// for arm64_gas_link). The first .text label must sit at offset 0, since
+// macho.fern enters at the first text byte.
+function arm64_gas_program(src: string): Arm64GasProg {
+    var p: Arm64GasProg = arm64_gas_prog_new();
+    var section: i32 = 0; // 0 = .text, 1 = data (__const / __data)
     var lines: string[] = src.split("\n");
     var li: i32 = 0;
     while (li < lines.len()) {
         var raw: string = lines[li];
         li = li + 1;
-        // strip a `//` line comment
         var cm: i32 = raw.index_of("//");
         if (cm >= 0) {
             raw = raw[0:cm];
@@ -272,20 +436,38 @@ function arm64_gas_assemble(src: string): Arm64Asm {
         if (line.len() == 0) {
             continue;
         }
-        // label prefix `name:` (a single token before the first ':')
+        // label prefix `name:`
         var colon: i32 = line.index_of(":");
         if (colon > 0) {
             var before: string = line[0:colon];
             if (before.index_of(" ") < 0 && before.index_of(",") < 0) {
-                a = arm64_asm_label(a, before);
+                if (section == 1) {
+                    p.dlab_names = p.dlab_names.push(before);
+                    p.dlab_offs = p.dlab_offs.push(p.data.len());
+                } else {
+                    p.asm = arm64_asm_label(p.asm, before);
+                }
                 line = arm64_gas_trim(line[colon + 1:line.len()]);
                 if (line.len() == 0) {
                     continue;
                 }
             }
         }
-        // directive: ignore (.text / .globl / .align / .p2align / .type …)
+        // directives
         if (line[0] == 46) { // '.'
+            if (line == ".text") {
+                section = 0;
+            } else if (line.starts_with(".section")) {
+                if (line.contains("__const") || line.contains("__DATA") || line.contains(".data") || line.contains(".rodata")) {
+                    section = 1;
+                } else {
+                    section = 0;
+                }
+            } else if (line.starts_with(".data")) {
+                section = 1;
+            } else if (section == 1) {
+                p = arm64_gas_data_directive(p, line);
+            }
             continue;
         }
         // mnemonic + operands
@@ -296,7 +478,78 @@ function arm64_gas_assemble(src: string): Arm64Asm {
             mnem = line[0:sp];
             rest = arm64_gas_trim(line[sp + 1:line.len()]);
         }
-        a = arm64_gas_emit(a, mnem, rest);
+        // @PAGE / @PAGEOFF symbol references queue a fixup; everything else
+        // assembles directly into .text.
+        if (mnem == "adrp") {
+            var aops: string[] = arm64_gas_operands(rest);
+            var aas: Arm64Asm = p.asm;
+            aas.code = arm64_adrp(aas.code, arm64_gas_reg(aops[0]), 0);
+            p.asm = aas;
+            p.pf_sites = p.pf_sites.push(aas.code.len() - 4);
+            p.pf_syms = p.pf_syms.push(arm64_gas_strip_at(aops[1]));
+            p.pf_kinds = p.pf_kinds.push(0);
+            continue;
+        }
+        if (mnem == "ldr" && rest.index_of("@PAGEOFF") >= 0) {
+            var lops: string[] = arm64_gas_operands(rest);
+            var lm: Arm64Mem = arm64_gas_mem(lops[1]); // base reg; off symbolic
+            // symbol is the bracket's second operand, before '@'
+            var linner: string = lops[1];
+            var lb: i32 = linner.index_of("[");
+            var rb: i32 = linner.index_of("]");
+            var lparts: string[] = arm64_gas_operands(linner[lb + 1:rb]);
+            var las: Arm64Asm = p.asm;
+            las.code = arm64_ldr(las.code, arm64_gas_reg(lops[0]), lm.base, 0);
+            p.asm = las;
+            p.pf_sites = p.pf_sites.push(las.code.len() - 4);
+            p.pf_syms = p.pf_syms.push(arm64_gas_strip_at(lparts[1]));
+            p.pf_kinds = p.pf_kinds.push(1);
+            continue;
+        }
+        if (mnem == "add" && rest.index_of("@PAGEOFF") >= 0) {
+            var dops: string[] = arm64_gas_operands(rest);
+            var das: Arm64Asm = p.asm;
+            das.code = arm64_addimm(das.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0);
+            p.asm = das;
+            p.pf_sites = p.pf_sites.push(das.code.len() - 4);
+            p.pf_syms = p.pf_syms.push(arm64_gas_strip_at(dops[2]));
+            p.pf_kinds = p.pf_kinds.push(2);
+            continue;
+        }
+        p.asm = arm64_gas_emit(p.asm, mnem, rest);
     }
-    return arm64_asm_resolve(a);
+    p.asm = arm64_asm_resolve(p.asm);
+    return p;
+}
+
+// arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the
+// final __TEXT / __DATA segment addresses are known (the caller supplies
+// them from macho.fern's macho_text_vaddr / macho_data_vaddr). After this,
+// p.asm.code + p.data are the final sections.
+function arm64_gas_link(p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
+    var aw: Arm64Asm = p.asm;
+    var i: i32 = 0;
+    while (i < p.pf_sites.len()) {
+        var site: i32 = p.pf_sites[i];
+        var target: i64 = data_vaddr + (arm64_gas_dlabel_off(p, p.pf_syms[i]) as i64);
+        var kind: i32 = p.pf_kinds[i];
+        if (kind == 0) {
+            var adrp_addr: i64 = text_vaddr + (site as i64);
+            aw.code = arm64_patch_adrp(aw.code, site, arm64_page_delta(target, adrp_addr));
+        } else if (kind == 1) {
+            aw.code = arm64_patch_ldr_off(aw.code, site, arm64_page_off(target));
+        } else {
+            aw.code = arm64_patch_addimm_off(aw.code, site, arm64_page_off(target));
+        }
+        i = i + 1;
+    }
+    p.asm = aw;
+    return p;
+}
+
+// arm64_gas_assemble parses a text-only program (no data section / symbol
+// relocation) and returns the resolved .text — the back-compat entry the
+// earlier slices use.
+function arm64_gas_assemble(src: string): Arm64Asm {
+    return arm64_gas_program(src).asm;
 }

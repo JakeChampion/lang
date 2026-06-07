@@ -305,6 +305,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"let-else-matched", "function mk(): Option[i32] { return Some(42); } function main(): i32 { let Some(v) = mk() else { return 1; } return v; }", 42, ""},
 		{"let-else-diverge", "function mk(): Option[i32] { return None; } function main(): i32 { let Some(v) = mk() else { return 7; } return v; }", 7, ""},
 		{"let-else-rest-multi", "function mk(): Option[i32] { return Some(40); } function main(): i32 { let Some(v) = mk() else { return 1; } var w: i32 = v + 2; return w; }", 42, ""},
+		// recursive local functions — hoisted to top level when capture-free.
+		{"rec-local-factorial", "function main(): i32 { function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } return fact(5); }", 120, ""},
+		{"rec-local-fib", "function main(): i32 { function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } return fib(10); }", 55, ""},
 		{"opt-local", "function main(): i32 { var o: Option[i32] = Some(5); match (o) { Some(v) => { return v * 2; }, None => { return 0; } } return 1; }", 10, ""},
 		{"opt-string-write", "function name(): Option[i32] { return Some(0); } function main(): i32 { match (name()) { Some(v) => { write(\"got\"); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "got"},
 		{"opt-in-if", "function lookup(k: i32): Option[i32] { if (k == 1) { return Some(100); } return None; } function main(): i32 { var sum = 0; match (lookup(1)) { Some(v) => { sum = sum + v; }, None => {} } match (lookup(2)) { Some(v) => { sum = sum + v; }, None => { sum = sum + 1; } } return sum; }", 101, ""},

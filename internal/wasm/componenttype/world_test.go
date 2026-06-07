@@ -66,6 +66,8 @@ func TestWorldImports(t *testing.T) {
 		"wasi:sockets/instance-network@0.2.0",
 		"wasi:sockets/tcp@0.2.0",
 		"wasi:sockets/tcp-create-socket@0.2.0",
+		"wasi:sockets/udp@0.2.0",
+		"wasi:sockets/udp-create-socket@0.2.0",
 		"wasi:random/random@0.2.0",
 	}
 	if len(got) != len(want) {

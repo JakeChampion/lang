@@ -319,6 +319,21 @@ planned order:
   E022 ("let-else source must be an enum value") surfaces here as E035
   (match-on-non-enum) via the desugar — a follow-up, matching the
   if-let / match-guard precedent.
+- ✅ **Recursive local functions** — `function f(...) { … f(…) … }` inside
+  another function. A non-recursive local already desugars to `var f =
+  function(…){…}` (a closure); a self-recursive one can't see its own name
+  through the closure value. `hoist_local_funcs_module` (a post-parse pass
+  in `module_with_builtins`) lifts a **capture-free** self-recursive local
+  to a top-level function — recursion resolves once it's top-level —
+  reusing all the existing top-level-function machinery (no new AST node,
+  no backend changes). A *capturing* recursive local still errors clearly
+  (lambda-lifting is a follow-up). The pass only rebuilds a body that
+  actually contains a recursive local (the `hl_has_rec_local` precheck), so
+  the self-host's own sources — which use none — pass through untouched and
+  the byte-identical stage-2 fixpoint holds. Surfaced (and required) the
+  arm64/x86 rc-helper below-heap guard fix (#2292): a no-capture closure is
+  a bare code pointer the exit-dec sweep must not rc-dec.
+  `self_host_recursive_local_test.go` (x86-64 + arm64) + wasm cases.
 - ✅ **`switch` / `case`** — desugars in the parser to a nested
   if/else-if chain (multi-value cases OR their `==` comparisons; no
   fall-through) (`self_host_switch_test.go`).
@@ -994,10 +1009,38 @@ smallest → largest:
     `arm64_gas_assemble`, wraps the bytes with `macho.fern`, and the signed
     Mach-O exits 42 — the first time the arm64-darwin path goes from
     **assembly text → runnable signed binary** with no external
-    `as`/`clang`/`ld64`. Next: feed `asm_arm64`'s actual emitted text
-    through this assembler and write the file from the driver (replacing the
-    `clang`/`ld64` shell-out), widening the parsed instruction surface to
-    whatever `asm_arm64` emits.
+    `as`/`clang`/`ld64`.
+  - ✅ **slice 3h — frame prologue/epilogue ops**: the instruction surface
+    a *real function* emits — `stp`/`ldp` with writeback (`[Xn, #off]!`
+    pre / `[Xn], #off` post), single `ldr`/`str` writeback (signed imm9),
+    and the `mov Xd, sp` / `mov sp, Xn` add-immediate alias (ORR can't name
+    SP) — added to `arm64_encode.fern` (encoders pinned vs llvm-mc) and
+    parsed by `arm64_gas.fern` (a `!`-tolerant memory parser + the pre/post
+    operand-count dispatch). Byte-checked by `TestSelfHostArm64FrameGas`
+    and gated end-to-end by **`TestSelfHostArm64DarwinMachOFnGasRuns`**: a
+    Fern program assembles the actual prologue/epilogue + frame idiom the
+    backend emits (`stp` … `mov x29, sp` … push/pop via `str`/`ldr`
+    writeback … `ldp` … `ret`, called by `bl`), wraps it with `macho.fern`,
+    and the signed Mach-O exits 42 — no external tool.
+  - ✅ **slice 3i — data section + named-symbol relocation**: `arm64_gas`
+    gains an `Arm64GasProg` (the text assembler + a `__DATA`/`__const`
+    blob + a data-symbol table + a page-fixup queue). The data directives
+    `.quad` / `.4byte` / `.word` / `.byte` / `.asciz` / `.string` /
+    `.align` build the blob; `.section __TEXT,__const` / `.data` switch
+    section; a label in the data section records a data symbol. `adrp
+    sym@PAGE`, `ldr [Xn, sym@PAGEOFF]`, and `add Xn, sym@PAGEOFF` queue
+    fixups that `arm64_gas_link(p, text_vaddr, data_vaddr)` resolves once
+    macho.fern's segment addresses are known (`arm64_patch_adrp` /
+    `_ldr_off` / `_addimm_off`). Byte-checked by `TestSelfHostArm64DataGas`
+    and gated end-to-end by **`TestSelfHostArm64DarwinMachOSymbolRuns`**: a
+    Fern program assembles text that defines a `.quad 42` in `__const` and
+    loads it *by name* (`adrp`/`ldr` `@PAGE`/`@PAGEOFF`), links the fixups,
+    wraps it with `macho.fern`, and the signed Mach-O exits 42 — a real
+    cross-segment symbol reference, no external tool. (Found + fixed a
+    self-host gotcha: a local named `as` collides with the cast keyword and
+    silently mis-compiles.) Remaining for full wiring: `.ltorg` literal
+    pools (`ldr Xd, =imm`), then feeding `asm_arm64`'s real output from the
+    CLI driver (replacing the `clang`/`ld64` shell-out).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
@@ -1262,11 +1305,41 @@ smallest → largest:
     driver comment. The driver keeps its single-arm `Ok` + fixed-path form
     (simplest; the file always exists), now for clarity rather than to
     dodge a bug.
+  - ✅ **slice 2y — `read_file` 64 KiB truncation fix (a REAL wasm bug)**.
+    Pushing the capstone toward larger programs (toward assembling
+    `asm.fern`'s own output) hit a hard ceiling at ~64 KiB of asm. Root
+    cause, verified directly: the self-host wasm preview1 `read_file`
+    (`wasm.fern` `readfile_func`) used a **fixed 64 KiB buffer** — once the
+    read offset reached 64 KiB the iovec length went to 0, `fd_read`
+    returned 0, and the loop mistook a full buffer for EOF, silently
+    truncating any larger file (a 140 KB / 300 KB file both read back as
+    64 KB). Fixed by growing the buffer in 64 KiB chunks (the bump
+    allocator hands out contiguous bytes and nothing else allocates during
+    the read loop, so each extension lands right after the buffer; room is
+    ensured *before* each read so a full buffer is never mistaken for EOF).
+    Now large files round-trip — `TestSelfHostWasmReadFileLarge` reads a
+    200 KB file and checks bytes past the boundary; the capstone assembler
+    reads multi-hundred-KB asm intact (ELF size scales with input). No
+    regression across the wasm / CLI / capstone suites. (This is unrelated
+    to the spurious "bugs" of 2x — it's an actual, reproduced defect.)
+  - ✅ **assembler-at-scale correctness — verified, NO bug** (the "150-fn →
+    85" claim was spurious). With large asm now delivered intact, the
+    self-host assembler was probed at 40 / 150 / 400 / 600 functions
+    (up to ~124 KB asm) and **matches gcc's assembly of the same `.s`
+    byte-for-result on every size**. The earlier "nfn=400 returns 144, want
+    400" reading was simply the **Unix 8-bit exit-code truncation**
+    (400 & 0xFF == 144), not a miscompile — and the "150 → 85" figure came
+    from a malformed test program (the `f32`/`f64` reserved-keyword function
+    names of 2x), not the assembler. Guarded by `TestSelfHostX86ScaleProbe`
+    (`self_host_x86_scale_probe_test.go`), which keeps each result < 256 so
+    the exit code is unmasked and cross-checks every case against gcc.
+    There is no O(n²)-label or fixup defect at scale. **Lesson (recurring):**
+    verify the test program is valid Fern and account for exit-code masking
+    before declaring an assembler/wasm bug.
   - ⬜ remaining: the x87 transcendentals (`fldl`/`fstpl` + `fsin`/`fcos`/…)
-    for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; broadening
-    the capstone toward progressively larger / multi-module programs (and
-    ultimately `asm.fern`'s own output → a native self-host fixpoint); and
-    the CLI wiring (blocked above).
+    for `sin`/`cos`/`exp`; the f64-method `asm.fern` gap above; assembling
+    `asm.fern`'s own output → a native self-host fixpoint; and the CLI
+    wiring (blocked above).
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param

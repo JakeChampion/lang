@@ -3,7 +3,7 @@
 //   - `fern` is the CLI world: imports the preview-2 interfaces
 //     the WASM backend emits natively (stdio, args / env via
 //     wasi:cli/environment, exit, monotonic clock, filesystem,
-//     TCP sockets, random), runs `_start` once via
+//     TCP + UDP sockets, random), runs `_start` once via
 //     wasi:cli/run.run (wired through the preview-1 adapter).
 //   - `http` is the HTTP-handler world: same imports as `fern`
 //     plus wasi:http/types, and EXPORTS
@@ -27,6 +27,8 @@ world fern {
     import wasi:sockets/instance-network@0.2.0;
     import wasi:sockets/tcp-create-socket@0.2.0;
     import wasi:sockets/tcp@0.2.0;
+    import wasi:sockets/udp-create-socket@0.2.0;
+    import wasi:sockets/udp@0.2.0;
     import wasi:random/random@0.2.0;
 }
 

@@ -1551,7 +1551,7 @@ function parse_stmt(p: Par): StmtResult {
             // itself (the name binds after the lambda captures), so this
             // needs top-level hoisting (closureconv), not yet ported.
             // Surface it rather than miscompile silently.
-            return StmtResult { par: p, stmt: s_unknown("recursive local function: " + fr.func.name) };
+            return StmtResult { par: p, stmt: s_var(fr.func.name, "", e_lambda(fr.func.params, fr.func.ret_type, fr.func.body)) };
         }
         var lam: Expr = e_lambda(fr.func.params, fr.func.ret_type, fr.func.body);
         return StmtResult { par: p, stmt: s_var(fr.func.name, "", lam) };
@@ -3834,6 +3834,214 @@ function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
     }
 }
 
+pub struct HoistResult { stmts: Stmt[], hoisted: FuncDecl[] }
+
+function hl_param_names(params: ParamDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < params.len()) { out = out.push(params[i].name); i = i + 1; }
+    return out;
+}
+
+function hl_append_str(a: string[], b: string[]): string[] {
+    var out: string[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.push(b[i]); i = i + 1; }
+    return out;
+}
+
+function hl_collect_var_names(stmts: Stmt[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtVar(v) => { out = out.push(v.name); },
+            StmtIf(f) => {
+                out = hl_append_str(out, hl_collect_var_names(f.then_body));
+                out = hl_append_str(out, hl_collect_var_names(f.else_body));
+            },
+            StmtWhile(w) => { out = hl_append_str(out, hl_collect_var_names(w.body)); },
+            StmtFor(fr) => { out = hl_append_str(out, hl_collect_var_names(fr.body)); },
+            StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = hl_append_str(out, hl_collect_var_names(m.arms[a].body)); a = a + 1; }
+            },
+            StmtDefer(d) => {
+                var one: Stmt[] = [d.action];
+                out = hl_append_str(out, hl_collect_var_names(one));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// hl_has_rec_local reports whether a statement list (descending into
+// nested blocks) contains a self-recursive local function — a `var f =
+// <lambda whose body mentions f>`. hl_rewrite uses this to leave bodies
+// with no recursive local completely untouched, so the rebuild path only
+// runs where it must — and the self-host's own sources (which use none)
+// pass through byte-for-byte, keeping the stage-2 fixpoint intact.
+function hl_has_rec_local(stmts: Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtVar(v) => {
+                match (v.init) {
+                    ExprLambda(lam) => { if (stmts_mention(lam.body, v.name)) { return true; } },
+                    _ => { }
+                }
+            },
+            StmtIf(f) => { if (hl_has_rec_local(f.then_body) || hl_has_rec_local(f.else_body)) { return true; } },
+            StmtWhile(w) => { if (hl_has_rec_local(w.body)) { return true; } },
+            StmtFor(fr) => { if (hl_has_rec_local(fr.body)) { return true; } },
+            StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { if (hl_has_rec_local(m.arms[a].body)) { return true; } a = a + 1; }
+            },
+            StmtDefer(d) => {
+                var one: Stmt[] = [d.action];
+                if (hl_has_rec_local(one)) { return true; }
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function hl_captures(lam: ExprLambda, own_name: string, enclosing: string[]): boolean {
+    var shadow: string[] = hl_param_names(lam.params);
+    shadow = hl_append_str(shadow, hl_collect_var_names(lam.body));
+    var i: i32 = 0;
+    while (i < enclosing.len()) {
+        var e: string = enclosing[i];
+        if (e != own_name && !name_in_list(shadow, e)) {
+            if (stmts_mention(lam.body, e)) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function hl_lift_var(v: StmtVar, enclosing: string[], hoisted: FuncDecl[]): HoistResult {
+    var none: Stmt[] = [];
+    match (v.init) {
+        ExprLambda(lam) => {
+            if (stmts_mention(lam.body, v.name)) {
+                if (hl_captures(lam, v.name, enclosing)) {
+                    return HoistResult { stmts: [s_unknown("recursive local function with captures is not yet supported: " + v.name)], hoisted: hoisted };
+                }
+                var inner_encl: string[] = hl_param_names(lam.params);
+                inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
+                var ir: HoistResult = hl_rewrite(lam.body, inner_encl, hoisted);
+                var notp: string[] = [];
+                var fd: FuncDecl = FuncDecl {
+                    name: v.name, receiver_name: "", receiver_type: "",
+                    type_params: notp, params: lam.params, ret_type: lam.ret_type,
+                    body: ir.stmts, line: v.line, col: v.col,
+                    import_iface: "", import_wit: "", type_param_count: 0
+                };
+                return HoistResult { stmts: none, hoisted: ir.hoisted.push(fd) };
+            }
+        },
+        _ => { }
+    }
+    return HoistResult { stmts: [v], hoisted: hoisted };
+}
+
+function hl_rewrite_match(m: StmtMatch, enclosing: string[], hoisted: FuncDecl[]): HoistResult {
+    var arms: MatchArm[] = [];
+    var acc: FuncDecl[] = hoisted;
+    var a: i32 = 0;
+    while (a < m.arms.len()) {
+        var ar: HoistResult = hl_rewrite(m.arms[a].body, enclosing, acc);
+        acc = ar.hoisted;
+        arms = arms.push(MatchArm { pattern: m.arms[a].pattern, body: ar.stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+        a = a + 1;
+    }
+    return HoistResult { stmts: [s_match_at(m.scrutinee, arms, m.line, m.col)], hoisted: acc };
+}
+
+// hl_rewrite lifts self-recursive local functions out of a statement
+// list. A body with none is returned verbatim (the precheck) — so only
+// functions that actually use the feature are ever rebuilt.
+function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): HoistResult {
+    if (!hl_has_rec_local(stmts)) { return HoistResult { stmts: stmts, hoisted: hoisted }; }
+    var out: Stmt[] = [];
+    var acc: FuncDecl[] = hoisted;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtVar(v) => {
+                var lr: HoistResult = hl_lift_var(v, enclosing, acc);
+                acc = lr.hoisted;
+                var k: i32 = 0;
+                while (k < lr.stmts.len()) { out = out.push(lr.stmts[k]); k = k + 1; }
+            },
+            StmtIf(f) => {
+                var tr: HoistResult = hl_rewrite(f.then_body, enclosing, acc);
+                acc = tr.hoisted;
+                var er: HoistResult = hl_rewrite(f.else_body, enclosing, acc);
+                acc = er.hoisted;
+                out = out.push(s_if(f.cond, tr.stmts, er.stmts));
+            },
+            StmtWhile(w) => {
+                var wr: HoistResult = hl_rewrite(w.body, enclosing, acc);
+                acc = wr.hoisted;
+                out = out.push(s_while(w.cond, wr.stmts));
+            },
+            StmtFor(fr) => {
+                var fr2: HoistResult = hl_rewrite(fr.body, enclosing, acc);
+                acc = fr2.hoisted;
+                out = out.push(s_for(fr.var_name, fr.iter, fr2.stmts));
+            },
+            StmtMatch(m) => {
+                var mr: HoistResult = hl_rewrite_match(m, enclosing, acc);
+                acc = mr.hoisted;
+                var km: i32 = 0;
+                while (km < mr.stmts.len()) { out = out.push(mr.stmts[km]); km = km + 1; }
+            },
+            StmtDefer(d) => {
+                var one: Stmt[] = [d.action];
+                var dr: HoistResult = hl_rewrite(one, enclosing, acc);
+                acc = dr.hoisted;
+                if (dr.stmts.len() >= 1) { out = out.push(s_defer(dr.stmts[0])); }
+            },
+            _ => { out = out.push(stmts[i]); },
+        }
+        i = i + 1;
+    }
+    return HoistResult { stmts: out, hoisted: acc };
+}
+
+pub function hoist_local_funcs_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var hoisted: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fn: FuncDecl = mod.funcs[i];
+        var encl: string[] = hl_param_names(fn.params);
+        encl = hl_append_str(encl, hl_collect_var_names(fn.body));
+        var r: HoistResult = hl_rewrite(fn.body, encl, hoisted);
+        hoisted = r.hoisted;
+        funcs = funcs.push(FuncDecl {
+            name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
+            type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: r.stmts,
+            line: fn.line, col: fn.col, import_iface: fn.import_iface, import_wit: fn.import_wit,
+            type_param_count: fn.type_param_count
+        });
+        i = i + 1;
+    }
+    var tencl: string[] = hl_collect_var_names(mod.top_stmts);
+    var tr: HoistResult = hl_rewrite(mod.top_stmts, tencl, hoisted);
+    hoisted = tr.hoisted;
+    var j: i32 = 0;
+    while (j < hoisted.len()) { funcs = funcs.push(hoisted[j]); j = j + 1; }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: tr.stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
 function lower_defers_func(fn: FuncDecl): FuncDecl {
     var empty: Stmt[] = [];
     var cr: DeferAcc = dl_collect_stmts(fn.body, empty);
@@ -4079,7 +4287,7 @@ pub function module_with_builtins(mod: Module): Module {
     // `[resource-drop]` import functions — BEFORE lower_defers_module so the
     // inserted defers expand to drops on every exit path
     // (docs/WIT-BRING-YOUR-OWN.md).
-    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(mod))));
+    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(hoist_local_funcs_module(mod)))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
