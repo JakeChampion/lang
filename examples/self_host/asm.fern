@@ -1311,45 +1311,7 @@ function (s: EmitState) write(text: string): EmitState {
     // accumulated bytes live in the strbuf until emit_module's
     // tail calls strbuf_take to materialise the final string.
     strbuf_append(text);
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s };
 }
 
 function (s: EmitState) bind_local(name: string): EmitState {
@@ -1359,45 +1321,7 @@ function (s: EmitState) bind_local(name: string): EmitState {
 function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
     var ln: string[] = s.local_names.push(name);
     var lts: string[] = s.local_types.push(ty);
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: ln,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: lts,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, local_names: ln, local_types: lts };
 }
 
 function (s: EmitState) local_type_of(name: string): string {
@@ -1412,131 +1336,17 @@ function (s: EmitState) local_type_of(name: string): string {
 function (s: EmitState) reset_locals(): EmitState {
     var ln: string[] = [];
     var lts: string[] = [];
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: ln,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: lts,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, local_names: ln, local_types: lts };
 }
 
 function (s: EmitState) enter_function(): EmitState {
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: true,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, in_function: true };
 }
 
 function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): EmitState {
     var nex: string[] = s.loop_exit_labels.push(exit_lbl);
     var ncn: string[] = s.loop_cont_labels.push(cont_lbl);
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: nex,
-        loop_cont_labels: ncn,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, loop_exit_labels: nex, loop_cont_labels: ncn };
 }
 
 function (s: EmitState) pop_loop_labels(): EmitState {
@@ -1548,45 +1358,7 @@ function (s: EmitState) pop_loop_labels(): EmitState {
         ncn = ncn.push(s.loop_cont_labels[i]);
         i = i + 1;
     }
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: nex,
-        loop_cont_labels: ncn,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, loop_exit_labels: nex, loop_cont_labels: ncn };
 }
 
 function (s: EmitState) top_loop_exit(): string {
@@ -1600,90 +1372,14 @@ function (s: EmitState) top_loop_cont(): string {
 }
 
 function (s: EmitState) leave_function(): EmitState {
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: false,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, in_function: false };
 }
 
 // mark_print_int flips the "this module needs the print_int
 // helper" flag. emit_module checks it after the body emit and
 // appends the __fern_print_int label + body if true.
 function (s: EmitState) mark_print_int(): EmitState {
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: true,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_print_int: true };
 }
 
 // mark_heap flips the "this module needs the heap allocator"
@@ -1692,907 +1388,111 @@ function (s: EmitState) mark_print_int(): EmitState {
 // when true. Used by struct literals + array literals once the
 // asm backend grows real heap-backed value codegen.
 function (s: EmitState) mark_heap(): EmitState {
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true };
 }
 
 function (s: EmitState) mark_str_concat(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: true, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_str_concat: true };
 }
 
 function (s: EmitState) mark_str_eq(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: true, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_str_eq: true };
 }
 
 function (s: EmitState) mark_str_print(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: true,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_str_print: true };
 }
 
 function (s: EmitState) mark_str_cmp(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: true,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_str_cmp: true };
 }
 
 function (s: EmitState) mark_str_read_line(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: true,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_str_read_line: true };
 }
 
 function (s: EmitState) mark_i32_to_string(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: true,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_i32_to_string: true };
 }
 
 function (s: EmitState) mark_str_to_i32(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: true,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_str_to_i32: true };
 }
 
 function (s: EmitState) mark_eprint(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: true,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_eprint: true };
 }
 
 function (s: EmitState) mark_str_search(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: true,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_str_search: true };
 }
 
 function (s: EmitState) mark_args(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: true,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_args: true };
 }
 
 // mark_arr_push: signals that the module needs the
 // __fern_arr_push runtime helper.
 function (s: EmitState) mark_arr_push(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: true,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_arr_push: true };
 }
 
 function (s: EmitState) mark_arr_slice(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: true,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_arr_slice: true };
 }
 
 function (s: EmitState) mark_arr_i32_index_of(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: true,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_arr_i32_index_of: true };
 }
 
 function (s: EmitState) mark_arr_reverse(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: true,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_arr_reverse: true };
 }
 
 function (s: EmitState) mark_arr_concat(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: true,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_arr_concat: true };
 }
 
 function (s: EmitState) mark_arr_str_index_of(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: true, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: true,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_str_eq: true, needs_arr_str_index_of: true };
 }
 
 function (s: EmitState) mark_arr_str_join(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: true, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: true,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_str_concat: true, needs_arr_str_join: true };
 }
 
 function (s: EmitState) mark_arr_i32_sum(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: true,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_arr_i32_sum: true };
 }
 
 function (s: EmitState) mark_arr_i32_min_max(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: true,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_arr_i32_min_max: true };
 }
 
 function (s: EmitState) mark_arr_i32_product(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: true,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_arr_i32_product: true };
 }
 
 function (s: EmitState) mark_str_chars(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: true,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_str_chars: true };
 }
 
 function (s: EmitState) mark_str_bytes(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: true,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_str_bytes: true };
 }
 
 function (s: EmitState) mark_str_reverse(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: true,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: true,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_heap: true, needs_str_reverse: true };
 }
 
 function (s: EmitState) mark_i32_pow(): EmitState {
-    return EmitState {
-        out: s.out, label_n: s.label_n, local_names: s.local_names,
-        in_function: s.in_function, string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs, local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: true
-    };
+    return EmitState { ...s, needs_i32_pow: true };
 }
 
 // mark_read_int flips the "this module needs the read_int
 // helper" flag. Companion to mark_print_int.
 function (s: EmitState) mark_read_int(): EmitState {
-    return EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: true,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    return EmitState { ...s, needs_read_int: true };
 }
 
 // add_string_lit appends the literal to the pool and returns
@@ -2616,45 +1516,7 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
     }
     var idx: i32 = s.string_lits.len();
     var sl: string[] = s.string_lits.push(v);
-    var ns: EmitState = EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: sl,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    var ns: EmitState = EmitState { ...s, string_lits: sl };
     return StringLitOut { state: ns, idx: idx };
 }
 
@@ -2691,45 +1553,7 @@ function (s: EmitState) has_local(name: string): boolean {
 struct LabelOut { state: EmitState, name: string }
 function fresh_label(s: EmitState): LabelOut {
     var name: string = ".L" + i32_to_string(s.label_n);
-    var ns: EmitState = EmitState {
-        out: s.out,
-        label_n: s.label_n + 1,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: s.struct_decls,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: s.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    var ns: EmitState = EmitState { ...s, label_n: s.label_n + 1 };
     return LabelOut { state: ns, name: name };
 }
 
@@ -3380,28 +2204,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         var kk_or: string = "0";
                         if (map_key_is_i32(prim_recv)) { kk_or = "1"; }
                         var or_lbl: i32 = s.label_n;
-                        s = EmitState {
-                            out: s.out, label_n: s.label_n + 2, local_names: s.local_names,
-                            in_function: s.in_function, string_lits: s.string_lits,
-                            needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-                            needs_heap: s.needs_heap, struct_decls: s.struct_decls,
-                            loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-                            funcs: s.funcs, local_types: s.local_types,
-                            needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq,
-                            needs_str_print: s.needs_str_print, needs_str_cmp: s.needs_str_cmp,
-                            needs_str_read_line: s.needs_str_read_line,
-                            needs_i32_to_string: s.needs_i32_to_string, needs_str_to_i32: s.needs_str_to_i32,
-                            needs_eprint: s.needs_eprint, needs_str_search: s.needs_str_search,
-                            needs_args: s.needs_args, needs_arr_push: s.needs_arr_push,
-                            needs_arr_slice: s.needs_arr_slice, needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-                            needs_arr_reverse: s.needs_arr_reverse, needs_arr_concat: s.needs_arr_concat,
-                            needs_arr_str_index_of: s.needs_arr_str_index_of,
-                            needs_arr_str_join: s.needs_arr_str_join, needs_arr_i32_sum: s.needs_arr_i32_sum,
-                            needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-                            needs_arr_i32_product: s.needs_arr_i32_product,
-                            needs_str_chars: s.needs_str_chars, needs_str_bytes: s.needs_str_bytes,
-                            needs_str_reverse: s.needs_str_reverse, needs_i32_pow: s.needs_i32_pow
-                        };
+                        s = EmitState { ...s, label_n: s.label_n + 2 };
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = emit_expr(c.args[1], s);
@@ -4140,28 +2943,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             // the array's len word.
                             s = emit_expr(fa.obj, s);
                             var ln_lbl: i32 = s.label_n;
-                            s = EmitState {
-                                out: s.out, label_n: s.label_n + 1, local_names: s.local_names,
-                                in_function: s.in_function, string_lits: s.string_lits,
-                                needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
-                                needs_heap: s.needs_heap, struct_decls: s.struct_decls,
-                                loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
-                                funcs: s.funcs, local_types: s.local_types,
-                                needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq,
-                                needs_str_print: s.needs_str_print, needs_str_cmp: s.needs_str_cmp,
-                                needs_str_read_line: s.needs_str_read_line,
-                                needs_i32_to_string: s.needs_i32_to_string, needs_str_to_i32: s.needs_str_to_i32,
-                                needs_eprint: s.needs_eprint, needs_str_search: s.needs_str_search,
-                                needs_args: s.needs_args, needs_arr_push: s.needs_arr_push,
-                                needs_arr_slice: s.needs_arr_slice, needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-                                needs_arr_reverse: s.needs_arr_reverse, needs_arr_concat: s.needs_arr_concat,
-                                needs_arr_str_index_of: s.needs_arr_str_index_of,
-                                needs_arr_str_join: s.needs_arr_str_join, needs_arr_i32_sum: s.needs_arr_i32_sum,
-                                needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-                                needs_arr_i32_product: s.needs_arr_i32_product,
-                                needs_str_chars: s.needs_str_chars, needs_str_bytes: s.needs_str_bytes,
-                                needs_str_reverse: s.needs_str_reverse, needs_i32_pow: s.needs_i32_pow
-                            };
+                            s = EmitState { ...s, label_n: s.label_n + 1 };
                             // Compute trim_flag (0 or 1) = (len==0) || (last byte == '\n').
                             s = s.write("    movq (%rsp), %rax\n");        // peek s box
                             s = s.write("    movq (%rax), %rdx\n");        // s data
@@ -4342,45 +3124,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = s.write("    movq (%rsp), %rax\n");
                     s = s.write("    movq (%rax), %rcx\n");
                     var m_end_lbl: i32 = s.label_n;
-                    s = EmitState {
-                        out: s.out,
-                        label_n: s.label_n + 1,
-                        local_names: s.local_names,
-                        in_function: s.in_function,
-                        string_lits: s.string_lits,
-                        needs_print_int: s.needs_print_int,
-                        needs_read_int: s.needs_read_int,
-                        needs_heap: s.needs_heap,
-                        struct_decls: s.struct_decls,
-                        loop_exit_labels: s.loop_exit_labels,
-                        loop_cont_labels: s.loop_cont_labels,
-                        funcs: s.funcs,
-                        local_types: s.local_types,
-                        needs_str_concat: s.needs_str_concat,
-                        needs_str_eq: s.needs_str_eq,
-                        needs_str_print: s.needs_str_print,
-                        needs_str_cmp: s.needs_str_cmp,
-                        needs_str_read_line: s.needs_str_read_line,
-                        needs_i32_to_string: s.needs_i32_to_string,
-                        needs_str_to_i32: s.needs_str_to_i32,
-                        needs_eprint: s.needs_eprint,
-                        needs_str_search: s.needs_str_search,
-                        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-                    };
+                    s = EmitState { ...s, label_n: s.label_n + 1 };
                     // For each func whose name matches and
                     // receiver_type is non-empty, emit a shape-
                     // compare arm. Walk in declaration order so
@@ -5662,45 +4406,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    popq %rax\n");
             // Use the label counter for end-of-dispatch label.
             var end_lbl: i32 = s.label_n;
-            s = EmitState {
-                out: s.out,
-                label_n: s.label_n + 1,
-                local_names: s.local_names,
-                in_function: s.in_function,
-                string_lits: s.string_lits,
-                needs_print_int: s.needs_print_int,
-                needs_read_int: s.needs_read_int,
-                needs_heap: s.needs_heap,
-                struct_decls: s.struct_decls,
-                loop_exit_labels: s.loop_exit_labels,
-                loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs,
-                local_types: s.local_types,
-                needs_str_concat: s.needs_str_concat,
-                needs_str_eq: s.needs_str_eq,
-                needs_str_print: s.needs_str_print,
-                needs_str_cmp: s.needs_str_cmp,
-                needs_str_read_line: s.needs_str_read_line,
-                needs_i32_to_string: s.needs_i32_to_string,
-                needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search,
-                needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-            };
+            s = EmitState { ...s, label_n: s.label_n + 1 };
             // Walk each struct decl looking for the named
             // field. Emit a shape-pointer comparison arm for
             // each match.
@@ -5724,45 +4430,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = s.write("    pushq %rax\n");
                     s = s.write("    jmp .Lfa_end_" + i32_to_string(end_lbl) + "\n");
                     s = s.write(".Lfa_next_" + i32_to_string(s.label_n) + ":\n");
-                    s = EmitState {
-                        out: s.out,
-                        label_n: s.label_n + 1,
-                        local_names: s.local_names,
-                        in_function: s.in_function,
-                        string_lits: s.string_lits,
-                        needs_print_int: s.needs_print_int,
-                        needs_read_int: s.needs_read_int,
-                        needs_heap: s.needs_heap,
-                        struct_decls: s.struct_decls,
-                        loop_exit_labels: s.loop_exit_labels,
-                        loop_cont_labels: s.loop_cont_labels,
-                        funcs: s.funcs,
-                        local_types: s.local_types,
-                        needs_str_concat: s.needs_str_concat,
-                        needs_str_eq: s.needs_str_eq,
-                        needs_str_print: s.needs_str_print,
-                        needs_str_cmp: s.needs_str_cmp,
-                        needs_str_read_line: s.needs_str_read_line,
-                        needs_i32_to_string: s.needs_i32_to_string,
-                        needs_str_to_i32: s.needs_str_to_i32,
-                        needs_eprint: s.needs_eprint,
-                        needs_str_search: s.needs_str_search,
-                        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-                    };
+                    s = EmitState { ...s, label_n: s.label_n + 1 };
                 }
                 di = di + 1;
             }
@@ -5801,45 +4469,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var caps: string[] = lambda_captures(lm, s);
             var n_caps: i32 = caps.len();
             var lam_id: i32 = s.label_n;
-            s = EmitState {
-                out: s.out,
-                label_n: s.label_n + 2,
-                local_names: s.local_names,
-                in_function: s.in_function,
-                string_lits: s.string_lits,
-                needs_print_int: s.needs_print_int,
-                needs_read_int: s.needs_read_int,
-                needs_heap: s.needs_heap,
-                struct_decls: s.struct_decls,
-                loop_exit_labels: s.loop_exit_labels,
-                loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs,
-                local_types: s.local_types,
-                needs_str_concat: s.needs_str_concat,
-                needs_str_eq: s.needs_str_eq,
-                needs_str_print: s.needs_str_print,
-                needs_str_cmp: s.needs_str_cmp,
-                needs_str_read_line: s.needs_str_read_line,
-                needs_i32_to_string: s.needs_i32_to_string,
-                needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search,
-                needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-            };
+            s = EmitState { ...s, label_n: s.label_n + 2 };
             var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
             var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
             s = s.write("    jmp " + skip_lbl + "\n");
@@ -5918,45 +4548,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    leave\n");
             s = s.write("    ret\n");
             // Restore outer scope's locals + in_function flag.
-            s = EmitState {
-                out: s.out,
-                label_n: s.label_n,
-                local_names: saved_locals,
-                in_function: saved_in_function,
-                string_lits: s.string_lits,
-                needs_print_int: s.needs_print_int,
-                needs_read_int: s.needs_read_int,
-                needs_heap: s.needs_heap,
-                struct_decls: s.struct_decls,
-                loop_exit_labels: s.loop_exit_labels,
-                loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs,
-                local_types: saved_local_types,
-                needs_str_concat: s.needs_str_concat,
-                needs_str_eq: s.needs_str_eq,
-                needs_str_print: s.needs_str_print,
-                needs_str_cmp: s.needs_str_cmp,
-                needs_str_read_line: s.needs_str_read_line,
-                needs_i32_to_string: s.needs_i32_to_string,
-                needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search,
-                needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-            };
+            s = EmitState { ...s, local_names: saved_locals, in_function: saved_in_function, local_types: saved_local_types };
             s = s.write(skip_lbl + ":\n");
             // Allocate box: (1 + n_caps) * 8 bytes.
             var box_bytes: i32 = (1 + n_caps) * 8;
@@ -6214,88 +4806,12 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.write("    movq %rax, " + i32_to_string(scrut_off) + "(%rbp)\n");
             // Bump the label counter for end-of-match.
             var end_lbl: i32 = s.label_n;
-            s = EmitState {
-                out: s.out,
-                label_n: s.label_n + 1,
-                local_names: s.local_names,
-                in_function: s.in_function,
-                string_lits: s.string_lits,
-                needs_print_int: s.needs_print_int,
-                needs_read_int: s.needs_read_int,
-                needs_heap: s.needs_heap,
-                struct_decls: s.struct_decls,
-                loop_exit_labels: s.loop_exit_labels,
-                loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs,
-                local_types: s.local_types,
-                needs_str_concat: s.needs_str_concat,
-                needs_str_eq: s.needs_str_eq,
-                needs_str_print: s.needs_str_print,
-                needs_str_cmp: s.needs_str_cmp,
-                needs_str_read_line: s.needs_str_read_line,
-                needs_i32_to_string: s.needs_i32_to_string,
-                needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search,
-                needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-            };
+            s = EmitState { ...s, label_n: s.label_n + 1 };
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[ai];
                 var next_lbl: i32 = s.label_n;
-                s = EmitState {
-                    out: s.out,
-                    label_n: s.label_n + 1,
-                    local_names: s.local_names,
-                    in_function: s.in_function,
-                    string_lits: s.string_lits,
-                    needs_print_int: s.needs_print_int,
-                    needs_read_int: s.needs_read_int,
-                    needs_heap: s.needs_heap,
-                    struct_decls: s.struct_decls,
-                    loop_exit_labels: s.loop_exit_labels,
-                    loop_cont_labels: s.loop_cont_labels,
-                    funcs: s.funcs,
-                    local_types: s.local_types,
-                    needs_str_concat: s.needs_str_concat,
-                    needs_str_eq: s.needs_str_eq,
-                    needs_str_print: s.needs_str_print,
-                    needs_str_cmp: s.needs_str_cmp,
-                    needs_str_read_line: s.needs_str_read_line,
-                    needs_i32_to_string: s.needs_i32_to_string,
-                    needs_str_to_i32: s.needs_str_to_i32,
-                    needs_eprint: s.needs_eprint,
-                    needs_str_search: s.needs_str_search,
-                    needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-                };
+                s = EmitState { ...s, label_n: s.label_n + 1 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
                         if (pv.type_name == "true" || pv.type_name == "false") {
@@ -6452,45 +4968,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             var top_lbl: i32 = s.label_n;
             var cont_lbl: i32 = s.label_n + 1;
             var end_lbl: i32 = s.label_n + 2;
-            s = EmitState {
-                out: s.out,
-                label_n: s.label_n + 3,
-                local_names: s.local_names,
-                in_function: s.in_function,
-                string_lits: s.string_lits,
-                needs_print_int: s.needs_print_int,
-                needs_read_int: s.needs_read_int,
-                needs_heap: s.needs_heap,
-                struct_decls: s.struct_decls,
-                loop_exit_labels: s.loop_exit_labels,
-                loop_cont_labels: s.loop_cont_labels,
-                funcs: s.funcs,
-                local_types: s.local_types,
-                needs_str_concat: s.needs_str_concat,
-                needs_str_eq: s.needs_str_eq,
-                needs_str_print: s.needs_str_print,
-                needs_str_cmp: s.needs_str_cmp,
-                needs_str_read_line: s.needs_str_read_line,
-                needs_i32_to_string: s.needs_i32_to_string,
-                needs_str_to_i32: s.needs_str_to_i32,
-                needs_eprint: s.needs_eprint,
-                needs_str_search: s.needs_str_search,
-                needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-            };
+            s = EmitState { ...s, label_n: s.label_n + 3 };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition: __for_i_N < len(__for_arr_N).
             s = s.write("    movq " + i32_to_string(arr_off) + "(%rbp), %rax\n");
@@ -6852,45 +5330,7 @@ pub function emit_module(mod: parser.Module): string {
     // / ExprFieldAccess paths can look up field layout. Builtin enum
     // injection (JsonValue / IoError) happens in the driver via
     // parser.module_with_builtins, so emit_module stays pure.
-    s = EmitState {
-        out: s.out,
-        label_n: s.label_n,
-        local_names: s.local_names,
-        in_function: s.in_function,
-        string_lits: s.string_lits,
-        needs_print_int: s.needs_print_int,
-        needs_read_int: s.needs_read_int,
-        needs_heap: s.needs_heap,
-        struct_decls: mod.structs,
-        loop_exit_labels: s.loop_exit_labels,
-        loop_cont_labels: s.loop_cont_labels,
-        funcs: mod.funcs,
-        local_types: s.local_types,
-        needs_str_concat: s.needs_str_concat,
-        needs_str_eq: s.needs_str_eq,
-        needs_str_print: s.needs_str_print,
-        needs_str_cmp: s.needs_str_cmp,
-        needs_str_read_line: s.needs_str_read_line,
-        needs_i32_to_string: s.needs_i32_to_string,
-        needs_str_to_i32: s.needs_str_to_i32,
-        needs_eprint: s.needs_eprint,
-        needs_str_search: s.needs_str_search,
-        needs_args: s.needs_args,
-        needs_arr_push: s.needs_arr_push,
-        needs_arr_slice: s.needs_arr_slice,
-        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
-        needs_arr_reverse: s.needs_arr_reverse,
-        needs_arr_concat: s.needs_arr_concat,
-        needs_arr_str_index_of: s.needs_arr_str_index_of,
-        needs_arr_str_join: s.needs_arr_str_join,
-        needs_arr_i32_sum: s.needs_arr_i32_sum,
-        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
-        needs_arr_i32_product: s.needs_arr_i32_product,
-        needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes,
-        needs_str_reverse: s.needs_str_reverse,
-        needs_i32_pow: s.needs_i32_pow
-    };
+    s = EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
     // Type-check before codegen. On any diagnostic, report and abort —
     // emitting assembly for ill-typed input would miscompile silently.
     var check_errs: string = check_module(mod, s);
