@@ -335,6 +335,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"shadow-ioerror", "enum IoError { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-jsonvalue", "enum JsonValue { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
+		// Generic functions: a concrete argument must NOT be flagged against
+		// the opaque type parameter (E038 false-positive guard).
+		{"generic-call-infer-ok", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id(5); }\n", nil},
+		{"generic-call-two-params-ok", "function fst[A, B](a: A, b: B): A { return a; }\nfunction main(): i32 { return fst(1, 2); }\n", nil},
+		// A non-generic argument-type mismatch still fires E038 (regression
+		// guard that the fix didn't disable the check).
+		{"nongeneric-arg-mismatch", "function f(a: string): i32 { return 0; }\nfunction main(): i32 { return f(5); }\n", []string{"E038"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
