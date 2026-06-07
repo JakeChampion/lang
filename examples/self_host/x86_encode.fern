@@ -308,7 +308,9 @@ function x86_rel_to(target_off: i32, patch_off: i32): i32 {
 
 struct X86Asm {
     code: i32[],
+    rodata: i32[],
     lab_names: string[],
+    lab_secs: i32[],
     lab_offs: i32[],
     fix_offs: i32[],
     fix_names: string[],
@@ -316,32 +318,86 @@ struct X86Asm {
 
 // x86_asm_new returns an empty assembler state.
 function x86_asm_new(): X86Asm {
-    return X86Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [] };
+    return X86Asm { code: [], rodata: [], lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [] };
 }
 
-// x86_label records `name` as pointing at the current code offset.
+// x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
+// boundary the ELF data image uses (so a rip-relative reference to .rodata
+// resolves to the same offset the loader maps it at).
+function x86_align8(n: i32): i32 {
+    var p: i32 = n;
+    while ((p % 8) != 0) {
+        p = p + 1;
+    }
+    return p;
+}
+
+// x86_label records `name` at the current .text offset (section 0).
 function x86_label(a: X86Asm, name: string): X86Asm {
     a.lab_names = a.lab_names.push(name);
+    a.lab_secs = a.lab_secs.push(0);
     a.lab_offs = a.lab_offs.push(a.code.len());
     return a;
 }
 
-// x86_label_off returns the recorded offset of `name`, or -1 if it has
-// not been placed yet (a forward reference).
-function x86_label_off(a: X86Asm, name: string): i32 {
+// x86_rodata_label records `name` at the current .rodata offset (section
+// 1); follow it with bytes pushed onto a.rodata (e.g. via x86_rodata_quad).
+function x86_rodata_label(a: X86Asm, name: string): X86Asm {
+    a.lab_names = a.lab_names.push(name);
+    a.lab_secs = a.lab_secs.push(1);
+    a.lab_offs = a.lab_offs.push(a.rodata.len());
+    return a;
+}
+
+// x86_rodata_quad appends an 8-byte little-endian value (lo + hi 32-bit
+// halves) to .rodata — a `.quad` constant.
+function x86_rodata_quad(a: X86Asm, lo: i32, hi: i32): X86Asm {
+    a.rodata = x86_le32(a.rodata, lo);
+    a.rodata = x86_le32(a.rodata, hi);
+    return a;
+}
+
+// x86_label_idx returns the index of `name` in the label table, or -1.
+function x86_label_idx(a: X86Asm, name: string): i32 {
     var i: i32 = 0;
     while (i < a.lab_names.len()) {
         if (a.lab_names[i] == name) {
-            return a.lab_offs[i];
+            return i;
         }
         i = i + 1;
     }
     return 0 - 1;
 }
 
+// x86_label_off returns the in-section offset of a .text label `name`, or
+// -1 if not yet placed. (Used for the immediate backward-branch patch,
+// which only targets .text — .rodata offsets aren't final until resolve.)
+function x86_label_off(a: X86Asm, name: string): i32 {
+    var i: i32 = x86_label_idx(a, name);
+    if (i < 0 || a.lab_secs[i] != 0) {
+        return 0 - 1;
+    }
+    return a.lab_offs[i];
+}
+
+// x86_final_off resolves `name` to its offset in the final image, given
+// the padded .text length (the .rodata base). .text labels keep their
+// offset; .rodata labels sit at padded_text + their .rodata offset.
+function x86_final_off(a: X86Asm, name: string, padded_text: i32): i32 {
+    var i: i32 = x86_label_idx(a, name);
+    if (i < 0) {
+        return 0 - 1;
+    }
+    if (a.lab_secs[i] == 1) {
+        return padded_text + a.lab_offs[i];
+    }
+    return a.lab_offs[i];
+}
+
 // x86_fixup_or_patch handles the rel32 of a branch placeholder just
 // emitted into a.code: the rel32 field starts at a.code.len()-4. If the
-// label is already placed, patch immediately; otherwise queue a fixup.
+// target is an already-placed .text label, patch immediately; otherwise
+// queue a fixup for x86_resolve.
 function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
     var patch_off: i32 = a.code.len() - 4;
     var target: i32 = x86_label_off(a, name);
@@ -351,6 +407,23 @@ function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
         a.fix_offs = a.fix_offs.push(patch_off);
         a.fix_names = a.fix_names.push(name);
     }
+    return a;
+}
+
+// x86_lea_rip_label emits `lea <dst>, [rip + label]` (REX.W 8D /r, ModR/M
+// mod=00 rm=101 = RIP-relative) with a placeholder disp32, and queues a
+// fixup. The displacement is rip-relative to the next instruction —
+// exactly x86_rel_to's math — so it shares the resolve path with branches.
+// Always deferred: a .rodata target's final offset isn't known until the
+// whole .text is emitted.
+function x86_lea_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+    a.code = a.code.push(x86_rex_w());
+    a.code = a.code.push(141); // 0x8D
+    a.code = a.code.push(x86_modrm(0, dst, 5)); // RIP-relative
+    a.code = x86_le32(a.code, 0); // placeholder disp32
+    var patch_off: i32 = a.code.len() - 4;
+    a.fix_offs = a.fix_offs.push(patch_off);
+    a.fix_names = a.fix_names.push(name);
     return a;
 }
 
@@ -372,14 +445,17 @@ function x86_call_label(a: X86Asm, name: string): X86Asm {
     return x86_fixup_or_patch(a, name);
 }
 
-// x86_resolve patches every queued forward fixup now that all labels are
-// placed. Call once after emitting the whole program; returns the state
-// whose `a.code` is the final machine code.
+// x86_resolve patches every queued fixup (forward branches and all
+// rip-relative lea references) now that every label is placed. .rodata
+// targets resolve against the padded .text length — the offset the ELF
+// data image places .rodata at. Call once after emitting the whole
+// program; afterwards a.code + a.rodata are the final sections.
 function x86_resolve(a: X86Asm): X86Asm {
+    var padded_text: i32 = x86_align8(a.code.len());
     var i: i32 = 0;
     while (i < a.fix_offs.len()) {
         var patch_off: i32 = a.fix_offs[i];
-        var target: i32 = x86_label_off(a, a.fix_names[i]);
+        var target: i32 = x86_final_off(a, a.fix_names[i], padded_text);
         a.code = x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off));
         i = i + 1;
     }

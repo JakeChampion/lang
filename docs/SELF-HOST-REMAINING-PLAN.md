@@ -919,9 +919,22 @@ smallest → largest:
     disp8=0). Byte-checked (`TestSelfHostX86Encode`) and run end-to-end
     (`TestSelfHostX86FrameRuns`: a stack-frame round-trip — store 42 to
     `[rbp-8]`, clobber, reload, exit — runs natively exiting 42).
-  - ⬜ remaining: SSE + x87 floats, `.rodata` + rip-relative symbol
-    addressing, and the text parser (`asm.fern` GAS text → these encoders
-    + the label API).
+  - ✅ **slice 2f — `.rodata` + rip-relative addressing**: a `.rodata`
+    section on `X86Asm` (cross-section labels: `x86_rodata_label` /
+    `x86_rodata_quad`), `lea r64, [rip+label]` (`x86_lea_rip_label`,
+    `48 8D` + ModR/M mod=00 rm=101), and `x86_resolve` extended to place
+    `.rodata` labels at the padded `.text` length and patch rip-relative
+    fixups (same `target - (next+4)` math as branches, since the whole
+    image is one segment). This is the addressing mode `asm.fern` uses
+    pervasively (`leaq .S<n>(%rip)` for the string pool, function
+    addresses, floats, `__fern_argc`). Byte-checked (`TestSelfHostX86Labels`)
+    and run end-to-end (`TestSelfHostX86RodataRuns`: `lea rax,[rip+answer]`;
+    `rax=[rax]`; exit — a `.quad 42` in `.rodata`, R+W+X data ELF, runs
+    natively exiting 42).
+  - ⬜ remaining: SSE + x87 floats (`movsd`/`movq` xmm, the float-math
+    instructions), and the text parser (`asm.fern` GAS text → these
+    encoders + the label/rodata API) — the final wiring slice that makes
+    `fern -target x86-64 -o` emit an ELF with no external tool.
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
