@@ -5294,83 +5294,14 @@ function check_module(mod: parser.Module, s: EmitState): string {
     return errs;
 }
 
-pub function emit_module(mod: parser.Module): string {
-    // Reset the global strbuf before any .write calls. Output is
-    // accumulated there (amortised O(1) per append) and materialised
-    // into a fresh string at the tail via strbuf_take().
-    strbuf_reset();
-    var s: EmitState = new_state();
-    // Seed the struct-decl table so emit_expr's ExprStructLit
-    // / ExprFieldAccess paths can look up field layout. Builtin enum
-    // injection (JsonValue / IoError) happens in the driver via
-    // parser.module_with_builtins, so emit_module stays pure.
-    s = EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
-    // Type-check before codegen. On any diagnostic, report and abort —
-    // emitting assembly for ill-typed input would miscompile silently.
-    var check_errs: string = check_module(mod, s);
-    if (check_errs.len() > 0) {
-        eprint(check_errs);
-        exit(1);
-        return "";
-    }
-    s = s.write("    .globl _start\n");
-    s = s.write("    .text\n");
-    // Emit each function body first. Each gets its own label
-    // (__fn_<name>:); _start dispatches into main() if it
-    // exists.
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        s = emit_function(mod.funcs[fi], s);
-        fi = fi + 1;
-    }
-    // _start: program entry point. If main() exists, call it
-    // and use its return value as the exit code. Otherwise
-    // run top-level stmts directly.
-    s = s.write("_start:\n");
-    // If args_count() / arg_at() were used, save argc + argv
-    // from the initial stack BEFORE any push (the kernel
-    // places argc at the top of the stack on entry).
-    if (s.has_need("args")) {
-        s = s.write("    movq (%rsp), %rax\n");
-        s = s.write("    movq %rax, __fern_argc(%rip)\n");
-        s = s.write("    leaq 8(%rsp), %rax\n");
-        s = s.write("    movq %rax, __fern_argv(%rip)\n");
-    }
-    // Save envp for env(). It follows argv's NULL terminator on the
-    // entry stack: envp = rsp + 16 + argc*8 (argc at [rsp], argv at
-    // rsp+8 with argc+1 slots incl. the NULL). Gated on needs_heap —
-    // the env() runtime helper allocates, so it only links when the
-    // heap is present, and any program calling env() marks the heap.
-    if (s.has_need("heap")) {
-        s = s.write("    movq (%rsp), %rax\n");            // argc
-        s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");   // envp base
-        s = s.write("    movq %rax, __fern_envp(%rip)\n");
-    }
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    if (has_main(mod)) {
-        // call __fn_main; exit with %rax.
-        s = s.write("    call __fn_main\n");
-        s = s.write("    movq %rax, %rdi\n");
-        s = s.write("    movq $60, %rax\n");
-        s = s.write("    syscall\n");
-    } else {
-        var n_locals: i32 = count_locals(mod.top_stmts);
-        if (n_locals > 0) {
-            var bytes: i32 = n_locals * 8;
-            if (bytes % 16 != 0) { bytes = bytes + 8; }
-            s = s.write("    subq $" + i32_to_string(bytes) + ", %rsp\n");
-        }
-        var i: i32 = 0;
-        while (i < mod.top_stmts.len()) {
-            s = emit_stmt(mod.top_stmts[i], s);
-            i = i + 1;
-        }
-        // Fallback exit (in case there's no return).
-        s = s.write("    movq $0, %rdi\n");
-        s = s.write("    movq $60, %rax\n");
-        s = s.write("    syscall\n");
-    }
+// emit_runtime appends the runtime-library helper bodies the
+// module requested via need()/has_need(): print_int, the heap
+// bump-allocator, string + array helpers, args, strbuf, etc.
+// Each block is gated on has_need(...) so only referenced
+// helpers are emitted. Split out of emit_module so that the
+// orchestration (type-check, function bodies, _start) stays
+// readable; the relative emission order is unchanged.
+function emit_runtime(s: EmitState): EmitState {
     // __fern_print_int helper: appended once at the end of the
     // .text section if any print_int call surfaced needs_print_int.
     // Converts the i64 in %rdi to decimal text in a stack buffer
@@ -9216,6 +9147,87 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq $-1, %rax\n");
         s = s.write("    ret\n");
     }
+    return s;
+}
+
+pub function emit_module(mod: parser.Module): string {
+    // Reset the global strbuf before any .write calls. Output is
+    // accumulated there (amortised O(1) per append) and materialised
+    // into a fresh string at the tail via strbuf_take().
+    strbuf_reset();
+    var s: EmitState = new_state();
+    // Seed the struct-decl table so emit_expr's ExprStructLit
+    // / ExprFieldAccess paths can look up field layout. Builtin enum
+    // injection (JsonValue / IoError) happens in the driver via
+    // parser.module_with_builtins, so emit_module stays pure.
+    s = EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    // Type-check before codegen. On any diagnostic, report and abort —
+    // emitting assembly for ill-typed input would miscompile silently.
+    var check_errs: string = check_module(mod, s);
+    if (check_errs.len() > 0) {
+        eprint(check_errs);
+        exit(1);
+        return "";
+    }
+    s = s.write("    .globl _start\n");
+    s = s.write("    .text\n");
+    // Emit each function body first. Each gets its own label
+    // (__fn_<name>:); _start dispatches into main() if it
+    // exists.
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        s = emit_function(mod.funcs[fi], s);
+        fi = fi + 1;
+    }
+    // _start: program entry point. If main() exists, call it
+    // and use its return value as the exit code. Otherwise
+    // run top-level stmts directly.
+    s = s.write("_start:\n");
+    // If args_count() / arg_at() were used, save argc + argv
+    // from the initial stack BEFORE any push (the kernel
+    // places argc at the top of the stack on entry).
+    if (s.has_need("args")) {
+        s = s.write("    movq (%rsp), %rax\n");
+        s = s.write("    movq %rax, __fern_argc(%rip)\n");
+        s = s.write("    leaq 8(%rsp), %rax\n");
+        s = s.write("    movq %rax, __fern_argv(%rip)\n");
+    }
+    // Save envp for env(). It follows argv's NULL terminator on the
+    // entry stack: envp = rsp + 16 + argc*8 (argc at [rsp], argv at
+    // rsp+8 with argc+1 slots incl. the NULL). Gated on needs_heap —
+    // the env() runtime helper allocates, so it only links when the
+    // heap is present, and any program calling env() marks the heap.
+    if (s.has_need("heap")) {
+        s = s.write("    movq (%rsp), %rax\n");            // argc
+        s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");   // envp base
+        s = s.write("    movq %rax, __fern_envp(%rip)\n");
+    }
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    if (has_main(mod)) {
+        // call __fn_main; exit with %rax.
+        s = s.write("    call __fn_main\n");
+        s = s.write("    movq %rax, %rdi\n");
+        s = s.write("    movq $60, %rax\n");
+        s = s.write("    syscall\n");
+    } else {
+        var n_locals: i32 = count_locals(mod.top_stmts);
+        if (n_locals > 0) {
+            var bytes: i32 = n_locals * 8;
+            if (bytes % 16 != 0) { bytes = bytes + 8; }
+            s = s.write("    subq $" + i32_to_string(bytes) + ", %rsp\n");
+        }
+        var i: i32 = 0;
+        while (i < mod.top_stmts.len()) {
+            s = emit_stmt(mod.top_stmts[i], s);
+            i = i + 1;
+        }
+        // Fallback exit (in case there's no return).
+        s = s.write("    movq $0, %rdi\n");
+        s = s.write("    movq $60, %rax\n");
+        s = s.write("    syscall\n");
+    }
+    s = emit_runtime(s);
     // s.out is always empty by design (writes route through the
     // strbuf primitive instead). Materialise the accumulated bytes.
     return strbuf_take();

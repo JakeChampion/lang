@@ -4845,102 +4845,15 @@ function check_module(mod: parser.Module, s: EmitState): string {
     return errs;
 }
 
-pub function emit_module(mod: parser.Module, darwin: boolean): string {
-    // Reset the global strbuf before any .write calls. Output is
-    // accumulated there (amortised O(1) per append) and materialised
-    // into a fresh string at the tail via strbuf_take().
-    strbuf_reset();
-    var s: EmitState = new_state();
-    // Seed the struct-decl table for ExprStructLit /
-    // ExprFieldAccess. Builtin enum injection happens in the driver
-    // (parser.module_with_builtins); emit_module stays pure.
-    s = EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
-    // Type-check before codegen. On any diagnostic, report and abort —
-    // emitting assembly for ill-typed input would miscompile silently.
-    var check_errs: string = check_module(mod, s);
-    if (check_errs.len() > 0) {
-        eprint(check_errs);
-        exit(1);
-        return "";
-    }
-    s = s.write("    .globl _start\n");
-    s = s.write("    .text\n");
-    // Emit each function body first. Each gets its own
-    // __fn_<name>: label; _start dispatches into main() if it
-    // exists.
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        s = emit_function(mod.funcs[fi], s);
-        fi = fi + 1;
-    }
-    s = s.write("_start:\n");
-    // Save argc + argv BEFORE the frame push. Linux (ELF, raw _start):
-    // the kernel lays out the SysV entry stack — argc at [sp], argv at
-    // sp+8. Darwin (Mach-O, _start->_main via dyld/LC_MAIN): the entry is
-    // a C-ABI `main(argc, argv, envp, apple)`, so argc=x0, argv=x1,
-    // envp=x2 arrive in registers, not on the stack.
-    if (s.has_need("args")) {
-        if (darwin) {
-            s = s.write("    adrp x9, __fern_argc\n");
-            s = s.write("    add x9, x9, :lo12:__fern_argc\n");
-            s = s.write("    str x0, [x9]\n");            // argc = x0
-            s = s.write("    adrp x9, __fern_argv\n");
-            s = s.write("    add x9, x9, :lo12:__fern_argv\n");
-            s = s.write("    str x1, [x9]\n");            // argv = x1
-        } else {
-            s = s.write("    ldr x0, [sp]\n");
-            s = s.write("    adrp x1, __fern_argc\n");
-            s = s.write("    add x1, x1, :lo12:__fern_argc\n");
-            s = s.write("    str x0, [x1]\n");
-            s = s.write("    add x0, sp, #8\n");
-            s = s.write("    adrp x1, __fern_argv\n");
-            s = s.write("    add x1, x1, :lo12:__fern_argv\n");
-            s = s.write("    str x0, [x1]\n");
-        }
-    }
-    // Save envp for env() / subprocess. Linux: envp = sp + 16 + argc*8 on
-    // the entry stack. Darwin: envp = x2 (C-ABI arg). Gated on needs_heap
-    // (env()/subprocess allocate, so they only link with the heap
-    // present, and any caller marks the heap). x2 survives the needs_args
-    // block above (which only touches x0/x1/x9).
-    if (s.has_need("heap")) {
-        if (darwin) {
-            s = s.write("    adrp x9, __fern_envp\n");
-            s = s.write("    add x9, x9, :lo12:__fern_envp\n");
-            s = s.write("    str x2, [x9]\n");            // envp = x2
-        } else {
-            s = s.write("    ldr x0, [sp]\n");            // argc
-            s = s.write("    lsl x0, x0, #3\n");          // argc*8
-            s = s.write("    add x0, x0, #16\n");         // + 16
-            s = s.write("    add x0, sp, x0\n");          // envp base
-            s = s.write("    adrp x1, __fern_envp\n");
-            s = s.write("    add x1, x1, :lo12:__fern_envp\n");
-            s = s.write("    str x0, [x1]\n");
-        }
-    }
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    if (has_main(mod)) {
-        s = s.write("    bl __fn_main\n");
-        s = s.write("    mov x8, #93\n");
-        s = s.write("    svc #0\n");
-    } else {
-        var n_locals: i32 = count_locals(mod.top_stmts);
-        if (n_locals > 0) {
-            var bytes: i32 = n_locals * 8;
-            if (bytes % 16 != 0) { bytes = bytes + 8; }
-            s = s.write("    sub sp, sp, #" + i32_to_string(bytes) + "\n");
-        }
-        var i: i32 = 0;
-        while (i < mod.top_stmts.len()) {
-            s = emit_stmt(mod.top_stmts[i], s);
-            i = i + 1;
-        }
-        // Fallback exit.
-        s = s.write("    mov x0, #0\n");
-        s = s.write("    mov x8, #93\n");
-        s = s.write("    svc #0\n");
-    }
+// emit_runtime appends the runtime-library helper bodies the
+// module requested via need()/has_need(): print_int, the heap
+// bump-allocator, string + array helpers, args, strbuf, etc.
+// Each block is gated on has_need(...) so only referenced
+// helpers are emitted. Split out of emit_module so that the
+// orchestration (type-check, function bodies, _start) stays
+// readable; the relative emission order is unchanged.
+// darwin selects Mach-O vs ELF sections/syscalls in the bodies.
+function emit_runtime(s: EmitState, darwin: boolean): EmitState {
     // __fern_print_int helper: converts the i64 in x0 to
     // decimal text in a stack buffer and writes to stdout.
     if (s.has_need("print_int")) {
@@ -9255,6 +9168,106 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    mov x0, #-1\n");
         s = s.write("    ret\n");
     }
+    return s;
+}
+
+pub function emit_module(mod: parser.Module, darwin: boolean): string {
+    // Reset the global strbuf before any .write calls. Output is
+    // accumulated there (amortised O(1) per append) and materialised
+    // into a fresh string at the tail via strbuf_take().
+    strbuf_reset();
+    var s: EmitState = new_state();
+    // Seed the struct-decl table for ExprStructLit /
+    // ExprFieldAccess. Builtin enum injection happens in the driver
+    // (parser.module_with_builtins); emit_module stays pure.
+    s = EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    // Type-check before codegen. On any diagnostic, report and abort —
+    // emitting assembly for ill-typed input would miscompile silently.
+    var check_errs: string = check_module(mod, s);
+    if (check_errs.len() > 0) {
+        eprint(check_errs);
+        exit(1);
+        return "";
+    }
+    s = s.write("    .globl _start\n");
+    s = s.write("    .text\n");
+    // Emit each function body first. Each gets its own
+    // __fn_<name>: label; _start dispatches into main() if it
+    // exists.
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        s = emit_function(mod.funcs[fi], s);
+        fi = fi + 1;
+    }
+    s = s.write("_start:\n");
+    // Save argc + argv BEFORE the frame push. Linux (ELF, raw _start):
+    // the kernel lays out the SysV entry stack — argc at [sp], argv at
+    // sp+8. Darwin (Mach-O, _start->_main via dyld/LC_MAIN): the entry is
+    // a C-ABI `main(argc, argv, envp, apple)`, so argc=x0, argv=x1,
+    // envp=x2 arrive in registers, not on the stack.
+    if (s.has_need("args")) {
+        if (darwin) {
+            s = s.write("    adrp x9, __fern_argc\n");
+            s = s.write("    add x9, x9, :lo12:__fern_argc\n");
+            s = s.write("    str x0, [x9]\n");            // argc = x0
+            s = s.write("    adrp x9, __fern_argv\n");
+            s = s.write("    add x9, x9, :lo12:__fern_argv\n");
+            s = s.write("    str x1, [x9]\n");            // argv = x1
+        } else {
+            s = s.write("    ldr x0, [sp]\n");
+            s = s.write("    adrp x1, __fern_argc\n");
+            s = s.write("    add x1, x1, :lo12:__fern_argc\n");
+            s = s.write("    str x0, [x1]\n");
+            s = s.write("    add x0, sp, #8\n");
+            s = s.write("    adrp x1, __fern_argv\n");
+            s = s.write("    add x1, x1, :lo12:__fern_argv\n");
+            s = s.write("    str x0, [x1]\n");
+        }
+    }
+    // Save envp for env() / subprocess. Linux: envp = sp + 16 + argc*8 on
+    // the entry stack. Darwin: envp = x2 (C-ABI arg). Gated on needs_heap
+    // (env()/subprocess allocate, so they only link with the heap
+    // present, and any caller marks the heap). x2 survives the needs_args
+    // block above (which only touches x0/x1/x9).
+    if (s.has_need("heap")) {
+        if (darwin) {
+            s = s.write("    adrp x9, __fern_envp\n");
+            s = s.write("    add x9, x9, :lo12:__fern_envp\n");
+            s = s.write("    str x2, [x9]\n");            // envp = x2
+        } else {
+            s = s.write("    ldr x0, [sp]\n");            // argc
+            s = s.write("    lsl x0, x0, #3\n");          // argc*8
+            s = s.write("    add x0, x0, #16\n");         // + 16
+            s = s.write("    add x0, sp, x0\n");          // envp base
+            s = s.write("    adrp x1, __fern_envp\n");
+            s = s.write("    add x1, x1, :lo12:__fern_envp\n");
+            s = s.write("    str x0, [x1]\n");
+        }
+    }
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    if (has_main(mod)) {
+        s = s.write("    bl __fn_main\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    svc #0\n");
+    } else {
+        var n_locals: i32 = count_locals(mod.top_stmts);
+        if (n_locals > 0) {
+            var bytes: i32 = n_locals * 8;
+            if (bytes % 16 != 0) { bytes = bytes + 8; }
+            s = s.write("    sub sp, sp, #" + i32_to_string(bytes) + "\n");
+        }
+        var i: i32 = 0;
+        while (i < mod.top_stmts.len()) {
+            s = emit_stmt(mod.top_stmts[i], s);
+            i = i + 1;
+        }
+        // Fallback exit.
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    svc #0\n");
+    }
+    s = emit_runtime(s, darwin);
     // s.out is always empty by design (writes route through the
     // strbuf primitive instead). Materialise the accumulated bytes.
     return strbuf_take();
