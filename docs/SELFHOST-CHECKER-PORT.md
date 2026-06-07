@@ -674,6 +674,23 @@ same code(s) the Go checker does — restricted to
   if, bare return → E012, closure-argument mismatch, nested lambda,
   no-return-type, recursive-local capture mismatch), all cross-checked
   against Go. Checker-only; checker.fern isn't in the fixpoint bundle.
+- **Slice 68a (done): lambda-E002 must not check IIFE-desugared match/if
+  expressions.** Follow-up to Slice 68. A `match` / `if` used in *value*
+  position is desugared by the parser into an immediately-invoked lambda —
+  `(function(): RT { … })()` — whose `RT` is a **coarse heuristic tag**
+  (`if_expr_rt` picks it from the first arm's literal shape, defaulting to
+  `"i32"`), not a user-declared return type. The Slice-68 pass therefore
+  false-positived E002 on a valid string-valued match/if-expression whose
+  first arm wasn't a string literal (e.g. an arm that's an identifier or a
+  call, so `RT` mis-tagged as `"i32"` while the arms are strings). The fix:
+  `lret_expr`'s `ExprCall` arm now special-cases a directly-invoked lambda
+  (the only way an IIFE arises here) — it skips the IIFE's own return check
+  but still recurses into the body via `lret_stmts` so genuinely-nested
+  lambdas are still covered. (A rare hand-written IIFE with a real mismatch
+  is no longer flagged — an acceptable, conservative trade matching the
+  gate's zero-false-positive stance.) Gated by two new corpus cases
+  (`match-expr-string-arms-ok`, `if-expr-string-arms-ok`), both clean under
+  Go + self-host.
 - **Slice 67 (done): recursive local functions no longer false-flag E001.**
   A local function `function f(...) { ... }` desugars to `var f =
   function(...) { ... }`, and the codegen hoist lifts a recursive one to
