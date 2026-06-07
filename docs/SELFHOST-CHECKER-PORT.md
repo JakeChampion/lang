@@ -654,6 +654,22 @@ same code(s) the Go checker does — restricted to
   language feature or analysis the self-host doesn't yet model end-to-end,
   not a checker-only rule. (E050/E051 owned-parameter move checking and
   E049 captured-reference reassignment are now done — see below.)
+- **Slice 67 (done): recursive local functions no longer false-flag E001.**
+  A local function `function f(...) { ... }` desugars to `var f =
+  function(...) { ... }`, and the codegen hoist lifts a recursive one to
+  top level — but the checker walked the lambda body without binding `f`,
+  so a recursive self-call `f(...)` was reported as an undefined function
+  (E001), falsely rejecting a valid recursive local (the Go checker accepts
+  it via its IsLocal handling). Both the type-inference pass (`check_stmt`)
+  and the call-resolution pass (`stmts_call_diags`) now pre-bind a
+  function-valued local to its function type before checking the init —
+  letrec scoping — so the self-call resolves and the body is checked
+  properly. (A plain `var f = closure` self-reference is accepted too,
+  matching the self-host's codegen which hoists both; the Go checker is
+  stricter there, a documented minor leniency.) Gated by two new
+  differential-corpus cases: a simple recursive local and a capturing one,
+  both clean under Go + self-host. Checker-only; checker.fern isn't in the
+  fixpoint bundle.
 - **Slice 66 (done): E049 — captured-reference reassignment.** Assigning
   to a reference-typed (pointer) variable that a closure captures from an
   enclosing scope is read-only (rebinding it inside the closure can't take
