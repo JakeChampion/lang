@@ -230,3 +230,37 @@ func TestEmitGrowsWithCode(t *testing.T) {
 		t.Fatalf("expected non-trivial program to emit more assembly than minimal: big=%d bytes, small=%d bytes", len(big), len(small))
 	}
 }
+
+// TestRcHelpersGuardBelowHeap pins the below-heap guard in the refcount
+// helpers (the x86-64 mirror of the arm64 test). The exit-dec sweep
+// decrements every local slot at function exit, including ones holding
+// non-heap values (a non-pointer scalar or a no-capture closure's bare
+// code pointer). Only heap-allocated objects carry an rc word at [ptr-8],
+// so the helpers must skip any pointer below the heap base (0x10000000,
+// the mmap hint) — otherwise the helper writes [ptr-8] of a .text/.rodata
+// address. The old guard only rejected < 0x10000.
+func TestRcHelpersGuardBelowHeap(t *testing.T) {
+	src := `struct Box { v: i32 }
+function main(): i32 {
+	var a: Box = Box { v: 1 };
+	var b: Box = a;
+	return b.v;
+}`
+	asm := compile(t, src)
+	if !strings.Contains(asm, "__fern_rc_dec:") {
+		t.Fatal("__fern_rc_dec helper not emitted by a program that drops a heap value")
+	}
+	for _, helper := range []string{"__fern_rc_dec", "__fern_rc_inc"} {
+		i := strings.Index(asm, helper+":")
+		if i < 0 {
+			continue
+		}
+		body := asm[i:]
+		if j := strings.Index(body[len(helper)+1:], "\n.globl "); j >= 0 {
+			body = body[:len(helper)+1+j]
+		}
+		if !strings.Contains(body, "0x10000000") {
+			t.Errorf("%s is missing the below-heap guard (no `cmp rdi, 0x10000000`):\n%s", helper, body)
+		}
+	}
+}

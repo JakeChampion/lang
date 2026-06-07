@@ -1198,6 +1198,14 @@ func (g *generator) emitRcIncRuntime() {
 	// aligned (low bit clear), so this guard is a no-op for every
 	// non-string caller (arrays / structs / enums / closures / etc.).
 	g.emit("tbnz x0, #0, .Lrcinc_ret")
+	// Below-heap guard (see emitRcDecRuntime): only heap objects carry an
+	// rc word at [ptr-8]. A no-capture closure is a bare code address in
+	// .text, far below the heap base — inc'ing it would write [ptr-8] in
+	// read-only .text. x1 is free here (the rc word loads into it next).
+	g.emit("mov x1, #1")
+	g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 = heap base hint
+	g.emit("cmp x0, x1")
+	g.emit("b.lo .Lrcinc_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.emit("tbnz w1, #31, .Lrcinc_ret")
 	g.emit("add w1, w1, #1")
@@ -1227,17 +1235,23 @@ func (g *generator) emitRcDecRuntime() {
 	// always 8-byte aligned (low bit clear); native strings ≤7 bytes
 	// are inline-tagged and must not be deref'd as pointers.
 	g.emit("tbnz x0, #0, .Lrcdec_ret")
-	// Defensive low-address guard: skip any pointer in the
-	// unmappable low-memory region (< 0x10000 = 64 KiB,
-	// Linux's typical mmap_min_addr). Phase 1d-v's exit dec
-	// sweep can briefly touch slots that hold non-pointer
-	// values — Lang enum tags (e.g. 2), small i32 literals,
-	// or uninitialised stack garbage that doesn't look
-	// pointer-shaped. Treating those as "not a heap object,
-	// don't touch" keeps the dec helper safe under the
-	// no-tracking exit pass; Phase 2's mutate-in-place check
-	// will sharpen the contract.
-	g.emit("cmp x0, #0x10000")
+	// Below-heap guard: skip any pointer below the heap base
+	// (the 0x1000_0000 mmap hint — see emitAllocRuntime). Only
+	// heap-allocated objects carry an rc word at [ptr-8]; a
+	// value below the heap is never one. This covers the
+	// unmappable low page, static .text/.rodata/.data, AND
+	// function pointers — a no-capture closure is a bare code
+	// address (in .text, well below the heap), so a cleanup
+	// dec of a closure-valued local must not write [ptr-8],
+	// which would land in read-only .text (a crash under an
+	// external linker that maps .text non-writable; the native
+	// RWX ELF would silently corrupt code instead). The old
+	// guard only rejected < 0x10000, letting code/rodata
+	// addresses through. x1 is free here (the rc word is loaded
+	// into it just below).
+	g.emit("mov x1, #1")
+	g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 = heap base hint
+	g.emit("cmp x0, x1")
 	g.emit("b.lo .Lrcdec_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.emit("tbnz w1, #31, .Lrcdec_ret")
