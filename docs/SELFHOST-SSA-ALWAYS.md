@@ -121,32 +121,25 @@ arm64 default path). Fixed by appending the newline in all three SSA
 `fd_write` path) and rewriting `self_host_ssa_print_test.go` to println
 semantics. `print` now lowers to the IR on wasm too.
 
-**Phase 2e (next — needs an env-ABI signal):** the last reject-list
-entries — `funcaddr` / `call_indirect` (function values via a wasm
-function table). A first cut (table of every function, `funcaddr` →
-table index, `call_indirect (type $clos<N>)`) lowers **capturing**
-closures correctly but **traps on no-capture function values** (a plain
-function or no-capture lambda used as a value). The cause is the SSA
-closure ABI: every indirect call passes the closure box as a trailing
-`env` argument, so the call site uses `$clos<U+1>` (U user args + env).
-A capturing lambda's lifted body already takes `__env` as its last param,
-so its type matches; but a no-capture target has only `U` params, and
-wasm's `call_indirect` is **strictly typed** (x86 / arm64 silently
-tolerate the unused extra arg in a register — wasm does not), so the
-`$clos<U+1>` call traps.
+**Phase 2e ✅ (landed — closures):** `funcaddr` / `call_indirect` via a
+wasm function table. The challenge is the SSA closure ABI: every indirect
+call passes the closure box as a trailing `env` argument, so the call
+site uses `$clos<U+1>` (U user args + env). A capturing lambda's lifted
+body already takes `__env` as its last param, so its type matches; but a
+no-capture function value has only `U` params, and wasm's `call_indirect`
+is **strictly typed** (x86 / arm64 silently tolerate the unused extra arg
+in a register — wasm does not). Solved by adding an `SFunc.takes_env` flag
+(set when the last param is `__env`) and, in `ssa_wasm`, building a
+function table whose slot for each function holds its *closure-callable*
+form: the function itself if it takes `__env`, else an env-dropping
+wrapper (`(param user…) (param env) → call $__fn_T user…`). `funcaddr` is
+the table slot index; `call_indirect` dispatches through `$clos<arity>`.
 
-The fix needs to know, per function, whether it carries an `env` param —
-which `SFunc` doesn't track today (only `collect_lambdas` knows). The
-clean path: add an `SFunc.takes_env` flag (set when the last param is
-`__env`), then in `ssa_wasm` emit an env-dropping wrapper
-(`(param user…) (param env) → call $__fn_T user…`) for each no-`env`
-`funcaddr` target and point its table slot at the wrapper. That's a
-cross-cutting change (the `SFunc` struct + every construction site in
-`ssa.fern` + the wasm table layout), so it is deferred to its own PR
-rather than shipping a backend that traps on some closure programs;
-until then closures fall back to `wasm.fern` (correct). Clearing this
-makes **all three backends consume the IR** for the whole current SSA
-subset.
+With this, **all three backends consume the IR** for the whole current
+SSA subset (integers, heap, strings, print, closures). `supported()` is
+now effectively always true for `build_func` output, but stays as a
+forward-compatibility guard so a future IR kind falls back rather than
+emitting broken WAT.
 
 (arm64-darwin reuses the arm64 SSA output with a Mach-O reskin —
 `ssa_arm64` emit + a `darwinize`-equivalent on the SSA framing — folded
