@@ -264,6 +264,169 @@ func ifaceHasResource(wi componenttype.WorldInterface, name string) bool {
 	return false
 }
 
+// ComposeExportsFromWorld wraps a reactor `core` — a library that provides one
+// or more `@export` functions and no cli/run entry — into a component that
+// EXPORTS each world export the core implements, lifting it with the WIT
+// canonical ABI (P6 — docs/WIT-BRING-YOUR-OWN.md). It generalises the fixed
+// `_lang_run` / `incoming-handler` lifts: the wasm backend surfaced a core
+// export `iface#wit-name` per `@export` function, and this lifts each one whose
+// (iface, wit-name) the world declares as an export. Scalar signatures only
+// (this slice); composite params/results follow. Any core imports the reactor
+// uses are wired from the world exactly as for a command.
+func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error) {
+	byIface := map[string]componenttype.WorldInterface{}
+	for _, wi := range w.Interfaces() {
+		byIface[wi.Name] = wi
+	}
+	var imports []gImport
+	for _, imp := range coreFuncImports(core) {
+		wi, ok := byIface[imp.module]
+		if !ok {
+			return nil, fmt.Errorf("component: core imports interface %q not declared by the world", imp.module)
+		}
+		if hasResourceDropPrefix(imp.name) {
+			return nil, fmt.Errorf("component: resource-drop in a reactor export is not supported yet (%q)", imp.name)
+		}
+		f, ok := worldFunc(wi, imp.name)
+		if !ok {
+			return nil, fmt.Errorf("component: interface %q has no function %q", imp.module, imp.name)
+		}
+		imports = append(imports, gImport{
+			iface:   imp.module,
+			name:    imp.name,
+			kind:    gKindFor(wi.Classify(f)),
+			params:  imp.params,
+			results: imp.results,
+		})
+	}
+
+	prefix, err := w.EmitWorldImports()
+	if err != nil {
+		return nil, err
+	}
+	pl := w.PrefixLayout()
+	g := &gComposer{
+		c: &p2composer{
+			buf:   append(PutComponentHeader(nil), prefix...),
+			nType: pl.Types,
+			nInst: pl.Instances,
+		},
+		surfaced: map[string]uint32{},
+		inst:     map[string]uint32{},
+	}
+	for _, iface := range w.Interfaces() {
+		if idx := w.ImportInstanceIndex(iface.Name); idx >= 0 {
+			g.inst[iface.Name] = uint32(idx)
+		}
+	}
+	g.add(imports...)
+	userInst := g.lower(core)
+
+	coreExports := coreFuncExportNames(core)
+	emitted := 0
+	for _, wi := range w.ExportedInterfaces() {
+		for _, f := range wi.FuncSigs {
+			coreName := wi.Name + "#" + f.Name
+			if !coreExports[coreName] {
+				continue
+			}
+			if err := g.liftScalarExport(userInst, wi.Name, f.Name, coreName, f.Sig); err != nil {
+				return nil, err
+			}
+			emitted++
+		}
+	}
+	if emitted == 0 {
+		return nil, fmt.Errorf("component: no world export matched a surfaced core export (iface#wit-name)")
+	}
+	return g.c.buf, nil
+}
+
+// liftScalarExport lifts one scalar world export: alias the surfaced core func,
+// build its component functype from the WIT signature, canon-lift it, and
+// export it as `iface` exposing `witName`.
+func (g *gComposer) liftScalarExport(userInst uint32, iface, witName, coreName string, sig *componenttype.FuncType) error {
+	if sig == nil {
+		return fmt.Errorf("component: export %s#%s has no resolved signature", iface, witName)
+	}
+	c := g.c
+	coreF := c.aliasCoreFunc(userInst, coreName)
+	var pnames []string
+	var pvals []byte
+	for i := range sig.Params {
+		p := sig.Params[i]
+		if !p.Ty.IsPrim {
+			return fmt.Errorf("component: export %s#%s: non-scalar parameter (scalar-only in this slice)", iface, witName)
+		}
+		name := p.Name
+		if name == "" {
+			name = fmt.Sprintf("p%d", i)
+		}
+		pnames = append(pnames, name)
+		pvals = append(pvals, p.Ty.Prim)
+	}
+	if sig.NamedResults || !sig.Result.IsPrim {
+		return fmt.Errorf("component: export %s#%s: non-scalar / multi result (scalar-only in this slice)", iface, witName)
+	}
+	funcType := c.nType
+	c.buf = PutTypeSectionOneFunc(c.buf, pnames, pvals, sig.Result.Prim)
+	c.nType++
+	c.buf = PutCanonSectionLiftNoOpts(c.buf, coreF, funcType)
+	lifted := c.nCFunc
+	c.nCFunc++
+	c.buf = PutInstanceSectionOnePackagedFunc(c.buf, witName, lifted)
+	inst := c.nInst
+	c.nInst++
+	c.buf = PutExportSectionOneInstance(c.buf, iface, inst)
+	return nil
+}
+
+// coreFuncExportNames returns the set of function-export names of a core
+// module (export section, id 7, kind 0x00 = func). Used to find the
+// `iface#wit-name` exports the wasm backend surfaced for `@export` functions.
+func coreFuncExportNames(bin []byte) map[string]bool {
+	out := map[string]bool{}
+	const preambleLen = 8
+	if len(bin) < preambleLen {
+		return out
+	}
+	for off := preambleLen; off < len(bin); {
+		id := bin[off]
+		off++
+		size, n := readULEB(bin[off:])
+		if n == 0 || off+n+int(size) > len(bin) {
+			return out
+		}
+		off += n
+		body := bin[off : off+int(size)]
+		off += int(size)
+		if id != 7 { // export section
+			continue
+		}
+		count, m := readULEB(body)
+		if m == 0 {
+			return out
+		}
+		body = body[m:]
+		for i := uint64(0); i < count && len(body) > 0; i++ {
+			name, rest := readName(body)
+			if len(rest) < 1 {
+				break
+			}
+			kind := rest[0]
+			rest = rest[1:]
+			_, ks := readULEB(rest)
+			rest = rest[ks:]
+			if kind == 0x00 { // func
+				out[name] = true
+			}
+			body = rest
+		}
+		return out
+	}
+	return out
+}
+
 func worldFunc(wi componenttype.WorldInterface, name string) (componenttype.WorldFunc, bool) {
 	for _, f := range wi.FuncSigs {
 		if f.Name == name {
