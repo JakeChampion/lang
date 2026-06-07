@@ -85,7 +85,7 @@ pub struct VMapMethodResult { stack: Value[], handled: boolean }
 function vm_map_method(m: VMap, name: string, argc: i32, stack: Value[], recv_idx: i32): VMapMethodResult {
     var result: Value = v_err("__pending__");
     var did_handle: boolean = false;
-    if ((name == "set" || name == "insert") && argc == 2) {
+    if ((name == "insert") && argc == 2) {
         var sk: Value = stack[recv_idx + 1];
         var sv: Value = stack[recv_idx + 2];
         var found_i: i32 = 0 - 1;

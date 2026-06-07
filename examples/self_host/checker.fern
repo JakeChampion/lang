@@ -813,7 +813,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             if (is_method) {
                 match (recv_ty) {
                     TypeMap(mt) => {
-                        if (name == "set" || name == "insert") {
+                        if (name == "insert") {
                             if (c.args.len() != 2) { return t_unknown("map.set: 2 args"); }
                             return recv_ty;
                         }
@@ -825,7 +825,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                             if (c.args.len() != 1) { return t_unknown("map.has: 1 arg"); }
                             return t_bool();
                         }
-                        if (name == "delete" || name == "without") {
+                        if (name == "without") {
                             if (c.args.len() != 1) { return t_unknown("map.delete: 1 arg"); }
                             return t_tuple([recv_ty, t_bool()]);
                         }

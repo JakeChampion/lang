@@ -510,7 +510,7 @@ function parse_map_lit(p: Par): ExprResult {
         var sargs: Expr[] = [];
         sargs = sargs.push(mlk[mpi]);
         sargs = sargs.push(mlv[mpi]);
-        mbase = e_call(e_field_access(mbase, "set"), sargs);
+        mbase = e_call(e_field_access(mbase, "insert"), sargs);
         mpi = mpi + 1;
     }
     return parse_postfix(p, mbase);
