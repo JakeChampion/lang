@@ -275,6 +275,61 @@ function x86_mov_store_r64(buf: i32[], base: i32, disp: i32, src: i32): i32[] {
     return x86_emit_mem(buf, src, base, disp);
 }
 
+// ---- SIB index addressing (slice 2j) ----
+//
+// `[base + index*scale + disp]` needs a SIB byte (ModR/M rm = 100). The
+// scale field encodes 1/2/4/8 as 0/1/2/3. base rbp/r13 still forces a
+// disp8 (no mod=00 form), as in x86_emit_mem.
+
+// x86_scale_bits maps a scale (1/2/4/8) to its 2-bit SIB field.
+function x86_scale_bits(scale: i32): i32 {
+    if (scale == 2) { return 1; }
+    if (scale == 4) { return 2; }
+    if (scale == 8) { return 3; }
+    return 0; // scale 1 (or default)
+}
+
+// x86_emit_mem_idx appends the ModR/M + SIB (+ displacement) for
+// `[base + index*scale + disp]` with the given ModR/M `reg` field.
+function x86_emit_mem_idx(buf: i32[], reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
+    var b: i32 = base & 7;
+    var is_rbp: boolean = (b == 5);
+    var md: i32 = 2;
+    var has_disp8: boolean = false;
+    if (disp == 0 && !is_rbp) {
+        md = 0;
+    } else {
+        if (disp >= (0 - 128) && disp <= 127) {
+            md = 1;
+            has_disp8 = true;
+        }
+    }
+    buf = buf.push(x86_modrm(md, reg, 4)); // rm = 100 -> SIB
+    buf = buf.push(x86_sib(x86_scale_bits(scale), index, base));
+    if (has_disp8) {
+        buf = buf.push(disp & 255);
+    } else {
+        if (md == 2) {
+            buf = x86_le32(buf, disp);
+        }
+    }
+    return buf;
+}
+
+// x86_mov_load_r64_idx: `mov <dst>, [base + index*scale + disp]`.
+function x86_mov_load_r64_idx(buf: i32[], dst: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
+    buf = buf.push(x86_rex(1, dst, index, base));
+    buf = buf.push(139); // 0x8B
+    return x86_emit_mem_idx(buf, dst, base, index, scale, disp);
+}
+
+// x86_mov_store_r64_idx: `mov [base + index*scale + disp], <src>`.
+function x86_mov_store_r64_idx(buf: i32[], base: i32, index: i32, scale: i32, disp: i32, src: i32): i32[] {
+    buf = buf.push(x86_rex(1, src, index, base));
+    buf = buf.push(137); // 0x89
+    return x86_emit_mem_idx(buf, src, base, index, scale, disp);
+}
+
 // ---- immediate ALU (slice 2b) ----
 
 // x86_alu_r64_imm32 encodes the `<op> <reg>, imm32` group-1 form:

@@ -964,13 +964,20 @@ smallest → largest:
     Byte-checked (`TestSelfHostX86Encode`, r0..r7 cases unchanged) and two
     native runs: `…GasExtRegRuns` (`imulq %r13,%r12`) and `…GasExtMemRuns`
     (store `%r8` to `[rsp]`, reload into `%r9`).
-  - ⬜ remaining: SIB **index** addressing (`(%r12,%r15,1)` — asm.fern's
-    byte-array writes), the 8/32-bit ops (`movb`/`movzbq`/`movl`/`cmpb`,
-    `setCC`, `movabsq` with 64-bit/hex immediates, `0x83` imm8 ALU, `movq
-    $imm` `C7` form), and the SSE/x87 float ops (`movsd`, `ucomisd`,
-    `xorpd`, `roundsd`, `fldl`/`fstpl`), then wire it into the
-    `fern -target x86-64 -o` driver so a real compiled program becomes an
-    ELF with no external tool.
+  - ✅ **slice 2j — SIB index addressing**: `[base + index*scale + disp]`
+    via `x86_emit_mem_idx` + `x86_scale_bits` (scale 1/2/4/8 → 0/1/2/3),
+    with `x86_mov_load_r64_idx` / `x86_mov_store_r64_idx` (REX.X for an
+    index >= 8). The GAS front-end parses `disp(%base,%index,scale)`, and
+    crucially the operand splitter is now **paren-aware**
+    (`x86_gas_top_comma` skips commas inside `(%b,%i,s)`). Byte-checked
+    (`TestSelfHostX86Encode`, `TestSelfHostX86Gas`) and a native run
+    (`TestSelfHostX86GasIndexRuns`: store 42 at `[rsp+rcx*8]`, reload).
+  - ⬜ remaining: the 8/32-bit ops (`movb`/`movzbq`/`movl`/`cmpb`, `setCC`,
+    `movabsq` with 64-bit/hex immediates, `0x83` imm8 ALU, `movq $imm` `C7`
+    form) and the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
+    `roundsd`, `fldl`/`fstpl`), then wire it into the `fern -target
+    x86-64 -o` driver so a real compiled program becomes an ELF with no
+    external tool.
 
   *Found on the way (latent, not fixed here):* the self-host **wasm
   checker doesn't flag arg-count mismatches** — calling a 1-param
