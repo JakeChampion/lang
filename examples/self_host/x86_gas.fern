@@ -280,6 +280,19 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "syscall") { a.code = x86_syscall(a.code); return a; }
     if (mnem == "leave") { a.code = x86_leave(a.code); return a; }
     if (mnem == "cqto") { a.code = x86_cqo(a.code); return a; }
+    // setCC <reg8>: store a condition flag as 0/1.
+    if (mnem == "sete" || mnem == "setz") { a.code = x86_setcc_reg8(a.code, 148, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setne" || mnem == "setnz") { a.code = x86_setcc_reg8(a.code, 149, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setl") { a.code = x86_setcc_reg8(a.code, 156, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setle") { a.code = x86_setcc_reg8(a.code, 158, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setg") { a.code = x86_setcc_reg8(a.code, 159, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setge") { a.code = x86_setcc_reg8(a.code, 157, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setb") { a.code = x86_setcc_reg8(a.code, 146, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setbe") { a.code = x86_setcc_reg8(a.code, 150, x86_gas_reg8(rest)); return a; }
+    if (mnem == "seta") { a.code = x86_setcc_reg8(a.code, 151, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setae") { a.code = x86_setcc_reg8(a.code, 147, x86_gas_reg8(rest)); return a; }
+    if (mnem == "sets") { a.code = x86_setcc_reg8(a.code, 152, x86_gas_reg8(rest)); return a; }
+    if (mnem == "setns") { a.code = x86_setcc_reg8(a.code, 153, x86_gas_reg8(rest)); return a; }
     // branch / call: one operand = a label
     if (mnem == "jmp") { return x86_jmp_label(a, rest); }
     if (mnem == "je" || mnem == "jz") { return x86_jcc_label(a, x86_cc_e(), rest); }

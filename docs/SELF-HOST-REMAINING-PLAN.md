@@ -994,9 +994,17 @@ smallest → largest:
     milestone: it compiles a real Fern program with `asm.fern`, feeds the
     emitted AT&T text through `x86_gas_assemble` + `elf.fern`, and runs the
     binary **natively on x86-64 exiting 42 — no external `as` or `ld`**.
+  - ✅ **slice 2m — setCC + broadened capstone**. Real programs with
+    comparisons / loops surfaced the missing `setCC` (`asm.fern` does
+    `cmpq` → `setl %al` → `movzbq` to materialise a bool); without it every
+    comparison produced garbage. Added `x86_setcc_reg8` (`0F 90+cc /0`) and
+    the `set{e,ne,l,le,g,ge,b,be,a,ae,s,ns}` mnemonics. `TestSelfHostX86Capstone`
+    is now table-driven over **arithmetic, while loops, if/else, function
+    calls, and recursion** (`fib`) — every case compiles via `asm.fern`,
+    assembles through the Fern toolchain, and runs natively exiting 42.
   - ⬜ remaining: the SSE/x87 float ops (`movsd`, `ucomisd`, `xorpd`,
     `roundsd`, `fldl`/`fstpl`) + `movabsq` (64-bit/hex immediates) for
-    float-using programs, broadening the capstone to more feature cases,
+    float-using programs, more capstone cases (strings / structs),
     and finally wiring the front-end into the `fern -target x86-64 -o`
     driver (so the CLI itself emits an ELF with no external tool).
 
