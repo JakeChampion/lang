@@ -36,9 +36,9 @@ func TestSelfHostWatLex(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	lex, err := os.ReadFile("../../examples/self_host/wat_lex.fern")
+	lex, err := os.ReadFile("../../examples/self_host/watbin.fern")
 	if err != nil {
-		t.Fatalf("read wat_lex.fern: %v", err)
+		t.Fatalf("read watbin.fern: %v", err)
 	}
 	source := string(lex) + "\n" + watLexSelfTestMain
 

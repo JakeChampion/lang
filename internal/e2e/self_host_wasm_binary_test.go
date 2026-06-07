@@ -50,7 +50,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 
 	// Build the assembler once: the encoder modules + a read_file driver.
 	var asmSrc strings.Builder
-	for _, name := range []string{"leb128.fern", "wat_lex.fern", "wat_parse.fern", "wat_encode.fern", "wat_emit_bin.fern"} {
+	for _, name := range []string{"watbin.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
