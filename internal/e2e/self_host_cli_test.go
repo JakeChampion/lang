@@ -30,7 +30,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "fern.fern"} {
+	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "watbin.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -860,6 +860,50 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 		if string(out) != "hi from wasm\n" {
 			t.Errorf("wasm-emitted program stdout = %q, want %q", string(out), "hi from wasm\n")
+		}
+	})
+
+	t.Run("emit-target-wasm-bin", func(t *testing.T) {
+		// The driver emits a wasm *binary* module under -target wasm-bin
+		// (WAT -> watbin assembler -> .wasm). Validate with wasm-tools and
+		// run it directly with wasmtime; check exit code + stdout.
+		wasmtime, err := exec.LookPath("wasmtime")
+		if err != nil {
+			t.Skip("wasmtime not on PATH; skipping -target wasm-bin")
+		}
+		srcPath := filepath.Join(dir, "wasmbin_prog.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi from wasm-bin\"); return 6 * 7; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		// Binary bytes go to a file (-o), not stdout, so they survive
+		// verbatim (incl. 0x00 / high bytes) without text mangling.
+		outPath := filepath.Join(dir, "wasmbin_prog.wasm")
+		stdout, code := runDriver(t, "-target", "wasm-bin", "-o", outPath, srcPath)
+		if code != 0 {
+			t.Fatalf("-target wasm-bin emit exited %d, want 0", code)
+		}
+		if len(stdout) != 0 {
+			t.Errorf("-target wasm-bin with -o wrote %d bytes to stdout, want 0", len(stdout))
+		}
+		bin, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read wasm-bin output: %v", err)
+		}
+		if len(bin) < 8 || bin[0] != 0x00 || bin[1] != 0x61 || bin[2] != 0x73 || bin[3] != 0x6d {
+			t.Fatalf("output is not a wasm binary (magic missing): % x", bin[:min(8, len(bin))])
+		}
+		if wasmtools, err := exec.LookPath("wasm-tools"); err == nil {
+			if out, err := exec.Command(wasmtools, "validate", outPath).CombinedOutput(); err != nil {
+				t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+			}
+		}
+		cmd := exec.Command(wasmtime, "run", outPath)
+		out, _ := cmd.Output()
+		if c := cmd.ProcessState.ExitCode(); c != 42 {
+			t.Errorf("wasm-bin program exited %d, want 42", c)
+		}
+		if string(out) != "hi from wasm-bin\n" {
+			t.Errorf("wasm-bin program stdout = %q, want %q", string(out), "hi from wasm-bin\n")
 		}
 	})
 
