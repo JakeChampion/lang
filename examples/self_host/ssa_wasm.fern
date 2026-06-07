@@ -15,16 +15,19 @@
 // on wasm32 every value (i32 and pointer alike) is a 32-bit local, so the
 // width bookkeeping the native backends need disappears here.
 //
-// Strategy (Phase 2 of docs/SELFHOST-SSA-ALWAYS.md): the integer subset,
-// the heap, strings, and I/O — const / copy / binary / unary / call /
-// param / phi over ret / br / brif; alloc / load_elem / store_elem over a
-// linear-memory bump allocator (arrays, strings, structs, tuples, methods;
-// on wasm32 every value is a 4-byte i32 word); concat / streq; and print
-// (bytes + a trailing '\n', via fd_write) — all through small runtime
-// helpers. `supported()` lets the caller (fern.try_ssa) fall back to the
-// AST emitter (wasm.fern) for the only kinds left — funcaddr /
-// call_indirect (escaping closures via a function table) — so output is
-// never wrong.
+// Strategy (Phase 2 of docs/SELFHOST-SSA-ALWAYS.md): the wasm backend now
+// covers the whole SSA subset build_func produces — the integer ops, the
+// heap (alloc / load_elem / store_elem over a linear-memory bump allocator;
+// on wasm32 every value is a 4-byte i32 word: arrays, strings, structs,
+// tuples, methods, maps), strings (concat / streq), I/O (print: bytes + a
+// trailing '\n' via fd_write), and closures (funcaddr / call_indirect via a
+// function table). The closure convention passes the env box as a trailing
+// arg, so call_indirect uses a $clos<arity> type and the table holds each
+// function's closure-callable form: a capturing lambda (which takes __env)
+// directly, a plain function value through an env-dropping wrapper (wasm's
+// call_indirect is strictly typed, unlike the native backends). `supported()`
+// still gates per kind so a future IR addition falls back to wasm.fern rather
+// than emitting broken WAT, but in practice every current kind is covered.
 
 import "core/no_prelude";
 import "./ssa";
@@ -69,6 +72,17 @@ function str_join_chunks(parts: string[]): string {
 // declared locals, in id order.
 function loc(v: i32): string {
     return "(local.get " + i32_to_string(v) + ")";
+}
+
+// index_of_str returns the position of s in xs, or 0 if absent (every
+// function is in the table, so a funcaddr always resolves).
+function index_of_str(xs: string[], s: string): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == s) { return i; }
+        i = i + 1;
+    }
+    return 0;
 }
 
 // block_index maps a block id to its position in f.blocks (its dispatch
@@ -120,7 +134,7 @@ function wasm_binop(op: string, a: string, b: string): string {
 
 // emit_inst lowers one value-defining instruction to a `(local.set …)`.
 // param and phi are handled elsewhere (wasm params / predecessor edges).
-function emit_inst(ins: ssa.SInst): string {
+function emit_inst(ins: ssa.SInst, fnnames: string[]): string {
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
         return "    (local.set " + i32_to_string(ins.result) + " (i32.const " + i32_to_string(ins.imm) + "))\n";
     }
@@ -176,6 +190,22 @@ function emit_inst(ins: ssa.SInst): string {
         // fd imm (1=stdout, 2=stderr).
         return "    (call $__fern_ssa_print " + loc(ins.args[0]) + " (i32.const " + i32_to_string(ins.imm) + "))\n";
     }
+    if (ins.kind == "funcaddr") {
+        // A function value is its slot in the function table (wasm has no raw
+        // code pointers); slot i holds the closure-callable form of funcs[i].
+        return "    (local.set " + i32_to_string(ins.result) + " (i32.const " + i32_to_string(index_of_str(fnnames, ins.str)) + "))\n";
+    }
+    if (ins.kind == "call_indirect") {
+        // args[0] is the table slot (a function value); args[1..] the call
+        // args, with the closure env passed last. call_indirect takes the args
+        // then the table index, typed by the call's arity ($clos<nargs>).
+        var nargs: i32 = ins.args.len() - 1;
+        var ci: string = "(call_indirect (type $clos" + i32_to_string(nargs) + ")";
+        var ai: i32 = 1;
+        while (ai < ins.args.len()) { ci = ci + " " + loc(ins.args[ai]); ai = ai + 1; }
+        ci = ci + " " + loc(ins.args[0]) + ")";
+        return "    (local.set " + i32_to_string(ins.result) + " " + ci + ")\n";
+    }
     return "";
 }
 
@@ -223,13 +253,13 @@ function emit_term(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
 }
 
 // emit_block emits one block's value instructions then its terminator.
-function emit_block(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
+function emit_block(f: ssa.SFunc, blk: ssa.SBlock, pc: i32, fnnames: string[]): string {
     var out: string = "";
     var k: i32 = 0;
     while (k < blk.insts.len()) {
         var ins: ssa.SInst = blk.insts[k];
         if (ins.kind != "param" && ins.kind != "phi") {
-            out = out + emit_inst(ins);
+            out = out + emit_inst(ins, fnnames);
         }
         k = k + 1;
     }
@@ -237,7 +267,8 @@ function emit_block(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
 }
 
 // emit_func lowers one SSA function to a `$__fn_<name>` wasm function.
-pub function emit_func(f: ssa.SFunc): string {
+// fnnames is the function-table layout (for funcaddr slot indices).
+pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
     var chunks: string[] = [];
     var sig: string = "  (func $__fn_" + f.name;
     var p: i32 = 0;
@@ -269,7 +300,7 @@ pub function emit_func(f: ssa.SFunc): string {
     bi = 0;
     while (bi < nb) {
         chunks = chunks.push("    ) ;; blk" + i32_to_string(bi) + "\n");
-        chunks = chunks.push(emit_block(f, f.blocks[bi], pc));
+        chunks = chunks.push(emit_block(f, f.blocks[bi], pc, fnnames));
         bi = bi + 1;
     }
     chunks = chunks.push("    ))\n");           // close loop + exit
@@ -285,7 +316,7 @@ function inst_supported(kind: string): boolean {
         || kind == "unary" || kind == "call" || kind == "param" || kind == "copy"
         || kind == "phi" || kind == "alloc" || kind == "load_elem"
         || kind == "store_elem" || kind == "concat" || kind == "streq"
-        || kind == "print";
+        || kind == "print" || kind == "funcaddr" || kind == "call_indirect";
 }
 
 // supported reports whether every instruction in every function is in the
@@ -393,9 +424,75 @@ function print_helper(): string {
     return o;
 }
 
+// max_indirect_arity returns the largest call_indirect arg count (minus the
+// code-pointer operand) across all functions, or -1 if there are none — the
+// highest $clos<N> function type the module needs for its indirect calls.
+function max_indirect_arity(funcs: ssa.SFunc[]): i32 {
+    var m: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var b: i32 = 0;
+        while (b < funcs[i].blocks.len()) {
+            var blk: ssa.SBlock = funcs[i].blocks[b];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                if (blk.insts[k].kind == "call_indirect") {
+                    var n: i32 = blk.insts[k].args.len() - 1;
+                    if (n > m) { m = n; }
+                }
+                k = k + 1;
+            }
+            b = b + 1;
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+// is_funcaddr_target reports whether `name` is taken as a function value
+// anywhere (a funcaddr operand) — such a function needs a closure-callable
+// table entry.
+function is_funcaddr_target(funcs: ssa.SFunc[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var b: i32 = 0;
+        while (b < funcs[i].blocks.len()) {
+            var blk: ssa.SBlock = funcs[i].blocks[b];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                if (blk.insts[k].kind == "funcaddr" && blk.insts[k].str == name) { return true; }
+                k = k + 1;
+            }
+            b = b + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// clos_wrapper emits an env-dropping table wrapper for a no-env function used
+// as a value. The closure convention passes the env box as a trailing arg to
+// every indirect call, so a plain function (U params, no __env) needs a
+// wrapper of arity U+1 that forwards the U user args and ignores the env —
+// otherwise wasm's strictly-typed call_indirect ($clos<U+1>) traps on the
+// function's U-param type. (Capturing lambdas already take __env, so they are
+// called directly and need no wrapper.)
+function clos_wrapper(f: ssa.SFunc): string {
+    var o: string = "  (func $__clos_" + f.name;
+    var p: i32 = 0;
+    while (p < f.nparams) { o = o + " (param i32)"; p = p + 1; }
+    o = o + " (param i32) (result i32)\n";   // trailing env param (ignored)
+    o = o + "    (call $__fn_" + f.name;
+    var a: i32 = 0;
+    while (a < f.nparams) { o = o + " (local.get " + i32_to_string(a) + ")"; a = a + 1; }
+    o = o + "))\n";
+    return o;
+}
+
 // emit_program frames the whole module: the WASI proc_exit import (plus
 // fd_write when print is used), an exported linear memory (WASI command
-// modules require one), the runtime helpers a program actually uses, each
+// modules require one), the $clos<N> function types + a function table when
+// closures are used, the runtime helpers a program actually uses, each
 // function body, then a `_start` that exits with main()'s value.
 pub function emit_program(funcs: ssa.SFunc[]): string {
     var out: string = "(module\n";
@@ -408,13 +505,51 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
     // ($__hp) for the heap. The low 1 KiB is reserved (print scratch / null).
     out = out + "  (memory (export \"memory\") 256)\n";
     out = out + "  (global $__hp (mut i32) (i32.const 1024))\n";
+    // Function values: a value is a table slot index; call_indirect dispatches
+    // through a $clos<arity> type. Emit the types, a table of every function
+    // (slot i = the closure-callable form of funcs[i]: the function itself if
+    // it takes __env, else an env-dropping wrapper), and the wrappers.
+    var fnnames: string[] = [];
+    var ni: i32 = 0;
+    while (ni < funcs.len()) { fnnames = fnnames.push(funcs[ni].name); ni = ni + 1; }
+    var has_clos: boolean = uses_kind(funcs, "funcaddr") || uses_kind(funcs, "call_indirect");
+    if (has_clos) {
+        var maxa: i32 = max_indirect_arity(funcs);
+        var a: i32 = 0;
+        while (a <= maxa) {
+            var ty: string = "  (type $clos" + i32_to_string(a) + " (func";
+            var pj: i32 = 0;
+            while (pj < a) { ty = ty + " (param i32)"; pj = pj + 1; }
+            out = out + ty + " (result i32)))\n";
+            a = a + 1;
+        }
+        out = out + "  (table " + i32_to_string(funcs.len()) + " funcref)\n";
+        var el: string = "  (elem (i32.const 0)";
+        var ei: i32 = 0;
+        while (ei < funcs.len()) {
+            if (!funcs[ei].takes_env && is_funcaddr_target(funcs, funcs[ei].name)) {
+                el = el + " $__clos_" + funcs[ei].name;
+            } else {
+                el = el + " $__fn_" + funcs[ei].name;
+            }
+            ei = ei + 1;
+        }
+        out = out + el + ")\n";
+        var wi: i32 = 0;
+        while (wi < funcs.len()) {
+            if (!funcs[wi].takes_env && is_funcaddr_target(funcs, funcs[wi].name)) {
+                out = out + clos_wrapper(funcs[wi]);
+            }
+            wi = wi + 1;
+        }
+    }
     if (uses_kind(funcs, "concat")) { out = out + concat_helper(); }
     if (uses_kind(funcs, "streq")) { out = out + streq_helper(); }
     if (has_print) { out = out + print_helper(); }
     var chunks: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        chunks = chunks.push(emit_func(funcs[i]));
+        chunks = chunks.push(emit_func(funcs[i], fnnames));
         i = i + 1;
     }
     out = out + str_join_chunks(chunks);

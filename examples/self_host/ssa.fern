@@ -75,7 +75,12 @@ pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
 
 // SFunc: nparams params occupy value ids 0..nparams-1; nvals is the next
 // fresh value id; blocks[entry] is the entry block.
-pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], entry: i32 }
+// takes_env is true when the function's last param is the closure `__env`
+// (a capturing lambda lifted by collect_lambdas). The wasm backend uses it
+// to decide whether a function-table entry can be called with the closure
+// convention directly or needs an env-dropping wrapper; the native backends
+// ignore it (their indirect calls tolerate an unused trailing arg).
+pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], entry: i32, takes_env: boolean }
 
 function t_ret(value: i32): STerm { return STerm { kind: "ret", cond: 0, target: 0, t: 0, f: 0, value: value }; }
 function t_br(target: i32): STerm { return STerm { kind: "br", cond: 0, target: target, t: 0, f: 0, value: 0 }; }
@@ -2024,7 +2029,7 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs
 
 pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[], seed: Seed): BResult {
     var sym: string = fn_sym(fd);
-    var f0: SFunc = SFunc { name: sym, nparams: 0, nvals: 0, blocks: [], entry: 0 };
+    var f0: SFunc = SFunc { name: sym, nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
     // Params occupy value ids 0..nparams-1, defined by "param" insts in the
     // entry block (block id 0). A pointer-shaped param — array / string / struct
     // / enum — is marked str="ptr" so compute_widths gives it 64-bit width.
@@ -2094,7 +2099,11 @@ pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[]
         }
     }
     s = s.close_cur();
-    var fout: SFunc = SFunc { name: s.name, nparams: s.nparams, nvals: s.nvals, blocks: s.blocks, entry: 0 };
+    // takes_env: a capturing lambda lifted by collect_lambdas ends in an
+    // `__env` param. The wasm backend reads this to call the closure-table
+    // entry directly (vs through an env-dropping wrapper for plain functions).
+    var te: boolean = fd.params.len() > 0 && fd.params[fd.params.len() - 1].name == "__env";
+    var fout: SFunc = SFunc { name: s.name, nparams: s.nparams, nvals: s.nvals, blocks: s.blocks, entry: 0, takes_env: te };
     return BResult { func: fout, ok: true };
 }
 
@@ -2196,7 +2205,7 @@ function copy_propagate(f: SFunc): SFunc {
         nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, resolved), preds: blk.preds });
         bi = bi + 1;
     }
-    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
 }
 
 // is_div_by_zero guards the folder against evaluating a /0 or %0 at
@@ -2263,7 +2272,7 @@ function const_fold(f: SFunc): SFunc {
             nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
             bi = bi + 1;
         }
-        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
     }
     return f;
 }
@@ -2362,7 +2371,7 @@ function algebraic_simplify(f: SFunc): SFunc {
             nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
             bi = bi + 1;
         }
-        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
     }
     return f;
 }
@@ -2456,7 +2465,7 @@ function cse(f: SFunc): SFunc {
         fblocks = fblocks.push(SBlock { id: blk.id, insts: ri, term: rewrite_term(blk.term, repl), preds: blk.preds });
         bi = bi + 1;
     }
-    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: fblocks, entry: f.entry };
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: fblocks, entry: f.entry, takes_env: f.takes_env };
 }
 
 // term_targets reports whether a terminator branches to block id `to`.
@@ -2535,7 +2544,7 @@ function branch_simplify(f: SFunc): SFunc {
             folded_blocks = folded_blocks.push(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
             bi = bi + 1;
         }
-        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: folded_blocks, entry: f.entry };
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: folded_blocks, entry: f.entry, takes_env: f.takes_env };
 
         // 2. Drop unreachable blocks and fix up survivor preds + phis.
         var reach: i32[] = reachable_ids(f);
@@ -2581,7 +2590,7 @@ function branch_simplify(f: SFunc): SFunc {
             nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: npreds });
             bi = bi + 1;
         }
-        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
     }
     return f;
 }
@@ -2648,7 +2657,7 @@ function merge_blocks(f: SFunc): SFunc {
             nblocks = nblocks.push(SBlock { id: blk.id, insts: blk.insts, term: blk.term, preds: np });
             k = k + 1;
         }
-        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
         changed = true;
     }
     return f;
@@ -2729,7 +2738,7 @@ pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
         nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
         bi = bi + 1;
     }
-    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
 }
 
 pub function calls_all_known(f: SFunc, known: string[]): boolean {
@@ -3031,7 +3040,7 @@ function dead_code_elim(f: SFunc): SFunc {
             nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
             bi = bi + 1;
         }
-        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
     }
     return f;
 }

@@ -217,12 +217,12 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	})
 
 	t.Run("emit-ssa-wasm", func(t *testing.T) {
-		// The wasm target is the third SSA consumer (ssa_wasm.fern): a core
-		// integer program compiles through the SSA backend by default — its
-		// WAT differs from the -no-ssa (AST wasm.fern) output and runs to the
-		// program's value. A program outside the wasm SSA subset (an array)
-		// falls back to the AST emitter via the supported() gate: identical
-		// WAT to -no-ssa, and still correct.
+		// The wasm target is the third SSA consumer (ssa_wasm.fern), now
+		// covering the whole SSA subset: integer, heap (array), string-concat,
+		// print, and closures all compile through the SSA backend by default —
+		// each program's WAT differs from the -no-ssa (AST wasm.fern) output
+		// and runs to its value / output. A program outside the subset (a float
+		// local) still falls back via the supported() gate (identical WAT).
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping -target wasm SSA path")
 		}
@@ -314,13 +314,8 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 			t.Errorf("SSA wasm print stdout = %q, want %q", string(prOut), "hi from wasm\n")
 		}
 
-		// Regression: try_ssa must not mutate the shared AST. A capturing
-		// lambda falls back on wasm (its closure box needs funcaddr /
-		// call_indirect), and collect_lambdas used to append `__env` to the
-		// lambda's params in place — corrupting the AST the fallback emitter
-		// then reused (duplicate $__env → invalid WAT). With SSA default-on
-		// this corrupted every fallback compile, so guard it: default WAT must
-		// equal -no-ssa WAT and run correctly.
+		// Closures compile through SSA now (function table + call_indirect):
+		// a capturing lambda's WAT differs from -no-ssa and runs correctly.
 		capSrc := "function main(): i32 { var n = 10; var f = function (x: i32): i32 { return x + n; }; return f(5); }\n"
 		capPath := filepath.Join(dir, "wasm_cap.fern")
 		if err := os.WriteFile(capPath, []byte(capSrc), 0o644); err != nil {
@@ -328,11 +323,32 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 		defCap, _ := runDriver(t, "-target", "wasm", capPath)
 		astCap, _ := runDriver(t, "-no-ssa", "-target", "wasm", capPath)
-		if string(defCap) != string(astCap) {
-			t.Error("default -target wasm corrupted the AST for a capturing-lambda fallback (try_ssa has a side effect)")
+		if string(defCap) == string(astCap) {
+			t.Error("default -target wasm fell back to AST for a capturing-lambda program (expected the SSA closure path)")
 		}
 		if got := runWat(t, "wasm_cap", defCap); got != 15 {
-			t.Errorf("capturing-lambda program (AST wasm fallback) exited %d, want 15", got)
+			t.Errorf("SSA wasm capturing-lambda program exited %d, want 15", got)
+		}
+
+		// Regression: try_ssa must not mutate the shared AST. A struct spread
+		// (`...base`) forces the fallback (build_func rejects it), but
+		// collect_lambdas still runs in try_ssa first; it used to append
+		// `__env` to the lambda's params in place, corrupting the AST the
+		// fallback emitter then reused (duplicate $__env → invalid WAT). Guard
+		// it: a spread + capturing-lambda program falls back to the AST emitter
+		// (default WAT == -no-ssa WAT) and runs correctly.
+		fbSrc := "struct P { x: i32, y: i32 } function main(): i32 { var n = 5; var f = function (z: i32): i32 { return z + n; }; var p = P { x: 1, y: 2 }; var q = P { ...p, x: 10 }; return f(q.x) + q.y; }\n"
+		fbPath := filepath.Join(dir, "wasm_fb.fern")
+		if err := os.WriteFile(fbPath, []byte(fbSrc), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		defFb, _ := runDriver(t, "-target", "wasm", fbPath)
+		astFb, _ := runDriver(t, "-no-ssa", "-target", "wasm", fbPath)
+		if string(defFb) != string(astFb) {
+			t.Error("default -target wasm corrupted the AST for a fallback program (try_ssa has a side effect)")
+		}
+		if got := runWat(t, "wasm_fb", defFb); got != 17 {
+			t.Errorf("spread+lambda fallback program exited %d, want 17", got)
 		}
 	})
 
