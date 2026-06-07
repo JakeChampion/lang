@@ -575,6 +575,31 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var rba: i32[] = [rbv];
                         return s.emit(SInst { kind: "unary", result: s.cur_id(), args: rba, imm: 0, str: cid.name });
                     }
+                    // strbuf_reset() / strbuf_append(s) / strbuf_take() — the
+                    // global amortised-O(1) string-builder (a dedicated op
+                    // each; the backends emit the runtime + a global byte
+                    // buffer). Not generic calls, so calls_all_known doesn't
+                    // bail. wasm has no SSA lowering (ssa_wasm rejects them →
+                    // AST fallback). strbuf_take materialises a fresh
+                    // [len, bytes…] string and resets the buffer.
+                    if (cid.name == "strbuf_reset" && c.args.len() == 0) {
+                        s = s.fresh();
+                        var sbra: i32[] = [];
+                        return s.emit(SInst { kind: "strbuf_reset", result: s.cur_id(), args: sbra, imm: 0, str: "" });
+                    }
+                    if (cid.name == "strbuf_append" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var sbav: i32 = s.cur_id();
+                        s = s.fresh();
+                        var sbaa: i32[] = [sbav];
+                        return s.emit(SInst { kind: "strbuf_append", result: s.cur_id(), args: sbaa, imm: 0, str: "" });
+                    }
+                    if (cid.name == "strbuf_take" && c.args.len() == 0) {
+                        s = s.fresh();
+                        var sbta: i32[] = [];
+                        return s.emit(SInst { kind: "strbuf_take", result: s.cur_id(), args: sbta, imm: 0, str: "" });
+                    }
                     // arr[idx] = val — the parser desugars an indexed
                     // assignment to the builtin __set_index(arr, idx, val).
                     // Lower it to a store_elem at idx+1 (offset 0 is the
@@ -2824,6 +2849,7 @@ pub function compute_widths(f: SFunc): i32[] {
                 else if (ins.kind == "call" && ins.imm == 1) { make64 = true; }   // pointer-returning call
                 else if (ins.kind == "call" && ins.imm == 2) { make64 = true; }   // f64-returning call (8-byte)
                 else if (ins.kind == "unary" && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) { make64 = true; }   // f64/i64 bit reinterpret — 8-byte value
+                else if (ins.kind == "strbuf_take") { make64 = true; }   // a string pointer
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
                 else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
@@ -3107,7 +3133,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
+            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -3272,7 +3298,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "concat" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "concat" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.append(ins); } else { changed = true; }
                 k = k + 1;
             }

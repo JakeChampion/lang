@@ -376,6 +376,16 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    mov x8, #93\n";
         return out + "    svc #0\n";
     }
+    if (ins.kind == "strbuf_reset") { return out + "    bl __fern_ssa_strbuf_reset\n"; }
+    if (ins.kind == "strbuf_append") {
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // string → x9
+        out = out + "    mov x0, x9\n";
+        return out + "    bl __fern_ssa_strbuf_append\n";
+    }
+    if (ins.kind == "strbuf_take") {
+        out = out + "    bl __fern_ssa_strbuf_take\n";
+        return store_reg(reg_of, ins.result, "x0", 64, out);   // result string ptr
+    }
     if (ins.kind == "concat") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // a → x9
         out = out + "    mov x0, x9\n";
@@ -653,6 +663,41 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    add w11, w11, #1\n    b .Lsne_loop\n";
     out = out + ".Lsne_yes:\n    mov w0, #1\n    ret\n";
     out = out + ".Lsne_no:\n    mov w0, #0\n    ret\n";
+    // strbuf — the global amortised-O(1) string builder. Byte buffer in .bss
+    // (256 MiB, demand-zero) + a length. append copies a source string's
+    // bytes (read from the [len, byte-per-word] layout); take materialises a
+    // fresh [len, bytes…] string and clears the buffer. Leaf helpers (x9..x15).
+    out = out + "    .bss\n    .align 8\n__fern_ssa_strbuf_data:\n    .zero 268435456\n";
+    out = out + "    .data\n    .align 8\n__fern_ssa_strbuf_len:\n    .quad 0\n";
+    out = out + "    .text\n";
+    out = out + "__fern_ssa_strbuf_reset:\n";
+    out = out + "    adrp x9, __fern_ssa_strbuf_len\n    add x9, x9, :lo12:__fern_ssa_strbuf_len\n    str xzr, [x9]\n    ret\n";
+    out = out + "__fern_ssa_strbuf_append:\n";              // x0 = source string
+    out = out + "    ldr w9, [x0]\n    cbz w9, .Lsba_done\n";
+    out = out + "    adrp x10, __fern_ssa_strbuf_data\n    add x10, x10, :lo12:__fern_ssa_strbuf_data\n";
+    out = out + "    adrp x11, __fern_ssa_strbuf_len\n    add x11, x11, :lo12:__fern_ssa_strbuf_len\n";
+    out = out + "    ldr x12, [x11]\n    add x10, x10, x12\n";   // dst = data + curlen
+    out = out + "    mov w13, #0\n";                       // i = 0
+    out = out + ".Lsba_loop:\n    cmp w13, w9\n    b.ge .Lsba_fin\n";
+    out = out + "    add w14, w13, #1\n    sbfiz x14, x14, #3, #32\n";   // (i+1)*8
+    out = out + "    ldrb w15, [x0, x14]\n    strb w15, [x10]\n    add x10, x10, #1\n";
+    out = out + "    add w13, w13, #1\n    b .Lsba_loop\n";
+    out = out + ".Lsba_fin:\n    ldr x12, [x11]\n    add x12, x12, w9, uxtw\n    str x12, [x11]\n";
+    out = out + ".Lsba_done:\n    ret\n";
+    out = out + "__fern_ssa_strbuf_take:\n";               // → x0
+    out = out + "    adrp x11, __fern_ssa_strbuf_len\n    add x11, x11, :lo12:__fern_ssa_strbuf_len\n";
+    out = out + "    ldr x9, [x11]\n";                     // total
+    out = out + "    adrp x12, __fern_ssa_hp\n    add x12, x12, :lo12:__fern_ssa_hp\n";
+    out = out + "    ldr x13, [x12]\n";                    // result = hp
+    out = out + "    add x14, x9, #1\n    lsl x14, x14, #3\n    add x14, x13, x14\n    str x14, [x12]\n";   // hp += (total+1)*8
+    out = out + "    str w9, [x13]\n";                     // result[0] = total
+    out = out + "    adrp x10, __fern_ssa_strbuf_data\n    add x10, x10, :lo12:__fern_ssa_strbuf_data\n";
+    out = out + "    mov x15, #0\n";                       // i = 0
+    out = out + ".Lsbt_loop:\n    cmp x15, x9\n    b.ge .Lsbt_fin\n";
+    out = out + "    ldrb w14, [x10, x15]\n";               // byte i
+    out = out + "    add x12, x15, #1\n    lsl x12, x12, #3\n    str w14, [x13, x12]\n";   // result[i+1] = byte
+    out = out + "    add x15, x15, #1\n    b .Lsbt_loop\n";
+    out = out + ".Lsbt_fin:\n    str xzr, [x11]\n    mov x0, x13\n    ret\n";
     out = out + "_start:\n";
     out = out + "    adrp x9, __fern_ssa_heap\n";
     out = out + "    add x9, x9, :lo12:__fern_ssa_heap\n";
