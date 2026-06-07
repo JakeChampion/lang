@@ -35,11 +35,7 @@ func TestSelfHostWasmShimCore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}
-	comp, err := os.ReadFile("../../examples/self_host/wat_component.fern")
-	if err != nil {
-		t.Fatalf("read wat_component.fern: %v", err)
-	}
-	source := string(watbin) + "\n" + string(comp) + "\n" + shimCoreSelfTestMain
+	source := string(watbin) + "\n" + shimCoreSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -114,11 +110,7 @@ func TestSelfHostWasmComponentSuffixStdout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}
-	comp, err := os.ReadFile("../../examples/self_host/wat_component.fern")
-	if err != nil {
-		t.Fatalf("read wat_component.fern: %v", err)
-	}
-	source := string(watbin) + "\n" + string(comp) + "\n" + suffixStdoutSelfTestMain
+	source := string(watbin) + "\n" + suffixStdoutSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
