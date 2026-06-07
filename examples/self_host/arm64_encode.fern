@@ -269,3 +269,125 @@ function arm64_patch_b19(buf: i32[], at: i32, rel: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xff00001f) | ((((rel >> 2) & 0x7ffff) as i64) << 5);
     return arm64_write_word(buf, at, w);
 }
+
+// ---- bl (branch-with-link, the call instruction) ----
+
+// arm64_bl_word encodes `bl <rel>` -> 0x94000000 | imm26 (rel/4). It sets
+// x30 = address of the following instruction; `ret` returns through x30.
+function arm64_bl_word(rel: i32): i64 {
+    return 0x94000000 | (((rel >> 2) & 0x3ffffff) as i64);
+}
+function arm64_bl(buf: i32[], rel: i32): i32[] {
+    return arm64_le32(buf, arm64_bl_word(rel));
+}
+
+// ============================================================
+// named-label assembler
+// ============================================================
+//
+// Arm64Asm threads the code buffer plus a label table (name -> byte
+// offset) and a fixup queue for branches whose target is not yet placed.
+// It is the arm64 counterpart of X86Asm in x86_encode.fern. Branch
+// displacements are PC-relative to the branch instruction itself, so a
+// fixup records the instruction's byte offset and resolve patches with
+// rel = target_off - instr_off. fix_kinds distinguishes the immediate
+// field: 0 = imm26 (b / bl), 1 = imm19 (b.cond / cbz / cbnz).
+
+struct Arm64Asm {
+    code: i32[],
+    lab_names: string[],
+    lab_offs: i32[],
+    fix_offs: i32[],
+    fix_names: string[],
+    fix_kinds: i32[],
+}
+
+// arm64_asm_new returns an empty assembler state.
+function arm64_asm_new(): Arm64Asm {
+    return Arm64Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [], fix_kinds: [] };
+}
+
+// arm64_asm_label records `name` at the current code offset.
+function arm64_asm_label(a: Arm64Asm, name: string): Arm64Asm {
+    a.lab_names = a.lab_names.push(name);
+    a.lab_offs = a.lab_offs.push(a.code.len());
+    return a;
+}
+
+// arm64_asm_label_off returns the byte offset of label `name`, or -1 if it
+// has not been placed yet.
+function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
+    var i: i32 = 0;
+    while (i < a.lab_names.len()) {
+        if (a.lab_names[i] == name) {
+            return a.lab_offs[i];
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// arm64_asm_fixup_or_patch handles a branch placeholder just emitted into
+// a.code (its instruction word at a.code.len()-4). `kind` selects the
+// immediate field. If the target label is already placed, patch now;
+// otherwise queue a fixup for arm64_asm_resolve.
+function arm64_asm_fixup_or_patch(a: Arm64Asm, name: string, kind: i32): Arm64Asm {
+    var at: i32 = a.code.len() - 4;
+    var target: i32 = arm64_asm_label_off(a, name);
+    if (target >= 0) {
+        if (kind == 1) {
+            a.code = arm64_patch_b19(a.code, at, target - at);
+        } else {
+            a.code = arm64_patch_b(a.code, at, target - at);
+        }
+    } else {
+        a.fix_offs = a.fix_offs.push(at);
+        a.fix_names = a.fix_names.push(name);
+        a.fix_kinds = a.fix_kinds.push(kind);
+    }
+    return a;
+}
+
+// arm64_asm_b / arm64_asm_bl emit an unconditional branch / call to a
+// (possibly forward) label.
+function arm64_asm_b(a: Arm64Asm, name: string): Arm64Asm {
+    a.code = arm64_b(a.code, 0);
+    return arm64_asm_fixup_or_patch(a, name, 0);
+}
+function arm64_asm_bl(a: Arm64Asm, name: string): Arm64Asm {
+    a.code = arm64_bl(a.code, 0);
+    return arm64_asm_fixup_or_patch(a, name, 0);
+}
+
+// arm64_asm_bcond / arm64_asm_cbz / arm64_asm_cbnz emit a conditional
+// branch to a (possibly forward) label.
+function arm64_asm_bcond(a: Arm64Asm, cond: i32, name: string): Arm64Asm {
+    a.code = arm64_bcond(a.code, cond, 0);
+    return arm64_asm_fixup_or_patch(a, name, 1);
+}
+function arm64_asm_cbz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
+    a.code = arm64_cbz(a.code, rt, 0);
+    return arm64_asm_fixup_or_patch(a, name, 1);
+}
+function arm64_asm_cbnz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
+    a.code = arm64_cbnz(a.code, rt, 0);
+    return arm64_asm_fixup_or_patch(a, name, 1);
+}
+
+// arm64_asm_resolve patches every queued (forward) fixup now that all
+// labels are placed. Call once after emitting the whole program;
+// afterwards a.code is the final .text.
+function arm64_asm_resolve(a: Arm64Asm): Arm64Asm {
+    var i: i32 = 0;
+    while (i < a.fix_offs.len()) {
+        var at: i32 = a.fix_offs[i];
+        var target: i32 = arm64_asm_label_off(a, a.fix_names[i]);
+        if (a.fix_kinds[i] == 1) {
+            a.code = arm64_patch_b19(a.code, at, target - at);
+        } else {
+            a.code = arm64_patch_b(a.code, at, target - at);
+        }
+        i = i + 1;
+    }
+    return a;
+}
