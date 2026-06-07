@@ -3010,7 +3010,7 @@ func (g *generator) emitDataSections() {
 // persistent cursors were deleted. See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 512 * 1024 * 1024 // 512 MiB per region — generous enough for the self-host asm backend to compile lexer.fern through itself (its O(N²) string-builder allocates ~290 MB for that)
+	const heapBytes = 1024 * 1024 * 1024 // 1 GiB per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source (the unified fern.fern + all modules) in one process; that needs ~0.75 GiB live (512 MiB, the old size, only fit lexer.fern). Lazy MAP_ANONYMOUS so it costs nothing until touched. Kept ≤ INT32_MAX so the `lea [base + heapBytes]` disp32 / `mov esi, heapBytes` size stay valid.
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")
