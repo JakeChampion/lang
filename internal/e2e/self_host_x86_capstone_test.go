@@ -144,12 +144,10 @@ func TestSelfHostX86Capstone(t *testing.T) {
 
 // x86CapstoneDriver reads the AT&T asm from the fixed path "in.s",
 // assembles it with the self-hosted GAS front-end + ELF writer, and writes
-// the runnable ELF to stdout. It uses a single-arm `Ok` match (the file
-// always exists) to sidestep a pre-existing wasm.fern bug in the second
-// arm of a Result match, and a fixed filename rather than args() (whose
-// self-host runtime has a layout-dependent alignment bug). Reading the asm
-// at runtime (rather than embedding it in the source) keeps the driver
-// small + constant, so it compiles once and scales to large programs.
+// the runnable ELF to stdout. Reading the asm at runtime (rather than
+// embedding it in the source) keeps the driver small + constant, so it
+// compiles once and scales to large programs. A single-arm `Ok` match is
+// enough since the file always exists.
 const x86CapstoneDriver = `
 function main(): i32 {
     match (read_file("in.s")) {
