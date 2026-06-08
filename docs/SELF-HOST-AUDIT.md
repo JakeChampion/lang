@@ -104,10 +104,12 @@ These are not just smells — they can produce wrong output today.
   silently skips non-digit bytes. Severity **High**. _Fix:_ sentinel `-1` +
   record on `p.unknown`; assert `p.unknown` empty at end of assembly.
 
-- [ ] **SH-007 — `ssa_wasm` `index_of_str` returns 0 (not −1) on miss.**
-  `ssa_wasm.fern:79-86` — a `funcaddr` not in the table silently emits slot 0 →
-  calls the wrong function. Severity **High** (latent). _Fix:_ return −1 and
-  assert/bail, or rename to `table_slot_of` and add a real guard.
+- [x] **SH-007 — `ssa_wasm` `index_of_str` returned 0 (not −1) on miss.** _Done:_
+  consolidated all three util-host copies (`ssa`, `ssa_wasm`, `wasm`) onto one
+  canonical `util.index_of_str` that returns −1 on miss, so a missing `funcaddr`
+  now emits table slot −1 (an out-of-bounds `call_indirect` that traps loudly)
+  instead of silently calling slot 0. (`watbin`'s copy stays local — it's a
+  deliberately self-contained module; it already returned −1.)
 
 - [ ] **SH-008 — `wasm` `StrTable.offset_of` returns scratch base on miss.**
   `wasm.fern:50-71` returns `24` for an un-interned string → silent wrong offset.
@@ -161,7 +163,7 @@ findings. Ranked by leverage.
     `util.base_type_name` (asmcore pub + wasm + checker's two names; asm/asm_arm64
     cross-module callers updated).
   - `is_all_digits` — **done** (`asmcore` pub + `ssa` + `wasm`, all already util).
-  - `index_of_str`/`index_of_byte`, `contains` (substring),
+  - `index_of_str` — **done** (SH-007 fixed); `index_of_byte`, `contains` (substring),
     `str_join_range`/`str_join_chunks`, `pred_slot`, `block_index`, `last_slash`,
     `join_path`, `module_name`, `resolve_path`, `dir_of`, `is_local`.
   - Named ASCII constants (`DOT=46`, `LBRACKET=91`, `RBRACKET=93`, `COMMA=44`,

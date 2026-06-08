@@ -98,3 +98,15 @@ pub function base_type_name(t: string): string {
     }
     return t;
 }
+
+// index_of_str returns the index of `s` in `xs`, or -1 if absent.
+// Canonical -1-on-miss (ssa_wasm previously returned 0, which silently
+// resolved a missing funcaddr to table slot 0 — SH-007).
+pub function index_of_str(xs: string[], s: string): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == s) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
