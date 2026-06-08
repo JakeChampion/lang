@@ -3596,7 +3596,7 @@ function emit_array_literal_kind(a: parser.ExprArray, kind: string, cx: Ctx, dep
         // is an existing array reference is retained (the outer array now
         // co-owns it alongside the source local). Only the i32-slot path
         // can hold a pointer element (i64/f64 elements are scalars).
-        if (kind == "i32" && (init_is_arr_alias(a.elements[i], cx.arr_src) || init_is_string_alias(a.elements[i], cx))) {
+        if (kind == "i32" && (init_is_arr_alias(a.elements[i], cx.arr_src) || init_is_string_alias(a.elements[i], cx) || init_is_tuple_alias(a.elements[i], cx))) {
             s = s + " (drop (call $__fern_rc_inc " + emit_expr(a.elements[i], cx, depth + 1) + "))";
         }
         i = i + 1;
@@ -3759,10 +3759,10 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // Option/Result constructors → tag boxes [tag@0][payload@4]:
                     // Some/Ok = tag 0, Err = tag 1 (None is the bare-ident case).
                     if ((id.name == "Some" || id.name == "Ok") && c.args.len() == 1) {
-                        return enum_box_retain(0, emit_expr(c.args[0], cx, depth + 1), depth, init_is_arr_alias(c.args[0], cx.arr_src) || init_is_string_alias(c.args[0], cx));
+                        return enum_box_retain(0, emit_expr(c.args[0], cx, depth + 1), depth, init_is_arr_alias(c.args[0], cx.arr_src) || init_is_string_alias(c.args[0], cx) || init_is_tuple_alias(c.args[0], cx));
                     }
                     if (id.name == "Err" && c.args.len() == 1) {
-                        return enum_box_retain(1, emit_expr(c.args[0], cx, depth + 1), depth, init_is_arr_alias(c.args[0], cx.arr_src) || init_is_string_alias(c.args[0], cx));
+                        return enum_box_retain(1, emit_expr(c.args[0], cx, depth + 1), depth, init_is_arr_alias(c.args[0], cx.arr_src) || init_is_string_alias(c.args[0], cx) || init_is_tuple_alias(c.args[0], cx));
                     }
                     // env(name): Option[string] builtin → the wasi
                     // environ runtime helper.
@@ -3840,7 +3840,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                             // Perceus construction-store inc: a user enum
                             // variant payload that is an existing array
                             // reference is retained (the variant co-owns it).
-                            if (init_is_arr_alias(c.args[vi], cx.arr_src) || init_is_string_alias(c.args[vi], cx)) {
+                            if (init_is_arr_alias(c.args[vi], cx.arr_src) || init_is_string_alias(c.args[vi], cx) || init_is_tuple_alias(c.args[vi], cx)) {
                                 vs = vs + " (drop (call $__fern_rc_inc " + emit_expr(c.args[vi], cx, depth + 1) + "))";
                             }
                             vi = vi + 1;
@@ -4076,7 +4076,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(i * 4) + ")) " + emit_expr(t.elements[i], cx, depth + 1) + ")";
                 // Perceus construction-store inc: a tuple element that is an
                 // existing array reference is retained (the tuple co-owns it).
-                if (init_is_arr_alias(t.elements[i], cx.arr_src) || init_is_string_alias(t.elements[i], cx)) {
+                if (init_is_arr_alias(t.elements[i], cx.arr_src) || init_is_string_alias(t.elements[i], cx) || init_is_tuple_alias(t.elements[i], cx)) {
                     s = s + " (drop (call $__fern_rc_inc " + emit_expr(t.elements[i], cx, depth + 1) + "))";
                 }
                 i = i + 1;
@@ -4149,7 +4149,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // Perceus construction-store inc: storing an existing
                     // array reference into a struct field retains the buffer
                     // (the struct now co-owns it alongside the source local).
-                    if (init_is_arr_alias(sl.field_values[i], cx.arr_src) || init_is_string_alias(sl.field_values[i], cx)) {
+                    if (init_is_arr_alias(sl.field_values[i], cx.arr_src) || init_is_string_alias(sl.field_values[i], cx) || init_is_tuple_alias(sl.field_values[i], cx)) {
                         s = s + " (drop (call $__fern_rc_inc " + emit_expr(sl.field_values[i], cx, depth + 1) + "))";
                     }
                 }
