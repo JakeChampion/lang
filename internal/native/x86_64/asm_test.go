@@ -50,6 +50,11 @@ func TestEncodeIntegerSurface(t *testing.T) {
 		{"sub rax, rcx", "4829c8"},
 		{"add rax, rcx", "4801c8"},
 		{"imul rax, rcx", "480fafc1"},
+		// bit-scan (used by the allocator's large-block power-of-two class):
+		// REX.W 0F BD/BC /r, same shape as the two-operand imul.
+		{"bsr rcx, rax", "480fbdc8"},
+		{"bsf rcx, rax", "480fbcc8"},
+		{"bsr rax, rdi", "480fbdc7"},
 		{"neg rax", "48f7d8"},
 		{"idiv ecx", "f7f9"},
 		{"sar rax, 1", "48d1f8"},
