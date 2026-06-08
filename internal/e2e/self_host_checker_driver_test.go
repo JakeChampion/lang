@@ -71,11 +71,17 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 		name     string
 		src      string
 		wantExit int
+		// wantDiag, when non-empty, must appear on the driver's stderr — the
+		// formatted diagnostic (bootstrap error-reporting via format_diags).
+		wantDiag string
 	}{
-		{"well-typed-arith", "function main(): i32 { return 1 + 2; }\n", 0},
-		{"well-typed-vars", "function main(): i32 { var a: i32 = 5; var b: i32 = a + 1; return b; }\n", 0},
-		{"return-type-mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", 1},
-		{"arith-type-mismatch", "function main(): i32 { var s: string = \"x\"; return 1 + s; }\n", 1},
+		{"well-typed-arith", "function main(): i32 { return 1 + 2; }\n", 0, ""},
+		{"well-typed-vars", "function main(): i32 { var a: i32 = 5; var b: i32 = a + 1; return b; }\n", 0, ""},
+		{"return-type-mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", 1, "error[E002]"},
+		{"arith-type-mismatch", "function main(): i32 { var s: string = \"x\"; return 1 + s; }\n", 1, "error["},
+		// Immutability rejections surface a formatted diagnostic on stderr.
+		{"field-assign-e048", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", 1, "error[E048]"},
+		{"subscript-assign-e056", "function main(): i32 { var a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", 1, "error[E056]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,9 +92,14 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.wantExit {
-				t.Errorf("%s: checker exited %d, want %d", tc.name, code, tc.wantExit)
+				t.Errorf("%s: checker exited %d, want %d\nstderr: %s", tc.name, code, tc.wantExit, stderr.String())
+			}
+			if tc.wantDiag != "" && !strings.Contains(stderr.String(), tc.wantDiag) {
+				t.Errorf("%s: stderr missing %q\ngot stderr: %s", tc.name, tc.wantDiag, stderr.String())
 			}
 		})
 	}

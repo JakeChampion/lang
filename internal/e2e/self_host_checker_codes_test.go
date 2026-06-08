@@ -76,6 +76,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E025": true, // switch on float / case value type mismatch
 	"E022": true, // if-let / let-else source not an enum; let-else else must diverge
 	"E057": true, // cell_new(v) element type must be a scalar or string
+	"E056": true, // subscript assignment (arr[i] = v) is read-only
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -322,7 +323,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", []string{"E048"}},
 		{"field-compound-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", []string{"E048"}},
 		{"nested-field-assign", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q { a: 1 } }; p.q.a = 9; return 0; }\n", []string{"E048"}},
-		{"index-assign-ok", "function main(): i32 { var a = [1, 2, 3]; a[0] = 9; return a[0]; }\n", nil},
+		{"index-assign-e056", "function main(): i32 { var a = [1, 2, 3]; a[0] = 9; return a[0]; }\n", []string{"E056"}},
 		{"local-reassign-ok", "function main(): i32 { var x: i32 = 1; x = 5; return x; }\n", nil},
 		{"struct-update-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 5 }; return p.x; }\n", nil},
 		{"value-undefined", "function main(): i32 { return z; }\n", []string{"E001"}},

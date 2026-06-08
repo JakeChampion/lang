@@ -2962,6 +2962,17 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         }
                         out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
                     }
+                    // E056: `arr[i] = v` is desugared by the parser to
+                    // `__set_index(arr, idx, rhs)`. Array elements are
+                    // immutable after construction (the subscript counterpart
+                    // of E048), so any such call is E056, reported at the
+                    // array. Same no-false-positives argument as E048:
+                    // __set_index is parser-internal and the self-host +
+                    // stdlib were migrated off subscript assignment to
+                    // `arr = arr.with(i, v)`.
+                    if (id.name == "__set_index" && c.args.len() == 3) {
+                        out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", expr_line(c.args[0]), expr_col(c.args[0])));
+                    }
                     // E057: cell_new(v) — a Cell's element type must be
                     // cycle-free, i.e. a scalar (i32/i64/f64/bool) or string.
                     // A composite / reference value (struct, array, tuple,
@@ -3815,6 +3826,42 @@ pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boole
 // renders `line:col: error[E0XX]: …` like the Go checker, the rest still
 // render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md.
 pub struct Diag { code: string, message: string, line: i32, col: i32 }
+
+// is_immutability_code reports whether `code` is one of the immutable-data
+// cycle rules — E048 (field assign), E049 (reference-capture write-back),
+// E055 (discarded pure-collection result), E056 (subscript assign). These
+// are the diagnostics the self-host compiler enforces at the build gate
+// (the rest of the checker is a partial port and may false-positive, so the
+// gate filters to this set). See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
+pub function is_immutability_code(code: string): boolean {
+    return code == "E048" || code == "E049" || code == "E055" || code == "E056";
+}
+
+// filter_immutability keeps only the immutable-data cycle diagnostics.
+pub function filter_immutability(diags: Diag[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        if (is_immutability_code(diags[i].code)) { out = out.append(diags[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// format_diags renders diagnostics one-per-line as
+// `error[CODE]: message (line:col)` — the self-host counterpart of the Go
+// driver's diag.Format. Used by the checking drivers to surface a rejection
+// to stderr before exiting non-zero (bootstrap error-reporting).
+pub function format_diags(diags: Diag[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        var d: Diag = diags[i];
+        out = out + "error[" + d.code + "]: " + d.message + " (" + itoa_nn(d.line) + ":" + itoa_nn(d.col) + ")\n";
+        i = i + 1;
+    }
+    return out;
+}
 
 // dg builds a position-less diagnostic; dg_at attaches a 1-based source
 // position. Most emitters use dg today and migrate to dg_at as their AST
