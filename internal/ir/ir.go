@@ -658,6 +658,23 @@ type ExternEnumParam struct {
 	RemapDisc     bool
 	PayloadType   ast.Type
 	PayloadOffset int32
+	// Variants is set only for a MIXED-WIDTH variant (some payloaded arm is
+	// 32-bit core, another 64-bit) — where the canonical join is i64 and each arm
+	// must be coerced to/from it (32-bit arms extend/wrap) at its own box payload
+	// offset. Indexed by variant/disc index; a payloadless arm has Type nil. When
+	// nil the (uniform or non-uniform-same-width) single-slot path applies:
+	// PayloadType is the join slot and PayloadOffset its box/area offset.
+	Variants []ExternEnumVariant
+}
+
+// ExternEnumVariant is one arm's box payload descriptor for a mixed-width variant
+// (see ExternEnumParam.Variants). BoxOffset is the payload's byte offset in the
+// Fern enum box (== payloadLayout of this arm's payload); Type is the arm's scalar
+// payload type (nil ⇒ payloadless). The wrapper branches on the disc to load/store
+// at this offset+width, coercing to/from the i64 join slot.
+type ExternEnumVariant struct {
+	BoxOffset int32
+	Type      ast.Type
 }
 
 // ExternRecordResult is the flattened layout of a record (struct) `@import`
@@ -825,7 +842,7 @@ func externEnumParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnu
 // carries exactly one scalar payload; payloadless variants are allowed. The
 // canonical `variant` flattens to (disc:i32, payload-join).
 //
-// Two payload shapes are lowered:
+// Three payload shapes are lowered:
 //   - Uniform: every payload is the same kind+width T, so the canonical join is
 //     T and PayloadType is T (an f32 payload passes as an f32, etc.).
 //   - Non-uniform but same core WIDTH (e.g. `{ i(s32), f(f32) }` — both 32-bit,
@@ -835,11 +852,17 @@ func externEnumParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnu
 //     box slot); the consumer reinterprets per the disc. This works without any
 //     per-arm branch because same-width payloads sit at the same box offset and
 //     a bit-load is value-preserving for both int and float arms.
+//   - Mixed core WIDTH (a 32-bit and a 64-bit arm, e.g. `{ i(s32), l(s64) }`):
+//     the canonical join is i64, and each arm lives at its OWN box offset and
+//     needs coercion (a 32-bit arm extends to / wraps from i64). PayloadType is
+//     i64 and Variants carries each arm's box offset + type; the wrapper branches
+//     on the disc to load/store at the right offset+width (appendVariantParam-
+//     PayloadI64 / appendVariantResultStore).
 //
-// Mixed-width (a 32-bit and a 64-bit arm) and multi-payload variants are still
-// deferred. Option/Result are handled by externEnumParamLayout; an all-payloadless
-// enum by externPlainEnumParam (this requires ≥1 payloaded variant). The wrapper
-// reads the tag at +0 and the payload at PayloadOffset; for a payloadless-case
+// Multi-payload (multi-field) variants are still deferred. Option/Result are
+// handled by externEnumParamLayout; an all-payloadless enum by externPlainEnumParam
+// (this requires ≥1 payloaded variant). The wrapper reads the tag at +0; for a
+// payloadless-case
 // value (a sentinel) the payload read yields ignored garbage (the host drops it
 // for that disc), so it's harmless.
 func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnumParam, bool) {
@@ -853,6 +876,7 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 	}
 	var firstPayload ast.Type
 	uniform := true
+	mixedWidth := false
 	anyPayloaded := false
 	for _, v := range ed.Variants {
 		switch len(v.Payloads) {
@@ -867,10 +891,10 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 				firstPayload = p
 			} else {
 				if externCanonicalCoreWidth(firstPayload) != externCanonicalCoreWidth(p) {
-					return nil, false // mixed-width payloads — deferred
+					mixedWidth = true // 32-bit and 64-bit arms — join is i64, per-arm coerce
 				}
 				if !externScalarTypeEq(firstPayload, p) {
-					uniform = false // non-uniform but same width — join is the bit-container
+					uniform = false // non-uniform — join is a bit-container
 				}
 			}
 			anyPayloaded = true
@@ -881,8 +905,22 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 	if !anyPayloaded {
 		return nil, false // all-payloadless ⇒ a plain enum (externPlainEnumParam)
 	}
-	// The canonical join slot: the payload type itself when uniform, else the
-	// integer bit-container of the shared core width.
+	if mixedWidth {
+		// The canonical join of a mixed-width arm set is i64; each arm is coerced
+		// to/from it (a 32-bit arm extends/wraps) and lives at its own box offset.
+		i64Slot := ast.NumberType{Width: 64, Signed: true}
+		areaOffs, _ := payloadLayout([]ast.Type{i64Slot}, 1, ptrW)
+		variants := make([]ExternEnumVariant, len(ed.Variants))
+		for i, v := range ed.Variants {
+			if len(v.Payloads) == 1 {
+				boxOffs, _ := payloadLayout([]ast.Type{v.Payloads[0]}, 1, ptrW)
+				variants[i] = ExternEnumVariant{BoxOffset: boxOffs[0], Type: v.Payloads[0]}
+			}
+		}
+		return &ExternEnumParam{RemapDisc: false, PayloadType: i64Slot, PayloadOffset: areaOffs[0], Variants: variants}, true
+	}
+	// Single-slot path: the canonical join slot is the payload type itself when
+	// uniform, else the integer bit-container of the shared core width.
 	slot := firstPayload
 	if !uniform {
 		slot = ast.NumberType{Width: int(externCanonicalCoreWidth(firstPayload)), Signed: true}
