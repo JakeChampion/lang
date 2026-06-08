@@ -298,7 +298,7 @@ function is_cell_expr(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprFieldAccess(fa) => {
             var ot: string = struct_type_of(fa.obj, cx);
             if (ot.len() == 0) { return false; }
-            return base_type_name(struct_field_type(cx.structs, ot, fa.field)) == "Cell";
+            return util.base_type_name(struct_field_type(cx.structs, ot, fa.field)) == "Cell";
         },
         _ => { return is_cell_new_call(e); },
     }
@@ -2581,14 +2581,7 @@ function lookup_pair(keys: string[], vals: string[], key: string): string {
 // `Box[i32]` / `Box[T]` → `Box`. Generics are erased, so the base name is
 // what matches the struct table. (A plain `[T]` array type has no base
 // ident, so this returns "" for it — harmless, arrays aren't structs.)
-function base_type_name(t: string): string {
-    var i: i32 = 0;
-    while (i < t.len()) {
-        if (t[i] == 91) { return t[0:i]; }
-        i = i + 1;
-    }
-    return t;
-}
+// base_type_name -> util.base_type_name (SH-020).
 
 // is_struct_type is true when `t` names a declared struct.
 function is_struct_type(structs: parser.StructDecl[], t: string): boolean {
@@ -2881,8 +2874,8 @@ function sa_elem_decl_type(v: parser.StmtVar, cx: Ctx): string {
     // method calls on the runtime-dispatch (emit_dyn_dispatch) path.
     if (v.type_name.len() >= 4 && v.type_name[0:4] == "dyn ") { return ""; }
     var et: string = struct_array_elem_type(v.init, cx);
-    if (et.len() == 0 && v.type_name.len() > 2 && v.type_name[v.type_name.len() - 2] == 91 && is_struct_type(cx.structs, base_type_name(v.type_name))) {
-        et = base_type_name(v.type_name);
+    if (et.len() == 0 && v.type_name.len() > 2 && v.type_name[v.type_name.len() - 2] == 91 && is_struct_type(cx.structs, util.base_type_name(v.type_name))) {
+        et = util.base_type_name(v.type_name);
     }
     return et;
 }
@@ -6186,7 +6179,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     // later `match (v)` types the Some/Ok binding.
                     var optpay: string = parse_option_payload(v.type_name);
                     if (optpay.len() == 0) { optpay = scrutinee_payload(v.init, cx); }
-                    var styp: string = base_type_name(v.type_name);
+                    var styp: string = util.base_type_name(v.type_name);
                     // Keep an enum-typed declaration as the enum name (so its
                     // methods dispatch); only fall back to the initializer's
                     // type when the declared type is neither struct nor enum.
@@ -6335,10 +6328,10 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         if (is_float_type(f.params[pj].type_name) && !contains_str(f64_names, f.params[pj].name)) {
             f64_names = f64_names.append(f.params[pj].name);
         }
-        if (base_type_name(f.params[pj].type_name) == "Map" && !contains_str(map_names, f.params[pj].name)) {
+        if (util.base_type_name(f.params[pj].type_name) == "Map" && !contains_str(map_names, f.params[pj].name)) {
             map_names = map_names.append(f.params[pj].name);
         }
-        if (base_type_name(f.params[pj].type_name) == "Cell" && !contains_str(cell_names, f.params[pj].name)) {
+        if (util.base_type_name(f.params[pj].type_name) == "Cell" && !contains_str(cell_names, f.params[pj].name)) {
             cell_names = cell_names.append(f.params[pj].name);
         }
         pj = pj + 1;
@@ -6347,7 +6340,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // `Box[T]` / `Box[i32]` strips to its base struct name).
     if (f.receiver_type.len() > 0) {
         sv_names = sv_names.append(f.receiver_name);
-        sv_types = sv_types.append(base_type_name(f.receiver_type));
+        sv_types = sv_types.append(util.base_type_name(f.receiver_type));
     }
     var i: i32 = 0;
     while (i < f.params.len()) {
@@ -6357,11 +6350,11 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
             ol_payloads = ol_payloads.append(pop);
         } else if (is_str_array_type(f.params[i].type_name)) {
             str_arrays = str_arrays.append(f.params[i].name);
-        } else if (is_struct_type(structs, base_type_name(f.params[i].type_name))) {
+        } else if (is_struct_type(structs, util.base_type_name(f.params[i].type_name))) {
             // Generic instantiation `Box[i32]` / param `Box[T]` strips to
             // the base struct name `Box`.
             sv_names = sv_names.append(f.params[i].name);
-            sv_types = sv_types.append(base_type_name(f.params[i].type_name));
+            sv_types = sv_types.append(util.base_type_name(f.params[i].type_name));
         } else if (f.params[i].type_name == "string") {
             locals = locals.append(f.params[i].name);
         }
@@ -6484,7 +6477,7 @@ function collect_method_types(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(base_type_name(mod.funcs[i].receiver_type)); }
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(util.base_type_name(mod.funcs[i].receiver_type)); }
         i = i + 1;
     }
     return out;
@@ -6611,7 +6604,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     var pnames: string[] = [];
     var head: string = "  (func $";
     if (f.receiver_type.len() > 0) {
-        fname = base_type_name(f.receiver_type) + "__" + f.name;
+        fname = util.base_type_name(f.receiver_type) + "__" + f.name;
         head = head + fname + " (param $" + f.receiver_name + " i32)";
         pnames = pnames.append(f.receiver_name);
     } else {

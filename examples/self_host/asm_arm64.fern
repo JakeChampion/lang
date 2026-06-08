@@ -2040,8 +2040,8 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         // enum-type receiver method is handled in the
         // fallback below. See the x86-64 backend.
         if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
-                && asmcore.is_struct_decl_name(asmcore.base_type_name(fd_m.receiver_type), s)) {
-            var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, asmcore.base_type_name(fd_m.receiver_type));
+                && asmcore.is_struct_decl_name(util.base_type_name(fd_m.receiver_type), s)) {
+            var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, util.base_type_name(fd_m.receiver_type));
             s = arm_lit.state;
             var next_l: asmcore.LabelOut = asmcore.fresh_label(s);
             s = next_l.state;
@@ -2049,7 +2049,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(arm_lit.idx) + "\n");
             s = s.write("    cmp x1, x2\n");
             s = s.write("    b.ne " + next_l.name + "\n");
-            s = s.write("    bl __fn_" + asmcore.sanitize_label(asmcore.base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
+            s = s.write("    bl __fn_" + asmcore.sanitize_label(util.base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
             s = s.write("    add sp, sp, #" + util.i32_to_string((c.args.len() + 1) * 16) + "\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    b .Lmethod_end_" + util.i32_to_string(m_end_lbl) + "\n");
@@ -2065,8 +2065,8 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     while (efi < s.funcs.len()) {
         var efd: parser.FuncDecl = s.funcs[efi];
         if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
-                && asmcore.is_enum_recv(asmcore.base_type_name(efd.receiver_type), s)) {
-            enum_recv = asmcore.base_type_name(efd.receiver_type);
+                && asmcore.is_enum_recv(util.base_type_name(efd.receiver_type), s)) {
+            enum_recv = util.base_type_name(efd.receiver_type);
         }
         efi = efi + 1;
     }
@@ -3488,7 +3488,7 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
     if (fd.receiver_type.len() > 0) {
         // Generic receiver types (`Box[T]`) strip to the base struct
         // name so the symbol matches the dispatch shape compare.
-        label_name = asmcore.base_type_name(fd.receiver_type) + "." + fd.name;
+        label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
     }
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
