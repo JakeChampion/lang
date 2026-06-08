@@ -454,7 +454,16 @@ world-driven composer (P2) wires it.
      func(a: s32) -> record { v: s32 }` returned by value), and
      `TestExternRecordResultSubwordCustomProvider` (a `make-mix: func() -> record
      { a: s8, b: u16, c: s32 }` with `{-5, 300, 1000}` packed at canonical
-     offsets 0/2/4 — values that fail under the wrong-width/sign load).
+     offsets 0/2/4 — values that fail under the wrong-width/sign load). **A
+     nested-record field is also lifted (one level)**: the canonical area inlines
+     the nested record's leaves (at the nested record's alignment), and the
+     wrapper materializes a separate inner Fern struct per nested field
+     (`ExternRecordField.Nested`), fills it from the area, and stores its pointer
+     in the outer slot — recursively bottom-up. A single-leaf-via-nested result
+     (which the canonical returns by value) is rejected (the by-value Direct
+     wrapper can't reconstruct nesting). Gated by
+     `TestExternRecordResultNestedCustomProvider` (a `make-line: func(...) ->
+     record line { p: point, q: point }`; the Fern side reads `l.p.x`/`l.q.y`).
    - **Tuple params + results — ✅ done (Go).** A Fern tuple is laid out exactly
      like a struct (rc header + elements at the same packing), so the record
      machinery generalises to tuples for free: `externCompositeFieldTypes`
@@ -749,8 +758,8 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices):
-     nested-record *results*; second-level / deeper nesting; non-uniform /
+   - Still rejected (next slices): the self-host port of nested-record results;
+     second-level / deeper nesting; non-uniform /
      multi-payload `variant`s; sub-4-byte-element `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above). The
