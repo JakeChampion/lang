@@ -193,6 +193,9 @@ struct Ctx {
     // alias) released at function exit. Like strings, a tuple is a flat rc
     // box; recursive element-release rides on this when free is flipped on.
     tup_swept: string[],
+    // True when the function returns a tuple (`(T, …)`) — a non-move tuple
+    // result is retained across the exit sweep.
+    ret_is_tuple: boolean,
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -740,18 +743,43 @@ function collect_tup_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[
     return acc;
 }
 
-// tup_exit_sweep emits the tuple release sweep: an rc DEC (free still OFF —
-// no reclamation / recursive element-release yet) of every owned tuple
-// local, balancing the inc-on-alias so the over-release detector stays
-// clean.
-function tup_exit_sweep(cx: Ctx): string {
+// tup_exit_sweep_excl emits the tuple release sweep with RECURSIVE field
+// release. For each owned tuple local (except `excl`, the move-on-return
+// slot): if this is the LAST owner (rc word at [t-8] == 1, i.e. the box is
+// about to be freed) first release the rc-tracked ('a' array / 's' string)
+// elements — read from the tuple's compile-time kind string — then free the
+// box via the shared $__fern_arr_dec. The rc==1 guard ensures the elements
+// are released exactly once, on the final free (an aliased tuple at rc>1
+// just decrements). A scalar ('i') element is skipped. Elements nested in
+// other containers are released only when freed at THIS sweep (a tuple
+// freed indirectly via arr_dec leaks its elements — sound, a known gap).
+function tup_exit_sweep_excl(cx: Ctx, excl: string): string {
     var o: string = "";
     var i: i32 = 0;
     while (i < cx.tup_swept.len()) {
-        o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.tup_swept[i] + ")))\n";
+        var name: string = cx.tup_swept[i];
+        if (name != excl) {
+            var kinds: string = lookup_pair(cx.tup_names, cx.tup_kinds, name);
+            var inner: string = "";
+            var e: i32 = 0;
+            while (e < kinds.len()) {
+                if (kinds[e] == 97 || kinds[e] == 115) {
+                    inner = inner + " (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(e * 4) + ")))))";
+                }
+                e = e + 1;
+            }
+            if (inner.len() > 0) {
+                o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then" + inner + "))\n";
+            }
+            o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
+        }
         i = i + 1;
     }
     return o;
+}
+
+function tup_exit_sweep(cx: Ctx): string {
+    return tup_exit_sweep_excl(cx, "");
 }
 
 // arr_exit_sweep emits the Perceus function-exit release: a release
@@ -1196,11 +1224,32 @@ function lambda_captures(lm: parser.ExprLambda, cx: Ctx): string[] {
 
 // tuple_kind_string builds the per-element kind tag for a tuple literal:
 // one char per element, 's' for a string element, else 'i'.
+// is_tuple_elem_array: a conservative "this expr is an rc-boxed array"
+// test for tuple element kinds — only DEFINITELY-array shapes (an array
+// literal, a non-string slice, or a bare ident in arr_src) so a mismarked
+// scalar never gets a (corrupting) recursive dec. A missed array → 'i'
+// (leak, sound).
+function is_tuple_elem_array(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        parser.ExprSlice(_) => { return true; },
+        parser.ExprIdent(id) => { return contains_str(cx.arr_src, id.name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// tuple_kind_string records a per-element kind char: 's' string, 'a'
+// rc-boxed array, else 'i'. Drives `t.N` string typing (only 's' is read
+// there) AND the tuple free recursive field-release (which dec's 'a'/'s'
+// elements).
 function tuple_kind_string(elements: parser.Expr[], cx: Ctx): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < elements.len()) {
-        if (is_string_expr(elements[i], cx)) { out = out + "s"; } else { out = out + "i"; }
+        if (is_string_expr(elements[i], cx)) { out = out + "s"; }
+        else if (is_tuple_elem_array(elements[i], cx)) { out = out + "a"; }
+        else { out = out + "i"; }
         i = i + 1;
     }
     return out;
@@ -6326,7 +6375,14 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.str_swept, id.name)) { smov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep(st.cx);
+            // Tuple move-on-return: a bare owned tuple local returned is
+            // excluded from the tuple sweep (handed over at its rc).
+            var tmov: string = "";
+            match (r.value) {
+                parser.ExprIdent(id) => { if (contains_str(st.cx.tup_swept, id.name)) { tmov = id.name; } },
+                _ => {},
+            }
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov);
             // Perceus return-retain: when an array/string-returning function
             // hands back a BORROWED reference (a field / index read, or a
             // borrowed param — anything not a fresh literal/concat/slice/call
@@ -6336,7 +6392,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             // and handed over as-is. This must apply even with NO swept locals
             // (a function that just `return obj.field` still owes the caller a
             // retain — else the caller's release of the result is a UAF).
-            var retain: boolean = (st.cx.ret_is_array || st.cx.ret_is_string) && mov.len() == 0 && smov.len() == 0 && ret_value_is_borrowed(r.value);
+            var retain: boolean = (st.cx.ret_is_array || st.cx.ret_is_string || st.cx.ret_is_tuple) && mov.len() == 0 && smov.len() == 0 && tmov.len() == 0 && ret_value_is_borrowed(r.value);
             if (st.cx.ret_void) {
                 st = st.w(sweep);
                 return st.w("    (return " + valstr + ")\n");
@@ -7078,6 +7134,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         str_swept: [],
         ret_is_string: f.ret_type == "string",
         tup_swept: [],
+        ret_is_tuple: f.ret_type.len() > 0 && f.ret_type[0] == 40,
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
