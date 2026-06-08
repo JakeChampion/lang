@@ -466,12 +466,22 @@ world-driven composer (P2) wires it.
      into `has_extern_mem_param` / `extern_needs_wrapper` for the struct-decl
      lookup. Gated by `TestSelfHostExternRecordParamCustomProvider` (a
      `sum-point: func(p: record { x, y: s32 }) -> s32`, x+y).
+   - **Self-host port — record (struct) results — ✅ done.** The symmetric
+     counterpart: an extern returning a record materializes a self-host struct.
+     The host writes the record's fields inline into the return area (field i @
+     i*4, all i32); the wrapper allocs a self-host struct (`type-id@0`,
+     fields@+4 via `struct_field_off`), stores the struct's `struct_id` + each
+     field, and returns its pointer. `is_extern_composite_ret` (now `mod`-aware)
+     also matches a record return, giving it the trailing return-area pointer +
+     `cabi_realloc`. The return area is over-allocated by 7 before 8-aligning so
+     the next (struct) alloc doesn't overlap it — the self-host heap bump isn't
+     aligned. Gated by `TestSelfHostExternRecordResultCustomProvider` (a
+     `make-point: func(a, b: s32) -> record { x, y: s32 }`, fields read back).
    - Still rejected (next slices): the rest of the self-host port (u8[] params
-     with repacking; tuple/sum-type params; record/tuple/sum results — the
-     return-area materialization); general user `variant`s; single-element
-     records/tuples (direct return); bool arrays; sub-word / nested-composite
-     fields. The multi-component harness (`TestExternImportCustomProvider`) is
-     the test vehicle for these.
+     with repacking; tuple/sum-type params + results); general user `variant`s;
+     single-element records/tuples (direct return); bool arrays; sub-word /
+     nested-composite fields. The multi-component harness
+     (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern

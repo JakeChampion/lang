@@ -1146,9 +1146,10 @@ function wat_extern_valtype(t: string): string {
 // preview-2 component imports — the world-driven composer wires them.
 // is_extern_composite_ret is true for the `@import` extern result types that
 // use the canonical return-area lowering (P4c): a string, a u8[] (list<u8>),
-// or a numeric array (list<T> with T's slot == canonical size).
-function is_extern_composite_ret(t: string): boolean {
-    return t == "string" || t == "u8[]" || extern_array_param_supported(t);
+// a numeric array (list<T> with T's slot == canonical size), or a record
+// (materialized into a self-host struct).
+function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
+    return t == "string" || t == "u8[]" || extern_array_param_supported(t) || extern_record_param_supported(mod, t);
 }
 
 // extern_array_param_supported is true for an `@import` array parameter whose
@@ -1206,7 +1207,7 @@ function has_extern_mem_param(mod: parser.Module, f: parser.FuncDecl): boolean {
 // generated wrapper rather than straight to the import: a composite result
 // (return-area lift) or a memory/record parameter.
 function extern_needs_wrapper(mod: parser.Module, f: parser.FuncDecl): boolean {
-    return is_extern_composite_ret(f.ret_type) || has_extern_mem_param(mod, f);
+    return is_extern_composite_ret(mod, f.ret_type) || has_extern_mem_param(mod, f);
 }
 
 function extern_imports(mod: parser.Module): string {
@@ -1237,7 +1238,7 @@ function extern_imports(mod: parser.Module): string {
                     }
                     sp = sp + 1;
                 }
-                if (is_extern_composite_ret(f.ret_type)) {
+                if (is_extern_composite_ret(mod, f.ret_type)) {
                     // Composite result: trailing return-area pointer, no result.
                     out = out + " (param i32)))\n";
                 } else {
@@ -1442,7 +1443,7 @@ function extern_exports(mod: parser.Module): string {
 function module_has_extern_composite_result(mod: parser.Module): boolean {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].import_iface.len() > 0 && is_extern_composite_ret(mod.funcs[i].ret_type)) { return true; }
+        if (mod.funcs[i].import_iface.len() > 0 && is_extern_composite_ret(mod, mod.funcs[i].ret_type)) { return true; }
         i = i + 1;
     }
     return false;
@@ -1548,7 +1549,41 @@ function extern_wrappers(mod: parser.Module): string {
                 fi = fi + 1;
             }
             out = out + "))\n";
-        } else if (f.import_iface.len() > 0 && is_extern_composite_ret(f.ret_type)) {
+        } else if (f.import_iface.len() > 0 && extern_record_param_supported(mod, f.ret_type)) {
+            // record result (P4c): a multi-field record returns indirectly; the
+            // host writes the fields inline into the return area (field i @
+            // i*4, all i32). The wrapper materializes a self-host struct
+            // (type-id@0, fields@+4) from them and returns its pointer.
+            var nf: i32 = struct_field_count(mod.structs, f.ret_type);
+            out = out + "  (func $" + f.name;
+            var rp: i32 = 0;
+            while (rp < f.params.len()) {
+                out = out + " (param $ep" + i32_to_string(rp) + " " + wat_extern_valtype(f.params[rp].type_name) + ")";
+                rp = rp + 1;
+            }
+            out = out + " (result i32)\n";
+            out = out + "    (local $rb i32) (local $s i32)\n";
+            // Return area: nf i32 fields, 8-aligned. Over-allocate by 7 so the
+            // aligned pointer + area stays within the reserved block (the heap
+            // bump isn't aligned, so the next alloc would otherwise overlap).
+            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.add (i32.mul (i32.const " + i32_to_string(nf) + ") (i32.const 4)) (i32.const 7))) (i32.const 7)) (i32.const -8)))\n";
+            out = out + "    (call $" + f.name + "__import";
+            var ra: i32 = 0;
+            while (ra < f.params.len()) {
+                out = out + " (local.get $ep" + i32_to_string(ra) + ")";
+                ra = ra + 1;
+            }
+            out = out + " (local.get $rb))\n";
+            // Materialize the struct: type id at slot 0, then each field.
+            out = out + "    (local.set $s (call $__fern_alloc (i32.const " + i32_to_string(4 + nf * 4) + ")))\n";
+            out = out + "    (i32.store (local.get $s) (i32.const " + i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
+            var rc: i32 = 0;
+            while (rc < nf) {
+                out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + i32_to_string(struct_field_off(rc)) + ")) (i32.load (i32.add (local.get $rb) (i32.const " + i32_to_string(rc * 4) + "))))\n";
+                rc = rc + 1;
+            }
+            out = out + "    (local.get $s))\n";
+        } else if (f.import_iface.len() > 0 && is_extern_composite_ret(mod, f.ret_type)) {
             out = out + "  (func $" + f.name;
             var args: string = "";
             var p: i32 = 0;
