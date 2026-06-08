@@ -389,15 +389,38 @@ were all I/O / sum-type:
   Behaviour-preserving for exhaustive matches (the only kind the checker
   admits), and a strict IR simplification for the rest.
 
-With this, **`main` is fully in the `build_func` subset** — every function the
-compiler defines now lowers through SSA. The remaining blocker to a full SSA
-self-compile is purely **memory**, not coverage:
+With this, **`main`'s `build_func` succeeds** and file I/O is off the blocker
+list. But — true to the "each fix unmasks the next" pattern above — file I/O was
+*not* the last coverage gap.
 
-Still open: the *linear* per-function retention (build + emit, freed by
+**Measured (the `-ssa-scan` diagnostic).** `fern.fern` grew a `-ssa-scan` flag:
+the non-bailing twin of `try_ssa` that runs `build_func` over every function in
+the merged program and records *all* failures + *all* unknown callees in one
+pass (vs `try_ssa`'s first-bail, all-or-nothing). Run over the whole compiler
+(1499 functions after lambda lifting) on current `main` + this PR, the true
+remaining coverage set is **small and enumerated**:
+
+- **`build_func` failure (1):** `wasm__emit_expr` — one unhandled construct in
+  the AST wasm emitter's expression lowering.
+- **Unknown callees (2):** `write` (raw stdout write — `print` *without* the
+  trailing newline; the driver's output primitive) and `args` (the argv
+  builtin returning `string[]`). Both are builtins with no `function` body, so
+  the SSA backends emit `call write` / `call args` → unknown. They need
+  dedicated ops + runtime, exactly like `read_file` / `write_file` / `exit` /
+  `print` before them (`write` is trivial — `print` with a no-newline flag;
+  `args` needs an argv→`string[]` materialiser over the `_start`-saved vector).
+
+So the honest state: file I/O closed three of the four `main`-cluster items
+(Option/Result, the match-all-return bug, read/write_file), and the
+whole-compiler scan now shows **exactly three holdouts left** (`write`, `args`,
+`wasm__emit_expr`) before per-function coverage is genuinely 100%.
+
+After those: the *linear* per-function retention (build + emit, freed by
 nothing) — Perceus RC (the native backend already has it; the self-host
 runtime stubs it to no-ops — `asm.fern`: "leak-everything bump heap") or a
-streaming/arena scheme. This is now the *sole* thing between here and a
-byte-stable SSA self-compile fixpoint (Phase 4's success criterion).
+streaming/arena scheme — is the memory wall that gates a byte-stable SSA
+self-compile fixpoint (Phase 4's success criterion) even once coverage is
+complete.
 
 ### Phase 5 — retire the AST emitters
 
