@@ -3151,12 +3151,21 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             }
             if (target_is_arr) {
                 s = s.mark_heap();
+                // Cow-aware dec (Phase 3 prep): skip the release when the
+                // new value IS the old value the slot held — an in-place
+                // mutator (`xs = xs.append(v)`) returned the same buffer,
+                // which is still live. Only release a DIFFERENT object.
+                var skip_lbl: asmcore.LabelOut = asmcore.fresh_label(s);
+                s = skip_lbl.state;
+                s = s.frame_ldr("x1", off);                   // OLD value
+                s = s.write("    cmp x0, x1\n");
+                s = s.write("    b.eq " + skip_lbl.name + "\n");
                 s = s.write("    str x0, [sp, #-16]!\n");     // save new value across the dec
-                s = s.frame_ldr("x0", off);                   // OLD value
-                s = s.write("    str x0, [sp, #-16]!\n");     // dec arg
+                s = s.write("    str x1, [sp, #-16]!\n");     // dec arg = OLD value
                 s = s.write("    bl __fn___fern_rc_dec\n");
                 s = s.write("    add sp, sp, #16\n");         // pop dec arg
                 s = s.write("    ldr x0, [sp], #16\n");       // restore new value
+                s = s.write(skip_lbl.name + ":\n");
             }
             s = s.frame_str("x0", off);
             return s;

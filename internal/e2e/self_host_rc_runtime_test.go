@@ -353,6 +353,9 @@ func TestSelfHostRcArm64(t *testing.T) {
 		{"borrowed-param", "function sum2(a: i32[]): i32 { return a[0] + a[1]; } function main(): i32 { var xs: i32[] = [7, 8]; var r = sum2(xs); return r + xs[0] + __fern_rc_underflow_count(); }", 22},
 		{"exit-sweep-no-underflow", "function f(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; } function main(): i32 { var a = f(); var b = f(); var c = f(); return __fern_rc_underflow_count(); }", 0},
 		{"branch-local-zeroinit", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0]; } return xs[1] + __fern_rc_underflow_count(); }", 6},
+		// Cow-aware dec (Phase 3 prep): a self-append loop stays clean.
+		{"self-append-no-underflow", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i); i = i + 1; } return __fern_rc_underflow_count(); }", 0},
+		{"self-append-values", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i * 2); i = i + 1; } return xs[19]; }", 38},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -362,6 +365,59 @@ func TestSelfHostRcArm64(t *testing.T) {
 			}
 			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
 			cmd := runArm64Bin(qemu, progBin)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
+
+// Phase 3 prep: the cow-aware dec-on-overwrite. An in-place mutator
+// (`xs = xs.append(v)` growing within capacity) returns the SAME buffer,
+// so releasing the slot's old value would over-count. The dec is now
+// skipped when the new value equals the old (`cmp; je/b.eq` guard), so a
+// self-mutating loop stays over-release-detector clean while a genuine
+// reassignment to a different buffer still releases. Mirrors the native
+// drift audit (docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 3 prep).
+func TestSelfHostRcSelfMutateX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// A 20-iteration self-append loop: in-place growth returns the
+		// same buffer, so the cow-aware dec keeps the detector at 0.
+		{"self-append-no-underflow", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i); i = i + 1; } return __fern_rc_underflow_count(); }", 0},
+		// Values stay correct across the self-mutation.
+		{"self-append-values", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i * 2); i = i + 1; } return xs[19]; }", 38},
+		// A genuine reassignment to a different buffer still releases the
+		// old and keeps the source readable, detector clean.
+		{"reassign-different-clean", "function main(): i32 { var xs: i32[] = [1, 2]; var ys: i32[] = [3, 4]; ys = xs; return ys[0] + xs[1] + __fern_rc_underflow_count(); }", 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
