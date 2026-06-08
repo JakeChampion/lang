@@ -431,6 +431,91 @@ func buildEnumSentBody(sentAddr func(int32) int, n int) func(map[string]uint32) 
 	}
 }
 
+// wasm opcodes the numeric helper package doesn't expose, emitted as raw bytes.
+const (
+	opI64ExtendI32U byte = 0xad // i64 <- i32 (zero-extend)
+	opI32WrapI64    byte = 0xa7 // i32 <- i64 (low 32 bits)
+)
+
+// externEnumVariantIs64 reports whether a mixed-width variant arm's payload
+// occupies the i64 half of the canonical join (a 64-bit int or f64). A 32-bit arm
+// (incl. f32 / sub-word) occupies the i32 half and needs extend/wrap coercion.
+func externEnumVariantIs64(t ast.Type) bool {
+	vt := externRecordFieldValtype(t)
+	return vt == encode.ValtypeI64 || vt == encode.ValtypeF64
+}
+
+// appendVariantParamPayloadI64 emits, for a mixed-width variant `@import`
+// parameter, the i64 canonical join value: it branches on the box tag (at the box
+// pointer in local `slot`) and, for the matching arm, loads the payload at that
+// arm's box offset, coercing to i64 (64-bit arm: i64.load the bits; 32-bit arm:
+// i32.load then zero-extend). A payloadless arm contributes i64.const 0 (the host
+// drops the payload for that disc). Builds an n-1-deep if/else chain returning i64.
+func appendVariantParamPayloadI64(body []byte, slot uint32, vs []ir.ExternEnumVariant) []byte {
+	armLoad := func(b []byte, v ir.ExternEnumVariant) []byte {
+		if v.Type == nil {
+			return inst.InstI64Const(b, 0)
+		}
+		b = inst.InstLocalGet(b, slot)
+		if externEnumVariantIs64(v.Type) {
+			return memory.InstI64Load(b, 3, uint32(v.BoxOffset))
+		}
+		b = memory.InstI32Load(b, 2, uint32(v.BoxOffset))
+		return append(b, opI64ExtendI32U)
+	}
+	n := len(vs)
+	for k := 0; k < n-1; k++ {
+		body = inst.InstLocalGet(body, slot)
+		body = memory.InstI32Load(body, 2, 0) // tag @ box+0
+		body = inst.InstI32Const(body, int32(k))
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, encode.ValtypeI64)
+		body = armLoad(body, vs[k])
+		body = inst.InstElse(body)
+	}
+	body = armLoad(body, vs[n-1]) // innermost (default) arm
+	for k := 0; k < n-1; k++ {
+		body = inst.InstEnd(body)
+	}
+	return body
+}
+
+// appendVariantResultStore emits, for a mixed-width variant `@import` *result*,
+// the per-arm payload store: it branches on the disc (local `disc`) and, for the
+// matching arm, reads the i64 canonical join slot at `rb+poff` and stores it into
+// the Fern box (base local) at that arm's box offset — i64.store for a 64-bit arm,
+// i32.wrap_i64 + i32.store for a 32-bit arm. A payloadless arm stores nothing.
+func appendVariantResultStore(body []byte, base, rb, disc, poff uint32, vs []ir.ExternEnumVariant) []byte {
+	const rcHeaderBytes = 8
+	storeArm := func(b []byte, v ir.ExternEnumVariant) []byte {
+		if v.Type == nil {
+			return b // payloadless — nothing to store
+		}
+		b = inst.InstLocalGet(b, base) // store address
+		b = inst.InstLocalGet(b, rb)
+		b = memory.InstI64Load(b, 3, poff) // i64 join slot
+		if externEnumVariantIs64(v.Type) {
+			return memory.InstI64Store(b, 3, uint32(rcHeaderBytes)+uint32(v.BoxOffset))
+		}
+		b = append(b, opI32WrapI64)
+		return memory.InstI32Store(b, 2, uint32(rcHeaderBytes)+uint32(v.BoxOffset))
+	}
+	n := len(vs)
+	for k := 0; k < n-1; k++ {
+		body = inst.InstLocalGet(body, disc)
+		body = inst.InstI32Const(body, int32(k))
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = storeArm(body, vs[k])
+		body = inst.InstElse(body)
+	}
+	body = storeArm(body, vs[n-1]) // innermost (default) arm
+	for k := 0; k < n-1; k++ {
+		body = inst.InstEnd(body)
+	}
+	return body
+}
+
 // buildExternEnumResultWrapper builds the wrapper for an `@import` extern
 // returning an option/result (P4c). The canonical variant flattens to
 // (disc, payload) > 1 core value, so it returns indirectly: the raw import
@@ -458,11 +543,29 @@ func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEn
 		if payVT == encode.ValtypeI64 || payVT == encode.ValtypeF64 {
 			psize = 8
 		}
-		size := ep.PayloadOffset + psize // return-area + box field-area size
+		areaSize := ep.PayloadOffset + psize // canonical return area (disc + join slot)
+		// The Fern box holds the matched arm's payload at its own offset; for a
+		// mixed-width variant that's per-arm, so size the box to the widest arm end.
+		boxSize := areaSize
+		if ep.Variants != nil {
+			boxSize = 0
+			for _, v := range ep.Variants {
+				if v.Type == nil {
+					continue
+				}
+				w := int32(4)
+				if externEnumVariantIs64(v.Type) {
+					w = 8
+				}
+				if end := v.BoxOffset + w; end > boxSize {
+					boxSize = end
+				}
+			}
+		}
 
 		var body []byte
-		// rb = __fern_alloc(size) — 8-aligned canonical return area.
-		body = inst.InstI32Const(body, size)
+		// rb = __fern_alloc(areaSize) — 8-aligned canonical return area.
+		body = inst.InstI32Const(body, areaSize)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalSet(body, rb)
 		// call import(params…, rb).
@@ -475,8 +578,8 @@ func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEn
 		body = inst.InstLocalGet(body, rb)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstLocalSet(body, disc)
-		// base = __fern_alloc(rcHeaderBytes + size); rc = 1 at base+0.
-		body = inst.InstI32Const(body, rcHeaderBytes+size)
+		// base = __fern_alloc(rcHeaderBytes + boxSize); rc = 1 at base+0.
+		body = inst.InstI32Const(body, rcHeaderBytes+boxSize)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalSet(body, base)
 		body = inst.InstLocalGet(body, base)
@@ -492,22 +595,28 @@ func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEn
 			body = inst.InstLocalGet(body, disc)
 		}
 		body = memory.InstI32Store(body, 2, rcHeaderBytes)
-		// payload @ base+rcHeaderBytes+off = load(rb+off).
-		body = inst.InstLocalGet(body, base)
-		body = inst.InstLocalGet(body, rb)
-		switch payVT {
-		case encode.ValtypeI64:
-			body = memory.InstI64Load(body, 3, poff)
-			body = memory.InstI64Store(body, 3, uint32(rcHeaderBytes)+poff)
-		case encode.ValtypeF32:
-			body = memory.InstF32Load(body, 2, poff)
-			body = memory.InstF32Store(body, 2, uint32(rcHeaderBytes)+poff)
-		case encode.ValtypeF64:
-			body = memory.InstF64Load(body, 3, poff)
-			body = memory.InstF64Store(body, 3, uint32(rcHeaderBytes)+poff)
-		default:
-			body = memory.InstI32Load(body, 2, poff)
-			body = memory.InstI32Store(body, 2, uint32(rcHeaderBytes)+poff)
+		if ep.Variants != nil {
+			// Mixed-width: store the matched arm's payload (coerced from the i64
+			// join slot) at that arm's box offset, branching on the disc.
+			body = appendVariantResultStore(body, base, rb, disc, poff, ep.Variants)
+		} else {
+			// payload @ base+rcHeaderBytes+off = load(rb+off).
+			body = inst.InstLocalGet(body, base)
+			body = inst.InstLocalGet(body, rb)
+			switch payVT {
+			case encode.ValtypeI64:
+				body = memory.InstI64Load(body, 3, poff)
+				body = memory.InstI64Store(body, 3, uint32(rcHeaderBytes)+poff)
+			case encode.ValtypeF32:
+				body = memory.InstF32Load(body, 2, poff)
+				body = memory.InstF32Store(body, 2, uint32(rcHeaderBytes)+poff)
+			case encode.ValtypeF64:
+				body = memory.InstF64Load(body, 3, poff)
+				body = memory.InstF64Store(body, 3, uint32(rcHeaderBytes)+poff)
+			default:
+				body = memory.InstI32Load(body, 2, poff)
+				body = memory.InstI32Store(body, 2, uint32(rcHeaderBytes)+poff)
+			}
 		}
 		// return base + rcHeaderBytes (user-visible enum pointer).
 		body = inst.InstLocalGet(body, base)
@@ -571,17 +680,25 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 					body = inst.InstLocalGet(body, slot)
 					body = memory.InstI32Load(body, 2, 0)
 				}
-				poff := uint32(ep.PayloadOffset)
-				body = inst.InstLocalGet(body, slot)
-				switch externRecordFieldValtype(ep.PayloadType) {
-				case encode.ValtypeI64:
-					body = memory.InstI64Load(body, 3, poff)
-				case encode.ValtypeF32:
-					body = memory.InstF32Load(body, 2, poff)
-				case encode.ValtypeF64:
-					body = memory.InstF64Load(body, 3, poff)
-				default:
-					body = memory.InstI32Load(body, 2, poff)
+				if ep.Variants != nil {
+					// Mixed-width variant: produce the i64 join value by branching on
+					// the box tag — each arm loads its payload at its own box offset
+					// and coerces to i64 (a 32-bit arm extends; a 64-bit arm loads it
+					// directly; float bits are value-preserving under the int load).
+					body = appendVariantParamPayloadI64(body, slot, ep.Variants)
+				} else {
+					poff := uint32(ep.PayloadOffset)
+					body = inst.InstLocalGet(body, slot)
+					switch externRecordFieldValtype(ep.PayloadType) {
+					case encode.ValtypeI64:
+						body = memory.InstI64Load(body, 3, poff)
+					case encode.ValtypeF32:
+						body = memory.InstF32Load(body, 2, poff)
+					case encode.ValtypeF64:
+						body = memory.InstF64Load(body, 3, poff)
+					default:
+						body = memory.InstI32Load(body, 2, poff)
+					}
 				}
 				slot++
 			case ex.ParamPlainEnums[i]:

@@ -553,15 +553,26 @@ world-driven composer (P2) wires it.
          the disc. No per-arm branch is needed — same-width payloads sit at the
          same box offset (the per-variant `payloadLayout` is width-determined) and
          a bit-load is value-preserving for both int and float arms.
-     `externCanonicalCoreWidth` classifies the width; **mixed-width** (a 32-bit
-     and a 64-bit arm) and **multi-payload** variants are still deferred. No
-     discriminant remap (the user-enum variant index is the WIT case order); a
-     payloadless-case sentinel's payload read is ignored garbage (the host drops
-     it for that disc). Gated by `TestExternVariantParamCustomProvider` (uniform —
-     `describe: func(s: shape) -> s32` over `variant shape { circle(s32),
-     square(s32), empty }`: `Circle(7)`→7, `Square(7)`→70, `Empty`→999) and
+       - **Mixed core WIDTH** — a 32-bit and a 64-bit arm, e.g. `{ i(s32),
+         l(s64) }`: the canonical join is i64, and each arm lives at its OWN box
+         offset and needs coercion (a 32-bit arm `i64.extend_i32_u` to / `i32.wrap_i64`
+         from the i64 slot). `PayloadType` is i64 and `ExternEnumParam.Variants`
+         carries each arm's box offset + type; the wrapper branches on the disc
+         (`appendVariantParamPayloadI64` / `appendVariantResultStore`) to
+         load/store at the right offset+width. (Float bits ride the int loads, so
+         f64 / f32 arms work too.)
+     `externCanonicalCoreWidth` classifies the width; **multi-payload** (multi-
+     field) variants are still deferred. No discriminant remap (the user-enum
+     variant index is the WIT case order); a payloadless-case sentinel's payload
+     read is ignored garbage (the host drops it for that disc). Gated by
+     `TestExternVariantParamCustomProvider` (uniform — `describe: func(s: shape)
+     -> s32` over `variant shape { circle(s32), square(s32), empty }`:
+     `Circle(7)`→7, `Square(7)`→70, `Empty`→999),
      `TestExternVariantNonUniformParamCustomProvider` (`{ i(s32), f(f32) }`, the
-     f32 arm's bits round-tripping through the i32 join).
+     f32 arm's bits round-tripping through the i32 join), and
+     `TestExternVariantMixedWidthParamCustomProvider` (`{ i(s32), l(s64) }`, the
+     i64 arm carrying a value that needs 64 bits). The result direction mirrors
+     all three via `TestExternVariant{,NonUniform,MixedWidth}Result…`.
    - **General `variant` results (uniform payload) — ✅ done (Go).** An `@import`
      extern returning a WIT `variant` with a uniform scalar payload (every case
      payloaded, same type T), lifted into a Fern user enum. The canonical variant
@@ -800,9 +811,10 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): the self-host port of non-uniform same-width
-     `variant` payloads (the Go side landed); mixed-width and multi-payload
-     `variant`s; sub-4-byte-element `list<T>` *results*
+   - Still rejected (next slices): the self-host port of non-uniform / mixed-width
+     `variant` payloads (the Go side landed; the self-host enum-box payload is
+     i32-only — 64-bit / float payloads need a backend-wide slice first);
+     multi-payload (multi-field) `variant`s; sub-4-byte-element `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
