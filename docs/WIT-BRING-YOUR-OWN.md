@@ -563,26 +563,42 @@ world-driven composer (P2) wires it.
          f64 / f32 arms work too.)
      A fourth shape — **MULTI-FIELD** arms (a case carrying ≥2 payloads; in WIT a
      case wraps multiple values in a `tuple<…>`, which flattens identically to a
-     Fern multi-field variant `Click(i32, i32)`) — joins to `SlotCount` i32 slots
-     (scoped to i32-class integer fields). `ExternEnumParam.SlotCount` +
-     `Variants[k].Fields` (per-arm field box offsets) drive a wrapper that pushes
-     each slot by branching on the disc — the arm's field j, or 0 to pad shorter
-     arms (`appendVariantParamMultiField` / `appendVariantResultStoreMultiField`).
-     `externCanonicalCoreWidth` / `externIsI32ClassInt` classify the arms;
-     **multi-field with mixed-width / float fields** is still deferred. No
-     discriminant remap (the user-enum variant index is the WIT case order); a
-     payloadless-case sentinel's payload read is ignored garbage (the host drops
-     it for that disc). Gated by `TestExternVariantParamCustomProvider` (uniform —
+     Fern multi-field variant `Click(i32, i32)`) — joins **position-wise** to
+     `SlotCount` slots, each slot j's type the canonical join of every arm's field
+     j (the full general join: `join(i32, f32) = i32`; any other unequal pair →
+     i64; equal → that type — so a slot may be i32 / i64 / f32 / f64). `ExternEnum-
+     Param.SlotCount` + `SlotTypes` (per-slot join valtype) + `Variants[k].{Fields,
+     FieldTypes,FieldAreaOffsets}` drive the wrappers. The **param** side pushes
+     each slot by branching on the disc — the arm's field j loaded from its box
+     offset and coerced to the slot type (a 32-bit field rides an i32 slot as its
+     raw bits, an f32 likewise; a 32-bit field under an i64 slot zero-extends; an
+     f64 rides an i64 slot as its bits), or the slot's zero to pad shorter arms
+     (`appendVariantParamMultiField`). The **result** side reads the canonical
+     variant *memory* layout — a 1-byte disc, then the payload aligned to the
+     widest field, so each arm's fields sit at its own tuple offsets
+     (`FieldAreaOffsets`, precomputed in `externVariantParamLayout`) — and copies
+     each by field width (i64 for an 8-byte field, i32 for a 4-byte one) into the
+     box, the float bits surviving the integer move
+     (`appendVariantResultStoreMultiField`). Scoped to 32-/64-bit numeric/float
+     fields (`externMultiFieldVariantFieldOK`; sub-word s8/s16, which pack at
+     1-/2-byte canonical sizes, are a separate slice). No discriminant remap (the
+     user-enum variant index is the WIT case order); a payloadless-case sentinel's
+     payload read is ignored garbage (the host drops it for that disc). Gated by
+     `TestExternVariantParamCustomProvider` (uniform —
      `describe: func(s: shape) -> s32` over `variant shape { circle(s32),
      square(s32), empty }`: `Circle(7)`→7, `Square(7)`→70, `Empty`→999),
      `TestExternVariantNonUniformParamCustomProvider` (`{ i(s32), f(f32) }`, the
      f32 arm's bits round-tripping through the i32 join),
      `TestExternVariantMixedWidthParamCustomProvider` (`{ i(s32), l(s64) }`, the
-     i64 arm carrying a value that needs 64 bits), and
+     i64 arm carrying a value that needs 64 bits),
      `TestExternVariantMultiFieldParamCustomProvider` (`{ click(tuple<u32,u32>),
-     key(u32), close }` ↔ `Ev { Click(i32,i32), Key(i32), Close }`). The result
-     direction mirrors all four via
-     `TestExternVariant{,NonUniform,MixedWidth,MultiField}Result…`.
+     key(u32), close }` ↔ `Ev { Click(i32,i32), Key(i32), Close }`), and
+     `TestExternVariantMultiFieldMixedParamCustomProvider` (the general join —
+     `{ move(tuple<s32,s64>), spin(tuple<f32,f64>), stop }` ↔ `Ev { Move(i32,i64),
+     Spin(f32,f64), Stop }`: slot0 = join(s32,f32) = i32, slot1 = join(s64,f64) =
+     i64, the f32/f64 bits riding the int slots). The result direction mirrors all
+     five via `TestExternVariant{,NonUniform,MixedWidth,MultiField,MultiFieldMixed}
+     Result…`.
    - **General `variant` results (uniform payload) — ✅ done (Go).** An `@import`
      extern returning a WIT `variant` with a uniform scalar payload (every case
      payloaded, same type T), lifted into a Fern user enum. The canonical variant
@@ -828,12 +844,13 @@ world-driven composer (P2) wires it.
      *single* `__ev` field — multi-payload variants drop the extra payloads and a
      multi-binding match is an `E015` arity error. So 64-bit / float / multi-field
      variant payloads need a self-host backend slice (real multi-payload variants +
-     wide enum slots) *before* the extern marshalling can be ported. Also deferred:
-     multi-field `variant` arms with mixed-width or float fields (Go — the fully
-     general canonical join, combining the per-slot-width and multi-slot paths);
-     sub-4-byte-element `list<T>` *results*
+     wide enum slots) *before* the extern marshalling can be ported. The Go-side
+     **general multi-field variant join** (mixed-width / float fields,
+     position-wise) is now **done** — see the multi-field entry above. Still
+     deferred: sub-4-byte-element `list<T>` *results*
      (`u8`/`bool`) via a custom provider (the `ComposeFromWorldAuto`
-     `gMemRealloc` trap analysed above). The
+     `gMemRealloc` trap analysed above); and sub-word (s8/s16) fields inside a
+     multi-field variant arm (the tight 1-/2-byte canonical packing). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
      vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an

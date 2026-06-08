@@ -665,22 +665,37 @@ type ExternEnumParam struct {
 	// the join slot, PayloadOffset its box/area offset).
 	Variants []ExternEnumVariant
 	// SlotCount > 0 marks a MULTI-FIELD variant: the canonical join is SlotCount
-	// i32 slots (all arms' fields are i32-class integers). Each arm's Fields give
-	// its payload box offsets (field j → slot j; arms with < SlotCount fields pad
-	// the trailing slots with 0). 0 ⇒ single-field (BoxOffset/Type) or non-Variants.
+	// slots, one per payload position. Each arm's Fields give its payload box
+	// offsets (field j → slot j; arms with < SlotCount fields pad the trailing
+	// slots with 0). 0 ⇒ single-field (BoxOffset/Type) or non-Variants.
 	SlotCount int32
+	// SlotTypes is the per-slot canonical *join* type of a MULTI-FIELD variant
+	// (len == SlotCount): each slot j's type is the position-wise canonical join
+	// of every arm's field j (i32/f32 → i32; otherwise unequal → i64; equal → that
+	// type), which decides the slot's flat valtype + the param wrapper's load/coerce.
+	// For an all-i32 multi-field variant every slot is i32 (the original shape).
+	SlotTypes []ast.Type
+	// AreaSize is the canonical return-area size (bytes) of a MULTI-FIELD variant
+	// *result* — the variant memory layout `[disc][pad][payload]`, sized to the
+	// widest arm's tuple and 8-rounded for the alloc. 0 for non-multi-field.
+	AreaSize int32
 }
 
 // ExternEnumVariant is one arm's box payload descriptor for a mixed-width or
 // multi-field variant (see ExternEnumParam.Variants). For a mixed-width
 // (single-payload) variant, BoxOffset is the payload's box byte offset and Type
 // its scalar type (nil ⇒ payloadless). For a multi-field variant, Fields holds
-// the arm's i32 payload box offsets in order (empty ⇒ payloadless). The wrapper
-// branches on the disc to load/store at the right offset(s).
+// the arm's payload box offsets in order (empty ⇒ payloadless), FieldTypes the
+// matching field types (for the width-aware load/coerce), and FieldAreaOffsets
+// the field's byte offset in the canonical result return-area (the arm's tuple
+// memory layout shifted past the discriminant). The wrapper branches on the disc
+// to load/store at the right offset(s).
 type ExternEnumVariant struct {
-	BoxOffset int32
-	Type      ast.Type
-	Fields    []int32
+	BoxOffset        int32
+	Type             ast.Type
+	Fields           []int32
+	FieldTypes       []ast.Type
+	FieldAreaOffsets []int32
 }
 
 // ExternRecordResult is the flattened layout of a record (struct) `@import`
@@ -894,22 +909,77 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 		return nil, false // all-payloadless ⇒ a plain enum (externPlainEnumParam)
 	}
 	if maxFields >= 2 {
-		// Multi-field variant: the canonical join is maxFields i32 slots. Scoped to
-		// i32-class integer fields (every slot a plain i32, no coercion). Each arm
-		// maps field j → slot j; shorter arms pad the trailing slots with 0.
+		// Multi-field variant: a WIT case wraps ≥2 values in a tuple, which the
+		// canonical ABI joins position-wise into maxFields flat slots. Each slot j's
+		// join type is the fold of join(field-j) over every arm (i32/f32 → i32;
+		// other unequal pairs → i64; equal → that type), so a slot may be i32, i64,
+		// f32, or f64. The param side pushes each slot from the matched arm's box
+		// field, coercing to the slot type; the result side reads the canonical
+		// variant *memory* layout (each arm's tuple packed past the discriminant).
+		// Scoped to 32-/64-bit numeric/float fields (sub-word fields would pack at
+		// 1-/2-byte canonical sizes — a separate slice). Each arm: field j → slot j;
+		// shorter arms pad trailing slots with 0.
 		variants := make([]ExternEnumVariant, len(ed.Variants))
+		slots := make([]ast.Type, maxFields)
+		haveSlot := make([]bool, maxFields)
+		payloadAlign := int32(1)
 		for i, v := range ed.Variants {
 			for _, p := range v.Payloads {
-				if !externIsI32ClassInt(p) {
-					return nil, false // non-i32 field in a multi-field arm — deferred
+				if !externMultiFieldVariantFieldOK(p) {
+					return nil, false // sub-word / unsupported field in a multi-field arm
 				}
 			}
-			if len(v.Payloads) > 0 {
-				offs, _ := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
-				variants[i] = ExternEnumVariant{Fields: offs}
+			if len(v.Payloads) == 0 {
+				continue
+			}
+			boxOffs, _ := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
+			variants[i] = ExternEnumVariant{
+				Fields:     boxOffs,
+				FieldTypes: append([]ast.Type{}, v.Payloads...),
+			}
+			for j, p := range v.Payloads {
+				if a := externCanonicalFieldSizeAlign(p); a > payloadAlign {
+					payloadAlign = a
+				}
+				ft := externCanonicalFlatType(p)
+				if !haveSlot[j] {
+					slots[j], haveSlot[j] = ft, true
+				} else {
+					slots[j] = externCanonicalFlatJoin(slots[j], ft)
+				}
 			}
 		}
-		return &ExternEnumParam{RemapDisc: false, PayloadType: ast.NumberType{Width: 32, Signed: true}, SlotCount: int32(maxFields), Variants: variants}, true
+		// Canonical variant memory layout (result side): a 1-byte discriminant
+		// (≤256 cases — the multi-field scope), then the payload aligned to the
+		// widest field. Each arm's fields sit at its own tuple offsets past there.
+		payloadOff := alignUp(1, payloadAlign)
+		areaSize := payloadOff
+		for i, v := range ed.Variants {
+			if len(v.Payloads) == 0 {
+				continue
+			}
+			areaOffs := make([]int32, len(v.Payloads))
+			pos := payloadOff
+			for j, p := range v.Payloads {
+				sz := externCanonicalFieldSizeAlign(p)
+				pos = alignUp(pos, sz)
+				areaOffs[j] = pos
+				pos += sz
+			}
+			variants[i].FieldAreaOffsets = areaOffs
+			if pos > areaSize {
+				areaSize = pos
+			}
+		}
+		areaSize = alignUp(areaSize, 8) // __fern_alloc is 8-aligned; covers a max-width load
+		return &ExternEnumParam{
+			RemapDisc:   false,
+			PayloadType: ast.NumberType{Width: 32, Signed: true},
+			SlotCount:   int32(maxFields),
+			SlotTypes:   slots,
+			AreaSize:    areaSize,
+			Variants:    variants,
+		}, true
 	}
 	// Single-field arms (0 or 1 payload each).
 	var firstPayload ast.Type
@@ -1035,13 +1105,87 @@ func externCanonicalCoreWidth(t ast.Type) int32 {
 	return 32
 }
 
-// externIsI32ClassInt reports whether t is an integer that flattens to a single
-// i32 core value (i8/i16/i32 and their unsigned forms; not 64-bit, not float).
-// Multi-field variants are scoped to these so every join slot is a plain i32 with
-// no reinterpret/extend coercion.
-func externIsI32ClassInt(t ast.Type) bool {
-	n, ok := t.(ast.NumberType)
-	return ok && n.NormalWidth() <= 32
+// externMultiFieldVariantFieldOK gates a field type a multi-field `variant` arm
+// may carry: a 32-/64-bit integer or a float. Each flattens to a single core
+// value (i32/i64/f32/f64) and packs at its natural 4-/8-byte size + alignment in
+// the canonical memory layout, so the join + return-area offset arithmetic stays
+// width-only. Sub-word integers (s8/s16/u8/u16) — which the canonical ABI packs
+// at 1/2 bytes — are deferred for multi-field arms.
+func externMultiFieldVariantFieldOK(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.NumberType:
+		w := x.NormalWidth()
+		return w == 32 || w == 64
+	case ast.FloatType:
+		return true
+	}
+	return false
+}
+
+// externCanonicalFlatType returns the canonical flat type a scalar lowers to:
+// i64 for a 64-bit integer, f64 for an f64, f32 for an f32, and i32 for every
+// narrower integer. It is the per-position input to externCanonicalFlatJoin.
+func externCanonicalFlatType(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return ast.FloatType{Width: 64}
+		}
+		return ast.FloatType{Spelling: "f32"}
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return ast.NumberType{Width: 64, Signed: true}
+		}
+	}
+	return ast.NumberType{Width: 32, Signed: true}
+}
+
+// externCanonicalFlatJoin computes the Component-Model `join` of two canonical
+// flat types (each already i32/i64/f32/f64 from externCanonicalFlatType): equal
+// types join to themselves; an {i32, f32} pair joins to i32 (a 32-bit bit
+// container); every other unequal pair joins to i64.
+func externCanonicalFlatJoin(a, b ast.Type) ast.Type {
+	ka, kb := externFlatKind(a), externFlatKind(b)
+	if ka == kb {
+		return a
+	}
+	if (ka == flatI32 && kb == flatF32) || (ka == flatF32 && kb == flatI32) {
+		return ast.NumberType{Width: 32, Signed: true}
+	}
+	return ast.NumberType{Width: 64, Signed: true}
+}
+
+// flatKind enumerates the four canonical flat core types.
+const (
+	flatI32 = iota
+	flatI64
+	flatF32
+	flatF64
+)
+
+// externFlatKind classifies a canonical flat type into one of the four core
+// kinds (flatI32/flatI64/flatF32/flatF64).
+func externFlatKind(t ast.Type) int {
+	switch x := t.(type) {
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return flatF64
+		}
+		return flatF32
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return flatI64
+		}
+	}
+	return flatI32
+}
+
+// alignUp rounds x up to the next multiple of a (a power of two ≥ 1).
+func alignUp(x, a int32) int32 {
+	if a <= 1 {
+		return x
+	}
+	return (x + a - 1) / a * a
 }
 
 // externRecordFieldSupported reports whether a record/tuple field type is one
