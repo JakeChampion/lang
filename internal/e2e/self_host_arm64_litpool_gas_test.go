@@ -24,6 +24,8 @@ import (
 //     `a[i]` read the wrong slot.
 //   - `ldrb/strb Wt, [Xn], #1`: the post-index byte-copy form (used by
 //     __fern_str_concat) ignored the writeback, so the copy never advanced.
+//   - `ldr/str Dt, [Xn{, #off}]`: the SIMD&FP load/store (f64 constants) was
+//     encoded as a general-register load, so floats never reached d-registers.
 //
 // Expected bytes pinned against llvm-mc. Run through the self-host wasm
 // pipeline; exit 0 = all pass, else the 1-based failing check id.
@@ -104,6 +106,15 @@ function main(): i32 {
     // strb w4, [x2], #1 -> 0x38001444
     var j: Arm64Asm = arm64_gas_assemble("strb w4, [x2], #1");
     if (j.code[0] != 68 || j.code[1] != 20 || j.code[2] != 0 || j.code[3] != 56) { return 16; }
+    // SIMD&FP load: ldr d0, [x0] -> 0xFD400000
+    var k: Arm64Asm = arm64_gas_assemble("ldr d0, [x0]");
+    if (k.code[0] != 0 || k.code[1] != 0 || k.code[2] != 64 || k.code[3] != 253) { return 17; }
+    // ldr d0, [x0, #8] -> 0xFD400400
+    var l: Arm64Asm = arm64_gas_assemble("ldr d0, [x0, #8]");
+    if (l.code[0] != 0 || l.code[1] != 4 || l.code[2] != 64 || l.code[3] != 253) { return 18; }
+    // str d1, [x2, #16] -> 0xFD000841
+    var m: Arm64Asm = arm64_gas_assemble("str d1, [x2, #16]");
+    if (m.code[0] != 65 || m.code[1] != 8 || m.code[2] != 0 || m.code[3] != 253) { return 19; }
     return 0;
 }
 `

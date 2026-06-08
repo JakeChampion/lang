@@ -444,6 +444,16 @@ function arm64_str(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 function arm64_ldr(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
     return arm64_le32(buf, arm64_ldr_word(rt, rn, off));
 }
+// 64-bit SIMD&FP load/store `ldr/str Dt, [Xn{, #off}]` — the float path
+// loads f64 constants from rodata into a d-register. Scaled unsigned imm12
+// (off/8), like the GP 64-bit form but base 0xfd400000 (ldr) / 0xfd000000
+// (str). Verified vs llvm-mc: ldr d0,[x0,#8] = 0xfd400400.
+function arm64_ldr_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfd400000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+function arm64_str_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfd000000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
 
 // ---- PC-relative page addressing (@PAGE / @PAGEOFF) ----
 //
@@ -1403,6 +1413,13 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     }
     if (mnem == "ldr" || mnem == "str") {
         var rt: i32 = arm64_gas_reg(ops[0]);
+        // SIMD&FP `ldr/str Dt, [Xn{, #off}]` — d-register dest (the f64
+        // constant-load path). Scalar [Xn] / [Xn, #off] only.
+        if (ops[0].len() > 0 && ops[0][0] == 100) { // 'd'
+            var fm: Arm64Mem = arm64_gas_mem(ops[1]);
+            if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_fp(a.code, rt, fm.base, fm.off) }; }
+            return Arm64Asm { ...a, code: arm64_str_fp(a.code, rt, fm.base, fm.off) };
+        }
         if (ops.len() >= 3) {
             // post-index: `ldr Xt, [Xn], #off` (ops[1]="[Xn]", ops[2]="#off")
             var pb: i32 = arm64_gas_mem(ops[1]).base;

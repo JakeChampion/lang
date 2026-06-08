@@ -1280,7 +1280,12 @@ smallest → largest:
     string-build under qemu (rodata strings, `:lo12:`, the heap, indexing,
     byte copy) in addition to exit42 / arith / fib. **Next:** flip
     `fern.fern -target arm64` to emit the ELF in-process (sweep the wider
-    case list for any remaining forms, then drop the `.s` + gcc path).
+    case list for any remaining forms, then drop the `.s` + gcc path). A
+    follow-up sweep (structs/enums/options/i64/floats) found one more silent
+    mis-encode — `ldr/str Dt, [Xn{, #off}]` (the SIMD&FP f64 load/store) was
+    encoded as a general-register load, so floats never reached d-registers;
+    fixed (`arm64_ldr_fp`/`arm64_str_fp`), byte-pinned, and `floats` runs
+    under qemu. (Darwin floats were broken by this too.)
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

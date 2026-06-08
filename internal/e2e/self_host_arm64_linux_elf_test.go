@@ -99,6 +99,7 @@ function main(): i32 {
 		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13},
 		{"array", `function main(): i32 { var a = [1,2,3,4,5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
 		{"strbuild", `function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + "ab"; i = i + 1; } return s.len(); }`, 6},
+		{"floats", `function main(): i32 { var x: f64 = 3.5; var y: f64 = 2.0; var z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
