@@ -641,6 +641,12 @@ type ExternFunc struct {
 	// discriminant, so the wasm param wrapper reads `i32.load(ptr)` and pushes
 	// it. The Fern variant order must match the WIT enum case order (no remap).
 	ParamPlainEnums map[int]bool
+	// ResultPlainEnumN is the variant count of a plain (payloadless / C-style)
+	// enum RESULT — a WIT `enum` return — or 0 if the result isn't one. The WIT
+	// enum is returned as a single i32 discriminant; the wasm result wrapper maps
+	// it back to a Fern payloadless enum value by selecting the matching static
+	// per-tag sentinel (`[tag:i32 @0]`), so no heap box is allocated.
+	ResultPlainEnumN int
 }
 
 // ExternEnumParam describes a flattened option/result `@import` parameter
@@ -1205,6 +1211,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				ef.ResultRecord = rr
 			} else if re, ok := externEnumParamLayout(fn.ReturnType, info, ptrW); ok {
 				ef.ResultEnum = re
+			} else if externPlainEnumParam(fn.ReturnType, info) {
+				ef.ResultPlainEnumN = len(info.Enums[fn.ReturnType.(ast.EnumType).Name].Variants)
 			}
 			out.Externs = append(out.Externs, ef)
 			continue

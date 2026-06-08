@@ -585,9 +585,27 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			helperIdxs[fn.Name] = idx
 		}
 	}
+	// __enum_sent(disc)->ptr maps a WIT-enum-result discriminant to the static
+	// per-tag sentinel; its select-chain spans 0..maxEnumN-1 and is built here
+	// because it needs internEnumSentinel (a data address, not a funcidx).
+	maxEnumN := 0
+	for _, ex := range prog.Externs {
+		if ex.ResultPlainEnumN > maxEnumN {
+			maxEnumN = ex.ResultPlainEnumN
+		}
+	}
 	for _, name := range helpers.order {
-		spec, isExtern := externWrappers[name]
-		if !isExtern {
+		var spec runtimeHelperSpec
+		isExtern := false
+		if name == "__enum_sent" {
+			spec = runtimeHelperSpec{
+				params:  []byte{encode.ValtypeI32},
+				results: []byte{encode.ValtypeI32},
+				body:    buildEnumSentBody(internEnumSentinel, maxEnumN),
+			}
+		} else if s, ok := externWrappers[name]; ok {
+			spec, isExtern = s, true
+		} else {
 			spec = runtimeHelperSpecs[name]
 		}
 		params, results := spec.params, spec.results

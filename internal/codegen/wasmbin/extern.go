@@ -328,6 +328,53 @@ func buildExternRecordResultDirectWrapper(nparams int, rawImport string, rr *ir.
 	}
 }
 
+// buildExternPlainEnumResultWrapper builds the wrapper for an `@import` extern
+// returning a WIT `enum` (a Fern payloadless / C-style enum). The raw import
+// returns a single i32 discriminant; the wrapper maps it to the matching static
+// per-tag sentinel via the shared __enum_sent helper, producing a Fern enum
+// value with no heap allocation. Wrapper type is (params…) -> i32.
+func buildExternPlainEnumResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		imp := idxs[rawImport]
+		sent := idxs["__enum_sent"]
+		var body []byte
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstCall(body, imp)  // → disc on stack
+		body = inst.InstCall(body, sent) // disc → sentinel ptr (the result)
+		return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	}
+}
+
+// buildEnumSentBody builds the `__enum_sent(disc) -> i32` helper: a select-chain
+// mapping a runtime enum discriminant in 0..n-1 to the address of the static
+// per-tag sentinel cell `[tag:i32 @0]` (interned via sentAddr). Sentinels are
+// shared by tag value across all enums, so one helper covering 0..maxN-1 serves
+// every WIT-enum result. No allocation — the returned pointer is immortal data.
+func buildEnumSentBody(sentAddr func(int32) int, n int) func(map[string]uint32) []byte {
+	return func(_ map[string]uint32) []byte {
+		var body []byte
+		if n <= 0 {
+			n = 1
+		}
+		// acc = sentinel(n-1); for k = n-2..0:
+		//   acc = select(acc, sent_k, disc != k)  ⇒  disc==k ? sent_k : acc.
+		// select(a,b,c) returns a if c else b, popping a,b,c (a deepest), so the
+		// running acc (already on the stack) is `a`/else, sent_k is `b`/then, and
+		// the condition is `disc != k`.
+		body = inst.InstI32Const(body, int32(sentAddr(int32(n-1))))
+		for k := n - 2; k >= 0; k-- {
+			body = inst.InstI32Const(body, int32(sentAddr(int32(k)))) // b (then)
+			body = inst.InstLocalGet(body, 0)                         // disc
+			body = inst.InstI32Const(body, int32(k))
+			body = numeric.InstI32Ne(body) // c = (disc != k)
+			body = inst.InstSelect(body)
+		}
+		return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	}
+}
+
 // buildExternEnumResultWrapper builds the wrapper for an `@import` extern
 // returning an option/result (P4c). The canonical variant flattens to
 // (disc, payload) > 1 core value, so it returns indirectly: the raw import

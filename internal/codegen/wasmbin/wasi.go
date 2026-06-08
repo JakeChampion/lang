@@ -949,6 +949,21 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")
 			helpers.add("cabi_realloc")
+		case ex.ResultPlainEnumN > 0:
+			// WIT `enum` result: the import returns a single i32 discriminant; the
+			// wrapper maps it to the matching static per-tag sentinel (`[tag @0]`)
+			// via __enum_sent, so a Fern payloadless enum value is produced with no
+			// heap allocation (the sentinels are shared, immortal data cells).
+			rawName := ex.Name + "$import"
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: params, results: []byte{encode.ValtypeI32}}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: []byte{encode.ValtypeI32},
+				body:    buildExternPlainEnumResultWrapper(len(ex.Params), rawName),
+			}
+			helpers.add(ex.Name)
+			helpers.add("__enum_sent")
 		default:
 			switch ret.(type) {
 			case ast.StructType, ast.TupleType:
