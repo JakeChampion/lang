@@ -17,6 +17,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
+import "./checker";
 import "./asm";
 
 // last_slash returns the index of the final '/' in p, or -1.
@@ -159,6 +160,21 @@ function main(): i32 {
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+
+    // Immutability gate: reject the immutable-data cycle rules
+    // (E048 field assign / E049 capture write-back / E055 discarded pure
+    // result / E056 subscript assign) before codegen — the self-host
+    // enforcement of the immutable-data model (docs/IMMUTABILITY-MIGRATION-
+    // PLAN.md §4). Filtered to the cycle rules so the rest of the partial
+    // checker can't false-positive-reject a valid program (or this very
+    // source under fixpoint). A hit prints the diagnostic to stderr and
+    // fails the build.
+    var imm: checker.Diag[] = checker.filter_immutability(checker.check_module(merged).diags);
+    if (imm.len() > 0) {
+        eprint(checker.format_diags(imm));
+        return 1;
+    }
+
     write(asm.emit_module(parser.module_with_builtins(merged)));
     return 0;
 }

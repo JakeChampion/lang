@@ -15,6 +15,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
+import "./checker";
 import "./asm_arm64";
 
 function last_slash(p: string): i32 {
@@ -130,6 +131,16 @@ function main(): i32 {
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+
+    // Immutability gate (see asm_load_run.fern): reject the immutable-data
+    // cycle rules (E048/E049/E055/E056) before codegen, filtered so the
+    // partial checker's other rules can't false-positive-reject.
+    var imm: checker.Diag[] = checker.filter_immutability(checker.check_module(merged).diags);
+    if (imm.len() > 0) {
+        eprint(checker.format_diags(imm));
+        return 1;
+    }
+
     write(asm_arm64.emit_module(parser.module_with_builtins(merged), false));
     return 0;
 }
