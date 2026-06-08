@@ -30,6 +30,7 @@
 
 import "core/no_prelude";
 import "./parser";
+import "./util";
 
 // StrTable interns string-literal payloads as `[len:i32][bytes]` blocks
 // in linear memory (the data section); a string VALUE is the i32 pointer
@@ -1485,11 +1486,11 @@ function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string): s
         if (mod.enums[ei].name == t) {
             var n: i32 = mod.enums[ei].variant_names.len();
             // Build from the default (last index) outward.
-            var acc: string = "(i32.const " + i32_to_string(n - 1) + ")";
+            var acc: string = "(i32.const " + util.i32_to_string(n - 1) + ")";
             var k: i32 = n - 2;
             while (k >= 0) {
                 var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
-                acc = "(select (i32.const " + i32_to_string(k) + ") " + acc + " (i32.eq (i32.load (local.get " + eploc + ")) (i32.const " + i32_to_string(sid) + ")))";
+                acc = "(select (i32.const " + util.i32_to_string(k) + ") " + acc + " (i32.eq (i32.load (local.get " + eploc + ")) (i32.const " + util.i32_to_string(sid) + ")))";
                 k = k - 1;
             }
             return acc;
@@ -1509,11 +1510,11 @@ function extern_plain_enum_sid(mod: parser.Module, t: string, dloc: string): str
     while (ei < mod.enums.len()) {
         if (mod.enums[ei].name == t) {
             var n: i32 = mod.enums[ei].variant_names.len();
-            var acc: string = "(i32.const " + i32_to_string(struct_id(mod.structs, mod.enums[ei].variant_names[n - 1])) + ")";
+            var acc: string = "(i32.const " + util.i32_to_string(struct_id(mod.structs, mod.enums[ei].variant_names[n - 1])) + ")";
             var k: i32 = n - 2;
             while (k >= 0) {
                 var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
-                acc = "(select (i32.const " + i32_to_string(sid) + ") " + acc + " (i32.eq (local.get " + dloc + ") (i32.const " + i32_to_string(k) + ")))";
+                acc = "(select (i32.const " + util.i32_to_string(sid) + ") " + acc + " (i32.eq (local.get " + dloc + ") (i32.const " + util.i32_to_string(k) + ")))";
                 k = k - 1;
             }
             return acc;
@@ -1850,11 +1851,11 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
     while (j < params.len()) {
         if (params[j].type_name == "string") {
             var lenI: i32 = wp + 1;
-            var blkS: string = i32_to_string(blk);
-            var iS: string = i32_to_string(i_local);
-            var lenS: string = i32_to_string(lenI);
-            var ptrS: string = i32_to_string(wp);
-            var jS: string = i32_to_string(j);
+            var blkS: string = util.i32_to_string(blk);
+            var iS: string = util.i32_to_string(i_local);
+            var lenS: string = util.i32_to_string(lenI);
+            var ptrS: string = util.i32_to_string(wp);
+            var jS: string = util.i32_to_string(j);
             body = body + "    (local.set " + blkS + " (call $__fern_alloc (i32.add (i32.const 4) (local.get " + lenS + "))))\n";
             body = body + "    (i32.store (local.get " + blkS + ") (local.get " + lenS + "))\n";
             body = body + "    (local.set " + iS + " (i32.const 0))\n";
@@ -1867,14 +1868,14 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
             blk = blk + 1;
             wp = wp + 2;
         } else {
-            callargs = callargs + " (local.get " + i32_to_string(wp) + ")";
+            callargs = callargs + " (local.get " + util.i32_to_string(wp) + ")";
             wp = wp + 1;
         }
         j = j + 1;
     }
     if (str_result) {
-        var sS: string = i32_to_string(s_local);
-        var raS: string = i32_to_string(ra_local);
+        var sS: string = util.i32_to_string(s_local);
+        var raS: string = util.i32_to_string(ra_local);
         body = body + "    (local.set " + sS + " (call $" + fname + callargs + "))\n";
         body = body + "    (local.set " + raS + " (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
         body = body + "    (i32.store (local.get " + raS + ") (i32.add (local.get " + sS + ") (i32.const 4)))\n";
@@ -1980,7 +1981,7 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "  (func $" + f.name;
             var pp: i32 = 0;
             while (pp < f.params.len()) {
-                var ppn: string = "$ep" + i32_to_string(pp);
+                var ppn: string = "$ep" + util.i32_to_string(pp);
                 if (f.params[pp].type_name == "string" || extern_array_param_supported(f.params[pp].type_name) || extern_byte_array_param(f.params[pp].type_name) || extern_record_param_supported(mod, f.params[pp].type_name) || extern_sum_param_supported(f.params[pp].type_name) || extern_tuple_param_supported(f.params[pp].type_name) || extern_plain_enum_param(mod, f.params[pp].type_name) || extern_variant_param_supported(mod, f.params[pp].type_name)) {
                     out = out + " (param " + ppn + " i32)";
                 } else {
@@ -1997,7 +1998,7 @@ function extern_wrappers(mod: parser.Module): string {
             var qi: i32 = 0;
             while (qi < f.params.len()) {
                 if (extern_array_param_supported(f.params[qi].type_name) || extern_byte_array_param(f.params[qi].type_name)) {
-                    out = out + "    (local $ab" + i32_to_string(qi) + " i32)\n";
+                    out = out + "    (local $ab" + util.i32_to_string(qi) + " i32)\n";
                     na = na + 1;
                 }
                 qi = qi + 1;
@@ -2007,12 +2008,12 @@ function extern_wrappers(mod: parser.Module): string {
             var ci: i32 = 0;
             while (ci < f.params.len()) {
                 if (extern_array_param_supported(f.params[ci].type_name)) {
-                    var cppn: string = "$ep" + i32_to_string(ci);
-                    var bn: string = "$ab" + i32_to_string(ci);
+                    var cppn: string = "$ep" + util.i32_to_string(ci);
+                    var bn: string = "$ab" + util.i32_to_string(ci);
                     var tn: string = f.params[ci].type_name;
                     var k: string = tn[0:tn.len() - 2];
-                    var ss: string = i32_to_string(elem_slot_size(k));
-                    var lbl: string = i32_to_string(ci);
+                    var ss: string = util.i32_to_string(elem_slot_size(k));
+                    var lbl: string = util.i32_to_string(ci);
                     out = out + "    (local.set $an (i32.load (local.get " + cppn + ")))\n";
                     out = out + "    (local.set " + bn + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get $an) (i32.const " + ss + "))) (i32.const 7)) (i32.const -8)))\n";
                     out = out + "    (local.set $ai (i32.const 0))\n";
@@ -2026,9 +2027,9 @@ function extern_wrappers(mod: parser.Module): string {
                     // `len`-byte buffer. Source elements live in 4-byte slots at
                     // +8; write each low byte contiguously (the canonical
                     // list<u8> / list<bool> is byte-packed, alignment 1).
-                    var ucppn: string = "$ep" + i32_to_string(ci);
-                    var ubn: string = "$ab" + i32_to_string(ci);
-                    var ulbl: string = i32_to_string(ci);
+                    var ucppn: string = "$ep" + util.i32_to_string(ci);
+                    var ubn: string = "$ab" + util.i32_to_string(ci);
+                    var ulbl: string = util.i32_to_string(ci);
                     out = out + "    (local.set $an (i32.load (local.get " + ucppn + ")))\n";
                     out = out + "    (local.set " + ubn + " (call $__fern_alloc (local.get $an)))\n";
                     out = out + "    (local.set $ai (i32.const 0))\n";
@@ -2044,11 +2045,11 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "    (call $" + f.name + "__import";
             var fi: i32 = 0;
             while (fi < f.params.len()) {
-                var fppn: string = "$ep" + i32_to_string(fi);
+                var fppn: string = "$ep" + util.i32_to_string(fi);
                 if (f.params[fi].type_name == "string") {
                     out = out + " (i32.add (local.get " + fppn + ") (i32.const 4)) (i32.load (local.get " + fppn + "))";
                 } else if (extern_array_param_supported(f.params[fi].type_name) || extern_byte_array_param(f.params[fi].type_name)) {
-                    out = out + " (local.get $ab" + i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))";
+                    out = out + " (local.get $ab" + util.i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))";
                 } else if (extern_record_param_supported(mod, f.params[fi].type_name)) {
                     // record: push each field (type-id@0, fields from +4) flattened
                     // to its canonical i32, using a width+sign-aware load for the
@@ -2056,7 +2057,7 @@ function extern_wrappers(mod: parser.Module): string {
                     var rfi: i32 = 0;
                     while (rfi < struct_field_count(mod.structs, f.params[fi].type_name)) {
                         var rft: string = struct_field_type_at(mod.structs, f.params[fi].type_name, rfi);
-                        out = out + " (" + extern_field_load_op(rft) + " (i32.add (local.get " + fppn + ") (i32.const " + i32_to_string(struct_field_off(rfi)) + ")))";
+                        out = out + " (" + extern_field_load_op(rft) + " (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(rfi)) + ")))";
                         rfi = rfi + 1;
                     }
                 } else if (extern_sum_param_supported(f.params[fi].type_name)) {
@@ -2072,7 +2073,7 @@ function extern_wrappers(mod: parser.Module): string {
                     // tuple: push each i32 element (element i @ i*4, no header).
                     var tfi: i32 = 0;
                     while (tfi < tuple_type_elem_count(f.params[fi].type_name)) {
-                        out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + i32_to_string(tfi * 4) + ")))";
+                        out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(tfi * 4) + ")))";
                         tfi = tfi + 1;
                     }
                 } else if (extern_plain_enum_param(mod, f.params[fi].type_name)) {
@@ -2084,7 +2085,7 @@ function extern_wrappers(mod: parser.Module): string {
                     // payload at struct_field_off(0). For a payloadless-case value
                     // the payload read is ignored garbage (host drops it).
                     out = out + " " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn);
-                    out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + i32_to_string(struct_field_off(0)) + ")))";
+                    out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(0)) + ")))";
                 } else {
                     out = out + " (local.get " + fppn + ")";
                 }
@@ -2098,18 +2099,18 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "  (func $" + f.name;
             var dp: i32 = 0;
             while (dp < f.params.len()) {
-                out = out + " (param $ep" + i32_to_string(dp) + " " + wat_extern_valtype(f.params[dp].type_name) + ")";
+                out = out + " (param $ep" + util.i32_to_string(dp) + " " + wat_extern_valtype(f.params[dp].type_name) + ")";
                 dp = dp + 1;
             }
             out = out + " (result i32)\n";
             out = out + "    (local $s i32)\n";
             out = out + "    (local.set $s (call $__fern_alloc (i32.const 8)))\n";
-            out = out + "    (i32.store (local.get $s) (i32.const " + i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
+            out = out + "    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
             // field @ struct_field_off(0) = the import's by-value i32 result.
-            out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + i32_to_string(struct_field_off(0)) + ")) (call $" + f.name + "__import";
+            out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(struct_field_off(0)) + ")) (call $" + f.name + "__import";
             var da: i32 = 0;
             while (da < f.params.len()) {
-                out = out + " (local.get $ep" + i32_to_string(da) + ")";
+                out = out + " (local.get $ep" + util.i32_to_string(da) + ")";
                 da = da + 1;
             }
             out = out + "))\n";
@@ -2126,7 +2127,7 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "  (func $" + f.name;
             var rp: i32 = 0;
             while (rp < f.params.len()) {
-                out = out + " (param $ep" + i32_to_string(rp) + " " + wat_extern_valtype(f.params[rp].type_name) + ")";
+                out = out + " (param $ep" + util.i32_to_string(rp) + " " + wat_extern_valtype(f.params[rp].type_name) + ")";
                 rp = rp + 1;
             }
             out = out + " (result i32)\n";
@@ -2134,23 +2135,23 @@ function extern_wrappers(mod: parser.Module): string {
             // Return area: canonical size, 8-aligned. Over-allocate by 7 so the
             // aligned pointer + area stays within the reserved block (the heap
             // bump isn't aligned, so the next alloc would otherwise overlap).
-            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + i32_to_string(canonsz + 7) + ")) (i32.const 7)) (i32.const -8)))\n";
+            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(canonsz + 7) + ")) (i32.const 7)) (i32.const -8)))\n";
             out = out + "    (call $" + f.name + "__import";
             var ra: i32 = 0;
             while (ra < f.params.len()) {
-                out = out + " (local.get $ep" + i32_to_string(ra) + ")";
+                out = out + " (local.get $ep" + util.i32_to_string(ra) + ")";
                 ra = ra + 1;
             }
             out = out + " (local.get $rb))\n";
             // Materialize the struct: type id at slot 0, then each field, read
             // from its canonical return-area offset and stored into the 4-byte slot.
-            out = out + "    (local.set $s (call $__fern_alloc (i32.const " + i32_to_string(4 + nf * 4) + ")))\n";
-            out = out + "    (i32.store (local.get $s) (i32.const " + i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
+            out = out + "    (local.set $s (call $__fern_alloc (i32.const " + util.i32_to_string(4 + nf * 4) + ")))\n";
+            out = out + "    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
             var rc: i32 = 0;
             while (rc < nf) {
                 var rcft: string = struct_field_type_at(mod.structs, f.ret_type, rc);
                 var coff: i32 = extern_canon_field_off(mod.structs, f.ret_type, rc);
-                out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + i32_to_string(struct_field_off(rc)) + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + i32_to_string(coff) + "))))\n";
+                out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(struct_field_off(rc)) + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))))\n";
                 rc = rc + 1;
             }
             out = out + "    (local.get $s))\n";
@@ -2162,7 +2163,7 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "  (func $" + f.name;
             var sp2: i32 = 0;
             while (sp2 < f.params.len()) {
-                out = out + " (param $ep" + i32_to_string(sp2) + " " + wat_extern_valtype(f.params[sp2].type_name) + ")";
+                out = out + " (param $ep" + util.i32_to_string(sp2) + " " + wat_extern_valtype(f.params[sp2].type_name) + ")";
                 sp2 = sp2 + 1;
             }
             out = out + " (result i32)\n";
@@ -2172,7 +2173,7 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "    (call $" + f.name + "__import";
             var sa: i32 = 0;
             while (sa < f.params.len()) {
-                out = out + " (local.get $ep" + i32_to_string(sa) + ")";
+                out = out + " (local.get $ep" + util.i32_to_string(sa) + ")";
                 sa = sa + 1;
             }
             out = out + " (local.get $rb))\n";
@@ -2193,7 +2194,7 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "  (func $" + f.name;
             var enp: i32 = 0;
             while (enp < f.params.len()) {
-                out = out + " (param $ep" + i32_to_string(enp) + " " + wat_extern_valtype(f.params[enp].type_name) + ")";
+                out = out + " (param $ep" + util.i32_to_string(enp) + " " + wat_extern_valtype(f.params[enp].type_name) + ")";
                 enp = enp + 1;
             }
             out = out + " (result i32)\n";
@@ -2201,7 +2202,7 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "    (local.set $d (call $" + f.name + "__import";
             var ena: i32 = 0;
             while (ena < f.params.len()) {
-                out = out + " (local.get $ep" + i32_to_string(ena) + ")";
+                out = out + " (local.get $ep" + util.i32_to_string(ena) + ")";
                 ena = ena + 1;
             }
             out = out + "))\n";
@@ -2213,7 +2214,7 @@ function extern_wrappers(mod: parser.Module): string {
             var args: string = "";
             var p: i32 = 0;
             while (p < f.params.len()) {
-                var pn: string = "$ep" + i32_to_string(p);
+                var pn: string = "$ep" + util.i32_to_string(p);
                 out = out + " (param " + pn + " " + wat_extern_valtype(f.params[p].type_name) + ")";
                 args = args + " (local.get " + pn + ")";
                 p = p + 1;
@@ -2245,7 +2246,7 @@ function extern_wrappers(mod: parser.Module): string {
                 // element size, so copy each element straight into its slot at
                 // +8 (no byte-expansion as for u8[]).
                 var rk: string = f.ret_type[0:f.ret_type.len() - 2];
-                var rss: string = i32_to_string(elem_slot_size(rk));
+                var rss: string = util.i32_to_string(elem_slot_size(rk));
                 out = out + "    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const " + rss + "))))\n";
                 out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
                 out = out + "    (local.set $i (i32.const 0))\n";
@@ -2294,7 +2295,7 @@ function emit_dyn_dispatch(obj: parser.Expr, field: string, args: parser.Expr[],
         i = i + 1;
     }
     if (impls.len() == 0) { return ""; }
-    var sc: string = "$__lit" + i32_to_string(depth);
+    var sc: string = "$__lit" + util.i32_to_string(depth);
     var argtext: string = "";
     var a: i32 = 0;
     while (a < args.len()) {
@@ -2306,7 +2307,7 @@ function emit_dyn_dispatch(obj: parser.Expr, field: string, args: parser.Expr[],
     var k: i32 = impls.len() - 1;
     while (k >= 0) {
         var sid: i32 = struct_id(cx.structs, impls[k]);
-        chain = "(if (result " + wt + ") (i32.eq (i32.load (local.get " + sc + ")) (i32.const " + i32_to_string(sid)
+        chain = "(if (result " + wt + ") (i32.eq (i32.load (local.get " + sc + ")) (i32.const " + util.i32_to_string(sid)
             + ")) (then (call $" + impls[k] + "__" + field + " (local.get " + sc + ")" + argtext + ")) (else " + chain + "))";
         k = k - 1;
     }
@@ -2954,25 +2955,7 @@ function (s: WState) w(text: string): WState {
 // numbers). Mirrors asm.fern's helper — the self-host doesn't expose an
 // `(i32).to_string()` method to emitter code, so each emitter carries
 // its own.
-function i32_to_string(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    if (n < 0) { neg = true; n = 0 - n; }
-    var out: string = "";
-    while (n > 0) {
-        var d: i32 = n % 10;
-        var c: string = "";
-        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
-        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
-        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
-        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
-        else if (d == 8) { c = "8"; } else { c = "9"; }
-        out = c + out;
-        n = n / 10;
-    }
-    if (neg) { out = "-" + out; }
-    return out;
-}
+// i32_to_string now lives in util.fern (imported as `util`). See SH-020.
 
 // is_all_digits / digits_to_i32 recognise + parse a tuple-index field name
 // (`.0`, `.1`, …) — the parser stores it as a numeric string.
@@ -3040,10 +3023,10 @@ function le32_escape(n: i32): string {
 // enum_box builds an Option/Result tag box `[tag:i32 @0][payload @4]` as a
 // single (block (result i32)) expression, reusing the $__lit<depth> temp.
 function enum_box(tag: i32, payload: string, depth: i32): string {
-    var ap: string = "$__lit" + i32_to_string(depth);
+    var ap: string = "$__lit" + util.i32_to_string(depth);
     var s: string = "(block (result i32)";
     s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const 8)))";
-    s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(tag) + "))";
+    s = s + " (i32.store (local.get " + ap + ") (i32.const " + util.i32_to_string(tag) + "))";
     s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const 4)) " + payload + ")";
     s = s + " (local.get " + ap + "))";
     return s;
@@ -3093,21 +3076,21 @@ function wasm_binop(op: string): string {
 // A depth-indexed temp ($__lit<depth>) holds the fresh pointer; nested
 // literals emit at depth+1 to avoid clobbering it.
 function emit_array_literal_kind(a: parser.ExprArray, kind: string, cx: Ctx, depth: i32): string {
-    var ap: string = "$__lit" + i32_to_string(depth);
+    var ap: string = "$__lit" + util.i32_to_string(depth);
     var n: i32 = a.elements.len();
     var slot: i32 = elem_slot_size(kind);
     var sop: string = elem_store_op(kind);
     var s: string = "(block (result i32)";
-    s = s + " (local.set " + ap + " (call $__fern_arr_box (i32.const " + i32_to_string(n * slot) + ")))";
-    s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(n) + "))";
-    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const 4)) (i32.const " + i32_to_string(n) + "))";
+    s = s + " (local.set " + ap + " (call $__fern_arr_box (i32.const " + util.i32_to_string(n * slot) + ")))";
+    s = s + " (i32.store (local.get " + ap + ") (i32.const " + util.i32_to_string(n) + "))";
+    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const 4)) (i32.const " + util.i32_to_string(n) + "))";
     var i: i32 = 0;
     while (i < n) {
         var ev: string = "";
         if (kind == "i64") { ev = emit_i64(a.elements[i], cx, depth + 1); }
         else if (kind == "f64") { ev = emit_f64(a.elements[i], cx, depth + 1); }
         else { ev = emit_expr(a.elements[i], cx, depth + 1); }
-        s = s + " (" + sop + " (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(8 + i * slot) + ")) " + ev + ")";
+        s = s + " (" + sop + " (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(8 + i * slot) + ")) " + ev + ")";
         i = i + 1;
     }
     s = s + " (local.get " + ap + "))";
@@ -3135,7 +3118,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             return "(i32.const 0)";
         },
         parser.ExprString(se) => {
-            return "(i32.const " + i32_to_string(cx.tab.offset_of(se.value)) + ")";
+            return "(i32.const " + util.i32_to_string(cx.tab.offset_of(se.value)) + ")";
         },
         parser.ExprIdent(id) => {
             // None is the no-payload Option variant (tag 1).
@@ -3144,7 +3127,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // env box at offset 4 + captureIndex*4.
             var capi: i32 = index_of_str(cx.cap_names, id.name);
             if (capi >= 0) {
-                return "(i32.load (i32.add (local.get $__env) (i32.const " + i32_to_string(4 + capi * 4) + ")))";
+                return "(i32.load (i32.add (local.get $__env) (i32.const " + util.i32_to_string(4 + capi * 4) + ")))";
             }
             // A bare reference to a zero-arg free function — a `const`
             // desugar — lowers to a call (unless shadowed by a local).
@@ -3155,8 +3138,8 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // variant (`Nil`, `Empty`): construct its [struct_id@0] tag box,
             // so `match` reads the right tag at offset 0.
             if (is_struct_type(cx.structs, id.name) && struct_field_count(cx.structs, id.name) == 0) {
-                var uap: string = "$__lit" + i32_to_string(depth);
-                return "(block (result i32) (local.set " + uap + " (call $__fern_alloc (i32.const 4))) (i32.store (local.get " + uap + ") (i32.const " + i32_to_string(struct_id(cx.structs, id.name)) + ")) (local.get " + uap + "))";
+                var uap: string = "$__lit" + util.i32_to_string(depth);
+                return "(block (result i32) (local.set " + uap + " (call $__fern_alloc (i32.const 4))) (i32.store (local.get " + uap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, id.name)) + ")) (local.get " + uap + "))";
             }
             return "(local.get $" + id.name + ")";
         },
@@ -3171,7 +3154,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 // `x?` — unwrap a Some/Ok payload, or early-return the
                 // None/Err box from the enclosing function. The box is
                 // parked in $__lit<depth>; tag != 0 means None/Err.
-                var ap: string = "$__lit" + i32_to_string(depth);
+                var ap: string = "$__lit" + util.i32_to_string(depth);
                 var s: string = "(block (result i32)";
                 s = s + " (local.set " + ap + " " + emit_expr(u.operand, cx, depth + 1) + ")";
                 s = s + " (if (i32.ne (i32.load (local.get " + ap + ")) (i32.const 0)) (then (return (local.get " + ap + "))))";
@@ -3253,9 +3236,9 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // local.tee it into this expression's depth-owned
                     // scratch ($__lit<depth>) — args evaluate at depth+1
                     // and can't clobber it.
-                    var sc: string = "$__lit" + i32_to_string(depth);
+                    var sc: string = "$__lit" + util.i32_to_string(depth);
                     var boxe: string = emit_expr(c.callee, cx, depth + 1);
-                    var ci: string = "(call_indirect (type $clos" + i32_to_string(c.args.len()) + ") (local.tee " + sc + " " + boxe + ")";
+                    var ci: string = "(call_indirect (type $clos" + util.i32_to_string(c.args.len()) + ") (local.tee " + sc + " " + boxe + ")";
                     var k: i32 = 0;
                     while (k < c.args.len()) {
                         ci = ci + " " + emit_expr(c.args[k], cx, depth + 1);
@@ -3321,7 +3304,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // — push the box as the $__env arg, then the args, then
                     // the table index (box[0]).
                     if (contains_str(cx.fn_names, id.name)) {
-                        var ci: string = "(call_indirect (type $clos" + i32_to_string(c.args.len()) + ") (local.get $" + id.name + ")";
+                        var ci: string = "(call_indirect (type $clos" + util.i32_to_string(c.args.len()) + ") (local.get $" + id.name + ")";
                         var k: i32 = 0;
                         while (k < c.args.len()) {
                             ci = ci + " " + emit_expr(c.args[k], cx, depth);
@@ -3338,14 +3321,14 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // offset 0 and the payload at offset 4. (Plain user enums:
                     // only Option/Result were special-cased before.)
                     if (is_struct_type(cx.structs, id.name)) {
-                        var vap: string = "$__lit" + i32_to_string(depth);
+                        var vap: string = "$__lit" + util.i32_to_string(depth);
                         var vnf: i32 = struct_field_count(cx.structs, id.name);
                         var vs: string = "(block (result i32)";
-                        vs = vs + " (local.set " + vap + " (call $__fern_alloc (i32.const " + i32_to_string(4 + vnf * 4) + ")))";
-                        vs = vs + " (i32.store (local.get " + vap + ") (i32.const " + i32_to_string(struct_id(cx.structs, id.name)) + "))";
+                        vs = vs + " (local.set " + vap + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + vnf * 4) + ")))";
+                        vs = vs + " (i32.store (local.get " + vap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, id.name)) + "))";
                         var vi: i32 = 0;
                         while (vi < c.args.len()) {
-                            vs = vs + " (i32.store (i32.add (local.get " + vap + ") (i32.const " + i32_to_string(struct_field_off(vi)) + ")) " + emit_expr(c.args[vi], cx, depth + 1) + ")";
+                            vs = vs + " (i32.store (i32.add (local.get " + vap + ") (i32.const " + util.i32_to_string(struct_field_off(vi)) + ")) " + emit_expr(c.args[vi], cx, depth + 1) + ")";
                             vi = vi + 1;
                         }
                         return vs + " (local.get " + vap + "))";
@@ -3546,15 +3529,15 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // cx.lamdefs.get() only after, so nested defs aren't clobbered.
             var lamtext: string = emit_lambda(lm, idx, cx, caps);
             cx.lamdefs.set(cx.lamdefs.get() + lamtext);
-            var ap: string = "$__lit" + i32_to_string(depth);
+            var ap: string = "$__lit" + util.i32_to_string(depth);
             var s: string = "(block (result i32)";
-            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(4 + caps.len() * 4) + ")))";
-            s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(idx) + "))";
+            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + caps.len() * 4) + ")))";
+            s = s + " (i32.store (local.get " + ap + ") (i32.const " + util.i32_to_string(idx) + "))";
             // Capture values: evaluated in the enclosing scope, stored at
             // box + 4 + i*4 (matching the lambda body's $__env loads).
             var ic: i32 = 0;
             while (ic < caps.len()) {
-                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(4 + ic * 4) + ")) " + emit_expr(parser.ExprIdent { name: caps[ic], line: 0, col: 0 }, cx, depth + 1) + ")";
+                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(4 + ic * 4) + ")) " + emit_expr(parser.ExprIdent { name: caps[ic], line: 0, col: 0 }, cx, depth + 1) + ")";
                 ic = ic + 1;
             }
             s = s + " (local.get " + ap + "))";
@@ -3564,15 +3547,15 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // Tuple block: N consecutive i32 slots, element i at offset
             // i*4 (no header — `t.N` knows the offset statically). Built in
             // a (block (result i32) …) with a depth-indexed temp.
-            var ap: string = "$__lit" + i32_to_string(depth);
+            var ap: string = "$__lit" + util.i32_to_string(depth);
             var n: i32 = t.elements.len();
             var bytes: i32 = n * 4;
             if (bytes == 0) { bytes = 4; }
             var s: string = "(block (result i32)";
-            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(bytes) + ")))";
+            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + util.i32_to_string(bytes) + ")))";
             var i: i32 = 0;
             while (i < n) {
-                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(i * 4) + ")) " + emit_expr(t.elements[i], cx, depth + 1) + ")";
+                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(i * 4) + ")) " + emit_expr(t.elements[i], cx, depth + 1) + ")";
                 i = i + 1;
             }
             s = s + " (local.get " + ap + "))";
@@ -3609,16 +3592,16 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // depth-indexed temp, like array literals. With a base
             // (`S { ...base, f: v }`), copy every field from base first,
             // then store the listed overrides.
-            var ap: string = "$__lit" + i32_to_string(depth);
+            var ap: string = "$__lit" + util.i32_to_string(depth);
             var nf: i32 = struct_field_count(cx.structs, sl.type_name);
             var s: string = "(block (result i32)";
-            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(4 + nf * 4) + ")))";
-            s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(struct_id(cx.structs, sl.type_name)) + "))";
+            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + nf * 4) + ")))";
+            s = s + " (i32.store (local.get " + ap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, sl.type_name)) + "))";
             if (sl.has_base) {
                 var bp: string = emit_expr(sl.base, cx, depth + 1);
                 var fi: i32 = 0;
                 while (fi < nf) {
-                    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(struct_field_off(fi)) + ")) (i32.load (i32.add " + bp + " (i32.const " + i32_to_string(struct_field_off(fi)) + "))))";
+                    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")) (i32.load (i32.add " + bp + " (i32.const " + util.i32_to_string(struct_field_off(fi)) + "))))";
                     fi = fi + 1;
                 }
             }
@@ -3626,7 +3609,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             while (i < sl.field_names.len()) {
                 var idx: i32 = struct_field_index(cx.structs, sl.type_name, sl.field_names[i]);
                 if (idx >= 0) {
-                    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(struct_field_off(idx)) + ")) " + emit_expr(sl.field_values[i], cx, depth + 1) + ")";
+                    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(struct_field_off(idx)) + ")) " + emit_expr(sl.field_values[i], cx, depth + 1) + ")";
                 }
                 i = i + 1;
             }
@@ -3636,7 +3619,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
         parser.ExprFieldAccess(fa) => {
             // Tuple index `t.N` (numeric field) → load at base + N*4.
             if (is_all_digits(fa.field)) {
-                return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + i32_to_string(digits_to_i32(fa.field) * 4) + ")))";
+                return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + util.i32_to_string(digits_to_i32(fa.field) * 4) + ")))";
             }
             var ot: string = struct_type_of(fa.obj, cx);
             // Enum constant `Color.Green`: the receiver isn't a struct
@@ -3644,14 +3627,14 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // emit a variant box `[type_id]`, like `Green {}`, so the
             // existing struct-union `match` dispatch works.
             if (ot.len() == 0 && is_struct_type(cx.structs, fa.field)) {
-                var vp: string = "$__lit" + i32_to_string(depth);
-                return "(block (result i32) (local.set " + vp + " (call $__fern_alloc (i32.const " + i32_to_string(4 + struct_field_count(cx.structs, fa.field) * 4) + "))) (i32.store (local.get " + vp + ") (i32.const " + i32_to_string(struct_id(cx.structs, fa.field)) + ")) (local.get " + vp + "))";
+                var vp: string = "$__lit" + util.i32_to_string(depth);
+                return "(block (result i32) (local.set " + vp + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + struct_field_count(cx.structs, fa.field) * 4) + "))) (i32.store (local.get " + vp + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, fa.field)) + ")) (local.get " + vp + "))";
             }
             // Bare field read s.f → load at base + 4 + index*4 (slot 0 is
             // the type id).
             var idx: i32 = struct_field_index(cx.structs, ot, fa.field);
             if (idx < 0) { return "(i32.const 0)"; }
-            return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + i32_to_string(struct_field_off(idx)) + ")))";
+            return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + util.i32_to_string(struct_field_off(idx)) + ")))";
         },
         _ => {
             return "(i32.const 0)";
@@ -3968,8 +3951,8 @@ function clock_funcs_p2(has_wall: boolean, has_mono: boolean): string {
 // into a 24-byte scratch buffer at `buf` (i64's widest decimal is 20
 // chars incl. sign). No trailing newline.
 function print_int64_helper(buf: i32): string {
-    var b: string = i32_to_string(buf);
-    var be: string = i32_to_string(buf + 24);
+    var b: string = util.i32_to_string(buf);
+    var be: string = util.i32_to_string(buf + 24);
     var o: string = "";
     o = o + "  (func $__fern_print_int64 (param $n i64)\n";
     o = o + "    (local $i i32)\n";
@@ -4007,8 +3990,8 @@ function print_int64_helper(buf: i32): string {
 // unsigned value is exactly 2147483648). No trailing newline — matching
 // the native print_int.
 function print_int_helper(buf: i32): string {
-    var b: string = i32_to_string(buf);
-    var be: string = i32_to_string(buf + 16);
+    var b: string = util.i32_to_string(buf);
+    var be: string = util.i32_to_string(buf + 16);
     var o: string = "";
     o = o + "  (func $__fern_print_int (param $n i32)\n";
     o = o + "    (local $i i32)\n";
@@ -4125,7 +4108,7 @@ function exit_func(component_io: boolean): string {
 // it. Shared by string concat and array allocation.
 function heap_alloc_helpers(heap_base: i32): string {
     var o: string = "";
-    o = o + "  (global $heap (mut i32) (i32.const " + i32_to_string(heap_base) + "))\n";
+    o = o + "  (global $heap (mut i32) (i32.const " + util.i32_to_string(heap_base) + "))\n";
     o = o + "  (func $__fern_alloc (param $n i32) (result i32)\n";
     o = o + "    (local $p i32)\n";
     o = o + "    (local.set $p (global.get $heap))\n";
@@ -4173,7 +4156,7 @@ function heap_alloc_helpers(heap_base: i32): string {
 // layout migration + inc/dec call sites ride on it in later slices,
 // exactly as on the asm backends.
 function rc_runtime_helpers(heap_base: i32): string {
-    var lo: string = i32_to_string(heap_base);
+    var lo: string = util.i32_to_string(heap_base);
     var o: string = "";
     o = o + "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
     // __alloc(n) -> ptr: forward to the bump allocator.
@@ -5524,8 +5507,8 @@ function collect_strings_stmts(body: parser.Stmt[], t: StrTable): StrTable {
 // address `off` (used for the "\n" byte). The errno result is dropped.
 function write_fixed(off: i32, len: i32): string {
     var o: string = "";
-    o = o + "    (i32.store (i32.const 0) (i32.const " + i32_to_string(off) + "))\n";
-    o = o + "    (i32.store (i32.const 4) (i32.const " + i32_to_string(len) + "))\n";
+    o = o + "    (i32.store (i32.const 0) (i32.const " + util.i32_to_string(off) + "))\n";
+    o = o + "    (i32.store (i32.const 4) (i32.const " + util.i32_to_string(len) + "))\n";
     o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
     return o;
 }
@@ -5692,13 +5675,13 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                                 if (sk == "i64") { sv = emit_i64(c.args[2], st.cx, 0); }
                                 else if (sk == "f64") { sv = emit_f64(c.args[2], st.cx, 0); }
                                 else { sv = emit_expr(c.args[2], st.cx, 0); }
-                                return st.w("    (" + elem_store_op(sk) + " (i32.add (i32.add " + emit_expr(c.args[0], st.cx, 0) + " (i32.const 8)) (i32.mul " + emit_expr(c.args[1], st.cx, 0) + " (i32.const " + i32_to_string(elem_slot_size(sk)) + "))) " + sv + ")\n");
+                                return st.w("    (" + elem_store_op(sk) + " (i32.add (i32.add " + emit_expr(c.args[0], st.cx, 0) + " (i32.const 8)) (i32.mul " + emit_expr(c.args[1], st.cx, 0) + " (i32.const " + util.i32_to_string(elem_slot_size(sk)) + "))) " + sv + ")\n");
                             }
                             if (id.name == "__set_field" && c.args.len() == 3) {
                                 // obj.field = v  (parser desugar). The
                                 // field name is a string literal arg; store
                                 // v at obj + index*4.
-                                return st.w("    (i32.store (i32.add " + emit_expr(c.args[0], st.cx, 0) + " (i32.const " + i32_to_string(set_field_offset(c.args[0], c.args[1], st.cx)) + ")) " + emit_expr(c.args[2], st.cx, 0) + ")\n");
+                                return st.w("    (i32.store (i32.add " + emit_expr(c.args[0], st.cx, 0) + " (i32.const " + util.i32_to_string(set_field_offset(c.args[0], c.args[1], st.cx)) + ")) " + emit_expr(c.args[2], st.cx, 0) + ")\n");
                             }
                         },
                         _ => {},
@@ -5727,8 +5710,8 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
         },
         parser.StmtWhile(w) => {
             var id: i32 = st.n;
-            var brk: string = "$brk_" + i32_to_string(id);
-            var cont: string = "$cont_" + i32_to_string(id);
+            var brk: string = "$brk_" + util.i32_to_string(id);
+            var cont: string = "$cont_" + util.i32_to_string(id);
             // Save the enclosing loop's labels; restore after the body.
             var outer_brk: string = st.brk;
             var outer_cont: string = st.cont;
@@ -5763,12 +5746,12 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             // each live slot (used == 1) binds k = keys[i], v = vals[i].
             if (comma_index(f.var_name) >= 0) {
                 var d2: i32 = st.fd;
-                var fi2: string = "$__fi" + i32_to_string(d2);
-                var fa2: string = "$__fa" + i32_to_string(d2);
+                var fi2: string = "$__fi" + util.i32_to_string(d2);
+                var fa2: string = "$__fa" + util.i32_to_string(d2);
                 var id2: i32 = st.n;
-                var brk2: string = "$fbrk_" + i32_to_string(id2);
-                var loop2: string = "$floop_" + i32_to_string(id2);
-                var bodycont2: string = "$fcont_" + i32_to_string(id2);
+                var brk2: string = "$fbrk_" + util.i32_to_string(id2);
+                var loop2: string = "$floop_" + util.i32_to_string(id2);
+                var bodycont2: string = "$fcont_" + util.i32_to_string(id2);
                 var kn: string = before_comma(f.var_name);
                 var vn: string = after_comma(f.var_name);
                 var ob: string = st.brk;
@@ -5804,22 +5787,22 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             // bound to arr[idx] each turn. Depth d (0..3) keeps nested
             // loops from clobbering each other's temps.
             var d: i32 = st.fd;
-            var fi: string = "$__fi" + i32_to_string(d);
-            var fa: string = "$__fa" + i32_to_string(d);
+            var fi: string = "$__fi" + util.i32_to_string(d);
+            var fa: string = "$__fa" + util.i32_to_string(d);
             var id: i32 = st.n;
-            var brk: string = "$fbrk_" + i32_to_string(id);
-            var loop: string = "$floop_" + i32_to_string(id);
+            var brk: string = "$fbrk_" + util.i32_to_string(id);
+            var loop: string = "$floop_" + util.i32_to_string(id);
             // `continue` must still run the index increment, so it
             // branches to the END of a body block (bodycont), after which
             // the increment + loop-back run. `break` branches to brk.
-            var bodycont: string = "$fcont_" + i32_to_string(id);
+            var bodycont: string = "$fcont_" + util.i32_to_string(id);
             var outer_brk: string = st.brk;
             var outer_cont: string = st.cont;
             // Element kind picks the load op + slot stride (i64[]/f64[]
             // are 8-byte; the loop var is typed wide to match — see
             // collect_wide_loop_vars).
             var ekind: string = array_elem_kind(f.iter, st.cx);
-            var eslot: string = i32_to_string(elem_slot_size(ekind));
+            var eslot: string = util.i32_to_string(elem_slot_size(ekind));
             var head: string =
                 "    (local.set " + fa + " " + emit_expr(f.iter, st.cx, 0) + ")\n"
                 + "    (local.set " + fi + " (i32.const 0))\n"
@@ -5850,9 +5833,9 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             // the payload (load @4) and run the body, branching to $mend
             // on a match. A wildcard arm runs unconditionally.
             var md: i32 = st.md;
-            var mv: string = "$__m" + i32_to_string(md);
+            var mv: string = "$__m" + util.i32_to_string(md);
             var id: i32 = st.n;
-            var mend: string = "$mend_" + i32_to_string(id);
+            var mend: string = "$mend_" + util.i32_to_string(id);
             // Bump label counter + match depth so nested matches / loops
             // inside arm bodies use distinct labels + scrutinee temps.
             st = WState { ...st, n: id + 1, md: md + 1 };
@@ -5870,7 +5853,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                         //     id@0, bind the value itself.
                         var tag: i32 = variant_tag(pv.type_name);
                         var sid: i32 = struct_id(st.cx.structs, pv.type_name);
-                        var nlabel: string = "$marm_" + i32_to_string(id) + "_" + i32_to_string(i);
+                        var nlabel: string = "$marm_" + util.i32_to_string(id) + "_" + util.i32_to_string(i);
                         st = st.w("    (block " + nlabel + "\n");
                         // `match (b) { true => …, false => … }`: the
                         // scrutinee is the bool value itself (not a tag box),
@@ -5881,12 +5864,12 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                         } else if (pv.type_name == "false") {
                             st = st.w("    (br_if " + nlabel + " (local.get " + mv + "))\n");
                         } else if (tag >= 0) {
-                            st = st.w("    (br_if " + nlabel + " (i32.ne (i32.load (local.get " + mv + ")) (i32.const " + i32_to_string(tag) + ")))\n");
+                            st = st.w("    (br_if " + nlabel + " (i32.ne (i32.load (local.get " + mv + ")) (i32.const " + util.i32_to_string(tag) + ")))\n");
                             if (pv.binding.len() > 0 && pv.binding != "_") {
                                 st = st.w("    (local.set $" + pv.binding + " (i32.load (i32.add (local.get " + mv + ") (i32.const 4))))\n");
                             }
                         } else if (sid >= 0) {
-                            st = st.w("    (br_if " + nlabel + " (i32.ne (i32.load (local.get " + mv + ")) (i32.const " + i32_to_string(sid) + ")))\n");
+                            st = st.w("    (br_if " + nlabel + " (i32.ne (i32.load (local.get " + mv + ")) (i32.const " + util.i32_to_string(sid) + ")))\n");
                             if (pv.binding.len() > 0 && pv.binding != "_") {
                                 // An enum variant carries its payload in the
                                 // synthetic `__ev` field at offset 4, so bind
@@ -5914,7 +5897,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                         // A guarded wildcard needs its own block to skip to when
                         // the guard is false (an unguarded wildcard always runs).
                         if (m.arms[i].has_guard) {
-                            var wlabel: string = "$marm_" + i32_to_string(id) + "_" + i32_to_string(i);
+                            var wlabel: string = "$marm_" + util.i32_to_string(id) + "_" + util.i32_to_string(i);
                             st = st.w("    (block " + wlabel + "\n");
                             st = st.w("    (br_if " + wlabel + " (i32.eqz " + emit_expr(m.arms[i].guard, st.cx, 0) + "))\n");
                             st = emit_stmts(m.arms[i].body, st);
@@ -6518,7 +6501,7 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
     if (rt.len() == 0) { rt = "i32"; }
     var synth_tp: string[] = [];
     var synth: parser.FuncDecl = parser.FuncDecl {
-        name: "__lambda" + i32_to_string(idx),
+        name: "__lambda" + util.i32_to_string(idx),
         receiver_name: "", receiver_type: "",
         type_params: synth_tp,
         params: ps, ret_type: rt, body: lm.body, line: 0, col: 0,
@@ -7694,7 +7677,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // offset; the string value is a pointer to the block.
     var di: i32 = 0;
     while (di < tab.values.len()) {
-        out = out + "  (data (i32.const " + i32_to_string(tab.offsets[di]) + ") \""
+        out = out + "  (data (i32.const " + util.i32_to_string(tab.offsets[di]) + ") \""
             + le32_escape(tab.values[di].len()) + wat_escape(tab.values[di]) + "\")\n";
         di = di + 1;
     }
@@ -7844,18 +7827,18 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     if (lam_ctr.get() > 0) {
         var ai: i32 = 0;
         while (ai <= 8) {
-            out = out + "  (type $clos" + i32_to_string(ai) + " (func (param i32";
+            out = out + "  (type $clos" + util.i32_to_string(ai) + " (func (param i32";
             var pj: i32 = 0;
             while (pj < ai) { out = out + " i32"; pj = pj + 1; }
             out = out + ") (result i32)))\n";
             ai = ai + 1;
         }
         out = out + lamdefs.get();
-        out = out + "  (table " + i32_to_string(lam_ctr.get()) + " funcref)\n";
+        out = out + "  (table " + util.i32_to_string(lam_ctr.get()) + " funcref)\n";
         out = out + "  (elem (i32.const 0)";
         var ei: i32 = 0;
         while (ei < lam_ctr.get()) {
-            out = out + " $__lambda" + i32_to_string(ei);
+            out = out + " $__lambda" + util.i32_to_string(ei);
             ei = ei + 1;
         }
         out = out + ")\n";

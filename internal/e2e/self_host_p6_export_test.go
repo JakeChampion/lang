@@ -22,7 +22,7 @@ func TestSelfHostExportAttributeCompiles(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -90,7 +90,7 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 	}
 
 	// --- self-host emits the exporter core (a command with main + @export). ---
-	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -270,7 +270,7 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 	}
 
 	// self-host emits the exporter core (command with main + string @export).
-	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -440,7 +440,7 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
