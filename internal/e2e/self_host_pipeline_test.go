@@ -38,7 +38,7 @@ import (
 func writeSelfHostPipelineProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	files := []string{"lexer.fern", "parser.fern", "constfold.fern", "checker.fern", "vm.fern", "pipeline.fern"}
+	files := []string{"lexer.fern", "parser.fern", "util.fern", "constfold.fern", "checker.fern", "vm.fern", "pipeline.fern"}
 	for _, name := range files {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
