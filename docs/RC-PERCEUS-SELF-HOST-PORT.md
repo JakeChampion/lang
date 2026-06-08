@@ -1110,3 +1110,21 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (strings stored into containers) + reassign/rebind dec + return-retain,
   then flip the string sweep from `__fern_rc_dec` to `__fern_arr_dec` to
   reclaim heap strings.
+- 2026-06-08: **wasm string RC — construction-store incs.** Storing an
+  existing heap string reference into a container now retains it, so the
+  container co-owns it alongside the source local — the soundness
+  prerequisite for flipping string free on (else a swept string would be
+  freed while a container still holds it). Wired at the same sites as the
+  array construction-incs, OR-ing in `init_is_string_alias(value, cx)`
+  beside the array check: struct-literal field stores, tuple elements,
+  string[] elements (the i32-slot element path), Some/Ok/Err payloads
+  (enum_box_retain), positional enum-variant payloads, and struct-update
+  base-copy (a copied `string` field). A bare-ident string source is
+  retained; a fresh concat / literal is moved (the container takes its
+  rc). Coverage: `TestSelfHostRcStrBoxWasm` gains
+  string-struct-field-retained, string-tuple-retained,
+  string-array-elem-retained, string-option-retained (source no longer
+  unique, values intact, detector 0). Full wasm suite green; bootstrap-
+  safe. Construction sites now retain BOTH arrays and strings. Next:
+  string reassign/rebind dec + return-retain, then flip the string sweep
+  to `__fern_arr_dec` (string free).

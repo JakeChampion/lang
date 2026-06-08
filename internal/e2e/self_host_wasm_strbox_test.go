@@ -59,6 +59,13 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// A concat-in-a-loop (reassign): intermediates leak (sound, free off)
 		// but the detector stays clean and the value is correct.
 		{"concat-loop-clean", "function main(): i32 { var s: string = \"\"; var i = 0; while (i < 5) { s = s + \"x\"; i = i + 1; } return s.len() + __fern_rc_underflow_count(); }", 5},
+		// Construction-store incs: storing an owned heap string into a struct
+		// field / tuple / string[] / Option retains it (source no longer
+		// unique), values intact, detector clean.
+		{"string-struct-field-retained", "struct H { name: string } function main(): i32 { var s: string = \"ab\" + \"cd\"; var h = H { name: s }; var u = __fern_rc_is_unique(s); return u + h.name.len() + __fern_rc_underflow_count(); }", 4},
+		{"string-tuple-retained", "function main(): i32 { var s: string = \"x\" + \"yz\"; var t = (s, 99); var u = __fern_rc_is_unique(s); return u + t.0.len() + __fern_rc_underflow_count(); }", 3},
+		{"string-array-elem-retained", "function main(): i32 { var a: string = \"p\" + \"q\"; var b: string = \"r\" + \"s\"; var arr: string[] = [a, b]; var ua = __fern_rc_is_unique(a); return ua + arr[0].len() + __fern_rc_underflow_count(); }", 2},
+		{"string-option-retained", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var o = Some(s); var u = __fern_rc_is_unique(s); return u + s.len() + __fern_rc_underflow_count(); }", 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
