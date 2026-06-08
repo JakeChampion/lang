@@ -31,7 +31,7 @@ func interpBundle(t *testing.T) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	for _, m := range []struct{ name, file string }{
-		{"lexer", "lexer.fern"}, {"parser", "parser.fern"}, {"interp", "interp.fern"},
+		{"util", "util.fern"}, {"lexer", "lexer.fern"}, {"parser", "parser.fern"}, {"interp", "interp.fern"},
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m.file))
 		if err != nil {
