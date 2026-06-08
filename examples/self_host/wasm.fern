@@ -1481,32 +1481,10 @@ function extern_field_is_scalar(ft: string): boolean {
     return ft == "i32" || ft == "u32" || ft == "i8" || ft == "u8" || ft == "i16" || ft == "u16" || ft == "boolean";
 }
 
-// extern_record_all_scalar reports whether `t` is a known struct of 1..16
-// all-scalar fields — a flattenable nested record, one level deep (its own
-// fields must not themselves be nested records).
-function extern_record_all_scalar(mod: parser.Module, t: string): boolean {
-    var i: i32 = 0;
-    while (i < mod.structs.len()) {
-        if (mod.structs[i].name == t) {
-            var n: i32 = mod.structs[i].fields.len();
-            if (n == 0 || n > 16) { return false; }
-            var j: i32 = 0;
-            while (j < n) {
-                if (!extern_field_is_scalar(mod.structs[i].fields[j].type_name)) { return false; }
-                j = j + 1;
-            }
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
 // extern_record_leaf_count is the total number of flattened scalar leaves of a
-// record, recursing into nested record fields to arbitrary depth. (Record params
-// only flatten one level — they reject deeper nesting at the
-// extern_record_all_scalar check before reaching here — but record *results*
-// nest arbitrarily, so the count recurses fully.)
+// record, recursing into nested record fields to arbitrary depth. Both record
+// params and results flatten nested records inline to arbitrary depth, so the
+// count recurses fully.
 function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
     var i: i32 = 0;
     while (i < mod.structs.len()) {
@@ -1528,9 +1506,8 @@ function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
 }
 
 // extern_record_nestable reports whether `t` is a record (struct) lowerable as a
-// nested result field to arbitrary depth: 1..16 fields, each a flattenable scalar
-// OR itself a nestable record. (The result-side counterpart of
-// extern_record_all_scalar, which is one-level only and gates params.)
+// nested record field to arbitrary depth: 1..16 fields, each a flattenable scalar
+// OR itself a nestable record. Gates both nested params and nested results.
 function extern_record_nestable(mod: parser.Module, t: string): boolean {
     var i: i32 = 0;
     while (i < mod.structs.len()) {
@@ -1577,8 +1554,8 @@ function extern_record_depth(mod: parser.Module, t: string): i32 {
 
 // extern_record_param_supported is true for a record (struct) `@import`
 // parameter the wrapper can flatten. Each field is a flattenable scalar, OR a
-// nested all-scalar record (flattened inline, one level — the canonical ABI
-// inlines a nested record). Scoped to 1..16 fields and 1..16 total leaves.
+// nested record (flattened inline by the canonical ABI, to **arbitrary depth**
+// via extern_record_nestable). Scoped to 1..16 fields and 1..16 total leaves.
 function extern_record_param_supported(mod: parser.Module, t: string): boolean {
     var i: i32 = 0;
     while (i < mod.structs.len()) {
@@ -1588,7 +1565,7 @@ function extern_record_param_supported(mod: parser.Module, t: string): boolean {
             var j: i32 = 0;
             while (j < n) {
                 var ft: string = mod.structs[i].fields[j].type_name;
-                if (!extern_field_is_scalar(ft) && !extern_record_all_scalar(mod, ft)) { return false; }
+                if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft)) { return false; }
                 j = j + 1;
             }
             var leaves: i32 = extern_record_leaf_count(mod, t);
@@ -1869,6 +1846,31 @@ function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string, ca
             out = out + "    (i32.store (i32.add (local.get " + dst + ") (i32.const " + util.i32_to_string(struct_field_off(rc)) + ")) (local.get " + inner_local + "))\n";
         }
         rc = rc + 1;
+    }
+    return out;
+}
+
+// extern_emit_record_param_leaves emits the flattened scalar leaves of a record
+// `@import` parameter, pushed (in declaration order) as the canonical core args
+// the raw import expects. `base_expr` is a WAT expression evaluating to the
+// struct value pointer (e.g. `(local.get $ep0)`). A scalar field is loaded
+// width+sign-aware at base+off; a nested record field deref-s the inner value
+// pointer at base+off and recurses with that as the new base — to arbitrary
+// depth. (The base sub-expression is re-evaluated per leaf, matching the one-level
+// shape this generalizes; the redundant inner-pointer loads are cheap.)
+function extern_emit_record_param_leaves(mod: parser.Module, base_expr: string, tn: string): string {
+    var out: string = "";
+    var n: i32 = struct_field_count(mod.structs, tn);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var ft: string = struct_field_type_at(mod.structs, tn, fi);
+        var field_expr: string = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(struct_field_off(fi)) + "))";
+        if (extern_field_is_scalar(ft)) {
+            out = out + " (" + extern_field_load_op(ft) + " " + field_expr + ")";
+        } else {
+            out = out + extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft);
+        }
+        fi = fi + 1;
     }
     return out;
 }
@@ -2346,27 +2348,10 @@ function extern_wrappers(mod: parser.Module): string {
                     out = out + " (local.get $ab" + util.i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))";
                 } else if (extern_record_param_supported(mod, f.params[fi].type_name)) {
                     // record: push each leaf flattened to its canonical i32 (a
-                    // width+sign-aware load for sub-word fields). A scalar field
-                    // loads at struct+off; a nested-record field loads the inner
-                    // value pointer at struct+off, then each inner leaf at +innerOff.
-                    var rtn: string = f.params[fi].type_name;
-                    var rfi: i32 = 0;
-                    while (rfi < struct_field_count(mod.structs, rtn)) {
-                        var rft: string = struct_field_type_at(mod.structs, rtn, rfi);
-                        if (extern_field_is_scalar(rft)) {
-                            out = out + " (" + extern_field_load_op(rft) + " (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(rfi)) + ")))";
-                        } else {
-                            // nested record: load the inner value pointer, then each leaf.
-                            var inner_ptr: string = "(i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(rfi)) + ")))";
-                            var ifi: i32 = 0;
-                            while (ifi < struct_field_count(mod.structs, rft)) {
-                                var ift: string = struct_field_type_at(mod.structs, rft, ifi);
-                                out = out + " (" + extern_field_load_op(ift) + " (i32.add " + inner_ptr + " (i32.const " + util.i32_to_string(struct_field_off(ifi)) + ")))";
-                                ifi = ifi + 1;
-                            }
-                        }
-                        rfi = rfi + 1;
-                    }
+                    // width+sign-aware load for sub-word fields), recursing into
+                    // nested record fields to arbitrary depth (deref the inner
+                    // value pointer, then its leaves).
+                    out = out + extern_emit_record_param_leaves(mod, "(local.get " + fppn + ")", f.params[fi].type_name);
                 } else if (extern_sum_param_supported(f.params[fi].type_name)) {
                     // option/result: push the discriminant (tag@0, remapped
                     // 1-tag for option) then the payload (@4).
