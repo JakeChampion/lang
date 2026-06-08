@@ -535,22 +535,33 @@ world-driven composer (P2) wires it.
      func(n: s32) -> color` returning `disc = n`; `rank(0/1/2)` → `Red/Green/Blue`
      — a full disc→sentinel→tag round-trip). General payload-carrying `variant`s
      are deferred.
-   - **General `variant` params (uniform payload) — ✅ done (Go).** A Fern user
-     enum with *payload-carrying* variants passed to an `@import` extern whose
-     WIT takes a `variant`. Scoped to a **uniform** payload: every payloaded
-     variant carries exactly one scalar of the same kind+width T (payloadless
-     variants allowed; ≥1 must be payloaded — else it's a plain enum). The
-     canonical `variant` flattens to (disc, payload-join), and with uniform T the
-     join is T — i.e. exactly `Result`'s (disc, payload) shape — so
-     `externVariantParamLayout` reuses the existing enum-param wrapper with no
-     discriminant remap (the user-enum variant index is the WIT case order). The
-     wrapper reads the tag at +0 and the payload at the box offset; for a
-     payloadless-case value (a sentinel) the payload read yields ignored garbage
-     (the host drops it for that disc), so it's harmless. Gated by
-     `TestExternVariantParamCustomProvider` (a `describe: func(s: shape) -> s32`
-     over `variant shape { circle(s32), square(s32), empty }`:
-     `Circle(7)`→7, `Square(7)`→70, `Empty`→999). Non-uniform / multi-payload
-     variants are deferred (the *result* direction landed — see below).
+   - **General `variant` params (uniform + non-uniform same-width payload) — ✅
+     done (Go).** A Fern user enum with *payload-carrying* variants passed to an
+     `@import` extern whose WIT takes a `variant`. Every payloaded variant carries
+     exactly one scalar (payloadless variants allowed; ≥1 must be payloaded — else
+     it's a plain enum). The canonical `variant` flattens to (disc, payload-join);
+     two payload shapes lower (`externVariantParamLayout`, shared with the result
+     side):
+       - **Uniform** — all payloads the same kind+width T: the join is T, so the
+         existing (disc, payload) enum-param wrapper is reused verbatim
+         (`PayloadType = T`; an f32 payload passes as an f32).
+       - **Non-uniform but same core WIDTH** — e.g. `{ i(s32), f(f32) }` (both
+         32-bit) or `{ l(s64), d(f64) }` (both 64-bit): the canonical join is the
+         integer bit-container of that width (i32 / i64). `PayloadType` is set to
+         that synthetic int, so the wrapper moves the payload's *bits*
+         (`i32.load`/`i64.load` of the box slot) and each side reinterprets per
+         the disc. No per-arm branch is needed — same-width payloads sit at the
+         same box offset (the per-variant `payloadLayout` is width-determined) and
+         a bit-load is value-preserving for both int and float arms.
+     `externCanonicalCoreWidth` classifies the width; **mixed-width** (a 32-bit
+     and a 64-bit arm) and **multi-payload** variants are still deferred. No
+     discriminant remap (the user-enum variant index is the WIT case order); a
+     payloadless-case sentinel's payload read is ignored garbage (the host drops
+     it for that disc). Gated by `TestExternVariantParamCustomProvider` (uniform —
+     `describe: func(s: shape) -> s32` over `variant shape { circle(s32),
+     square(s32), empty }`: `Circle(7)`→7, `Square(7)`→70, `Empty`→999) and
+     `TestExternVariantNonUniformParamCustomProvider` (`{ i(s32), f(f32) }`, the
+     f32 arm's bits round-tripping through the i32 join).
    - **General `variant` results (uniform payload) — ✅ done (Go).** An `@import`
      extern returning a WIT `variant` with a uniform scalar payload (every case
      payloaded, same type T), lifted into a Fern user enum. The canonical variant
@@ -569,7 +580,12 @@ world-driven composer (P2) wires it.
      over `variant grade { low(s32), mid(s32), high(s32) }`; recovers (tag,
      payload) for all three cases) and `TestExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
-     none }`, exercising a payloaded + a payloadless case).
+     none }`, exercising a payloaded + a payloadless case). **Non-uniform
+     same-width payloads** are also lifted (the same `externVariantParamLayout`
+     join — the i32/i64 bit-container): gated by
+     `TestExternVariantNonUniformResultCustomProvider` (a `classify: func(n: s32)
+     -> num` over `variant num { i(s32), f(f32) }`, the f32 arm's bits surviving
+     the i32 join slot bit-exactly).
    - **Self-host port — numeric array params — ✅ started.** The self-hosted
      compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
      beyond strings: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
@@ -784,8 +800,9 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): non-uniform / multi-payload `variant`s;
-     sub-4-byte-element `list<T>` *results*
+   - Still rejected (next slices): the self-host port of non-uniform same-width
+     `variant` payloads (the Go side landed); mixed-width and multi-payload
+     `variant`s; sub-4-byte-element `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
