@@ -114,6 +114,9 @@ struct Ctx {
     // map_names: locals/params holding an i32-keyed map, so `.set` / `.get`
     // / `.has` / `.get_or` on them dispatch to the map runtime.
     map_names: string[],
+    // cell_names: locals/params holding a Cell[T] (docs/CELL-TYPE-PLAN.md),
+    // so `.get()` / `.set(v)` on them dispatch to the single-slot box ops.
+    cell_names: string[],
     // map_str_names: the subset of map_names whose values are strings, so
     // `.get` / `.get_or` results are typed as string.
     map_str_names: string[],
@@ -255,6 +258,59 @@ function is_map_expr(e: parser.Expr, cx: Ctx): boolean {
         _ => { return false; },
     }
     return false;
+}
+
+// is_cell_new_call is true when `e` is a `cell_new(v)` call.
+function is_cell_new_call(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return id.name == "cell_new"; },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// is_cell_expr is true when `e` denotes a Cell — a cell_new(...) call or a
+// tracked cell-typed local/param (docs/CELL-TYPE-PLAN.md).
+function is_cell_expr(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return contains_str(cx.cell_names, id.name); },
+        _ => { return is_cell_new_call(e); },
+    }
+    return false;
+}
+
+// collect_cell_var_names gathers `var`/`let` names initialised with a
+// cell_new(...) call (recursing nested bodies).
+function collect_cell_var_names(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (is_cell_new_call(v.init) && !contains_str(acc, v.name)) { acc = acc.append(v.name); }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_cell_var_names(f.then_body, acc);
+                acc = collect_cell_var_names(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_cell_var_names(w.body, acc); },
+            parser.StmtFor(f) => { acc = collect_cell_var_names(f.body, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    acc = collect_cell_var_names(m.arms[k].body, acc);
+                    k = k + 1;
+                }
+            },
+            _ => { },
+        }
+        i = i + 1;
+    }
+    return acc;
 }
 
 // collect_map_var_names gathers `var`/`let` names whose initialiser is a
@@ -2735,6 +2791,10 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (id.name == "map_new" && c.args.len() == 1) {
                         return "(call $__fern_map_new_str " + emit_expr(c.args[0], cx, depth + 1) + ")";
                     }
+                    // cell_new(v) — a single-slot box (docs/CELL-TYPE-PLAN.md).
+                    if (id.name == "cell_new" && c.args.len() == 1) {
+                        return "(call $__fern_cell_new " + emit_expr(c.args[0], cx, depth + 1) + ")";
+                    }
                     // Closure call: the callee is a local/param holding a
                     // closure box. Indirect-call through the function table
                     // — push the box as the $__env arg, then the args, then
@@ -2825,6 +2885,16 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     }
                     // `.with(i, v)` — value-returning element set (replacing
                     // `arr[i] = v`). i64[]/f64[] use the 8-byte-slot variants.
+                    // Cell[T] (docs/CELL-TYPE-PLAN.md): get() loads slot 0;
+                    // set(v) stores it in place. set returns the cell pointer
+                    // (a value) so a bare `c.set(v);` statement drops cleanly.
+                    // v1 holds scalars in an i32 slot.
+                    if (is_cell_expr(fa.obj, cx) && fa.field == "get" && c.args.len() == 0) {
+                        return "(i32.load " + emit_expr(fa.obj, cx, depth) + ")";
+                    }
+                    if (is_cell_expr(fa.obj, cx) && fa.field == "set" && c.args.len() == 1) {
+                        return "(call $__fern_cell_set " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + ")";
+                    }
                     if (fa.field == "with" && c.args.len() == 2) {
                         var wk: string = array_elem_kind(fa.obj, cx);
                         if (wk == "i64") {
@@ -4138,6 +4208,18 @@ function arr_helpers(): string {
     o = o + "  (func $__fern_arr_with (param $a i32) (param $i i32) (param $v i32) (result i32)\n";
     o = o + "    (i32.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $v))\n";
     o = o + "    (local.get $a))\n";
+    // Cell[T] (docs/CELL-TYPE-PLAN.md): a single i32 slot. cell_new allocs +
+    // stores + returns the pointer; cell_set stores in place + returns the
+    // pointer (so a bare `c.set(v);` drops a value cleanly). get is inline
+    // (i32.load). Leak-everything heap, so no RC.
+    o = o + "  (func $__fern_cell_new (param $v i32) (result i32)\n";
+    o = o + "    (local $p i32)\n";
+    o = o + "    (local.set $p (call $__fern_alloc (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $p) (local.get $v))\n";
+    o = o + "    (local.get $p))\n";
+    o = o + "  (func $__fern_cell_set (param $c i32) (param $v i32) (result i32)\n";
+    o = o + "    (i32.store (local.get $c) (local.get $v))\n";
+    o = o + "    (local.get $c))\n";
     o = o + "  (func $__fern_arr_with_i64 (param $a i32) (param $i i32) (param $v i64) (result i32)\n";
     o = o + "    (i64.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (local.get $v))\n";
     o = o + "    (local.get $a))\n";
@@ -5548,6 +5630,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var i64_names: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "i64"), "i64", collect_i64_var_names(f.body, []));
     var f64_names: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "f64"), "f64", collect_f64_var_names(f.body, []));
     var map_names: string[] = collect_map_var_names(f.body, []);
+    var cell_names: string[] = collect_cell_var_names(f.body, []);
     var pj: i32 = 0;
     while (pj < f.params.len()) {
         if (f.params[pj].type_name == "i64" && !contains_str(i64_names, f.params[pj].name)) {
@@ -5558,6 +5641,9 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         }
         if (base_type_name(f.params[pj].type_name) == "Map" && !contains_str(map_names, f.params[pj].name)) {
             map_names = map_names.append(f.params[pj].name);
+        }
+        if (base_type_name(f.params[pj].type_name) == "Cell" && !contains_str(cell_names, f.params[pj].name)) {
+            cell_names = cell_names.append(f.params[pj].name);
         }
         pj = pj + 1;
     }
@@ -5622,7 +5708,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_i64: f.ret_type == "i64", mod_funcs: mod_funcs,
         f64_names: f64_names, f64_funcs: f64_funcs,
         ret_f64: is_float_type(f.ret_type),
-        map_names: map_names, map_str_names: [],
+        map_names: map_names, cell_names: cell_names, map_str_names: [],
         map_str_key_names: collect_str_key_map_names(f.body, map_names, []),
         tup_names: [], tup_kinds: [], tup_svtypes: [],
         fn_names: fn_names, lam_ctr: lam_ctr, lamdefs: lamdefs,
