@@ -98,6 +98,12 @@ func TestSelfHostRcConstructWasm(t *testing.T) {
 		// Fresh literal stored (no source local): moved into the struct, NOT
 		// inc'd; still reads back correctly, detector clean.
 		{"struct-field-fresh-move", "struct H { items: i32[] } function main(): i32 { var h = H { items: [9, 8, 7] }; return h.items[0] + __fern_rc_underflow_count(); }", 9},
+		// Array stored into a tuple element is retained.
+		{"tuple-elem-retained", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var t = (xs, 99); var u = __fern_rc_is_unique(xs); return u + t.0[2] + __fern_rc_underflow_count(); }", 3},
+		// Array wrapped in Some(...) (Option payload) is retained.
+		{"option-payload-retained", "function main(): i32 { var xs: i32[] = [4, 5, 6]; var o = Some(xs); var u = __fern_rc_is_unique(xs); return u + xs[1] + __fern_rc_underflow_count(); }", 5},
+		// Array wrapped in Ok(...) (Result payload) is retained.
+		{"result-payload-retained", "function main(): i32 { var xs: i32[] = [7, 8]; var r = Ok(xs); var u = __fern_rc_is_unique(xs); return u + xs[0] + __fern_rc_underflow_count(); }", 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
