@@ -691,6 +691,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"enum-i64-payload", "enum Box { Big(i64) } function main(): i32 { var b: Box = Big(5000000000); match (b) { Big(x) => { if (x == 5000000000) { return 42; } return 1; } } return 0; }", 42, ""},
 		{"enum-i64-payload-arith", "enum Box { Big(i64) } function main(): i32 { var b: Box = Big(4200000000); match (b) { Big(x) => { return (x / 100000000) as i32; } } return 0; }", 42, ""},
 		{"enum-f64-payload", "enum FBox { F(f64) } function main(): i32 { var b: FBox = F(3.5); match (b) { F(x) => { return (x * 4.0) as i32; } } return 0; }", 14, ""},
+		// Multi-payload variants (S4): a case carries >1 payload, stored at
+		// successive 4-byte slots and bound by a multi-binding match `V(a, b, …)`.
+		// The parser keeps every payload (`__ev`, `__ev1`, …); the checker's E015
+		// allows the matching arity; codegen binds each field at struct_field_off(j).
+		{"enum-multi-payload-2", "enum Ev { Pair(i32, i32), Single(i32), Stop } function main(): i32 { var p: Ev = Pair(3, 4); match (p) { Pair(a, b) => { return a * 10 + b; }, Single(x) => { return x; }, Stop => { return 0; } } return 0; }", 34, ""},
+		{"enum-multi-payload-3", "enum T3 { Tri(i32, i32, i32), Z } function main(): i32 { var t: T3 = Tri(1, 2, 3); match (t) { Tri(a, b, c) => { return a * 100 + b * 10 + c; }, Z => { return 0; } } return 0; }", 123, ""},
+		{"enum-multi-payload-second-arm", "enum Ev { Pair(i32, i32), Single(i32), Stop } function main(): i32 { var p: Ev = Single(9); match (p) { Pair(a, b) => { return a + b; }, Single(x) => { return x * 5; }, Stop => { return 0; } } return 0; }", 45, ""},
 		// Enum receiver method — dispatches via the enum type (a var typed
 		// `Shape` now records `Shape`, so its methods resolve).
 		{"enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { var a: Shape = Circle(3); var b: Shape = Square(4); return a.area() + b.area(); }", 43, ""},

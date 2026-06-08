@@ -2716,7 +2716,19 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == name) {
-            if (util.has_str(structs[i].field_names, "__ev")) { return 1; }
+            if (util.has_str(structs[i].field_names, "__ev")) {
+                // A multi-payload variant carries `__ev`, `__ev1`, … — count every
+                // `__ev`-prefixed field so the E015 arity check allows a matching
+                // multi-binding `V(a, b)`.
+                var c: i32 = 0;
+                var j: i32 = 0;
+                while (j < structs[i].field_names.len()) {
+                    var fn: string = structs[i].field_names[j];
+                    if (fn.len() >= 4 && fn[0:4] == "__ev") { c = c + 1; }
+                    j = j + 1;
+                }
+                return c;
+            }
             return 0 - 1;
         }
         i = i + 1;
