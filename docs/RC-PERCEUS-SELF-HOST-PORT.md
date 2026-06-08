@@ -954,3 +954,20 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   cross-backend parity: strings / structs / enums / maps reclamation
   (Phase 1e, all three backends) and the further Perceus opts
   (drop-on-last-use, FBIP reuse).
+- 2026-06-08: **wasm backend RC — freelist cap raised 64 KiB → 512 KiB
+  (asm parity).** The last array-RC parity gap between wasm and the asm
+  backends: asm recycles blocks up to 512 KiB (65536 size classes, #2412)
+  but wasm capped at 64 KiB (8192). Raised `fl_cells` 8192 → 65536, so the
+  freelist region grows 32 KiB → 256 KiB (still zero-init linear memory,
+  below the 1 MiB initial; bump heap starts above it) and wasm now recycles
+  the same block range — the larger token/AST arrays included, not just
+  small ones. Coverage: `TestSelfHostRcFreeWasm/reclaim-large-block` —
+  gen(20000) (cap 32768, a ~128 KiB block) is freed and the same-size
+  rebuild pops that block back (equal data pointer), which would NOT
+  recycle under the old 64 KiB cap. Full wasm suite (~100 s) green;
+  bootstrap-safe. **All three production backends (x86-64, arm64, wasm)
+  now have identical array reference counting + reclamation, including the
+  size-class freelist range.** Remaining for full Perceus parity with the
+  native compiler: non-array heap reclamation (strings / structs / enums /
+  maps — Phase 1e, all backends) and the liveness-based optimisations
+  (drop-on-last-use, FBIP reuse).

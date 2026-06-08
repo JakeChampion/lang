@@ -95,6 +95,11 @@ func TestSelfHostRcFreeWasm(t *testing.T) {
 		// A build/discard churn far exceeding the heap completes (reuse keeps
 		// memory bounded) and stays value-correct + detector-clean.
 		{"reclaim-churn", "function work(n: i32): i32 { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs[n - 1]; } function main(): i32 { var k = 0; var s = 0; while (k < 100000) { s = work(64); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 0},
+		// A LARGE array (> 64 KiB block) is recycled too — the freelist cap
+		// (65536 classes / 512 KiB) matches the asm backends. gen(20000) has
+		// cap 32768 → a ~128 KiB block; freeing it and rebuilding the same
+		// size pops that block back (equal data pointer).
+		{"reclaim-large-block", "function gen(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var a: i32[] = gen(20000); __fern_arr_dec(a); var b: i32[] = gen(20000); if (a == b) { return 7; } return 0; }", 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

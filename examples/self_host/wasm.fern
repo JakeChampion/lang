@@ -7937,13 +7937,15 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_rcmem: boolean = module_uses_rcmem(mod);
     var needs_heap: boolean = has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || export_needs_heap(mod) || has_rcmem || (component && io);
     // Memory layout above the static data: the Perceus size-class freelist
-    // (8192 i32 heads = 32 KiB, covering blocks up to 64 KiB; zero-init by
-    // wasm's zeroed memory = empty lists), then the bump heap. heap_base is
-    // 8-aligned so every block (and thus the class = blocksize/8 scheme)
+    // (65536 i32 heads = 256 KiB, covering blocks up to 512 KiB; zero-init
+    // by wasm's zeroed memory = empty lists), then the bump heap. heap_base
+    // is 8-aligned so every block (and thus the class = blocksize/8 scheme)
     // lines up. heap_base is also the rc helpers' low-address guard, so the
     // freelist region (below it) is never mistaken for a live heap object.
+    // 65536 classes matches the asm backends' freelist cap (512 KiB blocks)
+    // so wasm recycles the same range — the larger token/AST arrays included.
     var fl_base: i32 = (tab.next + 16 + heap_extra + 7) / 8 * 8;
-    var fl_cells: i32 = 8192;
+    var fl_cells: i32 = 65536;
     var heap_base: i32 = fl_base + fl_cells * 4;
     if (needs_heap) {
         out = out + heap_alloc_helpers(heap_base, fl_base, fl_cells);
