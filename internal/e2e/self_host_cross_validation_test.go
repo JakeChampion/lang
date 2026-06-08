@@ -38,7 +38,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	// imports, but using a shared dir means we can build all
 	// three side-by-side.)
 	for _, name := range []string{
-		"asmcore.fern", "lexer.fern", "parser.fern",
+		"asmcore.fern", "lexer.fern", "parser.fern", "util.fern",
 		"interp.fern", "vm.fern", "asm.fern",
 		"interp_run.fern", "vm_run.fern", "asm_run.fern",
 	} {
