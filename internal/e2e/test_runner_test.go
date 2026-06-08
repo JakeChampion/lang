@@ -131,12 +131,14 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 	}
 }
 
-// `examples/tests/async_runtime_test.fern` exercises the Phase-1
+// `examples/tests/async_runtime_test.fern` exercises the Phase-2
 // cooperative task runtime (std/task): the reactor's token
-// allocation + poll-drain, a single suspend/resume, and a two-task
-// fan-out whose waits overlap on one thread. It doubles as the
-// executable spec of the future `concurrent { … }` desugar's output
-// (docs/ASYNC-IMPLEMENTATION-PLAN.md). Passing suite → exit 0.
+// allocation + poll-drain, a single suspend/resume, a two-task
+// fan-out whose waits overlap on one thread, a multi-await task that
+// re-registers across scheduler rounds, and mixed await depths. It
+// doubles as the executable spec of the future `concurrent { … }`
+// desugar's output (docs/ASYNC-IMPLEMENTATION-PLAN.md). Passing
+// suite → exit 0.
 func TestRunnerAsyncRuntimeExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/async_runtime_test.fern")
@@ -144,8 +146,8 @@ func TestRunnerAsyncRuntimeExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 5") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 5 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 7") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 7 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 

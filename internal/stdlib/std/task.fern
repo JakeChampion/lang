@@ -1,39 +1,40 @@
-// std/task — cooperative single-threaded task runtime (Phase-1 core).
+// std/task — cooperative single-threaded task runtime (Phase-2 core).
 //
-// This is the backend-independent core of Fern's concurrency model
-// (docs/ASYNC-IMPLEMENTATION-RESEARCH.md, docs/ASYNC-IMPLEMENTATION-PLAN.md,
-// docs/CONCURRENCY-RESEARCH.md). The design is COLORLESS structured
-// concurrency implemented as STACKLESS continuations driven by a
-// single-threaded readiness reactor — never stackful green threads
-// (which need per-arch assembly and have no WASM story) and never a
-// general algebraic-effect system (deferred; effects are the eventual
-// colorless substrate, not the cheapest first step).
+// Backend-independent core of Fern's concurrency model
+// (docs/ASYNC-IMPLEMENTATION-PLAN.md, docs/ASYNC-IMPLEMENTATION-RESEARCH.md,
+// docs/CONCURRENCY-RESEARCH.md). COLORLESS structured concurrency as
+// STACKLESS continuations driven by a single-threaded readiness
+// reactor — never stackful green threads (which need per-arch
+// assembly and have no WASM story), never a general algebraic-effect
+// system (deferred; effects are the eventual colorless substrate, not
+// the cheapest first step).
 //
 // A task is a STATE MACHINE. Stepping it once either completes it
-// with a result (Done) or suspends it on a reactor token until the
-// corresponding I/O is ready, carrying the continuation to resume
-// with the woken value (Wait). Crucially, every task — regardless of
-// its internal structure — is uniformly a `Step` value: a closure
-// inside `Wait` captures the task's live locals (its "stack frame")
-// by value, so the runtime needs no generics, no `dyn`, and no
-// per-backend support code. The recursive `Step`/continuation type
-// compiles unchanged on x86-64, arm64, and wasm32 (verified).
+// with a result (Done) or suspends it on a reactor token until that
+// token's I/O is ready, carrying a continuation to resume with the
+// woken value (Wait). The continuation captures the task's live
+// locals by value — its "stack frame" across the suspension point —
+// AND threads the Reactor, so a resumed task may register a FURTHER
+// wait (multi-await: a sequence of dependent I/Os). Every task —
+// regardless of internal structure — is uniformly a `Step`, so the
+// runtime needs no generics, no `dyn`, and no per-backend support.
+// The recursive `Step`/continuation type compiles + runs unchanged on
+// interp / x86-64 / arm64 and compiles on wasm32 (verified).
 //
-// Phase 1 (this module): the runtime vocabulary (`Step`, `Reactor`,
-// `run`) plus an in-memory reactor, so the suspend/resume/overlap
-// model is testable in pure Fern on every backend. Phase 2 swaps the
-// reactor internals for epoll/kqueue (native) and wasi:io/poll (wasm)
-// over real fds — the lang-side API shape is unchanged. Phase 3 adds
-// the `concurrent { … }` / `spawn` / `await` surface syntax as a
-// parser-time desugar that EMITS exactly this `Step` shape, so user
-// code never writes a state machine by hand.
+// Phase 2 (this module): multi-await tasks + a real multi-round
+// scheduler, still over an in-memory reactor so the suspend / resume
+// / overlap / re-await model is testable in pure Fern on every
+// backend. Phase 1 (next) swaps the reactor internals for poll(2) /
+// epoll / kqueue (native) and wasi:io/poll (wasm) over real fds — the
+// lang-side API below is the frozen interface that work targets.
+// Phase 3 adds the `concurrent { … }` / `spawn` / `await` surface
+// syntax as a parser-time desugar that EMITS exactly this shape, so
+// user code never writes a state machine by hand.
 //
-// LIMITATION (Phase 1): a continuation `(i32) => Step` cannot itself
-// register a new wait (it doesn't thread the Reactor), so a task may
-// await at most once before completing. This covers the canonical
-// edge-handler fan-out (issue N requests, await each). Multi-await
-// tasks (a loop of awaits) need the Reactor threaded through the
-// continuation; that generalization lands with the Phase-3 desugar.
+// Phase-2 scope: results are i32 (or pointer-sized) — generic
+// `Task[T]` is gated on self-host generic monomorphization
+// (docs/SELF-HOST-AUDIT.md). The Go compiler already monomorphizes;
+// keeping the runtime concrete keeps it green on the self-hosted path.
 
 import "core/no_prelude";
 
@@ -41,23 +42,25 @@ import "core/no_prelude";
 //
 //   Done(result)        — the task finished with this i32 result.
 //   Wait(token, resume) — the task is suspended on reactor `token`;
-//                         call `resume(value)` once the token's I/O
-//                         completes (with the i32 the I/O yielded —
-//                         a byte count, an fd, a status, …) to obtain
-//                         the next Step.
+//                         call `resume(value, rx)` once the token's
+//                         I/O completes (with the i32 the I/O yielded
+//                         — a byte count, an fd, a status, …) to get
+//                         `(nextStep, advancedReactor)`. `resume` may
+//                         register a further wait on the reactor, so
+//                         a task can await any number of times.
 pub enum Step {
     Done(i32),
-    Wait(i32, (i32) => Step),
+    Wait(i32, (i32, Reactor) => (Step, Reactor)),
 }
 
 // Reactor — the readiness registry that multiplexes pending I/O.
 //
-// Phase-1 in-memory model: `register(value)` allocates a token and
+// Phase-2 in-memory model: `register(value)` allocates a token and
 // queues the value its completion will deliver (simulating a known
 // I/O result); `poll()` reports the completed (token, value) pairs.
-// Phase 2 replaces these fields with an epoll/kqueue fd-set (native)
+// Phase 1 replaces these fields with a poll(2)/epoll fd-set (native)
 // or a `list<pollable>` (wasm) and `poll()` blocks in the OS until at
-// least one is ready — the public methods keep the same shapes.
+// least one fd is ready — the public method shapes stay identical.
 pub struct Reactor {
     next_token: i32,
     tokens: i32[],
@@ -74,7 +77,7 @@ pub function reactor_new(): Reactor {
 
 // (rx).register(value) — allocate a fresh token and queue its
 // completion value, returning `(token, advancedReactor)` per the
-// cursor idiom (docs/CURSOR-IDIOM.md). In Phase 2 `value` is supplied
+// cursor idiom (docs/CURSOR-IDIOM.md). In Phase 1 `value` is supplied
 // by the syscall layer when the fd becomes ready rather than up front.
 pub function (rx: Reactor) register(value: i32): (i32, Reactor) {
     var tok: i32 = rx.next_token;
@@ -84,10 +87,11 @@ pub function (rx: Reactor) register(value: i32): (i32, Reactor) {
 }
 
 // (rx).poll() — drain the completed (token, value) pairs, returning
-// `(tokens, values, drainedReactor)`. Phase 1 reports every queued
-// completion in one round (sufficient for single-await fan-out);
-// Phase 2 blocks in the OS poll and reports only the fds that are
-// actually ready, looping until all tasks finish.
+// `(tokens, values, drainedReactor)`. Phase 2 reports every queued
+// completion in one round; Phase 1 blocks in the OS poll and reports
+// only the fds that are actually ready. The scheduler re-polls until
+// every task finishes, so waits registered mid-run are picked up on a
+// later round.
 pub function (rx: Reactor) poll(): (i32[], i32[], Reactor) {
     var empty_t: i32[] = [];
     var empty_v: i32[] = [];
@@ -100,52 +104,93 @@ pub function (rx: Reactor) pending(): i32 {
     return rx.tokens.len();
 }
 
-// __lookup(tokens, values, tok) — find the value paired with `tok`,
-// or -1 if absent. Linear scan: the pending set is tiny (one entry
-// per in-flight I/O within a single handler).
-function __lookup(tokens: i32[], values: i32[], tok: i32): i32 {
+// __all_done(states) — true once no task is still waiting.
+function __all_done(states: Step[]): boolean {
     var i: i32 = 0;
-    while (i < tokens.len()) {
-        if (tokens[i] == tok) { return values[i]; }
+    while (i < states.len()) {
+        match (states[i]) {
+            Done(v) => { },
+            Wait(t, c) => { return false; },
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// __find_waiter(states, tok) — index of the task suspended on `tok`,
+// or -1 if none. Linear scan: the live set is tiny (one entry per
+// in-flight I/O within a single handler).
+function __find_waiter(states: Step[], tok: i32): i32 {
+    var i: i32 = 0;
+    while (i < states.len()) {
+        match (states[i]) {
+            Done(v) => { },
+            Wait(t, c) => { if (t == tok) { return i; } },
+        }
         i = i + 1;
     }
     return -1;
 }
 
-// run(tasks, rx) — drive a set of already-started tasks to completion
-// on a single thread, multiplexing their waits through the reactor,
-// and return their i32 results in task order.
+// run(states, rx) — drive a set of already-started tasks to
+// completion on a single thread, multiplexing their waits through the
+// reactor, and return their i32 results in task order.
 //
-// `tasks[i]` is the current Step of task i (what its start function
-// returned). Every task has already registered its wait with `rx`
-// BEFORE this call, so all their I/O is in flight simultaneously —
-// that overlap is the fan-out the edge-handler use case needs (issue
-// two upstream fetches, await both). A single `poll()` round then
-// resumes each suspended task with its completion value.
+// `states[i]` is the current Step of task i (what its start function
+// returned). Every task has already registered its first wait BEFORE
+// this call, so all that I/O is in flight simultaneously — that
+// overlap is the fan-out the edge-handler use case needs (issue two
+// upstream fetches, await both). Each round polls the reactor for
+// completed tokens, resumes the matching tasks (which may register a
+// further wait), and repeats until every task is Done.
 //
-// Phase 1 assumes single-await tasks (each Wait resumes straight to
-// Done); a continuation that itself suspends again is recorded as -1
-// pending the Phase-3 multi-await generalization.
-pub function run(tasks: Step[], rx: Reactor): i32[] {
-    var (toks, vals, rx2) = rx.poll();
-    var results: i32[] = [];
-    var i: i32 = 0;
-    while (i < tasks.len()) {
-        var step: Step = tasks[i];
-        match (step) {
-            Done(v) => {
-                results = results.append(v);
-            },
-            Wait(tok, resume) => {
-                var value: i32 = __lookup(toks, vals, tok);
-                var next: Step = resume(value);
-                match (next) {
-                    Done(v2) => { results = results.append(v2); },
-                    Wait(t2, r2) => { results = results.append(-1); },
-                }
-            },
+// A task that never completes (its token is never delivered) lands as
+// -1 in the results; with the in-memory reactor that only happens if
+// the deadlock guard trips (no completions but tasks remain). The
+// Phase-1 reactor's poll blocks until a fd is ready, so a live task
+// always makes progress.
+pub function run(states_in: Step[], rx_in: Reactor): i32[] {
+    var states: Step[] = states_in;
+    var rx: Reactor = rx_in;
+    while (true) {
+        if (__all_done(states)) { break; }
+        var (toks, vals, rx2) = rx.poll();
+        rx = rx2;
+        if (toks.len() == 0) {
+            // No completions yet tasks remain: the in-memory reactor
+            // is out of queued events. The real reactor's poll blocks
+            // instead of returning empty, so this guard only fires in
+            // the in-memory model (and means a task awaited a token
+            // nobody will complete).
+            break;
         }
-        i = i + 1;
+        var j: i32 = 0;
+        while (j < toks.len()) {
+            var tok: i32 = toks[j];
+            var val: i32 = vals[j];
+            var i: i32 = __find_waiter(states, tok);
+            if (i >= 0) {
+                var st: Step = states[i];
+                match (st) {
+                    Done(v) => { },
+                    Wait(t, resume) => {
+                        var (next, rx3) = resume(val, rx);
+                        rx = rx3;
+                        states[i] = next;
+                    },
+                }
+            }
+            j = j + 1;
+        }
+    }
+    var results: i32[] = [];
+    var k: i32 = 0;
+    while (k < states.len()) {
+        match (states[k]) {
+            Done(v) => { results = results.append(v); },
+            Wait(t, c) => { results = results.append(-1); },
+        }
+        k = k + 1;
     }
     return results;
 }
