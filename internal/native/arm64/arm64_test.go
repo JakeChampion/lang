@@ -68,6 +68,8 @@ func TestEncodings(t *testing.T) {
 		{"cset x7, ge", arm64.CSET(7, arm64.CondGE), 0x9a9fb7e7},
 		{"cmn x1, x2", arm64.CMN(1, 2), 0xab02003f},
 		{"neg x0, x1", arm64.NEG(0, 1), 0xcb0103e0},
+		{"clz x0, x1", arm64.CLZ(0, 1), 0xdac01020},
+		{"clz x3, x2", arm64.CLZ(3, 2), 0xdac01043},
 		{"udiv x0, x1, x2", arm64.UDIV(0, 1, 2), 0x9ac20820},
 		{"sdiv x0, x1, x2", arm64.SDIV(0, 1, 2), 0x9ac20c20},
 		{"msub x0,x1,x2,x3", arm64.MSUB(0, 1, 2, 3), 0x9b028c20},

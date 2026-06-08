@@ -551,6 +551,14 @@ func NEG(rd, rm uint32) uint32 {
 	return 0xCB000000 | ((rm & regMask) << 16) | (31 << 5) | (rd & regMask)
 }
 
+// CLZ encodes `clz Xd, Xn` — count leading zeros (Data-processing, 1
+// source). Used by the allocator's large-block power-of-two size class
+// (next-pow2 bit position = 64 - clz(size-1)).
+// Encoding: base 0xDAC01000 | Rn<<5 | Rd.
+func CLZ(rd, rn uint32) uint32 {
+	return 0xDAC01000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // UDIV encodes `udiv Xd, Xn, Xm` — unsigned divide (Xn / Xm; division
 // by zero yields 0, per the architecture).
 // Encoding: base 0x9AC00800 | Rm<<16 | Rn<<5 | Rd.
