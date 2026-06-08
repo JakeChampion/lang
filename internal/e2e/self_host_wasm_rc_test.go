@@ -58,6 +58,134 @@ func TestSelfHostRcRuntimeWasm(t *testing.T) {
 	}
 }
 
+// TestSelfHostRcFreeWasm exercises the wasm Perceus FREE flip: arrays are
+// now reclaimed via $__fern_arr_dec into a size-class freelist, and
+// $__fern_alloc pops a freed block before bumping. Reuse is observable as
+// pointer equality — after freeing an array, a same-size allocation gets
+// the very same block back. Also checks that a churn (many build/discard
+// cycles) runs cleanly and that array values survive the free machinery.
+func TestSelfHostRcFreeWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm RC free e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Freeing an array and allocating a same-size one reuses the block
+		// (the freelist pop returns the just-freed block → equal data ptr).
+		{"freelist-reuse", "function main(): i32 { var a: i32[] = [1, 2, 3]; __fern_arr_dec(a); var b: i32[] = [9, 9, 9]; if (a == b) { return 7; } return 0; }", 7},
+		// Different size class is NOT reused (no false aliasing).
+		{"freelist-distinct-class", "function main(): i32 { var a: i32[] = [1, 2, 3]; __fern_arr_dec(a); var b: i32[] = [1, 2, 3, 4, 5, 6, 7, 8]; if (a == b) { return 1; } return 7; }", 7},
+		// A build/discard churn far exceeding the heap completes (reuse keeps
+		// memory bounded) and stays value-correct + detector-clean.
+		{"reclaim-churn", "function work(n: i32): i32 { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs[n - 1]; } function main(): i32 { var k = 0; var s = 0; while (k < 100000) { s = work(64); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(wat) == 0 {
+				t.Fatal("wasm emitter produced 0 bytes")
+			}
+			watPath := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+			_, _ = cmd.Output()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
+			}
+		})
+	}
+}
+
+// TestSelfHostRcConstructWasm exercises the wasm Perceus construction-
+// store inc: storing an EXISTING array reference into a struct field or
+// an array-of-arrays element retains the buffer (the container co-owns it
+// alongside the source local). Each program inspects the stored array's
+// rc (now > 1 => not unique) and asserts the over-release detector stays
+// clean — the inc balances the exit sweep's dec of both the source local
+// and (eventually, once struct/array free lands) the container. Free is
+// still OFF; this is the soundness prerequisite that lets a later slice
+// free arrays without dangling a stored reference.
+func TestSelfHostRcConstructWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm RC construction e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Array stored into a struct field: source local is no longer unique
+		// (the struct co-owns it), values intact, detector clean.
+		{"struct-field-retained", "struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2, 3]; var h = H { items: xs }; var u = __fern_rc_is_unique(xs); return u + h.items[2] + __fern_rc_underflow_count(); }", 3},
+		// Array-of-arrays: each element array is retained by the outer array.
+		{"array-of-arrays-retained", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4]; var both = [a, b]; var ua = __fern_rc_is_unique(a); return ua + both[0][1] + both[1][0] + __fern_rc_underflow_count(); }", 5},
+		// Fresh literal stored (no source local): moved into the struct, NOT
+		// inc'd; still reads back correctly, detector clean.
+		{"struct-field-fresh-move", "struct H { items: i32[] } function main(): i32 { var h = H { items: [9, 8, 7] }; return h.items[0] + __fern_rc_underflow_count(); }", 9},
+		// Array stored into a tuple element is retained.
+		{"tuple-elem-retained", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var t = (xs, 99); var u = __fern_rc_is_unique(xs); return u + t.0[2] + __fern_rc_underflow_count(); }", 3},
+		// Array wrapped in Some(...) (Option payload) is retained.
+		{"option-payload-retained", "function main(): i32 { var xs: i32[] = [4, 5, 6]; var o = Some(xs); var u = __fern_rc_is_unique(xs); return u + xs[1] + __fern_rc_underflow_count(); }", 5},
+		// Array wrapped in Ok(...) (Result payload) is retained.
+		{"result-payload-retained", "function main(): i32 { var xs: i32[] = [7, 8]; var r = Ok(xs); var u = __fern_rc_is_unique(xs); return u + xs[0] + __fern_rc_underflow_count(); }", 7},
+		// struct-update base-copy: a non-overridden array field copied from
+		// the base struct is retained (both structs co-own it).
+		{"struct-update-base-copy-retained", "struct H { items: i32[], n: i32 } function main(): i32 { var xs: i32[] = [1, 2]; var h = H { items: xs, n: 0 }; var h2 = H { ...h, n: 5 }; var u = __fern_rc_is_unique(xs); return u + h2.items[1] + h2.n + __fern_rc_underflow_count(); }", 7},
+		// User enum variant with an array payload is retained.
+		{"enum-variant-payload-retained", "enum Box { Arr(i32[]), Empty } function main(): i32 { var xs: i32[] = [3, 4, 5]; var b = Arr(xs); var u = __fern_rc_is_unique(xs); return u + xs[2] + __fern_rc_underflow_count(); }", 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(wat) == 0 {
+				t.Fatal("wasm emitter produced 0 bytes")
+			}
+			watPath := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+			_, _ = cmd.Output()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
+			}
+		})
+	}
+}
+
 // TestSelfHostRcCountingWasm exercises the wasm Perceus array counting
 // milestone (inc-on-alias + function-exit release sweep, free still OFF)
 // on NORMAL array programs — no manual rc intrinsic calls. Each program

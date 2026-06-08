@@ -31,7 +31,7 @@ func interpBundle(t *testing.T) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	for _, m := range []struct{ name, file string }{
-		{"lexer", "lexer.fern"}, {"parser", "parser.fern"}, {"interp", "interp.fern"},
+		{"util", "util.fern"}, {"lexer", "lexer.fern"}, {"parser", "parser.fern"}, {"interp", "interp.fern"},
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m.file))
 		if err != nil {
@@ -113,7 +113,7 @@ func TestSelfHostInterpDriverArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "asm_arm64.fern", "interp.fern", "flatten.fern", "bundle_run_arm64.fern"} {
+	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "asm_arm64.fern", "interp.fern", "flatten.fern", "bundle_run_arm64.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

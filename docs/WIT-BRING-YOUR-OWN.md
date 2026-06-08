@@ -401,15 +401,28 @@ world-driven composer (P2) wires it.
      s8/u16 field to a single sign-/zero-extended i32, so the wrapper reads a
      sub-word field with a width+sign-aware load (`i32.load8_s/u`,
      `i32.load16_s/u` via `appendExternFieldLoad`) to produce the correct i32
-     (`externRecordFieldValtype` keeps the flat valtype i32). bool, strings,
-     arrays, and nested records are still deferred — a struct param outside this
-     shape is rejected with a clear message. Gated by
-     `TestExternRecordParamCustomProvider` (a `record point { x: s32, y: s32 }`
-     summed), `TestExternRecordParamWideCustomProvider` (a mixed `record mix
-     { a: s32, b: s64 }`, exercising the i64 field's 8-byte offset + i64 flat
-     valtype), and `TestExternRecordParamSubwordCustomProvider` (a `record
-     { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under
-     the wrong-width or wrong-sign load).
+     (`externRecordFieldValtype` keeps the flat valtype i32). **A nested record
+     field is also flattened (one level)**: the canonical ABI inlines a nested
+     record, so `externRecordParamLeaves` recurses into a (flattenable) struct
+     field, emitting one leaf per inner scalar. A Fern struct field of struct
+     type is a *pointer*, so a nested leaf carries `DerefOffset` (the outer field
+     offset): the wrapper loads the inner value pointer there, then the leaf at
+     its inner offset. A **`bool` field** is also supported (both directions),
+     treated as an unsigned 8-bit: the Fern bool is 0/1 in a 4-byte slot, read
+     with `i32.load8_u` (low byte) and sized at 1 byte in the canonical memory
+     layout (`externCanonicalFieldSizeAlign`) — see the bool-field test below.
+     strings, arrays, and a *second* level of nesting are
+     still deferred — a struct param outside this shape is rejected with a clear
+     message. Gated by `TestExternRecordParamCustomProvider` (a `record point
+     { x: s32, y: s32 }` summed), `TestExternRecordParamWideCustomProvider` (a
+     mixed `record mix { a: s32, b: s64 }`, exercising the i64 field's 8-byte
+     offset + i64 flat valtype), `TestExternRecordParamSubwordCustomProvider` (a
+     `record { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that
+     fail under the wrong-width or wrong-sign load), and
+     `TestExternRecordParamNestedCustomProvider` (a `record line { p: point,
+     q: point }` flattened to its 4 inner coords). The `bool`-field round-trip
+     (param + result) is gated by `TestExternBoolRecordFieldCustomProvider` (a
+     `record flag { on: bool, n: s32 }` via `mk`/`rd`).
    - **Record (struct) results — ✅ done (Go).** An `@import` extern returning a
      `record` lifts into a Fern struct. A multi-field record flattens to > 1
      core value, so the canonical ABI returns it indirectly through a
@@ -527,12 +540,17 @@ world-driven composer (P2) wires it.
      `buildExternEnumResultWrapper` (materializing a Fern enum box
      `[rc][tag@0][payload@off]`) with no discriminant remap, matching how a
      payloaded user-enum variant is represented (so it's leak-free + consistent).
-     `externVariantResultLayout` gates it (every variant exactly one scalar
-     payload, uniform — payloadless cases deferred since the result wrapper always
-     materializes a box, not a sentinel). Gated by
+     `externVariantResultLayout` gates it (uniform single-scalar payload across
+     the payloaded variants). **Payloadless variants are allowed** (a mixed
+     `variant`, e.g. `{ some(s32), none }`): a payloadless case is materialized as
+     that same box with an unused payload — exactly how option/result results
+     already materialize their payloadless arm (`None`), so it's tag-correct and
+     match-correct (the box's unused payload is never read). Gated by
      `TestExternVariantResultCustomProvider` (a `classify: func(n: s32) -> grade`
-     over `variant grade { low(s32), mid(s32), high(s32) }`; the Fern side
-     `match`es and recovers (tag, payload) for all three cases).
+     over `variant grade { low(s32), mid(s32), high(s32) }`; recovers (tag,
+     payload) for all three cases) and `TestExternVariantResultMixedCustomProvider`
+     (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
+     none }`, exercising a payloaded + a payloadless case).
    - **Self-host port — numeric array params — ✅ started.** The self-hosted
      compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
      beyond strings: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
@@ -570,7 +588,13 @@ world-driven composer (P2) wires it.
      (`s8`/`s16`/`u8`/`u16`) are supported** — they sit in the same 4-byte slots,
      so the wrapper reads each with a width+sign-aware load
      (`extern_field_load_op` → `i32.load8_s/u`, `i32.load16_s/u`) to get the
-     correctly extended canonical i32; word fields use plain `i32.load`. `mod` is
+     correctly extended canonical i32; word fields use plain `i32.load`. **A
+     nested record field is flattened one level** (mirroring the Go side): a
+     field that is itself an all-scalar struct (`extern_record_all_scalar`)
+     expands to one leaf per inner field; since a self-host struct-of-struct field
+     is a pointer, the wrapper loads the inner value pointer at `struct+outerOff`
+     then each leaf at `+innerOff`. `extern_record_leaf_count` sizes the import's
+     `(param i32)` list (a second level of nesting is rejected). `mod` is
      threaded into `has_extern_mem_param` / `extern_needs_wrapper` for the
      struct-decl lookup. Sub-word *result* fields stay rejected
      (`extern_record_result_supported`, the result-side gate, stays i32/u32-only)
@@ -579,7 +603,14 @@ world-driven composer (P2) wires it.
      `sum-point: func(p: record { x, y: s32 }) -> s32`, x+y) and
      `TestSelfHostExternRecordParamSubwordCustomProvider` (a `record { a: s8,
      b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under the
-     wrong-width or wrong-sign load).
+     wrong-width or wrong-sign load) and
+     `TestSelfHostExternRecordParamNestedCustomProvider` (a `sum-line: func(l:
+     line) -> s32` over `record line { p: point, q: point }`,
+     `Line{p:{1,2},q:{3,4}}` → 10). **`bool` fields** are also supported (both
+     directions), treated as an unsigned 8-bit (`extern_field_is_scalar` accepts
+     `boolean`, `extern_field_load_op` → `i32.load8_u`, `extern_canon_field_size`
+     → 1), gated by `TestSelfHostExternBoolRecordFieldCustomProvider` (a `record
+     flag { on: bool, n: s32 }` via `mk`/`rd`).
    - **Self-host port — record (struct) results — ✅ done.** The symmetric
      counterpart: an extern returning a record materializes a self-host struct.
      The host writes the record's fields into the return area at the **canonical
@@ -702,13 +733,29 @@ world-driven composer (P2) wires it.
      `TestSelfHostExternVariantParamCustomProvider` (the same `describe:
      func(s: shape) -> s32` over `variant shape { circle(s32), square(s32),
      empty }`: `Circle(7)`→7, `Square(7)`→70, `Empty`→999).
-   - Still rejected (next slices): the self-host port of variant *results*;
-     non-uniform / multi-payload `variant`s; payloadless-case mixed `variant`
-     results (need sentinel materialization);
-     sub-4-byte-element `list<T>` *results* (`u8[]`/`bool[]`) via a custom
-     provider (the `ComposeFromWorldAuto` `gMemRealloc` trap analysed above);
-     bool / nested-composite fields. The multi-component harness
-     (`TestExternImportCustomProvider`) is the test vehicle for these.
+   - **Self-host port — general `variant` results (uniform payload) — ✅ done.**
+     The mirror of the Go variant result. A uniform-payload variant returns
+     indirectly (disc:u8 @0, payload @4); the self-host materializes a payloaded
+     user-enum value as a `[struct_id@0][payload@4]` box, so the wrapper maps the
+     disc to the matching variant's `struct_id` (`extern_plain_enum_sid`) and
+     stores it with the payload. `extern_variant_result_supported` now matches
+     the param gate (`extern_variant_param_supported`), so **payloadless variants
+     are allowed** (a mixed `variant`, e.g. `{ some(s32), none }`): a payloadless
+     case gets the same `[struct_id@0][payload@4]` box with an unused payload
+     (tag-correct, match-correct — the payload is never read for it), as on the
+     Go side. `is_extern_composite_ret` matches it (trailing return-area pointer).
+     Gated by `TestSelfHostExternVariantResultCustomProvider` (a `classify:
+     func(n: s32) -> grade` over `variant grade { low(s32), mid(s32), high(s32)
+     }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
+     (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
+     none }`, exercising a payloaded + a payloadless case).
+   - Still rejected (next slices):
+     nested-record *results*; second-level / deeper nesting; non-uniform /
+     multi-payload `variant`s; sub-4-byte-element `list<T>` *results*
+     (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
+     `gMemRealloc` trap analysed above). The
+     multi-component harness (`TestExternImportCustomProvider`) is the test
+     vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern

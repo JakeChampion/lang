@@ -28,7 +28,7 @@ import (
 func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
+	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -64,6 +64,7 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
+	utilSrc, _ := os.ReadFile("../../examples/self_host/util.fern")
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"function main(): i32 {\n" +
@@ -73,6 +74,8 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 		"}\n"
 
 	var bundle bytes.Buffer
+	bundle.WriteString("///MODULE util\n")
+	bundle.Write(utilSrc)
 	bundle.WriteString("///MODULE lexer\n")
 	bundle.Write(lexerSrc)
 	bundle.WriteString("\n///MODULE parser\n")

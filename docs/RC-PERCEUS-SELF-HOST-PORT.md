@@ -864,3 +864,93 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   dec-on-overwrite, then `__fern_arr_dec` + freelist to flip free ON
   (with return-retain / move-on-return riding on the temp shape already
   in place).
+- 2026-06-08: **wasm backend RC — construction-store incs (struct fields
+  + array-of-arrays).** Storing an EXISTING array reference into a
+  container retains the buffer so the container co-owns it alongside the
+  source local — the soundness prerequisite that lets a later slice free
+  arrays without dangling a stored reference. Wired at the two main
+  construction sites: struct-literal field stores (`H { items: xs }`) and
+  array-of-arrays element stores (`[a, b]`), each emitting
+  `$__fern_rc_inc` when the stored value is a bare-ident array (an
+  existing owner, via `init_is_arr_alias`). A FRESH literal stored
+  (`H { items: [9,8,7] }`) is moved, not inc'd (it arrives at rc 1 and the
+  container takes that reference). Sound by the same property as the
+  counting milestone: an inc only ever fires on a genuine rc-boxed array
+  source. Coverage: `TestSelfHostRcConstructWasm` — struct-field-retained
+  (source no longer unique), array-of-arrays-retained, struct-field-fresh-
+  move (no spurious inc) — each asserting values + detector 0. Full wasm
+  suite (~89 s) green; free still OFF; bootstrap-safe. Remaining
+  construction sites before free can flip on: struct-update base-copy,
+  tuple elements, enum / Option / Result payloads, and reassign
+  dec-on-overwrite; then `__fern_arr_dec` + freelist + return-retain /
+  move-on-return (the `$__retv_*` temp shape is already in place).
+- 2026-06-08: **wasm backend RC — construction-store incs extended
+  (tuples + Option/Result payloads).** Continues the construction-inc
+  coverage toward free-on soundness: storing an existing array reference
+  into a tuple element (`(xs, 99)`) or an Option/Result payload
+  (`Some(xs)` / `Ok(xs)` / `Err(xs)`) now retains the buffer. New
+  `enum_box_retain` (enum_box delegates with retain=false) appends the
+  `$__fern_rc_inc` when the Some/Ok/Err payload is a bare-ident array;
+  the tuple emitter incs array elements the same way. Same soundness
+  property as before — an inc only ever fires on a genuine rc-boxed array
+  source. Coverage: `TestSelfHostRcConstructWasm` gains tuple-elem-
+  retained, option-payload-retained, result-payload-retained (each:
+  source array no longer unique, values intact, detector 0). Full wasm
+  suite (~89 s) green; free still OFF; bootstrap-safe. Construction sites
+  now covered: struct field, array-of-arrays, tuple, Option/Result
+  payload. Remaining before free flips on: struct-update base-copy and
+  general user-enum-variant payloads, plus reassign dec-on-overwrite;
+  then `__fern_arr_dec` + freelist + return-retain / move-on-return.
+- 2026-06-08: **wasm backend RC — construction-store incs COMPLETE
+  (struct-update base-copy + user-enum-variant payloads).** The last two
+  container-store sites now retain array references, so EVERY place a wasm
+  array can be stored into a container is counted — the final soundness
+  prerequisite for the free flip. (1) struct-update `S { ...base, … }`:
+  copying a base struct's array field into the new struct creates a second
+  owner, so it is retained — UNLESS that field is overridden in the same
+  literal (its copy is about to be replaced; retaining would leak), so the
+  base-copy inc skips overridden indices. (2) positional user-enum-variant
+  constructors `Arr(xs)`: an array payload arg is retained like the
+  Option/Result payloads. Coverage: `TestSelfHostRcConstructWasm` gains
+  struct-update-base-copy-retained + enum-variant-payload-retained. Full
+  wasm suite (~93 s) green; free still OFF; bootstrap-safe. **All
+  construction sites now covered:** struct field, array-of-arrays, tuple,
+  Option/Result payload, struct-update base-copy, user-enum-variant
+  payload. The remaining work to flip free ON: reassign dec-on-overwrite
+  (reclaim replaced buffers, with the cow-guard for in-place append) +
+  return-retain / move-on-return (so a returned array survives its exit
+  sweep) + the `__fern_arr_dec` + size-class freelist runtime; then change
+  the exit-sweep / overwrite decs from `__fern_rc_dec` to `__fern_arr_dec`
+  and validate detector-clean + reclaim-churn, mirroring the asm Phase-3
+  flip.
+- 2026-06-08: **wasm backend RC — FREE FLIPPED ON. wasm now reclaims
+  array buffers, reaching array-RC parity with the asm backends.** The
+  culmination of the wasm rollout. (1) `__fern_alloc` is now freelist-
+  aware: it rounds the request to 8, and pops a same-size-class block from
+  the size-class freelist before bumping. (2) `__fern_arr_box` records the
+  rounded block size in the header slot at [a-4] (the old pad word) so
+  free can pick the class without knowing the element width. (3) New
+  `__fern_arr_dec`: at rc 1 it FREES — clears the rc word (a double-free
+  then reads 0 and ticks the over-release detector instead of corrupting)
+  and pushes the block onto its class (the next pointer parked in the bsz
+  slot, which arr_box rewrites on reuse). (4) The size-class freelist is a
+  zero-initialised 8192-entry region carved between the static data and
+  the bump heap (covers blocks ≤ 64 KiB; larger bump-only); heap_base sits
+  above it and doubles as the rc low-address guard. (5) The exit-sweep and
+  reassign-overwrite decs switched from `__fern_rc_dec` to
+  `__fern_arr_dec`; reassign is cow-aware (`xs = xs.append(v)` returning
+  the same pointer skips the dec) and retains a new alias. (6) Two return
+  paths keep a returned buffer alive: **move-on-return** (a bare owned
+  array local is excluded from the sweep) and **return-retain** (any other
+  array result is inc'd across the sweep — this caught a real UAF where
+  `return wcat(o, …)` hands back the borrowed buffer `wcat` grew in place,
+  which the sweep would otherwise free under the caller; surfaced by the
+  shim-core self-test, fixed before merge). Coverage: new
+  `TestSelfHostRcFreeWasm` (freelist-reuse — a freed block is handed back
+  to a same-size alloc as an equal pointer; distinct-class non-aliasing;
+  reclaim-churn 100k cycles, value-correct + detector 0) plus the whole
+  wasm suite (emit / binary / readfile / shim / component, ~91 s) green
+  with free ON. Bootstrap-safe (wasm.fern only). Remaining for full
+  cross-backend parity: strings / structs / enums / maps reclamation
+  (Phase 1e, all three backends) and the further Perceus opts
+  (drop-on-last-use, FBIP reuse).

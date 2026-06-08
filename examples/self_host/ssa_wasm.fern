@@ -57,14 +57,7 @@ function loc(v: i32): string {
 
 // index_of_str returns the position of s in xs, or 0 if absent (every
 // function is in the table, so a funcaddr always resolves).
-function index_of_str(xs: string[], s: string): i32 {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == s) { return i; }
-        i = i + 1;
-    }
-    return 0;
-}
+// index_of_str -> util.index_of_str (SH-020/SH-007).
 
 // block_index maps a block id to its position in f.blocks (its dispatch
 // index), or -1. pred_slot finds prev's position in blk.preds (the phi
@@ -212,7 +205,7 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
     if (ins.kind == "funcaddr") {
         // A function value is its slot in the function table (wasm has no raw
         // code pointers); slot i holds the closure-callable form of funcs[i].
-        return "    (local.set " + util.i32_to_string(ins.result) + " (i32.const " + util.i32_to_string(index_of_str(fnnames, ins.str)) + "))\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " (i32.const " + util.i32_to_string(util.index_of_str(fnnames, ins.str)) + "))\n";
     }
     if (ins.kind == "call_indirect") {
         // args[0] is the table slot (a function value); args[1..] the call

@@ -149,16 +149,7 @@ pub function disassemble(ops: vm.Op[]): string {
 
 // contains: trivial substring search. Used by the validation
 // harness to assert the disassembly mentions specific ops.
-function contains(haystack: string, needle: string): boolean {
-    if (needle.len() == 0) { return true; }
-    if (haystack.len() < needle.len()) { return false; }
-    var i: i32 = 0;
-    while (i <= haystack.len() - needle.len()) {
-        if (haystack[i:i + needle.len()] == needle) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
+// contains -> util.contains (SH-020).
 
 function disassemble_source(src: string): string {
     return disassemble(vm.compile_module(parser.parse_module(lexer.tokenize(src))));
@@ -172,103 +163,103 @@ function main(): i32 {
     // (formatting can drift); we check that the mnemonics
     // we expect are in there.
     var d1: string = disassemble_source("var x = 1 + 2 * 3; return x;");
-    if (!contains(d1, "PUSH_INT")) { return 10; }
-    if (!contains(d1, "BINARY")) { return 11; }
-    if (!contains(d1, "STORE_LOCAL")) { return 12; }
-    if (!contains(d1, "LOAD_LOCAL")) { return 13; }
-    if (!contains(d1, "RETURN")) { return 14; }
+    if (!util.contains(d1, "PUSH_INT")) { return 10; }
+    if (!util.contains(d1, "BINARY")) { return 11; }
+    if (!util.contains(d1, "STORE_LOCAL")) { return 12; }
+    if (!util.contains(d1, "LOAD_LOCAL")) { return 13; }
+    if (!util.contains(d1, "RETURN")) { return 14; }
     // Index column is left-zero-padded — `0000` should appear
     // on the first line.
-    if (!contains(d1, "0000")) { return 15; }
+    if (!util.contains(d1, "0000")) { return 15; }
 
     // Bool literal + comparison.
     var d2: string = disassemble_source("return 5 < 10;");
-    if (!contains(d2, "BINARY")) { return 20; }
+    if (!util.contains(d2, "BINARY")) { return 20; }
     // Binary op `<` shows up in the immediate column on one line.
-    if (!contains(d2, "<")) { return 21; }
+    if (!util.contains(d2, "<")) { return 21; }
 
     // If/else: JUMP_IF_FALSE + JUMP both fire.
     var d3: string = disassemble_source("if (true) { return 1; } else { return 2; }");
-    if (!contains(d3, "JUMP_IF_FALSE")) { return 30; }
-    if (!contains(d3, "JUMP")) { return 31; }
-    if (!contains(d3, "PUSH_BOOL")) { return 32; }
+    if (!util.contains(d3, "JUMP_IF_FALSE")) { return 30; }
+    if (!util.contains(d3, "JUMP")) { return 31; }
+    if (!util.contains(d3, "PUSH_BOOL")) { return 32; }
 
     // While: emits a JUMP back to the loop top + JUMP_IF_FALSE
     // out of the body. Both should show up.
     var d4: string = disassemble_source(
         "var i = 0; while (i < 3) { i = i + 1; } return i;"
     );
-    if (!contains(d4, "JUMP_IF_FALSE")) { return 40; }
-    if (!contains(d4, "JUMP")) { return 41; }
-    if (!contains(d4, "STORE_LOCAL")) { return 42; }
+    if (!util.contains(d4, "JUMP_IF_FALSE")) { return 40; }
+    if (!util.contains(d4, "JUMP")) { return 41; }
+    if (!util.contains(d4, "STORE_LOCAL")) { return 42; }
 
     // Unary `!`: emits UNARY.
     var d5: string = disassemble_source("return !true;");
-    if (!contains(d5, "UNARY")) { return 50; }
-    if (!contains(d5, "PUSH_BOOL")) { return 51; }
+    if (!util.contains(d5, "UNARY")) { return 50; }
+    if (!util.contains(d5, "PUSH_BOOL")) { return 51; }
 
     // String literal: PUSH_STR + the quoted contents in the
     // immediate column.
     var d6: string = disassemble_source("var s = \"hello\"; return 0;");
-    if (!contains(d6, "PUSH_STR")) { return 60; }
-    if (!contains(d6, "hello")) { return 61; }
+    if (!util.contains(d6, "PUSH_STR")) { return 60; }
+    if (!util.contains(d6, "hello")) { return 61; }
 
     // Expression statement: emits POP after the inner expr.
     var d7: string = disassemble_source("1 + 2; return 0;");
-    if (!contains(d7, "POP")) { return 70; }
+    if (!util.contains(d7, "POP")) { return 70; }
 
     // Function call disassembly: emits CALL with name + argc.
     var d8: string = disassemble_source(
         "function add(x: i32, y: i32): i32 { return x + y; } return add(2, 3);"
     );
-    if (!contains(d8, "CALL")) { return 80; }
-    if (!contains(d8, "add")) { return 81; }
+    if (!util.contains(d8, "CALL")) { return 80; }
+    if (!util.contains(d8, "add")) { return 81; }
 
     // Array literal + indexing + len: emits MAKE_ARRAY, INDEX, LEN.
     var d9: string = disassemble_source(
         "var a = [1, 2, 3]; var n = len(a); return a[0];"
     );
-    if (!contains(d9, "MAKE_ARRAY")) { return 90; }
-    if (!contains(d9, "INDEX")) { return 91; }
-    if (!contains(d9, "LEN")) { return 92; }
+    if (!util.contains(d9, "MAKE_ARRAY")) { return 90; }
+    if (!util.contains(d9, "INDEX")) { return 91; }
+    if (!util.contains(d9, "LEN")) { return 92; }
 
     // Struct literal + field access: emits MAKE_STRUCT,
     // FIELD_GET with the struct + field names as immediates.
     var d10: string = disassemble_source(
         "struct Point { x: i32, y: i32 } var p = Point { x: 1, y: 2 }; return p.x;"
     );
-    if (!contains(d10, "MAKE_STRUCT")) { return 100; }
-    if (!contains(d10, "Point")) { return 101; }
-    if (!contains(d10, "FIELD_GET")) { return 102; }
-    if (!contains(d10, "x")) { return 103; }
+    if (!util.contains(d10, "MAKE_STRUCT")) { return 100; }
+    if (!util.contains(d10, "Point")) { return 101; }
+    if (!util.contains(d10, "FIELD_GET")) { return 102; }
+    if (!util.contains(d10, "x")) { return 103; }
 
     // Match statement: emits DUP + TYPE_NAME_EQ for variant
     // patterns, plus the standard JUMP_IF_FALSE.
     var d11: string = disassemble_source(
         "struct Circle { r: i32 } var c = Circle { r: 3 }; match (c) { Circle(_) => { return 1; }, _ => { return 0; } }"
     );
-    if (!contains(d11, "DUP")) { return 110; }
-    if (!contains(d11, "TYPE_NAME_EQ")) { return 111; }
-    if (!contains(d11, "Circle")) { return 112; }
-    if (!contains(d11, "JUMP_IF_FALSE")) { return 113; }
+    if (!util.contains(d11, "DUP")) { return 110; }
+    if (!util.contains(d11, "TYPE_NAME_EQ")) { return 111; }
+    if (!util.contains(d11, "Circle")) { return 112; }
+    if (!util.contains(d11, "JUMP_IF_FALSE")) { return 113; }
 
     // Method call dispatch: emits CALL_METHOD with the
     // method name + argc.
     var d12: string = disassemble_source(
         "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } var k = Circle { r: 5 }; return k.area();"
     );
-    if (!contains(d12, "CALL_METHOD")) { return 120; }
-    if (!contains(d12, "area")) { return 121; }
+    if (!util.contains(d12, "CALL_METHOD")) { return 120; }
+    if (!util.contains(d12, "area")) { return 121; }
 
     // Float literal: emits PUSH_FLOAT (immediate stays `<f64>`
     // because there's no in-language f64-to-string yet).
     var d13: string = disassemble_source("return 3.14;");
-    if (!contains(d13, "PUSH_FLOAT")) { return 130; }
+    if (!util.contains(d13, "PUSH_FLOAT")) { return 130; }
 
     // Tuple literal: emits MAKE_TUPLE with the arity immediate.
     var d14: string = disassemble_source("return (1, 2, 3);");
-    if (!contains(d14, "MAKE_TUPLE")) { return 140; }
-    if (!contains(d14, "3")) { return 141; }
+    if (!util.contains(d14, "MAKE_TUPLE")) { return 140; }
+    if (!util.contains(d14, "3")) { return 141; }
 
     // Lambda WITHOUT captures: emits a JUMP-skip over the body,
     // then MAKE_FUNC with entry + locals immediates so the
@@ -276,10 +267,10 @@ function main(): i32 {
     var d15: string = disassemble_source(
         "function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }"
     );
-    if (!contains(d15, "MAKE_FUNC")) { return 150; }
-    if (!contains(d15, "CALL_CLOSURE")) { return 151; }
-    if (!contains(d15, "entry=")) { return 152; }
-    if (!contains(d15, "locals=")) { return 153; }
+    if (!util.contains(d15, "MAKE_FUNC")) { return 150; }
+    if (!util.contains(d15, "CALL_CLOSURE")) { return 151; }
+    if (!util.contains(d15, "entry=")) { return 152; }
+    if (!util.contains(d15, "locals=")) { return 153; }
 
     // Lambda WITH a capture: free-var sweep finds `n` as a
     // capture, so the lambda emits MAKE_CLOSURE (carrying the
@@ -288,10 +279,10 @@ function main(): i32 {
     var d16: string = disassemble_source(
         "function main(): i32 { var n = 7; var f = function (x: i32): i32 { return x + n; }; return f(35); }"
     );
-    if (!contains(d16, "MAKE_CLOSURE")) { return 160; }
-    if (!contains(d16, "LOAD_CAPTURE")) { return 161; }
-    if (!contains(d16, "caps=1")) { return 162; }
-    if (!contains(d16, "CALL_CLOSURE")) { return 163; }
+    if (!util.contains(d16, "MAKE_CLOSURE")) { return 160; }
+    if (!util.contains(d16, "LOAD_CAPTURE")) { return 161; }
+    if (!util.contains(d16, "caps=1")) { return 162; }
+    if (!util.contains(d16, "CALL_CLOSURE")) { return 163; }
 
     return 0;
 }

@@ -104,10 +104,12 @@ These are not just smells — they can produce wrong output today.
   silently skips non-digit bytes. Severity **High**. _Fix:_ sentinel `-1` +
   record on `p.unknown`; assert `p.unknown` empty at end of assembly.
 
-- [ ] **SH-007 — `ssa_wasm` `index_of_str` returns 0 (not −1) on miss.**
-  `ssa_wasm.fern:79-86` — a `funcaddr` not in the table silently emits slot 0 →
-  calls the wrong function. Severity **High** (latent). _Fix:_ return −1 and
-  assert/bail, or rename to `table_slot_of` and add a real guard.
+- [x] **SH-007 — `ssa_wasm` `index_of_str` returned 0 (not −1) on miss.** _Done:_
+  consolidated all three util-host copies (`ssa`, `ssa_wasm`, `wasm`) onto one
+  canonical `util.index_of_str` that returns −1 on miss, so a missing `funcaddr`
+  now emits table slot −1 (an out-of-bounds `call_indirect` that traps loudly)
+  instead of silently calling slot 0. (`watbin`'s copy stays local — it's a
+  deliberately self-contained module; it already returned −1.)
 
 - [ ] **SH-008 — `wasm` `StrTable.offset_of` returns scratch base on miss.**
   `wasm.fern:50-71` returns `24` for an un-interned string → silent wrong offset.
@@ -119,10 +121,13 @@ These are not just smells — they can produce wrong output today.
   _Done:_ deleted; confirmed the live `x86_gas_movl` (`:128`) handles the `$imm`
   form correctly via `x86_gas_reg32`. Severity **Med**.
 
-- [ ] **SH-010 — `digits_to_i32` has already drifted across copies.** `interp`'s
-  `str_to_i32` (`:184`) and `constfold`'s `digits_to_i32` (`:37`) do **not** strip
-  a leading `-`, but `vm`'s (`:382`) does. Same name, different behaviour.
-  Severity **Med**. _Fix:_ single canonical sign-aware parser (see SH-020).
+- [x] **SH-010 — `digits_to_i32` had drifted across copies.** `interp`'s
+  `str_to_i32`, `constfold`'s and others were sign-naive while `vm`/`asmcore`
+  were sign-aware. _Done:_ consolidated onto one canonical **sign-aware**
+  `util.digits_to_i32` (sign-aware is a strict superset on digit-only input, so
+  every caller is safe and the latent negative-string bug is fixed). All 6 copies
+  (`asmcore` pub, `constfold`, `ssa`, `vm`, `wasm`, `interp`'s `str_to_i32`) plus
+  the `asm`/`asm_arm64` cross-module callers now use it.
 
 ---
 
@@ -136,8 +141,8 @@ findings. Ranked by leverage.
   and move the copy-pasted leaf helpers into it, then import everywhere.
   _In progress (staged rollout):_ `util.fern` now exists (imports only
   `core/no_prelude`) and is seeded with the canonical `i32_to_string`;
-  `disasm`, `vm`, `constfold`, `printer` (dead copy deleted), `ssa_x86`/`ssa_arm64`/`ssa_wasm`, and `wasm` are converted (8 of 9 done).
-  Remaining: the last `i32_to_string` copy in `asmcore` (footprint 74 — the largest staging-edit sweep) and the
+  all 9 `i32_to_string` copies are now retired (`disasm`, `vm`, `constfold`, `printer` (dead), `ssa_x86`/`ssa_arm64`/`ssa_wasm`, `wasm`, `asmcore` — the last also dropped the `pub` cross-module copy used by `asm.fern`/`asm_arm64.fern`).
+  The `i32_to_string` strand is **done**. Remaining for SH-020: fold in the OTHER duplicated helpers and the
   rest of the helpers below, one file per PR — each conversion must add
   `util.fern` to every Go test that stages that module (no shared staging list;
   `disasm` had a footprint of 1, most others are 4–8, `wasm`/`asmcore` are 58/74).
@@ -149,14 +154,18 @@ findings. Ranked by leverage.
   - `i32_to_string` — **9 copies**: `asmcore:35`, `constfold:49`, `disasm:36`,
     `printer:29`, `ssa(int_str):3633`, `ssa_arm64:17`, `ssa_wasm:35`,
     `ssa_x86:23`, `vm:358`, `wasm:2581`.
-  - `digits_to_i32` — **5 copies** (`asmcore`, `constfold`, `ssa`, `vm`, `wasm`)
-    + the drifted `interp.str_to_i32` — fold into one **sign-aware** parser (SH-010).
-  - String membership — **6 copies / 4 names**: `has_str` (`asmcore:86`,
-    `vm:651`), `name_in` (`checker:2270`), `name_in_list` (`parser:4389`),
-    `contains_name` (`fern:128`, `asm_load_run`, `asm_arm64_load_run`).
-  - `base_type_name`/`type_base`/`strip_generic_args` — **4 copies / 3 names**
-    (`asmcore:14`, `checker:2660`, `checker:3990`, `wasm:2166`).
-  - `is_all_digits`, `index_of_str`/`index_of_byte`, `contains` (substring),
+  - `digits_to_i32` — **done** (SH-010): one sign-aware `util.digits_to_i32`; all
+    5 copies + `interp.str_to_i32` + the `asm`/`asm_arm64` cross-module callers converted.
+  - String membership — **done**: one `util.has_str` replaces the 6 copies /
+    4 names (`has_str`/`name_in`/`name_in_list`/`contains_name`) across `asmcore`,
+    `vm`, `checker`, `parser`, `fern`, and the two `*_load_run` drivers.
+  - `base_type_name`/`type_base`/`strip_generic_args` — **done**: one
+    `util.base_type_name` (asmcore pub + wasm + checker's two names; asm/asm_arm64
+    cross-module callers updated).
+  - `is_all_digits` — **done** (`asmcore` pub + `ssa` + `wasm`, all already util).
+  - `index_of_str` — **done** (SH-007 fixed). `contains` (substring) — **done**
+    (`asmcore` pub + `disasm` + asm/asm_arm64 callers; `watbin`/`literate` keep
+    their own copies — deliberately self-contained modules). `index_of_byte`
     `str_join_range`/`str_join_chunks`, `pred_slot`, `block_index`, `last_slash`,
     `join_path`, `module_name`, `resolve_path`, `dir_of`, `is_local`.
   - Named ASCII constants (`DOT=46`, `LBRACKET=91`, `RBRACKET=93`, `COMMA=44`,

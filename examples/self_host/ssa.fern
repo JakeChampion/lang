@@ -26,33 +26,15 @@
 
 import "core/no_prelude";
 import "./parser";
+import "./util";
 
 // digits_to_i32 parses a decimal literal's text (non-negative; unary minus
 // is a separate ExprUnary). Mirrors the private helper in the emitters.
-function digits_to_i32(s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) { return acc; }
-        acc = acc * 10 + (b - 48);
-        i = i + 1;
-    }
-    return acc;
-}
+// digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 
 // is_all_digits reports whether every byte of s is an ASCII digit (and s is
 // non-empty) — used to tell a tuple index `t.0` from a struct field `t.x`.
-function is_all_digits(s: string): boolean {
-    if (s.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) { return false; }
-        i = i + 1;
-    }
-    return true;
-}
+// is_all_digits now lives in util.fern (imported as `util`). See SH-020.
 
 // ---- IR ----------------------------------------------------------------
 
@@ -435,7 +417,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 // the source text; the backend emits it as a `.double` constant.
                 return s.emit(SInst { kind: "const_float", result: s.cur_id(), args: args0, imm: 0, str: n.text });
             }
-            return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: digits_to_i32(n.text), str: "" });
+            return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: util.digits_to_i32(n.text), str: "" });
         },
         parser.ExprBool(b) => {
             s = s.fresh();
@@ -994,7 +976,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var f: i32 = 0;
             while (f < nf) {
                 var fname: string = sd.fields[f].name;
-                var lj: i32 = index_of_str(sl.field_names, fname);
+                var lj: i32 = util.index_of_str(sl.field_names, fname);
                 var fw: i32 = struct_field_width(s.structs, sl.type_name, fname);
                 var fv: i32 = 0;
                 if (lj >= 0) {
@@ -1029,11 +1011,11 @@ function build_expr(e: parser.Expr, s: BState): BState {
             // elements live at offsets 0..n-1 (no tag / length prefix), so the
             // index is loaded directly. Width 0 (32-bit) matches the array /
             // construct path; pointer elements fit the low-heap 32-bit slots.
-            if (is_all_digits(fa.field)) {
+            if (util.is_all_digits(fa.field)) {
                 s = build_expr(fa.obj, s);
                 if (!s.ok) { return s; }
                 var tptr: i32 = s.cur_id();
-                s = s.kconst(digits_to_i32(fa.field));
+                s = s.kconst(util.digits_to_i32(fa.field));
                 var tidx: i32 = s.cur_id();
                 s = s.fresh();
                 var tla: i32[] = [tptr, tidx];
@@ -2020,7 +2002,7 @@ function lambda_free_caps(lm: parser.ExprLambda, locals: string[]): string[] {
     var ri: i32 = 0;
     while (ri < refs.len()) {
         var nm: string = refs[ri];
-        if (index_of_str(bound, nm) < 0 && index_of_str(caps, nm) < 0 && index_of_str(locals, nm) >= 0) {
+        if (util.index_of_str(bound, nm) < 0 && util.index_of_str(caps, nm) < 0 && util.index_of_str(locals, nm) >= 0) {
             caps = caps.append(nm);
         }
         ri = ri + 1;
@@ -2137,7 +2119,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             var ci: i32 = 0;
                             while (ci < caps.len()) {
                                 var ct: string = resolve_capture_type(caps[ci], fd);
-                                var muted: boolean = index_of_str(parent_assigned, caps[ci]) >= 0 || index_of_str(lam_assigned, caps[ci]) >= 0;
+                                var muted: boolean = util.index_of_str(parent_assigned, caps[ci]) >= 0 || util.index_of_str(lam_assigned, caps[ci]) >= 0;
                                 if (ct.len() == 0 || muted) { ok = false; ci = caps.len(); }
                                 else { ctypes = ctypes.append(ct); ci = ci + 1; }
                             }
@@ -2660,14 +2642,7 @@ function algebraic_simplify(f: SFunc): SFunc {
     return f;
 }
 
-function index_of_str(xs: string[], n: string): i32 {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == n) { return i; }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
+// index_of_str -> util.index_of_str (SH-020/SH-007).
 
 // is_commutative reports whether a binary op gives the same result with
 // its operands swapped — so CSE can canonicalise their order and catch
@@ -2719,7 +2694,7 @@ function cse(f: SFunc): SFunc {
             var pure: boolean = ins.kind == "const_int" || ins.kind == "const_bool" || ins.kind == "unary" || ins.kind == "binary";
             if (pure) {
                 var key: string = cse_key(ins);
-                var j: i32 = index_of_str(keys, key);
+                var j: i32 = util.index_of_str(keys, key);
                 if (j >= 0) {
                     repl = env_put(repl, ins.result, ids[j]);
                     k = k + 1;
@@ -3084,7 +3059,7 @@ function any_call_named(f: SFunc, names: string[]): boolean {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "call" && index_of_str(names, ins.str) >= 0) { return true; }
+            if (ins.kind == "call" && util.index_of_str(names, ins.str) >= 0) { return true; }
             k = k + 1;
         }
         bi = bi + 1;
@@ -3102,7 +3077,7 @@ pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "call" && index_of_str(ptr_ret, ins.str) >= 0) {
+            if (ins.kind == "call" && util.index_of_str(ptr_ret, ins.str) >= 0) {
                 ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 1, str: ins.str };
             }
             ninsts = ninsts.append(ins);
@@ -3128,7 +3103,7 @@ pub function mark_float_calls(f: SFunc, float_ret: string[]): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "call" && index_of_str(float_ret, ins.str) >= 0) {
+            if (ins.kind == "call" && util.index_of_str(float_ret, ins.str) >= 0) {
                 ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 2, str: ins.str };
             }
             ninsts = ninsts.append(ins);

@@ -32,6 +32,11 @@ import (
 // correctly sign-/zero-extended i32 the canonical ABI flattens it to. Wider
 // fields use the natural i64/f32/f64/i32 load matching externRecordFieldValtype.
 func appendExternFieldLoad(body []byte, t ast.Type, off uint32) []byte {
+	if _, ok := t.(ast.BoolType); ok {
+		// bool is one byte (0/1) — read it zero-extended, both from the Fern
+		// 4-byte slot (param) and the canonical 1-byte field (result).
+		return memory.InstI32Load8U(body, 0, off)
+	}
 	if n, ok := t.(ast.NumberType); ok {
 		switch n.NormalWidth() {
 		case 8:
@@ -493,6 +498,10 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 				// record flattening the raw import expects.
 				for _, f := range ex.ParamRecords[i] {
 					body = inst.InstLocalGet(body, slot)
+					if f.DerefOffset >= 0 {
+						// Nested record leaf: load the inner value pointer first.
+						body = memory.InstI32Load(body, 2, uint32(f.DerefOffset))
+					}
 					body = appendExternFieldLoad(body, f.Type, uint32(f.Offset))
 				}
 				slot++
