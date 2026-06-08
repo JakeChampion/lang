@@ -1005,8 +1005,17 @@ func canonicalExternParamValtypes(ex *ir.ExternFunc) ([]byte, error) {
 				out = append(out, externRecordFieldValtype(f.Type))
 			}
 		case ex.ParamEnums[i] != nil:
-			// option/result flattens to (disc:i32, payload).
-			out = append(out, encode.ValtypeI32, externRecordFieldValtype(ex.ParamEnums[i].PayloadType))
+			// variant flattens to (disc:i32, payload-join). A multi-field variant
+			// joins to SlotCount i32 slots; a single-field one to one payload slot.
+			ep := ex.ParamEnums[i]
+			out = append(out, encode.ValtypeI32)
+			if ep.SlotCount > 0 {
+				for s := int32(0); s < ep.SlotCount; s++ {
+					out = append(out, encode.ValtypeI32)
+				}
+			} else {
+				out = append(out, externRecordFieldValtype(ep.PayloadType))
+			}
 		case ex.ParamPlainEnums[i]:
 			// plain enum → WIT enum: a single i32 discriminant.
 			out = append(out, encode.ValtypeI32)
