@@ -445,25 +445,30 @@ function build_expr(e: parser.Expr, s: BState): BState {
             return s.emit(SInst { kind: "const_bool", result: s.cur_id(), args: args0, imm: iv, str: "" });
         },
         parser.ExprIdent(id) => {
-            // A no-capture lambda binding used as a VALUE (passed / returned)
-            // becomes its function address — a code pointer for an indirect
-            // call. Capturing ones need a heap box (deferred), so they bail.
+            // A bound local / param (including a capturing-lambda box, which
+            // is stored as the var's value) SHADOWS any same-named function:
+            // read its value rather than taking a function address. Without
+            // this, a local named like a method/function — e.g. a loop var
+            // `w` (also the WState.w method) or `cur_id` (also BState.cur_id)
+            // — would resolve to a `funcaddr` to that function and bail SSA.
+            var v: i32 = s.get_var(id.name);
+            if (v >= 0) {
+                s = s.fresh();
+                var a1: i32[] = [v];
+                return s.emit(SInst { kind: "copy", result: s.cur_id(), args: a1, imm: 0, str: "" });
+            }
+            // Not a local: a no-capture lambda or a named top-level function
+            // used as a VALUE → a 1-slot closure box [funcaddr]. (A capturing
+            // lambda binding "fn:…|…" holds its box in the var, so it took the
+            // get_var path above.)
             var idfn: string = s.get_var_type(id.name);
-            // A no-capture lambda or a named top-level function used as a VALUE
-            // → a 1-slot closure box [funcaddr]. A capturing lambda binding
-            // ("fn:…|…") already holds its box in the var, so it falls through
-            // to the plain get_var copy below.
             if (idfn.len() > 3 && idfn[0:3] == "fn:" && index_of_byte(idfn, 124) < 0) {
                 return emit_fn_box(s, idfn[3 : idfn.len()]);
             }
             if (idfn.len() >= 4 && idfn[0:4] == "gfn:") {
                 return emit_fn_box(s, id.name);
             }
-            var v: i32 = s.get_var(id.name);
-            if (v < 0) { return s.fail(); }
-            s = s.fresh();
-            var a1: i32[] = [v];
-            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: a1, imm: 0, str: "" });
+            return s.fail();
         },
         parser.ExprBinary(b) => {
             // String operands change `+` (concat) and `==`/`!=` (content
