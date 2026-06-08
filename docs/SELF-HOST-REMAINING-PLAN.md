@@ -1237,6 +1237,30 @@ smallest → largest:
     `TestSelfHostArm64NativeViaGoBackend` (Go x86 backend),
     `TestSelfHostArm64DarwinAssemblesRealRuntime` (wasm), the byte-pinned
     `*Gas` tests, and the flagship `TestSelfHostArm64DarwinBuilds`.
+  - ✅ **slice 3t — literal pool + negative-offset load/store (toward
+    arm64-Linux ELF; also fixes the darwin path)**: running asm_arm64's *raw
+    Linux* output (`emit_module(false)`) through arm64_native surfaced two
+    instruction-selection bugs that had been silently mis-assembled — the
+    darwin tests never caught them because they only check exit codes / Mach-O
+    parseability, and the flagship `TestSelfHostArm64DarwinBuilds` *skips* on
+    macOS when an emitted binary segfaults (so the broken binaries read as
+    green skips). (1) `ldr Xd, =N` + `.ltorg`: the PC-relative **literal
+    pool** asm_arm64 uses for every integer immediate was entirely
+    unimplemented — `ldr x0, =42` was assembled as `ldr x0, [x0]` and `.ltorg`
+    dropped. Added LDR-literal encoding (0x58…) + a per-program pending-pool
+    (`lit_sites`/`lit_vals`, flushed 8-aligned at each `.ltorg` and at end of
+    program), byte-pinned in `TestSelfHostArm64LitPoolGas`. (2)
+    `str/ldr Xt, [Xn, #neg]`: a negative (or non-8-aligned) frame offset
+    can't use the scaled unsigned form (`[x29, #-8]` mis-encoded as
+    `[x29, #0x7ff8]`); now falls back to the unscaled signed-imm9 `stur/ldur`,
+    as GAS does. **New end-to-end proof:**
+    `TestSelfHostArm64NativeLinuxElfRuns` assembles asm_arm64's real Linux
+    output through arm64_native + `elf.fern` and **runs the ELF under
+    qemu-aarch64** (exit42 / arith / fib, correct exit codes) — the first time
+    the in-Fern assembler's output is *executed* on the Linux CI box (the
+    darwin path can only be run on a macOS runner). **Next:** `:lo12:` add
+    parsing, `.bss`/`.skip` heap reservation (ELF memsz), and the rodata
+    `.ascii` path, then flip `fern.fern -target arm64` to emit ELF directly.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

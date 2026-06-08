@@ -487,6 +487,27 @@ function arm64_patch_ldr_off(buf: i32[], at: i32, off: i32): i32[] {
     return arm64_write_word(buf, at, w);
 }
 
+// ---- PC-relative literal load (`ldr Xt, =N` + `.ltorg` pool) ----
+//
+// asm_arm64 loads any 64-bit immediate via `ldr Xt, =N` and flushes the
+// constants into an in-.text literal pool at each `.ltorg` (after every
+// function). The LDR (literal) form (64-bit, opc=01) is
+//   0x58000000 | imm19<<5 | Rt
+// where imm19 = (pool_addr - ldr_addr) / 4 (signed, the label is PC-
+// relative from the ldr). Verified vs llvm-mc: a ldr to PC+8 = 0x58000040.
+function arm64_ldr_lit_word(rt: i32, imm19: i32): i64 {
+    return 0x58000000 | (((imm19 & 0x7ffff) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_lit(buf: i32[], rt: i32, imm19: i32): i32[] {
+    return arm64_le32(buf, arm64_ldr_lit_word(rt, imm19));
+}
+// arm64_patch_ldr_lit splices imm19 (bits 23:5) into an LDR-literal
+// placeholder at byte offset `at`, preserving the opcode + Rt (0xff00001f).
+function arm64_patch_ldr_lit(buf: i32[], at: i32, imm19: i32): i32[] {
+    var w: i64 = (arm64_read_word(buf, at) & 0xff00001f) | (((imm19 & 0x7ffff) as i64) << 5);
+    return arm64_write_word(buf, at, w);
+}
+
 // ---- frame pair load/store (the prologue/epilogue idiom) ----
 //
 // stp/ldp with writeback: `stp Xt, Xt2, [Xn, #off]!` (pre-index) saves the
@@ -1354,6 +1375,14 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
             if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_pre(a.code, rt, m.base, m.off) }; }
             return Arm64Asm { ...a, code: arm64_str_pre(a.code, rt, m.base, m.off) };
         }
+        // A negative or non-8-aligned offset can't use the scaled unsigned
+        // form (imm12 is unsigned, scaled by 8); fall back to the unscaled
+        // signed-imm9 ldur/stur, exactly as GAS does. asm_arm64 stores frame
+        // locals at `[x29, #-N]`, so this is the common case.
+        if (m.off < 0 || (m.off & 7) != 0) {
+            if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldur(a.code, rt, m.base, m.off) }; }
+            return Arm64Asm { ...a, code: arm64_stur(a.code, rt, m.base, m.off) };
+        }
         if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr(a.code, rt, m.base, m.off) }; }
         return Arm64Asm { ...a, code: arm64_str(a.code, rt, m.base, m.off) };
     }
@@ -1556,6 +1585,8 @@ pub struct Arm64GasProg {
     pf_sites: i32[],    // byte offset of the instruction to patch in .text
     pf_syms: string[],  // target data symbol
     pf_kinds: i32[],    // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
+    lit_sites: i32[],   // byte offset of a pending `ldr Xd, =N` (LDR-literal) to patch
+    lit_vals: i32[],    // the value each pending literal loads (sign-extended to 64-bit at flush)
     unknown: string[],  // mnemonics the assembler did not recognise
 }
 
@@ -1564,6 +1595,7 @@ function arm64_gas_prog_new(): Arm64GasProg {
         asm: arm64_asm_new(), data: [],
         dlab_names: [], dlab_offs: [],
         pf_sites: [], pf_syms: [], pf_kinds: [],
+        lit_sites: [], lit_vals: [],
         unknown: [],
     };
 }
@@ -1685,6 +1717,39 @@ function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
     return p; // other directives ignored
 }
 
+// arm64_lit_le64 appends the 8 little-endian bytes of a 64-bit literal-pool
+// value to a code buffer (low word then high word).
+function arm64_lit_le64(buf: i32[], v: i64): i32[] {
+    buf = arm64_le32(buf, v);
+    buf = arm64_le32(buf, v >> 32);
+    return buf;
+}
+
+// arm64_gas_ltorg flushes the pending `ldr Xd, =N` literal pool into .text
+// at the current offset: 8-align, then for each pending load patch its
+// LDR-literal imm19 to the (PC-relative) pool slot and append the value's 8
+// bytes. asm_arm64 emits a `.ltorg` after every function so the pool stays
+// within the ±1 MiB LDR-literal reach; the pool sits after the function's
+// `ret`, so it is never executed. The pending lists are cleared.
+function arm64_gas_ltorg(p0: Arm64GasProg): Arm64GasProg {
+    var p: Arm64GasProg = p0;
+    if (p.lit_sites.len() == 0) { return p; }
+    var aw: Arm64Asm = p.asm;
+    while ((aw.code.len() & 7) != 0) {
+        aw = Arm64Asm { ...aw, code: aw.code.append(0) };
+    }
+    var i: i32 = 0;
+    while (i < p.lit_sites.len()) {
+        var site: i32 = p.lit_sites[i];
+        var imm19: i32 = (aw.code.len() - site) / 4;
+        aw = Arm64Asm { ...aw, code: arm64_patch_ldr_lit(aw.code, site, imm19) };
+        aw = Arm64Asm { ...aw, code: arm64_lit_le64(aw.code, p.lit_vals[i] as i64) };
+        i = i + 1;
+    }
+    p = Arm64GasProg { ...p, asm: aw, lit_sites: [], lit_vals: [] };
+    return p;
+}
+
 // ---- the assemble loop ----
 
 // arm64_gas_program parses a GAS-text program (one statement per line)
@@ -1727,7 +1792,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         }
         // directives
         if (line[0] == 46) { // '.'
-            if (line == ".text") {
+            if (line == ".ltorg") {
+                p = arm64_gas_ltorg(p);
+            } else if (line == ".text") {
                 section = 0;
             } else if (arm64_str_starts_with(line, ".section")) {
                 if (arm64_str_contains(line, "__const") || arm64_str_contains(line, "__DATA") || arm64_str_contains(line, ".data") || arm64_str_contains(line, ".rodata")) {
@@ -1749,6 +1816,20 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (sp >= 0) {
             mnem = line[0:sp];
             rest = arm64_gas_trim(line[sp + 1:line.len()]);
+        }
+        // `ldr Xd, =N` (literal-pool load): emit an LDR-literal placeholder
+        // and queue the 64-bit value; `.ltorg` (or end of program) flushes
+        // the pool into .text and patches the imm19.
+        if (mnem == "ldr" && arm64_str_indexof(rest, "=") >= 0) {
+            var rops: string[] = arm64_gas_operands(rest);
+            var litok: string = arm64_gas_trim(rops[1]);
+            var nval: i32 = arm64_gas_atoi(arm64_gas_trim(litok[1:litok.len()]));
+            var llas: Arm64Asm = p.asm;
+            llas = Arm64Asm { ...llas, code: arm64_ldr_lit(llas.code, arm64_gas_reg(rops[0]), 0) };
+            p = Arm64GasProg { ...p, asm: llas };
+            p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(llas.code.len() - 4) };
+            p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
+            continue;
         }
         // @PAGE / @PAGEOFF symbol references queue a fixup; everything else
         // assembles directly into .text.
@@ -1836,6 +1917,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         }
         p = Arm64GasProg { ...p, asm: arm64_gas_emit(p.asm, mnem, rest) };
     }
+    p = arm64_gas_ltorg(p); // flush any literals after the final `.ltorg`
     p = Arm64GasProg { ...p, asm: arm64_asm_resolve(p.asm) };
     return p;
 }
