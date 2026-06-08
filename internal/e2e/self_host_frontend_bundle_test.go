@@ -64,6 +64,7 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
+	utilSrc, _ := os.ReadFile("../../examples/self_host/util.fern")
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"function main(): i32 {\n" +
@@ -73,6 +74,8 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 		"}\n"
 
 	var bundle bytes.Buffer
+	bundle.WriteString("///MODULE util\n")
+	bundle.Write(utilSrc)
 	bundle.WriteString("///MODULE lexer\n")
 	bundle.Write(lexerSrc)
 	bundle.WriteString("\n///MODULE parser\n")

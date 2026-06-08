@@ -30,7 +30,7 @@ import (
 func writeSelfHostPrinterProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "printer.fern"} {
+	for _, name := range []string{"lexer.fern", "util.fern", "parser.fern", "printer.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

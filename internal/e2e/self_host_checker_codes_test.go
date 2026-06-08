@@ -137,7 +137,7 @@ func filterImplemented(codes []string) []string {
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"flatten.fern", "checker.fern", "bundle_run.fern"} {
+	for _, name := range []string{"flatten.fern", "util.fern", "checker.fern", "bundle_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -151,6 +151,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	lexerSrc, _ := os.ReadFile(filepath.Join(dir, "lexer.fern"))
 	parserSrc, _ := os.ReadFile(filepath.Join(dir, "parser.fern"))
 	checkerSrc, _ := os.ReadFile(filepath.Join(dir, "checker.fern"))
+	utilSrc, _ := os.ReadFile(filepath.Join(dir, "util.fern"))
 	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
 	if err != nil {
 		t.Fatalf("read std/io.fern: %v", err)
@@ -161,6 +162,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	}
 	driverMod := strings.ReplaceAll(string(runSrc), "import \"std/io\";", "import \"./io\";")
 	var bundle bytes.Buffer
+	bundle.WriteString("///MODULE util\n")
+	bundle.Write(utilSrc)
 	bundle.WriteString("///MODULE lexer\n")
 	bundle.Write(lexerSrc)
 	bundle.WriteString("\n///MODULE parser\n")

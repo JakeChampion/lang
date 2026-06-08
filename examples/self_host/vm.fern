@@ -612,14 +612,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
 
 // has_str: linear-scan membership for the small subtract steps
 // in the free-var pipeline.
-function has_str(xs: string[], s: string): boolean {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == s) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
+// has_str -> util.has_str (SH-020).
 
 function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult {
     match (e) {
@@ -896,7 +889,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             var rri: i32 = 0;
             while (rri < refs.len()) {
                 var nm: string = refs[rri];
-                if (!has_str(bound, nm) && !has_str(captures, nm)) {
+                if (!util.has_str(bound, nm) && !util.has_str(captures, nm)) {
                     if (lt.idx_of(nm) >= 0 || lt.capture_idx_of(nm) >= 0) {
                         captures = captures.append(nm);
                     }

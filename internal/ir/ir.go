@@ -694,6 +694,12 @@ type ExternRecordField struct {
 	Offset          int32
 	CanonicalOffset int32
 	Type            ast.Type
+	// DerefOffset supports a nested-record PARAM leaf: when ≥0, the leaf lives
+	// inside a nested composite whose value pointer is stored at this byte offset
+	// from the outer struct — the param wrapper loads `[[struct+DerefOffset]+
+	// Offset]` (deref then leaf load). -1 (the default for a direct field, and
+	// for every record-result field) means the leaf is at `[struct+Offset]`.
+	DerefOffset int32
 }
 
 // maxFlatExternRecordFields caps how many fields a flattened record parameter
@@ -712,19 +718,8 @@ const maxFlatExternRecordFields = 16
 // tupleElemLayout offsets, value = base + rc header), so both flatten the same
 // way; the elements are structural so no info lookup is needed for tuples.
 func externCompositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool) {
-	var types []ast.Type
-	switch x := t.(type) {
-	case ast.StructType:
-		sd, ok := info.Structs[x.Name]
-		if !ok {
-			return nil, false
-		}
-		for _, f := range sd.Fields {
-			types = append(types, f.Type)
-		}
-	case ast.TupleType:
-		types = append(types, x.Elems...)
-	default:
+	types, ok := compositeFieldTypes(t, info)
+	if !ok {
 		return nil, false
 	}
 	for _, ft := range types {
@@ -733,6 +728,64 @@ func externCompositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool
 		}
 	}
 	return types, true
+}
+
+// compositeFieldTypes returns the in-order field/element types of a record
+// (struct) or tuple type, WITHOUT the flattenable-scalar check — so a field that
+// is itself a composite is returned as-is (used by externRecordParamLeaves to
+// recurse into a nested record). ok=false if t is neither a known struct nor a
+// tuple.
+func compositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool) {
+	switch x := t.(type) {
+	case ast.StructType:
+		sd, ok := info.Structs[x.Name]
+		if !ok {
+			return nil, false
+		}
+		types := make([]ast.Type, len(sd.Fields))
+		for i, f := range sd.Fields {
+			types[i] = f.Type
+		}
+		return types, true
+	case ast.TupleType:
+		return append([]ast.Type{}, x.Elems...), true
+	}
+	return nil, false
+}
+
+// externRecordParamLeaves flattens a record/tuple `@import` PARAMETER to its
+// scalar leaves, recursing **one level** into a nested record/tuple field (the
+// canonical ABI flattens a nested record inline). Each leaf carries its load
+// path: a direct field is `{DerefOffset:-1, Offset}` (load at struct+Offset); a
+// field of a nested composite is `{DerefOffset:outerOff, Offset:innerOff}` (load
+// the inner value pointer at struct+outerOff, then the leaf at +innerOff). The
+// nested composite must itself be all flattenable scalars (a second level of
+// nesting is rejected). Total leaves capped at maxFlatExternRecordFields.
+func externRecordParamLeaves(t ast.Type, info *checker.Info) ([]ExternRecordField, bool) {
+	top, ok := compositeFieldTypes(t, info)
+	if !ok || len(top) == 0 {
+		return nil, false
+	}
+	topOffs, _ := tupleElemLayout(top, 4)
+	var leaves []ExternRecordField
+	for i, ft := range top {
+		if externRecordFieldSupported(ft) {
+			leaves = append(leaves, ExternRecordField{DerefOffset: -1, Offset: topOffs[i], Type: ft})
+			continue
+		}
+		inner, innerOK := externCompositeFieldTypes(ft, info) // requires all-scalar (one level)
+		if !innerOK || len(inner) == 0 {
+			return nil, false
+		}
+		innerOffs, _ := tupleElemLayout(inner, 4)
+		for j, it := range inner {
+			leaves = append(leaves, ExternRecordField{DerefOffset: topOffs[i], Offset: innerOffs[j], Type: it})
+		}
+	}
+	if len(leaves) == 0 || len(leaves) > maxFlatExternRecordFields {
+		return nil, false
+	}
+	return leaves, true
 }
 
 // externEnumParamLayout describes how to flatten an option/result `@import`
@@ -894,6 +947,12 @@ func externRecordFieldSupported(t ast.Type) bool {
 		return w == 8 || w == 16 || w == 32 || w == 64
 	case ast.FloatType:
 		return true
+	case ast.BoolType:
+		// bool flattens to a single i32 core value (param) and is one byte in the
+		// canonical record memory layout (result) — handled like an unsigned
+		// 8-bit: a Fern bool is 0/1 in a 4-byte slot, so the field helpers read it
+		// with i32.load8_u and size it at 1 byte canonically.
+		return true
 	}
 	return false
 }
@@ -904,19 +963,10 @@ func externRecordFieldSupported(t ast.Type) bool {
 // from the composite value (the user-visible data pointer), so the wasm wrapper
 // loads each field straight off it — the same indexing a `p.field` read uses.
 func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bool) {
-	types, ok := externCompositeFieldTypes(t, info)
-	if !ok || len(types) == 0 || len(types) > maxFlatExternRecordFields {
-		return nil, false
-	}
-	// 4-byte ptrW: the wasm backend is the only consumer (composites aren't an
-	// extern shape on the natives). tupleElemLayout's packing is identical to
-	// structFieldLayout's, so it computes the right offsets for both.
-	offs, _ := tupleElemLayout(types, 4)
-	out := make([]ExternRecordField, len(types))
-	for i, ft := range types {
-		out[i] = ExternRecordField{Offset: offs[i], Type: ft}
-	}
-	return out, true
+	// Params flatten to scalar leaves, recursing one level into a nested
+	// record/tuple field (the canonical ABI inlines a nested record). Each leaf
+	// carries its load path (DerefOffset for the nested case).
+	return externRecordParamLeaves(t, info)
 }
 
 // externRecordResultLayout flattens a record (struct) or tuple `@import`
@@ -941,7 +991,7 @@ func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResu
 	coffs, csize := externCanonicalRecordLayout(types)
 	fields := make([]ExternRecordField, len(types))
 	for i, ft := range types {
-		fields[i] = ExternRecordField{Offset: offs[i], CanonicalOffset: coffs[i], Type: ft}
+		fields[i] = ExternRecordField{Offset: offs[i], CanonicalOffset: coffs[i], Type: ft, DerefOffset: -1}
 	}
 	return &ExternRecordResult{Fields: fields, Size: size, CanonicalSize: csize, Direct: len(types) == 1}, true
 }
@@ -966,6 +1016,8 @@ func externCanonicalFieldSizeAlign(t ast.Type) int32 {
 			return 8
 		}
 		return 4
+	case ast.BoolType:
+		return 1 // canonical bool is one byte
 	}
 	return 4
 }

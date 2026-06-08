@@ -74,3 +74,39 @@ pub function is_all_digits(s: string): boolean {
     }
     return true;
 }
+
+// has_str reports whether the string array `xs` contains `s`
+// (linear scan). The single home for the membership helper that
+// existed as has_str / name_in / name_in_list / contains_name.
+pub function has_str(xs: string[], s: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == s) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// base_type_name returns the type name with any generic args / array
+// suffix stripped — i.e. the prefix before the first `[`. The single
+// home for what was base_type_name / type_base / strip_generic_args.
+pub function base_type_name(t: string): string {
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] == 91) { return t[0:i]; }   // 91 = '['
+        i = i + 1;
+    }
+    return t;
+}
+
+// index_of_str returns the index of `s` in `xs`, or -1 if absent.
+// Canonical -1-on-miss (ssa_wasm previously returned 0, which silently
+// resolved a missing funcaddr to table slot 0 — SH-007).
+pub function index_of_str(xs: string[], s: string): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == s) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}

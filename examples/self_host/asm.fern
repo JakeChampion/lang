@@ -2126,15 +2126,15 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         // fallback below (the variant value's shape won't
         // match any struct arm).
         if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
-                && asmcore.is_struct_decl_name(asmcore.base_type_name(fd_m.receiver_type), s)) {
-            var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, asmcore.base_type_name(fd_m.receiver_type));
+                && asmcore.is_struct_decl_name(util.base_type_name(fd_m.receiver_type), s)) {
+            var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, util.base_type_name(fd_m.receiver_type));
             s = arm_lit.state;
             var next_l: asmcore.LabelOut = asmcore.fresh_label(s);
             s = next_l.state;
             s = s.write("    leaq .S" + util.i32_to_string(arm_lit.idx) + "(%rip), %rdx\n");
             s = s.write("    cmpq %rdx, %rcx\n");
             s = s.write("    jne " + next_l.name + "\n");
-            s = s.write("    call __fn_" + asmcore.sanitize_label(asmcore.base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
+            s = s.write("    call __fn_" + asmcore.sanitize_label(util.base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
             // Caller cleans up args + receiver.
             s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
             s = s.write("    pushq %rax\n");
@@ -2154,8 +2154,8 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     while (efi < s.funcs.len()) {
         var efd: parser.FuncDecl = s.funcs[efi];
         if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
-                && asmcore.is_enum_recv(asmcore.base_type_name(efd.receiver_type), s)) {
-            enum_recv = asmcore.base_type_name(efd.receiver_type);
+                && asmcore.is_enum_recv(util.base_type_name(efd.receiver_type), s)) {
+            enum_recv = util.base_type_name(efd.receiver_type);
         }
         efi = efi + 1;
     }
@@ -3784,7 +3784,7 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
         // Generic receiver types (`Box[T]`) strip to the base struct
         // name `Box` so the method symbol matches the dispatch shape
         // compare (which uses the value's base-name shape string).
-        label_name = asmcore.base_type_name(fd.receiver_type) + "." + fd.name;
+        label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
     }
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    pushq %rbp\n");

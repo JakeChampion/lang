@@ -104,6 +104,11 @@ func TestSelfHostRcConstructWasm(t *testing.T) {
 		{"option-payload-retained", "function main(): i32 { var xs: i32[] = [4, 5, 6]; var o = Some(xs); var u = __fern_rc_is_unique(xs); return u + xs[1] + __fern_rc_underflow_count(); }", 5},
 		// Array wrapped in Ok(...) (Result payload) is retained.
 		{"result-payload-retained", "function main(): i32 { var xs: i32[] = [7, 8]; var r = Ok(xs); var u = __fern_rc_is_unique(xs); return u + xs[0] + __fern_rc_underflow_count(); }", 7},
+		// struct-update base-copy: a non-overridden array field copied from
+		// the base struct is retained (both structs co-own it).
+		{"struct-update-base-copy-retained", "struct H { items: i32[], n: i32 } function main(): i32 { var xs: i32[] = [1, 2]; var h = H { items: xs, n: 0 }; var h2 = H { ...h, n: 5 }; var u = __fern_rc_is_unique(xs); return u + h2.items[1] + h2.n + __fern_rc_underflow_count(); }", 7},
+		// User enum variant with an array payload is retained.
+		{"enum-variant-payload-retained", "enum Box { Arr(i32[]), Empty } function main(): i32 { var xs: i32[] = [3, 4, 5]; var b = Arr(xs); var u = __fern_rc_is_unique(xs); return u + xs[2] + __fern_rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

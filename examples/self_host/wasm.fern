@@ -298,7 +298,7 @@ function is_cell_expr(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprFieldAccess(fa) => {
             var ot: string = struct_type_of(fa.obj, cx);
             if (ot.len() == 0) { return false; }
-            return base_type_name(struct_field_type(cx.structs, ot, fa.field)) == "Cell";
+            return util.base_type_name(struct_field_type(cx.structs, ot, fa.field)) == "Cell";
         },
         _ => { return is_cell_new_call(e); },
     }
@@ -1371,6 +1371,59 @@ function extern_byte_array_param(t: string): boolean {
 // wrapper reads with a width+sign-aware load (extern_field_load_op) so the
 // pushed i32 is correctly sign-/zero-extended. Scoped to 1..16 fields, each an
 // 8-/16-/32-bit integer.
+// extern_field_is_scalar reports whether a record field type is a flattenable
+// scalar (a 8-/16-/32-bit integer — every self-host slot is i32-class).
+function extern_field_is_scalar(ft: string): boolean {
+    return ft == "i32" || ft == "u32" || ft == "i8" || ft == "u8" || ft == "i16" || ft == "u16";
+}
+
+// extern_record_all_scalar reports whether `t` is a known struct of 1..16
+// all-scalar fields — a flattenable nested record, one level deep (its own
+// fields must not themselves be nested records).
+function extern_record_all_scalar(mod: parser.Module, t: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        if (mod.structs[i].name == t) {
+            var n: i32 = mod.structs[i].fields.len();
+            if (n == 0 || n > 16) { return false; }
+            var j: i32 = 0;
+            while (j < n) {
+                if (!extern_field_is_scalar(mod.structs[i].fields[j].type_name)) { return false; }
+                j = j + 1;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// extern_record_leaf_count is the total number of flattened scalar leaves of a
+// record param, recursing one level into a nested all-scalar record field.
+function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        if (mod.structs[i].name == t) {
+            var n: i32 = mod.structs[i].fields.len();
+            var leaves: i32 = 0;
+            var j: i32 = 0;
+            while (j < n) {
+                var ft: string = mod.structs[i].fields[j].type_name;
+                if (extern_field_is_scalar(ft)) { leaves = leaves + 1; }
+                else { leaves = leaves + struct_field_count(mod.structs, ft); }
+                j = j + 1;
+            }
+            return leaves;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// extern_record_param_supported is true for a record (struct) `@import`
+// parameter the wrapper can flatten. Each field is a flattenable scalar, OR a
+// nested all-scalar record (flattened inline, one level — the canonical ABI
+// inlines a nested record). Scoped to 1..16 fields and 1..16 total leaves.
 function extern_record_param_supported(mod: parser.Module, t: string): boolean {
     var i: i32 = 0;
     while (i < mod.structs.len()) {
@@ -1380,10 +1433,11 @@ function extern_record_param_supported(mod: parser.Module, t: string): boolean {
             var j: i32 = 0;
             while (j < n) {
                 var ft: string = mod.structs[i].fields[j].type_name;
-                if (ft != "i32" && ft != "u32" && ft != "i8" && ft != "u8" && ft != "i16" && ft != "u16") { return false; }
+                if (!extern_field_is_scalar(ft) && !extern_record_all_scalar(mod, ft)) { return false; }
                 j = j + 1;
             }
-            return true;
+            var leaves: i32 = extern_record_leaf_count(mod, t);
+            return leaves >= 1 && leaves <= 16;
         }
         i = i + 1;
     }
@@ -1718,9 +1772,10 @@ function extern_imports(mod: parser.Module): string {
                         // string / list<T> / list<u8>: canonical (ptr, len) = 2 i32s.
                         out = out + " (param i32) (param i32)";
                     } else if (extern_record_param_supported(mod, f.params[sp].type_name)) {
-                        // record: flattens to one i32 per field.
+                        // record: flattens to one i32 per leaf (recursing one
+                        // level into a nested record field).
                         var rn: i32 = 0;
-                        while (rn < struct_field_count(mod.structs, f.params[sp].type_name)) {
+                        while (rn < extern_record_leaf_count(mod, f.params[sp].type_name)) {
                             out = out + " (param i32)";
                             rn = rn + 1;
                         }
@@ -2064,13 +2119,26 @@ function extern_wrappers(mod: parser.Module): string {
                 } else if (extern_array_param_supported(f.params[fi].type_name) || extern_byte_array_param(f.params[fi].type_name)) {
                     out = out + " (local.get $ab" + util.i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))";
                 } else if (extern_record_param_supported(mod, f.params[fi].type_name)) {
-                    // record: push each field (type-id@0, fields from +4) flattened
-                    // to its canonical i32, using a width+sign-aware load for the
-                    // sub-word integers (s8/s16/u8/u16).
+                    // record: push each leaf flattened to its canonical i32 (a
+                    // width+sign-aware load for sub-word fields). A scalar field
+                    // loads at struct+off; a nested-record field loads the inner
+                    // value pointer at struct+off, then each inner leaf at +innerOff.
+                    var rtn: string = f.params[fi].type_name;
                     var rfi: i32 = 0;
-                    while (rfi < struct_field_count(mod.structs, f.params[fi].type_name)) {
-                        var rft: string = struct_field_type_at(mod.structs, f.params[fi].type_name, rfi);
-                        out = out + " (" + extern_field_load_op(rft) + " (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(rfi)) + ")))";
+                    while (rfi < struct_field_count(mod.structs, rtn)) {
+                        var rft: string = struct_field_type_at(mod.structs, rtn, rfi);
+                        if (extern_field_is_scalar(rft)) {
+                            out = out + " (" + extern_field_load_op(rft) + " (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(rfi)) + ")))";
+                        } else {
+                            // nested record: load the inner value pointer, then each leaf.
+                            var inner_ptr: string = "(i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(rfi)) + ")))";
+                            var ifi: i32 = 0;
+                            while (ifi < struct_field_count(mod.structs, rft)) {
+                                var ift: string = struct_field_type_at(mod.structs, rft, ifi);
+                                out = out + " (" + extern_field_load_op(ift) + " (i32.add " + inner_ptr + " (i32.const " + util.i32_to_string(struct_field_off(ifi)) + ")))";
+                                ifi = ifi + 1;
+                            }
+                        }
                         rfi = rfi + 1;
                     }
                 } else if (extern_sum_param_supported(f.params[fi].type_name)) {
@@ -2581,14 +2649,7 @@ function lookup_pair(keys: string[], vals: string[], key: string): string {
 // `Box[i32]` / `Box[T]` → `Box`. Generics are erased, so the base name is
 // what matches the struct table. (A plain `[T]` array type has no base
 // ident, so this returns "" for it — harmless, arrays aren't structs.)
-function base_type_name(t: string): string {
-    var i: i32 = 0;
-    while (i < t.len()) {
-        if (t[i] == 91) { return t[0:i]; }
-        i = i + 1;
-    }
-    return t;
-}
+// base_type_name -> util.base_type_name (SH-020).
 
 // is_struct_type is true when `t` names a declared struct.
 function is_struct_type(structs: parser.StructDecl[], t: string): boolean {
@@ -2881,8 +2942,8 @@ function sa_elem_decl_type(v: parser.StmtVar, cx: Ctx): string {
     // method calls on the runtime-dispatch (emit_dyn_dispatch) path.
     if (v.type_name.len() >= 4 && v.type_name[0:4] == "dyn ") { return ""; }
     var et: string = struct_array_elem_type(v.init, cx);
-    if (et.len() == 0 && v.type_name.len() > 2 && v.type_name[v.type_name.len() - 2] == 91 && is_struct_type(cx.structs, base_type_name(v.type_name))) {
-        et = base_type_name(v.type_name);
+    if (et.len() == 0 && v.type_name.len() > 2 && v.type_name[v.type_name.len() - 2] == 91 && is_struct_type(cx.structs, util.base_type_name(v.type_name))) {
+        et = util.base_type_name(v.type_name);
     }
     return et;
 }
@@ -3169,7 +3230,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             if (id.name == "None") { return enum_box(1, "(i32.const 0)", depth); }
             // A captured name (inside a lambda body) loads from the closure
             // env box at offset 4 + captureIndex*4.
-            var capi: i32 = index_of_str(cx.cap_names, id.name);
+            var capi: i32 = util.index_of_str(cx.cap_names, id.name);
             if (capi >= 0) {
                 return "(i32.load (i32.add (local.get $__env) (i32.const " + util.i32_to_string(4 + capi * 4) + ")))";
             }
@@ -3373,6 +3434,12 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         var vi: i32 = 0;
                         while (vi < c.args.len()) {
                             vs = vs + " (i32.store (i32.add (local.get " + vap + ") (i32.const " + util.i32_to_string(struct_field_off(vi)) + ")) " + emit_expr(c.args[vi], cx, depth + 1) + ")";
+                            // Perceus construction-store inc: a user enum
+                            // variant payload that is an existing array
+                            // reference is retained (the variant co-owns it).
+                            if (init_is_arr_alias(c.args[vi], cx.arr_src)) {
+                                vs = vs + " (drop (call $__fern_rc_inc " + emit_expr(c.args[vi], cx, depth + 1) + "))";
+                            }
                             vi = vi + 1;
                         }
                         return vs + " (local.get " + vap + "))";
@@ -3651,6 +3718,19 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 var fi: i32 = 0;
                 while (fi < nf) {
                     s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")) (i32.load (i32.add " + bp + " (i32.const " + util.i32_to_string(struct_field_off(fi)) + "))))";
+                    // Perceus construction-store inc: copying a base struct's
+                    // array field into the new struct creates a second owner,
+                    // so retain it — UNLESS this field is overridden below (its
+                    // copy is about to be replaced, so retaining would leak).
+                    var overridden: boolean = false;
+                    var ok: i32 = 0;
+                    while (ok < sl.field_names.len()) {
+                        if (struct_field_index(cx.structs, sl.type_name, sl.field_names[ok]) == fi) { overridden = true; }
+                        ok = ok + 1;
+                    }
+                    if (!overridden && ty_spelling_is_array(struct_field_type_at(cx.structs, sl.type_name, fi))) {
+                        s = s + " (drop (call $__fern_rc_inc (i32.load (i32.add " + bp + " (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")))))";
+                    }
                     fi = fi + 1;
                 }
             }
@@ -3721,14 +3801,7 @@ function contains_str(xs: string[], n: string): boolean {
 }
 
 // index_of_str returns the position of `n` in `xs`, or -1 if absent.
-function index_of_str(xs: string[], n: string): i32 {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == n) { return i; }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
+// index_of_str -> util.index_of_str (SH-020/SH-007).
 
 // collect_locals gathers every `var`/`let` name declared anywhere in a
 // statement list (recursing into if / while bodies), deduped — wasm
@@ -6167,7 +6240,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     // later `match (v)` types the Some/Ok binding.
                     var optpay: string = parse_option_payload(v.type_name);
                     if (optpay.len() == 0) { optpay = scrutinee_payload(v.init, cx); }
-                    var styp: string = base_type_name(v.type_name);
+                    var styp: string = util.base_type_name(v.type_name);
                     // Keep an enum-typed declaration as the enum name (so its
                     // methods dispatch); only fall back to the initializer's
                     // type when the declared type is neither struct nor enum.
@@ -6316,10 +6389,10 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         if (is_float_type(f.params[pj].type_name) && !contains_str(f64_names, f.params[pj].name)) {
             f64_names = f64_names.append(f.params[pj].name);
         }
-        if (base_type_name(f.params[pj].type_name) == "Map" && !contains_str(map_names, f.params[pj].name)) {
+        if (util.base_type_name(f.params[pj].type_name) == "Map" && !contains_str(map_names, f.params[pj].name)) {
             map_names = map_names.append(f.params[pj].name);
         }
-        if (base_type_name(f.params[pj].type_name) == "Cell" && !contains_str(cell_names, f.params[pj].name)) {
+        if (util.base_type_name(f.params[pj].type_name) == "Cell" && !contains_str(cell_names, f.params[pj].name)) {
             cell_names = cell_names.append(f.params[pj].name);
         }
         pj = pj + 1;
@@ -6328,7 +6401,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // `Box[T]` / `Box[i32]` strips to its base struct name).
     if (f.receiver_type.len() > 0) {
         sv_names = sv_names.append(f.receiver_name);
-        sv_types = sv_types.append(base_type_name(f.receiver_type));
+        sv_types = sv_types.append(util.base_type_name(f.receiver_type));
     }
     var i: i32 = 0;
     while (i < f.params.len()) {
@@ -6338,11 +6411,11 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
             ol_payloads = ol_payloads.append(pop);
         } else if (is_str_array_type(f.params[i].type_name)) {
             str_arrays = str_arrays.append(f.params[i].name);
-        } else if (is_struct_type(structs, base_type_name(f.params[i].type_name))) {
+        } else if (is_struct_type(structs, util.base_type_name(f.params[i].type_name))) {
             // Generic instantiation `Box[i32]` / param `Box[T]` strips to
             // the base struct name `Box`.
             sv_names = sv_names.append(f.params[i].name);
-            sv_types = sv_types.append(base_type_name(f.params[i].type_name));
+            sv_types = sv_types.append(util.base_type_name(f.params[i].type_name));
         } else if (f.params[i].type_name == "string") {
             locals = locals.append(f.params[i].name);
         }
@@ -6465,7 +6538,7 @@ function collect_method_types(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(base_type_name(mod.funcs[i].receiver_type)); }
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(util.base_type_name(mod.funcs[i].receiver_type)); }
         i = i + 1;
     }
     return out;
@@ -6592,7 +6665,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     var pnames: string[] = [];
     var head: string = "  (func $";
     if (f.receiver_type.len() > 0) {
-        fname = base_type_name(f.receiver_type) + "__" + f.name;
+        fname = util.base_type_name(f.receiver_type) + "__" + f.name;
         head = head + fname + " (param $" + f.receiver_name + " i32)";
         pnames = pnames.append(f.receiver_name);
     } else {
