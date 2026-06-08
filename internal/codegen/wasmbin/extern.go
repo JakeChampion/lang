@@ -239,6 +239,7 @@ func buildExternRecordResultWrapper(nparams int, rawImport string, rr *ir.Extern
 		imp := idxs[rawImport]
 		rb := uint32(nparams)
 		base := uint32(nparams + 1)
+		inner := uint32(nparams + 2) // scratch for a nested-record inner struct
 
 		var body []byte
 		// rb = __fern_alloc(canonical size) — the canonical return-area memory
@@ -259,21 +260,44 @@ func buildExternRecordResultWrapper(nparams int, rawImport string, rr *ir.Extern
 		body = inst.InstLocalGet(body, base)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 0)
-		// Copy each field: read from the canonical return area (width+sign-aware)
-		// and store into the Fern struct slot.
-		// [base + rcHeaderBytes + Offset] = [rb + CanonicalOffset].
+		// Materialize each field. A scalar field reads from the canonical return
+		// area (width+sign-aware) and stores into the Fern slot. A nested-record
+		// field allocs its own inner Fern struct, fills it from the area, and
+		// stores its pointer in the outer slot.
 		for _, f := range rr.Fields {
-			body = inst.InstLocalGet(body, base) // store addr (Fern slot)
-			body = inst.InstLocalGet(body, rb)   // load addr (canonical area)
-			body = appendExternFieldLoad(body, f.Type, uint32(f.CanonicalOffset))
-			body = appendExternFieldStore(body, f.Type, rcHeaderBytes+uint32(f.Offset))
+			if f.Nested == nil {
+				body = inst.InstLocalGet(body, base) // store addr (Fern slot)
+				body = inst.InstLocalGet(body, rb)   // load addr (canonical area)
+				body = appendExternFieldLoad(body, f.Type, uint32(f.CanonicalOffset))
+				body = appendExternFieldStore(body, f.Type, rcHeaderBytes+uint32(f.Offset))
+				continue
+			}
+			// inner = __fern_alloc(rcHeaderBytes + inner size); rc = 1.
+			body = inst.InstI32Const(body, rcHeaderBytes+f.Nested.Size)
+			body = inst.InstCall(body, alloc)
+			body = inst.InstLocalSet(body, inner)
+			body = inst.InstLocalGet(body, inner)
+			body = inst.InstI32Const(body, 1)
+			body = memory.InstI32Store(body, 2, 0)
+			for _, lf := range f.Nested.Fields {
+				body = inst.InstLocalGet(body, inner)
+				body = inst.InstLocalGet(body, rb)
+				body = appendExternFieldLoad(body, lf.Type, uint32(lf.CanonicalOffset))
+				body = appendExternFieldStore(body, lf.Type, rcHeaderBytes+uint32(lf.Offset))
+			}
+			// store (inner + rcHeaderBytes) at base + rcHeaderBytes + outer offset.
+			body = inst.InstLocalGet(body, base)
+			body = inst.InstLocalGet(body, inner)
+			body = inst.InstI32Const(body, rcHeaderBytes)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Store(body, 2, rcHeaderBytes+uint32(f.Offset))
 		}
 		// return base + rcHeaderBytes (user-visible struct pointer).
 		body = inst.InstLocalGet(body, base)
 		body = inst.InstI32Const(body, rcHeaderBytes)
 		body = numeric.InstI32Add(body)
 
-		locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32) // rb, base
+		locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // rb, base, inner
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }

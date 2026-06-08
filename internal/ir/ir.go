@@ -700,6 +700,14 @@ type ExternRecordField struct {
 	// Offset]` (deref then leaf load). -1 (the default for a direct field, and
 	// for every record-result field) means the leaf is at `[struct+Offset]`.
 	DerefOffset int32
+	// Nested supports a nested-record RESULT field (one level): when non-nil,
+	// this outer field is itself a record. Nested.Fields are the inner scalar
+	// leaves (their CanonicalOffset is the ABSOLUTE offset in the outer return
+	// area; Offset is the inner struct's field offset), and Nested.Size is the
+	// inner Fern struct's field-area size. The result wrapper allocs the inner
+	// struct, fills it from the return area, and stores its pointer at the outer
+	// field's Offset. nil for a scalar field.
+	Nested *ExternRecordResult
 }
 
 // maxFlatExternRecordFields caps how many fields a flattened record parameter
@@ -983,17 +991,80 @@ func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bo
 // of the return area, where sub-word fields pack tighter). For word-only records
 // the two coincide.
 func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResult, bool) {
-	types, ok := externCompositeFieldTypes(t, info)
-	if !ok || len(types) < 1 || len(types) > maxFlatExternRecordFields {
+	top, ok := compositeFieldTypes(t, info)
+	if !ok || len(top) < 1 || len(top) > maxFlatExternRecordFields {
 		return nil, false
 	}
-	offs, size := tupleElemLayout(types, 4)
-	coffs, csize := externCanonicalRecordLayout(types)
-	fields := make([]ExternRecordField, len(types))
-	for i, ft := range types {
-		fields[i] = ExternRecordField{Offset: offs[i], CanonicalOffset: coffs[i], Type: ft, DerefOffset: -1}
+	fernOffs, fernSize := tupleElemLayout(top, 4)
+	fields := make([]ExternRecordField, 0, len(top))
+	canonPos := int32(0)
+	maxAlign := int32(1)
+	leaves := 0
+	for i, ft := range top {
+		if externRecordFieldSupported(ft) { // direct scalar leaf
+			sz := externCanonicalFieldSizeAlign(ft)
+			if sz > maxAlign {
+				maxAlign = sz
+			}
+			canonPos = alignUpI32(canonPos, sz)
+			fields = append(fields, ExternRecordField{Offset: fernOffs[i], CanonicalOffset: canonPos, Type: ft, DerefOffset: -1})
+			canonPos += sz
+			leaves++
+			continue
+		}
+		// Nested record (one level): its scalar fields are laid out inline in the
+		// canonical area at the nested record's alignment; on the Fern side they
+		// live in a separate inner struct whose pointer is the outer field.
+		inner, innerOK := externCompositeFieldTypes(ft, info)
+		if !innerOK || len(inner) == 0 {
+			return nil, false
+		}
+		innerFernOffs, innerFernSize := tupleElemLayout(inner, 4)
+		innerAlign := int32(1)
+		for _, it := range inner {
+			if a := externCanonicalFieldSizeAlign(it); a > innerAlign {
+				innerAlign = a
+			}
+		}
+		if innerAlign > maxAlign {
+			maxAlign = innerAlign
+		}
+		canonPos = alignUpI32(canonPos, innerAlign)
+		innerLeaves := make([]ExternRecordField, len(inner))
+		for j, it := range inner {
+			sz := externCanonicalFieldSizeAlign(it)
+			canonPos = alignUpI32(canonPos, sz)
+			innerLeaves[j] = ExternRecordField{Offset: innerFernOffs[j], CanonicalOffset: canonPos, Type: it, DerefOffset: -1}
+			canonPos += sz
+			leaves++
+		}
+		canonPos = alignUpI32(canonPos, innerAlign)
+		fields = append(fields, ExternRecordField{
+			Offset:      fernOffs[i],
+			DerefOffset: -1,
+			Nested:      &ExternRecordResult{Fields: innerLeaves, Size: innerFernSize},
+		})
 	}
-	return &ExternRecordResult{Fields: fields, Size: size, CanonicalSize: csize, Direct: len(types) == 1}, true
+	if leaves < 1 || leaves > maxFlatExternRecordFields {
+		return nil, false
+	}
+	directScalar := len(fields) == 1 && fields[0].Nested == nil
+	if leaves == 1 && !directScalar {
+		// A single-leaf record flattens to one core value and so is returned by
+		// value — but the by-value (Direct) wrapper can't reconstruct a nested
+		// struct, so reject a single-leaf-via-nested record (a niche shape).
+		return nil, false
+	}
+	csize := alignUpI32(canonPos, maxAlign)
+	return &ExternRecordResult{Fields: fields, Size: fernSize, CanonicalSize: csize, Direct: directScalar && leaves == 1}, true
+}
+
+// alignUpI32 rounds n up to a multiple of a (a a power of two ≥ 1).
+func alignUpI32(n, a int32) int32 {
+	if rem := n % a; rem != 0 {
+		return n + (a - rem)
+	}
+	return n
 }
 
 // externCanonicalFieldSizeAlign returns the canonical-ABI memory size + alignment
@@ -1020,32 +1091,6 @@ func externCanonicalFieldSizeAlign(t ast.Type) int32 {
 		return 1 // canonical bool is one byte
 	}
 	return 4
-}
-
-// externCanonicalRecordLayout computes the canonical-ABI memory layout of a
-// record's fields: each field at its natural size + alignment, the record's
-// total size rounded up to its max field alignment. This is how the host writes
-// a record result into the return area (and differs from the Fern struct's
-// 4-byte-slot layout when sub-word fields are present).
-func externCanonicalRecordLayout(types []ast.Type) ([]int32, int32) {
-	offs := make([]int32, len(types))
-	pos := int32(0)
-	maxAlign := int32(1)
-	for i, t := range types {
-		sz := externCanonicalFieldSizeAlign(t)
-		if sz > maxAlign {
-			maxAlign = sz
-		}
-		if rem := pos % sz; rem != 0 {
-			pos += sz - rem
-		}
-		offs[i] = pos
-		pos += sz
-	}
-	if rem := pos % maxAlign; rem != 0 {
-		pos += maxAlign - rem
-	}
-	return offs, pos
 }
 
 // ExternExport binds a defined function (Name) to the WIT world export
