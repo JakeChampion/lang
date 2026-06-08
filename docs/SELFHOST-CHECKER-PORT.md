@@ -1080,6 +1080,41 @@ same code(s) the Go checker does — restricted to
   `line:col: error[E0XX]: msg` from the self-host checker; the Go checker
   leaves the differential gate.
 
+## Native-only codes blocked on feature ports
+
+Five Go-checker codes are **not** standalone checker rules — each is tied
+to a language feature the minimal self-host frontend doesn't model yet.
+Because the differential driver runs lexer → parser → checker (no
+codegen), a code is reachable only if the self-host **parser** produces
+the construct and the **type system** can represent it. These need the
+underlying feature ported first; they are tracked here so a future slice
+picks them up with the right prerequisite, not as a lone checker tweak:
+
+- **E023** (*unknown enum*) — the sibling of E022, implemented
+  defensively in `stmts_call_diags` but effectively **unreachable**: an
+  enum-typed scrutinee always resolves to a registered union sig, so the
+  "enum decl missing" branch can't fire. No corpus case possible.
+- **E032** (`use` binding-type inference failure) — the self-host parser
+  has no `use` support; porting it means replicating the whole desugar
+  (rest-of-block → a synthesised callback closure appended as the source
+  call's last arg). E032 is also never isolable — in every real failure
+  case it co-fires with E004 (the desugar makes a malformed-arity call),
+  E001 (unknown callee) or E038 (callback arg type) — so a differential
+  case can't pin it alone. (Probing this surfaced + fixed a Go-checker
+  nil-pointer panic formatting the un-inferred callback type for E038 —
+  see `ast.FuncType.String` and `TestUseWithoutAnnotationDoesNotPanicFormatting`.)
+- **E044** (closure captures a void / generic-param-typed var) — fires
+  only on an unrepresentable capture type. The self-host `Ty` system has
+  no generic-parameter type (generics are out of scope); a captured
+  generic reads as `unknown`, indistinguishable from an unresolved type.
+  Needs generics modelling.
+- **E057** (`Cell[T]` element must be scalar/string) — the self-host
+  doesn't model `Cell`, and `parse_type_name` keeps only the bare leading
+  token, dropping the `[T]` argument. Needs type-argument capture in the
+  parser (fixpoint-affecting) plus a `Cell` type.
+- **E053** (`fip` function may not allocate) — needs Perceus in the
+  self-host before allocation sites can be attributed to a `fip` function.
+
 ## Differential testing
 
 `internal/e2e/self_host_checker_codes_test.go` compiles

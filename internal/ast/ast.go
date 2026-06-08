@@ -344,10 +344,23 @@ func (f *FuncType) String() string {
 		if i > 0 {
 			out += ", "
 		}
+		// A param type can be nil when an upstream inference step
+		// bailed out (e.g. `use x <- f()` whose callback type the
+		// checker couldn't pin — see inferUseParam). Render it as
+		// `<unknown>` rather than dereferencing nil: this String is
+		// reached while formatting a diagnostic (E038), so a panic
+		// here would mask the real error.
+		if p == nil {
+			out += "<unknown>"
+			continue
+		}
 		out += p.String()
 	}
-	out += ") => " + f.Result.String()
-	return out
+	out += ") => "
+	if f.Result == nil {
+		return out + "<unknown>"
+	}
+	return out + f.Result.String()
 }
 
 // NormalWidth returns the canonical bit-width of a NumberType.
