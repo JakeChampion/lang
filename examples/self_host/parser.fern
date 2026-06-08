@@ -398,12 +398,13 @@ function array_builder_elem(t: string): string {
     return t[pl : t.len() - 1];
 }
 
-// is_builder_mutation is true when `c` is `b.append(...)` / `b.with(...)` —
-// an in-place builder mutation that becomes a reassignment.
+// is_builder_mutation is true when `c` is `b.append(...)` / `b.with(...)` /
+// `b.insert(...)` — an in-place builder mutation that becomes a reassignment.
+// `insert` covers the Map.build builder (`b.insert(k, v)`).
 function is_builder_mutation(c: ExprCall, b: string): boolean {
     match (c.callee) {
         ExprFieldAccess(fa) => {
-            if (fa.field != "append" && fa.field != "with") { return false; }
+            if (fa.field != "append" && fa.field != "with" && fa.field != "insert") { return false; }
             match (fa.obj) {
                 ExprIdent(id) => { return id.name == b; },
                 _ => { return false; },
@@ -506,6 +507,73 @@ function maybe_desugar_array_build(base: Expr): Expr {
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
                                     var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts };
+                                    return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0 };
+                                },
+                                _ => { return base; },
+                            }
+                        },
+                        _ => { return base; },
+                    }
+                },
+                _ => { return base; },
+            }
+        },
+        _ => { return base; },
+    }
+    return base;
+}
+
+// map_builder_inner extracts "K, V" from a "MapBuilder[K, V]" type spelling
+// (kept as a string by the self-host parser). Returns "" when the spelling
+// isn't MapBuilder[...]. The map sibling of array_builder_elem.
+function map_builder_inner(t: string): string {
+    var prefix: string = "MapBuilder[";
+    var pl: i32 = prefix.len();
+    if (t.len() < pl + 1) { return ""; }
+    if (t[t.len() - 1] != 93) { return ""; }  // 93 = ']'
+    var i: i32 = 0;
+    while (i < pl) {
+        if (t[i] != prefix[i]) { return ""; }
+        i = i + 1;
+    }
+    return t[pl : t.len() - 1];
+}
+
+// maybe_desugar_map_build lowers `Map.build(function(b: MapBuilder[K, V]):
+// void { BODY })` into a unique-local IIFE — the map sibling of
+// maybe_desugar_array_build (docs/ARRAY-BUILDER-PLAN.md). `b` is a fresh
+// non-escaping map so every `b.insert(k, v)` (rewritten to `b = b.insert(...)`)
+// is the in-place fast path. Returns `base` unchanged when it isn't a
+// well-formed Map.build call.
+function maybe_desugar_map_build(base: Expr): Expr {
+    match (base) {
+        ExprCall(call) => {
+            match (call.callee) {
+                ExprFieldAccess(fa) => {
+                    if (fa.field != "build") { return base; }
+                    match (fa.obj) {
+                        ExprIdent(id) => {
+                            if (id.name != "Map") { return base; }
+                            if (call.args.len() != 1) { return base; }
+                            match (call.args[0]) {
+                                ExprLambda(lam) => {
+                                    if (lam.params.len() != 1) { return base; }
+                                    var inner: string = map_builder_inner(lam.params[0].type_name);
+                                    if (inner.len() == 0) { return base; }
+                                    var bname: string = lam.params[0].name;
+                                    var mapty: string = "Map[" + inner + "]";
+                                    var cargs: Expr[] = [];
+                                    cargs = cargs.append(e_number("8", "", false));
+                                    var stmts: Stmt[] = [];
+                                    stmts = stmts.append(s_var(bname, mapty, e_call(e_ident("map_new"), cargs)));
+                                    var rewritten: Stmt[] = rewrite_builder_stmts(lam.body, bname);
+                                    var ri: i32 = 0;
+                                    while (ri < rewritten.len()) {
+                                        stmts = stmts.append(rewritten[ri]);
+                                        ri = ri + 1;
+                                    }
+                                    stmts = stmts.append(s_return(e_ident(bname)));
+                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0 };
                                 },
                                 _ => { return base; },
@@ -870,6 +938,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             p = p.advance();
             base = ExprCall { callee: base, args: args, line: oline, col: ocol, type_argc: pending_type_argc };
             base = maybe_desugar_array_build(base);
+            base = maybe_desugar_map_build(base);
             pending_type_argc = 0;
         } else if (pk == "[") {
             p = p.advance();
