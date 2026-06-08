@@ -12,14 +12,7 @@ import "./util";
 // Extracted to end the hand-maintained lockstep between the two
 // backends — this code now lives once.
 
-pub function base_type_name(t: string): string {
-    var i: i32 = 0;
-    while (i < t.len()) {
-        if (t[i] == 91) { return t[0:i]; }
-        i = i + 1;
-    }
-    return t;
-}
+// base_type_name -> util.base_type_name (SH-020).
 
 pub function sanitize_label(name: string): string {
     var out: string = "";

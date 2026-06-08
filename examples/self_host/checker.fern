@@ -2671,11 +2671,7 @@ function struct_decl_col(structs: parser.StructDecl[], name: string): i32 {
 
 // type_base strips a `[...]` suffix from a type annotation: `Box[i32]` ->
 // `Box`, `P` -> `P`.
-function type_base(t: string): string {
-    var i: i32 = 0;
-    while (i < t.len()) { if (t[i] == 91) { return t[0 : i]; } i = i + 1; }
-    return t;
-}
+// type_base -> util.base_type_name (SH-020).
 
 // dot_index returns the byte index of the first '.' in s, or -1. A
 // variant pattern that still carries a dot at check time is qualified by
@@ -2697,9 +2693,9 @@ function type_arity_diag(t: string, structs: parser.StructDecl[]): Diag[] {
     var out: Diag[] = [];
     var nargs: i32 = count_type_args(t);
     if (nargs >= 0) {
-        var tpc: i32 = struct_type_param_count(structs, type_base(t));
+        var tpc: i32 = struct_type_param_count(structs, util.base_type_name(t));
         if (tpc >= 0 && nargs != tpc) {
-            out = out.append(dg_at("E019", "struct " + type_base(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied", struct_decl_line(structs, type_base(t)), struct_decl_col(structs, type_base(t))));
+            out = out.append(dg_at("E019", "struct " + util.base_type_name(t) + " has " + itoa_nn(tpc) + " type parameter(s), " + itoa_nn(nargs) + " supplied", struct_decl_line(structs, util.base_type_name(t)), struct_decl_col(structs, util.base_type_name(t))));
         }
     }
     return out;
@@ -3883,7 +3879,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     var bi: i32 = 0;
     while (bi < rt.len()) { if (rt[bi] == 91) { return true; } bi = bi + 1; }   // '[' → generic/Map/array
     if (rt.len() >= 4 && rt[0:4] == "dyn ") { return true; }
-    var base: string = strip_generic_args(rt);
+    var base: string = util.base_type_name(rt);
     var i: i32 = 0;
     while (i < mod.structs.len()) { if (mod.structs[i].name == base) { return true; } i = i + 1; }
     var j: i32 = 0;
@@ -3946,7 +3942,7 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
                 earlier = true;
             }
             if (f2.receiver_name.len() > 0 && pe.receiver_name.len() > 0 && pe.name == f2.name
-                    && strip_generic_args(pe.receiver_type) == strip_generic_args(f2.receiver_type)) {
+                    && util.base_type_name(pe.receiver_type) == util.base_type_name(f2.receiver_type)) {
                 earlier = true;
             }
             ej = ej + 1;
@@ -3955,14 +3951,14 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
             if (f2.receiver_name.len() == 0) {
                 out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
             } else {
-                out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared", f2.line, f2.col));
+                out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + util.base_type_name(f2.receiver_type) + " redeclared", f2.line, f2.col));
             }
         }
         // E021: a method whose receiver type isn't a known struct / enum /
         // union (or a primitive / generic / dyn receiver), reported at the
         // method declaration.
         if (f2.receiver_name.len() > 0 && !receiver_type_ok(f2.receiver_type, mod)) {
-            out = out.append(dg_at("E021", "method receiver references unknown struct \"" + strip_generic_args(f2.receiver_type) + "\"", f2.line, f2.col));
+            out = out.append(dg_at("E021", "method receiver references unknown struct \"" + util.base_type_name(f2.receiver_type) + "\"", f2.line, f2.col));
         }
         di = di + 1;
     }
@@ -4043,14 +4039,7 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
 // strip_generic_args drops a `[...]` argument list from a (possibly
 // generic) receiver/type spelling: `Box[T]` -> `Box`, `P` -> `P`. Used so
 // a method's receiver identity and message render by base struct name.
-function strip_generic_args(t: string): string {
-    var i: i32 = 0;
-    while (i < t.len()) {
-        if (t[i] == 91) { return t[0:i]; }   // 91 = '['
-        i = i + 1;
-    }
-    return t;
-}
+// strip_generic_args -> util.base_type_name (SH-020).
 
 // ===================== owned-parameter move checking (E050/E051) =========
 // Affine analysis for `own` parameters: using an owned value after it has

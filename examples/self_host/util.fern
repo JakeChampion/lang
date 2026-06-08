@@ -86,3 +86,15 @@ pub function has_str(xs: string[], s: string): boolean {
     }
     return false;
 }
+
+// base_type_name returns the type name with any generic args / array
+// suffix stripped — i.e. the prefix before the first `[`. The single
+// home for what was base_type_name / type_base / strip_generic_args.
+pub function base_type_name(t: string): string {
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] == 91) { return t[0:i]; }   // 91 = '['
+        i = i + 1;
+    }
+    return t;
+}

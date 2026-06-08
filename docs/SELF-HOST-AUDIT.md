@@ -157,8 +157,9 @@ findings. Ranked by leverage.
   - String membership — **done**: one `util.has_str` replaces the 6 copies /
     4 names (`has_str`/`name_in`/`name_in_list`/`contains_name`) across `asmcore`,
     `vm`, `checker`, `parser`, `fern`, and the two `*_load_run` drivers.
-  - `base_type_name`/`type_base`/`strip_generic_args` — **4 copies / 3 names**
-    (`asmcore:14`, `checker:2660`, `checker:3990`, `wasm:2166`).
+  - `base_type_name`/`type_base`/`strip_generic_args` — **done**: one
+    `util.base_type_name` (asmcore pub + wasm + checker's two names; asm/asm_arm64
+    cross-module callers updated).
   - `is_all_digits` — **done** (`asmcore` pub + `ssa` + `wasm`, all already util).
   - `index_of_str`/`index_of_byte`, `contains` (substring),
     `str_join_range`/`str_join_chunks`, `pred_slot`, `block_index`, `last_slash`,
