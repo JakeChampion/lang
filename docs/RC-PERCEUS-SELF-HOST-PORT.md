@@ -1029,3 +1029,18 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   value-correct + detector 0). With this, all three backends release
   re-bound array locals per-iteration. (The wasm slice landed this first;
   this brings x86-64 + arm64 to the same behaviour.)
+- 2026-06-08: **wasm backend RC — reclaim fresh-array builtin/method
+  results.** Final array-reclaim gap on wasm: locals inited from a builtin
+  / method that returns a FRESH owned array — `args()`, `random_bytes(n)`,
+  and a map's `.keys()` / `.values()` snapshot — were not counted/swept
+  (only user-function call results were). New `init_is_fresh_array_builtin`
+  adds them to the swept set. Safe because these never alias an existing
+  buffer (unlike `.append(v)`, which can return the receiver in place and
+  stays excluded). Coverage: `TestSelfHostRcCallResultWasm` gains
+  random-swept, mapkeys-swept, and a `.values()`-in-a-loop case (fresh +
+  per-iteration dec-on-overwrite, detector 0). Full wasm suite (~96 s)
+  green; bootstrap-safe. wasm array reclamation is now comprehensive:
+  literals, slices, append loops, aliases, user-call results, fresh
+  builtins/methods, construction stores, and loop/rebind churn — matching
+  the asm backends' sweep-by-type completeness for the common cases.
+  Remaining: Phase 1e (strings / structs / enums / maps).
