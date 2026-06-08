@@ -683,6 +683,14 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"enum-construct-match", "enum Shape { Circle(i32), Square(i32) } function main(): i32 { var a: Shape = Circle(3); match (a) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; }", 27, ""},
 		{"enum-second-variant", "enum Shape { Circle(i32), Square(i32) } function main(): i32 { var a: Shape = Square(4); match (a) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; }", 16, ""},
 		{"enum-unit-variant", "enum Opt { Has(i32), Nil } function main(): i32 { var n: Opt = Nil; match (n) { Has(v) => { return v; }, Nil => { return 9; } } return 0; }", 9, ""},
+		// Wide enum payload slots (S1): a single i64 / f64 variant payload
+		// stores + binds at full width (8-byte slot), so a value above 2^31 (or
+		// a float's fractional bits) round-trips — a 4-byte i32 slot would
+		// truncate it. The bound `x` is a 64-bit local (declared i64/f64,
+		// recognised by is_i64_expr / is_f64_expr).
+		{"enum-i64-payload", "enum Box { Big(i64) } function main(): i32 { var b: Box = Big(5000000000); match (b) { Big(x) => { if (x == 5000000000) { return 42; } return 1; } } return 0; }", 42, ""},
+		{"enum-i64-payload-arith", "enum Box { Big(i64) } function main(): i32 { var b: Box = Big(4200000000); match (b) { Big(x) => { return (x / 100000000) as i32; } } return 0; }", 42, ""},
+		{"enum-f64-payload", "enum FBox { F(f64) } function main(): i32 { var b: FBox = F(3.5); match (b) { F(x) => { return (x * 4.0) as i32; } } return 0; }", 14, ""},
 		// Enum receiver method — dispatches via the enum type (a var typed
 		// `Shape` now records `Shape`, so its methods resolve).
 		{"enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { var a: Shape = Circle(3); var b: Shape = Square(4); return a.area() + b.area(); }", 43, ""},
