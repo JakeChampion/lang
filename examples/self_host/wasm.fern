@@ -6090,14 +6090,22 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 }
                 return st;
             }
-            st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
-            // Perceus string inc-on-alias: `var t = s` binding a second
-            // reference to an owned string retains it so the exit sweep's
-            // dec of both slots balances (a literal source is a guard no-op).
-            if (contains_str(st.cx.str_swept, v.name) && init_is_string_alias(v.init, st.cx)) {
-                st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+            // A swept string binding: release any prior string in the slot
+            // (cow-guarded) before storing, so a re-bound local — e.g. a
+            // loop body's `var s = a + b` each iteration — frees the previous
+            // iteration's string instead of leaking it. The slot is
+            // zero-init, so the first binding releases null (a no-op). A
+            // bare-ident alias then retains the string.
+            if (contains_str(st.cx.str_swept, v.name)) {
+                st = st.w("    (local.set $__retv_i32 " + emit_expr(v.init, st.cx, 0) + ")\n");
+                st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + v.name + ")) (then (drop (call $__fern_arr_dec (local.get $" + v.name + ")))))\n");
+                st = st.w("    (local.set $" + v.name + " (local.get $__retv_i32))\n");
+                if (init_is_string_alias(v.init, st.cx)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+                }
+                return st;
             }
-            return st;
+            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
         },
         parser.StmtAssign(a) => {
             if (contains_str(st.cx.i64_names, a.target)) {
@@ -6117,6 +6125,19 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + a.target + ")) (then (drop (call $__fern_arr_dec (local.get $" + a.target + ")))))\n");
                 st = st.w("    (local.set $" + a.target + " (local.get $__retv_i32))\n");
                 if (init_is_arr_alias(a.value, st.cx.arr_src)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + a.target + ")))\n");
+                }
+                return st;
+            }
+            // Reassigning an owned string local (`s = s + x`): release the
+            // old string (cow-guarded) and retain a newly-aliased one — so a
+            // string-building loop reclaims each intermediate instead of
+            // leaking all but the last.
+            if (contains_str(st.cx.str_swept, a.target)) {
+                st = st.w("    (local.set $__retv_i32 " + emit_expr(a.value, st.cx, 0) + ")\n");
+                st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + a.target + ")) (then (drop (call $__fern_arr_dec (local.get $" + a.target + ")))))\n");
+                st = st.w("    (local.set $" + a.target + " (local.get $__retv_i32))\n");
+                if (init_is_string_alias(a.value, st.cx)) {
                     st = st.w("    (drop (call $__fern_rc_inc (local.get $" + a.target + ")))\n");
                 }
                 return st;

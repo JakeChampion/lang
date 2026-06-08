@@ -75,6 +75,13 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// A locally-built string used then dropped is freed at exit; a churn
 		// stays value-correct + detector clean (no over-release with free on).
 		{"string-build-use-churn", "function main(): i32 { var n = 0; var k = 0; while (k < 2000) { var s: string = \"ab\" + \"cd\"; n = n + s.len(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 6},
+		// Reassign reclaim: `s = s + x` in a loop now releases each prior
+		// string (StmtAssign cow-guarded dec-on-overwrite) instead of leaking
+		// all but the last — value-correct + detector clean.
+		{"string-builder-loop-reclaim", "function main(): i32 { var s: string = \"\"; var i = 0; while (i < 100000) { s = s + \"x\"; i = i + 1; } return (s.len() % 7) + __fern_rc_underflow_count(); }", 5},
+		// Rebind reclaim: `var s = …` re-bound each iteration is released
+		// per-iteration (StmtVar dec-on-overwrite). detector clean.
+		{"string-rebind-loop-reclaim", "function main(): i32 { var n = 0; var k = 0; while (k < 100000) { var s: string = \"ab\" + \"cd\"; n = n + s.len(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

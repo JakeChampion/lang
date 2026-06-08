@@ -1152,3 +1152,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   string follow-ups: reassign/rebind dec (`s = s + x` loop intermediates
   still leak) and the extern/canonical-ABI string builders (env / args /
   read_file / @export, still unboxed). Then the container types.
+- 2026-06-08: **wasm string RC — reassign / rebind release (reclaim loop
+  intermediates).** Completes string reclamation for the build-in-a-loop
+  pattern (the dominant string-garbage source). `s = s + x` (StmtAssign)
+  and a re-bound `var s = …` (StmtVar) on a swept string local now do the
+  same cow-guarded dec-on-overwrite as arrays — release the slot's prior
+  string (`$__fern_arr_dec`) before storing the new one, so each
+  iteration's intermediate is reclaimed instead of leaking all but the
+  last. Sound: the slot is zero-init (first store releases null), the
+  `i32.ne` cow-guard skips a same-pointer store, and a bare-ident alias is
+  retained. Coverage: `TestSelfHostRcStrBoxWasm` gains
+  string-builder-loop-reclaim (`s = s + "x"` × 100k) and
+  string-rebind-loop-reclaim (`var s = a + b` × 100k) — value-correct +
+  detector 0. Full wasm suite (~111 s) green; bootstrap-safe. With this,
+  wasm heap-string reclamation covers literals (immortal), concats,
+  aliases, construction stores, returns (move + retain), AND loop
+  reassign/rebind churn — the practical surface, matching what arrays
+  reached. (Stacks on the string free flip.) Remaining string follow-up:
+  the extern/canonical-ABI builders (env / args / read_file / @export,
+  still unboxed). Then the container types.
