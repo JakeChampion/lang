@@ -29,6 +29,7 @@
 import "core/no_prelude";
 import "./lexer";
 import "./parser";
+import "./util";
 
 // =================== INT / FOLD HELPERS ====================
 
@@ -46,28 +47,11 @@ function digits_to_i32(s: string): i32 {
     return acc;
 }
 
-function i32_to_string(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    if (n < 0) { neg = true; n = 0 - n; }
-    var out: string = "";
-    while (n > 0) {
-        var d: i32 = n % 10;
-        var c: string = "";
-        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
-        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
-        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
-        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
-        else if (d == 8) { c = "8"; } else { c = "9"; }
-        out = c + out;
-        n = n / 10;
-    }
-    if (neg) { out = "-" + out; }
-    return out;
-}
+// i32_to_string now lives in util.fern (imported as `util`); the
+// fold uses util.i32_to_string to render a folded literal. See SH-020.
 
 function lit_i32(n: i32): parser.Expr {
-    return parser.ExprNumber { text: i32_to_string(n), suffix: "", is_float: false, line: 0, col: 0 };
+    return parser.ExprNumber { text: util.i32_to_string(n), suffix: "", is_float: false, line: 0, col: 0 };
 }
 
 function lit_bool(b: boolean): parser.Expr {
