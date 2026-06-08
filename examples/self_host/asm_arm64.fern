@@ -2935,11 +2935,22 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             s = s.write("    adrp x1, " + body_lbl + "\n");
             s = s.write("    add x1, x1, :lo12:" + body_lbl + "\n");
             s = s.write("    str x1, [x0]\n");
-            // Store captures.
+            // Store captures. Perceus construction inc: a captured
+            // rc-tracked array is retained (the closure box owns it) —
+            // box ptr (x0) preserved across the retain call.
             var oi: i32 = 0;
             while (oi < n_caps) {
                 var outer_off: i32 = s.lookup_local(caps[oi]);
                 s = s.frame_ldr("x1", outer_off);
+                if (asmcore.ty_is_array_like(s.local_type_of(caps[oi]))) {
+                    s = s.mark_heap();
+                    s = s.write("    str x0, [sp, #-16]!\n");   // save box ptr
+                    s = s.write("    str x1, [sp, #-16]!\n");   // retain arg = capture
+                    s = s.write("    bl __fn___fern_rc_inc\n");
+                    s = s.write("    mov x1, x0\n");            // value (helper returns ptr)
+                    s = s.write("    add sp, sp, #16\n");
+                    s = s.write("    ldr x0, [sp], #16\n");     // restore box ptr
+                }
                 s = s.write("    str x1, [x0, #" + asmcore.i32_to_string((oi + 1) * 8) + "]\n");
                 oi = oi + 1;
             }

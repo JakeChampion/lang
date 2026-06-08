@@ -595,3 +595,19 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   struct-literal / array-literal / tuple-literal element stores AND the
   struct-update form. Remaining before the free flip: closure captures
   of an array, and index/field assignment `arr[i] = xs` / `obj.f = xs`.
+- 2026-06-08: **Phase 1d (closure-capture construction inc), x86-64 +
+  arm64 — SHIPPED.** A lambda capturing an rc-tracked array now retains
+  the buffer at the capture-store (the closure box owns the reference),
+  on both backends (box ptr preserved across the retain call). Uses the
+  block-form lambda `function (): T { … }` (the working closure shape —
+  the arrow form `() => e` capturing a local is a *separate pre-existing*
+  self-host limitation: it segfaults on origin/main regardless of RC).
+  Tests: `TestSelfHostRcClosureX86_64` (local closure + escaping closure
+  capturing an array, both detector-0 + value-correct) + green
+  closures/higher-order suites + byte-identical bootstrap/fixpoint on
+  both backends. Free-readiness gate now CLOSED for: all literal
+  constructions, the struct-update form, AND closure captures. **Only
+  remaining site: index/field assignment** (`arr[i] = xs` / `obj.f = xs`
+  storing an array) — note `obj.f = …` struct-field assignment is
+  rejected by the checker (E048-style), and array-of-arrays index-assign
+  is rare; once confirmed/closed, Phase 3 can flip free.
