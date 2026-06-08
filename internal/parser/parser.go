@@ -3186,6 +3186,11 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				return nil, err
 			}
 			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args}
+			if db, err := p.maybeDesugarArrayBuild(expr.(*ast.Call)); err != nil {
+				return nil, err
+			} else if db != nil {
+				expr = db
+			}
 		case p.match(lexer.Punct, "["):
 			// Generic call-site type arguments: `f[i32](args)` /
 			// `pair[i32, string](a, b)`. Disambiguated from array
@@ -3388,6 +3393,162 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, er
 // allowed. Empty `Map {}` is also valid and produces an empty
 // map. Lowering happens at IR-build time — no runtime difference
 // from `var m = map_new(N); m.set(k, v); ...`.
+// maybeDesugarArrayBuild lowers `Array.build(function(b: ArrayBuilder[T]):
+// void { BODY })` — the scoped linear builder (docs/ARRAY-BUILDER-PLAN.md)
+// — into an immediately-invoked function that builds a unique local array
+// and returns it:
+//
+//	(function(): T[] {
+//	    var b: T[] = [];
+//	    BODY'                 // each statement `b.append(x);`  → `b = b.append(x);`
+//	                          //              `b.with(i, x);`  → `b = b.with(i, x);`
+//	    return b;
+//	})()
+//
+// Because `b` is a fresh non-escaping local, its buffer stays rc=1 and
+// every append/with takes the existing in-place fast path; `b = b.append(x)`
+// is an assignment, so E055 (discarded value-returning result) does not
+// fire. ArrayBuilder[T] is pure surface syntax consumed here — it never
+// reaches the checker or IR, so every backend (incl. self-host) gets the
+// builder with no further changes.
+//
+// Returns nil when `call` is not an `Array.build(...)` call (leave it
+// alone); a parse error when it is but is malformed.
+func (p *parser) maybeDesugarArrayBuild(call *ast.Call) (ast.Expr, error) {
+	fa, ok := call.Callee.(*ast.FieldAccess)
+	if !ok || fa.Field != "build" {
+		return nil, nil
+	}
+	recv, ok := fa.Target.(*ast.Ident)
+	if !ok || recv.Name != "Array" {
+		return nil, nil
+	}
+	// It's `Array.build(...)` — from here on, a malformed call is an error
+	// (otherwise it would fall through to a confusing "undefined Array").
+	if len(call.Args) != 1 {
+		return nil, p.errorf(call.P, "Array.build expects a single function(b: ArrayBuilder[T]) argument")
+	}
+	lam, ok := call.Args[0].(*ast.Lambda)
+	if !ok {
+		return nil, p.errorf(call.P, "Array.build's argument must be a function(b: ArrayBuilder[T]) literal")
+	}
+	if len(lam.Params) != 1 {
+		return nil, p.errorf(lam.P, "Array.build's function must take exactly one parameter (the builder)")
+	}
+	bname := lam.Params[0].Name
+	elem := arrayBuilderElem(lam.Params[0].Type)
+	if elem == nil {
+		return nil, p.errorf(lam.P, "Array.build's parameter must be typed ArrayBuilder[T]")
+	}
+	arrTy := ast.ArrayType{Elem: elem}
+	pos := call.P
+	stmts := make([]ast.Stmt, 0, len(lam.Body.Stmts)+2)
+	stmts = append(stmts, &ast.Var{
+		P: pos, Name: bname, Type: arrTy, WasAnnotated: true,
+		Init: &ast.ArrayLit{P: pos, ElemType: elem},
+	})
+	for _, s := range lam.Body.Stmts {
+		stmts = append(stmts, rewriteBuilderStmt(s, bname))
+	}
+	stmts = append(stmts, &ast.Return{P: pos, Value: &ast.Ident{P: pos, Name: bname}})
+	iife := &ast.Lambda{P: pos, ReturnType: arrTy, Body: &ast.Block{P: pos, Stmts: stmts}}
+	return &ast.Call{P: pos, Callee: iife}, nil
+}
+
+// arrayBuilderElem extracts T from an `ArrayBuilder[T]` type annotation
+// (the parser wraps `Name[...]` as EnumType; StructType is handled
+// defensively). Returns nil if the type isn't ArrayBuilder[_].
+func arrayBuilderElem(t ast.Type) ast.Type {
+	switch v := t.(type) {
+	case ast.EnumType:
+		if v.Name == "ArrayBuilder" && len(v.Args) == 1 {
+			return v.Args[0]
+		}
+	case ast.StructType:
+		if v.Name == "ArrayBuilder" && len(v.Args) == 1 {
+			return v.Args[0]
+		}
+	}
+	return nil
+}
+
+// rewriteBuilderStmt retargets statement-position `b.append(...)` /
+// `b.with(...)` calls (where `b` is the builder) into reassignments
+// `b = b.append(...)`, recursing into every statement container so a
+// builder mutated inside a loop / branch is handled. Reads (`b.len()`,
+// `b` as a value) and all other statements pass through untouched. A
+// builder call left unrewritten (e.g. inside a nested closure, which the
+// walker deliberately does not descend into) stays a discarded
+// value-returning result and trips E055 — a loud error, never a silent
+// lost write.
+func rewriteBuilderStmt(s ast.Stmt, b string) ast.Stmt {
+	switch n := s.(type) {
+	case *ast.ExprStmt:
+		if c, ok := n.Expr.(*ast.Call); ok && isBuilderMutation(c, b) {
+			return &ast.ExprStmt{P: n.P, Expr: &ast.Assign{P: n.P, Target: &ast.Ident{P: n.P, Name: b}, Value: c}}
+		}
+		return n
+	case *ast.Block:
+		n.Stmts = rewriteBuilderStmts(n.Stmts, b)
+		return n
+	case *ast.If:
+		n.Then = rewriteBuilderStmt(n.Then, b)
+		if n.Else != nil {
+			n.Else = rewriteBuilderStmt(n.Else, b)
+		}
+		return n
+	case *ast.IfLet:
+		n.Then = rewriteBuilderStmt(n.Then, b)
+		if n.Else != nil {
+			n.Else = rewriteBuilderStmt(n.Else, b)
+		}
+		return n
+	case *ast.LetElse:
+		if n.Else != nil {
+			n.Else.Stmts = rewriteBuilderStmts(n.Else.Stmts, b)
+		}
+		return n
+	case *ast.While:
+		n.Body = rewriteBuilderStmt(n.Body, b)
+		return n
+	case *ast.For:
+		n.Body = rewriteBuilderStmt(n.Body, b)
+		return n
+	case *ast.Switch:
+		for _, c := range n.Cases {
+			c.Body.Stmts = rewriteBuilderStmts(c.Body.Stmts, b)
+		}
+		if n.Default != nil {
+			n.Default.Stmts = rewriteBuilderStmts(n.Default.Stmts, b)
+		}
+		return n
+	case *ast.Match:
+		for _, arm := range n.Arms {
+			arm.Body.Stmts = rewriteBuilderStmts(arm.Body.Stmts, b)
+		}
+		return n
+	}
+	return s
+}
+
+func rewriteBuilderStmts(stmts []ast.Stmt, b string) []ast.Stmt {
+	for i, s := range stmts {
+		stmts[i] = rewriteBuilderStmt(s, b)
+	}
+	return stmts
+}
+
+// isBuilderMutation reports whether `c` is `b.append(...)` or `b.with(...)`
+// — an in-place builder mutation that becomes a reassignment.
+func isBuilderMutation(c *ast.Call, b string) bool {
+	fa, ok := c.Callee.(*ast.FieldAccess)
+	if !ok || (fa.Field != "append" && fa.Field != "with") {
+		return false
+	}
+	id, ok := fa.Target.(*ast.Ident)
+	return ok && id.Name == b
+}
+
 func (p *parser) parseMapLit(pos ast.Position) (ast.Expr, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err

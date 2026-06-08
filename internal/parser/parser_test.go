@@ -1633,3 +1633,72 @@ func TestOpaqueStructParses(t *testing.T) {
 		t.Fatalf("expected `var opaque`, got %T", p2.Funcs[0].Body.Stmts[0])
 	}
 }
+
+// Array.build desugars to a unique-local IIFE: a `var b: T[] = []`, the
+// body with statement-position `b.append(x);` rewritten to `b = b.append(x)`,
+// and a trailing `return b`. ArrayBuilder[T] is surface-only — it never
+// survives the desugar. See docs/ARRAY-BUILDER-PLAN.md.
+func TestArrayBuildDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): i32[] {
+  return Array.build(function(b: ArrayBuilder[i32]): void {
+    b.append(1);
+    while (true) { b.append(2); }
+  });
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+	call, ok := ret.Value.(*ast.Call)
+	if !ok {
+		t.Fatalf("Array.build should desugar to an IIFE Call, got %T", ret.Value)
+	}
+	lam, ok := call.Callee.(*ast.Lambda)
+	if !ok || len(call.Args) != 0 {
+		t.Fatalf("IIFE callee should be a zero-arg Lambda, got %T with %d args", call.Callee, len(call.Args))
+	}
+	stmts := lam.Body.Stmts
+	// First: `var b: i32[] = []`.
+	v, ok := stmts[0].(*ast.Var)
+	if !ok || v.Name != "b" {
+		t.Fatalf("first stmt should be `var b`, got %T", stmts[0])
+	}
+	if at, ok := v.Type.(ast.ArrayType); !ok {
+		t.Fatalf("b should be typed T[], got %v", v.Type)
+	} else if _, ok := at.Elem.(ast.NumberType); !ok {
+		t.Errorf("b's element type should be i32, got %v", at.Elem)
+	}
+	// Top-level `b.append(1);` rewritten to an assignment.
+	es, ok := stmts[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("second stmt should be ExprStmt, got %T", stmts[1])
+	}
+	if _, ok := es.Expr.(*ast.Assign); !ok {
+		t.Fatalf("b.append should desugar to an Assign, got %T", es.Expr)
+	}
+	// Nested `b.append(2);` inside the while is rewritten too.
+	w, ok := stmts[2].(*ast.While)
+	if !ok {
+		t.Fatalf("third stmt should be While, got %T", stmts[2])
+	}
+	inner := w.Body.(*ast.Block).Stmts[0].(*ast.ExprStmt)
+	if _, ok := inner.Expr.(*ast.Assign); !ok {
+		t.Errorf("nested b.append should desugar to an Assign, got %T", inner.Expr)
+	}
+	// Last: `return b`.
+	rb, ok := stmts[len(stmts)-1].(*ast.Return)
+	if !ok {
+		t.Fatalf("last stmt should be `return b`, got %T", stmts[len(stmts)-1])
+	}
+	if id, ok := rb.Value.(*ast.Ident); !ok || id.Name != "b" {
+		t.Errorf("should return the builder local `b`, got %v", rb.Value)
+	}
+}
+
+// A malformed Array.build is a parse error (not a confusing "undefined
+// Array" downstream).
+func TestArrayBuildMalformed(t *testing.T) {
+	if _, err := Parse(`function f(): i32[] { return Array.build(42); }`); err == nil {
+		t.Error("Array.build with a non-lambda argument should be a parse error")
+	}
+}
