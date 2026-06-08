@@ -39,14 +39,7 @@ pub function sanitize_label(name: string): string {
 
 // is_all_digits now lives in util.fern (imported as `util`). See SH-020.
 
-pub function has_str(xs: string[], s: string): boolean {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == s) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
+// has_str -> util.has_str (SH-020).
 
 pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
     match (e) {
@@ -264,7 +257,7 @@ pub function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] 
     var ri: i32 = 0;
     while (ri < refs.len()) {
         var nm: string = refs[ri];
-        if (!has_str(bound, nm) && !has_str(caps, nm) && outer.has_local(nm)) {
+        if (!util.has_str(bound, nm) && !util.has_str(caps, nm) && outer.has_local(nm)) {
             caps = caps.append(nm);
         }
         ri = ri + 1;

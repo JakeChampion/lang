@@ -24,6 +24,7 @@
 //   - Receivers, type-params, `pub`, `import`
 
 import "core/no_prelude";
+import "./util";
 import "./lexer";
 
 // =================== PARSER ====================
@@ -4188,7 +4189,7 @@ function hl_capture_list(lam: ExprLambda, own_name: string, enclosing: string[])
     var i: i32 = 0;
     while (i < enclosing.len()) {
         var e: string = enclosing[i];
-        if (e != own_name && !name_in_list(shadow, e) && !name_in_list(caps, e)) {
+        if (e != own_name && !util.has_str(shadow, e) && !util.has_str(caps, e)) {
             if (stmts_mention(lam.body, e)) { caps = caps.append(e); }
         }
         i = i + 1;
@@ -4492,14 +4493,7 @@ pub function lower_defers_module(mod: Module): Module {
 function resource_drop_fn_name(res: string): string { return "__resource_drop_" + res; }
 
 // name_in_list is a local membership test (contains_str lives in other modules).
-function name_in_list(xs: string[], n: string): boolean {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == n) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
+// name_in_list -> util.has_str (SH-020).
 
 // handle_resource_of returns R for an owned-handle spelling "own R", else "".
 function handle_resource_of(type_name: string): string {
@@ -4652,7 +4646,7 @@ pub function insert_resource_drops(mod: Module): Module {
                             && !handle_own_consumed(f.body, mod.funcs, v.name)) {
                             var dropcall: Expr = e_call(e_ident(resource_drop_fn_name(res)), [e_ident(v.name)]);
                             nbody = nbody.append(s_defer(s_expr(dropcall)));
-                            if (!name_in_list(needed, res)) { needed = needed.append(res); }
+                            if (!util.has_str(needed, res)) { needed = needed.append(res); }
                         }
                     }
                 },

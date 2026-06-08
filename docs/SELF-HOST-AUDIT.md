@@ -154,9 +154,9 @@ findings. Ranked by leverage.
     `ssa_x86:23`, `vm:358`, `wasm:2581`.
   - `digits_to_i32` — **done** (SH-010): one sign-aware `util.digits_to_i32`; all
     5 copies + `interp.str_to_i32` + the `asm`/`asm_arm64` cross-module callers converted.
-  - String membership — **6 copies / 4 names**: `has_str` (`asmcore:86`,
-    `vm:651`), `name_in` (`checker:2270`), `name_in_list` (`parser:4389`),
-    `contains_name` (`fern:128`, `asm_load_run`, `asm_arm64_load_run`).
+  - String membership — **done**: one `util.has_str` replaces the 6 copies /
+    4 names (`has_str`/`name_in`/`name_in_list`/`contains_name`) across `asmcore`,
+    `vm`, `checker`, `parser`, `fern`, and the two `*_load_run` drivers.
   - `base_type_name`/`type_base`/`strip_generic_args` — **4 copies / 3 names**
     (`asmcore:14`, `checker:2660`, `checker:3990`, `wasm:2166`).
   - `is_all_digits` — **done** (`asmcore` pub + `ssa` + `wasm`, all already util).

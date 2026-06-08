@@ -11,6 +11,7 @@
 // emitter import differs (./asm_arm64 instead of ./asm).
 
 import "core/no_prelude";
+import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
@@ -48,14 +49,7 @@ function join_path(dir: string, name: string): string {
     return dir + "/" + name + ".fern";
 }
 
-function contains_name(xs: string[], n: string): boolean {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i] == n) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
+// contains_name -> util.has_str (SH-020).
 
 function should_load(import_path: string, root: string): boolean {
     if (import_path.len() == 0) { return false; }
@@ -76,7 +70,7 @@ function add_imports(paths: string[], mod: parser.Module, root: string): string[
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
-        if (should_load(ip, root) && !contains_name(paths, ip)) {
+        if (should_load(ip, root) && !util.has_str(paths, ip)) {
             paths = paths.append(ip);
         }
         i = i + 1;
@@ -114,7 +108,7 @@ function main(): i32 {
     while (j < paths.len()) {
         var ipath: string = paths[j];
         j = j + 1;
-        if (!contains_name(done, ipath)) {
+        if (!util.has_str(done, ipath)) {
             done = done.append(ipath);
             var mpath: string = resolve_path(ipath, dir, root);
             var msrc: string = "";
