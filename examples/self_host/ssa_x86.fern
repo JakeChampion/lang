@@ -400,6 +400,17 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    call __fern_ssa_write_file\n";
         return store_res(reg_of, widths, ins.result, "a", out);  // Option box ptr ← %rax
     }
+    if (ins.kind == "write") {
+        // write(handle): like print but no trailing newline (fd 1).
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // handle → %rax
+        out = out + "    movq %rax, %rdi\n";
+        return out + "    call __fern_ssa_write\n";
+    }
+    if (ins.kind == "args") {
+        // args() → string[] of argv; __fern_ssa_args() → rax.
+        out = out + "    call __fern_ssa_args\n";
+        return store_res(reg_of, widths, ins.result, "a", out);  // string[] ptr ← %rax
+    }
     return out;
 }
 
@@ -782,7 +793,54 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + ".Lssa_wf_err:\n    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $0, (%rax)\n    movq $0, 8(%rax)\n";   // Some box
     out = out + ".Lssa_wf_ret:\n";
     out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    // __fern_ssa_write(rdi = string handle): like __fern_ssa_print but with NO
+    // trailing newline — the driver's raw-output primitive. One write syscall
+    // per byte over the [len, byte-per-word] layout (low octet of each word).
+    out = out + "__fern_ssa_write:\n";
+    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n";
+    out = out + "    movq %rdi, %rbx\n";          // handle
+    out = out + "    movl (%rbx), %r12d\n";        // len = word[0]
+    out = out + "    xorl %r13d, %r13d\n";         // i = 0
+    out = out + ".Lfsw_loop:\n";
+    out = out + "    cmpl %r12d, %r13d\n    jge .Lfsw_done\n";
+    out = out + "    leal 1(%r13d), %eax\n    movl %eax, %eax\n";   // i+1
+    out = out + "    leaq (%rbx,%rax,8), %rsi\n";   // &word[i+1] = byte address
+    out = out + "    movq $1, %rax\n    movl $1, %edi\n    movq $1, %rdx\n    syscall\n";   // write(1, &byte, 1)
+    out = out + "    incl %r13d\n    jmp .Lfsw_loop\n";
+    out = out + ".Lfsw_done:\n";
+    out = out + "    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    // argv vector saved by _start (argc + &argv[0]) for __fern_ssa_args.
+    out = out + "    .bss\n    .align 8\n__fern_ssa_argc:\n    .zero 8\n__fern_ssa_argv:\n    .zero 8\n    .text\n";
+    // __fern_ssa_args() → rax = SSA string[] [argc, strptr0, …], each strptr a
+    // fresh SSA [len, byte-per-word] string copied from the C argv[i]. Mirrors
+    // read_file's C-string → SSA-string packing. alloc preserves r8/r9/rcx/rdx
+    // (it touches only rdi/rax), so those carry per-arg state across the call.
+    out = out + "__fern_ssa_args:\n";
+    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n";
+    out = out + "    movq __fern_ssa_argc(%rip), %r12\n";       // argc
+    out = out + "    leaq 1(%r12), %rdi\n    shlq $3, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r13\n";   // arr base, (argc+1) words
+    out = out + "    movl %r12d, (%r13)\n";                     // arr[0] = argc
+    out = out + "    movq __fern_ssa_argv(%rip), %r14\n";       // &argv[0]
+    out = out + "    xorq %r15, %r15\n";                        // i = 0
+    out = out + ".Lssa_args_loop:\n    cmpq %r12, %r15\n    jge .Lssa_args_done\n";
+    out = out + "    movq (%r14,%r15,8), %rbx\n";               // argv[i] (C string)
+    out = out + "    xorq %rcx, %rcx\n";                        // strlen
+    out = out + ".Lssa_args_strlen:\n    movzbl (%rbx,%rcx), %eax\n    testb %al, %al\n    je .Lssa_args_strdone\n    incq %rcx\n    jmp .Lssa_args_strlen\n";
+    out = out + ".Lssa_args_strdone:\n    movq %rcx, %r8\n";    // r8 = len
+    out = out + "    leaq 1(%r8), %rdi\n    shlq $3, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r9\n";   // SSA string box
+    out = out + "    movl %r8d, (%r9)\n";                       // box[0] = len
+    out = out + "    xorq %rcx, %rcx\n";                        // j = 0
+    out = out + ".Lssa_args_copy:\n    cmpq %r8, %rcx\n    jge .Lssa_args_copydone\n";
+    out = out + "    movzbl (%rbx,%rcx), %eax\n    leaq 1(%rcx), %rdx\n    movl %eax, (%r9,%rdx,8)\n";   // box[j+1] = byte
+    out = out + "    incq %rcx\n    jmp .Lssa_args_copy\n";
+    out = out + ".Lssa_args_copydone:\n    leaq 1(%r15), %rdx\n    movq %r9, (%r13,%rdx,8)\n";   // arr[i+1] = box
+    out = out + "    incq %r15\n    jmp .Lssa_args_loop\n";
+    out = out + ".Lssa_args_done:\n    movq %r13, %rax\n";
+    out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
     out = out + "_start:\n";
+    // Save argc + &argv[0] before any stack use (rsp points at argc at entry).
+    out = out + "    movq (%rsp), %rax\n    movq %rax, __fern_ssa_argc(%rip)\n";
+    out = out + "    leaq 8(%rsp), %rax\n    movq %rax, __fern_ssa_argv(%rip)\n";
     out = out + "    leaq __fern_ssa_heap(%rip), %rax\n";
     out = out + "    movq %rax, __fern_ssa_hp(%rip)\n";
     out = out + "    call __fn_main\n";
