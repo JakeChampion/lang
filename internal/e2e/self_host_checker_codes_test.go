@@ -490,6 +490,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// Switch-body diagnostics must still be caught (the body-walking passes
 		// recurse into case / default bodies).
 		{"e025-switch-body-undefined", "function main(): i32 { var n: i32 = 1; switch (n) { case 1: return undef; default: return 0; } }\n", []string{"E001"}},
+		// E003 regression guard: an annotated map var assigned a `Map { … }`
+		// literal must NOT false-positive E003. The literal desugars to
+		// `map_new[_i32](n)…` whose key/value type the self-host leaves
+		// `unknown`; type_assignable now treats an unknown side as a wildcard
+		// into the annotated Map[K,V] (matching the empty-array rule).
+		{"map-ann-empty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map {}; return 0; }\n", nil},
+		{"map-ann-nonempty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map { \"a\": 1 }; return 0; }\n", nil},
+		{"map-ann-i32keys-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32,i32] = Map { 1: 2 }; return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -656,6 +656,23 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
                 _ => { return false; }
             }
         },
+        TypeMap(tm) => {
+            match (from) {
+                TypeMap(fm) => {
+                    // `map_new[_i32](n)` (the desugar of a `Map { … }` literal,
+                    // including the empty `Map {}`) types to a map with
+                    // `unknown` key / value — the self-host doesn't infer
+                    // K / V from a literal's entries — so an unknown side is a
+                    // wildcard that flows into any concrete `Map[K, V]` slot
+                    // (mirroring the empty-array rule above). A concrete side
+                    // must be assignable.
+                    var kok: boolean = is_unknown(fm.key) || type_assignable(fm.key, tm.key, unions);
+                    var vok: boolean = is_unknown(fm.value) || type_assignable(fm.value, tm.value, unions);
+                    return kok && vok;
+                },
+                _ => { return false; }
+            }
+        },
         _ => { return false; }
     }
     return false;
