@@ -836,12 +836,12 @@ function eval(e: Expr): i32 {
 function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     if (peek_kind(toks, pos) == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: peek_int(toks, pos) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -852,7 +852,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (peek_kind(toks, pos) != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -866,7 +866,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
         if (peek_kind(toks, pos) != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
