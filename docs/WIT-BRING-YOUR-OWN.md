@@ -650,8 +650,18 @@ world-driven composer (P2) wires it.
      variant's `struct_id`. Gated by
      `TestSelfHostExternEnumParamCustomProvider` (the same `pick: func(c: color)
      -> s32` over `enum color { red, green, blue }`, `Green` → 101).
-   - Still rejected (next slices): the self-host port of WIT `enum` *results*
-     (the Go select-over-sentinels just landed); general payload-carrying user
+   - **Self-host port — WIT `enum` results — ✅ done.** The mirror of the Go enum
+     result. The self-host has no static sentinels — a payloadless enum value is
+     a heap `[struct_id@0]` box (exactly what a bare `Green` produces) — so the
+     wrapper maps the returned disc back to the matching variant's `struct_id`
+     (`extern_plain_enum_sid`, the inverse of `extern_plain_enum_disc`) and
+     stores it in a fresh 4-byte box (no new leak surface: identical to normal
+     enum construction). `extern_needs_wrapper` now also fires for a plain-enum
+     return (the raw import returns the disc i32 directly — not a composite-ret
+     trailing area). Gated by `TestSelfHostExternEnumResultCustomProvider` (the
+     same `choose: func(n: s32) -> color` returning `disc = n`; `rank(0/1/2)` →
+     `Red/Green/Blue`).
+   - Still rejected (next slices): general payload-carrying user
      `variant`s; sub-4-byte-element
      `list<T>` *results* (`u8[]`/`bool[]`) via a custom provider (the
      `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); bool /
