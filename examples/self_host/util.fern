@@ -74,3 +74,15 @@ pub function is_all_digits(s: string): boolean {
     }
     return true;
 }
+
+// has_str reports whether the string array `xs` contains `s`
+// (linear scan). The single home for the membership helper that
+// existed as has_str / name_in / name_in_list / contains_name.
+pub function has_str(xs: string[], s: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == s) { return true; }
+        i = i + 1;
+    }
+    return false;
+}

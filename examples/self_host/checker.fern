@@ -37,6 +37,7 @@
 //     just lumps both into a numeric kind for now)
 
 import "core/no_prelude";
+import "./util";
 import "./lexer";
 import "./parser";
 
@@ -415,7 +416,7 @@ function is_reserved_enum_name(name: string): boolean {
 function variant_in_unions(name: string, unions: UnionSig[]): boolean {
     var i: i32 = 0;
     while (i < unions.len()) {
-        if (name_in(unions[i].variants, name)) { return true; }
+        if (util.has_str(unions[i].variants, name)) { return true; }
         i = i + 1;
     }
     return false;
@@ -2016,7 +2017,7 @@ function mx_builtin_enum_of(name: string): string {
 function mx_enum_of(name: string, enums: parser.EnumDecl[]): string {
     var i: i32 = 0;
     while (i < enums.len()) {
-        if (name_in(enums[i].variant_names, name)) { return enums[i].name; }
+        if (util.has_str(enums[i].variant_names, name)) { return enums[i].name; }
         i = i + 1;
     }
     return "";
@@ -2278,14 +2279,7 @@ function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: par
 }
 
 // name_in reports whether `n` is one of `names`.
-function name_in(names: string[], n: string): boolean {
-    var i: i32 = 0;
-    while (i < names.len()) {
-        if (names[i] == n) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
+// name_in -> util.has_str (SH-020).
 
 // find_struct_sig returns the struct sig named `name`, or an empty-named
 // sentinel when there's no such struct.
@@ -2320,7 +2314,7 @@ function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
                 if (ssig.name.len() > 0) {
                     var d: i32 = 0;
                     while (d < ssig.field_names.len()) {
-                        if (!name_in(sl.field_names, ssig.field_names[d])) {
+                        if (!util.has_str(sl.field_names, ssig.field_names[d])) {
                             out = out.append(dg_at("E005", "struct literal missing field \"" + ssig.field_names[d] + "\"", sl.line, sl.col));
                         }
                         d = d + 1;
@@ -2726,7 +2720,7 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == name) {
-            if (name_in(structs[i].field_names, "__ev")) { return 1; }
+            if (util.has_str(structs[i].field_names, "__ev")) { return 1; }
             return 0 - 1;
         }
         i = i + 1;
@@ -2751,7 +2745,7 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
                         },
                         parser.PatVariant(pv) => {
                             if (pv.type_name.len() > 0) {
-                                if (name_in(seen, pv.type_name)) {
+                                if (util.has_str(seen, pv.type_name)) {
                                     out = out.append(dg_at("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
                                 } else {
                                     seen = seen.append(pv.type_name);
@@ -2823,7 +2817,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (name_in(declared, v.name)) {
+                if (util.has_str(declared, v.name)) {
                     out = out.append(dg_at("E013", "variable \"" + v.name + "\" already declared in this scope", v.line, v.col));
                 } else {
                     declared = declared.append(v.name);
@@ -3217,7 +3211,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 TypeStruct(sn) => {
                     var fsig: StructSig = s.lookup_struct(sn.name);
                     if (fsig.name.len() > 0
-                            && !name_in(fsig.field_names, fa.field)
+                            && !util.has_str(fsig.field_names, fa.field)
                             && s.lookup_method(fa.field, sn.name).name.len() == 0) {
                         out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + fa.field + "\"", fa.line, fa.col));
                     }
@@ -3462,7 +3456,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                                 if (cqual == mun.name) {
                                                     // Correctly qualified — covers the bare variant.
                                                     covered = covered.append(cbare);
-                                                    if (!name_in(usig.variants, cbare)) {
+                                                    if (!util.has_str(usig.variants, cbare)) {
                                                         out = out.append(dg_at("E014", "variant \"" + cbare + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
                                                     }
                                                 } else if (cur.lookup_union(cqual).name.len() > 0) {
@@ -3477,7 +3471,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                                 // E014: a variant pattern that names
                                                 // something outside the scrutinee's
                                                 // enum/union, reported at the arm.
-                                                if (!name_in(usig.variants, cpv.type_name)) {
+                                                if (!util.has_str(usig.variants, cpv.type_name)) {
                                                     out = out.append(dg_at("E014", "variant \"" + cpv.type_name + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
                                                 }
                                             }
@@ -3489,7 +3483,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                             if (!saw_wild) {
                                 var vi: i32 = 0;
                                 while (vi < usig.variants.len()) {
-                                    if (!name_in(covered, usig.variants[vi])) {
+                                    if (!util.has_str(covered, usig.variants[vi])) {
                                         out = out.append(dg_at("E030", "match is not exhaustive — variant " + usig.variants[vi] + " of enum " + mun.name + " is not covered (add an arm or use `_`)", m.line, m.col));
                                     }
                                     vi = vi + 1;
@@ -3519,7 +3513,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                 match (mst) {
                                     TypeUnion(amu) => {
                                         var ausig: UnionSig = cur.lookup_union(amu.name);
-                                        if (ausig.name.len() > 0 && !name_in(ausig.variants, apv.type_name)) {
+                                        if (ausig.name.len() > 0 && !util.has_str(ausig.variants, apv.type_name)) {
                                             foreign = true;
                                         }
                                     },
@@ -3584,10 +3578,10 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
             var cnt: i32 = 0;
             var j: i32 = 0;
             while (j < enums.len()) {
-                if (name_in(enums[j].variant_names, vn[k])) { cnt = cnt + 1; }
+                if (util.has_str(enums[j].variant_names, vn[k])) { cnt = cnt + 1; }
                 j = j + 1;
             }
-            if (cnt >= 2 && !name_in(out, vn[k])) { out = out.append(vn[k]); }
+            if (cnt >= 2 && !util.has_str(out, vn[k])) { out = out.append(vn[k]); }
             k = k + 1;
         }
         i = i + 1;
@@ -3604,7 +3598,7 @@ function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): Diag[] {
     var out: Diag[] = [];
     match (e) {
         parser.ExprIdent(id) => {
-            if (name_in(ambig, id.name) && is_unknown(s.lookup(id.name))) {
+            if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name))) {
                 out = out.append(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
             }
         },
@@ -4098,7 +4092,7 @@ function ow_moved_join(dst: MovedEntry[], branch: MovedEntry[], diverges: boolea
     return out;
 }
 
-function ow_is_owned(ctx: OwnCtx, name: string): boolean { return name_in(ctx.owned, name); }
+function ow_is_owned(ctx: OwnCtx, name: string): boolean { return util.has_str(ctx.owned, name); }
 
 function ow_func_flags(ofuncs: OwnFunc[], name: string): boolean[] {
     var i: i32 = 0;
@@ -4488,7 +4482,7 @@ function e049_check_assigns(stmts: parser.Stmt[], enclosing: NameTy[], locals: s
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtAssign(a) => {
-                if (!name_in(locals, a.target) && e049_ref_capture(enclosing, a.target)) {
+                if (!util.has_str(locals, a.target) && e049_ref_capture(enclosing, a.target)) {
                     out = out.append(dg_at("E049", "cannot assign to captured \"" + a.target + "\": a reference-typed closure capture is read-only (return the new value from the closure instead)", a.target_line, a.target_col));
                 }
             },
