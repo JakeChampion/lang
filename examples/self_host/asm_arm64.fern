@@ -181,6 +181,22 @@ struct CallOut { state: asmcore.EmitState, done: boolean }
 // …). Returns done=true when it emitted the call; done=false (with
 // the state untouched) when `name` is not a builtin, so emit_call
 // falls through to the closure / generic user-call path.
+// enum_payload_retain — arm64 mirror: retain an enum / Option / Result
+// payload in x1 when it aliases an rc-tracked array (the box now owns
+// the reference). Box ptr in x0 preserved across the call. A fresh
+// literal / call payload is owned and not re-retained.
+function enum_payload_retain(arg: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
+    if (!asmcore.needs_rc_inc_on_alias(arg, s)) { return s; }
+    s = s.mark_heap();
+    s = s.write("    str x0, [sp, #-16]!\n");   // save box ptr
+    s = s.write("    str x1, [sp, #-16]!\n");   // retain arg = payload
+    s = s.write("    bl __fn___fern_rc_inc\n");
+    s = s.write("    mov x1, x0\n");            // payload (helper returns ptr)
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    ldr x0, [sp], #16\n");     // restore box ptr
+    return s;
+}
+
 function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState): CallOut {
     if (name == "len" && c.args.len() == 1) {
         // Dispatch on operand type: string box → load
@@ -822,6 +838,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    bl __fern_alloc\n");
         s = s.mark_heap();
         s = s.write("    ldr x1, [sp], #16\n");   // payload
+        s = enum_payload_retain(c.args[0], s);    // Perceus: retain an rc-tracked array payload
         s = s.write("    mov x2, #0\n");
         s = s.write("    str x2, [x0]\n");         // tag = Some
         s = s.write("    str x1, [x0, #8]\n");     // payload
@@ -836,6 +853,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    bl __fern_alloc\n");
         s = s.mark_heap();
         s = s.write("    ldr x1, [sp], #16\n");
+        s = enum_payload_retain(c.args[0], s);    // Perceus: retain an rc-tracked array payload
         if (name == "Ok") {
             s = s.write("    mov x2, #0\n");
         } else {
@@ -854,6 +872,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    bl __fern_alloc\n");
         s = s.mark_heap();
         s = s.write("    ldr x1, [sp], #16\n");   // payload
+        s = enum_payload_retain(c.args[0], s);    // Perceus: retain an rc-tracked array payload
         var evLit: asmcore.StringLitOut = asmcore.add_string_lit(s, name);
         s = evLit.state;
         s = s.write("    adrp x2, .S" + asmcore.i32_to_string(evLit.idx) + "\n");
@@ -3056,7 +3075,7 @@ function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
             var off: i32 = 0 - 8 * (i + 1);
             s = s.frame_ldr("x0", off);                 // slot value
             s = s.write("    str x0, [sp, #-16]!\n");    // dec arg
-            s = s.write("    bl __fn___fern_rc_dec\n");
+            s = s.write("    bl __fn___fern_arr_dec\n");
             s = s.write("    add sp, sp, #16\n");
             any = true;
         }
@@ -3207,6 +3226,9 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // value the slot held (dec-on-overwrite).
             var reassign_inc: boolean = asmcore.needs_rc_inc_on_alias(a.value, s);
             var target_is_arr: boolean = asmcore.ty_is_array_like(s.local_type_of(a.target));
+            // Borrow model: a reassigned array PARAMETER (idx < n_params)
+            // must NOT release its old value -- the caller owns it.
+            if ((0 - s.lookup_local(a.target)) / 8 - 1 < s.n_params) { target_is_arr = false; }
             s = emit_expr(a.value, s);
             var off: i32 = s.lookup_local(a.target);
             s = s.write("    ldr x0, [sp], #16\n");          // new value
@@ -3229,7 +3251,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    b.eq " + skip_lbl.name + "\n");
                 s = s.write("    str x0, [sp, #-16]!\n");     // save new value across the dec
                 s = s.write("    str x1, [sp, #-16]!\n");     // dec arg = OLD value
-                s = s.write("    bl __fn___fern_rc_dec\n");
+                s = s.write("    bl __fn___fern_arr_dec\n");
                 s = s.write("    add sp, sp, #16\n");         // pop dec arg
                 s = s.write("    ldr x0, [sp], #16\n");       // restore new value
                 s = s.write(skip_lbl.name + ":\n");
@@ -4667,6 +4689,11 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         // backend + the native detector.
         s = s.write("__fern_rc_underflow: .quad 0\n");
         s = s.write("    .align 3\n");
+        // Phase 3 size-class freelist (mirror of x86-64): head pointers
+        // indexed by idx = roundup8(size)/8; <= 8 KiB classes. Pushed by
+        // __fern_arr_dec, popped by __fern_alloc before bumping.
+        s = s.write("__fern_freelist: .skip 8192\n");
+        s = s.write("    .align 3\n");
         s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
@@ -4674,6 +4701,24 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("__fern_alloc:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
+        // Round request up to a multiple of 8, then try the freelist
+        // (idx = size/8; pop the class head if non-empty). Clobbers only
+        // x0..x3 like the bump path below.
+        s = s.write("    add x0, x0, #7\n");
+        s = s.write("    lsr x3, x0, #3\n");        // idx = roundup8(size)/8
+        s = s.write("    lsl x0, x3, #3\n");        // rounded size = idx*8 (avoids bic, unsupported by the in-process arm64-darwin assembler)
+        s = s.write("    cmp x3, #1024\n");
+        s = s.write("    b.hs .Lalloc_nofl\n");
+        s = s.write("    adrp x1, __fern_freelist\n");
+        s = s.write("    add x1, x1, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x2, [x1, x3, lsl #3]\n");   // head = freelist[idx]
+        s = s.write("    cbz x2, .Lalloc_nofl\n");
+        s = s.write("    ldr x0, [x2]\n");               // next = *head
+        s = s.write("    str x0, [x1, x3, lsl #3]\n");   // freelist[idx] = next
+        s = s.write("    mov x0, x2\n");                 // return head
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lalloc_nofl:\n");                  // x0 = rounded size
         s = s.write("    adrp x1, __fern_heap_ptr\n");
         s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
         s = s.write("    ldr x2, [x1]\n");
@@ -4972,7 +5017,46 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    add x10, x10, :lo12:__fern_rc_underflow\n");
         s = s.write("    ldr w0, [x10]\n");
         s = s.write("    ret\n");
+        // __fern_arr_dec(data) — Phase 3 array release (arm64 mirror).
+        // rc>1 -> dec; rc==1 -> free buffer to the freelist
+        // (base=data-16, size=(cap+3)*8, idx=cap+3); rc<=0 -> detector.
+        // Guards null / low-address / static sentinel; clears rc on free
+        // so a stray second release is a detector tick, not a re-free.
+        // Frameless: data at [sp]. Clobbers x0..x3, x9.
         s = s.write("__fn___fern_arr_dec:\n");
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    cbz x0, .Larrdec_ret\n");
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x0, x9\n");
+        s = s.write("    blo .Larrdec_ret\n");
+        s = s.write("    ldur w1, [x0, #-8]\n");      // rc
+        s = s.write("    tbnz w1, #31, .Larrdec_ret\n");   // static sentinel
+        s = s.write("    cmp w1, #1\n");
+        s = s.write("    beq .Larrdec_free\n");
+        s = s.write("    bgt .Larrdec_dec\n");        // rc > 1
+        s = s.write("    adrp x2, __fern_rc_underflow\n");   // rc <= 0
+        s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
+        s = s.write("    ldr w3, [x2]\n");
+        s = s.write("    add w3, w3, #1\n");
+        s = s.write("    str w3, [x2]\n");
+        s = s.write("    b .Larrdec_ret\n");
+        s = s.write(".Larrdec_dec:\n");
+        s = s.write("    sub w1, w1, #1\n");
+        s = s.write("    stur w1, [x0, #-8]\n");
+        s = s.write("    b .Larrdec_ret\n");
+        s = s.write(".Larrdec_free:\n");
+        s = s.write("    stur wzr, [x0, #-8]\n");      // clear rc
+        s = s.write("    ldur x1, [x0, #-16]\n");      // cap
+        s = s.write("    add x1, x1, #3\n");           // idx = cap + 3
+        s = s.write("    cmp x1, #1024\n");
+        s = s.write("    bhs .Larrdec_ret\n");
+        s = s.write("    sub x2, x0, #16\n");          // base = data - 16
+        s = s.write("    adrp x3, __fern_freelist\n");
+        s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x9, [x3, x1, lsl #3]\n"); // old head
+        s = s.write("    str x9, [x2]\n");             // *base = old head
+        s = s.write("    str x2, [x3, x1, lsl #3]\n"); // freelist[idx] = base
+        s = s.write(".Larrdec_ret:\n");
         s = s.write("    ret\n");
         s = s.write("__fn___fern_drop_arr_ptr:\n");
         s = s.write("    ret\n");

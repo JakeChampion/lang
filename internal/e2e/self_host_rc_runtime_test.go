@@ -360,6 +360,9 @@ func TestSelfHostRcArm64(t *testing.T) {
 		{"struct-holds-array", "struct H { items: i32[] } function mk(): H { var xs: i32[] = [7, 8]; return H { items: xs }; } function main(): i32 { var h = mk(); return h.items[0] + h.items[1] + __fern_rc_underflow_count(); }", 15},
 		{"array-of-arrays", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4]; var both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __fern_rc_underflow_count(); }", 5},
 		{"struct-update-copy", "struct H { items: i32[], n: i32 } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs, n: 0 }; var h2: H = H { ...h, n: 5 }; return h2.items[1] + h2.n + __fern_rc_underflow_count(); }", 7},
+		// Phase 3 (arm64 free): reclamation churn (alloc >> heap completes) + enum payload retain.
+		{"reclaim-churn", "function work(n: i32): i32 { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs[n - 1]; } function main(): i32 { var k = 0; var s = 0; while (k < 200000) { s = work(200); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 3},
+		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function mk(): Box { var xs: i32[] = [3, 4, 5]; return Arr(xs); } function main(): i32 { var b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __fern_rc_underflow_count(); }, Empty => { return 0; } } }", 9},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
