@@ -2854,10 +2854,10 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // Struct-update `Name { ...base, f: v }`: the new box has
             // one slot per DECLARED field (in decl order); un-overridden
             // slots are copied verbatim from the base, the rest are the
-            // override values. This heap is leak-everything (rc intrinsics
-            // are no-ops), so no rc bookkeeping is needed on the copies —
-            // unlike the Go IR lowering, which inc's each copied pointer
-            // field. See docs/IMMUTABILITY-MIGRATION-PLAN.md.
+            // override values. Perceus: both the copied array fields and
+            // the override array values are retained (the new struct owns
+            // those references) — matching the Go IR lowering. Needed for
+            // free-readiness: the new struct may outlive the base/source.
             if (sl.has_base) {
                 // Find the struct decl to size the box + map override
                 // names to decl-order field indices.
@@ -2899,6 +2899,20 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     }
                     if (!overridden) {
                         s = s.write("    movq " + asmcore.i32_to_string((ci + 1) * 8) + "(%rsi), %rcx\n");
+                        // Perceus construction inc: the new struct gets a
+                        // reference to the base's array field, so retain it
+                        // (base + box ptrs preserved across the call).
+                        if (asmcore.ty_is_array_like(asmcore.ty_from_name(fields[ci].type_name))) {
+                            s = s.mark_heap();
+                            s = s.write("    pushq %rsi\n");            // save base
+                            s = s.write("    pushq %rax\n");            // save box
+                            s = s.write("    pushq %rcx\n");            // retain arg
+                            s = s.write("    call __fn___fern_rc_inc\n");
+                            s = s.write("    addq $8, %rsp\n");
+                            s = s.write("    movq %rax, %rcx\n");       // value (helper returns ptr)
+                            s = s.write("    popq %rax\n");             // restore box
+                            s = s.write("    popq %rsi\n");             // restore base
+                        }
                         s = s.write("    movq %rcx, " + asmcore.i32_to_string((ci + 1) * 8) + "(%rax)\n");
                     }
                     ci = ci + 1;
@@ -2915,9 +2929,19 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                         if (fields[of2].name == sl.field_names[ok]) { oidx = of2; }
                         of2 = of2 + 1;
                     }
+                    var ov_inc: boolean = asmcore.needs_rc_inc_on_alias(sl.field_values[ok], s);
                     s = emit_expr(sl.field_values[ok], s);  // rt: [box, val]
                     s = s.write("    popq %rcx\n");          // val → %rcx
                     s = s.write("    popq %rax\n");          // box → %rax
+                    if (ov_inc) {
+                        s = s.mark_heap();
+                        s = s.write("    pushq %rax\n");            // save box
+                        s = s.write("    pushq %rcx\n");            // retain arg = override value
+                        s = s.write("    call __fn___fern_rc_inc\n");
+                        s = s.write("    addq $8, %rsp\n");
+                        s = s.write("    movq %rax, %rcx\n");       // value (helper returns ptr)
+                        s = s.write("    popq %rax\n");             // restore box
+                    }
                     s = s.write("    movq %rcx, " + asmcore.i32_to_string((oidx + 1) * 8) + "(%rax)\n");
                     s = s.write("    pushq %rax\n");         // box back on rt-stack
                     ok = ok + 1;

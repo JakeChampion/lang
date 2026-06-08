@@ -2694,8 +2694,9 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    adrp x1, .S" + asmcore.i32_to_string(suNameLit.idx) + "\n");
                 s = s.write("    add x1, x1, :lo12:.S" + asmcore.i32_to_string(suNameLit.idx) + "\n");
                 s = s.write("    str x1, [x0]\n");
-                // Pop the base pointer into x2 — no calls happen during
-                // the field copy, so x2 survives.
+                // Pop the base pointer into x2. The copy loop may call
+                // __fern_rc_inc to retain array fields; x2 (base) and x0
+                // (box) are saved/restored across any such call.
                 s = s.write("    ldr x2, [sp], #16\n");
                 var ci: i32 = 0;
                 while (ci < dn) {
@@ -2708,6 +2709,20 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     }
                     if (!overridden) {
                         s = s.write("    ldr x1, [x2, #" + asmcore.i32_to_string((ci + 1) * 8) + "]\n");
+                        // Perceus construction inc: retain the base's array
+                        // field the new struct now references (base x2 +
+                        // box x0 preserved across the call).
+                        if (asmcore.ty_is_array_like(asmcore.ty_from_name(fields[ci].type_name))) {
+                            s = s.mark_heap();
+                            s = s.write("    str x2, [sp, #-16]!\n");   // save base
+                            s = s.write("    str x0, [sp, #-16]!\n");   // save box
+                            s = s.write("    str x1, [sp, #-16]!\n");   // retain arg
+                            s = s.write("    bl __fn___fern_rc_inc\n");
+                            s = s.write("    mov x1, x0\n");            // value (helper returns ptr)
+                            s = s.write("    add sp, sp, #16\n");
+                            s = s.write("    ldr x0, [sp], #16\n");     // restore box
+                            s = s.write("    ldr x2, [sp], #16\n");     // restore base
+                        }
                         s = s.write("    str x1, [x0, #" + asmcore.i32_to_string((ci + 1) * 8) + "]\n");
                     }
                     ci = ci + 1;
@@ -2723,9 +2738,19 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                         if (fields[of2].name == sl.field_names[ok]) { oidx = of2; }
                         of2 = of2 + 1;
                     }
+                    var ov_inc: boolean = asmcore.needs_rc_inc_on_alias(sl.field_values[ok], s);
                     s = emit_expr(sl.field_values[ok], s);   // rt: [box, val]
                     s = s.write("    ldr x1, [sp], #16\n");   // val → x1
                     s = s.write("    ldr x0, [sp], #16\n");   // box → x0
+                    if (ov_inc) {
+                        s = s.mark_heap();
+                        s = s.write("    str x0, [sp, #-16]!\n");   // save box
+                        s = s.write("    str x1, [sp, #-16]!\n");   // retain arg = override value
+                        s = s.write("    bl __fn___fern_rc_inc\n");
+                        s = s.write("    mov x1, x0\n");            // value (helper returns ptr)
+                        s = s.write("    add sp, sp, #16\n");
+                        s = s.write("    ldr x0, [sp], #16\n");     // restore box
+                    }
                     s = s.write("    str x1, [x0, #" + asmcore.i32_to_string((oidx + 1) * 8) + "]\n");
                     s = s.write("    str x0, [sp, #-16]!\n"); // box back on rt-stack
                     ok = ok + 1;
