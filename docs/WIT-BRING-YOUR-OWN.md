@@ -582,7 +582,13 @@ world-driven composer (P2) wires it.
      (`s8`/`s16`/`u8`/`u16`) are supported** — they sit in the same 4-byte slots,
      so the wrapper reads each with a width+sign-aware load
      (`extern_field_load_op` → `i32.load8_s/u`, `i32.load16_s/u`) to get the
-     correctly extended canonical i32; word fields use plain `i32.load`. `mod` is
+     correctly extended canonical i32; word fields use plain `i32.load`. **A
+     nested record field is flattened one level** (mirroring the Go side): a
+     field that is itself an all-scalar struct (`extern_record_all_scalar`)
+     expands to one leaf per inner field; since a self-host struct-of-struct field
+     is a pointer, the wrapper loads the inner value pointer at `struct+outerOff`
+     then each leaf at `+innerOff`. `extern_record_leaf_count` sizes the import's
+     `(param i32)` list (a second level of nesting is rejected). `mod` is
      threaded into `has_extern_mem_param` / `extern_needs_wrapper` for the
      struct-decl lookup. Sub-word *result* fields stay rejected
      (`extern_record_result_supported`, the result-side gate, stays i32/u32-only)
@@ -591,7 +597,10 @@ world-driven composer (P2) wires it.
      `sum-point: func(p: record { x, y: s32 }) -> s32`, x+y) and
      `TestSelfHostExternRecordParamSubwordCustomProvider` (a `record { a: s8,
      b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under the
-     wrong-width or wrong-sign load).
+     wrong-width or wrong-sign load) and
+     `TestSelfHostExternRecordParamNestedCustomProvider` (a `sum-line: func(l:
+     line) -> s32` over `record line { p: point, q: point }`,
+     `Line{p:{1,2},q:{3,4}}` → 10).
    - **Self-host port — record (struct) results — ✅ done.** The symmetric
      counterpart: an extern returning a record materializes a self-host struct.
      The host writes the record's fields into the return area at the **canonical
@@ -730,8 +739,8 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): the self-host port of nested-record params;
-     nested-record *results*; second-level / deeper nesting; non-uniform /
+   - Still rejected (next slices): nested-record *results*; second-level /
+     deeper nesting; non-uniform /
      multi-payload `variant`s; sub-4-byte-element `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above); bool composite fields. The
