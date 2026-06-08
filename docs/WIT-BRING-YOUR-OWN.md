@@ -513,8 +513,22 @@ world-driven composer (P2) wires it.
      branches alongside `extern_array_param_supported`. Gated by
      `TestSelfHostExternU8ArrayParamCustomProvider` (a
      `sum-bytes: func(b: list<u8>) -> s32` provider; `[10,20,12]` → 42).
-   - Still rejected (next slices): the rest of the self-host port (tuple
-     params); general user `variant`s;
+   - **Self-host port — tuple params — ✅ done.** A self-host tuple is a heap
+     block of N consecutive 4-byte slots (element i @ `i*4`, no type-id header —
+     simpler than a record, whose fields start at +4), and the canonical tuple
+     flattens to one i32 per element in order. So the wrapper
+     (`extern_tuple_param_supported` gate, scoped to 2..16 i32/u32 elements)
+     pushes `(i32.load (tuple + i*4))` per element — no copy or alignment wall
+     (it flattens to values, like records). `tuple_type_elem_count` /
+     `nth_tuple_type_elem` parse the `(A, B, …)` spelling. Threaded through
+     `has_extern_mem_param`, the `extern_imports` per-element lowering, and the
+     wrapper's param-decl / call-forward branches. Gated by
+     `TestSelfHostExternTupleParamCustomProvider` (a
+     `sum-pair: func(p: tuple<s32, s32>) -> s32` provider; `(10, 32)` → 42). With
+     this, the self-host port reaches parity with the Go backend for the param /
+     result composite shapes (string, numeric arrays, u8[], records, sum types,
+     tuples).
+   - Still rejected (next slices): general user `variant`s;
      single-element records/tuples (direct return); bool arrays; sub-word /
      nested-composite fields. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.

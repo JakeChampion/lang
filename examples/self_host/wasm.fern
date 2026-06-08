@@ -1293,6 +1293,34 @@ function extern_sum_param_is_option(t: string): boolean {
     return t.len() > 7 && t[0:7] == "Option[";
 }
 
+// tuple_type_elem_count returns the number of top-level elements in a tuple
+// type spelling "(A, B, …)", or 0 if it isn't a parenthesised tuple.
+function tuple_type_elem_count(t: string): i32 {
+    if (t.len() < 2 || t[0] != 40) { return 0; }  // 40 = '('
+    var idx: i32 = 0;
+    while (nth_tuple_type_elem(t, idx).len() > 0) { idx = idx + 1; }
+    return idx;
+}
+
+// extern_tuple_param_supported is true for an `@import` tuple parameter the
+// wrapper can flatten to its elements. A self-host tuple is a heap block of N
+// consecutive 4-byte slots (element i @ i*4, no header) — every element is
+// i32-class — and the canonical tuple flattens to one i32 per element, in
+// order. Scoped to 2..16 i32/u32 elements (a 1-element parenthesised type isn't
+// a tuple in Fern; the canonical wider/byte elements wouldn't fit a 4-byte
+// slot). No alignment wall: like records, it flattens to values.
+function extern_tuple_param_supported(t: string): boolean {
+    var n: i32 = tuple_type_elem_count(t);
+    if (n < 2 || n > 16) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        var e: string = nth_tuple_type_elem(t, i);
+        if (e != "i32" && e != "u32") { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // has_extern_mem_param is true when an `@import` extern takes a parameter a
 // wrapper must lower: a `string` / numeric array (canonical (ptr, len)) or a
 // record (flattened to its fields).
@@ -1300,7 +1328,7 @@ function has_extern_mem_param(mod: parser.Module, f: parser.FuncDecl): boolean {
     var i: i32 = 0;
     while (i < f.params.len()) {
         var pt: string = f.params[i].type_name;
-        if (pt == "string" || extern_array_param_supported(pt) || extern_u8_array_param(pt) || extern_record_param_supported(mod, pt) || extern_sum_param_supported(pt)) { return true; }
+        if (pt == "string" || extern_array_param_supported(pt) || extern_u8_array_param(pt) || extern_record_param_supported(mod, pt) || extern_sum_param_supported(pt) || extern_tuple_param_supported(pt)) { return true; }
         i = i + 1;
     }
     return false;
@@ -1339,6 +1367,13 @@ function extern_imports(mod: parser.Module): string {
                     } else if (extern_sum_param_supported(f.params[sp].type_name)) {
                         // option/result: flattens to (disc, payload) = 2 i32s.
                         out = out + " (param i32) (param i32)";
+                    } else if (extern_tuple_param_supported(f.params[sp].type_name)) {
+                        // tuple: flattens to one i32 per element.
+                        var tn: i32 = 0;
+                        while (tn < tuple_type_elem_count(f.params[sp].type_name)) {
+                            out = out + " (param i32)";
+                            tn = tn + 1;
+                        }
                     } else {
                         out = out + " (param " + wat_extern_valtype(f.params[sp].type_name) + ")";
                     }
@@ -1590,7 +1625,7 @@ function extern_wrappers(mod: parser.Module): string {
             var pp: i32 = 0;
             while (pp < f.params.len()) {
                 var ppn: string = "$ep" + i32_to_string(pp);
-                if (f.params[pp].type_name == "string" || extern_array_param_supported(f.params[pp].type_name) || extern_u8_array_param(f.params[pp].type_name) || extern_record_param_supported(mod, f.params[pp].type_name) || extern_sum_param_supported(f.params[pp].type_name)) {
+                if (f.params[pp].type_name == "string" || extern_array_param_supported(f.params[pp].type_name) || extern_u8_array_param(f.params[pp].type_name) || extern_record_param_supported(mod, f.params[pp].type_name) || extern_sum_param_supported(f.params[pp].type_name) || extern_tuple_param_supported(f.params[pp].type_name)) {
                     out = out + " (param " + ppn + " i32)";
                 } else {
                     out = out + " (param " + ppn + " " + wat_extern_valtype(f.params[pp].type_name) + ")";
@@ -1673,6 +1708,13 @@ function extern_wrappers(mod: parser.Module): string {
                         out = out + " (i32.load (local.get " + fppn + "))";
                     }
                     out = out + " (i32.load offset=4 (local.get " + fppn + "))";
+                } else if (extern_tuple_param_supported(f.params[fi].type_name)) {
+                    // tuple: push each i32 element (element i @ i*4, no header).
+                    var tfi: i32 = 0;
+                    while (tfi < tuple_type_elem_count(f.params[fi].type_name)) {
+                        out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + i32_to_string(tfi * 4) + ")))";
+                        tfi = tfi + 1;
+                    }
                 } else {
                     out = out + " (local.get " + fppn + ")";
                 }
