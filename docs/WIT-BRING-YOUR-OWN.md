@@ -401,15 +401,22 @@ world-driven composer (P2) wires it.
      s8/u16 field to a single sign-/zero-extended i32, so the wrapper reads a
      sub-word field with a width+sign-aware load (`i32.load8_s/u`,
      `i32.load16_s/u` via `appendExternFieldLoad`) to produce the correct i32
-     (`externRecordFieldValtype` keeps the flat valtype i32). bool, strings,
-     arrays, and nested records are still deferred — a struct param outside this
-     shape is rejected with a clear message. Gated by
-     `TestExternRecordParamCustomProvider` (a `record point { x: s32, y: s32 }`
-     summed), `TestExternRecordParamWideCustomProvider` (a mixed `record mix
-     { a: s32, b: s64 }`, exercising the i64 field's 8-byte offset + i64 flat
-     valtype), and `TestExternRecordParamSubwordCustomProvider` (a `record
-     { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under
-     the wrong-width or wrong-sign load).
+     (`externRecordFieldValtype` keeps the flat valtype i32). **A nested record
+     field is also flattened (one level)**: the canonical ABI inlines a nested
+     record, so `externRecordParamLeaves` recurses into a (flattenable) struct
+     field, emitting one leaf per inner scalar. A Fern struct field of struct
+     type is a *pointer*, so a nested leaf carries `DerefOffset` (the outer field
+     offset): the wrapper loads the inner value pointer there, then the leaf at
+     its inner offset. bool, strings, arrays, and a *second* level of nesting are
+     still deferred — a struct param outside this shape is rejected with a clear
+     message. Gated by `TestExternRecordParamCustomProvider` (a `record point
+     { x: s32, y: s32 }` summed), `TestExternRecordParamWideCustomProvider` (a
+     mixed `record mix { a: s32, b: s64 }`, exercising the i64 field's 8-byte
+     offset + i64 flat valtype), `TestExternRecordParamSubwordCustomProvider` (a
+     `record { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that
+     fail under the wrong-width or wrong-sign load), and
+     `TestExternRecordParamNestedCustomProvider` (a `record line { p: point,
+     q: point }` flattened to its 4 inner coords).
    - **Record (struct) results — ✅ done (Go).** An `@import` extern returning a
      `record` lifts into a Fern struct. A multi-field record flattens to > 1
      core value, so the canonical ABI returns it indirectly through a
@@ -723,11 +730,13 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): non-uniform / multi-payload `variant`s;
-     sub-4-byte-element `list<T>` *results* (`u8[]`/`bool[]`) via a custom
-     provider (the `ComposeFromWorldAuto` `gMemRealloc` trap analysed above);
-     bool / nested-composite fields. The multi-component harness
-     (`TestExternImportCustomProvider`) is the test vehicle for these.
+   - Still rejected (next slices): the self-host port of nested-record params;
+     nested-record *results*; second-level / deeper nesting; non-uniform /
+     multi-payload `variant`s; sub-4-byte-element `list<T>` *results*
+     (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
+     `gMemRealloc` trap analysed above); bool composite fields. The
+     multi-component harness (`TestExternImportCustomProvider`) is the test
+     vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
