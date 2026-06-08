@@ -1897,7 +1897,10 @@ function extern_variant_param_supported(mod: parser.Module, t: string): boolean 
                 if (fc > 1) { return false; }
                 if (fc == 1) {
                     var ft: string = struct_field_type_at(mod.structs, vn, 0);
-                    if (ft != "i32" && ft != "u32") { return false; }
+                    // i32/u32 (4-byte) or i64/u64 (8-byte, S1 wide slot) payloads.
+                    // A mixed-width set joins to an i64 canonical slot (per-arm
+                    // extend/load); a uniform i32 set keeps the i32 join.
+                    if (ft != "i32" && ft != "u32" && ft != "i64" && ft != "u64") { return false; }
                     anyp = true;
                 }
                 j = j + 1;
@@ -1907,6 +1910,71 @@ function extern_variant_param_supported(mod: parser.Module, t: string): boolean 
         i = i + 1;
     }
     return false;
+}
+
+// extern_variant_join_is64 is true when a supported variant's canonical payload
+// join is i64 — i.e. at least one payloaded arm carries a 64-bit (i64/u64)
+// field. A uniform i32 variant joins to i32 (the original single-slot path); a
+// set with any 64-bit arm joins to i64 (mixed-width: per-arm extend/load).
+function extern_variant_join_is64(mod: parser.Module, t: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.enums.len()) {
+        if (mod.enums[i].name == t) {
+            var n: i32 = mod.enums[i].variant_names.len();
+            var j: i32 = 0;
+            while (j < n) {
+                var vn: string = mod.enums[i].variant_names[j];
+                if (struct_field_count(mod.structs, vn) == 1) {
+                    var ft: string = struct_field_type_at(mod.structs, vn, 0);
+                    if (ft == "i64" || ft == "u64") { return true; }
+                }
+                j = j + 1;
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// extern_variant_payload_join_i64 builds the i64 canonical-join value for a
+// variant @import parameter whose join is i64: a lazy if/else chain on the box's
+// struct_id that, for the matched arm, loads the payload at offset 4 and coerces
+// it to i64 — an i64/u64 arm `i64.load`s it directly; a 32-bit arm `i32.load`s +
+// zero-extends; a payloadless arm contributes 0 (the host drops it). The chain
+// MUST be if/else (not select): the arms read the box at different widths, and
+// only the matched arm's box is wide enough, so non-taken branches must not run.
+function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxloc: string): string {
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        if (mod.enums[ei].name == t) {
+            var n: i32 = mod.enums[ei].variant_names.len();
+            var acc: string = extern_variant_arm_join_i64(mod, mod.enums[ei].variant_names[n - 1], boxloc);
+            var k: i32 = n - 2;
+            while (k >= 0) {
+                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                acc = "(if (result i64) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_join_i64(mod, mod.enums[ei].variant_names[k], boxloc) + ") (else " + acc + "))";
+                k = k - 1;
+            }
+            return acc;
+        }
+        ei = ei + 1;
+    }
+    return "(i64.const 0)";
+}
+
+// extern_variant_arm_join_i64 emits one arm's payload coerced to the i64 join:
+// i64.load for a 64-bit field, i64.extend_i32_u(i32.load) for a 32-bit field,
+// i64.const 0 for a payloadless arm. Payload sits at struct_field_off(0) = 4.
+function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc: string): string {
+    if (struct_field_count(mod.structs, vn) == 1) {
+        var ft: string = struct_field_type_at(mod.structs, vn, 0);
+        if (ft == "i64" || ft == "u64") {
+            return "(i64.load offset=4 (local.get " + boxloc + "))";
+        }
+        return "(i64.extend_i32_u (i32.load offset=4 (local.get " + boxloc + ")))";
+    }
+    return "(i64.const 0)";
 }
 
 // extern_variant_result_supported is the result-side gate for a general
@@ -2258,8 +2326,13 @@ function extern_imports(mod: parser.Module): string {
                         // WIT enum: flattens to a single i32 discriminant.
                         out = out + " (param i32)";
                     } else if (extern_variant_param_supported(mod, f.params[sp].type_name)) {
-                        // variant: flattens to (disc, payload) = 2 i32s.
-                        out = out + " (param i32) (param i32)";
+                        // variant: flattens to (disc:i32, payload-join). The join
+                        // is i64 for a mixed-width / 64-bit-bearing set, else i32.
+                        if (extern_variant_join_is64(mod, f.params[sp].type_name)) {
+                            out = out + " (param i32) (param i64)";
+                        } else {
+                            out = out + " (param i32) (param i32)";
+                        }
                     } else {
                         out = out + " (param " + wat_extern_valtype(f.params[sp].type_name) + ")";
                     }
@@ -2612,9 +2685,14 @@ function extern_wrappers(mod: parser.Module): string {
                 } else if (extern_variant_param_supported(mod, f.params[fi].type_name)) {
                     // variant: push the disc (struct_id → variant index) then the
                     // payload at struct_field_off(0). For a payloadless-case value
-                    // the payload read is ignored garbage (host drops it).
+                    // the payload read is ignored garbage (host drops it). An i64
+                    // join (mixed-width) coerces each arm to i64 via a disc-branch.
                     out = out + " " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn);
-                    out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(0)) + ")))";
+                    if (extern_variant_join_is64(mod, f.params[fi].type_name)) {
+                        out = out + " " + extern_variant_payload_join_i64(mod, f.params[fi].type_name, fppn);
+                    } else {
+                        out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(0)) + ")))";
+                    }
                 } else {
                     out = out + " (local.get " + fppn + ")";
                 }
@@ -2743,10 +2821,15 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
             out = out + "    (local.get $s))\n";
         } else if (f.import_iface.len() > 0 && extern_variant_result_supported(mod, f.ret_type)) {
-            // variant result (uniform payload): returned indirectly (disc:u8 @0,
-            // payload @4). The wrapper materializes a self-host payloaded-variant
-            // box [struct_id@0][payload@4], mapping the disc to the variant's
-            // struct_id (extern_plain_enum_sid).
+            // variant result: returned indirectly. The canonical variant memory
+            // layout is disc:u8 @0 then the payload aligned to the join width — @4
+            // for an i32 join, @8 for an i64 (mixed-width) join. The wrapper
+            // materializes a self-host payloaded-variant box [struct_id@0][payload
+            // @4], mapping the disc to the variant's struct_id (extern_plain_enum_sid).
+            // For an i64 join it stores the full 8-byte payload; a match on a
+            // 32-bit arm then reads only its low 4 bytes (S1 width-aware bind), so
+            // no per-arm result branch is needed.
+            var vj64: boolean = extern_variant_join_is64(mod, f.ret_type);
             out = out + "  (func $" + f.name;
             var vrp: i32 = 0;
             while (vrp < f.params.len()) {
@@ -2755,8 +2838,13 @@ function extern_wrappers(mod: parser.Module): string {
             }
             out = out + " (result i32)\n";
             out = out + "    (local $rb i32) (local $d i32) (local $s i32)\n";
-            // Return area: disc:u8 @0, payload @4 (8 bytes), 8-aligned with slack.
-            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 15)) (i32.const 7)) (i32.const -8)))\n";
+            // Return area, 8-aligned with slack: i32 join needs 8 usable bytes
+            // (payload @4), i64 join 16 (payload @8) — over-alloc by 7 to align.
+            if (vj64) {
+                out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 23)) (i32.const 7)) (i32.const -8)))\n";
+            } else {
+                out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 15)) (i32.const 7)) (i32.const -8)))\n";
+            }
             out = out + "    (call $" + f.name + "__import";
             var vra: i32 = 0;
             while (vra < f.params.len()) {
@@ -2765,10 +2853,17 @@ function extern_wrappers(mod: parser.Module): string {
             }
             out = out + " (local.get $rb))\n";
             out = out + "    (local.set $d (i32.load8_u (local.get $rb)))\n";
-            // Materialize [struct_id@0][payload@4] (struct_id mapped from disc).
-            out = out + "    (local.set $s (call $__fern_alloc (i32.const 8)))\n";
-            out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
-            out = out + "    (i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))\n";
+            // Materialize [struct_id@0][payload@4] (struct_id mapped from disc); box
+            // sized for the join (12 bytes for an i64 payload, else 8).
+            if (vj64) {
+                out = out + "    (local.set $s (call $__fern_alloc (i32.const 12)))\n";
+                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
+                out = out + "    (i64.store offset=4 (local.get $s) (i64.load offset=8 (local.get $rb)))\n";
+            } else {
+                out = out + "    (local.set $s (call $__fern_alloc (i32.const 8)))\n";
+                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
+                out = out + "    (i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))\n";
+            }
             out = out + "    (local.get $s))\n";
         } else if (f.import_iface.len() > 0 && is_extern_composite_ret(mod, f.ret_type)) {
             out = out + "  (func $" + f.name;
