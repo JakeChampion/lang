@@ -39,7 +39,7 @@ func TestSelfHostStage2FixedPoint(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "util.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "util.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

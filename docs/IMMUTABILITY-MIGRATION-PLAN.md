@@ -49,19 +49,29 @@ The decision's 4-step sequencing is:
    / `error[E056]` and exits 1) and the `index-assign-e056` differential
    case (self-host E056 matches the Go checker).
 
-   **Still deferred:** wiring that gate into the *compile* drivers
-   (asm_load_run / asm_run / …) so codegen itself rejects — they run
-   lexer → parser → asm with no checker pass today. The remaining work
-   is to run `filter_immutability(check_module(mod).diags)` in those
-   drivers and `eprint` + exit non-zero on any hit (deferred mainly to
-   first confirm `check_module` is robust + fast on the *full* merged
-   self-host source under fixpoint). Meanwhile the self-host fully
-   supports the replacement idioms — struct-update (`T { ...old, f: v }`)
-   and `arr = arr.with(i, v)` parse, emit, and run on every backend
-   (verified by `self_host_struct_update_test.go`,
-   `self_host_functional_update_test.go`, and the `array_build` /
-   `map_build` differentials) — so it compiles modern Fern; the residual
-   `__set_field` / `__set_index` lowerings are dead for migrated code.
+   **Compile-driver gate — DONE for the file-loading drivers.** The
+   x86-64 and arm64 file-loading drivers (`asm_load_run.fern`,
+   `asm_arm64_load_run.fern`) now run
+   `filter_immutability(check_module(merged).diags)` after flattening and,
+   on any hit, `eprint(format_diags(...))` + `return 1` — so codegen itself
+   rejects a cycle-rule violation instead of silently lowering it. Filtered
+   to the cycle rules so the rest of the partial checker can't
+   false-positive-reject (confirmed: the *full* merged self-host source
+   passes the gate under fixpoint, and `check_module` is fast enough on it).
+   Verified by `self_host_immutability_gate_test.go` (the driver emits
+   `error[E048]` / `error[E055]` / `error[E056]` + exits non-zero on the
+   violating forms, and compiles the functional-update forms cleanly), with
+   fixpoint / stdtest / CLI / stdlib-import still green. The gate caught one
+   real latent violation — a self-host test program using the old
+   discarded-result `m.insert(...)` idiom — now fixed to `m = m.insert(...)`.
+
+   **Still to do:** the stdin drivers (`asm_run` / `asm_arm64_run`, used for
+   small single-file programs) and the wasm/ssa drivers don't gate yet — a
+   mechanical follow-up applying the same three lines. The replacement
+   idioms — struct-update (`T { ...old, f: v }`) and `arr = arr.with(i, v)`
+   — parse, emit, and run on every backend (verified by
+   `self_host_struct_update_test.go`, `self_host_functional_update_test.go`,
+   and the `array_build` / `map_build` differentials).
 
 This doc covers **step-3 scoping** plus a concrete **step-2 design
 sketch**. Every code claim below was verified against the file at the
