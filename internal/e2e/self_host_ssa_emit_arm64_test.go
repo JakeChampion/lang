@@ -330,4 +330,47 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		}
 		run(t, "scaling-large-function", sum%256, asm)
 	})
+
+	// File I/O — read_file / write_file lowered to the arm64 Linux syscall
+	// runtime, run under qemu through both the default and -regalloc paths.
+	// (qemu-aarch64 user-mode forwards file syscalls to the host FS.)
+	for _, mode := range []struct {
+		name string
+		args []string
+	}{{"default", []string{"-target", "arm64"}}, {"regalloc", []string{"-regalloc", "-target", "arm64"}}} {
+		mode := mode
+		// Round-trip: write then read back and compare via streq, exercising the
+		// SSA [len, byte-per-word] string layout end-to-end; a Go-side read
+		// confirms the on-disk bytes.
+		t.Run("file-io-roundtrip/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "io_roundtrip_"+mode.name+".txt")
+			_ = os.Remove(ioPath)
+			const content = "hello, fern"
+			src := fmt.Sprintf("function main(): i32 { match (write_file(%q, %q)) { Some(e) => { return 1; }, None => {} } match (read_file(%q)) { Ok(s) => { if (s == %q) { return 42; } return 2; }, Err(e) => { return 3; } } }", ioPath, content, ioPath, content)
+			run(t, "file-io-roundtrip", 42, runDriver(t, src, mode.args...))
+			got, err := os.ReadFile(ioPath)
+			if err != nil {
+				t.Fatalf("write_file did not create %s: %v", ioPath, err)
+			}
+			if string(got) != content {
+				t.Errorf("write_file wrote %q, want %q", got, content)
+			}
+		})
+		// read_file on a file the test pre-wrote: len + first byte = 10 + 'a'.
+		t.Run("file-io-read-external/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "io_external_"+mode.name+".txt")
+			const content = "abcdefghij"
+			if err := os.WriteFile(ioPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("seed file: %v", err)
+			}
+			src := fmt.Sprintf("function main(): i32 { match (read_file(%q)) { Ok(s) => { return s.len() + s[0]; }, Err(e) => { return 0; } } }", ioPath)
+			run(t, "file-io-read-external", 10+int('a'), runDriver(t, src, mode.args...))
+		})
+		// read_file on a missing path → Err.
+		t.Run("file-io-read-missing/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "does_not_exist.txt")
+			src := fmt.Sprintf("function main(): i32 { match (read_file(%q)) { Ok(s) => { return 0; }, Err(e) => { return 7; } } }", ioPath)
+			run(t, "file-io-read-missing", 7, runDriver(t, src, mode.args...))
+		})
+	}
 }

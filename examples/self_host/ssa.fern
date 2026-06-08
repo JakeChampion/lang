@@ -607,6 +607,35 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var sbta: i32[] = [];
                         return s.emit(SInst { kind: "strbuf_take", result: s.cur_id(), args: sbta, imm: 0, str: "" });
                     }
+                    // read_file(path) / write_file(path, content) — the file-I/O
+                    // builtins (the AST backends emit inline open/read/write/close
+                    // syscall sequences). Dedicated SSA ops, each lowering to a
+                    // syscall runtime helper on x86-64 / arm64; wasm has no SSA
+                    // lowering (ssa_wasm.inst_supported rejects them → AST
+                    // fallback). Both results are heap-box pointers:
+                    // read_file → Result[string, IoError] (Ok/Err box),
+                    // write_file → Option[IoError] (None/Some box), matched via
+                    // the fixed-tag chain like Some/Ok/Err. As dedicated ops they
+                    // are not generic calls, so calls_all_known doesn't bail.
+                    if (cid.name == "read_file" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var rfv: i32 = s.cur_id();
+                        s = s.fresh();
+                        var rfa: i32[] = [rfv];
+                        return s.emit(SInst { kind: "read_file", result: s.cur_id(), args: rfa, imm: 0, str: "" });
+                    }
+                    if (cid.name == "write_file" && c.args.len() == 2) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var wfp: i32 = s.cur_id();
+                        s = build_expr(c.args[1], s);
+                        if (!s.ok) { return s; }
+                        var wfc: i32 = s.cur_id();
+                        s = s.fresh();
+                        var wfa: i32[] = [wfp, wfc];
+                        return s.emit(SInst { kind: "write_file", result: s.cur_id(), args: wfa, imm: 0, str: "" });
+                    }
                     // Option / Result construction: Some(x) / Ok(x) / Err(x) →
                     // a 2-word box { tag@0, payload@1 } (Some/Ok tag 0, Err
                     // tag 1), mirroring the AST backend. None is an ExprIdent
@@ -1346,8 +1375,19 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                 }
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) { then_body = then_body.append(arm.body[bi]); bi = bi + 1; }
-                var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain };
-                chain = [theif];
+                if (i == arms.len() - 1) {
+                    // The textually-last variant arm is the catch-all of an
+                    // exhaustive match (Option/Result, struct-unions), so it
+                    // needs no tag check — like a wildcard (chain = body). This
+                    // also avoids an empty trailing `else`, whose dead but
+                    // reachable un-terminated fall-through would make an
+                    // all-arms-return match (e.g. `match (read_file(p)) { Ok(s)
+                    // => return …, Err(e) => return … }`) fail build_func.
+                    chain = then_body;
+                } else {
+                    var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain };
+                    chain = [theif];
+                }
             }
         }
         i = i - 1;
@@ -2822,6 +2862,8 @@ pub function compute_widths(f: SFunc): i32[] {
                 else if (ins.kind == "call" && ins.imm == 2) { make64 = true; }   // f64-returning call (8-byte)
                 else if (ins.kind == "unary" && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) { make64 = true; }   // f64/i64 bit reinterpret — 8-byte value
                 else if (ins.kind == "strbuf_take") { make64 = true; }   // a string pointer
+                else if (ins.kind == "read_file") { make64 = true; }   // a Result box pointer
+                else if (ins.kind == "write_file") { make64 = true; }   // an Option box pointer
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
                 else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
@@ -3105,7 +3147,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
+            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -3270,7 +3312,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "concat" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.append(ins); } else { changed = true; }
                 k = k + 1;
             }
