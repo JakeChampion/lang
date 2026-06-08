@@ -694,12 +694,12 @@ type ExternRecordField struct {
 	Offset          int32
 	CanonicalOffset int32
 	Type            ast.Type
-	// DerefOffset supports a nested-record PARAM leaf: when ≥0, the leaf lives
-	// inside a nested composite whose value pointer is stored at this byte offset
-	// from the outer struct — the param wrapper loads `[[struct+DerefOffset]+
-	// Offset]` (deref then leaf load). -1 (the default for a direct field, and
-	// for every record-result field) means the leaf is at `[struct+Offset]`.
-	DerefOffset int32
+	// DerefPath supports a nested-record PARAM leaf to arbitrary depth: each entry
+	// is a byte offset to dereference, in order, before the final leaf load. An
+	// empty/nil path means a direct field (load at `[struct+Offset]`); a path of
+	// `[o0, o1, …]` loads `[[[…[struct+o0]+o1]…]+Offset]` (deref each offset, then
+	// the leaf at Offset). nil for a direct field and for every record-result field.
+	DerefPath []int32
 	// Nested supports a nested-record RESULT field (one level): when non-nil,
 	// this outer field is itself a record. Nested.Fields are the inner scalar
 	// leaves (their CanonicalOffset is the ABSOLUTE offset in the outer return
@@ -716,27 +716,6 @@ type ExternRecordField struct {
 // memory, which this slice doesn't lower. Each supported field flattens to one
 // core value, so the field count is the flat count.
 const maxFlatExternRecordFields = 16
-
-// externCompositeFieldTypes returns the in-order field/element types of a
-// record (struct) or tuple type — the composites the canonical ABI flattens to
-// their fields — or ok=false if t is neither, the struct is unknown, or any
-// field/element isn't a flattenable scalar (32-/64-bit integer or float;
-// sub-word ints, bool, strings, arrays, and nested composites are deferred).
-// A Fern tuple is laid out exactly like a struct (rc header + elements at
-// tupleElemLayout offsets, value = base + rc header), so both flatten the same
-// way; the elements are structural so no info lookup is needed for tuples.
-func externCompositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool) {
-	types, ok := compositeFieldTypes(t, info)
-	if !ok {
-		return nil, false
-	}
-	for _, ft := range types {
-		if !externRecordFieldSupported(ft) {
-			return nil, false
-		}
-	}
-	return types, true
-}
 
 // compositeFieldTypes returns the in-order field/element types of a record
 // (struct) or tuple type, WITHOUT the flattenable-scalar check — so a field that
@@ -762,14 +741,26 @@ func compositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool) {
 }
 
 // externRecordParamLeaves flattens a record/tuple `@import` PARAMETER to its
-// scalar leaves, recursing **one level** into a nested record/tuple field (the
-// canonical ABI flattens a nested record inline). Each leaf carries its load
-// path: a direct field is `{DerefOffset:-1, Offset}` (load at struct+Offset); a
-// field of a nested composite is `{DerefOffset:outerOff, Offset:innerOff}` (load
-// the inner value pointer at struct+outerOff, then the leaf at +innerOff). The
-// nested composite must itself be all flattenable scalars (a second level of
-// nesting is rejected). Total leaves capped at maxFlatExternRecordFields.
+// scalar leaves, recursing into nested record/tuple fields to **arbitrary depth**
+// (the canonical ABI flattens a nested record inline). Each leaf carries its load
+// path: a direct field is `{DerefPath:nil, Offset}` (load at struct+Offset); a
+// field nested N levels deep is `{DerefPath:[o0,…,o(N-1)], Offset:leaf}` (deref
+// each offset in turn from the outer struct, then load the leaf at +Offset).
+// Total leaves capped at maxFlatExternRecordFields.
 func externRecordParamLeaves(t ast.Type, info *checker.Info) ([]ExternRecordField, bool) {
+	leaves, ok := externParamLeavesRec(t, info, nil)
+	if !ok || len(leaves) == 0 || len(leaves) > maxFlatExternRecordFields {
+		return nil, false
+	}
+	return leaves, true
+}
+
+// externParamLeavesRec collects the scalar leaves of composite type `t`, with
+// `prefix` the chain of deref offsets reaching `t` from the outermost struct. A
+// scalar field becomes a leaf carrying `prefix` as its DerefPath; a nested
+// composite field extends the prefix by the field's offset and recurses. ok=false
+// if any field is neither a flattenable scalar nor a known composite.
+func externParamLeavesRec(t ast.Type, info *checker.Info, prefix []int32) ([]ExternRecordField, bool) {
 	top, ok := compositeFieldTypes(t, info)
 	if !ok || len(top) == 0 {
 		return nil, false
@@ -778,20 +769,17 @@ func externRecordParamLeaves(t ast.Type, info *checker.Info) ([]ExternRecordFiel
 	var leaves []ExternRecordField
 	for i, ft := range top {
 		if externRecordFieldSupported(ft) {
-			leaves = append(leaves, ExternRecordField{DerefOffset: -1, Offset: topOffs[i], Type: ft})
+			leaves = append(leaves, ExternRecordField{DerefPath: prefix, Offset: topOffs[i], Type: ft})
 			continue
 		}
-		inner, innerOK := externCompositeFieldTypes(ft, info) // requires all-scalar (one level)
-		if !innerOK || len(inner) == 0 {
+		// Nested composite: extend the deref path by this field's offset (a fresh
+		// slice so siblings/leaves never alias) and recurse.
+		childPrefix := append(append([]int32{}, prefix...), topOffs[i])
+		sub, subOK := externParamLeavesRec(ft, info, childPrefix)
+		if !subOK {
 			return nil, false
 		}
-		innerOffs, _ := tupleElemLayout(inner, 4)
-		for j, it := range inner {
-			leaves = append(leaves, ExternRecordField{DerefOffset: topOffs[i], Offset: innerOffs[j], Type: it})
-		}
-	}
-	if len(leaves) == 0 || len(leaves) > maxFlatExternRecordFields {
-		return nil, false
+		leaves = append(leaves, sub...)
 	}
 	return leaves, true
 }
@@ -1032,7 +1020,7 @@ func externResultLayoutRec(top []ast.Type, info *checker.Info, canonStart int32)
 				maxAlign = sz
 			}
 			canonPos = alignUpI32(canonPos, sz)
-			fields = append(fields, ExternRecordField{Offset: fernOffs[i], CanonicalOffset: canonPos, Type: ft, DerefOffset: -1})
+			fields = append(fields, ExternRecordField{Offset: fernOffs[i], CanonicalOffset: canonPos, Type: ft})
 			canonPos += sz
 			leaves++
 			continue
@@ -1056,9 +1044,8 @@ func externResultLayoutRec(top []ast.Type, info *checker.Info, canonStart int32)
 		canonPos = alignUpI32(innerEnd, innerAlign)
 		leaves += innerLeaves
 		fields = append(fields, ExternRecordField{
-			Offset:      fernOffs[i],
-			DerefOffset: -1,
-			Nested:      &ExternRecordResult{Fields: innerFields, Size: innerFernSize},
+			Offset: fernOffs[i],
+			Nested: &ExternRecordResult{Fields: innerFields, Size: innerFernSize},
 		})
 	}
 	return fields, fernSize, canonPos, maxAlign, leaves, true

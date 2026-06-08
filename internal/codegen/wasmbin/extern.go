@@ -549,9 +549,10 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 				// record flattening the raw import expects.
 				for _, f := range ex.ParamRecords[i] {
 					body = inst.InstLocalGet(body, slot)
-					if f.DerefOffset >= 0 {
-						// Nested record leaf: load the inner value pointer first.
-						body = memory.InstI32Load(body, 2, uint32(f.DerefOffset))
+					// Nested record leaf: deref each offset in the path (load the
+					// inner value pointer) before the final leaf load.
+					for _, off := range f.DerefPath {
+						body = memory.InstI32Load(body, 2, uint32(off))
 					}
 					body = appendExternFieldLoad(body, f.Type, uint32(f.Offset))
 				}

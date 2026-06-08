@@ -402,27 +402,31 @@ world-driven composer (P2) wires it.
      sub-word field with a width+sign-aware load (`i32.load8_s/u`,
      `i32.load16_s/u` via `appendExternFieldLoad`) to produce the correct i32
      (`externRecordFieldValtype` keeps the flat valtype i32). **A nested record
-     field is also flattened (one level)**: the canonical ABI inlines a nested
-     record, so `externRecordParamLeaves` recurses into a (flattenable) struct
-     field, emitting one leaf per inner scalar. A Fern struct field of struct
-     type is a *pointer*, so a nested leaf carries `DerefOffset` (the outer field
-     offset): the wrapper loads the inner value pointer there, then the leaf at
-     its inner offset. A **`bool` field** is also supported (both directions),
-     treated as an unsigned 8-bit: the Fern bool is 0/1 in a 4-byte slot, read
-     with `i32.load8_u` (low byte) and sized at 1 byte in the canonical memory
-     layout (`externCanonicalFieldSizeAlign`) — see the bool-field test below.
-     strings, arrays, and a *second* level of nesting are
-     still deferred — a struct param outside this shape is rejected with a clear
-     message. Gated by `TestExternRecordParamCustomProvider` (a `record point
-     { x: s32, y: s32 }` summed), `TestExternRecordParamWideCustomProvider` (a
-     mixed `record mix { a: s32, b: s64 }`, exercising the i64 field's 8-byte
-     offset + i64 flat valtype), `TestExternRecordParamSubwordCustomProvider` (a
-     `record { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that
-     fail under the wrong-width or wrong-sign load), and
-     `TestExternRecordParamNestedCustomProvider` (a `record line { p: point,
-     q: point }` flattened to its 4 inner coords). The `bool`-field round-trip
-     (param + result) is gated by `TestExternBoolRecordFieldCustomProvider` (a
-     `record flag { on: bool, n: s32 }` via `mk`/`rd`).
+     field is also flattened, to *arbitrary depth***: the canonical ABI inlines a
+     nested record, so `externParamLeavesRec` recurses into (flattenable) struct
+     fields, emitting one leaf per inner scalar. A Fern struct field of struct
+     type is a *pointer*, so a leaf nested N levels deep carries a `DerefPath`
+     (the chain of N outer field offsets): the wrapper deref-s each in turn (load
+     the inner value pointer) then loads the leaf at its innermost offset. A
+     **`bool` field** is also supported (both directions), treated as an unsigned
+     8-bit: the Fern bool is 0/1 in a 4-byte slot, read with `i32.load8_u` (low
+     byte) and sized at 1 byte in the canonical memory layout
+     (`externCanonicalFieldSizeAlign`) — see the bool-field test below. Strings
+     and arrays as fields are still deferred — a struct param outside this shape
+     is rejected with a clear message. Gated by
+     `TestExternRecordParamCustomProvider` (a `record point { x: s32, y: s32 }`
+     summed), `TestExternRecordParamWideCustomProvider` (a mixed `record mix {
+     a: s32, b: s64 }`, exercising the i64 field's 8-byte offset + i64 flat
+     valtype), `TestExternRecordParamSubwordCustomProvider` (a `record { a: s8,
+     b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under the
+     wrong-width or wrong-sign load), `TestExternRecordParamNestedCustomProvider`
+     (one level — a `record line { p: point, q: point }` flattened to its 4 inner
+     coords), and `TestExternRecordParamDeepNestedCustomProvider` (three levels —
+     `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` / `point { x, y }`,
+     the six leaves weighted so the deref chains are checked). The `bool`-field
+     round-trip (param + result) is gated by
+     `TestExternBoolRecordFieldCustomProvider` (a `record flag { on: bool, n: s32
+     }` via `mk`/`rd`).
    - **Record (struct) results — ✅ done (Go).** An `@import` extern returning a
      `record` lifts into a Fern struct. A multi-field record flattens to > 1
      core value, so the canonical ABI returns it indirectly through a
@@ -780,10 +784,10 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): deeper nesting for record *params* (still one
-     level, both backends — the param leaf carries a single `DerefOffset`, not a
-     deref chain); non-uniform / multi-payload `variant`s; sub-4-byte-element
-     `list<T>` *results*
+   - Still rejected (next slices): the self-host port of deeper-nested record
+     *params* (the Go param side now recurses to arbitrary depth via a `DerefPath`
+     chain); non-uniform / multi-payload `variant`s; sub-4-byte-element `list<T>`
+     *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
