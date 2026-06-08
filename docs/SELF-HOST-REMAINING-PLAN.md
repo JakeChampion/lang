@@ -1261,6 +1261,26 @@ smallest → largest:
     darwin path can only be run on a macOS runner). **Next:** `:lo12:` add
     parsing, `.bss`/`.skip` heap reservation (ELF memsz), and the rodata
     `.ascii` path, then flip `fern.fern -target arm64` to emit ELF directly.
+  - ✅ **slice 3u — `:lo12:` / `.ascii` / `.double` / `.bss` + array/string
+    instruction forms (arm64-Linux runs the common surface)**: closed the
+    remaining gaps so asm_arm64's real Linux output runs end-to-end under
+    qemu-aarch64. Directives: `add Xd, Xn, :lo12:sym` (the ELF low-12-bits
+    relocation, reusing the same kind-2 fixup as darwin's `@PAGEOFF`),
+    `.ascii` (no-NUL string), `.double` (decimal → IEEE-754 via a parse_f64 +
+    `f64_bits`, reusing `arm64_gas_data_le`), and a real `.bss` section
+    (`bss_size` + bss-symbol table; `.skip`/`.zero`/`.quad`/`.align` reserve
+    memsz, not file bytes — the 1 GiB `__fern_heap` is zero-fill; bss symbols
+    resolve to `data_vaddr + data.len() + bss_off`). Instruction forms two
+    bugs hid (they mis-assembled silently): `ldr/str Xt, [Xn, Xm, lsl #3]`
+    (register-offset **array indexing** — was parsed as `[Xn]`, dropping the
+    index) and `ldrb/strb Wt, [Xn], #1` (post-index **byte copy** in
+    `__fern_str_concat` — ignored the writeback). Both also affected darwin
+    (arrays + string concat). Byte-pinned in `TestSelfHostArm64LitPoolGas`;
+    `TestSelfHostArm64NativeLinuxElfRuns` now runs print / concat / array /
+    string-build under qemu (rodata strings, `:lo12:`, the heap, indexing,
+    byte copy) in addition to exit42 / arith / fib. **Next:** flip
+    `fern.fern -target arm64` to emit the ELF in-process (sweep the wider
+    case list for any remaining forms, then drop the `.s` + gcc path).
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.
