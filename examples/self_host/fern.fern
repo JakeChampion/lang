@@ -255,6 +255,70 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     return SsaResult { asm: asm, ok: true };
 }
 
+// ssa_scan is the non-bailing twin of try_ssa: it runs build_func over EVERY
+// function in the merged program (plus lifted lambdas), and instead of
+// returning on the first failure it records ALL build_func failures and ALL
+// unknown callees across the whole program in one pass — the measurement that
+// `try_ssa` (first-bail, all-or-nothing) can't give. Used by `-ssa-scan` to
+// prove the self-host compiler's per-function SSA coverage (zero failures +
+// zero unknown callees = the whole compiler is in the subset; the only
+// remaining blocker to a full SSA self-compile is then memory, not coverage).
+function ssa_scan(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): i32 {
+    var lifted: parser.FuncDecl[] = ssa.collect_lambdas(funcs);
+    var allfuncs: parser.FuncDecl[] = funcs;
+    var lai: i32 = 0;
+    while (lai < lifted.len()) { allfuncs = allfuncs.append(lifted[lai]); lai = lai + 1; }
+    // The same known set try_ssa builds: every user/lifted function symbol plus
+    // the injected runtime-helper names (so map/push/slice calls resolve).
+    var known: string[] = [];
+    var ni: i32 = 0;
+    while (ni < allfuncs.len()) { known = known.append(ssa.fn_sym(allfuncs[ni])); ni = ni + 1; }
+    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
+    var hk: i32 = 0;
+    while (hk < hmod.funcs.len()) { known = known.append(hmod.funcs[hk].name); hk = hk + 1; }
+    var seed: ssa.Seed = ssa.build_seed(allfuncs);
+
+    var fails: string[] = [];
+    var unknown: string[] = [];
+    var i: i32 = 0;
+    while (i < allfuncs.len()) {
+        var r: ssa.BResult = ssa.build_func_seeded(allfuncs[i], structs, seed);
+        if (!r.ok) {
+            fails = fails.append(ssa.fn_sym(allfuncs[i]));
+        } else {
+            // Collect every call / funcaddr target this function emits that
+            // isn't a known function (dedup) — the calls_all_known bail set.
+            var bi: i32 = 0;
+            while (bi < r.func.blocks.len()) {
+                var blk: ssa.SBlock = r.func.blocks[bi];
+                var k: i32 = 0;
+                while (k < blk.insts.len()) {
+                    var ins: ssa.SInst = blk.insts[k];
+                    if (ins.kind == "call" || ins.kind == "funcaddr") {
+                        if (!util.has_str(known, ins.str) && !util.has_str(unknown, ins.str)) {
+                            unknown = unknown.append(ins.str);
+                        }
+                    }
+                    k = k + 1;
+                }
+                bi = bi + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    write("functions scanned: " + checker.itoa_nn(allfuncs.len()) + "\n");
+    write("build_func failures: " + checker.itoa_nn(fails.len()) + "\n");
+    var fi: i32 = 0;
+    while (fi < fails.len()) { write("  FAIL " + fails[fi] + "\n"); fi = fi + 1; }
+    write("unknown callees: " + checker.itoa_nn(unknown.len()) + "\n");
+    var ui: i32 = 0;
+    while (ui < unknown.len()) { write("  UNKNOWN " + unknown[ui] + "\n"); ui = ui + 1; }
+    if (fails.len() == 0 && unknown.len() == 0) { write("RESULT: full per-function SSA coverage (0 failures, 0 unknown callees)\n"); }
+    else { write("RESULT: coverage gaps remain\n"); }
+    return 0;
+}
+
 function main(): i32 {
     var av: string[] = args();
 
@@ -266,6 +330,7 @@ function main(): i32 {
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
     var no_ssa: boolean = false;
+    var mode_scan: boolean = false;
     var optimize: boolean = false;
     var have_entry: boolean = false;
 
@@ -282,6 +347,11 @@ function main(): i32 {
             // SSA is the default now; accept -ssa as a no-op for back-compat.
         } else if (a == "-no-ssa") {
             no_ssa = true;
+        } else if (a == "-ssa-scan") {
+            // Diagnostic: report every build_func failure + unknown callee across
+            // the whole merged program (non-bailing), then exit. Measures
+            // per-function SSA coverage without the all-or-nothing try_ssa bail.
+            mode_scan = true;
         } else if (a == "-O") {
             optimize = true;
         } else if (a == "-target") {
@@ -382,6 +452,8 @@ function main(): i32 {
         }
     }
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+
+    if (mode_scan) { return ssa_scan(merged.funcs, merged.structs); }
 
     if (mode_check) {
         var mt: checker.ModuleTypes = checker.check_module(merged);
