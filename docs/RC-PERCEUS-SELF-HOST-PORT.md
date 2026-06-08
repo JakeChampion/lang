@@ -1171,23 +1171,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   reached. (Stacks on the string free flip.) Remaining string follow-up:
   the extern/canonical-ABI builders (env / args / read_file / @export,
   still unboxed). Then the container types.
-- 2026-06-08: **Finding (deferred) — expanding the wasm swept-string oracle
-  to method/call/slice results miscompiles string-heavy code.** Attempted
-  to extend `init_is_owned_string` from {concat, literal} to also cover
-  string-returning CALLS (`x.to_upper()`, `build_str()`), SLICES
-  (`s[a:b]`), excluding `get_or` (borrowed map value). The plain-mode WAT
-  for simple programs was byte-identical, but the component-adapter tests
-  failed wasm-tools validation ("expected i32 but nothing on stack") — and
-  the root cause is that the assembler those tests build FROM `watbin.fern`
-  (string-method/slice heavy) was itself miscompiled by the expanded
-  oracle, then emitted invalid wasm. So the expansion has a latent
-  emission bug for swept method/call/slice STRING results (likely in the
-  StmtVar/StmtReturn string dec-on-overwrite / temp-dance interaction with
-  some watbin pattern). REVERTED — the merged string reclamation (concat /
-  literal / alias / construction / return / reassign-rebind) is unaffected
-  and correct (watbin compiles + validates fine without the expansion).
-  Before re-attempting: reproduce by compiling `watbin.fern` through the
-  self-host wasm backend with the expanded oracle and bisect which string
-  pattern emits the stack-underflow, then fix the str-sweep emission for
-  that shape. The same care applies to the extern/canonical-ABI string
-  builders (env / args / read_file / @export) — they stay unboxed/unswept.
+- 2026-06-08: **wasm string RC — method/call/slice results reclaimed + a
+  borrowed-return-retain correctness fix.** Extended `init_is_owned_string`
+  to also sweep string-returning CALLS (`x.to_upper()`, `build_str()`) and
+  SLICES (`s[a:b]`) — excluding `get_or` (a borrowed map value). The first
+  attempt miscompiled `watbin.fern` (the assembler the component-adapter
+  tests build, string-method/slice heavy) → invalid wasm. Bisecting it
+  surfaced a LATENT return-retain bug (also affecting the merged array
+  call-result reclaim): a function returning a BORROWED reference
+  (`return obj.field`) with NO swept locals took the StmtReturn early path,
+  which skipped return-retain — so the caller's release of the result freed
+  the field underfoot (the `node_head` UAF). Fix: a new
+  `ret_value_is_borrowed` drives return-retain in BOTH the sweep-empty and
+  temp-dance paths — retain a returned value that may alias/borrow (field /
+  index read, borrowed param ident, or a CALL that can return its arg in
+  place like `wcat(o, …)`), and do NOT retain a definitely-fresh result
+  (array/string literal, concat, slice — removing the prior fresh-return
+  over-leak too). Coverage: `TestSelfHostRcStrBoxWasm` gains
+  string-method-result-swept, string-fn-result-swept,
+  string-slice-result-swept, and string-borrowed-field-return (the
+  regression guard). The component-adapter + binary (watbin assembler) +
+  full wasm/RC suites are green. (The extern/canonical-ABI string builders
+  — env / args / read_file / @export — remain unboxed/unswept.)

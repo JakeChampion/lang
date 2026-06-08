@@ -82,6 +82,14 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// Rebind reclaim: `var s = …` re-bound each iteration is released
 		// per-iteration (StmtVar dec-on-overwrite). detector clean.
 		{"string-rebind-loop-reclaim", "function main(): i32 { var n = 0; var k = 0; while (k < 100000) { var s: string = \"ab\" + \"cd\"; n = n + s.len(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 6},
+		// Method / call / slice string results are now counted+swept too.
+		{"string-method-result-swept", "function main(): i32 { var s: string = \"AbC\".to_upper(); return s.len() + __fern_rc_underflow_count(); }", 3},
+		{"string-fn-result-swept", "function build(): string { return \"x\" + \"yz\"; } function main(): i32 { var s: string = build(); return s.len() + __fern_rc_underflow_count(); }", 3},
+		{"string-slice-result-swept", "function main(): i32 { var src: string = \"abcdef\"; var s: string = src[1:4]; return s.len() + __fern_rc_underflow_count(); }", 3},
+		// Regression: a function returning a BORROWED string field with NO
+		// swept locals must still return-retain it, or the caller's sweep of
+		// the result frees the field underfoot (the node_head/watbin UAF).
+		{"string-borrowed-field-return", "struct H { name: string } function getname(h: H): string { return h.name; } function main(): i32 { var s: string = \"ab\" + \"cd\"; var h = H { name: s }; var n: string = getname(h); return n.len() + h.name.len() + __fern_rc_underflow_count(); }", 8},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
