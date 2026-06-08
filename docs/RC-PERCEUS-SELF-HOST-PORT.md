@@ -1271,3 +1271,30 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   recursive field-release; structs and enums reuse the same shape** (a
   per-field rc-kind map + the rc==1-guarded recursive dec), adding the
   extern/canonical-ABI care for structs.
+- 2026-06-08: **wasm struct/enum RC — rc-box LAYOUT foundation.** A struct
+  block (and an enum variant, which shares the struct layout) is now
+  rc-headered via the generic `$__fern_str_box` (8-byte rc+bsz header,
+  returns base+8), so it carries an rc word at `[s-8]` while every
+  s-relative access is unchanged — the type id stays at slot 0 (so `match`
+  reads the right tag) and each field stays at `struct_field_off`. The four
+  normal Fern struct/enum allocation sites migrate from `$__fern_alloc`:
+  `ExprStructLit` (incl. `{ ...base, f: v }` update syntax and named-field
+  variants), the `Color.Green` enum-constant field access, the bare-ident
+  unit variant (`Nil`/`Empty`), and the positional variant constructor
+  (`Circle(3)`). The extern/canonical-ABI result records (the two
+  `extern_emit_record_fill` / by-value `@import` struct allocations) are
+  intentionally left raw in this slice — layout-only never sweeps structs,
+  so a boxed-vs-raw mix is value-safe; they migrate when struct counting
+  lands (a swept extern struct must be boxed, or its `[s-8]` read is
+  garbage). The struct field construction-incs (array/string members
+  retained when stored into a field, incl. the base-copy path) were already
+  present from the string slice — they ride unchanged on the boxed layout.
+  Coverage: new `TestSelfHostRcStructBoxWasm` — struct-fresh-unique (rc==1),
+  struct-values-intact, struct-holds-array / struct-holds-string,
+  struct-update-intact, unit-variant-match, variant-payload-intact,
+  struct-return-intact, struct-loop-clean (all value-correct + detector 0).
+  Full wasm suite green; bootstrap-safe; free still OFF. Next for structs is
+  counting (a per-struct-local sweep with inc-on-alias, reusing the
+  array/string/tuple sweep shape) then the FREE flip with recursive
+  field-release driven by a per-field rc-kind map — at which point the
+  extern result records must also be boxed (or excluded from the sweep).

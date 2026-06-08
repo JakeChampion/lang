@@ -3707,7 +3707,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // so `match` reads the right tag at offset 0.
             if (is_struct_type(cx.structs, id.name) && struct_field_count(cx.structs, id.name) == 0) {
                 var uap: string = "$__lit" + util.i32_to_string(depth);
-                return "(block (result i32) (local.set " + uap + " (call $__fern_alloc (i32.const 4))) (i32.store (local.get " + uap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, id.name)) + ")) (local.get " + uap + "))";
+                return "(block (result i32) (local.set " + uap + " (call $__fern_str_box (i32.const 4))) (i32.store (local.get " + uap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, id.name)) + ")) (local.get " + uap + "))";
             }
             return "(local.get $" + id.name + ")";
         },
@@ -3901,7 +3901,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                             vk = vk + 1;
                         }
                         var vs: string = "(block (result i32)";
-                        vs = vs + " (local.set " + vap + " (call $__fern_alloc (i32.const " + util.i32_to_string(vbytes) + ")))";
+                        vs = vs + " (local.set " + vap + " (call $__fern_str_box (i32.const " + util.i32_to_string(vbytes) + ")))";
                         vs = vs + " (i32.store (local.get " + vap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, id.name)) + "))";
                         var vi: i32 = 0;
                         while (vi < c.args.len()) {
@@ -4198,7 +4198,14 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             var ap: string = "$__lit" + util.i32_to_string(depth);
             var nf: i32 = struct_field_count(cx.structs, sl.type_name);
             var s: string = "(block (result i32)";
-            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + nf * 4) + ")))";
+            // Perceus struct rc-box layout: a struct block is rc-headered via
+            // the generic $__fern_str_box (8-byte rc+bsz header, returns
+            // base+8), so it carries an rc word at [s-8] while every
+            // s-relative field access (type id at slot 0, fields at
+            // struct_field_off) is unchanged. The payload size handed to
+            // str_box is the raw block size (tag word + one slot per field);
+            // counting + recursive field-release ride on this foundation.
+            s = s + " (local.set " + ap + " (call $__fern_str_box (i32.const " + util.i32_to_string(4 + nf * 4) + ")))";
             s = s + " (i32.store (local.get " + ap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, sl.type_name)) + "))";
             if (sl.has_base) {
                 var bp: string = emit_expr(sl.base, cx, depth + 1);
@@ -4250,7 +4257,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // existing struct-union `match` dispatch works.
             if (ot.len() == 0 && is_struct_type(cx.structs, fa.field)) {
                 var vp: string = "$__lit" + util.i32_to_string(depth);
-                return "(block (result i32) (local.set " + vp + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + struct_field_count(cx.structs, fa.field) * 4) + "))) (i32.store (local.get " + vp + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, fa.field)) + ")) (local.get " + vp + "))";
+                return "(block (result i32) (local.set " + vp + " (call $__fern_str_box (i32.const " + util.i32_to_string(4 + struct_field_count(cx.structs, fa.field) * 4) + "))) (i32.store (local.get " + vp + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, fa.field)) + ")) (local.get " + vp + "))";
             }
             // Bare field read s.f → load at base + 4 + index*4 (slot 0 is
             // the type id).
