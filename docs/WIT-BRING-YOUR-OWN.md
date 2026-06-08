@@ -606,7 +606,11 @@ world-driven composer (P2) wires it.
      wrong-width or wrong-sign load) and
      `TestSelfHostExternRecordParamNestedCustomProvider` (a `sum-line: func(l:
      line) -> s32` over `record line { p: point, q: point }`,
-     `Line{p:{1,2},q:{3,4}}` → 10).
+     `Line{p:{1,2},q:{3,4}}` → 10). **`bool` fields** are also supported (both
+     directions), treated as an unsigned 8-bit (`extern_field_is_scalar` accepts
+     `boolean`, `extern_field_load_op` → `i32.load8_u`, `extern_canon_field_size`
+     → 1), gated by `TestSelfHostExternBoolRecordFieldCustomProvider` (a `record
+     flag { on: bool, n: s32 }` via `mk`/`rd`).
    - **Self-host port — record (struct) results — ✅ done.** The symmetric
      counterpart: an extern returning a record materializes a self-host struct.
      The host writes the record's fields into the return area at the **canonical
@@ -745,7 +749,7 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): the self-host port of bool record fields;
+   - Still rejected (next slices):
      nested-record *results*; second-level / deeper nesting; non-uniform /
      multi-payload `variant`s; sub-4-byte-element `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
