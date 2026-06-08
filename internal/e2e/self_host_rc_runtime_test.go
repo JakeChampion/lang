@@ -321,6 +321,85 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 	})
 }
 
+// Phase 4 (Perceus move-on-return): `return xs` where xs is a bare
+// owned array LOCAL (slot index >= n_params) hands the buffer to the
+// caller directly — the return-retain inc and the exit sweep's dec of
+// that slot are a balanced pair, so both are elided. The buffer reaches
+// the caller at its current rc with identical net effect. These cases
+// verify both the runtime correctness (clean over-release detector,
+// correct values) and the emission (no retain inc in the elided path,
+// but a retain inc IS still emitted when the optimization does not
+// apply, e.g. returning a non-ident array expression).
+func TestSelfHostRcMoveOnReturnX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Bare owned local returned: moved to caller, values intact, detector clean.
+		{"move-bare-local", "function make(): i32[] { var xs: i32[] = [10, 20, 30]; return xs; } function main(): i32 { var ys = make(); return ys[0] + ys[2] + __fern_rc_underflow_count(); }", 40},
+		// Moved through a chain of callers (each return moves), detector clean.
+		{"move-chained", "function mk(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; } function relay(): i32[] { var a = mk(); return a; } function main(): i32 { var b = relay(); return b[0] + b[2] + __fern_rc_underflow_count(); }", 4},
+		// Move co-exists with a sibling array local that IS swept (only the
+		// returned slot is excluded): sibling release keeps detector clean.
+		{"move-with-sibling-sweep", "function make(): i32[] { var keep: i32[] = [9, 9]; var xs: i32[] = [5, 6, 7]; return xs; } function main(): i32 { var ys = make(); return ys[0] + ys[2] + __fern_rc_underflow_count(); }", 12},
+		// Returning a BORROWED param array is NOT a move (idx < n_params):
+		// the caller still owns it, so it stays usable after the call.
+		{"return-param-not-moved", "function pick(a: i32[]): i32[] { return a; } function main(): i32 { var xs: i32[] = [3, 4]; var ys = pick(xs); return ys[0] + xs[1] + __fern_rc_underflow_count(); }", 7},
+		// Churn: a builder whose result is moved out on every call must
+		// still allow reclamation (alloc >> heap completes via the freelist).
+		{"move-churn", "function build(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var k = 0; var s = 0; while (k < 200000) { var r = build(64); s = r[63]; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+
+	// Emission: returning a bare owned array local elides the retain inc
+	// (no `call __fn___fern_rc_inc` for that path), whereas returning a
+	// non-ident array expression (a field access) still emits it.
+	t.Run("emits-no-inc-on-move", func(t *testing.T) {
+		asm := string(runCapture(t, gcc, runner, driverBin,
+			[]byte("function make(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; } function main(): i32 { var ys = make(); return ys[0]; }")))
+		if strings.Contains(asm, "call __fn___fern_rc_inc") {
+			t.Errorf("move-on-return should elide the retain inc, but found call __fn___fern_rc_inc")
+		}
+	})
+	t.Run("emits-inc-when-not-moved", func(t *testing.T) {
+		asm := string(runCapture(t, gcc, runner, driverBin,
+			[]byte("struct H { items: i32[] } function get(h: H): i32[] { return h.items; } function main(): i32 { var hh: H = H { items: [4, 5, 6] }; var ys = get(hh); return ys[0]; }")))
+		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+			t.Errorf("returning a non-local array expression should still emit the retain inc")
+		}
+	})
+}
+
 // Phase 1d arm64 parity: the array inc/dec wiring (alias retain,
 // reassign-inc + dec-on-overwrite, function-exit release sweep with
 // zero-init + array-return retain) mirrored into asm_arm64.fern. Run
@@ -363,6 +442,11 @@ func TestSelfHostRcArm64(t *testing.T) {
 		// Phase 3 (arm64 free): reclamation churn (alloc >> heap completes) + enum payload retain.
 		{"reclaim-churn", "function work(n: i32): i32 { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs[n - 1]; } function main(): i32 { var k = 0; var s = 0; while (k < 200000) { s = work(200); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 3},
 		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function mk(): Box { var xs: i32[] = [3, 4, 5]; return Arr(xs); } function main(): i32 { var b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __fern_rc_underflow_count(); }, Empty => { return 0; } } }", 9},
+		// Phase 4 (move-on-return): bare owned local moved to caller; sibling
+		// local still swept; borrowed-param return is not a move.
+		{"move-bare-local", "function make(): i32[] { var xs: i32[] = [10, 20, 30]; return xs; } function main(): i32 { var ys = make(); return ys[0] + ys[2] + __fern_rc_underflow_count(); }", 40},
+		{"move-with-sibling-sweep", "function make(): i32[] { var keep: i32[] = [9, 9]; var xs: i32[] = [5, 6, 7]; return xs; } function main(): i32 { var ys = make(); return ys[0] + ys[2] + __fern_rc_underflow_count(); }", 12},
+		{"return-param-not-moved", "function pick(a: i32[]): i32[] { return a; } function main(): i32 { var xs: i32[] = [3, 4]; var ys = pick(xs); return ys[0] + xs[1] + __fern_rc_underflow_count(); }", 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
