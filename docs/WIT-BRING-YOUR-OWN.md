@@ -518,7 +518,21 @@ world-driven composer (P2) wires it.
      `TestExternVariantParamCustomProvider` (a `describe: func(s: shape) -> s32`
      over `variant shape { circle(s32), square(s32), empty }`:
      `Circle(7)`→7, `Square(7)`→70, `Empty`→999). Non-uniform / multi-payload
-     variants and the *result* direction are deferred.
+     variants are deferred (the *result* direction landed — see below).
+   - **General `variant` results (uniform payload) — ✅ done (Go).** An `@import`
+     extern returning a WIT `variant` with a uniform scalar payload (every case
+     payloaded, same type T), lifted into a Fern user enum. The canonical variant
+     flattens to (disc, payload) > 1 core value, so it returns indirectly (disc:u8
+     @0, payload @off) — exactly the option/result result shape — and reuses
+     `buildExternEnumResultWrapper` (materializing a Fern enum box
+     `[rc][tag@0][payload@off]`) with no discriminant remap, matching how a
+     payloaded user-enum variant is represented (so it's leak-free + consistent).
+     `externVariantResultLayout` gates it (every variant exactly one scalar
+     payload, uniform — payloadless cases deferred since the result wrapper always
+     materializes a box, not a sentinel). Gated by
+     `TestExternVariantResultCustomProvider` (a `classify: func(n: s32) -> grade`
+     over `variant grade { low(s32), mid(s32), high(s32) }`; the Fern side
+     `match`es and recovers (tag, payload) for all three cases).
    - **Self-host port — numeric array params — ✅ started.** The self-hosted
      compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
      beyond strings: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
@@ -688,8 +702,9 @@ world-driven composer (P2) wires it.
      `TestSelfHostExternVariantParamCustomProvider` (the same `describe:
      func(s: shape) -> s32` over `variant shape { circle(s32), square(s32),
      empty }`: `Circle(7)`→7, `Square(7)`→70, `Empty`→999).
-   - Still rejected (next slices): general `variant` *results* + non-uniform /
-     multi-payload `variant`s;
+   - Still rejected (next slices): the self-host port of variant *results*;
+     non-uniform / multi-payload `variant`s; payloadless-case mixed `variant`
+     results (need sentinel materialization);
      sub-4-byte-element `list<T>` *results* (`u8[]`/`bool[]`) via a custom
      provider (the `ComposeFromWorldAuto` `gMemRealloc` trap analysed above);
      bool / nested-composite fields. The multi-component harness
