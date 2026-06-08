@@ -211,6 +211,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"str-upper-len", "function main(): i32 { return \"abc\".to_upper().len(); }", 3, ""},
 		// i32 arrays (read side): literal, index, .len(), while-sum.
 		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3, ""},
+		{"cell-get-set", "function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }", 10, ""},
+		{"cell-shared", "function bump(c: Cell[i32]) { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }", 13, ""},
 		{"arr-index-first", "function main(): i32 { var a = [42, 99, 7]; return a[0]; }", 42, ""},
 		{"arr-index-middle", "function main(): i32 { var a = [42, 99, 7]; return a[1]; }", 99, ""},
 		{"arr-index-last", "function main(): i32 { var a = [42, 99, 7]; return a[2]; }", 7, ""},
