@@ -177,6 +177,13 @@ struct Ctx {
     // that aliases a swept local (e.g. `return wcat(o, …)` where wcat
     // returns its borrowed buffer in place) isn't freed under the caller.
     ret_is_array: boolean,
+    // Perceus string reference-counting (counting milestone, free OFF).
+    // str_swept: body string locals that are OWNED (a fresh concat result
+    // or a string literal) or a bare-ident alias — released (rc dec, no
+    // free yet) at function exit. Static literals are guard-no-ops; heap
+    // concats balance their inc-on-alias. Borrowed sources (params, field /
+    // index reads, get_or, method results) are conservatively NOT swept.
+    str_swept: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -564,6 +571,76 @@ function init_is_owned_array(e: parser.Expr): boolean {
         _ => { return false; }
     }
     return false;
+}
+
+// init_is_owned_string: the init produces a fresh, OWNED heap string (rc 1)
+// — a concatenation (`a + b`, a $__fern_str_box block) — or an immortal
+// string literal (data-section; the rc helpers' address guard no-ops it).
+// Borrowed string sources (field/index reads, get_or, method results) are
+// excluded for now (conservative: they leak, sound while free is off).
+function init_is_owned_string(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprString(_) => { return true; },
+        parser.ExprBinary(b) => { return b.op == "+" && is_string_expr(e, cx); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// init_is_string_alias: the init is a bare ident naming an existing string
+// (an alias to retain — the inc site).
+function init_is_string_alias(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(_) => { return is_string_expr(e, cx); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_str_swept gathers body string locals to release at function exit:
+// those bound to an owned string (concat / literal) or a bare-ident alias.
+// comma destructures are skipped. Uses cx (string locals already known) so
+// is_string_expr resolves alias sources.
+function collect_str_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    if (init_is_owned_string(v.init, cx) || init_is_string_alias(v.init, cx)) {
+                        acc = acc.append(v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_str_swept(f.then_body, cx, acc);
+                acc = collect_str_swept(f.else_body, cx, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_str_swept(w.body, cx, acc); },
+            parser.StmtFor(f) => { acc = collect_str_swept(f.body, cx, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_str_swept(m.arms[k].body, cx, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// str_exit_sweep emits the string release sweep: an rc DEC (free still OFF
+// — no reclamation yet, just balance validation) of every owned string
+// local. A literal slot is a guard no-op; a heap concat balances its
+// inc-on-alias so the over-release detector stays clean.
+function str_exit_sweep(cx: Ctx): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < cx.str_swept.len()) {
+        o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.str_swept[i] + ")))\n";
+        i = i + 1;
+    }
+    return o;
 }
 
 // arr_exit_sweep emits the Perceus function-exit release: a release
@@ -6001,7 +6078,14 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 }
                 return st;
             }
-            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+            st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+            // Perceus string inc-on-alias: `var t = s` binding a second
+            // reference to an owned string retains it so the exit sweep's
+            // dec of both slots balances (a literal source is a guard no-op).
+            if (contains_str(st.cx.str_swept, v.name) && init_is_string_alias(v.init, st.cx)) {
+                st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+            }
+            return st;
         },
         parser.StmtAssign(a) => {
             if (contains_str(st.cx.i64_names, a.target)) {
@@ -6059,8 +6143,8 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.arr_swept, id.name)) { mov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov);
-            // No owned array locals (or a void return): emit directly.
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep(st.cx);
+            // No owned array/string locals (or a void return): emit directly.
             if (sweep.len() == 0 || st.cx.ret_void) {
                 st = st.w(sweep);
                 return st.w("    (return " + valstr + ")\n");
@@ -6790,6 +6874,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         arr_swept: [], arr_src: [],
         ret_void: !returns_value(f.ret_type),
         ret_is_array: ty_spelling_is_array(f.ret_type),
+        str_swept: [],
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -6839,7 +6924,10 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cx2: Ctx = collect_str_locals_stmts(f.body, cx0);
     var cx3: Ctx = Ctx { ...cx2, map_str_names: collect_str_val_map_names(f.body, cx2, map_names, []) };
     // Tuple-local element kinds (after string locals are known).
-    return collect_tuple_locals(f.body, cx3);
+    var cx4: Ctx = collect_tuple_locals(f.body, cx3);
+    // Perceus string RC set (counting milestone, free OFF) — computed last,
+    // once all string locals are known so alias sources resolve.
+    return Ctx { ...cx4, str_swept: collect_str_swept(f.body, cx4, []) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning
@@ -7062,7 +7150,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     // Perceus exit sweep on the fall-through path (functions that end
     // without an explicit `return`). After a final `return` it is
     // unreachable-but-valid wasm, like the trailing fallthrough const.
-    return head + decls + st.out + arr_exit_sweep(cx) + tail;
+    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tail;
 }
 
 // module_uses_divrem is true when any free function body or the

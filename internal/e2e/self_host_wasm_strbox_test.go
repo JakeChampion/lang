@@ -51,6 +51,14 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// String values survive the new layout: len + bytes read correctly.
 		{"concat-value-intact", "function main(): i32 { var s: string = \"foo\" + \"barbaz\"; return s.len(); }", 9},
 		{"substr-value-intact", "function main(): i32 { var s: string = \"hello world\"; var t: string = s[0:5]; return t.len(); }", 5},
+		// String counting milestone (free OFF): an owned concat local is
+		// released (rc dec) at exit, value-correct + over-release detector 0.
+		{"concat-swept-clean", "function main(): i32 { var a: string = \"x\"; var b: string = \"yz\"; var s: string = a + b; return s.len() + __fern_rc_underflow_count(); }", 3},
+		// Aliasing a heap concat: the alias is inc'd, both swept, balanced.
+		{"concat-alias-clean", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var t: string = s; return t.len() + __fern_rc_underflow_count(); }", 4},
+		// A concat-in-a-loop (reassign): intermediates leak (sound, free off)
+		// but the detector stays clean and the value is correct.
+		{"concat-loop-clean", "function main(): i32 { var s: string = \"\"; var i = 0; while (i < 5) { s = s + \"x\"; i = i + 1; } return s.len() + __fern_rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
