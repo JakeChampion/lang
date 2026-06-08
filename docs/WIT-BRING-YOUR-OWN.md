@@ -523,19 +523,23 @@ world-driven composer (P2) wires it.
      trailing return-area pointer + `cabi_realloc`. Gated by
      `TestSelfHostExternSumTypeResultCustomProvider` (`div(a,b) ->
      result<s32,s32>`, `half(n) -> option<s32>`, matched and checked).
-   - **Self-host port — u8[] params — ✅ done.** A self-host `u8[]` stores each
-     byte widened to a full 4-byte element slot, while the canonical `list<u8>`
-     wants the bytes packed one-per-byte. So — unlike the wider numeric arrays,
-     whose slot already matches the canonical element size and only need an
-     aligned copy — a u8[] param needs a *byte-repacking* copy: the wrapper
-     (`extern_u8_array_param` gate) allocs `len` bytes and writes each element's
+   - **Self-host port — u8[] / boolean[] params — ✅ done.** A self-host `u8[]`
+     stores each byte widened to a full 4-byte element slot, while the canonical
+     `list<u8>` wants the bytes packed one-per-byte. So — unlike the wider numeric
+     arrays, whose slot already matches the canonical element size and only need
+     an aligned copy — a u8[] param needs a *byte-repacking* copy: the wrapper
+     (`extern_byte_array_param` gate) allocs `len` bytes and writes each element's
      low byte contiguously (`i32.store8`; alignment is moot for 1-byte
-     elements), then forwards `(buf, len)`. Threaded through
-     `has_extern_mem_param`, the `extern_imports` `(param i32)(param i32)`
+     elements), then forwards `(buf, len)`. A `boolean[]` param is byte-identical
+     (the self-host stores bools as 0/1 in 4-byte slots too), so the same gate +
+     wrapper cover it — the self-host port of the Go-side bool[] param. Threaded
+     through `has_extern_mem_param`, the `extern_imports` `(param i32)(param i32)`
      lowering, and the wrapper's param-decl / buffer-locals / call-forward
      branches alongside `extern_array_param_supported`. Gated by
      `TestSelfHostExternU8ArrayParamCustomProvider` (a
-     `sum-bytes: func(b: list<u8>) -> s32` provider; `[10,20,12]` → 42).
+     `sum-bytes: func(b: list<u8>) -> s32` provider; `[10,20,12]` → 42) and
+     `TestSelfHostExternBoolArrayParamCustomProvider` (a
+     `count-true: func(b: list<bool>) -> s32` provider; `[true,false,true]` → 2).
    - **Self-host port — tuple params — ✅ done.** A self-host tuple is a heap
      block of N consecutive 4-byte slots (element i @ `i*4`, no type-id header —
      simpler than a record, whose fields start at +4), and the canonical tuple
@@ -565,9 +569,9 @@ world-driven composer (P2) wires it.
      `make-wrapped: func(a: s32) -> record { v: s32 }` provider, run through the
      self-hosted backend).
    - Still rejected (next slices): general user `variant`s; bool[] *results*
-     (the composer trap above) + the self-host port of bool[] params; sub-word /
-     nested-composite fields. The multi-component harness
-     (`TestExternImportCustomProvider`) is the test vehicle for these.
+     (the composer trap above); sub-word / nested-composite fields. The
+     multi-component harness (`TestExternImportCustomProvider`) is the test
+     vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
