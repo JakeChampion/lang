@@ -104,6 +104,10 @@ func TestSelfHostRcArrayLayoutWasm(t *testing.T) {
 		{"detector-clean", "function main(): i32 { var xs: i32[] = [1, 2, 3]; __fern_rc_inc(xs); __fern_rc_dec(xs); return __fern_rc_underflow_count(); }", 0},
 		// Over-release a real array (dec past rc==0): detector fires (1).
 		{"detector-over-release", "function main(): i32 { var xs: i32[] = [1, 2, 3]; __fern_rc_dec(xs); __fern_rc_dec(xs); return __fern_rc_underflow_count(); }", 1},
+		// Peripheral producers are rc-boxed too (uniform layout): a
+		// random_bytes() array and a map .values() snapshot both carry rc==1.
+		{"random-bytes-boxed", "function main(): i32 { var b: i32[] = random_bytes(4); return __fern_rc_is_unique(b); }", 1},
+		{"map-values-boxed", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var vs = m.values(); return __fern_rc_is_unique(vs) + vs.len(); }", 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2019,7 +2019,7 @@ function extern_wrappers(mod: parser.Module): string {
                 // u8[]: `[len@0]` header, elements packed into 4-byte slots at
                 // +8 (the self-host array layout — see elem_slot_size). Expand
                 // each host byte into its slot.
-                out = out + "    (local.set $s (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $ln) (i32.const 4)))))\n";
+                out = out + "    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const 4))))\n";
                 out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
                 out = out + "    (local.set $i (i32.const 0))\n";
                 out = out + "    (block $d (loop $c\n";
@@ -2034,7 +2034,7 @@ function extern_wrappers(mod: parser.Module): string {
                 // +8 (no byte-expansion as for u8[]).
                 var rk: string = f.ret_type[0:f.ret_type.len() - 2];
                 var rss: string = i32_to_string(elem_slot_size(rk));
-                out = out + "    (local.set $s (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $ln) (i32.const " + rss + ")))))\n";
+                out = out + "    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const " + rss + "))))\n";
                 out = out + "    (i32.store (local.get $s) (local.get $ln))\n";
                 out = out + "    (local.set $i (i32.const 0))\n";
                 out = out + "    (block $d (loop $c\n";
@@ -4175,7 +4175,7 @@ function random_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
     o = o + "    (local $arr i32) (local $buf i32) (local $i i32)\n";
-    o = o + "    (local.set $arr (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $n) (i32.const 4)))))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
     o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
     o = o + "    (local.set $buf (call $__fern_alloc (local.get $n)))\n";
@@ -4203,7 +4203,7 @@ function random_func_p2(): string {
     var o: string = "";
     o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
     o = o + "    (local $arr i32) (local $i i32) (local $r i64)\n";
-    o = o + "    (local.set $arr (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $n) (i32.const 4)))))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
     o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
@@ -4254,7 +4254,7 @@ function args_func_p2(): string {
     o = o + "    (call $get_arguments (local.get $ra))\n";
     o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
     o = o + "    (local.set $count (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-    o = o + "    (local.set $arr (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $count) (i32.const 4)))))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $count) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $arr) (local.get $count))\n";
     o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $count))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
@@ -4288,7 +4288,7 @@ function args_func(): string {
     o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $argc) (i32.const 4))))\n";
     o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
     o = o + "    (drop (call $args_get (local.get $ptrs) (local.get $buf)))\n";
-    o = o + "    (local.set $arr (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $argc) (i32.const 4)))))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $argc) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $arr) (local.get $argc))\n";
     o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $argc))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
@@ -4850,7 +4850,7 @@ function map_helpers(): string {
     o = o + "  (func $__fern_map_snapshot (param $box i32) (param $src i32) (result i32)\n";
     o = o + "    (local $n i32) (local $arr i32) (local $cap i32) (local $used i32) (local $base i32) (local $i i32) (local $j i32)\n";
     o = o + "    (local.set $n (i32.load (local.get $box)))\n";
-    o = o + "    (local.set $arr (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $n) (i32.const 4)))))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
     o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
     o = o + "    (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";

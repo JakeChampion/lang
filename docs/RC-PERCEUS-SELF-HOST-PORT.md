@@ -810,3 +810,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   self-host). Next: migrate the peripheral array producers + wire
   inc-on-alias / construction-store / exit-sweep (counting milestone,
   free off), then `__fern_arr_dec` + freelist (free on).
+- 2026-06-08: **wasm backend RC — array layout migration completed
+  (uniform).** Migrated the remaining peripheral array producers onto
+  `$__fern_arr_box`, so EVERY wasm array now carries the rc word (no more
+  mixed old/new layouts): the two `@export` result wrappers (`u8[]` +
+  numeric `list<T>`), `random_bytes`, the wasi `args`, the env string
+  array, and the map `keys`/`values` snapshot. Each was confirmed an
+  array (len@[base], elems@[base+8]) and its access is a-relative, so the
+  one-line alloc-call swap is transparent. This is the cleanliness
+  prerequisite for flipping free on later (a non-boxed array would read a
+  garbage rc at [a-8] and corrupt on free). Coverage extended:
+  `TestSelfHostRcArrayLayoutWasm` now also passes a `random_bytes()`
+  array and a map `.values()` snapshot straight to the rc intrinsics
+  (both rc==1 / unique, values intact). Full wasm suite (~94 s) green.
+  The remaining wasm parity step is the COUNTING milestone (inc-on-alias
+  + construction-store + exit-sweep, free off) then free — both gated on
+  building a reliable "is array local" oracle, which on wasm means
+  combining the backend's fragmented type lists (i32[]/string[]/struct[]/
+  i64[]/f64[]/fn[] + array-of-arrays) since a spurious inc on a non-array
+  pointer would corrupt an adjacent object's header (unlike the asm
+  backends, where `asmcore.ty_is_array_like` already gives this oracle).
