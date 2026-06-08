@@ -2542,6 +2542,15 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             var tj: i32 = n_elems - 1;
             while (tj >= 0) {
                 s = s.write("    ldr x1, [sp], #16\n");
+                if (asmcore.needs_rc_inc_on_alias(t.elements[tj], s)) {
+                    s = s.mark_heap();
+                    s = s.write("    str x0, [sp, #-16]!\n");   // save tuple ptr
+                    s = s.write("    str x1, [sp, #-16]!\n");   // retain arg = element
+                    s = s.write("    bl __fn___fern_rc_inc\n");
+                    s = s.write("    mov x1, x0\n");            // element (helper returns the ptr)
+                    s = s.write("    add sp, sp, #16\n");
+                    s = s.write("    ldr x0, [sp], #16\n");     // restore tuple ptr
+                }
                 s = s.write("    str x1, [x0, #" + asmcore.i32_to_string(tj * 8) + "]\n");
                 tj = tj - 1;
             }
@@ -2568,6 +2577,15 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             var aj: i32 = n_elems - 1;
             while (aj >= 0) {
                 s = s.write("    ldr x1, [sp], #16\n");
+                if (asmcore.needs_rc_inc_on_alias(a.elements[aj], s)) {
+                    s = s.mark_heap();
+                    s = s.write("    str x0, [sp, #-16]!\n");   // save array ptr
+                    s = s.write("    str x1, [sp, #-16]!\n");   // retain arg = element
+                    s = s.write("    bl __fn___fern_rc_inc\n");
+                    s = s.write("    mov x1, x0\n");            // element (helper returns the ptr)
+                    s = s.write("    add sp, sp, #16\n");
+                    s = s.write("    ldr x0, [sp], #16\n");     // restore array ptr
+                }
                 s = s.write("    str x1, [x0, #" + asmcore.i32_to_string((aj + 1) * 8) + "]\n");
                 aj = aj - 1;
             }

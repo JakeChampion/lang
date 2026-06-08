@@ -356,6 +356,9 @@ func TestSelfHostRcArm64(t *testing.T) {
 		// Cow-aware dec (Phase 3 prep): a self-append loop stays clean.
 		{"self-append-no-underflow", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i); i = i + 1; } return __fern_rc_underflow_count(); }", 0},
 		{"self-append-values", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 20) { xs = xs.append(i * 2); i = i + 1; } return xs[19]; }", 38},
+		// Construction store: struct field + array-of-arrays capture.
+		{"struct-holds-array", "struct H { items: i32[] } function mk(): H { var xs: i32[] = [7, 8]; return H { items: xs }; } function main(): i32 { var h = mk(); return h.items[0] + h.items[1] + __fern_rc_underflow_count(); }", 15},
+		{"array-of-arrays", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4]; var both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __fern_rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -482,4 +485,53 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 			t.Errorf("expected a retain (__fern_rc_inc) at the struct field init")
 		}
 	})
+}
+
+// Phase 1d (array/tuple construction store): an array/tuple element
+// initialised from an rc-tracked array alias retains the buffer (the
+// container owns a new reference) — the array-literal and tuple-literal
+// arms of the free-readiness gate. inc-only / detector-clean / safe.
+func TestSelfHostRcConstructContainersX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Array of arrays: the inner array aliases are retained.
+		{"array-of-arrays", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4]; var both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __fern_rc_underflow_count(); }", 5},
+		// Tuple holding an array: the array element is retained.
+		{"tuple-of-array", "function main(): i32 { var xs: i32[] = [7, 8]; var t = (xs, 9); return t.0[1] + t.1 + __fern_rc_underflow_count(); }", 17},
+		// Returning a container that captured a local array (would UAF
+		// once free is on without the construction inc) stays correct.
+		{"return-arr-of-arrs", "function mk(): i32[][] { var a: i32[] = [5, 6]; return [a, a]; } function main(): i32 { var both = mk(); return both[0][0] + both[1][1] + __fern_rc_underflow_count(); }", 11},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
 }
