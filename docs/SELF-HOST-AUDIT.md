@@ -276,9 +276,12 @@ appendix §6.)
   immutable parallel arrays rebuilt per op (O(n²)); block scoping via length-trim
   is off-by-one-fragile — extract scope-frame `Env`/`LocalsTable` + `stack_drop`/
   `stack_take_top` helpers (used ~6× by hand today).
-- [ ] **SH-048 — `interp.fern:237-680` / `vm.fern:660-998`** `eval_expr` (~440 lines)
+- [~] **SH-048 — `interp.fern:237-680` / `vm.fern:660-998`** `eval_expr` (~440 lines)
   & `compile_expr` (~340) — extract `eval_binary`/`eval_unary` (mirror the VM's
-  `apply_binary`) and `compile_args` (4 near-identical arg loops).
+  `apply_binary`) and `compile_args` (4 near-identical arg loops). _Partial:_
+  the ~108-line `ExprBinary` body is now `eval_binary(op, lv, rv)` (pure in its
+  operands), shrinking `eval_expr`'s arm to a 4-line head + delegation. Still
+  open: `eval_unary`, and the VM-side `compile_args` factoring.
 - [ ] **SH-049 — `ssa.fern:69` SInst/STerm are string-tagged flat records** with an
   `imm` field overloaded as value / param-index / **width 32-64** / alloc-count /
   call-return-kind (`:2983`) — make it a tagged union (checker-enforced exhaustive

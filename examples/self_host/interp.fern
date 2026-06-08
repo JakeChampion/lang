@@ -234,6 +234,122 @@ function str_to_f64(s: string): f64 {
 // errors, the surrounding op returns the same VErr. This keeps
 // the early-return pattern out of the body and matches the
 // checker's TypeUnknown threading.
+// eval_binary applies a binary operator to two already-evaluated
+// operands. Pure in (op, lv, rv) — extracted from eval_expr's
+// ExprBinary arm so the operator semantics live in one place,
+// mirroring the VM's apply_binary (SH-048).
+function eval_binary(op: string, lv: Value, rv: Value): Value {
+    // `+` overloads i32 (arithmetic) and string (concat).
+    if (op == "+") {
+        match (lv) {
+            VInt(li) => {
+                match (rv) {
+                    VInt(ri) => { return v_int(li.v + ri.v); },
+                    _ => { return v_err("`+` rhs not i32"); }
+                }
+            },
+            VString(ls) => {
+                match (rv) {
+                    VString(rs) => { return v_string(ls.v + rs.v); },
+                    _ => { return v_err("`+` rhs not string"); }
+                }
+            },
+            VFloat(lf) => {
+                match (rv) {
+                    VFloat(rf) => { return v_float(lf.v + rf.v); },
+                    _ => { return v_err("`+` rhs not f64"); }
+                }
+            },
+            _ => { return v_err("`+` lhs not i32, string, or f64"); }
+        }
+    }
+    if (op == "-" || op == "*" || op == "/" || op == "%") {
+        match (lv) {
+            VInt(li) => {
+                match (rv) {
+                    VInt(ri) => {
+                        if (op == "-") { return v_int(li.v - ri.v); }
+                        if (op == "*") { return v_int(li.v * ri.v); }
+                        if (op == "/") {
+                            if (ri.v == 0) { return v_err("division by zero"); }
+                            return v_int(li.v / ri.v);
+                        }
+                        if (ri.v == 0) { return v_err("modulo by zero"); }
+                        return v_int(li.v % ri.v);
+                    },
+                    _ => { return v_err("arithmetic rhs not i32"); }
+                }
+            },
+            VFloat(lf) => {
+                match (rv) {
+                    VFloat(rf) => {
+                        if (op == "-") { return v_float(lf.v - rf.v); }
+                        if (op == "*") { return v_float(lf.v * rf.v); }
+                        if (op == "/") {
+                            if (rf.v == 0.0) { return v_err("float division by zero"); }
+                            return v_float(lf.v / rf.v);
+                        }
+                        // `%` on floats isn't supported — the
+                        // semantics differ across languages
+                        // and the parser side doesn't yet
+                        // distinguish.
+                        return v_err("`%` on f64 is unsupported");
+                    },
+                    _ => { return v_err("arithmetic rhs not f64"); }
+                }
+            },
+            _ => { return v_err("arithmetic lhs not i32 or f64"); }
+        }
+    }
+    if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+        match (lv) {
+            VInt(li) => {
+                match (rv) {
+                    VInt(ri) => {
+                        if (op == "<") { return v_bool(li.v < ri.v); }
+                        if (op == "<=") { return v_bool(li.v <= ri.v); }
+                        if (op == ">") { return v_bool(li.v > ri.v); }
+                        return v_bool(li.v >= ri.v);
+                    },
+                    _ => { return v_err("comparison rhs not i32"); }
+                }
+            },
+            VFloat(lf) => {
+                match (rv) {
+                    VFloat(rf) => {
+                        if (op == "<") { return v_bool(lf.v < rf.v); }
+                        if (op == "<=") { return v_bool(lf.v <= rf.v); }
+                        if (op == ">") { return v_bool(lf.v > rf.v); }
+                        return v_bool(lf.v >= rf.v);
+                    },
+                    _ => { return v_err("comparison rhs not f64"); }
+                }
+            },
+            _ => { return v_err("comparison lhs not i32 or f64"); }
+        }
+    }
+    if (op == "==" || op == "!=") {
+        var eq: boolean = value_eq(lv, rv);
+        if (op == "==") { return v_bool(eq); }
+        return v_bool(!eq);
+    }
+    if (op == "&&" || op == "||") {
+        match (lv) {
+            VBool(lb) => {
+                match (rv) {
+                    VBool(rb) => {
+                        if (op == "&&") { return v_bool(lb.v && rb.v); }
+                        return v_bool(lb.v || rb.v);
+                    },
+                    _ => { return v_err("logical rhs not bool"); }
+                }
+            },
+            _ => { return v_err("logical lhs not bool"); }
+        }
+    }
+    return v_err("unknown binary op: " + op);
+}
+
 function eval_expr(e: parser.Expr, env: Env): Value {
     match (e) {
         parser.ExprNumber(n) => {
@@ -248,115 +364,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             if (is_err(lv)) { return lv; }
             var rv: Value = eval_expr(b.right, env);
             if (is_err(rv)) { return rv; }
-            // `+` overloads i32 (arithmetic) and string (concat).
-            if (b.op == "+") {
-                match (lv) {
-                    VInt(li) => {
-                        match (rv) {
-                            VInt(ri) => { return v_int(li.v + ri.v); },
-                            _ => { return v_err("`+` rhs not i32"); }
-                        }
-                    },
-                    VString(ls) => {
-                        match (rv) {
-                            VString(rs) => { return v_string(ls.v + rs.v); },
-                            _ => { return v_err("`+` rhs not string"); }
-                        }
-                    },
-                    VFloat(lf) => {
-                        match (rv) {
-                            VFloat(rf) => { return v_float(lf.v + rf.v); },
-                            _ => { return v_err("`+` rhs not f64"); }
-                        }
-                    },
-                    _ => { return v_err("`+` lhs not i32, string, or f64"); }
-                }
-            }
-            if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
-                match (lv) {
-                    VInt(li) => {
-                        match (rv) {
-                            VInt(ri) => {
-                                if (b.op == "-") { return v_int(li.v - ri.v); }
-                                if (b.op == "*") { return v_int(li.v * ri.v); }
-                                if (b.op == "/") {
-                                    if (ri.v == 0) { return v_err("division by zero"); }
-                                    return v_int(li.v / ri.v);
-                                }
-                                if (ri.v == 0) { return v_err("modulo by zero"); }
-                                return v_int(li.v % ri.v);
-                            },
-                            _ => { return v_err("arithmetic rhs not i32"); }
-                        }
-                    },
-                    VFloat(lf) => {
-                        match (rv) {
-                            VFloat(rf) => {
-                                if (b.op == "-") { return v_float(lf.v - rf.v); }
-                                if (b.op == "*") { return v_float(lf.v * rf.v); }
-                                if (b.op == "/") {
-                                    if (rf.v == 0.0) { return v_err("float division by zero"); }
-                                    return v_float(lf.v / rf.v);
-                                }
-                                // `%` on floats isn't supported — the
-                                // semantics differ across languages
-                                // and the parser side doesn't yet
-                                // distinguish.
-                                return v_err("`%` on f64 is unsupported");
-                            },
-                            _ => { return v_err("arithmetic rhs not f64"); }
-                        }
-                    },
-                    _ => { return v_err("arithmetic lhs not i32 or f64"); }
-                }
-            }
-            if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-                match (lv) {
-                    VInt(li) => {
-                        match (rv) {
-                            VInt(ri) => {
-                                if (b.op == "<") { return v_bool(li.v < ri.v); }
-                                if (b.op == "<=") { return v_bool(li.v <= ri.v); }
-                                if (b.op == ">") { return v_bool(li.v > ri.v); }
-                                return v_bool(li.v >= ri.v);
-                            },
-                            _ => { return v_err("comparison rhs not i32"); }
-                        }
-                    },
-                    VFloat(lf) => {
-                        match (rv) {
-                            VFloat(rf) => {
-                                if (b.op == "<") { return v_bool(lf.v < rf.v); }
-                                if (b.op == "<=") { return v_bool(lf.v <= rf.v); }
-                                if (b.op == ">") { return v_bool(lf.v > rf.v); }
-                                return v_bool(lf.v >= rf.v);
-                            },
-                            _ => { return v_err("comparison rhs not f64"); }
-                        }
-                    },
-                    _ => { return v_err("comparison lhs not i32 or f64"); }
-                }
-            }
-            if (b.op == "==" || b.op == "!=") {
-                var eq: boolean = value_eq(lv, rv);
-                if (b.op == "==") { return v_bool(eq); }
-                return v_bool(!eq);
-            }
-            if (b.op == "&&" || b.op == "||") {
-                match (lv) {
-                    VBool(lb) => {
-                        match (rv) {
-                            VBool(rb) => {
-                                if (b.op == "&&") { return v_bool(lb.v && rb.v); }
-                                return v_bool(lb.v || rb.v);
-                            },
-                            _ => { return v_err("logical rhs not bool"); }
-                        }
-                    },
-                    _ => { return v_err("logical lhs not bool"); }
-                }
-            }
-            return v_err("unknown binary op: " + b.op);
+            return eval_binary(b.op, lv, rv);
         },
         parser.ExprUnary(u) => {
             var ov: Value = eval_expr(u.operand, env);
