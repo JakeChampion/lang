@@ -458,27 +458,36 @@ all-or-nothing, so even a streaming driver must **build every function once** up
 front to verify the whole program is in-subset — and *that first build pass
 alone* overruns the heap.
 
-So the wall is **transient allocation inside `build_func` + `optimize`**, not
-retained output. Those passes churn `.append` / functional-update garbage per
-function, and **nothing is freed**: the `cmd/fern`-built compiler is at RC
-"free OFF" (the Perceus self-host port is mid-flight — see #2491 "string RC
-counting milestone (free OFF)" and `docs/RC-PERCEUS-SELF-HOST-PORT.md`). With
-freeing off, total transient allocation across ~1500 builds exceeds the arena
-regardless of how the output is streamed. The AST path fits only because its
-total churn happens to stay under 1 GiB.
+So the wall is **transient build-time allocation**, not retained output.
 
-#### The actual unblock (two viable levers)
+#### Root cause: array `.append`'s grow path leaks (the Go backend's RC)
 
-1. **Turn RC freeing ON** (the Perceus track already in progress). Once dead
-   per-function build garbage is reclaimed, the streaming-emit structure above
-   becomes worthwhile and the self-compile should fit. This is the project's
-   chosen direction.
-2. **Cut `build_func` / `optimize` transient allocation** (the seed-overlay and
-   pass early-out fixes already did this once, removing an O(functions²) term).
-   A further reduction could get total churn under the arena even with free off.
+The `cmd/fern`-built compiler's RC **does** free — verified directly: a program
+that allocates a fresh array literal and drops it **200 million** times runs at
+flat, few-MB RSS (free + freelist reuse working). So this is *not* a global
+"free OFF".
 
-Streaming the emit is *necessary but not sufficient* — keep it for after
-freeing lands; on its own it does nothing.
+The leak is specific to **`a = a.append(x)`'s grow/realloc path**. Measured: a
+program that builds a 1000-element array via `.append` and drops it, repeated
+100 000×, **traps at ~1 GiB** — while building the same array *once* and keeping
+it is flat. The Go backend's `__fern_arr_push_grow` copy path
+(`internal/codegen/x86_64/x86_64.go`) allocates the larger buffer, copies, and
+returns it **without reclaiming the old buffer** on a grow. Since `build_func` /
+`optimize` / emit construct every per-function array (instruction lists, block
+lists, value/edge arrays) via `.append`, a whole-compiler compile churns ~1500
+functions' worth of grow-discarded buffers that never return to the freelist →
+the >2 GiB overrun. The AST path leans on `.append` far less, so its churn stays
+under 1 GiB.
+
+#### The actual unblock
+
+Fix array `.append`'s grow path to reclaim the old buffer when the array is
+uniquely owned (rc == 1) — return it to the freelist on realloc, the way a plain
+drop already does. That is a localized Go-backend RC fix (mirrored in arm64).
+Once grow-discarded buffers are reused, the whole-compiler SSA compile's churn
+should fall toward the AST path's. The streaming-emit structure above is then a
+worthwhile *second* step — it caps the retained live set — but is unnecessary on
+its own (verified: it moves peak by 3 MB while the append leak stands).
 
 ### Phase 5 — retire the AST emitters
 
