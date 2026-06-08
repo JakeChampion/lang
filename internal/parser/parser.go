@@ -3186,7 +3186,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				return nil, err
 			}
 			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args}
-			if db, err := p.maybeDesugarArrayBuild(expr.(*ast.Call)); err != nil {
+			if db, err := p.maybeDesugarBuild(expr.(*ast.Call)); err != nil {
 				return nil, err
 			} else if db != nil {
 				expr = db
@@ -3542,11 +3542,89 @@ func rewriteBuilderStmts(stmts []ast.Stmt, b string) []ast.Stmt {
 // — an in-place builder mutation that becomes a reassignment.
 func isBuilderMutation(c *ast.Call, b string) bool {
 	fa, ok := c.Callee.(*ast.FieldAccess)
-	if !ok || (fa.Field != "append" && fa.Field != "with") {
+	if !ok || (fa.Field != "append" && fa.Field != "with" && fa.Field != "insert") {
 		return false
 	}
 	id, ok := fa.Target.(*ast.Ident)
 	return ok && id.Name == b
+}
+
+// maybeDesugarBuild dispatches the builder desugars: Array.build (above) and
+// Map.build. Returns nil when `call` is neither.
+func (p *parser) maybeDesugarBuild(call *ast.Call) (ast.Expr, error) {
+	if e, err := p.maybeDesugarArrayBuild(call); err != nil || e != nil {
+		return e, err
+	}
+	return p.maybeDesugarMapBuild(call)
+}
+
+// maybeDesugarMapBuild lowers `Map.build(function(b: MapBuilder[K, V]):
+// void { BODY })` into a unique-local IIFE — the map sibling of
+// maybeDesugarArrayBuild (docs/ARRAY-BUILDER-PLAN.md):
+//
+//	(function(): Map[K, V] {
+//	    var b: Map[K, V] = map_new(8);
+//	    BODY'                 // `b.insert(k, v);` → `b = b.insert(k, v);`
+//	    return b;
+//	})()
+//
+// `b` is a fresh non-escaping map, so every insert is the in-place fast
+// path and the reassignment form keeps E055 from firing. MapBuilder[K, V]
+// is surface-only.
+func (p *parser) maybeDesugarMapBuild(call *ast.Call) (ast.Expr, error) {
+	fa, ok := call.Callee.(*ast.FieldAccess)
+	if !ok || fa.Field != "build" {
+		return nil, nil
+	}
+	recv, ok := fa.Target.(*ast.Ident)
+	if !ok || recv.Name != "Map" {
+		return nil, nil
+	}
+	if len(call.Args) != 1 {
+		return nil, p.errorf(call.P, "Map.build expects a single function(b: MapBuilder[K, V]) argument")
+	}
+	lam, ok := call.Args[0].(*ast.Lambda)
+	if !ok {
+		return nil, p.errorf(call.P, "Map.build's argument must be a function(b: MapBuilder[K, V]) literal")
+	}
+	if len(lam.Params) != 1 {
+		return nil, p.errorf(lam.P, "Map.build's function must take exactly one parameter (the builder)")
+	}
+	bname := lam.Params[0].Name
+	kv := mapBuilderArgs(lam.Params[0].Type)
+	if kv == nil {
+		return nil, p.errorf(lam.P, "Map.build's parameter must be typed MapBuilder[K, V]")
+	}
+	mapTy := ast.StructType{Name: "Map", Args: kv}
+	pos := call.P
+	stmts := make([]ast.Stmt, 0, len(lam.Body.Stmts)+2)
+	stmts = append(stmts, &ast.Var{
+		P: pos, Name: bname, Type: mapTy, WasAnnotated: true,
+		Init: &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "map_new"}, Args: []ast.Expr{&ast.NumberLit{P: pos, Value: 8}}},
+	})
+	for _, s := range lam.Body.Stmts {
+		stmts = append(stmts, rewriteBuilderStmt(s, bname))
+	}
+	stmts = append(stmts, &ast.Return{P: pos, Value: &ast.Ident{P: pos, Name: bname}})
+	iife := &ast.Lambda{P: pos, ReturnType: mapTy, Body: &ast.Block{P: pos, Stmts: stmts}}
+	return &ast.Call{P: pos, Callee: iife}, nil
+}
+
+// mapBuilderArgs extracts [K, V] from a `MapBuilder[K, V]` type annotation
+// (parser wraps `Name[...]` as EnumType; StructType handled defensively).
+// Returns nil if the type isn't MapBuilder[_, _].
+func mapBuilderArgs(t ast.Type) []ast.Type {
+	switch v := t.(type) {
+	case ast.EnumType:
+		if v.Name == "MapBuilder" && len(v.Args) == 2 {
+			return v.Args
+		}
+	case ast.StructType:
+		if v.Name == "MapBuilder" && len(v.Args) == 2 {
+			return v.Args
+		}
+	}
+	return nil
 }
 
 func (p *parser) parseMapLit(pos ast.Position) (ast.Expr, error) {

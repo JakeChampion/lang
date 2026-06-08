@@ -1702,3 +1702,50 @@ func TestArrayBuildMalformed(t *testing.T) {
 		t.Error("Array.build with a non-lambda argument should be a parse error")
 	}
 }
+
+// Map.build desugars to a unique-local IIFE: `var b: Map[K,V] = map_new(8)`,
+// the body with `b.insert(k,v);` rewritten to `b = b.insert(k,v)`, and a
+// trailing `return b`. See docs/ARRAY-BUILDER-PLAN.md.
+func TestMapBuildDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+  var m = Map.build(function(b: MapBuilder[i32, i32]): void {
+    b.insert(1, 2);
+  });
+  return 0;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
+	call, ok := v.Init.(*ast.Call)
+	if !ok {
+		t.Fatalf("Map.build should desugar to an IIFE Call, got %T", v.Init)
+	}
+	lam, ok := call.Callee.(*ast.Lambda)
+	if !ok || len(call.Args) != 0 {
+		t.Fatalf("IIFE callee should be a zero-arg Lambda, got %T", call.Callee)
+	}
+	// First: `var b: Map[i32,i32] = map_new(8)`.
+	bv, ok := lam.Body.Stmts[0].(*ast.Var)
+	if !ok || bv.Name != "b" {
+		t.Fatalf("first stmt should be `var b`, got %T", lam.Body.Stmts[0])
+	}
+	if st, ok := bv.Type.(ast.StructType); !ok || st.Name != "Map" || len(st.Args) != 2 {
+		t.Fatalf("b should be typed Map[K,V], got %v", bv.Type)
+	}
+	mc, ok := bv.Init.(*ast.Call)
+	if !ok {
+		t.Fatalf("b init should be a map_new call, got %T", bv.Init)
+	}
+	if id, ok := mc.Callee.(*ast.Ident); !ok || id.Name != "map_new" {
+		t.Errorf("b should init from map_new, got %v", mc.Callee)
+	}
+	// `b.insert(1,2);` rewritten to an assignment.
+	es, ok := lam.Body.Stmts[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("second stmt should be ExprStmt, got %T", lam.Body.Stmts[1])
+	}
+	if _, ok := es.Expr.(*ast.Assign); !ok {
+		t.Errorf("b.insert should desugar to an Assign, got %T", es.Expr)
+	}
+}
