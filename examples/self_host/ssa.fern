@@ -34,16 +34,7 @@ import "./util";
 
 // is_all_digits reports whether every byte of s is an ASCII digit (and s is
 // non-empty) — used to tell a tuple index `t.0` from a struct field `t.x`.
-function is_all_digits(s: string): boolean {
-    if (s.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) { return false; }
-        i = i + 1;
-    }
-    return true;
-}
+// is_all_digits now lives in util.fern (imported as `util`). See SH-020.
 
 // ---- IR ----------------------------------------------------------------
 
@@ -1020,7 +1011,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             // elements live at offsets 0..n-1 (no tag / length prefix), so the
             // index is loaded directly. Width 0 (32-bit) matches the array /
             // construct path; pointer elements fit the low-heap 32-bit slots.
-            if (is_all_digits(fa.field)) {
+            if (util.is_all_digits(fa.field)) {
                 s = build_expr(fa.obj, s);
                 if (!s.ok) { return s; }
                 var tptr: i32 = s.cur_id();

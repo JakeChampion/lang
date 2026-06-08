@@ -159,7 +159,8 @@ findings. Ranked by leverage.
     `contains_name` (`fern:128`, `asm_load_run`, `asm_arm64_load_run`).
   - `base_type_name`/`type_base`/`strip_generic_args` — **4 copies / 3 names**
     (`asmcore:14`, `checker:2660`, `checker:3990`, `wasm:2166`).
-  - `is_all_digits`, `index_of_str`/`index_of_byte`, `contains` (substring),
+  - `is_all_digits` — **done** (`asmcore` pub + `ssa` + `wasm`, all already util).
+  - `index_of_str`/`index_of_byte`, `contains` (substring),
     `str_join_range`/`str_join_chunks`, `pred_slot`, `block_index`, `last_slash`,
     `join_path`, `module_name`, `resolve_path`, `dir_of`, `is_local`.
   - Named ASCII constants (`DOT=46`, `LBRACKET=91`, `RBRACKET=93`, `COMMA=44`,

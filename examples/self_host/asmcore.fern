@@ -37,16 +37,7 @@ pub function sanitize_label(name: string): string {
 
 // digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 
-pub function is_all_digits(s: string): boolean {
-    if (s.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) { return false; }
-        i = i + 1;
-    }
-    return true;
-}
+// is_all_digits now lives in util.fern (imported as `util`). See SH-020.
 
 pub function has_str(xs: string[], s: string): boolean {
     var i: i32 = 0;
