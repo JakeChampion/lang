@@ -75,6 +75,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E045": true, // map literal key type must be i32 or string
 	"E025": true, // switch on float / case value type mismatch
 	"E022": true, // if-let / let-else source not an enum; let-else else must diverge
+	"E057": true, // cell_new(v) element type must be a scalar or string
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -516,6 +517,22 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"letelse-enum-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { return 0; }; return v; }\n", nil},
 		{"iflet-bad-variant", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; if let Bogus(v) = o { return 0; } return 0; }\n", []string{"E014"}},
 		{"iflet-bad-arity", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; if let Has(a, b) = o { return 0; } return 0; }\n", []string{"E015"}},
+		// E057: `cell_new(v)` constructs a Cell[T]; T must be cycle-free —
+		// a scalar (i32/i64/f64/bool) or string. A composite / reference
+		// argument (struct, array, tuple, another cell) is E057, reported
+		// at the argument. The Go checker's type-annotation form
+		// (`Cell[T]` in a field/param) reports E057 at the synthesised Cell
+		// builtin decl (position 0:0), which diag.Format renders without a
+		// code, so the differential keys off the value form (cell_new),
+		// whose diagnostic carries the argument position. Cross-checked
+		// against the Go checker.
+		{"cellnew-i32-ok", "function main(): i32 { var c = cell_new(5); return 0; }\n", nil},
+		{"cellnew-string-ok", "function main(): i32 { var c = cell_new(\"x\"); return 0; }\n", nil},
+		{"cellnew-bool-ok", "function main(): i32 { var c = cell_new(1 < 2); return 0; }\n", nil},
+		{"cellnew-struct-bad", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; var c = cell_new(p); return 0; }\n", []string{"E057"}},
+		{"cellnew-array-bad", "function main(): i32 { var a: i32[] = [1]; var c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cellnew-tuple-bad", "function main(): i32 { var t = (1, 2); var c = cell_new(t); return 0; }\n", []string{"E057"}},
+		{"cellnew-nested-bad", "function main(): i32 { var c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

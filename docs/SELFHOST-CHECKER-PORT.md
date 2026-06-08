@@ -1108,10 +1108,22 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   no generic-parameter type (generics are out of scope); a captured
   generic reads as `unknown`, indistinguishable from an unresolved type.
   Needs generics modelling.
-- **E057** (`Cell[T]` element must be scalar/string) — the self-host
-  doesn't model `Cell`, and `parse_type_name` keeps only the bare leading
-  token, dropping the `[T]` argument. Needs type-argument capture in the
-  parser (fixpoint-affecting) plus a `Cell` type.
+- **E057** (`Cell[T]` element must be scalar/string) — **done for the
+  value form.** `cell_new(v)` is already a recognised self-host builtin;
+  the checker now types it as a nominal `Cell` handle and flags E057 in
+  `call_diags` when the argument's type isn't a scalar / string
+  (`is_primitive_type` is the exact analog of the Go `isCellElemType`,
+  modulo the generic-`ParamType` case the self-host doesn't model). The
+  diagnostic points at the argument, matching the Go checker's
+  `n.Args[0].Pos()`. The **type-annotation form** (`Cell[T]` in a field /
+  param) is *not* ported: the Go checker reports it at the synthesised
+  `Cell` builtin decl (position 0:0), which `diag.Format` renders with no
+  `error[E0XX]` prefix — so the differential gate (which scrapes codes
+  from `diag.Format`) sees no code from Go there and can't key on it.
+  (Fixing that Go diagnostic to point at the use site is a separate
+  improvement.) Gated by corpus cases `cellnew-i32-ok`,
+  `cellnew-string-ok`, `cellnew-bool-ok`, `cellnew-struct-bad`,
+  `cellnew-array-bad`, `cellnew-tuple-bad`, `cellnew-nested-bad`.
 - **E053** (`fip` function may not allocate) — needs Perceus in the
   self-host before allocation sites can be attributed to a `fip` function.
 
