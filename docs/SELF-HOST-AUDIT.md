@@ -465,3 +465,38 @@ ident/var-name walkers). The diverged dedup policy becomes the caller's `f`
   and `"///MODULE " +` builders.
 - Verify locally on x86 (cli/fixpoint/stage2/cross-validation) + wasm via
   wasmtime; arm64/macOS via CI, as throughout SH-020.
+
+---
+
+## SH-057 — self-host miscompiles a lambda that *writes* a captured outer var (confirmed bug)
+
+_Surfaced while resolving the SH-022 wasm-collector question; pre-existing (not
+caused by SH-022 — astwalk's collectors are byte-identical to the old copies)._
+
+**Repro:** `function main(): i32 { var x = 1; var f = function (): i32 { x = 42; return 7; }; var r = f(); return r + x; }`
+
+| engine | result | |
+|---|---|---|
+| Go reference (`fern -interp`) | **49** | `x` mutated to 42 → by-reference capture; `7 + 42` |
+| self-host interp | **8** | `x` not captured → write lost → `7 + 1` |
+| self-host vm | **254** (VErr) | `x` not captured → `x = 42` compiles to an assign-to-undefined sentinel |
+
+**Root cause:** the free-variable collector's `collect_idents_stmt` `StmtAssign` arm
+(now in `astwalk.fern`, inherited identically from asmcore/ssa/vm) collects only
+`a.value`, **not** the assign target `a.target`. So a lambda that assigns to an
+outer var *without reading it* never lists that var as a free reference →
+`lambda_captures` doesn't capture it. `wasm`'s collector is the only one that
+collects `a.target`, so wasm is the lone correct backend here. (This is why SH-022
+left wasm un-converged.)
+
+**Why CI misses it:** the cross-validation suite's closure cases capture vars they
+*read*; none assign a captured var write-only.
+
+**Fix direction (needs a decision):** make `astwalk.collect_idents_stmt` collect
+`a.target` (converge *up* to wasm's behavior) so write-captured outer vars are
+captured. BUT this is only correct if the language intends by-reference write
+capture (the Go reference does → likely yes); it touches closure codegen across
+asmcore/ssa/vm, so it needs a focused test (write-capture round-trips to the Go
+reference's 49 on x86/arm64/wasm) and a call on the intended semantics
+(by-ref vs. read-only-with-a-checker-error). The interp(8)/vm(254) split also means
+**vm's closure-assign path needs checking** independently.
