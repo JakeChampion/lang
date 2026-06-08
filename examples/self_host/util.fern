@@ -110,3 +110,17 @@ pub function index_of_str(xs: string[], s: string): i32 {
     }
     return 0 - 1;
 }
+
+// contains reports whether `needle` occurs in `haystack` (substring
+// search; empty needle matches). literate.fern keeps its own copy — it
+// is a standalone module not staged through util.
+pub function contains(haystack: string, needle: string): boolean {
+    if (needle.len() == 0) { return true; }
+    if (haystack.len() < needle.len()) { return false; }
+    var i: i32 = 0;
+    while (i <= haystack.len() - needle.len()) {
+        if (haystack[i:i + needle.len()] == needle) { return true; }
+        i = i + 1;
+    }
+    return false;
+}

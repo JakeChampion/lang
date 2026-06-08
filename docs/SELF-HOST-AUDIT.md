@@ -163,7 +163,9 @@ findings. Ranked by leverage.
     `util.base_type_name` (asmcore pub + wasm + checker's two names; asm/asm_arm64
     cross-module callers updated).
   - `is_all_digits` — **done** (`asmcore` pub + `ssa` + `wasm`, all already util).
-  - `index_of_str` — **done** (SH-007 fixed); `index_of_byte`, `contains` (substring),
+  - `index_of_str` — **done** (SH-007 fixed). `contains` (substring) — **done**
+    (`asmcore` pub + `disasm` + asm/asm_arm64 callers; `watbin`/`literate` keep
+    their own copies — deliberately self-contained modules). `index_of_byte`
     `str_join_range`/`str_join_chunks`, `pred_slot`, `block_index`, `last_slash`,
     `join_path`, `module_name`, `resolve_path`, `dir_of`, `is_local`.
   - Named ASCII constants (`DOT=46`, `LBRACKET=91`, `RBRACKET=93`, `COMMA=44`,

@@ -8033,130 +8033,130 @@ function main(): i32 {
     // literal `$42`, a `pushq` of it, the syscall epilogue with
     // `$60` (sys_exit_group), and `syscall`.
     var a1: string = emit_source("return 42;");
-    if (!asmcore.contains(a1, "movq $42")) { return 10; }
-    if (!asmcore.contains(a1, "pushq %rax")) { return 11; }
-    if (!asmcore.contains(a1, "popq %rdi")) { return 12; }
-    if (!asmcore.contains(a1, "movq $60, %rax")) { return 13; }
-    if (!asmcore.contains(a1, "syscall")) { return 14; }
-    if (!asmcore.contains(a1, ".globl _start")) { return 15; }
+    if (!util.contains(a1, "movq $42")) { return 10; }
+    if (!util.contains(a1, "pushq %rax")) { return 11; }
+    if (!util.contains(a1, "popq %rdi")) { return 12; }
+    if (!util.contains(a1, "movq $60, %rax")) { return 13; }
+    if (!util.contains(a1, "syscall")) { return 14; }
+    if (!util.contains(a1, ".globl _start")) { return 15; }
 
     // Arithmetic: `return 2 + 3;` should emit addq.
     var a2: string = emit_source("return 2 + 3;");
-    if (!asmcore.contains(a2, "movq $2")) { return 20; }
-    if (!asmcore.contains(a2, "movq $3")) { return 21; }
-    if (!asmcore.contains(a2, "addq")) { return 22; }
+    if (!util.contains(a2, "movq $2")) { return 20; }
+    if (!util.contains(a2, "movq $3")) { return 21; }
+    if (!util.contains(a2, "addq")) { return 22; }
 
     // Subtraction.
     var a3: string = emit_source("return 7 - 4;");
-    if (!asmcore.contains(a3, "subq")) { return 30; }
+    if (!util.contains(a3, "subq")) { return 30; }
 
     // Multiplication.
     var a4: string = emit_source("return 6 * 7;");
-    if (!asmcore.contains(a4, "imulq")) { return 40; }
+    if (!util.contains(a4, "imulq")) { return 40; }
 
     // Division — emits cqto for sign-extension + idivq.
     var a5: string = emit_source("return 20 / 4;");
-    if (!asmcore.contains(a5, "cqto")) { return 50; }
-    if (!asmcore.contains(a5, "idivq")) { return 51; }
+    if (!util.contains(a5, "cqto")) { return 50; }
+    if (!util.contains(a5, "idivq")) { return 51; }
 
     // Modulo — moves remainder from rdx into rax.
     var a6: string = emit_source("return 23 % 5;");
-    if (!asmcore.contains(a6, "cqto")) { return 60; }
-    if (!asmcore.contains(a6, "idivq")) { return 61; }
-    if (!asmcore.contains(a6, "movq %rdx, %rax")) { return 62; }
+    if (!util.contains(a6, "cqto")) { return 60; }
+    if (!util.contains(a6, "idivq")) { return 61; }
+    if (!util.contains(a6, "movq %rdx, %rax")) { return 62; }
 
     // Unary negation.
     var a7: string = emit_source("return -5;");
-    if (!asmcore.contains(a7, "negq")) { return 70; }
+    if (!util.contains(a7, "negq")) { return 70; }
 
     // Nested expressions: `return (2 + 3) * 4;` — should have
     // an addq before the imulq (left subtree fully emitted
     // first).
     var a8: string = emit_source("return (2 + 3) * 4;");
-    if (!asmcore.contains(a8, "addq")) { return 80; }
-    if (!asmcore.contains(a8, "imulq")) { return 81; }
+    if (!util.contains(a8, "addq")) { return 80; }
+    if (!util.contains(a8, "imulq")) { return 81; }
 
     // Comparisons: each op emits `cmpq` + the matching setcc +
     // a movzbq zero-extension. Result is a 0 or 1 on the rt
     // stack, suitable as an i32 exit code.
     var a9: string = emit_source("return 5 < 10;");
-    if (!asmcore.contains(a9, "cmpq")) { return 90; }
-    if (!asmcore.contains(a9, "setl")) { return 91; }
-    if (!asmcore.contains(a9, "movzbq")) { return 92; }
+    if (!util.contains(a9, "cmpq")) { return 90; }
+    if (!util.contains(a9, "setl")) { return 91; }
+    if (!util.contains(a9, "movzbq")) { return 92; }
 
     var a10: string = emit_source("return 5 <= 5;");
-    if (!asmcore.contains(a10, "setle")) { return 100; }
+    if (!util.contains(a10, "setle")) { return 100; }
 
     var a11: string = emit_source("return 7 > 3;");
-    if (!asmcore.contains(a11, "setg")) { return 110; }
+    if (!util.contains(a11, "setg")) { return 110; }
 
     var a12: string = emit_source("return 7 >= 7;");
-    if (!asmcore.contains(a12, "setge")) { return 120; }
+    if (!util.contains(a12, "setge")) { return 120; }
 
     var a13: string = emit_source("return 4 == 4;");
-    if (!asmcore.contains(a13, "sete")) { return 130; }
+    if (!util.contains(a13, "sete")) { return 130; }
 
     var a14: string = emit_source("return 4 != 5;");
-    if (!asmcore.contains(a14, "setne")) { return 140; }
+    if (!util.contains(a14, "setne")) { return 140; }
 
     // If/else: emits `cmpq $0`, `je .L0`, the then-block, `jmp
     // .L1`, `.L0:`, the else-block, `.L1:`.
     var a15: string = emit_source("if (true) { return 1; } else { return 2; }");
-    if (!asmcore.contains(a15, "cmpq $0")) { return 150; }
-    if (!asmcore.contains(a15, "je .L")) { return 151; }
-    if (!asmcore.contains(a15, "jmp .L")) { return 152; }
-    if (!asmcore.contains(a15, ".L0:")) { return 153; }
-    if (!asmcore.contains(a15, ".L1:")) { return 154; }
+    if (!util.contains(a15, "cmpq $0")) { return 150; }
+    if (!util.contains(a15, "je .L")) { return 151; }
+    if (!util.contains(a15, "jmp .L")) { return 152; }
+    if (!util.contains(a15, ".L0:")) { return 153; }
+    if (!util.contains(a15, ".L1:")) { return 154; }
 
     // No-else if: only the cond-fail jump label, no second jmp.
     var a16: string = emit_source("if (true) { return 1; } return 0;");
-    if (!asmcore.contains(a16, "cmpq $0")) { return 160; }
-    if (!asmcore.contains(a16, "je .L")) { return 161; }
+    if (!util.contains(a16, "cmpq $0")) { return 160; }
+    if (!util.contains(a16, "je .L")) { return 161; }
 
     // While: emits top label, cond, je exit, body, jmp top,
     // exit label.
     var a17: string = emit_source("while (1 < 2) { return 0; }");
-    if (!asmcore.contains(a17, "cmpq $0")) { return 170; }
-    if (!asmcore.contains(a17, "je .L")) { return 171; }
-    if (!asmcore.contains(a17, "jmp .L")) { return 172; }
+    if (!util.contains(a17, "cmpq $0")) { return 170; }
+    if (!util.contains(a17, "je .L")) { return 171; }
+    if (!util.contains(a17, "jmp .L")) { return 172; }
 
     // Locals: frame prologue + slot store + slot load. `var x =
     // 5; return x;` should pushq %rbp, subq the frame, then
     // movq the literal into -8(%rbp), then pushq from -8(%rbp).
     var a18: string = emit_source("var x = 5; return x;");
-    if (!asmcore.contains(a18, "pushq %rbp")) { return 180; }
-    if (!asmcore.contains(a18, "movq %rsp, %rbp")) { return 181; }
-    if (!asmcore.contains(a18, "subq $")) { return 182; }
-    if (!asmcore.contains(a18, "movq %rax, -8(%rbp)")) { return 183; }
-    if (!asmcore.contains(a18, "pushq -8(%rbp)")) { return 184; }
+    if (!util.contains(a18, "pushq %rbp")) { return 180; }
+    if (!util.contains(a18, "movq %rsp, %rbp")) { return 181; }
+    if (!util.contains(a18, "subq $")) { return 182; }
+    if (!util.contains(a18, "movq %rax, -8(%rbp)")) { return 183; }
+    if (!util.contains(a18, "pushq -8(%rbp)")) { return 184; }
 
     // Multiple locals get distinct slots: -8, -16, -24, ...
     var a19: string = emit_source("var a = 1; var b = 2; var c = 3; return c;");
-    if (!asmcore.contains(a19, "movq %rax, -8(%rbp)")) { return 190; }
-    if (!asmcore.contains(a19, "movq %rax, -16(%rbp)")) { return 191; }
-    if (!asmcore.contains(a19, "movq %rax, -24(%rbp)")) { return 192; }
-    if (!asmcore.contains(a19, "pushq -24(%rbp)")) { return 193; }
+    if (!util.contains(a19, "movq %rax, -8(%rbp)")) { return 190; }
+    if (!util.contains(a19, "movq %rax, -16(%rbp)")) { return 191; }
+    if (!util.contains(a19, "movq %rax, -24(%rbp)")) { return 192; }
+    if (!util.contains(a19, "pushq -24(%rbp)")) { return 193; }
 
     // Re-assignment: `x = x + 1;` reads + writes the same slot.
     var a20: string = emit_source("var x = 5; x = x + 1; return x;");
-    if (!asmcore.contains(a20, "pushq -8(%rbp)")) { return 200; }
-    if (!asmcore.contains(a20, "movq %rax, -8(%rbp)")) { return 201; }
-    if (!asmcore.contains(a20, "addq")) { return 202; }
+    if (!util.contains(a20, "pushq -8(%rbp)")) { return 200; }
+    if (!util.contains(a20, "movq %rax, -8(%rbp)")) { return 201; }
+    if (!util.contains(a20, "addq")) { return 202; }
 
     // Compound assign desugars: `x += 1` → `x = x + 1` so the
     // asm shape is identical.
     var a21: string = emit_source("var x = 0; x += 7; return x;");
-    if (!asmcore.contains(a21, "addq")) { return 210; }
-    if (!asmcore.contains(a21, "movq %rax, -8(%rbp)")) { return 211; }
+    if (!util.contains(a21, "addq")) { return 210; }
+    if (!util.contains(a21, "movq %rax, -8(%rbp)")) { return 211; }
 
     // Counter loop: `var i = 0; while (i < 3) { i = i + 1; }
     // return i;` exercises locals + branches together.
     var a22: string = emit_source(
         "var i = 0; while (i < 3) { i = i + 1; } return i;"
     );
-    if (!asmcore.contains(a22, "pushq -8(%rbp)")) { return 220; }
-    if (!asmcore.contains(a22, "je .L")) { return 221; }
-    if (!asmcore.contains(a22, "jmp .L")) { return 222; }
+    if (!util.contains(a22, "pushq -8(%rbp)")) { return 220; }
+    if (!util.contains(a22, "je .L")) { return 221; }
+    if (!util.contains(a22, "jmp .L")) { return 222; }
 
     // Function decl + call: emits __fn_add label, calls from
     // main, has leave + ret in the body, and _start calls
@@ -8165,36 +8165,36 @@ function main(): i32 {
         "function add(x: i32, y: i32): i32 { return x + y; }"
         + " function main(): i32 { return add(2, 3); }"
     );
-    if (!asmcore.contains(a23, "__fn_add:")) { return 230; }
-    if (!asmcore.contains(a23, "__fn_main:")) { return 231; }
-    if (!asmcore.contains(a23, "call __fn_add")) { return 232; }
-    if (!asmcore.contains(a23, "call __fn_main")) { return 233; }
-    if (!asmcore.contains(a23, "leave")) { return 234; }
-    if (!asmcore.contains(a23, "ret\n")) { return 235; }
+    if (!util.contains(a23, "__fn_add:")) { return 230; }
+    if (!util.contains(a23, "__fn_main:")) { return 231; }
+    if (!util.contains(a23, "call __fn_add")) { return 232; }
+    if (!util.contains(a23, "call __fn_main")) { return 233; }
+    if (!util.contains(a23, "leave")) { return 234; }
+    if (!util.contains(a23, "ret\n")) { return 235; }
 
     // print("...") lowers to a write syscall + emits the
     // literal in .rodata at label .S0.
     var a24: string = emit_source("print(\"hi\\n\"); return 0;");
-    if (!asmcore.contains(a24, "leaq .S0(%rip)")) { return 240; }
-    if (!asmcore.contains(a24, "movq $1, %rdi")) { return 241; }
-    if (!asmcore.contains(a24, "movq $1, %rax")) { return 242; }  // sys_write
-    if (!asmcore.contains(a24, ".section .rodata")) { return 243; }
-    if (!asmcore.contains(a24, ".S0: .ascii")) { return 244; }
-    if (!asmcore.contains(a24, "hi")) { return 245; }
+    if (!util.contains(a24, "leaq .S0(%rip)")) { return 240; }
+    if (!util.contains(a24, "movq $1, %rdi")) { return 241; }
+    if (!util.contains(a24, "movq $1, %rax")) { return 242; }  // sys_write
+    if (!util.contains(a24, ".section .rodata")) { return 243; }
+    if (!util.contains(a24, ".S0: .ascii")) { return 244; }
+    if (!util.contains(a24, "hi")) { return 245; }
 
     // print_int(N) emits a call to the __fern_print_int helper,
     // which the module appends once at the end of .text.
     var a25: string = emit_source("print_int(42); return 0;");
-    if (!asmcore.contains(a25, "call __fern_print_int")) { return 250; }
-    if (!asmcore.contains(a25, "__fern_print_int:")) { return 251; }
-    if (!asmcore.contains(a25, ".Lpi_div:")) { return 252; }
+    if (!util.contains(a25, "call __fern_print_int")) { return 250; }
+    if (!util.contains(a25, "__fern_print_int:")) { return 251; }
+    if (!util.contains(a25, ".Lpi_div:")) { return 252; }
 
     // read_int() emits a call to the __fern_read_int helper,
     // which the module appends once at the end of .text.
     var a26: string = emit_source("return read_int();");
-    if (!asmcore.contains(a26, "call __fern_read_int")) { return 260; }
-    if (!asmcore.contains(a26, "__fern_read_int:")) { return 261; }
-    if (!asmcore.contains(a26, ".Lri_loop:")) { return 262; }
+    if (!util.contains(a26, "call __fern_read_int")) { return 260; }
+    if (!util.contains(a26, "__fern_read_int:")) { return 261; }
+    if (!util.contains(a26, ".Lri_loop:")) { return 262; }
 
     return 0;
 }
