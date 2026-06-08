@@ -264,9 +264,12 @@ appendix §6.)
 - [ ] **SH-045 — `checker.fern:4527-4660`** `check_module` rebuilds `build_func_scope`
   8× per function and runs the whole pass list twice (funcs + top_stmts) — build
   the scope once; extract `run_body_passes(stmts, scope)`.
-- [ ] **SH-046 — `checker.fern:454-486` + `:400-413`** builtin function/enum-variant
+- [~] **SH-046 — `checker.fern:454-486` + `:400-413`** builtin function/enum-variant
   membership as giant hand-kept `||` chains in 3 places — single source-of-truth
-  table.
+  table. _Partial:_ `is_builtin_variant` (`:400`) now derives from the single
+  variant→enum table in `mx_builtin_enum_of`, collapsing the duplicated 17-name
+  variant list. Still open: `is_builtin_function` (`:454`, the ~30-name builtin
+  list) and folding `is_reserved_enum_name`'s 4 enum names into the same table.
 
 ### Interp / VM / SSA
 - [ ] **SH-047 — `interp.fern:125-176` & `vm.fern:1681-1990`** environment/stack are

@@ -397,12 +397,10 @@ function bind_names(s: Scope, name: string): Scope {
 // front-end auto-injects (Option / Result, plus JsonValue / IoError via
 // parser.inject_builtin_enums) — these can be referenced bare (e.g.
 // `return None;`) without a local declaration, so E001 must not flag them.
+// Derived from the single variant→enum table in mx_builtin_enum_of so the
+// builtin-variant list lives in exactly one place (SH-046).
 function is_builtin_variant(name: string): boolean {
-    return name == "Some" || name == "None" || name == "Ok" || name == "Err"
-        || name == "JNull" || name == "JBool" || name == "JNumber" || name == "JString"
-        || name == "JArray" || name == "JObject"
-        || name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists"
-        || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other";
+    return mx_builtin_enum_of(name).len() > 0;
 }
 
 // is_reserved_enum_name reports whether `name` is one of the enums the
