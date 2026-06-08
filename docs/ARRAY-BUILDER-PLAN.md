@@ -133,13 +133,17 @@ takes the pragmatic, low-risk path.
    on every backend. Verified: `array-build` in the self-host prog
    (x86/arm64) + wasm-run suites, and an `array_build` differential case
    (Go vs self-host, x86-64 / arm64 / wasm — identical output).
-3. **`Map.build` / `MapBuilder`** — ✅ **done (Go).** Same desugar
-   (`maybeDesugarMapBuild`): `b.insert(k, v);` → `b = b.insert(k, v)` on a
-   fresh `map_new(8)`-backed local. `insert` + `len` (the value-returning
-   `without` returns a tuple, so it's deferred). Parser test + e2e
+3. **`Map.build` / `MapBuilder`** — ✅ **done (Go + self-host).** Same
+   desugar (`maybeDesugarMapBuild`): `b.insert(k, v);` → `b = b.insert(k, v)`
+   on a fresh `map_new(8)`-backed local. `insert` + `len` (the value-
+   returning `without` returns a tuple, so it's deferred). Parser test + e2e
    (insert-while / insert-for-in / len-read / string-keys-overwrite /
-   churn on x86-64 / wasm / interp). *Self-host `parser.fern` parity:
-   follow-up* (mirrors the Array.build self-host port).
+   churn on x86-64 / wasm / interp). **Self-host `parser.fern` parity done:**
+   `maybe_desugar_map_build` + `map_builder_inner` mirror the Array.build
+   port, and `is_builder_mutation` now also rewrites `b.insert(...)`.
+   Verified by the `map_build` feature-differential case (Go vs self-host
+   identical output on x86-64 / arm64 / wasm), with the self-host
+   fixpoint/CLI confirming the compiler still bootstraps itself.
 4. **Migrate every `arr[i] = v` site + land E056** — ✅ **done.** All ~83
    indexed-assignment statements (stdlib base64 / hex / sort / string / i32
    / core/int / task / test; self-host asm encoders / ssa / interp / vm /
