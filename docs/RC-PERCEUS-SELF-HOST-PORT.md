@@ -611,3 +611,31 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   storing an array) — note `obj.f = …` struct-field assignment is
   rejected by the checker (E048-style), and array-of-arrays index-assign
   is rare; once confirmed/closed, Phase 3 can flip free.
+- 2026-06-08: **Phase 3 (free flip) — ATTEMPTED, NOT LANDED (gated on a
+  residual under-count).** Implemented the x86-64 size-class freelist
+  (`__fern_alloc` round-to-8 + freelist pop; `__fern_freelist` BSS, 1024
+  classes) and the real `__fern_arr_dec` (frees the buffer at rc==1:
+  base `data-16`, size `(cap+3)*8`, idx `cap+3`), and rerouted the
+  exit-sweep + dec-on-overwrite array releases through it. Bounded probes
+  all passed (churn-loop reclaim, alias, reassign, return-array,
+  index-assign, match-binding, for-over-arr-of-arr, nested-call-temp —
+  all value-correct, detector 0). **But the full self-host
+  (`TestSelfHostStage2FixedPoint`, mmc2 compiling itself) SEGFAULTED** —
+  a double-free: some array buffer in the self-host's own code has two
+  live references while its rc reflects one, so the second release
+  re-frees a recycled block. Zeroing the rc on free (so a stray second
+  release reads 0 → detector, not re-free) made the fixpoint pass, which
+  CONFIRMS the diagnosis (double-free, not a missing helper) but only
+  MASKS it — if the freed block is reused between the two releases, the
+  second release corrupts the live reuser, so it is not sound. The Phase-3
+  changes were reverted; the branch stays at the sound free-off state.
+  **Before free can flip:** find + fix the residual under-count. The
+  prime suspect is an uncounted alias from a CALL result that aliases an
+  argument (e.g. `var z = f(xs)` where `f` returns its param), which the
+  current `needs_rc_inc_on_alias` (ident/field/index only) does not
+  retain — this is exactly what the native compiler's
+  `inferParamEscapes` / `findReturnsNoParamEscape` analyses handle. The
+  port's next slice is that escape/alias analysis (or a precise audit of
+  the self-host's array-returning helpers), after which the freelist +
+  `__fern_arr_dec` flip above can be re-applied and validated against the
+  bootstrap/fixpoint + a corpus-wide-0 detector.
