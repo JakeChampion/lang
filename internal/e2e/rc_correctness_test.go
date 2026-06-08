@@ -3219,6 +3219,56 @@ function main(): i32 {
     return (got - 9) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Cell[i32] churn: a fresh cell per iteration, freed at loop-body
+		// scope exit so the next alloc reuses the block. A cell is a
+		// one-element ARRAY box (16-byte header), so its reclaim must go
+		// through __fern_arr_dec (base = data-16), NOT the struct box_free
+		// (base = data-8) — the latter mis-frees the header and corrupts the
+		// freelist over the churn, drifting `acc`. sum of (i+1), i in 0..199
+		// = sum 1..200 = 20100.
+		name: "cell_i32_churn",
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var c = cell_new(i);
+        c.set(c.get() + 1);
+        acc = acc + c.get();
+        i = i + 1;
+    }
+    return (acc - 20100) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Cell[string] full rc cycle with HEAP strings: cell_new moves a
+		// fresh concat in; set OVERWRITES (pre-drops the old heap buffer,
+		// moves the new one in); get RETAINS the returned string into a
+		// local that drops at scope exit; the cell's own drop reclaims its
+		// slot buffer + box via __fern_drop_arr_str (wasm/arm64) /
+		// __fern_drop_arr_ptr (x86_64). Churned 100x so any unbalanced
+		// retain/release drifts the underflow counter (over-release) — a
+		// leak would read 0 too, but the buffers here are all reclaimed.
+		// "y0".."y9" len 2 (10) + "y10".."y99" len 3 (90) = 20 + 270 = 290.
+		name: "cell_string_overwrite_churn",
+		src: `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
+    var n: i32 = 0;
+    var base: string = "hello";
+    var i: i32 = 0;
+    while (i < 100) {
+        var c = cell_new(base + "_a");
+        c.set(base + "_bb");
+        var s = c.get();
+        n = n + s.len();
+        i = i + 1;
+    }
+    return (n - 800) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

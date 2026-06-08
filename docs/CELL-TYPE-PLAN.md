@@ -1,7 +1,10 @@
 # Cell[T] — a sanctioned mutable cell for the immutable-data world
 
-Date: 2026-06-07.
-Status: design. No compiler or `.fern` code changed by this doc.
+Date: 2026-06-07 (updated 2026-06-08).
+Status: implemented on the Go reference compiler for scalar **and `string`**
+element types (`cell_new` / `get` / `set` + cycle-free E057 + full rc
+reclamation). Self-host backends are scalar-only (follow-up). §3a (`arr[i]
+= v` → E056) is the remaining downstream step.
 
 ## Purpose
 
@@ -62,30 +65,41 @@ single-pass IDs), bounded so it can never break the RC invariant.
 `Cell[T]` is well-typed only when `T` is **cycle-free**: a value of `T`
 transitively contains no heap reference that could point back at the cell.
 
-**v1 scope — scalars only (start narrow, mirrors how E048/E049/E055
-shipped):**
+**Scope — scalars + `string` (Go reference compiler):**
 
 | `T` | allowed | why |
 |---|---|---|
 | `i32`, `i64`, `f64`, `bool`, `usize`, … (scalars) | ✅ **shipped** | hold no pointer; the slot needs no RC |
-| `string` | ⏳ deferred | cycle-free, but the slot *owns* a reference — needs the owning-slot RC below before it's memory-safe |
+| `string` | ✅ **shipped (Go compiler)** | cycle-free (a buffer of bytes, references no other value); the owning slot now participates in the string rc arc (retain on new / get, release on overwrite / drop) |
 | everything else (`struct`, `enum`, `T[]`, tuple, `Cell`, fn) | ❌ | can transitively hold a reference → cycle-capable |
 
-The two idioms that block §3a are an `i32` counter (`lam_ctr`, covered
-now) and a `string` accumulator (`lamdefs`, waiting on `string` support).
-`string` is cycle-free in principle, but a `Cell[string]` slot *owns* a
-string reference: without the release-old/retain-new RC below, Perceus
-would free the string while the cell still points at it (use-after-free),
-so it is **gated on the owning-slot RC integration**, which is itself an
-in-progress area (the `__rc_inc`/`__rc_dec` helpers cover `u8[]` today,
-strings next). The predicate can widen further to "transitively
+The two idioms that block §3a are an `i32` counter (`lam_ctr`) and a
+`string` accumulator (`lamdefs`); both element types are now supported on
+the Go reference compiler. `string` is cycle-free (it references no other
+Fern value), and the `Cell[string]` slot now participates in the
+completed string rc arc (docs/RC-STRINGS-PLAN.md): `cell_new` retains an
+aliased element, `get` retains the returned buffer, `set` releases the old
+slot value and retains the new, and the cell's drop releases the slot
+before freeing the box. The predicate can widen further to "transitively
 cycle-free" (e.g. `i32[]`) once a use case needs it. A checker rule
 **E057** rejects `Cell[T]` for any not-yet-allowed `T`.
 
-The v1 implementation lowers `Cell` as a one-element heap box (same layout
-as a 1-element array literal), so Perceus RCs the **box** via the standard
-rc word at `data-8` with **no per-slot RC** — exactly why scalars are safe
-and references wait.
+`Cell` lowers as a one-element heap box (same layout as a 1-element array
+literal: `[cap|rc|len|slot]`, 16-byte header, data pointer at `base+16`),
+so Perceus RCs the **box** via the standard rc word at `data-8`. Because
+the box header is array-shaped, the cell's **drop must go through the
+array reclamation path** (`__fern_arr_dec` for scalars, `__fern_drop_arr_str`
+/ `__fern_drop_arr_ptr` for `string`, computing `base = data - 16`) — *not*
+the struct `__fern_box_free` path, whose `data - 8` base assumption
+mis-frees the cell's header (this was a latent over-/mis-free for
+`Cell[i32]`, fixed alongside the `string` work).
+
+**Self-host backends remain scalar-only.** The self-host emitters lower
+`Cell` as alloc + load/store with no slot RC (their heap is
+leak-everything), which is correct for scalars; `Cell[string]` there would
+miscompile, so the self-host `checker.fern` E057 parity (and self-host
+`Cell[string]` codegen) is a follow-up. The differential corpus uses only
+`Cell[i32]`, so the compilers don't diverge.
 
 ## 3. Surface
 
@@ -132,12 +146,16 @@ The cell box is a heap object, so it's retained/released like any other.
 The **slot's** RC depends on `T`:
 
 - **scalar `T`** — no RC on the slot; the box itself is RC'd. Trivial.
-- **`string` `T`** — the cell *owns* a reference to the string. `set`
-  must **release the old** slot value and **retain the new**; dropping
-  the cell releases the slot. This is the one new RC integration; it's
-  the same release-old/retain-new dance the CoW array element-store
-  already performs, scoped to a single slot. Because `string` is
-  cycle-free, this can't leak via cycles.
+- **`string` `T`** (shipped on the Go compiler) — the cell *owns* a
+  reference to the string. `cell_new` retains an alias-shaped element (a
+  fresh concat / literal is moved in); `get` retains the returned buffer
+  (the cell keeps its slot copy); `set` **releases the old** slot value
+  and **retains the new**; the cell's drop releases the slot before
+  freeing the box. This reuses the completed string rc helpers
+  (`__fern_str_inc` / `__fern_str_dec` on two-word ABIs, `__fern_rc_inc` /
+  `__fern_rc_dec` on native single-word) — the same retain/release dance
+  the array element-store already performs, scoped to one slot. Because
+  `string` is cycle-free, this can't leak via cycles.
 
 (The cycle-free restriction is what keeps this RC story sound: a
 reference-typed-but-cyclic `T` would need a cycle collector, which is
@@ -164,12 +182,19 @@ with `arr.with` / `Cell.set` as the two sanctioned writes.
 
 ## 6. Phasing
 
-1. **`Cell[T]` (this track):** type + `cell_new`/`get`/`set` on Go + all
-   self-host backends; E057 (cycle-free restriction) on both checkers;
-   tests (checker rule, e2e get/set on every backend, RC for `Cell[string]`).
-2. **Migrate the array-as-cell idioms** (`lam_ctr`, `lamdefs`, and the
+1. **`Cell[T]` scalars** — ✅ **done** on Go + all self-host backends;
+   E057 (cycle-free restriction); e2e get/set on every backend.
+2. **`Cell[string]` RC (Go reference compiler)** — ✅ **done**: E057
+   widened to allow `string`, retain/release wired through `cell_new` /
+   `get` / `set` / drop (reusing the completed string rc arc), and the
+   cell drop routed through the array reclamation path (also fixing the
+   latent `Cell[i32]` mis-free). Tests: `TestCellElemTypeE057` (checker)
+   + `cell_i32_churn` / `cell_string_overwrite_churn` rc-corpus entries
+   (x86_64 / arm64 / wasm, corpus + freelist-reuse). *Follow-up:*
+   self-host `Cell[string]` codegen + `checker.fern` E057 parity.
+3. **Migrate the array-as-cell idioms** (`lam_ctr`, `lamdefs`, and the
    handful of `obj.arr[i] = v` mutable-cell sites) to `Cell`.
-3. **Remove `arr[i] = v`** → E056, migrating the remaining *local* array
+4. **Remove `arr[i] = v`** → E056, migrating the remaining *local* array
    element writes to `arr = arr.with(i, v)`. Finishes
    `docs/PURE-COLLECTION-API-PLAN.md` §3a.
 

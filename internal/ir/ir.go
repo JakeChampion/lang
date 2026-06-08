@@ -3113,6 +3113,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			switch id.Name {
 			case "map_new":
 				return false // fresh owned handle
+			case "cell_new":
+				// A fresh rc=1 cell box (emitCellNew) that RETAINS its element
+				// (string args are inc'd on construction), like map_new /
+				// StructLit — reclaimable regardless of the arg's taint. The
+				// any-arg-tainted rule below would otherwise taint a
+				// Cell[string] built from a literal / borrowed string and leave
+				// it permanently ineligible (its slot buffer + box unreclaimed).
+				// An escaping cell is still caught by the escape / move analysis.
+				return false
 			case "__method_Map_set", "__method_Map_clear":
 				// Aliases the receiver (Args[0]) only.
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
@@ -4309,6 +4318,17 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emitMapSlotDrop(slot, st)
 			return
 		}
+		// Cell reclamation: a Cell is a one-element array box (emitCellNew),
+		// so reclaim it through the array machinery keyed on the
+		// instantiation's element type — never the generic struct/box_free
+		// branch below, whose data-8 base would mis-free the cell's 16-byte
+		// header. A Cell[string] dec's its slot buffer; a Cell[scalar] frees
+		// the box. Ineligible cells leak-safe via the plain dec.
+		if st, ok := t.(ast.StructType); ok && st.Name == "Cell" {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emitCellDropOnStack(cellElemOf(t), eligible)
+			return
+		}
 		// Phase 3 step 3: a user struct with pointer-shaped
 		// rc-tracked fields drops those fields on its LAST
 		// reference before dec'ing the box — balancing the
@@ -4790,6 +4810,15 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 	switch v := t.(type) {
 	case ast.StructType:
 		if v.Name == "Map" {
+			return "", false
+		}
+		// Cell is a one-element array box, not a record: a single
+		// __drop_struct_Cell can't see the per-instantiation element type
+		// (Cell[string] vs Cell[i32]) and box_free would mis-free its
+		// 16-byte array header. Drops are handled inline at the call sites
+		// (emitDec / decValueOnStack / emitStructEnumSlotDrop), which carry
+		// the instantiation type and route through the array machinery.
+		if v.Name == "Cell" {
 			return "", false
 		}
 		if _, ok := info.Structs[v.Name]; !ok {
@@ -13481,6 +13510,13 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
+	// Cell value (data ptr on the stack): reclaim through the array
+	// machinery keyed on the instantiation's element type — a cell is a
+	// one-element array box, not a record. mayFree gates the actual free.
+	if st, ok := t.(ast.StructType); ok && st.Name == "Cell" {
+		b.emitCellDropOnStack(cellElemOf(t), mayFree)
+		return
+	}
 	// `mayFree` is the borrow-aware permission to return this value's buffer to
 	// the freelist. It's true only for OWNED top-level array locals
 	// (computeFreeEligible); struct fields and enum payloads always pass false
@@ -13581,6 +13617,14 @@ func (b *builder) dropStructField(t ast.Type) {
 }
 
 func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
+	// A Cell slot reinit / reassign reclaims the old box through the array
+	// machinery (dropFnNameFor declines Cell). Owned here, so eligible=true;
+	// the helper's null / rc==1 guards are the safety net.
+	if st, ok := ty.(ast.StructType); ok && st.Name == "Cell" {
+		b.emit(Op{Kind: OpLoadLocal, I32: idx})
+		b.emitCellDropOnStack(cellElemOf(ty), true)
+		return
+	}
 	if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
@@ -15965,13 +16009,60 @@ func arraySetStoreOp(t ast.Type, ptrW int) (OpKind, int) {
 }
 
 // cellElemType returns the cell's element type from the stamped TypeArgs
-// (i32 fallback when absent). v1 cells hold scalars (E057), so a default
-// i32 width is safe.
+// (i32 fallback when absent). The element type drives stride / store-width
+// selection and — for a `string` element — the rc retain/release wiring.
 func (b *builder) cellElemType(n *ast.Call) ast.Type {
 	if len(n.TypeArgs) == 1 {
 		return n.TypeArgs[0]
 	}
 	return ast.NumberType{}
+}
+
+// cellElemOf returns the element type of a Cell-typed value (i32 fallback
+// when its TypeArgs are missing). Used by the drop paths, which see the
+// instantiation type (Cell[string] vs Cell[i32]) and route reclamation by
+// the element.
+func cellElemOf(t ast.Type) ast.Type {
+	if st, ok := t.(ast.StructType); ok && st.Name == "Cell" && len(st.Args) == 1 {
+		return st.Args[0]
+	}
+	return ast.NumberType{}
+}
+
+// emitCellDropOnStack reclaims a Cell value whose data pointer is already
+// on the operand stack. A cell IS a one-element array box (the same
+// [cap|rc|len|slot] layout emitCellNew writes), so it reclaims through the
+// ARRAY machinery — never the struct/box_free path, whose data-8 base
+// assumption mis-frees the cell's 16-byte (array-style) header. A `string`
+// element dec's through the string-aware per-element walk; a scalar element
+// just frees the box. A non-eligible (borrowed / escaped) cell leaks-safe
+// via a plain rc_dec on the box (its rc word lives at data-8, like an
+// array's). Net-zero on the operand stack.
+func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
+	if !ast.RcFreeEnabled || !eligible {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	stride := int32(ast.ElemSizeBytesFor(elem, b.ptrW))
+	if stride == 0 {
+		stride = 4
+	}
+	helper := "__fern_arr_dec"
+	if _, isStr := elem.(ast.StringType); isStr {
+		if ast.UseTwoWordStrings(b.ptrW) {
+			// Two-word string element (wasm + arm64-TwoWordOverride): walk +
+			// __fern_str_dec each (data, len), then free the box.
+			helper = "__fern_drop_arr_str"
+		} else if b.ptrW == 8 {
+			// Native single-word string element (x86_64): each element is a
+			// single pointer; __fern_drop_arr_ptr walks + __fern_rc_dec's it.
+			helper = "__fern_drop_arr_ptr"
+		}
+	}
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+	b.emit(Op{Kind: OpDrop})
 }
 
 // emitCellNew lowers `cell_new(v)` to a one-element heap box (the same
@@ -16015,6 +16106,17 @@ func (b *builder) emitCellNew(n *ast.Call) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
+	// A `string` element makes the cell CO-OWN the buffer: retain an
+	// alias-shaped source (an Ident / field / index the caller still holds)
+	// so the cell's drop has a reference to release; a fresh value (concat /
+	// literal / call result) or a moved last-use local transfers its single
+	// reference and isn't inc'd. Mirrors array-literal / push element retain
+	// (needsRcIncOnAlias + emitAliasInc). Scalars hold no buffer — no inc.
+	if _, isStr := elemType.(ast.StringType); isStr {
+		if needsRcIncOnAlias(n.Args[0], b) && !b.moveSites[n.Args[0]] {
+			b.emitAliasInc(n.Args[0])
+		}
+	}
 	b.emit(storeOp)
 	// Result: the data pointer.
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
@@ -16024,26 +16126,71 @@ func (b *builder) emitCellNew(n *ast.Call) error {
 }
 
 // emitCellGet lowers `c.get()` to a load of slot 0 (the data pointer is
-// the slot address).
+// the slot address). A `string` element is returned BORROWED — the cell
+// still owns its slot copy — so retain the returned buffer (the caller's
+// binding / drop balances it), exactly as `m.get` / `arr[i]` reads do.
 func (b *builder) emitCellGet(n *ast.Call) error {
 	elemType := b.cellElemType(n)
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
 	b.emit(payloadLoadOpFor(elemType, b.ptrW))
+	if _, isStr := elemType.(ast.StringType); isStr {
+		if ast.UseTwoWordStrings(b.ptrW) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+		} else if b.ptrW == 8 {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		}
+	}
 	return nil
 }
 
 // emitCellSet lowers `c.set(v)` to an in-place store of slot 0 — no CoW
 // (a cell mutates in place by design) — and leaves nothing on the stack
-// (the method returns void).
+// (the method returns void). For a `string` element this is an OVERWRITE:
+// the slot already holds a co-owned buffer, so pre-drop it (balancing the
+// retain at its set/construction) before storing the new value, and retain
+// an alias-shaped new value. Mirrors the Map[K,string] overwrite pre-drop
+// + set retain.
 func (b *builder) emitCellSet(n *ast.Call) error {
 	elemType := b.cellElemType(n)
+	if _, isStr := elemType.(ast.StringType); !isStr {
+		// Scalar: plain in-place store, no rc traffic.
+		if err := b.expr(n.Args[0]); err != nil { // cell data ptr = slot address
+			return err
+		}
+		if err := b.expr(n.Args[1]); err != nil { // value
+			return err
+		}
+		b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
+		return nil
+	}
+	// String element. Stash the cell pointer so args[0] is evaluated once,
+	// then pre-drop the old slot string before storing the new one.
+	ptrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__cell_set_%d", ptrSlot)] = ptrSlot
 	if err := b.expr(n.Args[0]); err != nil { // cell data ptr = slot address
 		return err
 	}
+	b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+	// Pre-drop the existing slot string (gated like every other dec).
+	if ast.RcFreeEnabled {
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(payloadLoadOpFor(elemType, b.ptrW))
+		if ast.UseTwoWordStrings(b.ptrW) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+		} else {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		}
+		b.emit(Op{Kind: OpDrop})
+	}
+	// Store the new value (addr, value), retaining an alias-shaped source.
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 	if err := b.expr(n.Args[1]); err != nil { // value
 		return err
+	}
+	if needsRcIncOnAlias(n.Args[1], b) && !b.moveSites[n.Args[1]] {
+		b.emitAliasInc(n.Args[1])
 	}
 	b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
 	return nil
