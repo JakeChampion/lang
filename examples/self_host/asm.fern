@@ -136,6 +136,24 @@ function emit_fn_value(name: string, s: asmcore.EmitState): asmcore.EmitState {
 
 
 
+// enum_payload_retain emits a Perceus construction retain for an
+// enum / Option / Result payload sitting in %rcx, when that payload
+// aliases an rc-tracked array (the box now owns the reference, so the
+// array must survive the source local's release). The box pointer in
+// %rax is preserved across the call (__fern_rc_inc returns the ptr).
+// A fresh literal / call payload is already owned and not re-retained.
+function enum_payload_retain(arg: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
+    if (!asmcore.needs_rc_inc_on_alias(arg, s)) { return s; }
+    s = s.mark_heap();
+    s = s.write("    pushq %rax\n");            // save box ptr
+    s = s.write("    pushq %rcx\n");            // retain arg = payload
+    s = s.write("    call __fn___fern_rc_inc\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    movq %rax, %rcx\n");       // payload (helper returns the ptr)
+    s = s.write("    popq %rax\n");             // restore box ptr
+    return s;
+}
+
 // emit_call lowers a parser.ExprCall (the `c` payload). Split out
 // of emit_expr's match so the dispatch reads as a table and this
 // arm — the largest by far — is independently navigable.
@@ -782,6 +800,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    call __fern_alloc\n");
         s = s.mark_heap();
         s = s.write("    popq %rcx\n");          // payload
+        s = enum_payload_retain(c.args[0], s);   // Perceus: retain an rc-tracked array payload
         s = s.write("    movq $0, (%rax)\n");    // tag = Some
         s = s.write("    movq %rcx, 8(%rax)\n"); // payload
         s = s.write("    pushq %rax\n");
@@ -801,6 +820,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    call __fern_alloc\n");
         s = s.mark_heap();
         s = s.write("    popq %rcx\n");
+        s = enum_payload_retain(c.args[0], s);   // Perceus: retain an rc-tracked array payload
         if (name == "Ok") {
             s = s.write("    movq $0, (%rax)\n");
         } else {
@@ -822,6 +842,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    call __fern_alloc\n");
         s = s.mark_heap();
         s = s.write("    popq %rcx\n");          // payload
+        s = enum_payload_retain(c.args[0], s);   // Perceus: retain an rc-tracked array payload
         var evLit: asmcore.StringLitOut = asmcore.add_string_lit(s, name);
         s = evLit.state;
         s = s.write("    leaq .S" + asmcore.i32_to_string(evLit.idx) + "(%rip), %rdx\n");
@@ -3287,7 +3308,7 @@ function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
         if (asmcore.ty_is_array_like(s.local_types[i])) {
             var off: i32 = 0 - 8 * (i + 1);
             s = s.write("    pushq " + asmcore.i32_to_string(off) + "(%rbp)\n");  // slot value as dec arg
-            s = s.write("    call __fn___fern_rc_dec\n");
+            s = s.write("    call __fn___fern_arr_dec\n");
             s = s.write("    addq $8, %rsp\n");
             any = true;
         }
@@ -3457,6 +3478,9 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // Phase 3.
             var reassign_inc: boolean = asmcore.needs_rc_inc_on_alias(a.value, s);
             var target_is_arr: boolean = asmcore.ty_is_array_like(s.local_type_of(a.target));
+            // Borrow model: a reassigned array PARAMETER (idx < n_params)
+            // must NOT release its old value -- the caller owns it.
+            if ((0 - s.lookup_local(a.target)) / 8 - 1 < s.n_params) { target_is_arr = false; }
             s = emit_expr(a.value, s);
             var off: i32 = s.lookup_local(a.target);
             s = s.write("    popq %rax\n");                 // new value
@@ -3481,7 +3505,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    je " + skip_lbl.name + "\n");
                 s = s.write("    pushq %rax\n");            // save new value across the dec
                 s = s.write("    pushq %rcx\n");            // OLD value as dec arg
-                s = s.write("    call __fn___fern_rc_dec\n");
+                s = s.write("    call __fn___fern_arr_dec\n");
                 s = s.write("    addq $8, %rsp\n");         // pop dec arg
                 s = s.write("    popq %rax\n");             // restore new value
                 s = s.write(skip_lbl.name + ":\n");
@@ -5056,6 +5080,8 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // internal/codegen/x86_64/x86_64.go).
         s = s.write("__fern_rc_underflow: .quad 0\n");
         s = s.write("    .align 8\n");
+        s = s.write("__fern_freelist: .skip 8192\n");
+        s = s.write("    .align 8\n");
         s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost)
         s = s.write("    .section .text\n");
         s = s.write(".globl __fern_alloc\n");
@@ -5063,14 +5089,33 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("__fern_alloc:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
-        // Initialise __fern_heap_ptr on first call (lazy).
+        s = s.write("    addq $7, %rdi\n");
+        s = s.write("    andq $-8, %rdi\n");
+        s = s.write("    pushq %rcx\n");
+        s = s.write("    pushq %rdx\n");
+        s = s.write("    movq %rdi, %rcx\n");
+        s = s.write("    shrq $3, %rcx\n");
+        s = s.write("    cmpq $1024, %rcx\n");
+        s = s.write("    jae .Lalloc_nofl\n");
+        s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
+        s = s.write("    movq (%rdx,%rcx,8), %rax\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jz .Lalloc_nofl\n");
+        s = s.write("    movq (%rax), %rdi\n");
+        s = s.write("    movq %rdi, (%rdx,%rcx,8)\n");
+        s = s.write("    popq %rdx\n");
+        s = s.write("    popq %rcx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lalloc_nofl:\n");
+        s = s.write("    popq %rdx\n");
+        s = s.write("    popq %rcx\n");
         s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jne .Lalloc_inited\n");
         s = s.write("    leaq __fern_heap(%rip), %rax\n");
         s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
         s = s.write(".Lalloc_inited:\n");
-        // Result = current ptr; advance ptr by %rdi (the size).
         s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
         s = s.write("    addq %rax, %rdi\n");
         // Bounds check: a bump heap has no GC, so an overflow would
@@ -5281,6 +5326,35 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movl __fern_rc_underflow(%rip), %eax\n");
         s = s.write("    ret\n");
         s = s.write("__fn___fern_arr_dec:\n");
+        s = s.write("    movq 8(%rsp), %rax\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jz .Larrdec_ret\n");
+        s = s.write("    cmpq $0x10000, %rax\n");
+        s = s.write("    jb .Larrdec_ret\n");
+        s = s.write("    movl -8(%rax), %ecx\n");
+        s = s.write("    testl %ecx, %ecx\n");
+        s = s.write("    js .Larrdec_ret\n");
+        s = s.write("    cmpl $1, %ecx\n");
+        s = s.write("    je .Larrdec_free\n");
+        s = s.write("    jg .Larrdec_dec\n");
+        s = s.write("    incl __fern_rc_underflow(%rip)\n");
+        s = s.write("    jmp .Larrdec_ret\n");
+        s = s.write(".Larrdec_dec:\n");
+        s = s.write("    subl $1, %ecx\n");
+        s = s.write("    movl %ecx, -8(%rax)\n");
+        s = s.write("    jmp .Larrdec_ret\n");
+        s = s.write(".Larrdec_free:\n");
+        s = s.write("    movl $0, -8(%rax)\n");
+        s = s.write("    movl -16(%rax), %ecx\n");
+        s = s.write("    addq $3, %rcx\n");
+        s = s.write("    cmpq $1024, %rcx\n");
+        s = s.write("    jae .Larrdec_ret\n");
+        s = s.write("    leaq -16(%rax), %rdx\n");
+        s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+        s = s.write("    movq (%r8,%rcx,8), %rdi\n");
+        s = s.write("    movq %rdi, (%rdx)\n");
+        s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
+        s = s.write(".Larrdec_ret:\n");
         s = s.write("    ret\n");
         s = s.write("__fn___fern_drop_arr_ptr:\n");
         s = s.write("    ret\n");

@@ -664,3 +664,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   flip (which is correct and recorded above). Until then free stays off
   (safe-leak); every inc/dec/construction-inc slice already merged is
   sound and is the foundation that flip will switch on.
+- 2026-06-08: **Phase 3 (FREE ON), x86-64 — SHIPPED (attempt #3, the
+  reclamation win, now validated against the std-test suite).** The JSON
+  gap from attempt #2 was a missing **enum/Option/Result payload
+  construction inc**: `Arr(xs)` / `Some(xs)` / `Ok(xs)` / `Err(xs)` never
+  retained an rc-tracked array payload, so the array was freed while the
+  variant box still referenced it → nested-structure corruption. Added
+  `enum_payload_retain` (shared helper, x86) at all three constructor
+  sites (gated on `needs_rc_inc_on_alias`, box ptr preserved). With that
+  + the borrow fix (reassigned array param doesn't free the caller's
+  buffer) + the freelist + `__fern_arr_dec`, free is now SOUND: full
+  self-host bootstrap + `Stage2FixedPoint` byte-identical with free on,
+  AND `TestSelfHostStdTestE2E` (JSON nested structures — the test that
+  caught attempt #2) passes, plus all RC / array / map / enum / struct
+  suites + detector 0. RECLAIMING:
+  `TestSelfHostRcFreeReclaimX86_64` (reclaim-churn ≫ heap completes;
+  borrowed-param builder; enum-holds-array survives source scope-exit).
+  Scope unchanged: arrays ≤ 8 KiB recycle, larger bump-only; strings/
+  structs/enums not yet freed (Phase 1e) — their array payloads are
+  retained (so sound) but leak. Next: mirror the freelist +
+  `__fern_arr_dec` + borrow fix + enum_payload_retain to arm64.
