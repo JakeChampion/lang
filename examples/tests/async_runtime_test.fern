@@ -2,8 +2,8 @@ import "core/no_prelude";
 import "std/test";
 import "std/task";
 
-// examples/tests/async_runtime_test.fern — exercises the Phase-1
-// cooperative task runtime (std/task). This file is also the
+// examples/tests/async_runtime_test.fern — exercises the Phase-2
+// cooperative task runtime (std/task). This file doubles as the
 // EXECUTABLE SPECIFICATION of what the future `concurrent { … }`
 // desugar (docs/ASYNC-IMPLEMENTATION-PLAN.md, Phase 3) will emit:
 // each `spawn`ed task becomes a hand-rolled state machine here, so
@@ -36,16 +36,33 @@ function test_reactor_poll_drains(): Option[string] {
 
 // --- task state-machine helpers (the desugar's eventual output) ---
 
-// A "fetch then add" task: registers a wait whose completion will
-// deliver `simulated`, and resumes by adding `addend`. The nested
-// `resume` function is the continuation; it captures `addend` by
-// value — i.e. the task's live frame across the suspension point.
+// A single-await "fetch then add" task: registers a wait whose
+// completion delivers `simulated`, and resumes by adding `addend`.
+// The nested `resume` is the continuation; it captures `addend` by
+// value (the task's live frame across the suspension point) and
+// threads the reactor back out unchanged.
 function start_add_task(rx: task.Reactor, simulated: i32, addend: i32): (task.Step, task.Reactor) {
     var (tok, rx2) = rx.register(simulated);
-    function resume(woken: i32): task.Step {
-        return Done(woken + addend);
+    function resume(woken: i32, r: task.Reactor): (task.Step, task.Reactor) {
+        return (Done(woken + addend), r);
     }
     return (Wait(tok, resume), rx2);
+}
+
+// A MULTI-AWAIT task: await `a`, then await `b`, then finish with
+// their sum. resume1 registers the second wait (and captures `b`);
+// resume2 captures the first woken value `w1`. This is the case
+// Phase 1's single-await runtime could not express.
+function start_seq_task(rx: task.Reactor, a: i32, b: i32): (task.Step, task.Reactor) {
+    var (tok1, rx1) = rx.register(a);
+    function resume1(w1: i32, r: task.Reactor): (task.Step, task.Reactor) {
+        var (tok2, r2) = r.register(b);
+        function resume2(w2: i32, r3: task.Reactor): (task.Step, task.Reactor) {
+            return (Done(w1 + w2), r3);
+        }
+        return (Wait(tok2, resume2), r2);
+    }
+    return (Wait(tok1, resume1), rx1);
 }
 
 // --- runtime behaviour tests --------------------------------------
@@ -62,19 +79,40 @@ function test_single_task(): Option[string] {
 
 // Two tasks fan out: BOTH register their waits before either resumes,
 // so their I/O overlaps on one thread — the canonical edge-handler
-// "issue two fetches, await both" pattern. The scheduler resumes each
-// with its own completion value.
+// "issue two fetches, await both" pattern.
 function test_fanout_overlap(): Option[string] {
     var rx0: task.Reactor = task.reactor_new();
     var (s0, rx1) = start_add_task(rx0, 10, 1);   // -> 11
     var (s1, rx2) = start_add_task(rx1, 20, 2);   // -> 22
-    // At this point both waits are in flight simultaneously.
     if (rx2.pending() != 2) { return test.fail("both tasks should be suspended concurrently"); }
     var tasks: task.Step[] = [s0, s1];
     var results: i32[] = task.run(tasks, rx2);
     if (results.len() != 2) { return test.fail("expected 2 results"); }
     if (results[0] != 11) { return test.fail("task 0 wrong: " + results[0].to_string()); }
     return test.assert_eq(results[1], 22);
+}
+
+// A multi-await task completes across TWO rounds of the scheduler:
+// the second wait is registered while the run loop is already going,
+// and the re-poll picks it up.
+function test_multi_await(): Option[string] {
+    var rx0: task.Reactor = task.reactor_new();
+    var (s0, rx1) = start_seq_task(rx0, 10, 20);
+    var tasks: task.Step[] = [s0];
+    var results: i32[] = task.run(tasks, rx1);
+    return test.assert_eq(results[0], 30);   // 10 + 20
+}
+
+// A multi-await task interleaved with a single-await task: proves the
+// scheduler tracks several tasks at different await depths at once.
+function test_mixed_depths(): Option[string] {
+    var rx0: task.Reactor = task.reactor_new();
+    var (s0, rx1) = start_seq_task(rx0, 5, 6);    // multi-await -> 11
+    var (s1, rx2) = start_add_task(rx1, 100, 1);  // single-await -> 101
+    var tasks: task.Step[] = [s0, s1];
+    var results: i32[] = task.run(tasks, rx2);
+    if (results[0] != 11) { return test.fail("seq task wrong: " + results[0].to_string()); }
+    return test.assert_eq(results[1], 101);
 }
 
 // A task that completes immediately (no suspension) still works:
@@ -93,6 +131,8 @@ function main(): i32 {
     r = r.it("reactor poll drains", test_reactor_poll_drains());
     r = r.it("single task resumes", test_single_task());
     r = r.it("fanout tasks overlap", test_fanout_overlap());
+    r = r.it("multi-await task", test_multi_await());
+    r = r.it("mixed await depths", test_mixed_depths());
     r = r.it("immediate done", test_immediate_done());
     return r.finish();
 }

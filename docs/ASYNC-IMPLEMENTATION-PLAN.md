@@ -134,10 +134,35 @@ a PR").
 - Validated end-to-end on interp / x86-64 / arm64(qemu); compiles on
   wasm. **Zero codegen, IR, or backend changes.**
 
-Limitation deliberately accepted in Phase 0: a continuation
-`(i32) => Step` does not thread the `Reactor`, so a task may await at
-most **once** before completing (covers the canonical fan-out:
-issue N requests, await each). Lifted in Phase 2.
+Limitation accepted in Phase 0, **lifted in Phase 2**: a continuation
+`(i32) => Step` did not thread the `Reactor`, so a task could await at
+most once before completing.
+
+> **Sequencing note:** Phase 2 was implemented *before* Phase 1
+> (reversing the original order). Rationale: Phase 1 writes ~6 codegen
+> sites of `poll(2)`/`wasi:io/poll` assembly against the reactor
+> interface; doing that *before* the multi-await generalization
+> settled the interface would have risked reworking all that asm. So
+> the runtime semantics (multi-await, the scheduler, the reactor's
+> method shapes) were frozen in pure Fern first; Phase 1 now targets a
+> stable interface.
+
+### Phase 2 — generalize the runtime — **DONE**
+
+- Continuations thread the `Reactor`
+  (`(i32, Reactor) => (Step, Reactor)`), so a task can await any
+  number of times (sequential dependent I/Os), not just once.
+- A real multi-round scheduler: each `run` round polls the reactor,
+  resumes every task whose token completed (each may register a
+  further wait), and repeats until all tasks are `Done`. Waits
+  registered mid-run are picked up on a later round. The parked set
+  is the task-states array itself (`Step[]`), scanned by token — no
+  separate waiter map needed at this scale.
+- Verified end-to-end (multi-await + mixed-depth + fan-out): interp /
+  x86-64 / arm64(qemu) = correct; wasm compiles. Still **zero
+  codegen/IR/backend changes** — pure Fern.
+- Results stay i32/pointer-concrete; generic `Task[T]` remains gated
+  on self-host monomorphization (below).
 
 ### Phase 1 — the real reactor (the hard plumbing)
 
@@ -162,22 +187,18 @@ Risk: this is the most backend-heavy slice and the only one needing
 arm64/qemu + wasmtime in the loop. Gate locally on x86-64 + interp +
 wasm; let CI run arm64.
 
-### Phase 2 — generalize the runtime
+### Phase 2.5 — remaining runtime generalization (deferred)
 
-- Thread the `Reactor` through continuations
-  (`(i32, Reactor) => (Step, Reactor)`) so a task can await **more
-  than once** (a loop of awaits, sequential dependent fetches).
-- A proper scheduler over a ready-queue (FIFO) + a waiter map
-  (`token -> parked continuation`) — `core/map` + a small `Queue`
-  (a stdlib gap worth filling regardless). Re-poll until all tasks
-  finish, not just one round.
-- **Generic `Task[T]`** instead of the i32-concrete Phase-0 core.
+- **Generic `Task[T]`** instead of the i32/pointer-concrete core.
   *Gated on self-host generic monomorphization* — the self-hosted
   compiler currently does generic *erasure* with known field-dispatch
   gaps (see `SELF-HOST-AUDIT.md`), so until monomorphization lands
-  the runtime stays i32/pointer-concrete to keep it compiling on the
-  self-hosted path. (The Go compiler already monomorphizes; this is
-  purely a self-host-readiness gate.)
+  the runtime stays concrete to keep it compiling on the self-hosted
+  path. (The Go compiler already monomorphizes; this is purely a
+  self-host-readiness gate.) Pick up when monomorphization lands.
+- If the linear token scan ever shows up (many concurrent waits in
+  one handler — unlikely for edge fan-out), swap the `Step[]` scan
+  for a `core/map` waiter index. Not needed at current scale.
 
 ### Phase 3 — the surface syntax (`concurrent` / `spawn` / `await`)
 
