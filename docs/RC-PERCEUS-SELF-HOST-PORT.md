@@ -1128,3 +1128,27 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   safe. Construction sites now retain BOTH arrays and strings. Next:
   string reassign/rebind dec + return-retain, then flip the string sweep
   to `__fern_arr_dec` (string free).
+- 2026-06-08: **wasm string RC — FREE flipped ON. wasm now reclaims heap
+  strings.** The string sweep switched from `$__fern_rc_dec` to
+  `$__fern_arr_dec` — strings are FLAT (no rc-tracked children), so the
+  shared array dec frees them at rc 1 into the same size-class freelist, no
+  new runtime needed. `str_exit_sweep_excl(cx, excl)` adds a move-on-return
+  exclusion; `Ctx.ret_is_string` drives string return-retain. StmtReturn
+  now: (1) string move-on-return — a bare owned string local returned is
+  excluded from the string sweep (handed to the caller at its rc); (2)
+  string return-retain — any other string result is inc'd across the sweep
+  so a result aliasing a swept local isn't freed underfoot (the
+  borrow-return guard, mirroring arrays). This rides on the construction-
+  incs (#2493) so a string stored in a container survives its builder's
+  exit (sweep dec's it to rc 1, the container keeps it). Coverage:
+  `TestSelfHostRcStrBoxWasm` gains string-return-survives (move-on-return),
+  string-struct-survives-free (construction-inc + free), string-build-use-
+  churn (2000 build/use cycles, detector 0). Full wasm suite (~129 s) green
+  with string free ON — the real soundness proof since strings are
+  pervasive; bootstrap-safe. (Pointer-reuse isn't directly observable for
+  strings — `==` is content-equality — but reclamation is the identical
+  arr_dec/freelist path proven for arrays.) Heap strings built and
+  used/stored/returned within a function are now reclaimed. Remaining
+  string follow-ups: reassign/rebind dec (`s = s + x` loop intermediates
+  still leak) and the extern/canonical-ABI string builders (env / args /
+  read_file / @export, still unboxed). Then the container types.
