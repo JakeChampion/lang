@@ -884,3 +884,20 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   tuple elements, enum / Option / Result payloads, and reassign
   dec-on-overwrite; then `__fern_arr_dec` + freelist + return-retain /
   move-on-return (the `$__retv_*` temp shape is already in place).
+- 2026-06-08: **wasm backend RC — construction-store incs extended
+  (tuples + Option/Result payloads).** Continues the construction-inc
+  coverage toward free-on soundness: storing an existing array reference
+  into a tuple element (`(xs, 99)`) or an Option/Result payload
+  (`Some(xs)` / `Ok(xs)` / `Err(xs)`) now retains the buffer. New
+  `enum_box_retain` (enum_box delegates with retain=false) appends the
+  `$__fern_rc_inc` when the Some/Ok/Err payload is a bare-ident array;
+  the tuple emitter incs array elements the same way. Same soundness
+  property as before — an inc only ever fires on a genuine rc-boxed array
+  source. Coverage: `TestSelfHostRcConstructWasm` gains tuple-elem-
+  retained, option-payload-retained, result-payload-retained (each:
+  source array no longer unique, values intact, detector 0). Full wasm
+  suite (~89 s) green; free still OFF; bootstrap-safe. Construction sites
+  now covered: struct field, array-of-arrays, tuple, Option/Result
+  payload. Remaining before free flips on: struct-update base-copy and
+  general user-enum-variant payloads, plus reassign dec-on-overwrite;
+  then `__fern_arr_dec` + freelist + return-retain / move-on-return.
