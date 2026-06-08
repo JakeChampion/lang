@@ -119,6 +119,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Two SEPARATE lambdas in one module — exercises the shared lam_ctr /
 		// lamdefs Cells incrementing (0→1→2) and accumulating both bodies
 		// (the array-as-cell idiom migrated to Cell). 1 + 4 = 5.
+		// Array.build desugar through the self-host parser (parser.fern):
+		// b.append in a loop builds [1,2,3,4]; sum 10.
+		{"array-build", "function main(): i32 { var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void { var i = 0; while (i < 4) { b.append(i + 1); i = i + 1; } }); return out[0] + out[1] + out[2] + out[3]; }", 10, ""},
 		{"two-lambdas", "function main(): i32 { var a: i32 = if (true) { 1 } else { 2 }; var b: i32 = if (false) { 3 } else { 4 }; return a + b; }", 5, ""},
 		{"direct-iife", "function main(): i32 { return (function(): i32 { return 7; })(); }", 7, ""},
 		// Local (nested) functions — desugar to a closure-valued local.
