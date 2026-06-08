@@ -4597,10 +4597,10 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 		}
 	}
 	cases := map[string]*ir.Program{
-		// Numeric arrays of any width (u8[]…i64[]/f64[]) ARE accepted now (P4c).
-		// bool[] stays rejected: a Fern bool is 4 bytes but the canonical
-		// list<bool> element is 1 byte, so the stride differs.
-		"bool array param":          mk([]ast.Param{{Name: "a", Type: ast.ArrayType{Elem: ast.BoolType{}}}}, i32()),
+		// Numeric arrays of any width (u8[]…i64[]/f64[]) ARE accepted now (P4c),
+		// and so are bool[] *params* (byte-repacked). A bool[] *result* stays
+		// rejected: the canonical list<bool> lowers through the world composer in
+		// a way that isn't supported yet, so it's a follow-up.
 		"bool array result":         mk(nil, ast.ArrayType{Elem: ast.BoolType{}}),
 		"string param + str result": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, ast.StringType{}),
 	}

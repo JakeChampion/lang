@@ -980,7 +980,7 @@ func canonicalExternParamValtypes(ex *ir.ExternFunc) ([]byte, error) {
 	var out []byte
 	for i, p := range ex.Params {
 		switch {
-		case isStringType(p.Type) || isScalarArrayParamType(p.Type):
+		case isStringType(p.Type) || isScalarArrayParamType(p.Type) || isBoolArrayParamType(p.Type):
 			out = append(out, encode.ValtypeI32, encode.ValtypeI32)
 		case ex.ParamRecords[i] != nil:
 			for _, f := range ex.ParamRecords[i] {
@@ -1047,6 +1047,22 @@ func isScalarArrayParamType(t ast.Type) bool {
 		return true
 	}
 	return false
+}
+
+// isBoolArrayParamType reports whether t is a `bool[]`. A Fern bool is a 4-byte
+// i32 (0/1), but the canonical `list<bool>` element is a single byte, so —
+// unlike the numeric arrays, whose native stride already matches the canonical
+// element size — a bool array can't be passed/lifted zero-copy: it needs a
+// byte-repacking copy (params: contract each 4-byte bool to one byte; results:
+// expand each canonical byte back to a 4-byte slot). Handled by dedicated
+// wrappers rather than the zero-copy `isScalarArrayParamType` path.
+func isBoolArrayParamType(t ast.Type) bool {
+	at, ok := t.(ast.ArrayType)
+	if !ok {
+		return false
+	}
+	_, ok = at.Elem.(ast.BoolType)
+	return ok
 }
 
 // externRecordFieldValtype returns the flat core valtype a record field
