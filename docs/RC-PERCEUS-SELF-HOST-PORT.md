@@ -684,3 +684,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   structs/enums not yet freed (Phase 1e) — their array payloads are
   retained (so sound) but leak. Next: mirror the freelist +
   `__fern_arr_dec` + borrow fix + enum_payload_retain to arm64.
+- 2026-06-08: **Phase 3 (FREE ON), arm64 — SHIPPED. Both production
+  backends now reclaim array buffers.** Mirrored the x86-64 free flip to
+  `asm_arm64.fern`: `enum_payload_retain` (arm64) wired into Some / Ok /
+  Err / enum-variant constructors; the size-class freelist in
+  `__fern_alloc` (round-up-8 via `bic`, pop the class head, clobbers only
+  x0..x3 like the bump path); the real `__fern_arr_dec` (free at rc==1,
+  base `data-16`, idx `cap+3`, clears rc on free, guards null/low-addr/
+  sentinel); the two array releases (exit sweep + dec-on-overwrite)
+  rerouted to it; and the borrow fix (a reassigned array param doesn't
+  release the caller's buffer). Verified under qemu-aarch64:
+  `TestSelfHostStdTestE2EArm64` (JSON nested structures — the gap that
+  caught x86 attempt #2) passes; `TestSelfHostRcArm64` incl. the new
+  reclaim-churn (alloc >> heap completes) + enum-holds-array; the
+  byte-identical arm64 bootstrap (`FixpointArm64` / `Stage2FixedPointArm64`);
+  and the array / json / map / struct / enum / closure / tuple / generics
+  arm64 suites. detector 0. The array reclamation win is now on BOTH
+  x86-64 and arm64. Remaining for full parity with native: Phase 1e
+  (rc-track + free strings/structs/enums/maps), the wasm backend, and
+  the eventual Perceus optimisation passes (move/reuse/precise-drop)
+  which all ride on this counting foundation.
