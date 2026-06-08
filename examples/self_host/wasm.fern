@@ -196,6 +196,14 @@ struct Ctx {
     // True when the function returns a tuple (`(T, …)`) — a non-move tuple
     // result is retained across the exit sweep.
     ret_is_tuple: boolean,
+    // Perceus struct/enum reference-counting (counting milestone, free OFF).
+    // struct_swept: body struct/enum-value locals that are OWNED (a fresh
+    // struct literal, a variant / unit-variant / enum-constant box, a
+    // struct-returning call) or a bare-ident alias — released (rc dec, no
+    // free yet) at function exit. A struct is rc-boxed like a flat tuple;
+    // recursive field-release rides on this when free is flipped on. Borrowed
+    // sources (params, field / index reads) are conservatively NOT swept.
+    struct_swept: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -780,6 +788,114 @@ function tup_exit_sweep_excl(cx: Ctx, excl: string): string {
 
 function tup_exit_sweep(cx: Ctx): string {
     return tup_exit_sweep_excl(cx, "");
+}
+
+// init_is_owned_struct: the init produces a FRESH or MOVED struct/enum value
+// the local owns — a struct literal, a struct-returning call (incl. a
+// positional variant constructor and a struct-returning method/function), a
+// bare 0-field unit variant (`Nil`/`Empty`), or an enum constant
+// (`Color.Green`). A struct field / index read is BORROWED, not owned
+// (handled by the return-retain path, never swept). Alias detection is
+// separate (init_is_struct_alias).
+function init_is_owned_struct(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprStructLit(_) => { return true; },
+        parser.ExprCall(_) => { return struct_type_of(e, cx).len() > 0; },
+        parser.ExprIdent(id) => {
+            return is_struct_type(cx.structs, id.name) && struct_field_count(cx.structs, id.name) == 0;
+        },
+        parser.ExprFieldAccess(fa) => {
+            // An enum constant (`Color.Green`): obj isn't struct-typed but the
+            // field names a variant — a fresh box. A real field read
+            // (`s.field`, obj struct-typed) is borrowed, not owned.
+            return struct_type_of(fa.obj, cx).len() == 0 && is_struct_type(cx.structs, fa.field);
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// init_is_struct_alias: a bare-ident reference to a struct-valued local/param
+// (a co-owner to retain — the inc site), excluding unit variants (those are
+// fresh boxes handled as owned, not aliased).
+function init_is_struct_alias(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (is_struct_type(cx.structs, id.name)) { return false; }
+            return lookup_pair(cx.sv_names, cx.sv_types, id.name).len() > 0;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// collect_struct_swept gathers body struct/enum-value locals to release at
+// exit: an owned struct (init_is_owned_struct) or a bare-ident alias
+// (init_is_struct_alias). Comma destructures are skipped. Uses cx (struct
+// locals already known) so alias sources resolve.
+function collect_struct_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    if (init_is_owned_struct(v.init, cx) || init_is_struct_alias(v.init, cx)) {
+                        acc = acc.append(v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_struct_swept(f.then_body, cx, acc);
+                acc = collect_struct_swept(f.else_body, cx, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_struct_swept(w.body, cx, acc); },
+            parser.StmtFor(f) => { acc = collect_struct_swept(f.body, cx, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_struct_swept(m.arms[k].body, cx, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// struct_exit_sweep_excl emits the struct/enum release sweep (counting
+// milestone: rc DEC via $__fern_rc_dec — no free, no recursive field-release
+// yet) of every owned struct local, except `excl` (the move-on-return slot
+// handed to the caller at its rc). Recursive field-release + the $__fern_arr_dec
+// free ride on this when struct free is flipped on.
+function struct_exit_sweep_excl(cx: Ctx, excl: string): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < cx.struct_swept.len()) {
+        if (cx.struct_swept[i] != excl) {
+            o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.struct_swept[i] + ")))\n";
+        }
+        i = i + 1;
+    }
+    return o;
+}
+
+function struct_exit_sweep(cx: Ctx): string {
+    return struct_exit_sweep_excl(cx, "");
+}
+
+// ret_struct_is_borrowed: a returned struct/enum value that aliases/borrows
+// and so must be retained to hand the caller a counted reference — a real
+// field read (`s.field`), an index read, or a bare-ident (a borrowed param;
+// a returned swept local is a move, filtered out separately by struct_mov).
+// A fresh struct literal / variant-constructor call / unit-variant / enum
+// constant is owned-and-moved, never retained (would leak).
+function ret_struct_is_borrowed(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => { return struct_type_of(fa.obj, cx).len() > 0; },
+        parser.ExprIndex(_) => { return true; },
+        parser.ExprIdent(_) => { return true; },
+        _ => { return false; },
+    }
+    return false;
 }
 
 // arr_exit_sweep emits the Perceus function-exit release: a release
@@ -6304,6 +6420,16 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 }
                 return st;
             }
+            // Perceus struct inc-on-alias: `var u = s` retains the struct box
+            // so the exit sweep's dec balances. A fresh struct/variant is rc 1
+            // already (no inc — that would leak).
+            if (contains_str(st.cx.struct_swept, v.name)) {
+                st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+                if (init_is_struct_alias(v.init, st.cx)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+                }
+                return st;
+            }
             return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
         },
         parser.StmtAssign(a) => {
@@ -6389,7 +6515,14 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.tup_swept, id.name)) { tmov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov);
+            // Struct move-on-return: a bare owned struct/enum local returned is
+            // excluded from the struct sweep (handed over at its rc).
+            var struct_mov: string = "";
+            match (r.value) {
+                parser.ExprIdent(id) => { if (contains_str(st.cx.struct_swept, id.name)) { struct_mov = id.name; } },
+                _ => {},
+            }
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov);
             // Perceus return-retain: when an array/string-returning function
             // hands back a BORROWED reference (a field / index read, or a
             // borrowed param — anything not a fresh literal/concat/slice/call
@@ -6399,7 +6532,12 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             // and handed over as-is. This must apply even with NO swept locals
             // (a function that just `return obj.field` still owes the caller a
             // retain — else the caller's release of the result is a UAF).
-            var retain: boolean = (st.cx.ret_is_array || st.cx.ret_is_string || st.cx.ret_is_tuple) && mov.len() == 0 && smov.len() == 0 && tmov.len() == 0 && ret_value_is_borrowed(r.value);
+            // Struct/enum return-retain: a borrowed struct/enum return (a real
+            // field / index read, or a borrowed param) is retained so the
+            // caller owns a counted reference; a fresh literal / constructor
+            // call / move-on-return local is not (would leak / double-own).
+            var struct_borrowed: boolean = struct_type_of(r.value, st.cx).len() > 0 && ret_struct_is_borrowed(r.value, st.cx);
+            var retain: boolean = ((st.cx.ret_is_array || st.cx.ret_is_string || st.cx.ret_is_tuple) && ret_value_is_borrowed(r.value) || struct_borrowed) && mov.len() == 0 && smov.len() == 0 && tmov.len() == 0 && struct_mov.len() == 0;
             if (st.cx.ret_void) {
                 st = st.w(sweep);
                 return st.w("    (return " + valstr + ")\n");
@@ -7142,6 +7280,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_is_string: f.ret_type == "string",
         tup_swept: [],
         ret_is_tuple: f.ret_type.len() > 0 && f.ret_type[0] == 40,
+        struct_swept: [],
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -7196,7 +7335,10 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // computed last, once all string/tuple locals are known so alias
     // sources resolve.
     var cx5: Ctx = Ctx { ...cx4, str_swept: collect_str_swept(f.body, cx4, []) };
-    return Ctx { ...cx5, tup_swept: collect_tup_swept(f.body, cx5, []) };
+    var cx6: Ctx = Ctx { ...cx5, tup_swept: collect_tup_swept(f.body, cx5, []) };
+    // Perceus struct/enum RC set (counting milestone, free OFF) — computed
+    // last, once all struct-valued locals are known so alias sources resolve.
+    return Ctx { ...cx6, struct_swept: collect_struct_swept(f.body, cx6, []) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning
@@ -7422,7 +7564,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     // Perceus exit sweep on the fall-through path (functions that end
     // without an explicit `return`). After a final `return` it is
     // unreachable-but-valid wasm, like the trailing fallthrough const.
-    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + tail;
+    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + tail;
 }
 
 // module_uses_divrem is true when any free function body or the

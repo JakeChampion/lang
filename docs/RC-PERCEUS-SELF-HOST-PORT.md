@@ -1298,3 +1298,35 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   array/string/tuple sweep shape) then the FREE flip with recursive
   field-release driven by a per-field rc-kind map — at which point the
   extern result records must also be boxed (or excluded from the sweep).
+- 2026-06-08: **wasm struct/enum RC — COUNTING milestone (free OFF).** Owned
+  struct/enum-value locals are now reference-counted and released (rc DEC via
+  `$__fern_rc_dec` — no free, no recursive field-release yet) at function
+  exit, mirroring the array/string/tuple counting shape. New `Ctx.struct_swept`
+  is the swept set, built by `collect_struct_swept` (last in `build_ctx`, once
+  struct locals are known so aliases resolve) from `init_is_owned_struct` (a
+  struct literal, a struct-returning call incl. positional variant
+  constructors and struct methods, a bare 0-field unit variant, an enum
+  constant) OR `init_is_struct_alias` (a bare-ident co-owner). StmtVar emits
+  `$__fern_rc_inc` after a struct alias bind; `struct_exit_sweep_excl` runs at
+  StmtReturn (alongside the array/string/tuple sweeps) and the fall-through
+  epilogue. Struct move-on-return (`struct_mov`) excludes a returned bare
+  struct local from the sweep; a new struct-specific return-retain
+  (`ret_struct_is_borrowed` — a real field / index read or a borrowed-param
+  ident, but NOT a fresh literal / constructor call) retains a borrowed
+  struct return so the caller owns a counted reference (`ret_value_is_borrowed`
+  couldn't be reused — it treats a struct-builder call as borrowed, which
+  would over-retain; the struct predicate treats a call as a move). Sound but
+  leaky by design: structs stored INTO containers aren't construction-inc'd
+  yet (the struct-value construction-inc gap), and the sweep doesn't
+  recursively release fields — both mean over-counting (leak), never
+  over-release, so the detector stays clean. Coverage:
+  `TestSelfHostRcStructBoxWasm` gains struct-swept-clean, struct-alias-clean,
+  struct-move-return-clean, struct-borrowed-field-return (the watbin-style UAF
+  guard — the borrowed field's rc balances across both decs only because of
+  the return-retain) and struct-base-copy-churn-clean (1000 `a = step(a)`
+  base-copy cycles, detector 0). Full RC suite + component-adapter + watbin +
+  binary wasm tests green; bootstrap-safe. Next is the struct FREE flip:
+  per-field rc-kind map → recursive field-release (`if [s-8]==1` last-owner
+  guard dec'ing rc-tracked fields, then `$__fern_arr_dec`), struct-value
+  construction-incs (so a struct stored in a container survives), AND boxing
+  the extern result records (a swept extern struct must carry an rc header).
