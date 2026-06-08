@@ -184,6 +184,10 @@ struct Ctx {
     // concats balance their inc-on-alias. Borrowed sources (params, field /
     // index reads, get_or, method results) are conservatively NOT swept.
     str_swept: string[],
+    // True when the function's declared return type is `string` — a
+    // non-move string result is retained across the exit sweep (so a result
+    // aliasing a swept string local isn't freed under the caller).
+    ret_is_string: boolean,
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -629,18 +633,26 @@ function collect_str_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[
     return acc;
 }
 
-// str_exit_sweep emits the string release sweep: an rc DEC (free still OFF
-// — no reclamation yet, just balance validation) of every owned string
-// local. A literal slot is a guard no-op; a heap concat balances its
-// inc-on-alias so the over-release detector stays clean.
-function str_exit_sweep(cx: Ctx): string {
+// str_exit_sweep emits the string release sweep: a release ($__fern_arr_dec
+// — strings are flat, so the shared array dec frees them at rc 1 into the
+// size-class freelist) of every owned string local, EXCEPT `excl` (the
+// move-on-return slot, handed to the caller at its current rc). Pass "" to
+// sweep all. A literal slot is a guard no-op (data-section address); a heap
+// string at rc 1 is freed.
+function str_exit_sweep_excl(cx: Ctx, excl: string): string {
     var o: string = "";
     var i: i32 = 0;
     while (i < cx.str_swept.len()) {
-        o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.str_swept[i] + ")))\n";
+        if (cx.str_swept[i] != excl) {
+            o = o + "    (drop (call $__fern_arr_dec (local.get $" + cx.str_swept[i] + ")))\n";
+        }
         i = i + 1;
     }
     return o;
+}
+
+function str_exit_sweep(cx: Ctx): string {
+    return str_exit_sweep_excl(cx, "");
 }
 
 // arr_exit_sweep emits the Perceus function-exit release: a release
@@ -6143,19 +6155,29 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.arr_swept, id.name)) { mov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep(st.cx);
+            // String move-on-return: returning a bare owned string local
+            // hands it to the caller — exclude it from the string sweep.
+            var smov: string = "";
+            match (r.value) {
+                parser.ExprIdent(id) => { if (contains_str(st.cx.str_swept, id.name)) { smov = id.name; } },
+                _ => {},
+            }
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov);
             // No owned array/string locals (or a void return): emit directly.
             if (sweep.len() == 0 || st.cx.ret_void) {
                 st = st.w(sweep);
                 return st.w("    (return " + valstr + ")\n");
             }
             st = st.w("    (local.set " + tmp + " " + valstr + ")\n");
-            // Perceus return-retain: an array result that is NOT a plain
-            // move-on-return local may alias a swept local (a callee that
-            // returns its borrowed buffer in place), so retain it across
+            // Perceus return-retain: an array/string result that is NOT a
+            // plain move-on-return local may alias a swept local (a callee
+            // returning its borrowed buffer in place), so retain it across
             // the sweep — the sweep's dec of the aliasing slot then nets to
             // the caller's expected rc instead of freeing it underfoot.
             if (st.cx.ret_is_array && mov.len() == 0) {
+                st = st.w("    (drop (call $__fern_rc_inc (local.get " + tmp + ")))\n");
+            }
+            if (st.cx.ret_is_string && smov.len() == 0) {
                 st = st.w("    (drop (call $__fern_rc_inc (local.get " + tmp + ")))\n");
             }
             st = st.w(sweep);
@@ -6875,6 +6897,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_void: !returns_value(f.ret_type),
         ret_is_array: ty_spelling_is_array(f.ret_type),
         str_swept: [],
+        ret_is_string: f.ret_type == "string",
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass

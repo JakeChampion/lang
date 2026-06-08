@@ -66,6 +66,15 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		{"string-tuple-retained", "function main(): i32 { var s: string = \"x\" + \"yz\"; var t = (s, 99); var u = __fern_rc_is_unique(s); return u + t.0.len() + __fern_rc_underflow_count(); }", 3},
 		{"string-array-elem-retained", "function main(): i32 { var a: string = \"p\" + \"q\"; var b: string = \"r\" + \"s\"; var arr: string[] = [a, b]; var ua = __fern_rc_is_unique(a); return ua + arr[0].len() + __fern_rc_underflow_count(); }", 2},
 		{"string-option-retained", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var o = Some(s); var u = __fern_rc_is_unique(s); return u + s.len() + __fern_rc_underflow_count(); }", 4},
+		// String FREE on: a built string returned (move-on-return) survives
+		// in the caller — not freed under it. Detector clean.
+		{"string-return-survives", "function build(): string { var s: string = \"ab\" + \"cd\"; return s; } function main(): i32 { var x: string = build(); var y: string = build(); return x.len() + y.len() + __fern_rc_underflow_count(); }", 8},
+		// A built string stored in a struct survives the builder's exit sweep
+		// (construction-inc keeps it at rc 1 for the struct). Detector clean.
+		{"string-struct-survives-free", "struct H { name: string } function mk(): H { var s: string = \"xy\" + \"z\"; return H { name: s }; } function main(): i32 { var h = mk(); return h.name.len() + __fern_rc_underflow_count(); }", 3},
+		// A locally-built string used then dropped is freed at exit; a churn
+		// stays value-correct + detector clean (no over-release with free on).
+		{"string-build-use-churn", "function main(): i32 { var n = 0; var k = 0; while (k < 2000) { var s: string = \"ab\" + \"cd\"; n = n + s.len(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
