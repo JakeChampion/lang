@@ -3013,15 +3013,7 @@ function (s: WState) w(text: string): WState {
 
 // is_all_digits / digits_to_i32 recognise + parse a tuple-index field name
 // (`.0`, `.1`, …) — the parser stores it as a numeric string.
-function is_all_digits(s: string): boolean {
-    if (s.len() == 0) { return false; }
-    var i: i32 = 0;
-    while (i < s.len()) {
-        if (s[i] < 48 || s[i] > 57) { return false; }
-        i = i + 1;
-    }
-    return true;
-}
+// is_all_digits now lives in util.fern (imported as `util`). See SH-020.
 
 // digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 function hex_digit(d: i32): string {
@@ -3694,7 +3686,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
         },
         parser.ExprFieldAccess(fa) => {
             // Tuple index `t.N` (numeric field) → load at base + N*4.
-            if (is_all_digits(fa.field)) {
+            if (util.is_all_digits(fa.field)) {
                 return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + util.i32_to_string(util.digits_to_i32(fa.field) * 4) + ")))";
             }
             var ot: string = struct_type_of(fa.obj, cx);
@@ -6025,7 +6017,7 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
         },
         parser.ExprFieldAccess(fa) => {
             // Tuple index `t.N` is string when element N is a string.
-            if (is_all_digits(fa.field)) {
+            if (util.is_all_digits(fa.field)) {
                 return tuple_elem_is_string(fa.obj, util.digits_to_i32(fa.field), cx);
             }
             // s.f is string-typed when f is a `string` field.

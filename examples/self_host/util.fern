@@ -61,3 +61,16 @@ pub function digits_to_i32(s: string): i32 {
     if (neg) { return 0 - acc; }
     return acc;
 }
+
+// is_all_digits reports whether `s` is a non-empty run of ASCII
+// decimal digits (no sign, no separators).
+pub function is_all_digits(s: string): boolean {
+    if (s.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return false; }
+        i = i + 1;
+    }
+    return true;
+}

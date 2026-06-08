@@ -2819,7 +2819,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
         parser.ExprFieldAccess(fa) => {
             // Numeric field name → tuple access (offset idx*8,
             // no shape dispatch). See asm.fern for rationale.
-            if (asmcore.is_all_digits(fa.field)) {
+            if (util.is_all_digits(fa.field)) {
                 var tup_idx: i32 = util.digits_to_i32(fa.field);
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
