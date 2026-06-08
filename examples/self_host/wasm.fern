@@ -188,6 +188,11 @@ struct Ctx {
     // non-move string result is retained across the exit sweep (so a result
     // aliasing a swept string local isn't freed under the caller).
     ret_is_string: boolean,
+    // Perceus tuple reference-counting (counting milestone, free OFF).
+    // tup_swept: body tuple locals (a fresh tuple literal, or a bare-ident
+    // alias) released at function exit. Like strings, a tuple is a flat rc
+    // box; recursive element-release rides on this when free is flipped on.
+    tup_swept: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -683,6 +688,70 @@ function str_exit_sweep_excl(cx: Ctx, excl: string): string {
 
 function str_exit_sweep(cx: Ctx): string {
     return str_exit_sweep_excl(cx, "");
+}
+
+// init_is_owned_tuple / init_is_tuple_alias: a `var t = (…)` tuple literal
+// is a fresh owned rc box; a `var u = t` bare-ident alias of a tracked
+// tuple local retains it. (Borrowed sources — params, field/index reads —
+// are conservatively not swept.)
+function init_is_owned_tuple(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprTuple(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function init_is_tuple_alias(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return contains_str(cx.tup_names, id.name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_tup_swept gathers body tuple locals to release at exit (an owned
+// tuple literal or a bare-ident tuple alias). Uses cx (tuple locals known).
+function collect_tup_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    if (init_is_owned_tuple(v.init) || init_is_tuple_alias(v.init, cx)) {
+                        acc = acc.append(v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_tup_swept(f.then_body, cx, acc);
+                acc = collect_tup_swept(f.else_body, cx, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_tup_swept(w.body, cx, acc); },
+            parser.StmtFor(f) => { acc = collect_tup_swept(f.body, cx, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_tup_swept(m.arms[k].body, cx, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// tup_exit_sweep emits the tuple release sweep: an rc DEC (free still OFF —
+// no reclamation / recursive element-release yet) of every owned tuple
+// local, balancing the inc-on-alias so the over-release detector stays
+// clean.
+function tup_exit_sweep(cx: Ctx): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < cx.tup_swept.len()) {
+        o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.tup_swept[i] + ")))\n";
+        i = i + 1;
+    }
+    return o;
 }
 
 // arr_exit_sweep emits the Perceus function-exit release: a release
@@ -6139,6 +6208,15 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 }
                 return st;
             }
+            // Perceus tuple inc-on-alias: `var u = t` retains the tuple box
+            // so the exit sweep's dec of both slots balances.
+            if (contains_str(st.cx.tup_swept, v.name)) {
+                st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+                if (init_is_tuple_alias(v.init, st.cx)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+                }
+                return st;
+            }
             return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
         },
         parser.StmtAssign(a) => {
@@ -6217,7 +6295,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.str_swept, id.name)) { smov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov);
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep(st.cx);
             // Perceus return-retain: when an array/string-returning function
             // hands back a BORROWED reference (a field / index read, or a
             // borrowed param — anything not a fresh literal/concat/slice/call
@@ -6960,6 +7038,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_is_array: ty_spelling_is_array(f.ret_type),
         str_swept: [],
         ret_is_string: f.ret_type == "string",
+        tup_swept: [],
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -7010,9 +7089,11 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cx3: Ctx = Ctx { ...cx2, map_str_names: collect_str_val_map_names(f.body, cx2, map_names, []) };
     // Tuple-local element kinds (after string locals are known).
     var cx4: Ctx = collect_tuple_locals(f.body, cx3);
-    // Perceus string RC set (counting milestone, free OFF) — computed last,
-    // once all string locals are known so alias sources resolve.
-    return Ctx { ...cx4, str_swept: collect_str_swept(f.body, cx4, []) };
+    // Perceus string + tuple RC sets (counting milestone, free OFF) —
+    // computed last, once all string/tuple locals are known so alias
+    // sources resolve.
+    var cx5: Ctx = Ctx { ...cx4, str_swept: collect_str_swept(f.body, cx4, []) };
+    return Ctx { ...cx5, tup_swept: collect_tup_swept(f.body, cx5, []) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning
@@ -7235,7 +7316,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     // Perceus exit sweep on the fall-through path (functions that end
     // without an explicit `return`). After a final `return` it is
     // unreachable-but-valid wasm, like the trailing fallthrough const.
-    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tail;
+    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + tail;
 }
 
 // module_uses_divrem is true when any free function body or the

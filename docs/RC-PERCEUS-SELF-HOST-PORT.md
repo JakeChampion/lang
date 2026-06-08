@@ -1210,3 +1210,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   compile-time element kinds, before freeing the box). Structs and enums
   follow the same shape (structs add the extern/canonical-ABI care that
   bit the string method/call expansion).
+- 2026-06-08: **wasm tuple RC — counting milestone (free OFF).** Mirrors
+  the array/string counting for tuple boxes, validated detector-clean. New
+  `collect_tup_swept` (+ `init_is_owned_tuple` = a `(…)` literal,
+  `init_is_tuple_alias` = a bare-ident alias of a tracked tuple local)
+  builds the swept set; `Ctx.tup_swept` is populated last in `build_ctx`
+  (after `collect_tuple_locals`, so alias sources resolve). StmtVar emits
+  `$__fern_rc_inc` after a tuple alias bind; `tup_exit_sweep` (rc DEC via
+  `$__fern_rc_dec` — no free yet) runs at StmtReturn (alongside the
+  array/string sweeps) and the epilogue. Coverage:
+  `TestSelfHostRcTupleBoxWasm` gains tuple-swept-clean, tuple-alias-clean,
+  tuple-loop-clean (value-correct + detector 0). Full wasm suite (~114 s)
+  green; bootstrap-safe. Next for tuples is the FREE flip — where the
+  genuinely new Perceus mechanism lands: **recursive field-release**. A
+  tuple free can't go through the generic `__fern_arr_dec` (it doesn't know
+  the element layout); the plan is an inline `if [t-8]==1` (last owner →
+  about to free) guard that first dec's the rc-tracked elements, then frees
+  the box — driven by a tuple element-kind string extended from {string,
+  other} to also mark arrays (conservatively, only provably-array elements
+  get a recursive dec; a mis-mark would be a UAF, so it must be exact).

@@ -46,6 +46,13 @@ func TestSelfHostRcTupleBoxWasm(t *testing.T) {
 		{"tuple-holds-array", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var t = (xs, 9); return t.0[2] + t.1 + __fern_rc_underflow_count(); }", 12},
 		// Destructuring a tuple reads both elements correctly.
 		{"tuple-destructure", "function main(): i32 { var t = (8, 34); var (a, b) = t; return a + b; }", 42},
+		// Counting milestone (free off): an owned tuple local is released
+		// (rc dec) at exit, value-correct + detector clean.
+		{"tuple-swept-clean", "function main(): i32 { var t = (5, 7); return t.0 + t.1 + __fern_rc_underflow_count(); }", 12},
+		// Aliasing a tuple: the alias is inc'd, both swept, balanced.
+		{"tuple-alias-clean", "function main(): i32 { var t = (3, 4); var u = t; return u.0 + t.1 + __fern_rc_underflow_count(); }", 7},
+		// A tuple re-bound each loop iteration: detector stays clean.
+		{"tuple-loop-clean", "function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var t = (k, 2); s = s + t.1; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
