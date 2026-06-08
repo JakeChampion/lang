@@ -672,6 +672,23 @@ function arm64_mul(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
     return arm64_le32(buf, w);
 }
 
+// arm64_ldr_reg / arm64_str_reg encode the register-offset forms
+// `ldr/str Xt, [Xn, Xm{, lsl #3}]` — the array-indexing idiom (base + index
+// * 8). 64-bit: ldr base 0xf8600000, str base 0xf8200000; option=LSL/UXTX
+// (011), bits[11:10]=10. The scale bit S (bit 12) is set for `lsl #3` and
+// clear for the bare `[Xn, Xm]` form (0x7800 vs 0x6800). Verified vs llvm-mc:
+// ldr x0,[x0,x1,lsl #3] = 0xf8617800; ldr x0,[x1,x2] = 0xf8626820.
+function arm64_ldr_str_reg_word(is_load: boolean, rt: i32, rn: i32, rm: i32, shifted: boolean): i64 {
+    var base: i64 = 0xf8200000;
+    if (is_load) { base = 0xf8600000; }
+    var optbits: i64 = 0x6800;
+    if (shifted) { optbits = 0x7800; }
+    return base | (((rm & 31) as i64) << 16) | optbits | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_str_reg(buf: i32[], is_load: boolean, rt: i32, rn: i32, rm: i32, shifted: boolean): i32[] {
+    return arm64_le32(buf, arm64_ldr_str_reg_word(is_load, rt, rn, rm, shifted));
+}
+
 // arm64_ldur / arm64_stur encode `ldur/stur Xt, [Xn, #off]` — the unscaled
 // signed-imm9 load/store (no writeback, no scaling), the form the backend
 // uses for frame-slot access. 0xF8400000 / 0xF8000000 | imm9<<12 | Rn<<5 | Rt.
@@ -926,6 +943,16 @@ function arm64_ldrb(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 }
 function arm64_strb(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
     return arm64_le32(buf, 0x39000000 | (((off & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+// Post-index byte load/store `ldrb/strb Wt, [Xn], #imm9` — the byte-copy
+// loop idiom (__fern_str_concat). imm9 is a signed unscaled offset in
+// bits 20:12, index bits 11:10 = 01. ldrb base 0x38400000, strb 0x38000000.
+// Verified vs llvm-mc: ldrb w4,[x1],#1 = 0x38401424.
+function arm64_ldrb_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0x38400400 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+function arm64_strb_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0x38000400 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
 }
 function arm64_ldrh(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
     return arm64_le32(buf, 0x79400000 | ((((off / 2) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
@@ -1369,6 +1396,18 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
             if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_post(a.code, rt, pb, po) }; }
             return Arm64Asm { ...a, code: arm64_str_post(a.code, rt, pb, po) };
         }
+        // register-offset form `[Xn, Xm{, lsl #3}]` (array indexing): the
+        // bracket has a second *register* operand. Detect it before the
+        // scalar [Xn, #imm] path.
+        var lb0: i32 = arm64_str_indexof(ops[1], "[");
+        var rb0: i32 = arm64_str_indexof(ops[1], "]");
+        if (lb0 >= 0 && rb0 > lb0) {
+            var mparts: string[] = arm64_gas_operands(ops[1][lb0 + 1:rb0]);
+            if (mparts.len() >= 2 && mparts[1].len() > 0 && (mparts[1][0] == 120 || mparts[1][0] == 119)) { // 'x'/'w'
+                var shifted: boolean = (mparts.len() >= 3 && arm64_str_indexof(mparts[2], "lsl") >= 0);
+                return Arm64Asm { ...a, code: arm64_ldr_str_reg(a.code, mnem == "ldr", rt, arm64_gas_reg(mparts[0]), arm64_gas_reg(mparts[1]), shifted) };
+            }
+        }
         var m: Arm64Mem = arm64_gas_mem(ops[1]);
         if (arm64_gas_has_bang(ops[1])) {
             // pre-index writeback: `[Xn, #off]!`
@@ -1517,6 +1556,14 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") {
+        // post-index `ldrb/strb Wt, [Xn], #imm` (the byte-copy loop): 3
+        // operands, ops[1]="[Xn]", ops[2]="#imm".
+        if ((mnem == "ldrb" || mnem == "strb") && ops.len() >= 3) {
+            var pbb: i32 = arm64_gas_mem(ops[1]).base;
+            var poo: i32 = arm64_gas_imm(ops[2]);
+            if (mnem == "ldrb") { return Arm64Asm { ...a, code: arm64_ldrb_post(a.code, arm64_gas_reg(ops[0]), pbb, poo) }; }
+            return Arm64Asm { ...a, code: arm64_strb_post(a.code, arm64_gas_reg(ops[0]), pbb, poo) };
+        }
         var bm: Arm64Mem = arm64_gas_mem(ops[1]);
         if (mnem == "ldrb") { a = Arm64Asm { ...a, code: arm64_ldrb(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) }; }
         else if (mnem == "strb") { a = Arm64Asm { ...a, code: arm64_strb(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) }; }
@@ -1587,6 +1634,9 @@ pub struct Arm64GasProg {
     pf_kinds: i32[],    // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
     lit_sites: i32[],   // byte offset of a pending `ldr Xd, =N` (LDR-literal) to patch
     lit_vals: i32[],    // the value each pending literal loads (sign-extended to 64-bit at flush)
+    bss_size: i32,      // total zero-init .bss bytes (ELF memsz beyond filesz; e.g. the heap)
+    bss_names: string[],// .bss symbol names
+    bss_offs: i32[],    // each .bss symbol's offset within the bss region
     unknown: string[],  // mnemonics the assembler did not recognise
 }
 
@@ -1596,6 +1646,7 @@ function arm64_gas_prog_new(): Arm64GasProg {
         dlab_names: [], dlab_offs: [],
         pf_sites: [], pf_syms: [], pf_kinds: [],
         lit_sites: [], lit_vals: [],
+        bss_size: 0, bss_names: [], bss_offs: [],
         unknown: [],
     };
 }
@@ -1645,6 +1696,18 @@ function arm64_gas_strip_at(tok: string): string {
     return arm64_gas_trim(s);
 }
 
+// arm64_gas_strip_lo12 returns the symbol portion of a `:lo12:sym` operand
+// (the Linux/ELF low-12-bits relocation, the GAS spelling of darwin's
+// `sym@PAGEOFF`). Everything after `:lo12:`, trimmed.
+function arm64_gas_strip_lo12(tok: string): string {
+    var s: string = arm64_gas_trim(tok);
+    var at: i32 = arm64_str_indexof(s, ":lo12:");
+    if (at >= 0) {
+        s = s[at + 6 : s.len()];
+    }
+    return arm64_gas_trim(s);
+}
+
 // arm64_gas_data_le appends `n` little-endian bytes of `v` to the data blob.
 function arm64_gas_data_le(p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
     var i: i32 = 0;
@@ -1681,6 +1744,73 @@ function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
     return p;
 }
 
+// arm64_gas_data_ascii appends a `.ascii "…"` string (NO trailing NUL) to
+// the data blob, decoding the same escapes as .asciz. asm_arm64 emits string
+// literals as `.ascii` (the length is tracked separately, so no terminator).
+function arm64_gas_data_ascii(p: Arm64GasProg, line: string): Arm64GasProg {
+    var q1: i32 = arm64_str_indexof(line, "\"");
+    if (q1 < 0) { return p; }
+    var i: i32 = q1 + 1;
+    while (i < line.len() && line[i] != 34) {
+        var c: i32 = line[i];
+        if (c == 92 && i + 1 < line.len()) {
+            var e: i32 = line[i + 1];
+            if (e == 110) { c = 10; }
+            else if (e == 116) { c = 9; }
+            else if (e == 114) { c = 13; }
+            else if (e == 48) { c = 0; }
+            else { c = e; }
+            i = i + 1;
+        }
+        p = Arm64GasProg { ...p, data: p.data.append(c & 255) };
+        i = i + 1;
+    }
+    return p;
+}
+
+// arm64_parse_f64 parses a decimal float literal (optional sign, integer +
+// fractional digits, optional `e`/`E` exponent) — the `.double` operand
+// shape asm_arm64 emits. Mirrors x86_gas_parse_f64.
+function arm64_parse_f64(s: string): f64 {
+    var i: i32 = 0;
+    var neg: boolean = false;
+    if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
+    else if (s.len() > 0 && s[0] == 43) { i = 1; }
+    var val: f64 = 0.0;
+    while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        val = val * 10.0 + ((s[i] - 48) as f64);
+        i = i + 1;
+    }
+    if (i < s.len() && s[i] == 46) {
+        i = i + 1;
+        var scale: f64 = 1.0;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            val = val * 10.0 + ((s[i] - 48) as f64);
+            scale = scale * 10.0;
+            i = i + 1;
+        }
+        val = val / scale;
+    }
+    if (i < s.len() && (s[i] == 101 || s[i] == 69)) { // 'e' / 'E'
+        i = i + 1;
+        var eneg: boolean = false;
+        if (i < s.len() && s[i] == 45) { eneg = true; i = i + 1; }
+        else if (i < s.len() && s[i] == 43) { i = i + 1; }
+        var e: i32 = 0;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            e = e * 10 + (s[i] - 48);
+            i = i + 1;
+        }
+        var pe: i32 = 0;
+        while (pe < e) {
+            if (eneg) { val = val / 10.0; } else { val = val * 10.0; }
+            pe = pe + 1;
+        }
+    }
+    if (neg) { return 0.0 - val; }
+    return val;
+}
+
 // arm64_gas_data_align pads the data blob to a 2^n byte boundary.
 function arm64_gas_data_align(p: Arm64GasProg, n: i32): Arm64GasProg {
     var a: i32 = 1;
@@ -1690,6 +1820,49 @@ function arm64_gas_data_align(p: Arm64GasProg, n: i32): Arm64GasProg {
         p = Arm64GasProg { ...p, data: p.data.append(0) };
     }
     return p;
+}
+
+// arm64_gas_bss_directive reserves zero-init space in the .bss region for a
+// directive (no file bytes — it only grows bss_size, the ELF memsz tail).
+// `.skip`/`.zero`/`.space N`, `.quad`/`.word`/`.byte` (zero-init slots), and
+// `.align` are the forms asm_arm64 emits for the heap globals + the 1 GiB
+// `__fern_heap: .skip` reservation.
+function arm64_gas_bss_directive(p: Arm64GasProg, line: string): Arm64GasProg {
+    if (arm64_str_starts_with(line, ".skip") || arm64_str_starts_with(line, ".zero") || arm64_str_starts_with(line, ".space")) {
+        var sp: i32 = arm64_str_indexof(line, " ");
+        if (sp >= 0) {
+            return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_atoi(arm64_gas_trim(line[sp + 1:line.len()])) };
+        }
+        return p;
+    }
+    if (arm64_str_starts_with(line, ".quad")) { return Arm64GasProg { ...p, bss_size: p.bss_size + 8 }; }
+    if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) { return Arm64GasProg { ...p, bss_size: p.bss_size + 4 }; }
+    if (arm64_str_starts_with(line, ".byte")) { return Arm64GasProg { ...p, bss_size: p.bss_size + 1 }; }
+    if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
+        var sp2: i32 = arm64_str_indexof(line, " ");
+        if (sp2 >= 0) {
+            var n: i32 = arm64_gas_atoi(arm64_gas_trim(line[sp2 + 1:line.len()]));
+            var a: i32 = 1;
+            var k: i32 = 0;
+            while (k < n) { a = a * 2; k = k + 1; }
+            var bs: i32 = p.bss_size;
+            while ((bs % a) != 0) { bs = bs + 1; }
+            return Arm64GasProg { ...p, bss_size: bs };
+        }
+        return p;
+    }
+    return p;
+}
+
+// arm64_gas_bss_off returns a .bss symbol's offset within the bss region, or
+// -1 if it is not a bss symbol.
+function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
+    var i: i32 = 0;
+    while (i < p.bss_names.len()) {
+        if (p.bss_names[i] == name) { return p.bss_offs[i]; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 
 // arm64_gas_data_directive handles a `.`-directive inside a data section.
@@ -1707,6 +1880,12 @@ function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
     }
     if (arm64_str_starts_with(line, ".asciz") || arm64_str_starts_with(line, ".string")) {
         return arm64_gas_data_asciz(p, line);
+    }
+    if (arm64_str_starts_with(line, ".ascii")) {
+        return arm64_gas_data_ascii(p, line);
+    }
+    if (arm64_str_starts_with(line, ".double")) {
+        return arm64_gas_data_le(p, f64_bits(arm64_parse_f64(arm64_gas_trim(line[7:line.len()]))), 8);
     }
     if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
         var sp: i32 = arm64_str_indexof(line, " ");
@@ -1781,6 +1960,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 if (section == 1) {
                     p = Arm64GasProg { ...p, dlab_names: p.dlab_names.append(before) };
                     p = Arm64GasProg { ...p, dlab_offs: p.dlab_offs.append(p.data.len()) };
+                } else if (section == 2) {
+                    p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before) };
+                    p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
                 } else {
                     p = Arm64GasProg { ...p, asm: arm64_asm_label(p.asm, before) };
                 }
@@ -1796,14 +1978,20 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 p = arm64_gas_ltorg(p);
             } else if (line == ".text") {
                 section = 0;
+            } else if (line == ".bss") {
+                section = 2;
             } else if (arm64_str_starts_with(line, ".section")) {
-                if (arm64_str_contains(line, "__const") || arm64_str_contains(line, "__DATA") || arm64_str_contains(line, ".data") || arm64_str_contains(line, ".rodata")) {
+                if (arm64_str_contains(line, "__bss") || arm64_str_contains(line, ".bss")) {
+                    section = 2;
+                } else if (arm64_str_contains(line, "__const") || arm64_str_contains(line, "__DATA") || arm64_str_contains(line, ".data") || arm64_str_contains(line, ".rodata")) {
                     section = 1;
                 } else {
                     section = 0;
                 }
             } else if (arm64_str_starts_with(line, ".data")) {
                 section = 1;
+            } else if (section == 2) {
+                p = arm64_gas_bss_directive(p, line);
             } else if (section == 1) {
                 p = arm64_gas_data_directive(p, line);
             }
@@ -1869,6 +2057,20 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
             continue;
         }
+        // Linux/ELF low-12-bits add: `add Xd, Xn, :lo12:sym` — the GAS
+        // spelling of darwin's `add Xd, Xn, sym@PAGEOFF` (same kind-2 fixup;
+        // arm64_gas_link resolves both to target & 0xfff). The matching
+        // `adrp Xd, sym` is handled by the adrp branch above (bare symbol).
+        if (mnem == "add" && arm64_str_indexof(rest, ":lo12:") >= 0) {
+            var lops: string[] = arm64_gas_operands(rest);
+            var las: Arm64Asm = p.asm;
+            las = Arm64Asm { ...las, code: arm64_addimm(las.code, arm64_gas_reg(lops[0]), arm64_gas_reg(lops[1]), 0) };
+            p = Arm64GasProg { ...p, asm: las };
+            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(las.code.len() - 4) };
+            p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_lo12(lops[2])) };
+            p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
+            continue;
+        }
         // `and Xd, Xn, #imm` (logical immediate) needs a verified bitmask
         // encoding; an unsupported immediate is recorded (never silently
         // mis-encoded). Register-form `and` falls through to emit.
@@ -1918,6 +2120,11 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         p = Arm64GasProg { ...p, asm: arm64_gas_emit(p.asm, mnem, rest) };
     }
     p = arm64_gas_ltorg(p); // flush any literals after the final `.ltorg`
+    // 8-align the data blob so the .bss region that follows it in memory
+    // (data_vaddr + data.len()) starts 8-aligned for the heap globals.
+    while ((p.data.len() & 7) != 0) {
+        p = Arm64GasProg { ...p, data: p.data.append(0) };
+    }
     p = Arm64GasProg { ...p, asm: arm64_asm_resolve(p.asm) };
     return p;
 }
@@ -1931,7 +2138,16 @@ pub function arm64_gas_link(p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): 
     var i: i32 = 0;
     while (i < p.pf_sites.len()) {
         var site: i32 = p.pf_sites[i];
-        var target: i64 = data_vaddr + (arm64_gas_dlabel_off(p, p.pf_syms[i]) as i64);
+        // A symbol is either in the rodata/data blob (dlab) or the zero-init
+        // .bss region, which is laid out immediately after the data in memory
+        // (vaddr data_vaddr + data.len() + bss_off).
+        var doff: i32 = arm64_gas_dlabel_off(p, p.pf_syms[i]);
+        var target: i64 = 0;
+        if (doff >= 0) {
+            target = data_vaddr + (doff as i64);
+        } else {
+            target = data_vaddr + (p.data.len() as i64) + (arm64_gas_bss_off(p, p.pf_syms[i]) as i64);
+        }
         var kind: i32 = p.pf_kinds[i];
         if (kind == 0) {
             var adrp_addr: i64 = text_vaddr + (site as i64);

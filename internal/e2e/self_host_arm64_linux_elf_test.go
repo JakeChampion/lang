@@ -22,10 +22,11 @@ import (
 //
 // Both arm64_native and elf.fern are import-free, so the driver concatenates
 // them with a small main() (no `pub` needed) and is compiled by the Go x86
-// backend (the CLI's backend). Scoped to programs without rodata/heap for
-// now (string + .bss/.skip support is a later slice); exit42 / arith / fib
-// exercise the core: literal loads, frame stores at negative offsets,
-// branches, calls, and the ELF entry/_start wiring.
+// backend (the CLI's backend). Covers the common surface: literal loads,
+// negative-offset frame stores, branches/calls + ELF entry wiring (exit42 /
+// arith / fib); rodata strings + `:lo12:` addressing (print); the heap
+// (`.bss`/`.skip`, register-offset array indexing, post-index byte copy for
+// string concat) via array / concat / strout.
 func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 	if _, err := exec.LookPath("qemu-aarch64"); err != nil {
 		t.Skip("qemu-aarch64 not on PATH; skipping arm64-linux ELF run e2e")
@@ -75,7 +76,7 @@ function main(): i32 {
     if (entry_off < 0) { entry_off = 0; }
     var body: i32[] = elf_pad_to_8(pa2.code);
     body = elf_cat(body, p.data);
-    var bin: i32[] = elf_image_entry_bss(body, 7, elf_em_aarch64(), entry_off, 0);
+    var bin: i32[] = elf_image_entry_bss(body, 7, elf_em_aarch64(), entry_off, p.bss_size);
     write(string_from_bytes(to_u8(bin)));
     return 0;
 }
@@ -94,6 +95,10 @@ function main(): i32 {
 		{"exit42", `function main(): i32 { return 42; }`, 42},
 		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`, 42},
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n-1)+fib(n-2); } function main(): i32 { return fib(10); }`, 55},
+		{"print", `function main(): i32 { print("hi"); return 0; }`, 0},
+		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13},
+		{"array", `function main(): i32 { var a = [1,2,3,4,5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
+		{"strbuild", `function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + "ab"; i = i + 1; } return s.len(); }`, 6},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

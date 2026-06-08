@@ -19,6 +19,11 @@ import (
 //   - `str/ldr Xt, [Xn, #neg]`: a negative frame offset can't use the scaled
 //     unsigned form (it mis-encoded `[x29, #-8]` as `[x29, #0x7ff8]`); it
 //     must fall back to the unscaled signed-imm9 stur/ldur, as GAS does.
+//   - `ldr/str Xt, [Xn, Xm{, lsl #3}]`: the register-offset (array-indexing)
+//     form was parsed as a scalar `[Xn]` (the index register dropped), so
+//     `a[i]` read the wrong slot.
+//   - `ldrb/strb Wt, [Xn], #1`: the post-index byte-copy form (used by
+//     __fern_str_concat) ignored the writeback, so the copy never advanced.
 //
 // Expected bytes pinned against llvm-mc. Run through the self-host wasm
 // pipeline; exit 0 = all pass, else the 1-based failing check id.
@@ -84,6 +89,21 @@ function main(): i32 {
     // str x0, [x29, #8] -> 0xF90007A0 -> A0 07 00 F9
     var e: Arm64Asm = arm64_gas_assemble("str x0, [x29, #8]");
     if (e.code[0] != 160 || e.code[1] != 7 || e.code[2] != 0 || e.code[3] != 249) { return 11; }
+    // register-offset (array indexing) ldr x0, [x0, x1, lsl #3] -> 0xF8617800
+    var f: Arm64Asm = arm64_gas_assemble("ldr x0, [x0, x1, lsl #3]");
+    if (f.code[0] != 0 || f.code[1] != 120 || f.code[2] != 97 || f.code[3] != 248) { return 12; }
+    // register-offset str x0, [x2, x3, lsl #3] -> 0xF8237840
+    var g: Arm64Asm = arm64_gas_assemble("str x0, [x2, x3, lsl #3]");
+    if (g.code[0] != 64 || g.code[1] != 120 || g.code[2] != 35 || g.code[3] != 248) { return 13; }
+    // register-offset, no shift: ldr x0, [x1, x2] -> 0xF8626820
+    var h: Arm64Asm = arm64_gas_assemble("ldr x0, [x1, x2]");
+    if (h.code[0] != 32 || h.code[1] != 104 || h.code[2] != 98 || h.code[3] != 248) { return 14; }
+    // post-index byte copy: ldrb w4, [x1], #1 -> 0x38401424
+    var i: Arm64Asm = arm64_gas_assemble("ldrb w4, [x1], #1");
+    if (i.code[0] != 36 || i.code[1] != 20 || i.code[2] != 64 || i.code[3] != 56) { return 15; }
+    // strb w4, [x2], #1 -> 0x38001444
+    var j: Arm64Asm = arm64_gas_assemble("strb w4, [x2], #1");
+    if (j.code[0] != 68 || j.code[1] != 20 || j.code[2] != 0 || j.code[3] != 56) { return 16; }
     return 0;
 }
 `
