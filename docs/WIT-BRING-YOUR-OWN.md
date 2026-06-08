@@ -507,12 +507,21 @@ world-driven composer (P2) wires it.
      `[type-id@0][field@+4 in 4-byte slots]`, so the wrapper pushes one i32 per
      field — no canonical memory pointer, hence **no alignment wall** (unlike the
      arrays). `extern_record_param_supported` gates a known struct of 1..16
-     i32/u32 fields (the self-host struct slot is 4 bytes); `extern_imports`
-     emits one `(param i32)` per field; the wrapper forwards
-     `(i32.load (struct + struct_field_off(idx)))` per field. `mod` is threaded
-     into `has_extern_mem_param` / `extern_needs_wrapper` for the struct-decl
-     lookup. Gated by `TestSelfHostExternRecordParamCustomProvider` (a
-     `sum-point: func(p: record { x, y: s32 }) -> s32`, x+y).
+     8-/16-/32-bit integer fields; `extern_imports` emits one `(param i32)` per
+     field; the wrapper forwards one load per field. **Sub-word integer fields
+     (`s8`/`s16`/`u8`/`u16`) are supported** — they sit in the same 4-byte slots,
+     so the wrapper reads each with a width+sign-aware load
+     (`extern_field_load_op` → `i32.load8_s/u`, `i32.load16_s/u`) to get the
+     correctly extended canonical i32; word fields use plain `i32.load`. `mod` is
+     threaded into `has_extern_mem_param` / `extern_needs_wrapper` for the
+     struct-decl lookup. Sub-word *result* fields stay rejected
+     (`extern_record_result_supported`, the result-side gate, stays i32/u32-only)
+     — the canonical return-area packs them tightly, a dual-layout slice, same as
+     the Go side. Gated by `TestSelfHostExternRecordParamCustomProvider` (a
+     `sum-point: func(p: record { x, y: s32 }) -> s32`, x+y) and
+     `TestSelfHostExternRecordParamSubwordCustomProvider` (a `record { a: s8,
+     b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under the
+     wrong-width or wrong-sign load).
    - **Self-host port — record (struct) results — ✅ done.** The symmetric
      counterpart: an extern returning a record materializes a self-host struct.
      The host writes the record's fields inline into the return area (field i @
@@ -595,10 +604,9 @@ world-driven composer (P2) wires it.
    - Still rejected (next slices): general user `variant`s; sub-4-byte-element
      `list<T>` *results* (`u8[]`/`bool[]`) via a custom provider (the
      `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); sub-word record
-     *result* fields (the dual-layout slice — params are done) + the self-host
-     port of sub-word record params; bool / nested-composite fields. The
-     multi-component harness (`TestExternImportCustomProvider`) is the test
-     vehicle for these.
+     *result* fields (the dual-layout slice — params are done on both backends);
+     bool / nested-composite fields. The multi-component harness
+     (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
