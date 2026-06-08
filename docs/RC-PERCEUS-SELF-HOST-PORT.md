@@ -1193,3 +1193,20 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   regression guard). The component-adapter + binary (watbin assembler) +
   full wasm/RC suites are green. (The extern/canonical-ABI string builders
   — env / args / read_file / @export — remain unboxed/unswept.)
+- 2026-06-08: **Phase 1e container types begin — wasm tuple rc-box layout
+  foundation.** First container type. Tuples are the simplest (a single
+  alloc site, fixed layout, no extern/canonical-ABI involvement), so they
+  establish the container pattern. The tuple block is now allocated via the
+  generic `$__fern_str_box` (the flat 8-byte rc+bsz header box, returns
+  base+8) instead of bare `$__fern_alloc`, so a tuple carries an rc word at
+  [t-8] while every t-relative element access (`t.N`, destructure) is
+  unchanged. Coverage: `TestSelfHostRcTupleBoxWasm` — tuple-fresh-unique
+  (rc==1), tuple-values-intact, tuple-holds-array, tuple-destructure. Full
+  wasm suite (~119 s) green; bootstrap-safe. Inert/foundational for now
+  (free off). Next for tuples: counting (sweep tuple locals, inc-on-alias,
+  containers-in-containers construction-incs) then free — where the GENUINELY
+  NEW Perceus piece lands: **recursive field-release** (freeing a tuple
+  must first dec its rc-tracked array/string elements, using the tuple's
+  compile-time element kinds, before freeing the box). Structs and enums
+  follow the same shape (structs add the extern/canonical-ABI care that
+  bit the string method/call expansion).
