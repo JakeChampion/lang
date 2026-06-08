@@ -481,29 +481,48 @@ func appendVariantParamPayloadI64(body []byte, slot uint32, vs []ir.ExternEnumVa
 }
 
 // appendVariantParamMultiField emits, for a multi-field variant `@import`
-// parameter, the SlotCount i32 join slots. For each slot j it builds an i32-result
-// if/else chain on the box tag: the matching arm pushes its field j (i32.load at
-// the field's box offset) or 0 if the arm has fewer than j+1 fields (padding).
+// parameter, the SlotCount canonical join slots (ep.SlotTypes[j] per slot). For
+// each slot j it builds an if/else chain on the box tag whose result type is the
+// slot's valtype: the matching arm pushes its field j loaded from the field's box
+// offset and coerced to the slot type, or the slot's zero if the arm has fewer
+// than j+1 fields (padding). The coercion is byte-preserving: a field whose
+// natural width matches the slot loads directly (an f32 field rides an i32 slot
+// as its raw bits, an f64 an i64); a 32-bit field under an i64 slot zero-extends.
 func appendVariantParamMultiField(body []byte, slot uint32, ep *ir.ExternEnumParam) []byte {
 	n := len(ep.Variants)
-	slotVal := func(b []byte, v ir.ExternEnumVariant, j int32) []byte {
-		if int(j) < len(v.Fields) {
-			b = inst.InstLocalGet(b, slot)
-			return memory.InstI32Load(b, 2, uint32(v.Fields[j]))
+	slotVal := func(b []byte, v ir.ExternEnumVariant, j int32, slotVT byte) []byte {
+		if int(j) >= len(v.Fields) {
+			return appendZeroConst(b, slotVT) // padding: shorter arm
 		}
-		return inst.InstI32Const(b, 0)
+		off := uint32(v.Fields[j])
+		b = inst.InstLocalGet(b, slot)
+		switch slotVT {
+		case encode.ValtypeF32:
+			return memory.InstF32Load(b, 2, off)
+		case encode.ValtypeF64:
+			return memory.InstF64Load(b, 3, off)
+		case encode.ValtypeI64:
+			if externFieldIs64(v.FieldTypes[j]) {
+				return memory.InstI64Load(b, 3, off)
+			}
+			b = memory.InstI32Load(b, 2, off)
+			return append(b, opI64ExtendI32U) // 32-bit arm → i64 slot
+		default:
+			return memory.InstI32Load(b, 2, off)
+		}
 	}
 	for j := int32(0); j < ep.SlotCount; j++ {
+		slotVT := externRecordFieldValtype(ep.SlotTypes[j])
 		for k := 0; k < n-1; k++ {
 			body = inst.InstLocalGet(body, slot)
 			body = memory.InstI32Load(body, 2, 0) // tag @ box+0
 			body = inst.InstI32Const(body, int32(k))
 			body = numeric.InstI32Eq(body)
-			body = inst.InstIfStart(body, encode.ValtypeI32)
-			body = slotVal(body, ep.Variants[k], j)
+			body = inst.InstIfStart(body, slotVT)
+			body = slotVal(body, ep.Variants[k], j, slotVT)
 			body = inst.InstElse(body)
 		}
-		body = slotVal(body, ep.Variants[n-1], j) // innermost (default) arm
+		body = slotVal(body, ep.Variants[n-1], j, slotVT) // innermost (default) arm
 		for k := 0; k < n-1; k++ {
 			body = inst.InstEnd(body)
 		}
@@ -511,18 +530,49 @@ func appendVariantParamMultiField(body []byte, slot uint32, ep *ir.ExternEnumPar
 	return body
 }
 
+// externFieldIs64 reports whether a multi-field arm's field occupies 8 bytes (a
+// 64-bit int or f64), so it loads/stores as i64; otherwise it is a 4-byte field.
+func externFieldIs64(t ast.Type) bool {
+	vt := externRecordFieldValtype(t)
+	return vt == encode.ValtypeI64 || vt == encode.ValtypeF64
+}
+
+// appendZeroConst pushes the zero value of a core valtype.
+func appendZeroConst(b []byte, vt byte) []byte {
+	switch vt {
+	case encode.ValtypeI64:
+		return inst.InstI64Const(b, 0)
+	case encode.ValtypeF32:
+		return inst.InstF32Const(b, 0)
+	case encode.ValtypeF64:
+		return inst.InstF64Const(b, 0)
+	default:
+		return inst.InstI32Const(b, 0)
+	}
+}
+
 // appendVariantResultStoreMultiField emits, for a multi-field variant `@import`
 // *result*, the per-arm payload store: branching on the disc, the matching arm
-// stores each of its fields from the corresponding i32 join slot in the return
-// area (slot j @ rb + 4 + 4*j) into the Fern box at the field's box offset.
+// copies each of its fields from the canonical return-area (the variant memory
+// layout — field j @ rb + FieldAreaOffsets[j]) into the Fern box at the field's
+// box offset. The copy is by field width (i64 for an 8-byte field, i32 for a
+// 4-byte one) and byte-preserving, so a float field's bits round-trip through the
+// integer move.
 func appendVariantResultStoreMultiField(body []byte, base, rb, disc uint32, ep *ir.ExternEnumParam) []byte {
 	const rcHeaderBytes = 8
 	storeArm := func(b []byte, v ir.ExternEnumVariant) []byte {
 		for j, off := range v.Fields {
+			area := uint32(v.FieldAreaOffsets[j])
+			box := uint32(rcHeaderBytes) + uint32(off)
 			b = inst.InstLocalGet(b, base) // store address
 			b = inst.InstLocalGet(b, rb)
-			b = memory.InstI32Load(b, 2, uint32(4+4*j)) // slot j in the area
-			b = memory.InstI32Store(b, 2, uint32(rcHeaderBytes)+uint32(off))
+			if externFieldIs64(v.FieldTypes[j]) {
+				b = memory.InstI64Load(b, 3, area)
+				b = memory.InstI64Store(b, 3, box)
+			} else {
+				b = memory.InstI32Load(b, 2, area)
+				b = memory.InstI32Store(b, 2, box)
+			}
 		}
 		return b
 	}
@@ -611,11 +661,18 @@ func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEn
 		// widest arm end (and the area to the join: SlotCount i32 slots when multi).
 		boxSize := areaSize
 		if ep.SlotCount > 0 {
-			areaSize = 4 + ep.SlotCount*4
+			// Multi-field: the canonical return-area is the variant memory layout
+			// (ir precomputed AreaSize); the Fern box holds the widest arm's fields
+			// at their box offsets (8 bytes for a 64-bit field, else 4).
+			areaSize = ep.AreaSize
 			boxSize = 0
 			for _, v := range ep.Variants {
-				for _, off := range v.Fields {
-					if end := off + 4; end > boxSize {
+				for j, off := range v.Fields {
+					w := int32(4)
+					if externFieldIs64(v.FieldTypes[j]) {
+						w = 8
+					}
+					if end := off + w; end > boxSize {
 						boxSize = end
 					}
 				}
