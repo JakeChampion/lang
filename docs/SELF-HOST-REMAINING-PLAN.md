@@ -1286,6 +1286,25 @@ smallest → largest:
     encoded as a general-register load, so floats never reached d-registers;
     fixed (`arm64_ldr_fp`/`arm64_str_fp`), byte-pinned, and `floats` runs
     under qemu. (Darwin floats were broken by this too.)
+  - ✅ **slice 3v — the flip: `fern.fern -target arm64` emits the ELF
+    in-process**: `fern.fern` now `import`s `elf` and routes **both** emit
+    paths through `arm64_elf_binary(asm)` — the SSA path (`ssa_arm64`, the
+    default for `-target arm64`) and the AST fallback (`asm_arm64.emit_module`)
+    — which runs `arm64_gas_program` (unknown guard → `eprint` + exit 2) →
+    `arm64_gas_link` (text_vaddr = `elf_text_vaddr()`, data 8-aligned after
+    `.text`) → `elf_image_entry_bss` (entry = `_start`, memsz tail = the bss
+    heap), packing the runnable ELF into the output string. **The `.s` + gcc/
+    ld path is gone** for `-target arm64`. A pre-flip sweep confirmed the SSA
+    path needed one extra form — `sbfiz Xd, Xn, #lsb, #width` (scaled-index
+    addressing of an i32; SBFM alias) — now handled. Decisive proof:
+    **`TestSelfHostArm64LinuxBuilds`** builds the flipped CLI (Go x86 backend)
+    and **runs** 11 programs (incl. structs / options / enums / arrays /
+    strings / floats) as arm64 ELF under **qemu-aarch64**, checking exit codes
+    — the arm64-Linux path executes on the Linux CI box (the darwin path can
+    only run on a macOS runner). The cli test's `emit-target-arm64` and the
+    macho / gobackend stagings add `elf.fern`; `arm64_native.arm64_asm_label_off`
+    and the `elf_*` helpers are now `pub`. Both native arm64 targets (Linux
+    ELF + Darwin Mach-O) now emit runnable binaries with no external toolchain.
 - 🔧 **x86-64 assembler** — Intel-syntax asm text → machine-code bytes,
   mirroring `internal/native/x86_64/` (`asm.go` + `parse.go` + `sse.go`
   + `x87.go` + `rodata.go`). The largest piece; built up in slices.

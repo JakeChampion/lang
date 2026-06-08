@@ -40,7 +40,7 @@ function elf_base_vaddr(): i32 { return 4194304; }
 function elf_page_align(): i32 { return 65536; }
 
 // elf_em_aarch64 is EM_AARCH64 (e_machine).
-function elf_em_aarch64(): i32 { return 183; }
+pub function elf_em_aarch64(): i32 { return 183; }
 
 // elf_em_x86_64 is EM_X86_64 (e_machine).
 function elf_em_x86_64(): i32 { return 62; }
@@ -49,7 +49,7 @@ function elf_em_x86_64(): i32 { return 62; }
 // single-segment image (just past the ELF header + one program header).
 // A native assembler needs this to resolve PC-relative symbol references
 // (adrp / :lo12: on arm64, rip-relative on x86-64).
-function elf_text_vaddr(): i32 {
+pub function elf_text_vaddr(): i32 {
     return elf_base_vaddr() + elf_eh_size() + elf_ph_size();
 }
 
@@ -89,7 +89,7 @@ function elf_le64(buf: i32[], v: i64): i32[] {
 // ---- buffer helpers ----
 
 // elf_cat appends every byte of `src` to `buf`.
-function elf_cat(buf: i32[], src: i32[]): i32[] {
+pub function elf_cat(buf: i32[], src: i32[]): i32[] {
     var i: i32 = 0;
     while (i < src.len()) {
         buf = buf.append(src[i]);
@@ -100,7 +100,7 @@ function elf_cat(buf: i32[], src: i32[]): i32[] {
 
 // elf_pad_to_8 appends zero bytes until the buffer length is a multiple
 // of 8 (so the data blob lands 8-byte aligned after .text).
-function elf_pad_to_8(b: i32[]): i32[] {
+pub function elf_pad_to_8(b: i32[]): i32[] {
     while ((b.len() % 8) != 0) {
         b = b.append(0);
     }
@@ -129,7 +129,7 @@ function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32):
 // bytes: the segment's p_memsz exceeds p_filesz by `bss`, so the loader
 // zero-fills that region in memory without it occupying any file bytes
 // (this is how asm.fern's 1 GB `__fern_heap` is reserved).
-function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i32, bss: i32): i32[] {
+pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i32, bss: i32): i32[] {
     var filesz: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
     var memsz: i64 = filesz + (bss as i64);
     var entry: i64 = (elf_text_vaddr() + entry_off) as i64;

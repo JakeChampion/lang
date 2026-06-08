@@ -45,6 +45,7 @@ import "./ssa_wasm";
 import "./watbin";
 import "./constfold";
 import "./arm64_native";
+import "./elf";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes can pack it into a
@@ -55,6 +56,33 @@ function to_u8(b: i32[]): u8[] {
     var i: i32 = 0;
     while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; }
     return o;
+}
+
+// arm64_elf_binary assembles arm64 Linux GAS text (from either the SSA or AST
+// emitter) into a runnable static ELF entirely in-process via arm64_native +
+// elf.fern — no `.s` + external gcc/ld. Returns the binary bytes packed into a
+// string (written verbatim by write_file), or "" if the assembler hit an
+// instruction it doesn't yet support (the caller reports it and exits 2). The
+// arm64-darwin counterpart is the macho_static_executable path above.
+function arm64_elf_binary(asm: string): string {
+    var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
+    if (p.unknown.len() > 0) {
+        eprint("fern: -target arm64: in-process assembler hit an instruction it does not yet support: ");
+        eprint(p.unknown[0]);
+        eprint("\n");
+        return "";
+    }
+    var pa: arm64_native.Arm64Asm = p.asm;
+    var tv: i64 = (elf.elf_text_vaddr()) as i64;
+    var dv: i64 = tv + ((((pa.code.len() + 7) & (0 - 8))) as i64); // data 8-aligned after .text
+    p = arm64_native.arm64_gas_link(p, tv, dv);
+    var pa2: arm64_native.Arm64Asm = p.asm;
+    var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
+    if (eoff < 0) { eoff = 0; }
+    var body: i32[] = elf.elf_pad_to_8(pa2.code);
+    body = elf.elf_cat(body, p.data);
+    var bin: i32[] = elf.elf_image_entry_bss(body, 7, elf.elf_em_aarch64(), eoff, p.bss_size);
+    return string_from_bytes(to_u8(bin));
 }
 
 // last_slash returns the index of the final '/' in p, or -1.
@@ -420,8 +448,16 @@ function main(): i32 {
     if (!no_ssa) {
         var sr: SsaResult = try_ssa(merged.funcs, merged.structs, target);
         if (sr.ok) {
+            // arm64 (Linux) emits a runnable ELF in-process (arm64_native +
+            // elf.fern), dropping the `.s` + gcc/ld link — same flip as
+            // arm64-darwin. Other targets write the SSA text as-is.
+            var ssa_out: string = sr.asm;
+            if (target == "arm64") {
+                ssa_out = arm64_elf_binary(sr.asm);
+                if (ssa_out.len() == 0) { return 2; }
+            }
             if (out_path.len() > 0) {
-                match (write_file(out_path, sr.asm)) {
+                match (write_file(out_path, ssa_out)) {
                     Some(e) => {
                         eprint("fern: cannot write output: ");
                         eprint(out_path);
@@ -431,7 +467,7 @@ function main(): i32 {
                     None => {},
                 }
             } else {
-                write(sr.asm);
+                write(ssa_out);
             }
             return 0;
         }
@@ -440,7 +476,10 @@ function main(): i32 {
     var full: parser.Module = parser.module_with_builtins(merged);
     var out_asm: string = "";
     if (target == "arm64") {
-        out_asm = asm_arm64.emit_module(full, false);
+        // In-process ELF (arm64_native + elf.fern) — no `.s` + gcc/ld. The
+        // SSA path above already flipped; this is the AST-emitter fallback.
+        out_asm = arm64_elf_binary(asm_arm64.emit_module(full, false));
+        if (out_asm.len() == 0) { return 2; }
     } else if (target == "arm64-darwin") {
         // Same arm64 code generator with the Darwin syscall builtins
         // (gettimeofday / getentropy) selected via the darwin flag;

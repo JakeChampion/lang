@@ -339,7 +339,7 @@ function arm64_asm_label(a: Arm64Asm, name: string): Arm64Asm {
 
 // arm64_asm_label_off returns the byte offset of label `name`, or -1 if it
 // has not been placed yet.
-function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
+pub function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
     var i: i32 = 0;
     while (i < a.lab_names.len()) {
         if (a.lab_names[i] == name) {
@@ -624,6 +624,21 @@ function arm64_ubfx_word(rd: i32, rn: i32, lsb: i32, width: i32): i64 {
 }
 function arm64_ubfx(buf: i32[], rd: i32, rn: i32, lsb: i32, width: i32): i32[] {
     return arm64_le32(buf, arm64_ubfx_word(rd, rn, lsb, width));
+}
+
+// arm64_sbfiz_word encodes `sbfiz Xd, Xn, #lsb, #width` — signed bitfield
+// insert in zeros (sign-extend `width` low bits of Xn, then shift left by
+// `lsb`). The SSA arm64 backend emits it for scaled-index addressing of an
+// i32 value (`sbfiz xD, xN, #3, #32` = (i32)xN * 8). SBFM-64 alias:
+// immr=(-lsb) mod 64, imms=width-1, N=1. (Verified vs llvm-mc:
+// sbfiz x1,x2,#3,#29 = 0x937d7041.)
+function arm64_sbfiz_word(rd: i32, rn: i32, lsb: i32, width: i32): i64 {
+    var immr: i64 = ((64 - lsb) & 63) as i64;
+    var imms: i64 = ((width - 1) & 63) as i64;
+    return 0x93400000 | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+function arm64_sbfiz(buf: i32[], rd: i32, rn: i32, lsb: i32, width: i32): i32[] {
+    return arm64_le32(buf, arm64_sbfiz_word(rd, rn, lsb, width));
 }
 
 // arm64_sxtw_word encodes `sxtw Xd, Wn` — sign-extend a 32-bit word to
@@ -1492,6 +1507,10 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_sxtw(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
         return a;
     }
+    if (mnem == "sbfiz") {
+        a = Arm64Asm { ...a, code: arm64_sbfiz(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_imm(ops[3])) };
+        return a;
+    }
     if (mnem == "tbnz") {
         return arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
     }
@@ -1692,7 +1711,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "stp" || mnem == "ldp") { return true; }
     if (mnem == "b" || mnem == "bl" || mnem == "blr" || mnem == "ret" || mnem == "svc") { return true; }
     if (mnem == "cbz" || mnem == "cbnz" || mnem == "tbz" || mnem == "tbnz") { return true; }
-    if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw") { return true; }
+    if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw" || mnem == "sbfiz") { return true; }
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
     if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16") { return true; }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
