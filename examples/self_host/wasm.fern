@@ -677,26 +677,27 @@ function collect_arr_src(body: parser.Stmt[], arr_ret_fns: string[], acc: string
     return acc;
 }
 
-function collect_arr_swept(body: parser.Stmt[], src: string[], arr_ret_fns: string[], acc: string[]): string[] {
+function collect_arr_swept(body: parser.Stmt[], src: string[], arr_ret_fns: string[], arr_ret_methods: string[], acc: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
-                    if (init_is_owned_array(v.init) || init_is_arr_alias(v.init, src) || init_is_user_arr_call(v.init, arr_ret_fns) || init_is_fresh_array_builtin(v.init)) {
+                    if (init_is_owned_array(v.init) || init_is_arr_alias(v.init, src) || init_is_user_arr_call(v.init, arr_ret_fns) || init_is_fresh_array_builtin(v.init)
+                        || (ty_spelling_is_array(v.type_name) && init_is_user_arr_method(v.init, arr_ret_methods))) {
                         acc = acc.append(v.name);
                     }
                 }
             },
             parser.StmtIf(f) => {
-                acc = collect_arr_swept(f.then_body, src, arr_ret_fns, acc);
-                acc = collect_arr_swept(f.else_body, src, arr_ret_fns, acc);
+                acc = collect_arr_swept(f.then_body, src, arr_ret_fns, arr_ret_methods, acc);
+                acc = collect_arr_swept(f.else_body, src, arr_ret_fns, arr_ret_methods, acc);
             },
-            parser.StmtWhile(w) => { acc = collect_arr_swept(w.body, src, arr_ret_fns, acc); },
-            parser.StmtFor(f) => { acc = collect_arr_swept(f.body, src, arr_ret_fns, acc); },
+            parser.StmtWhile(w) => { acc = collect_arr_swept(w.body, src, arr_ret_fns, arr_ret_methods, acc); },
+            parser.StmtFor(f) => { acc = collect_arr_swept(f.body, src, arr_ret_fns, arr_ret_methods, acc); },
             parser.StmtMatch(m) => {
                 var k: i32 = 0;
-                while (k < m.arms.len()) { acc = collect_arr_swept(m.arms[k].body, src, arr_ret_fns, acc); k = k + 1; }
+                while (k < m.arms.len()) { acc = collect_arr_swept(m.arms[k].body, src, arr_ret_fns, arr_ret_methods, acc); k = k + 1; }
             },
             _ => {},
         }
@@ -718,6 +719,41 @@ function collect_arr_ret_fns(mod_funcs: parser.FuncDecl[]): string[] {
         i = i + 1;
     }
     return out;
+}
+
+// collect_arr_ret_methods lists the names of user METHODS declared to
+// return an array. Like user free functions, their StmtReturn applies
+// return-retain, so a result bound to a (declared-array) local is safe to
+// count/sweep. Builtin methods (`.append`/`.with`, which can hand back the
+// receiver in place) are NOT user methods, so they never appear here.
+function collect_arr_ret_methods(mod_funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod_funcs.len()) {
+        if (mod_funcs[i].receiver_type.len() > 0 && ty_spelling_is_array(mod_funcs[i].ret_type) && !contains_str(out, mod_funcs[i].name)) {
+            out = out.append(mod_funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// init_is_user_arr_method: the init is a method call `obj.m()` where `m` is
+// a user method declared to return an array. Paired at the call site with a
+// declared-array local type (so a same-named method on another receiver
+// that returns a non-array can't misclassify the slot), it is safe to
+// sweep — the method's return-retain hands the buffer over at a counted rc.
+function init_is_user_arr_method(e: parser.Expr, arr_ret_methods: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => { return contains_str(arr_ret_methods, fa.field); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string[], fnmeths: string[], fnarrs: string[]): string[] {
@@ -6788,8 +6824,9 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         api = api + 1;
     }
     var arr_ret_fns: string[] = collect_arr_ret_fns(mod_funcs);
+    var arr_ret_methods: string[] = collect_arr_ret_methods(mod_funcs);
     asrc = collect_arr_src(f.body, arr_ret_fns, asrc);
-    var aswept: string[] = collect_arr_swept(f.body, asrc, arr_ret_fns, []);
+    var aswept: string[] = collect_arr_swept(f.body, asrc, arr_ret_fns, arr_ret_methods, []);
     cx = Ctx { ...cx, arr_src: asrc, arr_swept: aswept };
     // String-valued maps are needed during collect_str_locals_stmts (so a
     // `for v in m.values()` binds v as string). Seed them from

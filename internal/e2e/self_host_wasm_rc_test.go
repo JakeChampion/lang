@@ -169,6 +169,11 @@ func TestSelfHostRcCallResultWasm(t *testing.T) {
 		// A .values() snapshot re-bound each loop iteration: fresh + swept +
 		// per-iteration dec-on-overwrite, value-correct + detector clean.
 		{"freshbuiltin-values-loop", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; var k = 0; while (k < 100) { var vs: i32[] = m.values(); s = s + vs[0]; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 6},
+		// A declared-array local inited from a USER method returning an array
+		// is counted/swept (the method's return-retain makes it safe).
+		{"method-result-swept", "struct Box { n: i32 } function (b: Box) make(): i32[] { var xs: i32[] = []; var i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var box = Box { n: 5 }; var r: i32[] = box.make(); return r[4] + __fern_rc_underflow_count(); }", 4},
+		// Same, re-bound each loop iteration: per-iteration release, clean.
+		{"method-result-loop", "struct Box { n: i32 } function (b: Box) make(): i32[] { var xs: i32[] = []; var i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var box = Box { n: 6 }; var s = 0; var k = 0; while (k < 50) { var r: i32[] = box.make(); s = s + r[5]; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

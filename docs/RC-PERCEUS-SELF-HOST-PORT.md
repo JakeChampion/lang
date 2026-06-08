@@ -1029,6 +1029,7 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   value-correct + detector 0). With this, all three backends release
   re-bound array locals per-iteration. (The wasm slice landed this first;
   this brings x86-64 + arm64 to the same behaviour.)
+<<<<<<< HEAD
 - 2026-06-08: **wasm backend RC — reclaim fresh-array builtin/method
   results.** Final array-reclaim gap on wasm: locals inited from a builtin
   / method that returns a FRESH owned array — `args()`, `random_bytes(n)`,
@@ -1044,3 +1045,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   builtins/methods, construction stores, and loop/rebind churn — matching
   the asm backends' sweep-by-type completeness for the common cases.
   Remaining: Phase 1e (strings / structs / enums / maps).
+=======
+- 2026-06-08: **wasm backend RC — reclaim user-method array results.** The
+  symmetric completion of the user-function call-result reclaim: a
+  declared-array local inited from a user METHOD that returns an array
+  (`var r: i32[] = obj.build()`) is now counted/swept. New
+  `collect_arr_ret_methods` + `init_is_user_arr_method` recognise it; the
+  declared-array local type is required at the call site so a same-named
+  method on another receiver returning a non-array can't misclassify the
+  slot, and the method's StmtReturn return-retain makes the result safe to
+  sweep. Builtin methods (`.append`/`.with`, receiver-passthrough) are not
+  user methods, so they're never matched. Coverage:
+  `TestSelfHostRcCallResultWasm` gains method-result-swept and
+  method-result-loop (per-iteration release, detector 0). Full wasm suite
+  (~88 s) green; bootstrap-safe. Remaining: Phase 1e (strings / structs /
+  enums / maps) — a large per-type rollout (layout → count → free, plus
+  recursive field-release for containers and extern/canonical-ABI layout
+  for host-interop values); strings are the simplest next target (flat
+  block, reuse __fern_arr_dec / freelist, static literals auto-excluded by
+  the address guard).
+>>>>>>> 7031dd4 (self-host wasm: reclaim user-method array results)
