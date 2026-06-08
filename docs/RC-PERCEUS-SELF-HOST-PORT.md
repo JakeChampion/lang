@@ -1065,3 +1065,26 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   block, reuse __fern_arr_dec / freelist, static literals auto-excluded by
   the address guard).
 >>>>>>> 7031dd4 (self-host wasm: reclaim user-method array results)
+- 2026-06-08: **Phase 1e begins — wasm string rc-box layout foundation.**
+  First non-array heap type. New `$__fern_str_box(p)` rc-headers a heap
+  string block (8-byte rc+bsz header, returns s = base+8 so [s] = len,
+  [s+4..] = bytes stay s-relative; rc at [s-8], block size at [s-4]). The
+  pure-Fern string builders now route through it — `__fern_strcat`,
+  `substr`, `str_upper` / `str_lower`, `str_repeat`, `str_join`,
+  `string_from_bytes`, `i32_to_str` / `i64_to_str` (9 helpers; the
+  `alloc(4+len)` payload arg is unchanged, str_box adds the header).
+  Static string literals stay in the data section (below heap_base),
+  unboxed — the rc helpers' address guard already treats them as immortal,
+  so a string value transparently mixes boxed-heap + unboxed-literal
+  pointers (every access is s-relative). Release reuses the shared
+  `$__fern_arr_dec` + size-class freelist (a string is FLAT — no
+  rc-tracked children — so no recursive field-dec, unlike the container
+  types). The extern/canonical-ABI-adjacent string builders (env / args /
+  read_file / @export wrappers) are deliberately left unboxed for now;
+  partial boxing is safe in the foundation because no string rc-ops are
+  wired yet. Coverage: `TestSelfHostRcStrBoxWasm` — a fresh concat /
+  to_upper string is unique (rc==1); a literal is not (guarded); concat /
+  substr values intact. Full wasm suite (~94 s) green; bootstrap-safe.
+  Next: string counting (sweep string locals via arr_dec — the address
+  guard no-ops literals, so no conservative oracle needed; inc-on-alias,
+  construction-incs, reassign/rebind dec, return-retain) then flip free.
