@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"bytes"
+	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +32,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"asmcore.fern", "flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "arm64_native.fern", "fern.fern"} {
+	for _, name := range []string{"asmcore.fern", "flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -423,7 +425,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// is a false positive. This is the bundle-wide FP guard the
 		// differential corpus can't express, mirroring the manual
 		// "fern -check over every module" validation prior slices used.
-		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "asm.fern", "asm_arm64.fern", "wasm.fern", "arm64_native.fern", "fern.fern"} {
+		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "asm.fern", "asm_arm64.fern", "wasm.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
 				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)
@@ -1002,21 +1004,33 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	})
 
 	t.Run("emit-target-arm64", func(t *testing.T) {
-		// The driver (x86-64 host binary) emits arm64 asm under
-		// -target arm64; cross-assemble it and run under qemu.
-		arm64gcc, qemu := arm64Tooling(t) // skips if cross toolchain absent
+		// The driver (x86-64 host binary) emits a runnable arm64 Linux ELF
+		// directly under -target arm64 (in-process via arm64_native + elf.fern,
+		// no `.s` + gcc/ld); run it under qemu and check the exit code.
+		_, qemu := arm64Tooling(t) // skips if qemu absent
 		srcPath := filepath.Join(dir, "arm_prog.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 6 * 7; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		asm, code := runDriver(t, "-target", "arm64", srcPath)
+		progBin := filepath.Join(dir, "arm_prog.bin")
+		_, code := runDriver(t, "-target", "arm64", "-o", progBin, srcPath)
 		if code != 0 {
 			t.Fatalf("-target arm64 emit exited %d, want 0", code)
 		}
-		if len(asm) == 0 {
-			t.Fatal("-target arm64 produced 0 bytes of asm")
+		raw, err := os.ReadFile(progBin)
+		if err != nil {
+			t.Fatalf("read emitted binary: %v", err)
 		}
-		progBin := buildBinArm64(t, arm64gcc, dir, "arm_prog", string(asm))
+		f, err := elf.NewFile(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("-target arm64 output is not a parseable ELF: %v", err)
+		}
+		if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_EXEC {
+			t.Fatalf("got machine=%v type=%v, want AARCH64/EXEC", f.Machine, f.Type)
+		}
+		if err := os.Chmod(progBin, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
 		cmd := exec.Command(qemu, progBin)
 		_ = cmd.Run()
 		if c := cmd.ProcessState.ExitCode(); c != 42 {
