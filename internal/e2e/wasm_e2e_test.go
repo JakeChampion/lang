@@ -1450,31 +1450,9 @@ func TestWASMSubI32Slices(t *testing.T) {
 // __slice_idx_N helper (same as the read path) and the
 // width-aware store op. Verifies that mutations through a
 // slice show up when reading back from the parent.
-func TestWASMSliceWrites(t *testing.T) {
-	src := `function main(): i32 {
-    var bytes: u8[] = [1, 2, 3, 4, 5];
-    var view: [u8] = bytes[1:4];
-    view = view.with(0, 99);
-    view = view.with(2, 100);
-    if (bytes[1] != 99) { return 1; }
-    if (bytes[2] != 3) { return 2; }
-    if (bytes[3] != 100) { return 3; }
-    if (bytes[0] != 1) { return 4; }
-    if (bytes[4] != 5) { return 5; }
-
-    // Wide-element slice writes too.
-    var wide: i64[] = [10, 20, 30, 40];
-    var w: [i64] = wide[1:3];
-    w = w.with(0, (1 << 40));
-    if (wide[1] != (1 << 40)) { return 6; }
-    if (wide[0] != 10) { return 7; }
-    if (wide[2] != 30) { return 8; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got %d, want 0 (slice writes)", got)
-	}
-}
+// (Removed TestWASMSliceWrites: writing through a slice mutated the backing
+// array, which immutability (E056) forbids — slices are read-only views now.
+// Slice reads are covered by TestWASMStringSlice and the slice-read cases.)
 
 // String slicing — `s[a:b]` returns a freshly allocated
 // substring. Bounds checked; default low/high mean 0 and

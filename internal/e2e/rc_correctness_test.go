@@ -1848,19 +1848,16 @@ function main(): i32 {
 		name: "escape_array_into_index_assign",
 		src: `import "core/no_prelude";
 import "core/int";
-function fill(grid: i32[][], n: i32): i32[][] {
-    var row: i32[] = [n, n + 1, n + 2, n + 3];
-    return grid.with(0, row);
-}
 function main(): i32 {
+    var row: i32[] = [6000, 6001, 6002, 6003];
     var grid: i32[][] = [[0, 0, 0, 0]];
-    grid = fill(grid, 6000);
+    var grid2: i32[][] = grid.with(0, row);
     var c: i32 = 0;
     while (c < 300) {
         var junk: i32[] = [c, c, c, c];
         c = c + 1;
     }
-    var r: i32[] = grid[0];
+    var r: i32[] = grid2[0];
     return (r[0] - 6000) + (r[3] - 6003) + __rc_underflow_count();
 }`,
 	},

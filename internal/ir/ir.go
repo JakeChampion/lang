@@ -14867,7 +14867,14 @@ func isSelfMapMutation(value ast.Expr, targetName string) bool {
 	if !ok {
 		return false
 	}
-	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" {
+	// `__method_Array_set` is `arr.with(i, v)` — like the map mutators it
+	// goes through a `*_cow_inplace` helper that returns the SAME handle on
+	// rc==1 (no reference released) and a fresh copy on rc>1. So `arr =
+	// arr.with(...)` needs the same COW-aware dec (dec the old handle iff a
+	// copy happened) as `m = m.set(...)`; an unconditional dec over-releases
+	// the in-place handle (the rc-underflow / unbounded-leak the wasm
+	// OwnInplaceSort + LiteralAllocReclaim tests caught).
+	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" && callee.Name != "__method_Array_set" {
 		return false
 	}
 	if len(call.Args) == 0 {
