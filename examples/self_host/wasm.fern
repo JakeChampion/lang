@@ -1342,6 +1342,30 @@ function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string): s
     }
     return "(i32.const 0)";
 }
+
+// extern_plain_enum_sid emits a WAT i32 expression mapping a runtime WIT-enum
+// discriminant (variant index, in local `dloc`) back to the matching variant's
+// struct_id — the inverse of extern_plain_enum_disc, used to materialize a Fern
+// payloadless enum value `[struct_id@0]` from an enum *result*. A select-chain
+// `disc==k ? sid_k : acc`.
+function extern_plain_enum_sid(mod: parser.Module, t: string, dloc: string): string {
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        if (mod.enums[ei].name == t) {
+            var n: i32 = mod.enums[ei].variant_names.len();
+            var acc: string = "(i32.const " + i32_to_string(struct_id(mod.structs, mod.enums[ei].variant_names[n - 1])) + ")";
+            var k: i32 = n - 2;
+            while (k >= 0) {
+                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                acc = "(select (i32.const " + i32_to_string(sid) + ") " + acc + " (i32.eq (local.get " + dloc + ") (i32.const " + i32_to_string(k) + ")))";
+                k = k - 1;
+            }
+            return acc;
+        }
+        ei = ei + 1;
+    }
+    return "(i32.const 0)";
+}
 // field of type `ft` from its 4-byte slot, leaving its canonical i32 on the
 // stack. Sub-word integers use a width+sign-aware load so the value is correctly
 // sign-/zero-extended (the self-host stores them in a 4-byte little-endian slot,
@@ -1504,7 +1528,7 @@ function has_extern_mem_param(mod: parser.Module, f: parser.FuncDecl): boolean {
 // generated wrapper rather than straight to the import: a composite result
 // (return-area lift) or a memory/record parameter.
 function extern_needs_wrapper(mod: parser.Module, f: parser.FuncDecl): boolean {
-    return is_extern_composite_ret(mod, f.ret_type) || has_extern_mem_param(mod, f);
+    return is_extern_composite_ret(mod, f.ret_type) || has_extern_mem_param(mod, f) || extern_plain_enum_param(mod, f.ret_type);
 }
 
 function extern_imports(mod: parser.Module): string {
@@ -1995,6 +2019,29 @@ function extern_wrappers(mod: parser.Module): string {
                 out = out + "    (i32.store (local.get $s) (i32.load8_u (local.get $rb)))\n";
             }
             out = out + "    (i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))\n";
+            out = out + "    (local.get $s))\n";
+        } else if (f.import_iface.len() > 0 && extern_plain_enum_param(mod, f.ret_type)) {
+            // WIT enum result: the import returns a single i32 discriminant; the
+            // wrapper materializes the Fern payloadless enum value by mapping the
+            // disc to the matching variant's struct_id and storing it in a fresh
+            // `[struct_id@0]` box (the same shape a bare `Green` produces).
+            out = out + "  (func $" + f.name;
+            var enp: i32 = 0;
+            while (enp < f.params.len()) {
+                out = out + " (param $ep" + i32_to_string(enp) + " " + wat_extern_valtype(f.params[enp].type_name) + ")";
+                enp = enp + 1;
+            }
+            out = out + " (result i32)\n";
+            out = out + "    (local $d i32) (local $s i32)\n";
+            out = out + "    (local.set $d (call $" + f.name + "__import";
+            var ena: i32 = 0;
+            while (ena < f.params.len()) {
+                out = out + " (local.get $ep" + i32_to_string(ena) + ")";
+                ena = ena + 1;
+            }
+            out = out + "))\n";
+            out = out + "    (local.set $s (call $__fern_alloc (i32.const 4)))\n";
+            out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
             out = out + "    (local.get $s))\n";
         } else if (f.import_iface.len() > 0 && is_extern_composite_ret(mod, f.ret_type)) {
             out = out + "  (func $" + f.name;
