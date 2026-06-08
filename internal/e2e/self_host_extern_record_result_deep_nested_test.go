@@ -11,19 +11,21 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordResultSubwordCustomProvider is the self-host port of
-// the sub-word record-field *result* dual layout (docs/WIT-BRING-YOUR-OWN.md,
-// Go-side TestExternRecordResultSubwordCustomProvider). The canonical
-// return-area packs s8/u16 at their natural 1-/2-byte size + offset (a@0, b@2,
-// c@4), which differs from the self-host struct's 4-byte slots. So the wrapper
-// reads each field at its canonical offset (extern_canon_top_off) with a
-// width+sign-aware load (extern_field_load_op) and stores it into the wider
-// self-host slot; the return area is sized by extern_canon_record_size_nested.
+// TestSelfHostExternRecordResultDeepNestedCustomProvider is the self-host port of
+// the deeper-nesting (arbitrary depth) record `@import` *result* gate
+// (docs/WIT-BRING-YOUR-OWN.md, Go-side TestExternRecordResultDeepNestedCustomProvider).
+// An extern returns a record whose field is a record whose field is itself a
+// record, lifted into a self-host struct tree. The canonical ABI inlines every
+// nested record's leaves into the return area at each level's alignment;
+// extern_record_nestable/extern_record_leaf_count recurse the gate,
+// extern_canon_* recurse the layout, and extern_emit_record_fill recurses the
+// materialization (one $inner local per nesting level via extern_record_depth).
 //
-// The provider exports `make-mix: func() -> record { a: s8, b: u16, c: s32 }`
-// returning fixed {-5, 300, 1000} at canonical offsets. The self-host program
-// checks (p.a as i32)+(p.b as i32)+p.c == 1295 (fails under the wrong load).
-func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
+// Shape: `record outer { l: mid, r: mid }`, `record mid { p: point, n: s32 }`,
+// `record point { x: s32, y: s32 }` — three levels (outer→mid→point). The
+// provider fills eight s32 leaves; the Fern side reads them through `o.l.p.x` …
+// `o.r.n` and forms a checkable weighted sum.
+func TestSelfHostExternRecordResultDeepNestedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -41,18 +43,19 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 		}
 	}
 
+	// --- Provider component exporting local:test/src@0.1.0 make-outer. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	const iface = "interface src { record mix { a: s8, b: u16, c: s32 } make-mix: func() -> mix; }"
+	const iface = "interface src { record point { x: s32, y: s32 } record mid { p: point, n: s32 } record outer { l: mid, r: mid } make-outer: func(a: s32, b: s32, c: s32, d: s32, e: s32, f: s32, g: s32, h: s32) -> outer; }"
 	if err := os.WriteFile(filepath.Join(provWit, "src.wit"),
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// make-mix returns the record indirectly: alloc an 8-byte area via
-	// cabi_realloc, write the fields at the canonical layout (a:s8@0, b:u16@2,
-	// c:s32@4), return the pointer.
+	// make-outer returns the nested record indirectly: a 24-byte area, the eight
+	// s32 leaves inlined in declaration order (l.p.x@0, l.p.y@4, l.n@8, r.p.x@12,
+	// r.p.y@16, r.n@20) via cabi_realloc, returning its pointer.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))
@@ -61,12 +64,15 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
     (local.set $p (global.get $h))
     (global.set $h (i32.add (global.get $h) (local.get $ns)))
     (local.get $p))
-  (func (export "local:test/src@0.1.0#make-mix") (result i32)
+  (func (export "local:test/src@0.1.0#make-outer") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $e i32) (param $f i32) (param $g i32) (param $hh i32) (result i32)
     (local $r i32)
-    (local.set $r (call 0 (i32.const 0) (i32.const 0) (i32.const 4) (i32.const 8)))
-    (i32.store8 (local.get $r) (i32.const -5))
-    (i32.store16 offset=2 (local.get $r) (i32.const 300))
-    (i32.store offset=4 (local.get $r) (i32.const 1000))
+    (local.set $r (call 0 (i32.const 0) (i32.const 0) (i32.const 4) (i32.const 24)))
+    (i32.store         (local.get $r) (local.get $a))
+    (i32.store offset=4  (local.get $r) (local.get $b))
+    (i32.store offset=8  (local.get $r) (local.get $c))
+    (i32.store offset=12 (local.get $r) (local.get $d))
+    (i32.store offset=16 (local.get $r) (local.get $e))
+    (i32.store offset=20 (local.get $r) (local.get $f))
     (local.get $r)))`), 0o644); err != nil {
 		t.Fatalf("write provider core: %v", err)
 	}
@@ -75,6 +81,7 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
+	// --- User world (custom src iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -103,6 +110,7 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
+	// --- Self-host backend: emit the core from the deep-nested-result program. ---
 	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -125,18 +133,22 @@ function main(): i32 {
     return 0;
 }
 `
-	if err := os.WriteFile(filepath.Join(dir, "swr_run.fern"), []byte(driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "rrd_run.fern"), []byte(driver), 0o644); err != nil {
 		t.Fatalf("write driver: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "swr_run.fern", "swr_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "rrd_run.fern", "rrd_run")
 
-	const want = "mr-ok"
-	prog := `struct Mix { a: i8, b: u16, c: i32 }
-@import("local:test/src@0.1.0", "make-mix")
-function make_mix(): Mix;
+	const want = "deep-ok"
+	prog := `struct Point { x: i32, y: i32 }
+struct Mid { p: Point, n: i32 }
+struct Outer { l: Mid, r: Mid }
+@import("local:test/src@0.1.0", "make-outer")
+function make_outer(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32): Outer;
 function main(): i32 {
-    var p: Mix = make_mix();
-    if ((p.a as i32) + (p.b as i32) + p.c == 1295) { write("` + want + `"); } else { write("mr-bad"); }
+    var o: Outer = make_outer(1, 2, 3, 4, 5, 6, 7, 8);
+    // l.p.x=1, l.p.y=2, l.n=3, r.p.x=4, r.p.y=5, r.n=6
+    // 1 + 2*10 + 3*100 + 4*1000 + 5*10000 + 6*100000 = 654321
+    if (o.l.p.x + o.l.p.y * 10 + o.l.n * 100 + o.r.p.x * 1000 + o.r.p.y * 10000 + o.r.n * 100000 == 654321) { write("` + want + `"); } else { write("deep-bad"); }
     return 0;
 }`
 	watBytes := runCapture(t, gcc, runner, driverBin, []byte(prog))
