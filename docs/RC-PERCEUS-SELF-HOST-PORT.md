@@ -717,3 +717,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   free-list/first-fit is a possible follow-up). Verified on both
   backends + both arm64 assemblers: std-test (JSON), bootstrap/fixpoint,
   reclaim-churn, RC suites — all green, detector 0.
+- 2026-06-08: **Phase 4 (Perceus optimisation passes) begins —
+  move-on-return, both backends.** First inc/dec pair-cancellation:
+  `return xs` where `xs` is a bare owned array LOCAL (an `ExprIdent`
+  naming an array-typed local whose slot index ≥ `n_params`, i.e. NOT a
+  borrowed parameter) now MOVES the buffer to the caller. The
+  return-retain inc and the exit sweep's dec of that one slot are a
+  balanced pair on the same value, so both are elided — the buffer
+  reaches the caller at its current rc with identical net effect, and
+  one inc + one dec are saved per moved return (the hottest shape in the
+  self-host: every `make`/`build`/`parse` helper returns its freshly
+  built array). Eliding an inc/dec pair on a single slot is net-zero
+  regardless of any aliasing of the same buffer through other slots, so
+  it is safe with free ON. Implementation: shared oracle
+  `(s) move_on_return_idx(e)` in `asmcore.fern` returns the local index
+  to move (or -1); `emit_array_exit_dec_excl(s, excl)` skips that slot
+  (`emit_array_exit_dec` delegates with -1); `StmtReturn` skips the inc
+  when `mov_idx >= 0` and passes it to the sweep, mirrored in `asm.fern`
+  + `asm_arm64.fern`. A returned BORROWED param (idx < n_params) is NOT
+  moved — the caller still owns it. Coverage:
+  `TestSelfHostRcMoveOnReturnX86_64` (bare-local move, chained moves,
+  move-alongside-a-swept-sibling, borrowed-param-not-moved, move-churn
+  ≫ heap, + emission asserts: no retain inc on the moved path, retain
+  inc still present for a non-local array return) and three
+  `TestSelfHostRcArm64` parity cases (move-bare-local,
+  move-with-sibling-sweep, return-param-not-moved). Full regression:
+  std-test (JSON), bootstrap/fixpoint (x86 + arm64), all RC suites —
+  green, detector 0. Next Phase-4 candidates: drop-on-last-use
+  (release an array local right after its final read instead of at the
+  exit sweep, shrinking live ranges) and FBIP reuse (route a
+  uniquely-owned about-to-die buffer straight into the next same-size
+  allocation, skipping free+alloc).

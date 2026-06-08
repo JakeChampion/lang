@@ -985,6 +985,31 @@ pub function needs_rc_inc_on_alias(e: parser.Expr, s: EmitState): boolean {
     return false;
 }
 
+// move_on_return_idx implements Perceus move-on-return for owned array
+// locals. When `return e` returns `e` that is a bare ExprIdent naming an
+// array-typed LOCAL whose slot index is >= n_params (i.e. NOT a borrowed
+// parameter), the buffer can be MOVED to the caller: the return-retain
+// inc and the exit sweep's dec of that one slot are a balanced pair on
+// the same value, so eliding BOTH hands the array to the caller at its
+// current rc with identical net effect. Returns that local's index for
+// the caller to (a) skip the return inc and (b) exclude from the sweep;
+// returns -1 when no move applies (non-ident, non-array, or a borrowed
+// param). Eliding an inc/dec pair on one slot is net-zero regardless of
+// any aliasing of the same buffer through other slots, so this is safe.
+pub function (s: EmitState) move_on_return_idx(e: parser.Expr): i32 {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (!s.has_local(id.name)) { return 0 - 1; }
+            if (!ty_is_array_like(s.local_type_of(id.name))) { return 0 - 1; }
+            var idx: i32 = (0 - s.lookup_local(id.name)) / 8 - 1;
+            if (idx < s.n_params) { return 0 - 1; }
+            return idx;
+        },
+        _ => { return 0 - 1; }
+    }
+    return 0 - 1;
+}
+
 pub function is_map(t: Ty): boolean {
     match (t) {
         TyMapAny(_) => { return true; },

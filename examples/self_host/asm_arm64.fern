@@ -3067,11 +3067,14 @@ function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32)
 // short-circuits null / low-address / sentinel, so an unassigned
 // (zero-init) slot is a no-op. Clobbers x0 (and the dec helper's
 // temps); callers needing a live value across the sweep save it first.
-function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
+//
+// `excl` is the local index to SKIP (Perceus move-on-return elides the
+// dec for the slot handed to the caller); pass -1 to sweep all.
+function emit_array_exit_dec_excl(s: asmcore.EmitState, excl: i32): asmcore.EmitState {
     var i: i32 = s.n_params;
     var any: boolean = false;
     while (i < s.local_names.len()) {
-        if (asmcore.ty_is_array_like(s.local_types[i])) {
+        if (i != excl && asmcore.ty_is_array_like(s.local_types[i])) {
             var off: i32 = 0 - 8 * (i + 1);
             s = s.frame_ldr("x0", off);                 // slot value
             s = s.write("    str x0, [sp, #-16]!\n");    // dec arg
@@ -3085,6 +3088,10 @@ function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
+    return emit_array_exit_dec_excl(s, 0 - 1);
+}
+
 function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
     match (stmt) {
         // StmtDefer is lowered away (parser.lower_defers) before emit; this
@@ -3094,6 +3101,10 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
         parser.StmtDefer(_) => { return s.write("    // unsupported: StmtDefer survived lowering\n"); },
         parser.StmtReturn(r) => {
             var ret_is_arr: boolean = asmcore.ty_is_array_like(asmcore.infer_expr_type(r.value, s));
+            // Perceus move-on-return: returning a bare owned array local
+            // hands its buffer to the caller — skip the retain inc and
+            // exclude that slot from the sweep (a balanced pair).
+            var mov_idx: i32 = s.move_on_return_idx(r.value);
             s = emit_expr(r.value, s);
             if (s.in_function) {
                 // Function return: pop value to x0. Perceus exit: retain
@@ -3101,16 +3112,18 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 // (which dec's its slot), then sweep, then restore the
                 // result and ret. Net rc for the returned buffer is
                 // unchanged for the caller. `mov sp, x29` undoes the
-                // prologue's sub sp; ldp post-indexes sp by 16.
+                // prologue's sub sp; ldp post-indexes sp by 16. When
+                // move-on-return applies (mov_idx >= 0) the inc is elided
+                // and the sweep skips that slot, so the pair cancels.
                 s = s.write("    ldr x0, [sp], #16\n");
-                if (ret_is_arr) {
+                if (ret_is_arr && mov_idx < 0) {
                     s = s.mark_heap();
                     s = s.write("    str x0, [sp, #-16]!\n");
                     s = s.write("    bl __fn___fern_rc_inc\n");
                     s = s.write("    add sp, sp, #16\n");
                 }
                 s = s.write("    str x0, [sp, #-16]!\n");   // save result across the sweep
-                s = emit_array_exit_dec(s);
+                s = emit_array_exit_dec_excl(s, mov_idx);
                 s = s.write("    ldr x0, [sp], #16\n");      // restore result
                 s = s.write("    mov sp, x29\n");
                 s = s.write("    ldp x29, x30, [sp], #16\n");

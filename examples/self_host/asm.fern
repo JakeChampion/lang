@@ -3301,11 +3301,15 @@ function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32)
 // unassigned (zero-init) slot or a non-pointer is a no-op. Clobbers
 // %rax/%rcx — callers needing a live value across the sweep save it
 // first. Emitted at every in-function return + the fallback exit.
-function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
+//
+// `excl` is the local index to SKIP (Perceus move-on-return elides the
+// dec for the slot whose buffer is being handed to the caller); pass -1
+// to sweep every array local.
+function emit_array_exit_dec_excl(s: asmcore.EmitState, excl: i32): asmcore.EmitState {
     var i: i32 = s.n_params;
     var any: boolean = false;
     while (i < s.local_names.len()) {
-        if (asmcore.ty_is_array_like(s.local_types[i])) {
+        if (i != excl && asmcore.ty_is_array_like(s.local_types[i])) {
             var off: i32 = 0 - 8 * (i + 1);
             s = s.write("    pushq " + asmcore.i32_to_string(off) + "(%rbp)\n");  // slot value as dec arg
             s = s.write("    call __fn___fern_arr_dec\n");
@@ -3316,6 +3320,10 @@ function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (any) { s = s.mark_heap(); }
     return s;
+}
+
+function emit_array_exit_dec(s: asmcore.EmitState): asmcore.EmitState {
+    return emit_array_exit_dec_excl(s, 0 - 1);
 }
 
 function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
@@ -3329,6 +3337,10 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // Capture whether we're returning an rc-tracked array BEFORE
             // emitting (the type oracle reads the current locals).
             var ret_is_arr: boolean = asmcore.ty_is_array_like(asmcore.infer_expr_type(r.value, s));
+            // Perceus move-on-return: returning a bare owned array local
+            // hands its buffer to the caller directly — skip the retain
+            // inc and exclude that slot from the sweep (a balanced pair).
+            var mov_idx: i32 = s.move_on_return_idx(r.value);
             s = emit_expr(r.value, s);
             if (s.in_function) {
                 // Function return: result in %rax. Perceus exit: if the
@@ -3336,16 +3348,18 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 // it survives the local release sweep (which dec's its
                 // slot); then sweep the array locals, then restore the
                 // result and ret. Net rc for the returned buffer is
-                // unchanged for the caller.
+                // unchanged for the caller. When move-on-return applies
+                // (mov_idx >= 0) the inc is elided and the sweep skips
+                // that slot, so the pair cancels.
                 s = s.write("    popq %rax\n");
-                if (ret_is_arr) {
+                if (ret_is_arr && mov_idx < 0) {
                     s = s.mark_heap();
                     s = s.write("    pushq %rax\n");
                     s = s.write("    call __fn___fern_rc_inc\n");
                     s = s.write("    addq $8, %rsp\n");
                 }
                 s = s.write("    pushq %rax\n");        // save result across the sweep
-                s = emit_array_exit_dec(s);
+                s = emit_array_exit_dec_excl(s, mov_idx);
                 s = s.write("    popq %rax\n");          // restore result
                 s = s.write("    leave\n");
                 s = s.write("    ret\n");
