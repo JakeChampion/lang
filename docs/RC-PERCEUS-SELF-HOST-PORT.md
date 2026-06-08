@@ -748,3 +748,35 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   exit sweep, shrinking live ranges) and FBIP reuse (route a
   uniquely-owned about-to-die buffer straight into the next same-size
   allocation, skipping free+alloc).
+- 2026-06-08: **wasm backend RC — Phase 0c foundation (additive).** The
+  third production backend (`wasm.fern`) had zero RC; this lands the
+  reference-counting runtime, the wasm32 mirror of the x86-64 / arm64
+  `__fn___fern_rc_*` helpers. New `rc_runtime_helpers(heap_base)` emits
+  `$__fern_rc_inc` / `$__fern_rc_dec` / `$__fern_rc_is_unique` /
+  `$__fern_rc_underflow_count` plus the raw-memory pokes `$__alloc` (→
+  bump heap) / `$__load_i32` / `$__store_i32` — gated on use via
+  `module_uses_rcmem`, so existing modules are byte-for-byte unchanged
+  (the whole wasm emit + binary suites stay green). rc word is an i32 at
+  [data-8]; guard chain matches the asm backends (null → SSO low-bit →
+  low-address → static sentinel) with ONE wasm-specific correction: the
+  low-address threshold is `heap_base` (the bump-heap start), not the
+  asm's fixed `0x10000` — wasm linear memory starts low, so a high fixed
+  guard would reject every real heap pointer (caught immediately: all
+  four non-trivial cases failed until the threshold was lowered). Any
+  pointer below heap_base is static data (sentinel-guarded) or a
+  non-pointer, so this is strictly more precise than the asm constant.
+  Over-release bumps `$__fern_rc_underflow`. Coverage: a new
+  `TestSelfHostRcRuntimeWasm` reuses the shared `rcRuntimeCases` (the
+  same six programs that gate x86/arm64 Phase 0c — inc/dec arithmetic,
+  is_unique true/false, underflow detected/clean, null-safe), hand-
+  building rc-headered objects through `__alloc` + `__store_i32`. NB the
+  test file is `self_host_wasm_rc_test.go` (not `..._rc_wasm_test.go`):
+  a trailing `_wasm` before `_test.go` is read by the Go toolchain as a
+  `wasm` GOARCH build constraint and silently excludes the file on
+  linux. This is additive only — it does NOT touch the wasm array layout
+  or any existing emit path, so it can't regress the x86/arm64 bootstrap
+  (different binaries) or the existing wasm tests. Next for wasm parity:
+  migrate the array layout to carry the rc word (`[cap, rc, len, elems]`
+  analogue at wasm32 widths), then mirror the inc-on-alias /
+  construction-store / exit-sweep / free machinery the asm backends
+  already have — each a self-contained slice on this foundation.
