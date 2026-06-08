@@ -3164,11 +3164,23 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // Store fn_addr at box[0].
             s = s.write("    leaq " + body_lbl + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
-            // Store captures (read from outer locals).
+            // Store captures (read from outer locals). Perceus
+            // construction inc: a captured rc-tracked array is retained
+            // (the closure box owns the reference) — box ptr preserved
+            // across the retain call.
             var oi: i32 = 0;
             while (oi < n_caps) {
                 var outer_off: i32 = s.lookup_local(caps[oi]);
                 s = s.write("    movq " + asmcore.i32_to_string(outer_off) + "(%rbp), %rcx\n");
+                if (asmcore.ty_is_array_like(s.local_type_of(caps[oi]))) {
+                    s = s.mark_heap();
+                    s = s.write("    pushq %rax\n");            // save box ptr
+                    s = s.write("    pushq %rcx\n");            // retain arg = capture
+                    s = s.write("    call __fn___fern_rc_inc\n");
+                    s = s.write("    addq $8, %rsp\n");
+                    s = s.write("    movq %rax, %rcx\n");       // value (helper returns ptr)
+                    s = s.write("    popq %rax\n");             // restore box ptr
+                }
                 s = s.write("    movq %rcx, " + asmcore.i32_to_string((oi + 1) * 8) + "(%rax)\n");
                 oi = oi + 1;
             }

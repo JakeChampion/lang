@@ -539,3 +539,50 @@ func TestSelfHostRcConstructContainersX86_64(t *testing.T) {
 		})
 	}
 }
+
+// Phase 1d (closure capture): a lambda capturing an rc-tracked array
+// retains the buffer (the closure box owns the reference). Uses the
+// block-form lambda (`function (): T { ... }`); the arrow form
+// `() => e` capturing a local is a separate pre-existing self-host
+// limitation. inc-only / detector-clean / safe (free off).
+func TestSelfHostRcClosureX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Local closure capturing an array local.
+		{"closure-captures-array", "function main(): i32 { var xs: i32[] = [3, 4, 5]; var f = function (): i32 { return xs[1] + xs[2]; }; return f() + __fern_rc_underflow_count(); }", 9},
+		// Closure escaping its defining function, capturing an array.
+		{"closure-escapes-with-array", "function mk(xs: i32[]): () => i32 { return function (): i32 { return xs[0] + xs[1]; }; } function main(): i32 { var a: i32[] = [3, 4]; var f = mk(a); return f() + __fern_rc_underflow_count(); }", 7},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
