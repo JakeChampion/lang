@@ -163,7 +163,9 @@ findings. Ranked by leverage.
     `util.base_type_name` (asmcore pub + wasm + checker's two names; asm/asm_arm64
     cross-module callers updated).
   - `is_all_digits` — **done** (`asmcore` pub + `ssa` + `wasm`, all already util).
-  - `index_of_str` — **done** (SH-007 fixed); `index_of_byte`, `contains` (substring),
+  - `index_of_str` — **done** (SH-007 fixed). `contains` (substring) — **done**
+    (`asmcore` pub + `disasm` + asm/asm_arm64 callers; `watbin`/`literate` keep
+    their own copies — deliberately self-contained modules). `index_of_byte`
     `str_join_range`/`str_join_chunks`, `pred_slot`, `block_index`, `last_slash`,
     `join_path`, `module_name`, `resolve_path`, `dir_of`, `is_local`.
   - Named ASCII constants (`DOT=46`, `LBRACKET=91`, `RBRACKET=93`, `COMMA=44`,
@@ -185,7 +187,12 @@ findings. Ranked by leverage.
   fragility findings.
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
-- [ ] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** Every analysis
+- [ ] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _Note (investigated):_
+  the most-duplicated walker, `collect_idents_expr`, has **semantically diverged**
+  across copies — `wasm`'s dedups idents (`if (!contains_str(acc, …))`) while
+  `asmcore`/`ssa` append unconditionally — so it is NOT a safe mechanical merge;
+  a real `fold` must reconcile these behaviours deliberately. (`asmcore` ≡ `ssa`
+  modulo whitespace; `wasm`/`vm` differ.) Every analysis
   re-enumerates all Expr/Stmt variants by hand: `parser.fern` ~10 walkers
   (`expr_mentions:1574`, `mono_*`, `ms_*`, `rw_call_*`, …); `checker.fern` ~15
   scope-threading passes (`ret_diags`, `lret_*`, `mx_*`, `slit_diags`,
@@ -295,12 +302,11 @@ appendix §6.)
   immutable parallel arrays rebuilt per op (O(n²)); block scoping via length-trim
   is off-by-one-fragile — extract scope-frame `Env`/`LocalsTable` + `stack_drop`/
   `stack_take_top` helpers (used ~6× by hand today).
-- [~] **SH-048 — `interp.fern:237-680` / `vm.fern:660-998`** `eval_expr` (~440 lines)
+- [x] **SH-048 — `interp.fern:237-680` / `vm.fern:660-998`** `eval_expr` (~440 lines)
   & `compile_expr` (~340) — extract `eval_binary`/`eval_unary` (mirror the VM's
-  `apply_binary`) and `compile_args` (4 near-identical arg loops). _Partial:_
-  the ~108-line `ExprBinary` body is now `eval_binary(op, lv, rv)` (pure in its
-  operands), shrinking `eval_expr`'s arm to a 4-line head + delegation. Still
-  open: `eval_unary`, and the VM-side `compile_args` factoring.
+  `apply_binary`) and `compile_args` (4 near-identical arg loops). _Done:_
+  `eval_binary` and now `eval_unary` extracted from interp's `eval_expr`; the
+  VM's six near-identical arg-emit loops folded into one `compile_args`.
 - [ ] **SH-049 — `ssa.fern:69` SInst/STerm are string-tagged flat records** with an
   `imm` field overloaded as value / param-index / **width 32-64** / alloc-count /
   call-return-kind (`:2983`) — make it a tagged union (checker-enforced exhaustive
@@ -362,3 +368,69 @@ file stays the single worklist. Files audited in full: `lexer`, `parser`,
 `wasm`, `watbin`, `elf`, `x86_gas`, `disasm`, `printer`, `literate`,
 `wit_decode`, `wit_compose`, plus the `*_run` / `pipeline` / `bundle_*` /
 `fern` driver group.
+
+---
+
+## Appendix — SH-022 design proposal (generic AST traversal)
+
+_Investigated during the SH-020 work; this is the plan to implement, not yet done._
+
+### The problem, concretely
+There is no shared AST traversal, so every pass hand-enumerates the Expr/Stmt
+variants. Current hand-written Expr-variant arm counts: **wasm 180, checker 89,
+asmcore 30, ssa 28** (plus the parser's own ~10 rewrite passes). Adding a field or
+variant to the AST means touching all of them; a missed arm is a silent bug.
+
+### Key constraint discovered
+The walkers are **not** mechanically mergeable — they've semantically diverged.
+The clearest case: `collect_idents_expr` exists in `asmcore`, `ssa`, `vm`, `wasm`;
+`asmcore` ≡ `ssa` (modulo whitespace), but **`wasm` dedups** idents
+(`if (!contains_str(acc, id.name))`) while the others append unconditionally, and
+`vm` differs again. So a single `fold` must make that policy a parameter, not
+assume one behaviour. This is why SH-022 is design work, not a sweep.
+
+### What the bootstrap language supports
+Closures/lambdas with captures lower on every backend (`OpMakeClosure` etc.), and
+function-typed parameters work — so a higher-order traversal taking a per-node
+callback is feasible. The functional/immutable style means a **fold**
+(`acc -> acc`) fits better than a mutating visitor.
+
+### Proposed shape
+Add `astwalk.fern` (imports `parser` only) with two primitives:
+
+```
+// Post-order fold: visit every sub-expression, threading an accumulator.
+// `f` is called once per Expr node (leaves and composites) with the node
+// and the current acc; astwalk handles all the structural recursion.
+pub function fold_expr[A](e: parser.Expr, acc: A, f: fn(parser.Expr, A) -> A): A
+pub function fold_stmt[A](s: parser.Stmt, acc: A, f: ...): A   // recurses into exprs + nested stmts
+```
+
+If parser generics (`[A]`) aren't usable here yet (verify first — see SH-021/
+generics status), fall back to a monomorphic `string[]`-accumulator fold
+(`fold_expr_strs`) which already covers the biggest cluster (the `collect_*`
+ident/var-name walkers). The diverged dedup policy becomes the caller's `f`
+(append vs. append-if-absent), so wasm keeps its set semantics explicitly.
+
+### Staged rollout (one PR each, lowest-risk first)
+1. `astwalk.fern` + `fold_expr_strs` + convert the **collect-ident family** in
+   `ssa`/`vm` (identical copies; not in `///MODULE` bundles → low blast radius).
+   Leave `wasm`'s deduping version until step 3 so its policy change is isolated
+   and reviewable.
+2. Convert `asmcore`'s `collect_idents_*` — note `asmcore` is hand-bundled by the
+   asm-path self-hosting tests, so add `///MODULE astwalk` to those bundles
+   (same cascade handled for `util` in SH-020; **also check dynamic-marker
+   bundles** — `interp_driver`-style `"///MODULE " + name` — which the literal
+   sweeps miss).
+3. Convert `wasm`'s deduping collector, passing the append-if-absent `f`; pin the
+   set-semantics with a test so the behaviour is explicit, not incidental.
+4. Generalise the rewrite passes (constfold/flatten/monomorph) onto a
+   `map_expr`/`map_stmt` (rebuilding fold) — larger, do last.
+
+### Risks / test strategy
+- Behaviour drift on the diverged collectors — mitigate by converting identical
+  copies first and isolating each policy change (step 3) with its own pinning test.
+- Bundle cascades (incl. dynamic-marker bundles) — grep both `///MODULE astwalk`
+  and `"///MODULE " +` builders.
+- Verify locally on x86 (cli/fixpoint/stage2/cross-validation) + wasm via
+  wasmtime; arm64/macOS via CI, as throughout SH-020.

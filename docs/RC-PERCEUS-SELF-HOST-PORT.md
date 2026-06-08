@@ -923,3 +923,51 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the exit-sweep / overwrite decs from `__fern_rc_dec` to `__fern_arr_dec`
   and validate detector-clean + reclaim-churn, mirroring the asm Phase-3
   flip.
+- 2026-06-08: **wasm backend RC — FREE FLIPPED ON. wasm now reclaims
+  array buffers, reaching array-RC parity with the asm backends.** The
+  culmination of the wasm rollout. (1) `__fern_alloc` is now freelist-
+  aware: it rounds the request to 8, and pops a same-size-class block from
+  the size-class freelist before bumping. (2) `__fern_arr_box` records the
+  rounded block size in the header slot at [a-4] (the old pad word) so
+  free can pick the class without knowing the element width. (3) New
+  `__fern_arr_dec`: at rc 1 it FREES — clears the rc word (a double-free
+  then reads 0 and ticks the over-release detector instead of corrupting)
+  and pushes the block onto its class (the next pointer parked in the bsz
+  slot, which arr_box rewrites on reuse). (4) The size-class freelist is a
+  zero-initialised 8192-entry region carved between the static data and
+  the bump heap (covers blocks ≤ 64 KiB; larger bump-only); heap_base sits
+  above it and doubles as the rc low-address guard. (5) The exit-sweep and
+  reassign-overwrite decs switched from `__fern_rc_dec` to
+  `__fern_arr_dec`; reassign is cow-aware (`xs = xs.append(v)` returning
+  the same pointer skips the dec) and retains a new alias. (6) Two return
+  paths keep a returned buffer alive: **move-on-return** (a bare owned
+  array local is excluded from the sweep) and **return-retain** (any other
+  array result is inc'd across the sweep — this caught a real UAF where
+  `return wcat(o, …)` hands back the borrowed buffer `wcat` grew in place,
+  which the sweep would otherwise free under the caller; surfaced by the
+  shim-core self-test, fixed before merge). Coverage: new
+  `TestSelfHostRcFreeWasm` (freelist-reuse — a freed block is handed back
+  to a same-size alloc as an equal pointer; distinct-class non-aliasing;
+  reclaim-churn 100k cycles, value-correct + detector 0) plus the whole
+  wasm suite (emit / binary / readfile / shim / component, ~91 s) green
+  with free ON. Bootstrap-safe (wasm.fern only). Remaining for full
+  cross-backend parity: strings / structs / enums / maps reclamation
+  (Phase 1e, all three backends) and the further Perceus opts
+  (drop-on-last-use, FBIP reuse).
+- 2026-06-08: **wasm backend RC — freelist cap raised 64 KiB → 512 KiB
+  (asm parity).** The last array-RC parity gap between wasm and the asm
+  backends: asm recycles blocks up to 512 KiB (65536 size classes, #2412)
+  but wasm capped at 64 KiB (8192). Raised `fl_cells` 8192 → 65536, so the
+  freelist region grows 32 KiB → 256 KiB (still zero-init linear memory,
+  below the 1 MiB initial; bump heap starts above it) and wasm now recycles
+  the same block range — the larger token/AST arrays included, not just
+  small ones. Coverage: `TestSelfHostRcFreeWasm/reclaim-large-block` —
+  gen(20000) (cap 32768, a ~128 KiB block) is freed and the same-size
+  rebuild pops that block back (equal data pointer), which would NOT
+  recycle under the old 64 KiB cap. Full wasm suite (~100 s) green;
+  bootstrap-safe. **All three production backends (x86-64, arm64, wasm)
+  now have identical array reference counting + reclamation, including the
+  size-class freelist range.** Remaining for full Perceus parity with the
+  native compiler: non-array heap reclamation (strings / structs / enums /
+  maps — Phase 1e, all backends) and the liveness-based optimisations
+  (drop-on-last-use, FBIP reuse).

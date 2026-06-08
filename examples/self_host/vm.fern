@@ -614,6 +614,19 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
 // in the free-var pipeline.
 // has_str -> util.has_str (SH-020).
 
+// compile_args compiles each call argument in order, threading
+// ops + locals through. Extracted from compile_expr's several
+// near-identical arg-emit loops (SH-048).
+function compile_args(args: parser.Expr[], ops: Op[], lt: LocalsTable): CompileResult {
+    var i: i32 = 0;
+    while (i < args.len()) {
+        var r: CompileResult = compile_expr(args[i], ops, lt);
+        ops = r.ops; lt = r.lt;
+        i = i + 1;
+    }
+    return CompileResult { ops: ops, lt: lt };
+}
+
 function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult {
     match (e) {
         parser.ExprNumber(n) => {
@@ -689,31 +702,22 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     if (lt.idx_of(id.name) >= 0) {
                         ops = ops.append(op_load(lt.idx_of(id.name)));
                         var cai: i32 = 0;
-                        while (cai < c.args.len()) {
-                            var car: CompileResult = compile_expr(c.args[cai], ops, lt);
-                            ops = car.ops; lt = car.lt;
-                            cai = cai + 1;
-                        }
+                        var car: CompileResult = compile_args(c.args, ops, lt);
+                        ops = car.ops; lt = car.lt;
                         ops = ops.append(op_call_closure(c.args.len()));
                         return CompileResult { ops: ops, lt: lt };
                     }
                     if (lt.capture_idx_of(id.name) >= 0) {
                         ops = ops.append(op_load_capture(lt.capture_idx_of(id.name)));
                         var cpai: i32 = 0;
-                        while (cpai < c.args.len()) {
-                            var cpar: CompileResult = compile_expr(c.args[cpai], ops, lt);
-                            ops = cpar.ops; lt = cpar.lt;
-                            cpai = cpai + 1;
-                        }
+                        var cpar: CompileResult = compile_args(c.args, ops, lt);
+                        ops = cpar.ops; lt = cpar.lt;
                         ops = ops.append(op_call_closure(c.args.len()));
                         return CompileResult { ops: ops, lt: lt };
                     }
                     var ai: i32 = 0;
-                    while (ai < c.args.len()) {
-                        var ar: CompileResult = compile_expr(c.args[ai], ops, lt);
-                        ops = ar.ops; lt = ar.lt;
-                        ai = ai + 1;
-                    }
+                    var ar: CompileResult = compile_args(c.args, ops, lt);
+                    ops = ar.ops; lt = ar.lt;
                     ops = ops.append(op_call(id.name, c.args.len()));
                     return CompileResult { ops: ops, lt: lt };
                 },
@@ -737,11 +741,8 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                         // Emit args + a plain OpCall("ns.field",
                         // argc).
                         var qcai: i32 = 0;
-                        while (qcai < c.args.len()) {
-                            var qcar: CompileResult = compile_expr(c.args[qcai], ops, lt);
-                            ops = qcar.ops; lt = qcar.lt;
-                            qcai = qcai + 1;
-                        }
+                        var qcar: CompileResult = compile_args(c.args, ops, lt);
+                        ops = qcar.ops; lt = qcar.lt;
                         ops = ops.append(op_call(ns_hint + "." + fa.field, c.args.len()));
                         return CompileResult { ops: ops, lt: lt };
                     }
@@ -749,11 +750,8 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     var rr: CompileResult = compile_expr(fa.obj, ops, lt);
                     ops = rr.ops; lt = rr.lt;
                     var mi: i32 = 0;
-                    while (mi < c.args.len()) {
-                        var mr: CompileResult = compile_expr(c.args[mi], ops, lt);
-                        ops = mr.ops; lt = mr.lt;
-                        mi = mi + 1;
-                    }
+                    var mr: CompileResult = compile_args(c.args, ops, lt);
+                    ops = mr.ops; lt = mr.lt;
                     ops = ops.append(op_call_method(fa.field, c.args.len()));
                     return CompileResult { ops: ops, lt: lt };
                 },
@@ -764,11 +762,8 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
                     var ccr: CompileResult = compile_expr(c.callee, ops, lt);
                     ops = ccr.ops; lt = ccr.lt;
                     var cai2: i32 = 0;
-                    while (cai2 < c.args.len()) {
-                        var car2: CompileResult = compile_expr(c.args[cai2], ops, lt);
-                        ops = car2.ops; lt = car2.lt;
-                        cai2 = cai2 + 1;
-                    }
+                    var car2: CompileResult = compile_args(c.args, ops, lt);
+                    ops = car2.ops; lt = car2.lt;
                     ops = ops.append(op_call_closure(c.args.len()));
                     return CompileResult { ops: ops, lt: lt };
                 }

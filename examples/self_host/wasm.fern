@@ -172,6 +172,11 @@ struct Ctx {
     // True when the function returns nothing (void) — a `return` then
     // carries no operand, so the exit-sweep temp dance is skipped.
     ret_void: boolean,
+    // True when the function's declared return type is an array — a
+    // non-move array result is retained across the exit sweep so a result
+    // that aliases a swept local (e.g. `return wcat(o, …)` where wcat
+    // returns its borrowed buffer in place) isn't freed under the caller.
+    ret_is_array: boolean,
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -561,18 +566,27 @@ function init_is_owned_array(e: parser.Expr): boolean {
     return false;
 }
 
-// arr_exit_sweep emits the Perceus function-exit release: a dec of every
-// owned array local (cx.arr_swept). An unassigned slot (declared in a
-// not-taken branch) is 0, and the dec helper short-circuits null, so it
-// is a no-op. Clean while free is OFF (dec just decrements the rc word).
-function arr_exit_sweep(cx: Ctx): string {
+// arr_exit_sweep emits the Perceus function-exit release: a release
+// ($__fern_arr_dec, which frees at rc 1) of every owned array local
+// (cx.arr_swept), except `excl` — the Perceus move-on-return slot, whose
+// buffer is handed to the caller at its current rc (the return-retain
+// inc and this dec would be a balanced pair, so both are elided). Pass ""
+// to sweep all. An unassigned slot (declared in a not-taken branch) is 0,
+// and arr_dec short-circuits null, so it is a no-op.
+function arr_exit_sweep_excl(cx: Ctx, excl: string): string {
     var o: string = "";
     var i: i32 = 0;
     while (i < cx.arr_swept.len()) {
-        o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.arr_swept[i] + ")))\n";
+        if (cx.arr_swept[i] != excl) {
+            o = o + "    (drop (call $__fern_arr_dec (local.get $" + cx.arr_swept[i] + ")))\n";
+        }
         i = i + 1;
     }
     return o;
+}
+
+function arr_exit_sweep(cx: Ctx): string {
+    return arr_exit_sweep_excl(cx, "");
 }
 
 // init_is_arr_alias: the init is a bare ident naming an existing array
@@ -1374,7 +1388,7 @@ function extern_byte_array_param(t: string): boolean {
 // extern_field_is_scalar reports whether a record field type is a flattenable
 // scalar (a 8-/16-/32-bit integer — every self-host slot is i32-class).
 function extern_field_is_scalar(ft: string): boolean {
-    return ft == "i32" || ft == "u32" || ft == "i8" || ft == "u8" || ft == "i16" || ft == "u16";
+    return ft == "i32" || ft == "u32" || ft == "i8" || ft == "u8" || ft == "i16" || ft == "u16" || ft == "boolean";
 }
 
 // extern_record_all_scalar reports whether `t` is a known struct of 1..16
@@ -1458,8 +1472,7 @@ function extern_record_result_supported(mod: parser.Module, t: string): boolean 
             if (n == 0 || n > 16) { return false; }
             var j: i32 = 0;
             while (j < n) {
-                var ft: string = mod.structs[i].fields[j].type_name;
-                if (ft != "i32" && ft != "u32" && ft != "i8" && ft != "u8" && ft != "i16" && ft != "u16") { return false; }
+                if (!extern_field_is_scalar(mod.structs[i].fields[j].type_name)) { return false; }
                 j = j + 1;
             }
             return true;
@@ -1596,7 +1609,7 @@ function extern_plain_enum_sid(mod: parser.Module, t: string, dloc: string): str
 // so the low byte(s) at the field offset are the meaningful ones).
 function extern_field_load_op(ft: string): string {
     if (ft == "i8") { return "i32.load8_s"; }
-    if (ft == "u8") { return "i32.load8_u"; }
+    if (ft == "u8" || ft == "boolean") { return "i32.load8_u"; }
     if (ft == "i16") { return "i32.load16_s"; }
     if (ft == "u16") { return "i32.load16_u"; }
     return "i32.load";
@@ -1605,7 +1618,7 @@ function extern_field_load_op(ft: string): string {
 // extern_canon_field_size returns the canonical-ABI memory size (== alignment)
 // of a record field type: i8/u8 → 1, i16/u16 → 2, else 4.
 function extern_canon_field_size(ft: string): i32 {
-    if (ft == "i8" || ft == "u8") { return 1; }
+    if (ft == "i8" || ft == "u8" || ft == "boolean") { return 1; }
     if (ft == "i16" || ft == "u16") { return 2; }
     return 4;
 }
@@ -4234,11 +4247,30 @@ function exit_func(component_io: boolean): string {
 // heap_alloc_helpers emits the bump allocator: a `$heap` global starting
 // at `heap_base` (above all static data) and `$__fern_alloc` which bumps
 // it. Shared by string concat and array allocation.
-function heap_alloc_helpers(heap_base: i32): string {
+function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): string {
+    var hb: string = util.i32_to_string(heap_base);
+    var flb: string = util.i32_to_string(fl_base);
+    var flc: string = util.i32_to_string(fl_cells);
     var o: string = "";
-    o = o + "  (global $heap (mut i32) (i32.const " + util.i32_to_string(heap_base) + "))\n";
+    // The over-release detector global lives here (before $__fern_arr_dec,
+    // which bumps it, and before rc_runtime_helpers, which also reads it).
+    o = o + "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
+    o = o + "  (global $heap (mut i32) (i32.const " + hb + "))\n";
+    // Perceus size-class freelist: a per-class head pointer array at
+    // [fl_base .. fl_base + fl_cells*4), zero-initialised (empty lists) by
+    // wasm's zeroed linear memory. Class = roundup8(blocksize)/8. A freed
+    // block (rc reaching 0 in $__fern_arr_dec) is pushed onto its class;
+    // $__fern_alloc pops a same-class block before bumping. Blocks larger
+    // than fl_cells*8 bytes are bump-only (never recycled).
     o = o + "  (func $__fern_alloc (param $n i32) (result i32)\n";
-    o = o + "    (local $p i32)\n";
+    o = o + "    (local $p i32) (local $cls i32) (local $head i32)\n";
+    o = o + "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
+    o = o + "    (local.set $cls (i32.shr_u (local.get $n) (i32.const 3)))\n";
+    o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
+    o = o + "      (local.set $head (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+    o = o + "      (if (local.get $head) (then\n";
+    o = o + "        (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (i32.load (i32.add (local.get $head) (i32.const 4))))\n";
+    o = o + "        (return (local.get $head))))))\n";
     o = o + "    (local.set $p (global.get $heap))\n";
     o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
     // Grow linear memory when the bump pointer passes the current capacity
@@ -4248,17 +4280,47 @@ function heap_alloc_helpers(heap_base: i32): string {
     o = o + "      (then (drop (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))))))\n";
     o = o + "    (local.get $p))\n";
     // $__fern_arr_box(eb) -> a: allocate an rc-headered array block and
-    // return the DATA pointer `a`. Block layout: [rc@0][pad@4][len@8]
+    // return the DATA pointer `a`. Block layout: [rc@0][bsz@4][len@8]
     // [cap@12][elems@16..]; a = base+8, so the rc word sits at [a-8]
     // (matching the asm backends' [data-8] convention) while len@[a],
     // cap@[a+4], elems@[a+8] keep every a-relative array access unchanged.
-    // rc starts at 1 (the fresh owner). `eb` is the element-bytes
-    // (n*slot); the 16-byte header (rc+pad+len+cap) is added here.
+    // rc starts at 1 (the fresh owner). bsz (at [base+4] = [a-4]) records
+    // the rounded block size so $__fern_arr_dec can pick the freelist class
+    // without knowing the element width.
     o = o + "  (func $__fern_arr_box (param $eb i32) (result i32)\n";
-    o = o + "    (local $base i32)\n";
-    o = o + "    (local.set $base (call $__fern_alloc (i32.add (i32.const 16) (local.get $eb))))\n";
+    o = o + "    (local $base i32) (local $n i32)\n";
+    o = o + "    (local.set $n (i32.and (i32.add (i32.add (i32.const 16) (local.get $eb)) (i32.const 7)) (i32.const -8)))\n";
+    o = o + "    (local.set $base (call $__fern_alloc (local.get $n)))\n";
     o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
+    o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
     o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
+    // $__fern_arr_dec(a) -> a: Perceus array release. Same guard chain as
+    // the rc helpers (null / SSO low-bit / low-addr / sentinel). rc > 1:
+    // decrement. rc <= 0: over-release (detector++), no free. rc == 1:
+    // FREE — clear rc to 0 (a double-free then reads 0 and ticks the
+    // detector instead of corrupting) and push the block onto its size
+    // class (the next pointer is parked in the bsz slot at base+4, which
+    // $__fern_arr_box rewrites on reuse, so rc stays 0 while free).
+    o = o + "  (func $__fern_arr_dec (param $a i32) (result i32)\n";
+    o = o + "    (local $base i32) (local $rc i32) (local $cls i32)\n";
+    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
+    o = o + "    (local.set $base (i32.sub (local.get $a) (i32.const 8)))\n";
+    o = o + "    (local.set $rc (i32.load (local.get $base)))\n";
+    o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.gt_s (local.get $rc) (i32.const 1)) (then\n";
+    o = o + "      (i32.store (local.get $base) (i32.sub (local.get $rc) (i32.const 1)))\n";
+    o = o + "      (return (local.get $a))))\n";
+    o = o + "    (if (i32.le_s (local.get $rc) (i32.const 0)) (then\n";
+    o = o + "      (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))\n";
+    o = o + "      (return (local.get $a))))\n";
+    o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
+    o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
+    o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
+    o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))))\n";
+    o = o + "    (local.get $a))\n";
     return o;
 }
 
@@ -4286,7 +4348,7 @@ function heap_alloc_helpers(heap_base: i32): string {
 function rc_runtime_helpers(heap_base: i32): string {
     var lo: string = util.i32_to_string(heap_base);
     var o: string = "";
-    o = o + "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
+    // ($__fern_rc_underflow is defined in heap_alloc_helpers, emitted first.)
     // __alloc(n) -> ptr: forward to the bump allocator.
     o = o + "  (func $__alloc (param $n i32) (result i32)\n";
     o = o + "    (call $__fern_alloc (local.get $n)))\n";
@@ -5721,6 +5783,21 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             if (contains_str(st.cx.f64_names, a.target)) {
                 return st.w("    (local.set $" + a.target + " " + emit_f64(a.value, st.cx, 0) + ")\n");
             }
+            // Reassigning an owned array local: release the old buffer and
+            // retain a newly-aliased one. The new value is computed into a
+            // scratch first; the release is cow-aware — an in-place
+            // `xs = xs.append(v)` returns the SAME pointer, so dec'ing would
+            // over-release (the `i32.ne` guard skips it). A bare-ident alias
+            // (`xs = ys`) retains the new buffer so the exit sweep balances.
+            if (contains_str(st.cx.arr_swept, a.target)) {
+                st = st.w("    (local.set $__retv_i32 " + emit_expr(a.value, st.cx, 0) + ")\n");
+                st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + a.target + ")) (then (drop (call $__fern_arr_dec (local.get $" + a.target + ")))))\n");
+                st = st.w("    (local.set $" + a.target + " (local.get $__retv_i32))\n");
+                if (init_is_arr_alias(a.value, st.cx.arr_src)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + a.target + ")))\n");
+                }
+                return st;
+            }
             return st.w("    (local.set $" + a.target + " " + emit_expr(a.value, st.cx, 0) + ")\n");
         },
         parser.StmtReturn(r) => {
@@ -5746,13 +5823,30 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                     _ => { valstr = emit_expr(r.value, st.cx, 0); },
                 }
             } else { valstr = emit_expr(r.value, st.cx, 0); }
-            var sweep: string = arr_exit_sweep(st.cx);
+            // Perceus move-on-return: returning a bare owned array local
+            // hands its buffer to the caller — exclude it from the release
+            // sweep (otherwise arr_dec would free it before the caller reads
+            // it). The return-retain inc and that dec are a balanced pair.
+            var mov: string = "";
+            match (r.value) {
+                parser.ExprIdent(id) => { if (contains_str(st.cx.arr_swept, id.name)) { mov = id.name; } },
+                _ => {},
+            }
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov);
             // No owned array locals (or a void return): emit directly.
             if (sweep.len() == 0 || st.cx.ret_void) {
                 st = st.w(sweep);
                 return st.w("    (return " + valstr + ")\n");
             }
             st = st.w("    (local.set " + tmp + " " + valstr + ")\n");
+            // Perceus return-retain: an array result that is NOT a plain
+            // move-on-return local may alias a swept local (a callee that
+            // returns its borrowed buffer in place), so retain it across
+            // the sweep — the sweep's dec of the aliasing slot then nets to
+            // the caller's expected rc instead of freeing it underfoot.
+            if (st.cx.ret_is_array && mov.len() == 0) {
+                st = st.w("    (drop (call $__fern_rc_inc (local.get " + tmp + ")))\n");
+            }
             st = st.w(sweep);
             return st.w("    (return (local.get " + tmp + "))\n");
         },
@@ -6468,6 +6562,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_arr_kind: arr_kind_of_spelling(f.ret_type),
         arr_swept: [], arr_src: [],
         ret_void: !returns_value(f.ret_type),
+        ret_is_array: ty_spelling_is_array(f.ret_type),
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -7841,15 +7936,26 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_tostring: boolean = module_uses_tostring(mod);
     var has_rcmem: boolean = module_uses_rcmem(mod);
     var needs_heap: boolean = has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || export_needs_heap(mod) || has_rcmem || (component && io);
+    // Memory layout above the static data: the Perceus size-class freelist
+    // (65536 i32 heads = 256 KiB, covering blocks up to 512 KiB; zero-init
+    // by wasm's zeroed memory = empty lists), then the bump heap. heap_base
+    // is 8-aligned so every block (and thus the class = blocksize/8 scheme)
+    // lines up. heap_base is also the rc helpers' low-address guard, so the
+    // freelist region (below it) is never mistaken for a live heap object.
+    // 65536 classes matches the asm backends' freelist cap (512 KiB blocks)
+    // so wasm recycles the same range — the larger token/AST arrays included.
+    var fl_base: i32 = (tab.next + 16 + heap_extra + 7) / 8 * 8;
+    var fl_cells: i32 = 65536;
+    var heap_base: i32 = fl_base + fl_cells * 4;
     if (needs_heap) {
-        out = out + heap_alloc_helpers(tab.next + 16 + heap_extra);
+        out = out + heap_alloc_helpers(heap_base, fl_base, fl_cells);
     }
     // The Perceus RC runtime (__fern_rc_*) + raw-memory pokes (__alloc
     // forwards to the bump heap above). Emitted whenever the heap is — the
-    // array counting inc/exit-sweep emit $__fern_rc_inc / $__fern_rc_dec
+    // array counting inc/exit-sweep emit $__fern_rc_inc / $__fern_arr_dec
     // calls, and any heap program may carry array params to count.
     if (needs_heap) {
-        out = out + rc_runtime_helpers(tab.next + 16 + heap_extra);
+        out = out + rc_runtime_helpers(heap_base);
     }
     // component-io: the $fd_write shim over the preview2 stdout stream, so
     // every fd_write call site (print / write / print_int) works unchanged.
