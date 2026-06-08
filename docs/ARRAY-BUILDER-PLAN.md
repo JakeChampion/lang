@@ -133,7 +133,13 @@ takes the pragmatic, low-risk path.
    on every backend. Verified: `array-build` in the self-host prog
    (x86/arm64) + wasm-run suites, and an `array_build` differential case
    (Go vs self-host, x86-64 / arm64 / wasm — identical output).
-3. **`Map.build` / `MapBuilder`** — the symmetric map builder.
+3. **`Map.build` / `MapBuilder`** — ✅ **done (Go).** Same desugar
+   (`maybeDesugarMapBuild`): `b.insert(k, v);` → `b = b.insert(k, v)` on a
+   fresh `map_new(8)`-backed local. `insert` + `len` (the value-returning
+   `without` returns a tuple, so it's deferred). Parser test + e2e
+   (insert-while / insert-for-in / len-read / string-keys-overwrite /
+   churn on x86-64 / wasm / interp). *Self-host `parser.fern` parity:
+   follow-up* (mirrors the Array.build self-host port).
 4. **Migrate the genuine `arr[i] = v` sites** (x86_encode / arm64_native
    `buf[at]=`, the `word_freq` sort, `interp` `bvals[bi]=`) to builders or
    `arr.with`, then land **E056** (subscript assignment is read-only),
