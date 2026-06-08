@@ -643,22 +643,27 @@ world-driven composer (P2) wires it.
      the self-host struct's 4-byte slots, so the wrapper reads each with a
      width+sign-aware load (`extern_field_load_op`) and stores it into the wider
      slot; for word-only records the layouts coincide. **A nested-record field is
-     also lifted (one level)** (mirroring the Go side): the canonical area inlines
-     the nested record's leaves at the nested record's alignment
-     (`extern_canon_field_align` / `extern_canon_field_csize` / nesting-aware
-     `extern_canon_top_off` + `extern_canon_record_size_nested`), and the wrapper
-     allocs a separate inner self-host struct per nested field, fills it from the
-     inlined canonical offsets, and stores its pointer in the outer slot. A
-     single-leaf-via-nested result (returned by value) is rejected — only a single
-     *scalar* field is `extern_record_ret_direct`-eligible (the by-value Direct
-     wrapper can't reconstruct nesting). Gated by
+     also lifted, to *arbitrary depth*** (mirroring the Go side): the canonical
+     area inlines every nested record's leaves at each level's alignment
+     (recursive `extern_canon_field_align` / `extern_canon_field_csize` /
+     `extern_canon_top_off` / `extern_canon_record_size_nested`), the gate recurses
+     (`extern_record_nestable` / `extern_record_leaf_count`), and
+     `extern_emit_record_fill` recurses the materialization — allocating one inner
+     self-host struct per node and wiring child pointers into their parents
+     bottom-up, with one `$inner<depth>` scratch local per nesting level
+     (`extern_record_depth` sizes them). A single-leaf-via-nested result (returned
+     by value) is rejected — only a single *scalar* field is
+     `extern_record_ret_direct`-eligible (the by-value Direct wrapper can't
+     reconstruct nesting). Gated by
      `TestSelfHostExternRecordResultCustomProvider` (a `make-point: func(a, b:
      s32) -> record { x, y: s32 }`, fields read back),
      `TestSelfHostExternRecordResultSubwordCustomProvider` (a `make-mix: func()
      -> record { a: s8, b: u16, c: s32 }` with `{-5, 300, 1000}` at canonical
-     offsets 0/2/4), and `TestSelfHostExternRecordResultNestedCustomProvider` (a
-     `make-line: func(...) -> record line { p: point, q: point }`; the Fern side
-     reads `l.p.x`/`l.q.y`).
+     offsets 0/2/4), `TestSelfHostExternRecordResultNestedCustomProvider` (one
+     level — a `make-line: func(...) -> record line { p: point, q: point }`; reads
+     `l.p.x`/`l.q.y`), and `TestSelfHostExternRecordResultDeepNestedCustomProvider`
+     (three levels — `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` /
+     `point { x, y }`; reads `o.l.p.x` … `o.r.n`).
    - **Self-host port — sum-type (option/result) params — ✅ done.** An
      Option/Result `@import` parameter flattens to (disc, payload). A self-host
      enum is a heap box `[tag:i32 @0][payload:i32 @4]` (Some/Ok=0, None/Err=1) —
@@ -776,10 +781,9 @@ world-driven composer (P2) wires it.
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
    - Still rejected (next slices): deeper nesting for record *params* (still one
-     level — the param leaf carries a single `DerefOffset`, not a deref chain) and
-     the self-host port of deeper-nested results (the Go result side now recurses
-     to arbitrary depth); non-uniform / multi-payload `variant`s;
-     sub-4-byte-element `list<T>` *results*
+     level, both backends — the param leaf carries a single `DerefOffset`, not a
+     deref chain); non-uniform / multi-payload `variant`s; sub-4-byte-element
+     `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above). The
      multi-component harness (`TestExternImportCustomProvider`) is the test

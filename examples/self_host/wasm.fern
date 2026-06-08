@@ -1448,7 +1448,10 @@ function extern_record_all_scalar(mod: parser.Module, t: string): boolean {
 }
 
 // extern_record_leaf_count is the total number of flattened scalar leaves of a
-// record param, recursing one level into a nested all-scalar record field.
+// record, recursing into nested record fields to arbitrary depth. (Record params
+// only flatten one level — they reject deeper nesting at the
+// extern_record_all_scalar check before reaching here — but record *results*
+// nest arbitrarily, so the count recurses fully.)
 function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
     var i: i32 = 0;
     while (i < mod.structs.len()) {
@@ -1459,10 +1462,58 @@ function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
             while (j < n) {
                 var ft: string = mod.structs[i].fields[j].type_name;
                 if (extern_field_is_scalar(ft)) { leaves = leaves + 1; }
-                else { leaves = leaves + struct_field_count(mod.structs, ft); }
+                else { leaves = leaves + extern_record_leaf_count(mod, ft); }
                 j = j + 1;
             }
             return leaves;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// extern_record_nestable reports whether `t` is a record (struct) lowerable as a
+// nested result field to arbitrary depth: 1..16 fields, each a flattenable scalar
+// OR itself a nestable record. (The result-side counterpart of
+// extern_record_all_scalar, which is one-level only and gates params.)
+function extern_record_nestable(mod: parser.Module, t: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        if (mod.structs[i].name == t) {
+            var n: i32 = mod.structs[i].fields.len();
+            if (n == 0 || n > 16) { return false; }
+            var j: i32 = 0;
+            while (j < n) {
+                var ft: string = mod.structs[i].fields[j].type_name;
+                if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft)) { return false; }
+                j = j + 1;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// extern_record_depth is the maximum record-nesting depth of result struct `t`:
+// 0 if all fields are scalar, 1 for one level of nested records, N for N levels.
+// Used to reserve one scratch inner-struct local per level in the result wrapper.
+function extern_record_depth(mod: parser.Module, t: string): i32 {
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        if (mod.structs[i].name == t) {
+            var n: i32 = mod.structs[i].fields.len();
+            var maxd: i32 = 0;
+            var j: i32 = 0;
+            while (j < n) {
+                var ft: string = mod.structs[i].fields[j].type_name;
+                if (!extern_field_is_scalar(ft)) {
+                    var d: i32 = 1 + extern_record_depth(mod, ft);
+                    if (d > maxd) { maxd = d; }
+                }
+                j = j + 1;
+            }
+            return maxd;
         }
         i = i + 1;
     }
@@ -1494,13 +1545,14 @@ function extern_record_param_supported(mod: parser.Module, t: string): boolean {
 }
 
 // extern_record_result_supported is the result-side gate: 1..16 fields, each a
-// scalar (8-/16-/32-bit integer) OR a nested all-scalar record (flattened inline
-// one level, the canonical ABI inlines a nested record). Sub-word fields
-// (s8/s16/u8/u16) are supported via a dual layout — the canonical return-area
-// packs them at their natural 1-/2-byte size + alignment (extern_canon_top_off /
-// extern_canon_record_size_nested), which differs from the self-host struct's
-// 4-byte slots; the wrapper reads each with a width+sign-aware load and stores
-// it into the wider slot, allocating a separate inner struct per nested field.
+// scalar (8-/16-/32-bit integer) OR a nested record (flattened inline by the
+// canonical ABI, to **arbitrary depth** via extern_record_nestable). Sub-word
+// fields (s8/s16/u8/u16) are supported via a dual layout — the canonical
+// return-area packs them at their natural 1-/2-byte size + alignment
+// (extern_canon_top_off / extern_canon_record_size_nested), which differs from
+// the self-host struct's 4-byte slots; the wrapper reads each with a
+// width+sign-aware load and stores it into the wider slot, allocating a separate
+// inner struct per nested node (one scratch local per nesting level).
 //
 // Single-leaf-via-nested is rejected: a 1-leaf record returns by value (Direct),
 // but the by-value wrapper can't reconstruct a nested struct, so only a single
@@ -1514,7 +1566,7 @@ function extern_record_result_supported(mod: parser.Module, t: string): boolean 
             var j: i32 = 0;
             while (j < n) {
                 var ft: string = mod.structs[i].fields[j].type_name;
-                if (!extern_field_is_scalar(ft) && !extern_record_all_scalar(mod, ft)) { return false; }
+                if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft)) { return false; }
                 j = j + 1;
             }
             var leaves: i32 = extern_record_leaf_count(mod, t);
@@ -1669,55 +1721,17 @@ function extern_canon_field_size(ft: string): i32 {
     return 4;
 }
 
-// extern_canon_field_off returns the canonical-ABI memory offset of field `idx`
-// in struct `tn`: each field placed at its natural size+alignment (the layout
-// the host writes a record result into the return area).
-function extern_canon_field_off(structs: parser.StructDecl[], tn: string, idx: i32): i32 {
-    var pos: i32 = 0;
-    var i: i32 = 0;
-    while (i < idx) {
-        var sz: i32 = extern_canon_field_size(struct_field_type_at(structs, tn, i));
-        var rem: i32 = pos % sz;
-        if (rem != 0) { pos = pos + (sz - rem); }
-        pos = pos + sz;
-        i = i + 1;
-    }
-    var fsz: i32 = extern_canon_field_size(struct_field_type_at(structs, tn, idx));
-    var frem: i32 = pos % fsz;
-    if (frem != 0) { pos = pos + (fsz - frem); }
-    return pos;
-}
-
-// extern_canon_record_size returns the canonical-ABI memory size of struct `tn`:
-// the end of the last field, rounded up to the record's max field alignment.
-function extern_canon_record_size(structs: parser.StructDecl[], tn: string): i32 {
-    var n: i32 = struct_field_count(structs, tn);
-    if (n == 0) { return 0; }
-    var last: i32 = n - 1;
-    var lsz: i32 = extern_canon_field_size(struct_field_type_at(structs, tn, last));
-    var size: i32 = extern_canon_field_off(structs, tn, last) + lsz;
-    var maxa: i32 = 1;
-    var i: i32 = 0;
-    while (i < n) {
-        var a: i32 = extern_canon_field_size(struct_field_type_at(structs, tn, i));
-        if (a > maxa) { maxa = a; }
-        i = i + 1;
-    }
-    var rem: i32 = size % maxa;
-    if (rem != 0) { size = size + (maxa - rem); }
-    return size;
-}
-
 // extern_canon_field_align returns the canonical-ABI alignment of a result-record
-// field type: a scalar's own size, or (for a nested all-scalar record, inlined by
-// the canonical ABI) the max alignment of the nested record's fields.
+// field type: a scalar's own size, or (for a nested record, inlined by the
+// canonical ABI) the max alignment of the nested record's fields, recursing to
+// arbitrary depth.
 function extern_canon_field_align(mod: parser.Module, ft: string): i32 {
     if (extern_field_is_scalar(ft)) { return extern_canon_field_size(ft); }
     var n: i32 = struct_field_count(mod.structs, ft);
     var maxa: i32 = 1;
     var i: i32 = 0;
     while (i < n) {
-        var a: i32 = extern_canon_field_size(struct_field_type_at(mod.structs, ft, i));
+        var a: i32 = extern_canon_field_align(mod, struct_field_type_at(mod.structs, ft, i));
         if (a > maxa) { maxa = a; }
         i = i + 1;
     }
@@ -1726,10 +1740,10 @@ function extern_canon_field_align(mod: parser.Module, ft: string): i32 {
 
 // extern_canon_field_csize returns the canonical-ABI size of a result-record
 // field type: a scalar's own size, or (for a nested record, inlined) the nested
-// record's canonical size.
+// record's canonical size, recursing to arbitrary depth.
 function extern_canon_field_csize(mod: parser.Module, ft: string): i32 {
     if (extern_field_is_scalar(ft)) { return extern_canon_field_size(ft); }
-    return extern_canon_record_size(mod.structs, ft);
+    return extern_canon_record_size_nested(mod, ft);
 }
 
 // extern_canon_top_off returns the canonical-ABI offset of top-level field `idx`
@@ -1771,6 +1785,37 @@ function extern_canon_record_size_nested(mod: parser.Module, tn: string): i32 {
     var rem: i32 = size % maxa;
     if (rem != 0) { size = size + (maxa - rem); }
     return size;
+}
+
+// extern_emit_record_fill emits WAT filling the self-host result struct whose
+// pointer is in local `dst` (its type id already stored by the caller) from the
+// canonical return area in local $rb, for struct `tn` whose canonical base offset
+// within the area is `canon_base`. A scalar field is read width+sign-aware at its
+// canonical offset; a nested record field allocs an inner struct into
+// $inner<depth>, recurses to fill it, and stores its pointer in the outer slot.
+// Recurses to arbitrary depth — the wrapper reserves one $inner local per level.
+// The single local per depth is safe across siblings: a child's pointer is stored
+// into its parent before the next sibling at that depth overwrites the local.
+function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string, canon_base: i32, depth: i32): string {
+    var out: string = "";
+    var nf: i32 = struct_field_count(mod.structs, tn);
+    var rc: i32 = 0;
+    while (rc < nf) {
+        var rcft: string = struct_field_type_at(mod.structs, tn, rc);
+        var coff: i32 = canon_base + extern_canon_top_off(mod, tn, rc);
+        if (extern_field_is_scalar(rcft)) {
+            out = out + "    (i32.store (i32.add (local.get " + dst + ") (i32.const " + util.i32_to_string(struct_field_off(rc)) + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))))\n";
+        } else {
+            var inner_local: string = "$inner" + util.i32_to_string(depth);
+            var inf: i32 = struct_field_count(mod.structs, rcft);
+            out = out + "    (local.set " + inner_local + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + inf * 4) + ")))\n";
+            out = out + "    (i32.store (local.get " + inner_local + ") (i32.const " + util.i32_to_string(struct_id(mod.structs, rcft)) + "))\n";
+            out = out + extern_emit_record_fill(mod, inner_local, rcft, coff, depth + 1);
+            out = out + "    (i32.store (i32.add (local.get " + dst + ") (i32.const " + util.i32_to_string(struct_field_off(rc)) + ")) (local.get " + inner_local + "))\n";
+        }
+        rc = rc + 1;
+    }
+    return out;
 }
 
 // struct_field_type_at returns the declared type of field `idx` in struct `tn`
@@ -2333,6 +2378,7 @@ function extern_wrappers(mod: parser.Module): string {
             // and pointed to by the outer slot, returning the outer pointer.
             var nf: i32 = struct_field_count(mod.structs, f.ret_type);
             var canonsz: i32 = extern_canon_record_size_nested(mod, f.ret_type);
+            var maxdepth: i32 = extern_record_depth(mod, f.ret_type);
             out = out + "  (func $" + f.name;
             var rp: i32 = 0;
             while (rp < f.params.len()) {
@@ -2340,7 +2386,14 @@ function extern_wrappers(mod: parser.Module): string {
                 rp = rp + 1;
             }
             out = out + " (result i32)\n";
-            out = out + "    (local $rb i32) (local $s i32) (local $inner i32)\n";
+            out = out + "    (local $rb i32) (local $s i32)";
+            // One scratch local per nesting level for the inner structs.
+            var dl: i32 = 0;
+            while (dl < maxdepth) {
+                out = out + " (local $inner" + util.i32_to_string(dl) + " i32)";
+                dl = dl + 1;
+            }
+            out = out + "\n";
             // Return area: canonical size, 8-aligned. Over-allocate by 7 so the
             // aligned pointer + area stays within the reserved block (the heap
             // bump isn't aligned, so the next alloc would otherwise overlap).
@@ -2352,34 +2405,11 @@ function extern_wrappers(mod: parser.Module): string {
                 ra = ra + 1;
             }
             out = out + " (local.get $rb))\n";
-            // Materialize the struct: type id at slot 0, then each field, read
-            // from its canonical return-area offset and stored into the 4-byte slot.
+            // Materialize the struct: type id at slot 0, then fill each field
+            // (scalar or nested) recursively from the inlined canonical area.
             out = out + "    (local.set $s (call $__fern_alloc (i32.const " + util.i32_to_string(4 + nf * 4) + ")))\n";
             out = out + "    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
-            var rc: i32 = 0;
-            while (rc < nf) {
-                var rcft: string = struct_field_type_at(mod.structs, f.ret_type, rc);
-                var coff: i32 = extern_canon_top_off(mod, f.ret_type, rc);
-                if (extern_field_is_scalar(rcft)) {
-                    out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(struct_field_off(rc)) + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))))\n";
-                } else {
-                    // Nested record: alloc the inner struct, fill each inner field
-                    // from the inlined canonical area (base coff + inner offset),
-                    // and store the inner pointer into the outer slot.
-                    var inf: i32 = struct_field_count(mod.structs, rcft);
-                    out = out + "    (local.set $inner (call $__fern_alloc (i32.const " + util.i32_to_string(4 + inf * 4) + ")))\n";
-                    out = out + "    (i32.store (local.get $inner) (i32.const " + util.i32_to_string(struct_id(mod.structs, rcft)) + "))\n";
-                    var ii: i32 = 0;
-                    while (ii < inf) {
-                        var ift: string = struct_field_type_at(mod.structs, rcft, ii);
-                        var ioff: i32 = coff + extern_canon_field_off(mod.structs, rcft, ii);
-                        out = out + "    (i32.store (i32.add (local.get $inner) (i32.const " + util.i32_to_string(struct_field_off(ii)) + ")) (" + extern_field_load_op(ift) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(ioff) + "))))\n";
-                        ii = ii + 1;
-                    }
-                    out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(struct_field_off(rc)) + ")) (local.get $inner))\n";
-                }
-                rc = rc + 1;
-            }
+            out = out + extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0);
             out = out + "    (local.get $s))\n";
         } else if (f.import_iface.len() > 0 && extern_sum_param_supported(f.ret_type)) {
             // option/result result (P4c): flattens to (disc, payload), returned
