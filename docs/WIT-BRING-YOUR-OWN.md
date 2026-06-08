@@ -455,15 +455,21 @@ world-driven composer (P2) wires it.
      `TestExternRecordResultSubwordCustomProvider` (a `make-mix: func() -> record
      { a: s8, b: u16, c: s32 }` with `{-5, 300, 1000}` packed at canonical
      offsets 0/2/4 — values that fail under the wrong-width/sign load). **A
-     nested-record field is also lifted (one level)**: the canonical area inlines
-     the nested record's leaves (at the nested record's alignment), and the
-     wrapper materializes a separate inner Fern struct per nested field
-     (`ExternRecordField.Nested`), fills it from the area, and stores its pointer
-     in the outer slot — recursively bottom-up. A single-leaf-via-nested result
-     (which the canonical returns by value) is rejected (the by-value Direct
-     wrapper can't reconstruct nesting). Gated by
-     `TestExternRecordResultNestedCustomProvider` (a `make-line: func(...) ->
-     record line { p: point, q: point }`; the Fern side reads `l.p.x`/`l.q.y`).
+     nested-record field is also lifted, to *arbitrary depth***: the canonical
+     area inlines every nested record's leaves (each at its own alignment), and
+     the wrapper materializes a separate inner Fern struct per node, wiring child
+     pointers into their parents bottom-up. `externResultLayoutRec` recurses the
+     canonical layout (building the `ExternRecordField.Nested` subtree;
+     `externCompositeAlign` gives each nested record's alignment), and
+     `buildExternRecordResultWrapper` recurses the materialization with one
+     scratch local per nesting level (`rrNestDepth` sizes them). A
+     single-leaf-via-nested result (which the canonical returns by value) is
+     rejected (the by-value Direct wrapper can't reconstruct nesting). Gated by
+     `TestExternRecordResultNestedCustomProvider` (one level — a `make-line:
+     func(...) -> record line { p: point, q: point }`; reads `l.p.x`/`l.q.y`) and
+     `TestExternRecordResultDeepNestedCustomProvider` (three levels —
+     `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` / `point { x, y }`;
+     reads `o.l.p.x` … `o.r.n`).
    - **Tuple params + results — ✅ done (Go).** A Fern tuple is laid out exactly
      like a struct (rc header + elements at the same packing), so the record
      machinery generalises to tuples for free: `externCompositeFieldTypes`
@@ -769,9 +775,11 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): the self-host port of nested-record results;
-     second-level / deeper nesting; non-uniform /
-     multi-payload `variant`s; sub-4-byte-element `list<T>` *results*
+   - Still rejected (next slices): deeper nesting for record *params* (still one
+     level — the param leaf carries a single `DerefOffset`, not a deref chain) and
+     the self-host port of deeper-nested results (the Go result side now recurses
+     to arbitrary depth); non-uniform / multi-payload `variant`s;
+     sub-4-byte-element `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above). The
      multi-component harness (`TestExternImportCustomProvider`) is the test

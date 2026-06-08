@@ -995,11 +995,36 @@ func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResu
 	if !ok || len(top) < 1 || len(top) > maxFlatExternRecordFields {
 		return nil, false
 	}
+	fields, fernSize, canonEnd, maxAlign, leaves, ok := externResultLayoutRec(top, info, 0)
+	if !ok || leaves < 1 || leaves > maxFlatExternRecordFields {
+		return nil, false
+	}
+	directScalar := len(fields) == 1 && fields[0].Nested == nil
+	if leaves == 1 && !directScalar {
+		// A single-leaf record flattens to one core value and so is returned by
+		// value — but the by-value (Direct) wrapper can't reconstruct a nested
+		// struct, so reject a single-leaf-via-nested record (a niche shape).
+		return nil, false
+	}
+	csize := alignUpI32(canonEnd, maxAlign)
+	return &ExternRecordResult{Fields: fields, Size: fernSize, CanonicalSize: csize, Direct: directScalar && leaves == 1}, true
+}
+
+// externResultLayoutRec lays out the in-order field/element types `top` of a
+// composite result into the canonical return area starting at byte `canonStart`,
+// returning the per-field layout, the composite's Fern struct size (4-byte
+// slots), the end canonical position, the composite's max field alignment, the
+// total scalar-leaf count, and ok. A scalar field is placed directly (Fern slot
+// Offset + CanonicalOffset). A nested composite field recurses **to arbitrary
+// depth**: the canonical ABI inlines the nested record's leaves at the nested
+// record's alignment, while on the Fern side it lives in a separate inner struct
+// (ExternRecordField.Nested) whose pointer is the outer field. ok=false if any
+// field is neither a flattenable scalar nor a known composite.
+func externResultLayoutRec(top []ast.Type, info *checker.Info, canonStart int32) (fields []ExternRecordField, fernSize, canonEnd, maxAlign int32, leaves int, ok bool) {
 	fernOffs, fernSize := tupleElemLayout(top, 4)
-	fields := make([]ExternRecordField, 0, len(top))
-	canonPos := int32(0)
-	maxAlign := int32(1)
-	leaves := 0
+	fields = make([]ExternRecordField, 0, len(top))
+	canonPos := canonStart
+	maxAlign = 1
 	for i, ft := range top {
 		if externRecordFieldSupported(ft) { // direct scalar leaf
 			sz := externCanonicalFieldSizeAlign(ft)
@@ -1012,51 +1037,54 @@ func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResu
 			leaves++
 			continue
 		}
-		// Nested record (one level): its scalar fields are laid out inline in the
-		// canonical area at the nested record's alignment; on the Fern side they
-		// live in a separate inner struct whose pointer is the outer field.
-		inner, innerOK := externCompositeFieldTypes(ft, info)
+		// Nested composite: align to its own alignment, recurse to lay out its
+		// leaves inline, then round its end up to its alignment (canonical struct
+		// tail padding).
+		inner, innerOK := compositeFieldTypes(ft, info)
 		if !innerOK || len(inner) == 0 {
-			return nil, false
+			return nil, 0, 0, 0, 0, false
 		}
-		innerFernOffs, innerFernSize := tupleElemLayout(inner, 4)
-		innerAlign := int32(1)
-		for _, it := range inner {
-			if a := externCanonicalFieldSizeAlign(it); a > innerAlign {
-				innerAlign = a
-			}
-		}
+		innerAlign := externCompositeAlign(ft, info)
 		if innerAlign > maxAlign {
 			maxAlign = innerAlign
 		}
 		canonPos = alignUpI32(canonPos, innerAlign)
-		innerLeaves := make([]ExternRecordField, len(inner))
-		for j, it := range inner {
-			sz := externCanonicalFieldSizeAlign(it)
-			canonPos = alignUpI32(canonPos, sz)
-			innerLeaves[j] = ExternRecordField{Offset: innerFernOffs[j], CanonicalOffset: canonPos, Type: it, DerefOffset: -1}
-			canonPos += sz
-			leaves++
+		innerFields, innerFernSize, innerEnd, _, innerLeaves, innerRecOK := externResultLayoutRec(inner, info, canonPos)
+		if !innerRecOK {
+			return nil, 0, 0, 0, 0, false
 		}
-		canonPos = alignUpI32(canonPos, innerAlign)
+		canonPos = alignUpI32(innerEnd, innerAlign)
+		leaves += innerLeaves
 		fields = append(fields, ExternRecordField{
 			Offset:      fernOffs[i],
 			DerefOffset: -1,
-			Nested:      &ExternRecordResult{Fields: innerLeaves, Size: innerFernSize},
+			Nested:      &ExternRecordResult{Fields: innerFields, Size: innerFernSize},
 		})
 	}
-	if leaves < 1 || leaves > maxFlatExternRecordFields {
-		return nil, false
+	return fields, fernSize, canonPos, maxAlign, leaves, true
+}
+
+// externCompositeAlign returns the canonical-ABI alignment of a composite type:
+// the max alignment of its fields, recursing into nested composites. Returns 1
+// for a non-composite (the caller only uses it on composite fields).
+func externCompositeAlign(t ast.Type, info *checker.Info) int32 {
+	types, ok := compositeFieldTypes(t, info)
+	if !ok {
+		return 1
 	}
-	directScalar := len(fields) == 1 && fields[0].Nested == nil
-	if leaves == 1 && !directScalar {
-		// A single-leaf record flattens to one core value and so is returned by
-		// value — but the by-value (Direct) wrapper can't reconstruct a nested
-		// struct, so reject a single-leaf-via-nested record (a niche shape).
-		return nil, false
+	a := int32(1)
+	for _, ft := range types {
+		var fa int32
+		if externRecordFieldSupported(ft) {
+			fa = externCanonicalFieldSizeAlign(ft)
+		} else {
+			fa = externCompositeAlign(ft, info)
+		}
+		if fa > a {
+			a = fa
+		}
 	}
-	csize := alignUpI32(canonPos, maxAlign)
-	return &ExternRecordResult{Fields: fields, Size: fernSize, CanonicalSize: csize, Direct: directScalar && leaves == 1}, true
+	return a
 }
 
 // alignUpI32 rounds n up to a multiple of a (a a power of two ≥ 1).
