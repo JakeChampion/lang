@@ -238,9 +238,12 @@ Items not already folded into a theme above. (Med/Low findings live in the
 appendix §6.)
 
 ### Frontend
-- [ ] **SH-040 — `parser.fern:1000-1070`** re-implements struct-literal body parsing
-  that `parse_struct_lit_body` (`:621`) already provides — delegate to it (~55
-  dup lines, drift risk).
+- [x] **SH-040 — `parser.fern:1000-1070`** re-implemented struct-literal body
+  parsing that `parse_struct_lit_body` (`:621`) already provides. _Done:_ the
+  `parse_primary` bare-ident path now delegates to the shared helper (mirroring
+  the qualified `pkg.Type {…}` path at `:840` and the generic `Name[T] {…}` path
+  at `:750`), removing ~55 duplicated lines and the drift risk between the two
+  copies of the spread / field / trailing-comma loop.
 - [ ] **SH-041 — `parser.fern:1136-1169`** parse errors collapse into untyped
   `ExprUnknown{kind:string}`/`StmtUnknown` with no position — accumulate real
   diagnostics; at least carry source position.
