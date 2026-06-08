@@ -1149,7 +1149,7 @@ function wat_extern_valtype(t: string): string {
 // a numeric array (list<T> with T's slot == canonical size), or a record
 // (materialized into a self-host struct).
 function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
-    return t == "string" || t == "u8[]" || extern_array_param_supported(t) || extern_record_param_supported(mod, t);
+    return t == "string" || t == "u8[]" || extern_array_param_supported(t) || extern_record_param_supported(mod, t) || extern_sum_param_supported(t);
 }
 
 // extern_array_param_supported is true for an `@import` array parameter whose
@@ -1630,6 +1630,37 @@ function extern_wrappers(mod: parser.Module): string {
                 out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + i32_to_string(struct_field_off(rc)) + ")) (i32.load (i32.add (local.get $rb) (i32.const " + i32_to_string(rc * 4) + "))))\n";
                 rc = rc + 1;
             }
+            out = out + "    (local.get $s))\n";
+        } else if (f.import_iface.len() > 0 && extern_sum_param_supported(f.ret_type)) {
+            // option/result result (P4c): flattens to (disc, payload), returned
+            // indirectly (disc:u8 @0, payload:i32 @4). The wrapper materializes
+            // a self-host enum box [tag:i32 @0][payload @4], remapping the
+            // discriminant back (1-disc for option).
+            out = out + "  (func $" + f.name;
+            var sp2: i32 = 0;
+            while (sp2 < f.params.len()) {
+                out = out + " (param $ep" + i32_to_string(sp2) + " " + wat_extern_valtype(f.params[sp2].type_name) + ")";
+                sp2 = sp2 + 1;
+            }
+            out = out + " (result i32)\n";
+            out = out + "    (local $rb i32) (local $s i32)\n";
+            // Return area: disc:u8 @0, payload @4 (8 bytes), 8-aligned with slack.
+            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 15)) (i32.const 7)) (i32.const -8)))\n";
+            out = out + "    (call $" + f.name + "__import";
+            var sa: i32 = 0;
+            while (sa < f.params.len()) {
+                out = out + " (local.get $ep" + i32_to_string(sa) + ")";
+                sa = sa + 1;
+            }
+            out = out + " (local.get $rb))\n";
+            // Materialize the enum box: tag (remapped) @0, payload @4.
+            out = out + "    (local.set $s (call $__fern_alloc (i32.const 8)))\n";
+            if (extern_sum_param_is_option(f.ret_type)) {
+                out = out + "    (i32.store (local.get $s) (i32.sub (i32.const 1) (i32.load8_u (local.get $rb))))\n";
+            } else {
+                out = out + "    (i32.store (local.get $s) (i32.load8_u (local.get $rb)))\n";
+            }
+            out = out + "    (i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))\n";
             out = out + "    (local.get $s))\n";
         } else if (f.import_iface.len() > 0 && is_extern_composite_ret(mod, f.ret_type)) {
             out = out + "  (func $" + f.name;

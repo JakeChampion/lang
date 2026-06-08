@@ -487,8 +487,21 @@ world-driven composer (P2) wires it.
      `Option[i32/u32]` / `Result` with i32/u32 arms (parsed from the type
      spelling). Gated by `TestSelfHostExternSumTypeParamCustomProvider`
      (Ok(42)→42, Err(5)→-5, Some(7)→7, None→-1).
+   - **Self-host port — sum-type (option/result) results — ✅ done.** The
+     symmetric counterpart: an extern returning an Option/Result materializes a
+     self-host enum box. The host writes (disc:u8 @0, payload:i32 @4) into the
+     return area; the wrapper over-allocs the 8-byte area by 7 before 8-aligning
+     it (the self-host heap bump isn't aligned, so the next enum-box alloc must
+     not overlap), calls the import with the scalar args + area pointer, then
+     allocs a self-host enum box `[tag:i32 @0][payload @4]`, stores the remapped
+     discriminant (`1-disc` for option via `extern_sum_param_is_option`, else
+     `disc`) and the payload, and returns the box. `is_extern_composite_ret`
+     (now also matching `extern_sum_param_supported`) gives the sum return the
+     trailing return-area pointer + `cabi_realloc`. Gated by
+     `TestSelfHostExternSumTypeResultCustomProvider` (`div(a,b) ->
+     result<s32,s32>`, `half(n) -> option<s32>`, matched and checked).
    - Still rejected (next slices): the rest of the self-host port (u8[] params
-     with repacking; tuple params; sum-type results); general user `variant`s;
+     with repacking; tuple params); general user `variant`s;
      single-element records/tuples (direct return); bool arrays; sub-word /
      nested-composite fields. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
