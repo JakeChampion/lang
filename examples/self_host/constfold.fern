@@ -35,17 +35,7 @@ import "./util";
 
 // Parse the digit run captured by the lexer back into an i32.
 // No suffix handling — same simplification the interp uses.
-function digits_to_i32(s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) { return acc; }
-        acc = acc * 10 + (b - 48);
-        i = i + 1;
-    }
-    return acc;
-}
+// digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 
 // i32_to_string now lives in util.fern (imported as `util`); the
 // fold uses util.i32_to_string to render a folded literal. See SH-020.
@@ -71,7 +61,7 @@ function as_int_lit(e: parser.Expr): OptInt {
     match (e) {
         parser.ExprNumber(n) => {
             if (n.is_float) { return OptInt { ok: false, v: 0 }; }
-            return OptInt { ok: true, v: digits_to_i32(n.text) };
+            return OptInt { ok: true, v: util.digits_to_i32(n.text) };
         },
         _ => { return OptInt { ok: false, v: 0 }; }
     }

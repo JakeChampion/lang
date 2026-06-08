@@ -357,25 +357,7 @@ function (lt: LocalsTable) bind_capture(name: string): LocalsTable {
 // StmtFor lowering calls util.i32_to_string to mint unique
 // synthetic-local names for nested loops. See SH-020.
 
-function digits_to_i32(s: string): i32 {
-    if (s.len() == 0) { return 0; }
-    var neg: boolean = false;
-    var start: i32 = 0;
-    if (s[0] == 45) { neg = true; start = 1; }
-    var acc: i32 = 0;
-    var i: i32 = start;
-    while (i < s.len()) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) {
-            if (neg) { return 0 - acc; }
-            return acc;
-        }
-        acc = acc * 10 + (b - 48);
-        i = i + 1;
-    }
-    if (neg) { return 0 - acc; }
-    return acc;
-}
+// digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 
 // digits_to_f64 parses a decimal float literal (`[-]d[.d]`).
 // Mirrors interp.str_to_f64; the bytecode constant pool stores
@@ -645,7 +627,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             if (n.is_float) {
                 ops = ops.append(op_push_float(digits_to_f64(n.text)));
             } else {
-                ops = ops.append(op_push_int(digits_to_i32(n.text)));
+                ops = ops.append(op_push_int(util.digits_to_i32(n.text)));
             }
             return CompileResult { ops: ops, lt: lt };
         },
@@ -2175,7 +2157,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                         }
                     },
                     VTuple(tv) => {
-                        var tidx: i32 = digits_to_i32(o.field_name);
+                        var tidx: i32 = util.digits_to_i32(o.field_name);
                         if (tidx < 0 || tidx >= tv.elements.len()) {
                             stack = stack_push(stack, v_err("tuple index `" + o.field_name + "` out of range"));
                         } else {

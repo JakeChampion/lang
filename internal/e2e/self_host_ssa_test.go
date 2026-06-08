@@ -32,7 +32,7 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		t.Skip("ssa_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "ssa.fern", "ssa_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "ssa.fern", "ssa_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

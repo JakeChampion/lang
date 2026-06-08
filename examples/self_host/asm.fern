@@ -3016,7 +3016,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // pointer, so the offset is just idx*8 from the
             // box pointer. No runtime dispatch needed.
             if (asmcore.is_all_digits(fa.field)) {
-                var tup_idx: i32 = asmcore.digits_to_i32(fa.field);
+                var tup_idx: i32 = util.digits_to_i32(fa.field);
                 s = emit_expr(fa.obj, s);
                 s = s.write("    popq %rax\n");
                 s = s.write("    movq " + util.i32_to_string(tup_idx * 8) + "(%rax), %rax\n");

@@ -35,25 +35,7 @@ pub function sanitize_label(name: string): string {
 
 // i32_to_string now lives in util.fern (imported as `util`). See SH-020.
 
-pub function digits_to_i32(s: string): i32 {
-    if (s.len() == 0) { return 0; }
-    var neg: boolean = false;
-    var start: i32 = 0;
-    if (s[0] == 45) { neg = true; start = 1; }
-    var acc: i32 = 0;
-    var i: i32 = start;
-    while (i < s.len()) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) {
-            if (neg) { return 0 - acc; }
-            return acc;
-        }
-        acc = acc * 10 + (b - 48);
-        i = i + 1;
-    }
-    if (neg) { return 0 - acc; }
-    return acc;
-}
+// digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 
 pub function is_all_digits(s: string): boolean {
     if (s.len() == 0) { return false; }
