@@ -1476,29 +1476,16 @@ function extern_variant_param_supported(mod: parser.Module, t: string): boolean 
 }
 
 // extern_variant_result_supported is the result-side gate for a general
-// `variant` return with a uniform payload: a user enum where *every* variant is
-// a 1-field struct whose field is i32/u32 (no payloadless variants — the result
-// wrapper materializes an always-`[struct_id][payload]` box, not a sentinel).
-// The canonical variant flattens to (disc, payload) and returns indirectly.
+// `variant` return with a uniform payload. It accepts the same shape as a
+// variant parameter — every payloaded variant a 1-field i32/u32 struct, all
+// uniform, ≥1 payloaded — and **allows payloadless variants** (a mixed
+// `variant`, e.g. `{ some(s32), none }`). The result wrapper materializes an
+// always-`[struct_id@0][payload@4]` box; a payloadless case gets that box with
+// an unused payload (tag-correct, match-correct — the payload is never read for
+// it), exactly how the Go backend and option/result results handle a
+// payloadless arm. The canonical variant flattens to (disc, payload), indirect.
 function extern_variant_result_supported(mod: parser.Module, t: string): boolean {
-    var i: i32 = 0;
-    while (i < mod.enums.len()) {
-        if (mod.enums[i].name == t) {
-            var n: i32 = mod.enums[i].variant_names.len();
-            if (n == 0) { return false; }
-            var j: i32 = 0;
-            while (j < n) {
-                var vn: string = mod.enums[i].variant_names[j];
-                if (!is_struct_type(mod.structs, vn) || struct_field_count(mod.structs, vn) != 1) { return false; }
-                var ft: string = struct_field_type_at(mod.structs, vn, 0);
-                if (ft != "i32" && ft != "u32") { return false; }
-                j = j + 1;
-            }
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
+    return extern_variant_param_supported(mod, t);
 }
 
 // extern_plain_enum_disc emits a WAT i32 expression mapping the plain-enum value
