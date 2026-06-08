@@ -1215,7 +1215,7 @@ function wat_extern_valtype(t: string): string {
 // a numeric array (list<T> with T's slot == canonical size), or a record
 // (materialized into a self-host struct).
 function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
-    return t == "string" || t == "u8[]" || extern_array_param_supported(t) || extern_record_param_supported(mod, t) || extern_sum_param_supported(t);
+    return t == "string" || t == "u8[]" || extern_array_param_supported(t) || extern_record_result_supported(mod, t) || extern_sum_param_supported(t);
 }
 
 // extern_array_param_supported is true for an `@import` array parameter whose
@@ -1244,11 +1244,36 @@ function extern_byte_array_param(t: string): boolean {
 
 // extern_record_param_supported is true for an `@import` record (struct)
 // parameter the wrapper can flatten to its fields. A self-host struct value is
-// [type-id@0][field@+4 each in a 4-byte slot], so every field is i32-class; the
-// canonical record flattens to one i32 per field. Scoped to 1..16 fields, each
-// i32/u32 (the self-host struct slot is 4 bytes, so wider/byte fields don't fit
-// the layout anyway).
+// [type-id@0][field@+4 each in a 4-byte slot]. The canonical record flattens to
+// one i32 per field, including the sub-word integers (s8/s16/u8/u16), which the
+// wrapper reads with a width+sign-aware load (extern_field_load_op) so the
+// pushed i32 is correctly sign-/zero-extended. Scoped to 1..16 fields, each an
+// 8-/16-/32-bit integer.
 function extern_record_param_supported(mod: parser.Module, t: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        if (mod.structs[i].name == t) {
+            var n: i32 = mod.structs[i].fields.len();
+            if (n == 0 || n > 16) { return false; }
+            var j: i32 = 0;
+            while (j < n) {
+                var ft: string = mod.structs[i].fields[j].type_name;
+                if (ft != "i32" && ft != "u32" && ft != "i8" && ft != "u8" && ft != "i16" && ft != "u16") { return false; }
+                j = j + 1;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// extern_record_result_supported is the result-side gate: like the param gate
+// but i32/u32 fields only. A sub-word *result* field would need the canonical
+// return-area's tightly-packed (1-/2-byte) layout, which differs from the
+// self-host struct's 4-byte slots — a separate dual-layout slice. Params
+// sidestep it because the flattening is to i32 core values, not memory.
+function extern_record_result_supported(mod: parser.Module, t: string): boolean {
     var i: i32 = 0;
     while (i < mod.structs.len()) {
         if (mod.structs[i].name == t) {
@@ -1267,6 +1292,33 @@ function extern_record_param_supported(mod: parser.Module, t: string): boolean {
     return false;
 }
 
+// extern_field_load_op returns the wasm load op that reads a flattened record
+// field of type `ft` from its 4-byte slot, leaving its canonical i32 on the
+// stack. Sub-word integers use a width+sign-aware load so the value is correctly
+// sign-/zero-extended (the self-host stores them in a 4-byte little-endian slot,
+// so the low byte(s) at the field offset are the meaningful ones).
+function extern_field_load_op(ft: string): string {
+    if (ft == "i8") { return "i32.load8_s"; }
+    if (ft == "u8") { return "i32.load8_u"; }
+    if (ft == "i16") { return "i32.load16_s"; }
+    if (ft == "u16") { return "i32.load16_u"; }
+    return "i32.load";
+}
+
+// struct_field_type_at returns the declared type of field `idx` in struct `tn`
+// ("" if out of range / unknown).
+function struct_field_type_at(structs: parser.StructDecl[], tn: string, idx: i32): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == tn) {
+            if (idx >= 0 && idx < structs[i].fields.len()) { return structs[i].fields[idx].type_name; }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // extern_record_ret_direct is true for a supported record RESULT with exactly
 // one field. A single-field record flattens to exactly one core value (fits
 // MAX_FLAT_RESULTS=1), so the canonical ABI returns it by value — the import
@@ -1274,7 +1326,7 @@ function extern_record_param_supported(mod: parser.Module, t: string): boolean {
 // the wrapper materializes the one-field struct from that value (mirrors the Go
 // ExternRecordResult.Direct path). Multi-field records return indirectly.
 function extern_record_ret_direct(mod: parser.Module, t: string): boolean {
-    return extern_record_param_supported(mod, t) && struct_field_count(mod.structs, t) == 1;
+    return extern_record_result_supported(mod, t) && struct_field_count(mod.structs, t) == 1;
 }
 // parameter (P4c): a sum type whose arm payload(s) are i32/u32. A self-host
 // Option/Result is a heap box `[tag:i32 @0][payload:i32 @4]`; the canonical
@@ -1716,10 +1768,13 @@ function extern_wrappers(mod: parser.Module): string {
                 } else if (extern_array_param_supported(f.params[fi].type_name) || extern_byte_array_param(f.params[fi].type_name)) {
                     out = out + " (local.get $ab" + i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))";
                 } else if (extern_record_param_supported(mod, f.params[fi].type_name)) {
-                    // record: push each i32 field (type-id@0, fields from +4).
+                    // record: push each field (type-id@0, fields from +4) flattened
+                    // to its canonical i32, using a width+sign-aware load for the
+                    // sub-word integers (s8/s16/u8/u16).
                     var rfi: i32 = 0;
                     while (rfi < struct_field_count(mod.structs, f.params[fi].type_name)) {
-                        out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + i32_to_string(struct_field_off(rfi)) + ")))";
+                        var rft: string = struct_field_type_at(mod.structs, f.params[fi].type_name, rfi);
+                        out = out + " (" + extern_field_load_op(rft) + " (i32.add (local.get " + fppn + ") (i32.const " + i32_to_string(struct_field_off(rfi)) + ")))";
                         rfi = rfi + 1;
                     }
                 } else if (extern_sum_param_supported(f.params[fi].type_name)) {
@@ -1767,7 +1822,7 @@ function extern_wrappers(mod: parser.Module): string {
             }
             out = out + "))\n";
             out = out + "    (local.get $s))\n";
-        } else if (f.import_iface.len() > 0 && extern_record_param_supported(mod, f.ret_type)) {
+        } else if (f.import_iface.len() > 0 && extern_record_result_supported(mod, f.ret_type)) {
             // record result (P4c): a multi-field record returns indirectly; the
             // host writes the fields inline into the return area (field i @
             // i*4, all i32). The wrapper materializes a self-host struct
