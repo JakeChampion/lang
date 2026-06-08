@@ -246,11 +246,25 @@ await both — the trigger condition that motivated the whole design
 ### Phase 5 — composition: `select`, cancellation, timeouts
 
 - `select` / happy-eyeballs (first task to finish wins, the rest
-  cancel).
-- Scope-bounded **cancellation** on `concurrent` exit (resume a
-  cancelled task zero times — Koka `cancelable` shape; an unused
-  continuation is just dropped, which RC/Perceus reclaims).
-- Timeouts (a timer pollable in the reactor).
+  cancel) — **DONE in the runtime** (`task.select`): runs tasks until
+  the first reaches `Done`, returns `(winnerIndex, result)`, and
+  abandons the losers. Verified (shallow-vs-deep race + already-done)
+  on interp / x86-64 / arm64(qemu); wasm compiles. The `select`
+  *surface syntax* still waits on Phase 3.
+- Scope-bounded **cancellation** — landed structurally with `select`:
+  a losing task is simply never resumed and its parked continuation
+  (and captured frame) is dropped, which RC/Perceus reclaims (Koka
+  `cancelable` shape; one-shot, no `dup`). The Phase-1 reactor will
+  additionally close the loser's fd to stop the in-flight OS I/O.
+- Timeouts (a timer pollable in the reactor) — still pending; needs
+  the Phase-1 real reactor.
+
+> Built early (ahead of Phase 3/4) because it is pure-Fern, fully
+> testable, and non-colliding with the in-flight self-host SSA work —
+> the same "validate the model in pure Fern first" strategy used for
+> the Phase-0/2 core. The hard surface + real-I/O phases (3, 4) and
+> the backend reactor (Phase 1) are deferred until the SSA-by-default
+> migration lands, so the poll primitive targets the settled path.
 
 ## Cross-cutting concerns
 
