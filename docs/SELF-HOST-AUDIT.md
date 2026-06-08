@@ -187,12 +187,15 @@ findings. Ranked by leverage.
   fragility findings.
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
-- [ ] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _Note (investigated):_
-  the most-duplicated walker, `collect_idents_expr`, has **semantically diverged**
-  across copies — `wasm`'s dedups idents (`if (!contains_str(acc, …))`) while
-  `asmcore`/`ssa` append unconditionally — so it is NOT a safe mechanical merge;
-  a real `fold` must reconcile these behaviours deliberately. (`asmcore` ≡ `ssa`
-  modulo whitespace; `wasm`/`vm` differ.) Every analysis
+- [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress
+  (`astwalk.fern` started; see appendix for the corrected analysis):_ the
+  free-variable collectors (`collect_idents_expr`/`_stmt`/`collect_bound_stmt`) are
+  byte-identical across `asmcore`/`ssa`/`vm` and now live once in `astwalk.fern`;
+  `ssa` and `vm` are converted (asmcore next — it's bundled). The `expr` collector
+  also converges with `wasm`'s (wasm's accumulator-dedup is **redundant** — every
+  consumer dedups again when building the capture list), but wasm's **stmt**
+  collector genuinely diverges in coverage (`_ => {}`-skips `StmtSwitch`/`StmtDefer`
+  the others handle), so wasm is deferred pending a deliberate look. Every analysis
   re-enumerates all Expr/Stmt variants by hand: `parser.fern` ~10 walkers
   (`expr_mentions:1574`, `mono_*`, `ms_*`, `rw_call_*`, …); `checker.fern` ~15
   scope-threading passes (`ret_diags`, `lret_*`, `mx_*`, `slit_diags`,
@@ -381,13 +384,31 @@ variants. Current hand-written Expr-variant arm counts: **wasm 180, checker 89,
 asmcore 30, ssa 28** (plus the parser's own ~10 rewrite passes). Adding a field or
 variant to the AST means touching all of them; a missed arm is a silent bug.
 
-### Key constraint discovered
-The walkers are **not** mechanically mergeable — they've semantically diverged.
-The clearest case: `collect_idents_expr` exists in `asmcore`, `ssa`, `vm`, `wasm`;
-`asmcore` ≡ `ssa` (modulo whitespace), but **`wasm` dedups** idents
-(`if (!contains_str(acc, id.name))`) while the others append unconditionally, and
-`vm` differs again. So a single `fold` must make that policy a parameter, not
-assume one behaviour. This is why SH-022 is design work, not a sweep.
+### What actually converges (corrected after closer analysis)
+An earlier draft of this appendix claimed the walkers had "semantically diverged"
+and couldn't be merged. That was over-cautious — the real picture:
+
+- **`collect_idents_expr` converges across all four** (`asmcore`/`ssa`/`vm` are
+  byte-identical modulo whitespace; `wasm` matches too). The apparent difference —
+  `wasm` dedups into the accumulator (`if (!contains_str(acc, …))`) — is
+  **redundant**: every consumer (`lambda_captures` and the ssa/vm equivalents)
+  dedups *again* when building the capture list (`!has_str(caps, nm)`), so a `refs`
+  list with duplicates yields an identical capture set + first-seen order. wasm's
+  `_ => {}` wildcard over the literal leaves is equivalent to the others' explicit
+  no-op arms. So one **non-deduping** collector serves all four with zero behaviour
+  change.
+- **`collect_idents_stmt` converges across `asmcore`/`ssa`/`vm`** (identical, all 13
+  Stmt variants) but **wasm genuinely diverges**: its `collect_idents_stmts` is
+  list-shaped and `_ => {}`-skips `StmtSwitch`/`StmtDefer` (which the others recurse
+  into). Unifying wasm there could change which vars a lambda captures through a
+  switch/defer, so wasm is **deferred** pending a deliberate look (latent bugfix vs.
+  regression).
+
+**Status:** `astwalk.fern` now holds the canonical (non-deduping, full-coverage)
+`collect_idents_expr`/`_stmt`/`collect_bound_stmt`; `ssa` and `vm` are converted.
+Remaining: `asmcore` (identical collectors — safe, but bundled, so it carries the
+`///MODULE astwalk` cascade + a ~74-list staging sweep), then `wasm` (the genuine
+divergence above).
 
 ### What the bootstrap language supports
 Closures/lambdas with captures lower on every backend (`OpMakeClosure` etc.), and
