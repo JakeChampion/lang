@@ -780,3 +780,33 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   analogue at wasm32 widths), then mirror the inc-on-alias /
   construction-store / exit-sweep / free machinery the asm backends
   already have — each a self-contained slice on this foundation.
+- 2026-06-08: **wasm backend RC — array layout migration.** Array
+  blocks now carry the rc word, the wasm analogue of the asm Phase-1a
+  layout migration. New `$__fern_arr_box(eb)` (in heap_alloc_helpers,
+  beside `$__fern_alloc`) allocates `[rc@0][pad@4][len@8][cap@12]
+  [elems@16..]` and returns the DATA pointer `a = base+8` with rc
+  initialised to 1 — so the rc word sits at [a-8] (matching the asm
+  backends' [data-8] convention) while len@[a] / cap@[a+4] /
+  elems@[a+8] keep EVERY a-relative array access (index, len, slice,
+  grow-copy, for-loops, struct/tuple payloads) byte-for-byte unchanged.
+  Migrated the core array allocators to route through it: the array
+  literal builder (`emit_array_literal_kind`) and the four runtime
+  growers/slicers (`__fern_arr_push`, `arr_slice`, `arr_slice8`,
+  `arr_push_wide`). Centralising rc-init in one helper kept the per-site
+  change to a one-line alloc-call swap and the blast radius minimal. The
+  peripheral array producers (args / env / random_bytes / map_snapshot /
+  export wrappers) still use the old header for now; this is SAFE because
+  every access is a-relative and rc is not yet wired into array sites
+  (mixed old/new layouts read identically) — they migrate alongside the
+  inc/free wiring in the next slice, before free is flipped on. Coverage:
+  `TestSelfHostRcArrayLayoutWasm` passes a real array literal AND an
+  append-grown array straight to the rc intrinsics — fresh => unique
+  (rc==1), after inc => not unique (rc==2), inc+dec => unique again,
+  elements intact through the shifted data ptr, detector clean on
+  balance and firing on over-release. The whole wasm suite (emit /
+  binary / readfile / shim / component, ~93 s) stays green — the real
+  proof the layout is consistent, since arrays are pervasive. Still
+  bootstrap-safe (wasm.fern only; different binary from the x86/arm64
+  self-host). Next: migrate the peripheral array producers + wire
+  inc-on-alias / construction-store / exit-sweep (counting milestone,
+  free off), then `__fern_arr_dec` + freelist (free on).
