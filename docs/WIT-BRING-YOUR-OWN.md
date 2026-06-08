@@ -477,8 +477,18 @@ world-driven composer (P2) wires it.
      the next (struct) alloc doesn't overlap it — the self-host heap bump isn't
      aligned. Gated by `TestSelfHostExternRecordResultCustomProvider` (a
      `make-point: func(a, b: s32) -> record { x, y: s32 }`, fields read back).
+   - **Self-host port — sum-type (option/result) params — ✅ done.** An
+     Option/Result `@import` parameter flattens to (disc, payload). A self-host
+     enum is a heap box `[tag:i32 @0][payload:i32 @4]` (Some/Ok=0, None/Err=1) —
+     identical to the Go backend — so the wrapper pushes the discriminant
+     (the tag, remapped `1-tag` for option since canonical none=0/some=1
+     reverses Fern's order; result matches) then the payload, with no alignment
+     wall (it flattens to values). `extern_sum_param_supported` gates
+     `Option[i32/u32]` / `Result` with i32/u32 arms (parsed from the type
+     spelling). Gated by `TestSelfHostExternSumTypeParamCustomProvider`
+     (Ok(42)→42, Err(5)→-5, Some(7)→7, None→-1).
    - Still rejected (next slices): the rest of the self-host port (u8[] params
-     with repacking; tuple/sum-type params + results); general user `variant`s;
+     with repacking; tuple params; sum-type results); general user `variant`s;
      single-element records/tuples (direct return); bool arrays; sub-word /
      nested-composite fields. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
