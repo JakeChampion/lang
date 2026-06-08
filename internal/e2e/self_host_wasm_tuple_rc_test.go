@@ -53,6 +53,11 @@ func TestSelfHostRcTupleBoxWasm(t *testing.T) {
 		{"tuple-alias-clean", "function main(): i32 { var t = (3, 4); var u = t; return u.0 + t.1 + __fern_rc_underflow_count(); }", 7},
 		// A tuple re-bound each loop iteration: detector stays clean.
 		{"tuple-loop-clean", "function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var t = (k, 2); s = s + t.1; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
+		// Construction-store inc: storing a tuple into a container retains it
+		// (source no longer unique), values intact, detector clean — the prep
+		// that lets a tuple stored in a container survive once free flips on.
+		{"tuple-in-array-retained", "function main(): i32 { var t = (3, 4); var arr = [t]; var u = __fern_rc_is_unique(t); return u + arr[0].0 + __fern_rc_underflow_count(); }", 3},
+		{"tuple-in-tuple-retained", "function main(): i32 { var t = (5, 6); var o = (t, 99); var u = __fern_rc_is_unique(t); return u + o.0.1 + __fern_rc_underflow_count(); }", 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

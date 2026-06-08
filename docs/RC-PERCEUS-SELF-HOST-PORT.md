@@ -1229,3 +1229,20 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the box — driven by a tuple element-kind string extended from {string,
   other} to also mark arrays (conservatively, only provably-array elements
   get a recursive dec; a mis-mark would be a UAF, so it must be exact).
+- 2026-06-08: **wasm tuple RC — construction-store incs.** Storing a tuple
+  reference into a container now retains it (the container co-owns it) —
+  the soundness prep that lets a tuple stored in a container survive once
+  tuple free is flipped on. Wired at the same 6 construction sites as the
+  array/string incs, OR-ing `init_is_tuple_alias(value, cx)` in beside the
+  array/string checks: struct-literal field stores, tuple elements,
+  array (`[t, …]`) elements, Some/Ok/Err payloads, and positional
+  enum-variant payloads. Coverage: `TestSelfHostRcTupleBoxWasm` gains
+  tuple-in-array-retained and tuple-in-tuple-retained (source no longer
+  unique, nested access intact, detector 0). Full wasm suite (~116 s)
+  green; bootstrap-safe; free still OFF. Construction sites now retain
+  arrays, strings AND tuples. The remaining tuple step is the FREE flip
+  with recursive field-release — a larger, soundness-critical slice
+  (an inline `if [t-8]==1` last-owner guard that dec's the rc-tracked
+  elements, driven by a tuple element-kind string extended to mark arrays,
+  plus tuple return move/retain) — deferred to a focused effort with budget
+  headroom, since the array/string flips each surfaced a real UAF mid-way.
