@@ -37,7 +37,7 @@ import (
 func writeSelfHostConstfoldProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "constfold.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "constfold.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

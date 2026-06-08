@@ -136,8 +136,8 @@ findings. Ranked by leverage.
   and move the copy-pasted leaf helpers into it, then import everywhere.
   _In progress (staged rollout):_ `util.fern` now exists (imports only
   `core/no_prelude`) and is seeded with the canonical `i32_to_string`;
-  `disasm.fern` and `vm.fern` are converted off their local copies (2 of 9 done).
-  Remaining: convert the other 7 `i32_to_string` copies and the
+  `disasm.fern`, `vm.fern`, and `constfold.fern` are converted off their local copies (3 of 9 done).
+  Remaining: convert the other 6 `i32_to_string` copies and the
   rest of the helpers below, one file per PR — each conversion must add
   `util.fern` to every Go test that stages that module (no shared staging list;
   `disasm` had a footprint of 1, most others are 4–8, `wasm`/`asmcore` are 58/74).
