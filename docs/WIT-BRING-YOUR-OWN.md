@@ -482,21 +482,26 @@ world-driven composer (P2) wires it.
      ResultEnum`). Same scope as the param side. Gated by
      `TestExternSumTypeResultCustomProvider` (a `div: -> result<s32,s32>` and
      `half: -> option<s32>`, the Fern side matching Ok/Err/Some/None).
-   - **WIT `enum` params — ✅ done (Go).** A Fern "plain" enum — a user enum
-     whose variants are *all* payloadless (a C-style enum) — passed to an
-     `@import` extern whose WIT takes an `enum`. A WIT enum flattens to a single
+   - **WIT `enum` params + results — ✅ done (Go).** A Fern "plain" enum — a user
+     enum whose variants are *all* payloadless (a C-style enum) — at an `@import`
+     extern whose WIT takes/returns an `enum`. A WIT enum flattens to a single
      i32 discriminant; a Fern payloadless enum value is a pointer to a 4-byte
-     sentinel `[tag:i32 @0]` (`OpEnumSentinel`), so the wrapper reads
-     `i32.load(ptr)` and pushes the tag. `externPlainEnumParam` gates it (an
-     `ast.EnumType` whose `info.Enums` decl has ≥1 variant, all payloadless;
+     sentinel `[tag:i32 @0]` (`OpEnumSentinel`). **Param:** the wrapper reads
+     `i32.load(ptr)` and pushes the tag. **Result:** the import returns the disc
+     by value; the wrapper maps it back to the matching static per-tag sentinel
+     via the `__enum_sent(disc)->ptr` select-chain helper — **no heap
+     allocation** (sentinels are shared immortal data cells, keyed by tag value
+     across all enums), built where `internEnumSentinel` is in scope and sized to
+     the max variant count across enum results. `externPlainEnumParam` gates both
+     (an `ast.EnumType` whose `info.Enums` decl has ≥1 variant, all payloadless;
      Option/Result naturally fail the all-payloadless test and keep their own
-     remapping path), recorded as `ir.ExternFunc.ParamPlainEnums`. **The Fern
-     variant order must match the WIT enum case order** — no remap — a
-     declaration-order contract (the canonical disc is just the tag). Gated by
-     `TestExternEnumParamCustomProvider` (a `pick: func(c: color) -> s32` over
-     `enum color { red, green, blue }` returning `disc + 100`; Fern passes
-     `Green` (tag 1), expects 101). Enum *results* (materializing a Fern
-     sentinel/box from a returned disc) and general payload-carrying `variant`s
+     remapping path), recorded as `ir.ExternFunc.ParamPlainEnums` /
+     `ResultPlainEnumN`. **The Fern variant order must match the WIT enum case
+     order** — no remap — a declaration-order contract (the canonical disc is the
+     tag). Gated by `TestExternEnumParamCustomProvider` (a `pick: func(c: color)
+     -> s32`; `Green` → 101) and `TestExternEnumResultCustomProvider` (a `choose:
+     func(n: s32) -> color` returning `disc = n`; `rank(0/1/2)` → `Red/Green/Blue`
+     — a full disc→sentinel→tag round-trip). General payload-carrying `variant`s
      are deferred.
    - **Self-host port — numeric array params — ✅ started.** The self-hosted
      compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
@@ -645,9 +650,9 @@ world-driven composer (P2) wires it.
      variant's `struct_id`. Gated by
      `TestSelfHostExternEnumParamCustomProvider` (the same `pick: func(c: color)
      -> s32` over `enum color { red, green, blue }`, `Green` → 101).
-   - Still rejected (next slices): WIT `enum` *results* (materializing a Fern
-     sentinel/box from a runtime disc — needs a jump-table or an immortal-box
-     leak); general payload-carrying user `variant`s; sub-4-byte-element
+   - Still rejected (next slices): the self-host port of WIT `enum` *results*
+     (the Go select-over-sentinels just landed); general payload-carrying user
+     `variant`s; sub-4-byte-element
      `list<T>` *results* (`u8[]`/`bool[]`) via a custom provider (the
      `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); bool /
      nested-composite fields. The multi-component harness
