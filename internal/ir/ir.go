@@ -821,35 +821,20 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 
 // externVariantResultLayout describes a general user-enum `@import` RESULT that
 // flattens like Result to (disc, payload) and is returned indirectly. It accepts
-// a user enum where *every* variant carries exactly one scalar payload, all the
-// same kind+width T (no payloadless variants — those would have to materialize a
-// sentinel rather than the always-a-box the result wrapper emits; deferred). The
+// a user enum with a uniform payload — every payloaded variant carries exactly
+// one scalar of the same kind+width T — and **allows payloadless variants** (a
+// mixed `variant`, e.g. `{ circle(s32), empty }`); ≥1 must be payloaded. The
 // uniform payload makes the canonical join T, so it reuses
 // buildExternEnumResultWrapper (which materializes a Fern enum box `[rc][tag@0]
-// [payload@off]`) with no discriminant remap — matching how a payloaded user-enum
-// variant is represented. Option/Result are handled by externEnumParamLayout.
+// [payload@off]`) with no discriminant remap. A payloadless case is materialized
+// as that same box with an unused payload — exactly how option/result results
+// already materialize their payloadless arm (None / payloadless Err), so it's a
+// tag-correct, match-correct value (the box's unused payload is never read).
+// Option/Result themselves are handled by externEnumParamLayout.
 func externVariantResultLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnumParam, bool) {
-	et, ok := t.(ast.EnumType)
-	if !ok {
-		return nil, false
-	}
-	ed, ok := info.Enums[et.Name]
-	if !ok || len(ed.Variants) == 0 {
-		return nil, false
-	}
-	var payload ast.Type
-	for _, v := range ed.Variants {
-		if len(v.Payloads) != 1 || !externRecordFieldSupported(v.Payloads[0]) {
-			return nil, false // payloadless / multi-payload / unsupported — deferred
-		}
-		if payload == nil {
-			payload = v.Payloads[0]
-		} else if !externScalarTypeEq(payload, v.Payloads[0]) {
-			return nil, false // non-uniform payloads — deferred
-		}
-	}
-	offs, _ := payloadLayout([]ast.Type{payload}, 1, ptrW)
-	return &ExternEnumParam{RemapDisc: false, PayloadType: payload, PayloadOffset: offs[0]}, true
+	// Same shape rules as a variant parameter: a uniform single-scalar payload
+	// across the payloaded variants, payloadless variants allowed, ≥1 payloaded.
+	return externVariantParamLayout(t, info, ptrW)
 }
 
 // externPlainEnumParam reports whether t is a "plain" enum — a user enum (named
