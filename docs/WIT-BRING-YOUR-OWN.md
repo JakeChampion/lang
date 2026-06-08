@@ -635,8 +635,19 @@ world-driven composer (P2) wires it.
      `TestSelfHostExternSingleFieldRecordResultCustomProvider` (the same
      `make-wrapped: func(a: s32) -> record { v: s32 }` provider, run through the
      self-hosted backend).
-   - Still rejected (next slices): WIT `enum` *results* + the self-host port of
-     enum params; general payload-carrying user `variant`s; sub-4-byte-element
+   - **Self-host port — WIT `enum` params — ✅ done.** The mirror of the Go WIT
+     enum param. A self-host payloadless user-enum value is a pointer to a
+     `[struct_id@0]` box where `struct_id` is a *global* id (not the variant
+     index), so the wrapper can't just push `[ptr+0]`: `extern_plain_enum_param`
+     gates a `mod.enums` enum whose every variant is a 0-field struct, and
+     `extern_plain_enum_disc` emits a select-chain mapping the loaded struct_id
+     to the variant index (= the WIT discriminant), comparing against each
+     variant's `struct_id`. Gated by
+     `TestSelfHostExternEnumParamCustomProvider` (the same `pick: func(c: color)
+     -> s32` over `enum color { red, green, blue }`, `Green` → 101).
+   - Still rejected (next slices): WIT `enum` *results* (materializing a Fern
+     sentinel/box from a runtime disc — needs a jump-table or an immortal-box
+     leak); general payload-carrying user `variant`s; sub-4-byte-element
      `list<T>` *results* (`u8[]`/`bool[]`) via a custom provider (the
      `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); bool /
      nested-composite fields. The multi-component harness
