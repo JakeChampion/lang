@@ -58,6 +58,16 @@ func TestSelfHostRcTupleBoxWasm(t *testing.T) {
 		// that lets a tuple stored in a container survive once free flips on.
 		{"tuple-in-array-retained", "function main(): i32 { var t = (3, 4); var arr = [t]; var u = __fern_rc_is_unique(t); return u + arr[0].0 + __fern_rc_underflow_count(); }", 3},
 		{"tuple-in-tuple-retained", "function main(): i32 { var t = (5, 6); var o = (t, 99); var u = __fern_rc_is_unique(t); return u + o.0.1 + __fern_rc_underflow_count(); }", 6},
+		// FREE + recursive field-release: freeing a tuple at exit releases its
+		// rc-tracked array element (the source xs is dec'd to 0 by the tuple's
+		// recursive release) — value-correct + detector clean.
+		{"tuple-array-elem-released", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var t = (xs, 9); return t.0[2] + t.1 + __fern_rc_underflow_count(); }", 12},
+		// Same for a string element.
+		{"tuple-string-elem-released", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var t = (s, 5); return t.0.len() + t.1 + __fern_rc_underflow_count(); }", 9},
+		// A build-tuple-with-array-element churn (bare-ident array element →
+		// recursively released each time the tuple is freed): detector clean
+		// with free on across many cycles.
+		{"tuple-array-churn-clean", "function mk(): i32 { var a: i32[] = [1, 2, 3, 4, 5, 6, 7, 8]; var t = (a, 5); return t.0[7] + t.1; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

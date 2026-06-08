@@ -1246,3 +1246,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   elements, driven by a tuple element-kind string extended to mark arrays,
   plus tuple return move/retain) — deferred to a focused effort with budget
   headroom, since the array/string flips each surfaced a real UAF mid-way.
+- 2026-06-08: **wasm tuple RC — FREE flipped ON, with RECURSIVE FIELD-
+  RELEASE (the new Perceus mechanism).** Tuples are now reclaimed, and
+  freeing a tuple first releases its rc-tracked elements. The mechanism:
+  `tuple_kind_string` is extended to mark each element 's' (string) / 'a'
+  (rc-boxed array, via the conservative `is_tuple_elem_array`) / 'i'
+  (scalar); `tup_exit_sweep_excl` then, for each owned tuple local, emits an
+  inline `if [t-8]==1` (last-owner / about-to-free) guard that dec's the
+  'a'/'s' elements (`$__fern_arr_dec` on `[t + i*4]`) BEFORE freeing the box
+  — so elements are released exactly once, on the final free (an aliased
+  tuple at rc>1 just decrements). Tuple move-on-return (`tmov`) excludes a
+  returned bare tuple local from the sweep; `ret_is_tuple` adds tuples to
+  the borrowed-return-retain. Rides on the tuple construction-incs so a
+  stored tuple survives. A conservative element mark ('i' when unsure)
+  means a missed array/string element leaks rather than corrupts; a tuple
+  freed INDIRECTLY (via another container's arr_dec, not at this sweep)
+  also leaks its elements — both sound, known gaps that a type-tagged
+  generic dec would close later. Coverage: `TestSelfHostRcTupleBoxWasm`
+  gains tuple-array-elem-released + tuple-string-elem-released (the source
+  array/string is dec'd to 0 by the tuple's recursive release, detector 0)
+  and tuple-array-churn-clean (50k cycles). Full wasm suite (~132 s) green
+  with tuple free ON; bootstrap-safe. (A test-only snag: `use` is a
+  reserved word — the churn helper was renamed.) **This establishes
+  recursive field-release; structs and enums reuse the same shape** (a
+  per-field rc-kind map + the rc==1-guarded recursive dec), adding the
+  extern/canonical-ABI care for structs.
