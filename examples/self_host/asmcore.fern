@@ -770,13 +770,18 @@ pub struct TyMapI32 { val: Ty }
 
 pub struct TyMapIter { val: Ty }
 
+// TyCell models Cell[T] (docs/CELL-TYPE-PLAN.md) — a single-slot mutable
+// box. v1 holds scalars only (the checker's E057 enforces cycle-free T);
+// `val` records the element type for get()'s result + set()'s arg width.
+pub struct TyCell { val: Ty }
+
 pub struct TyStructNamed { name: string }
 
 pub type Ty = TyI32 | TyU32 | TyU64 | TyI64 | TyUsize | TyIsize | TyBool
             | TyString | TyF64 | TyStruct | TyTuple | TyUnknown |
             TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
             | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult |
-            TyFn | TyMapStr | TyMapI32 | TyMapIter | TyStructNamed;
+            TyFn | TyMapStr | TyMapI32 | TyMapIter | TyCell | TyStructNamed;
 
 pub function ty_named(name: string): Ty { return TyStructNamed { name: name }; }
 
@@ -840,6 +845,28 @@ pub function ty_map_i32(x: Ty): Ty { return TyMapI32 { val: x }; }
 
 pub function ty_mapiter(x: Ty): Ty { return TyMapIter { val: x }; }
 
+pub function ty_cell(x: Ty): Ty { return TyCell { val: x }; }
+
+// is_cell reports whether t is a Cell[T] (the receiver-type gate for
+// cell get()/set() dispatch).
+pub function is_cell(t: Ty): boolean {
+    match (t) {
+        TyCell(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// cell_val returns the element type of a Cell[T] (ty_unknown when t isn't
+// a cell), driving get()'s result + set()'s arg load/store width.
+pub function cell_val(t: Ty): Ty {
+    match (t) {
+        TyCell(x) => { return x.val; },
+        _ => { return ty_unknown(); }
+    }
+    return ty_unknown();
+}
+
 pub function ty_ord(t: Ty): i32 {
     match (t) {
         TyI32(_) => { return 0; },
@@ -869,6 +896,7 @@ pub function ty_ord(t: Ty): i32 {
         TyMapI32(_) => { return 24; },
         TyMapIter(_) => { return 25; },
         TyStructNamed(_) => { return 26; },
+        TyCell(_) => { return 27; },
         _ => { return -1; }
     }
     return -1;
@@ -1221,6 +1249,7 @@ pub function ty_tag(t: Ty): string {
         TyMapStr(x) => { return "map:" + ty_tag(x.val); },
         TyMapI32(x) => { return "mapI:" + ty_tag(x.val); },
         TyMapIter(x) => { return "mapiter:" + ty_tag(x.val); },
+        TyCell(x) => { return "cell:" + ty_tag(x.val); },
         TyStructNamed(x) => { return x.name; }
     }
     return "unknown";
@@ -1234,6 +1263,7 @@ pub function ty_eq(a: Ty, b: Ty): boolean {
         TyMapStr(x) => { match (b) { TyMapStr(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
         TyMapI32(x) => { match (b) { TyMapI32(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
         TyMapIter(x) => { match (b) { TyMapIter(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
+        TyCell(x) => { match (b) { TyCell(y) => { return ty_eq(x.val, y.val); }, _ => { return false; } } },
         TyStructNamed(x) => { match (b) { TyStructNamed(y) => { return x.name == y.name; }, _ => { return false; } } },
         _ => { return ty_ord(a) == ty_ord(b); }
     }
@@ -1290,6 +1320,9 @@ pub function ty_from_name(name: string): Ty {
         return ty_map_str(generic_value_ty(name, 4));
     }
     if (name.len() >= 3 && name[0:3] == "Map") { return ty_map_str(ty_unknown()); }
+    if (name.len() >= 5 && name[0:5] == "Cell[") {
+        return ty_cell(ty_from_name(name[5 : name.len() - 1]));
+    }
     if (name.len() >= 8 && name[0:7] == "Option[") {
         return ty_option(ty_from_name(name[7:name.len() - 1]));
     }
@@ -1461,6 +1494,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "random_bytes") { return ty_string(); }
                     if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
                     if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }
+                    if (id.name == "cell_new" && c.args.len() == 1) { return ty_cell(infer_expr_type(c.args[0], s)); }
                     if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
                             || id.name == "__floor_f64" || id.name == "__ceil_f64"
                             || id.name == "__trunc_f64" || id.name == "__round_f64"
@@ -1493,6 +1527,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                 parser.ExprFieldAccess(fa) => {
                     var rt: Ty = infer_expr_type(fa.obj, s);
                     if (fa.field == "read_chunk") { return ty_option(ty_string()); }
+                    if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
                     if (is_map(rt) && fa.field == "get") {
                         return ty_option(map_val(rt));
                     }

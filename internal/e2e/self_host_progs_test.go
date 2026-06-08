@@ -31,6 +31,10 @@ var selfHostProgCases = []struct {
 	// Array.with — value-returning element set (replaces arr[i]=v).
 	// [1,2,3] with(1,20) → [1,20,3]; 1+20+3 = 24.
 	{"array-with", `function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(1, 20); return a[0] + a[1] + a[2]; }`, 24},
+	// Cell[i32] — single-slot mutable box. (0+5)*2 = 10.
+	{"cell-get-set", `function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }`, 10},
+	// Cell shared mutation through a function param: 10 bumped 3× = 13.
+	{"cell-shared", `function bump(c: Cell[i32]) { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }`, 13},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.
 	{"array-with-chain", `function main(): i32 { var a: i32[] = [0, 0, 0]; a = a.with(0, 5); a = a.with(2, 7); return a[0] * 10 + a[2]; }`, 57},
 	// Map.insert (value-returning) with overwrite: {1:99, 2:20}.

@@ -318,6 +318,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "map_new_i32") { return "Map"; }
                     if (cid.name == "map_new") { return "SMap"; }
+                    if (cid.name == "cell_new") { return "cell"; }
                     if (cid.name == "string_from_bytes") { return "string"; }
                     // A call's result has the callee's declared return type
                     // (seeded "gfn:<ret>"). So a struct-returning `foo().field`
@@ -700,6 +701,26 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     // __ssa_smap_new). Both buffers share the same layout; the
                     // string-keyed methods only differ in comparing keys by
                     // content (__streq).
+                    // cell_new(v) — a single-slot box (docs/CELL-TYPE-PLAN.md):
+                    // alloc one slot, store the value at offset 0, yield the
+                    // pointer (modelled on emit_fn_box).
+                    if (cid.name == "cell_new" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var nval: i32 = s.cur_id();
+                        s = s.fresh();
+                        var nbox: i32 = s.cur_id();
+                        var nna: i32[] = [];
+                        s = s.emit(SInst { kind: "alloc", result: nbox, args: nna, imm: 1, str: "" });
+                        s = s.kconst(0);
+                        var nz: i32 = s.cur_id();
+                        s = s.fresh();
+                        var nsa: i32[] = [nbox, nz, nval];
+                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: nsa, imm: 64, str: "" });
+                        s = s.fresh();
+                        var nca: i32[] = [nbox];
+                        return s.emit(SInst { kind: "copy", result: s.cur_id(), args: nca, imm: 0, str: "" });
+                    }
                     var callee_name: string = cid.name;
                     if (callee_name == "map_new") { callee_name = "__ssa_smap_new"; }
                     if (callee_name == "map_new_i32") { callee_name = "__ssa_map_new_i32"; }
@@ -764,6 +785,31 @@ function build_expr(e: parser.Expr, s: BState): BState {
                             s = s.fresh();
                             return s.emit(SInst { kind: "call", result: s.cur_id(), args: uargs, imm: 0, str: usym });
                         }
+                    }
+                    // Cell[T] (docs/CELL-TYPE-PLAN.md): get() loads slot 0;
+                    // set(v) stores it in place (void). Single-slot box.
+                    if (urt == "cell" && fa.field == "get" && c.args.len() == 0) {
+                        s = build_expr(fa.obj, s);
+                        if (!s.ok) { return s; }
+                        var gptr: i32 = s.cur_id();
+                        s = s.kconst(0);
+                        var gz: i32 = s.cur_id();
+                        s = s.fresh();
+                        var gla: i32[] = [gptr, gz];
+                        return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: gla, imm: 64, str: "" });
+                    }
+                    if (urt == "cell" && fa.field == "set" && c.args.len() == 1) {
+                        s = build_expr(fa.obj, s);
+                        if (!s.ok) { return s; }
+                        var cptr: i32 = s.cur_id();
+                        s = s.kconst(0);
+                        var cz: i32 = s.cur_id();
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var cval: i32 = s.cur_id();
+                        s = s.fresh();
+                        var cstore: i32[] = [cptr, cz, cval];
+                        return s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: cstore, imm: 64, str: "" });
                     }
                     // Built-in `.with(i, v)` on arrays — value-returning
                     // element set (`arr = arr.with(i, v)`, the replacement for
@@ -1148,6 +1194,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             // dispatch indirectly.
             if (ity == "fn" || (ity.len() > 3 && ity[0:3] == "fn:") || (ity.len() >= 4 && ity[0:4] == "gfn:")) { return s.set_var_type(v.name, "fnval"); }
             if (ity == "Map" || ity == "SMap") { return s.set_var_type(v.name, ity); }
+            if (ity == "cell") { return s.set_var_type(v.name, "cell"); }
             if (ity == "f64" || v.type_name == "f64") { return s.set_var_type(v.name, "f64"); }
             if (ends_with_brackets(ity)) { return s.set_var_type(v.name, ity); }
             if (is_struct_type(ity, s.structs) || ity == "string") { return s.set_var_type(v.name, ity); }
@@ -2201,6 +2248,7 @@ pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[]
         var ptn: string = fd.params[pj].type_name;
         if (ptn.len() >= 10 && ptn[0:10] == "Map[string") { s = s.set_var_type(fd.params[pj].name, "SMap"); }
         else if (ptn.len() >= 3 && ptn[0:3] == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
+        else if (ptn.len() >= 5 && ptn[0:5] == "Cell[") { s = s.set_var_type(fd.params[pj].name, "cell"); }
         else if (ptn == "fn") { s = s.set_var_type(fd.params[pj].name, "fnval"); }
         else if (ptn == "f64") { s = s.set_var_type(fd.params[pj].name, "f64"); }
         else if (ends_with_brackets(ptn)) { s = s.set_var_type(fd.params[pj].name, ptn); }

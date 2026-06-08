@@ -91,6 +91,10 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"arr-two", "function main(): i32 { var a = [1, 2]; var b = [100, 200]; return a[1] + b[0]; }", 102},
 		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3},
 		{"arr-with", "function main(): i32 { var a = [1, 2, 3]; a = a.with(1, 20); return a[0] + a[1] + a[2]; }", 24},
+		{"cell-get-set", "function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }", 10},
+		// Shared mutation through a (non-void; the SSA backend doesn't emit
+		// void user fns yet) param: each call bumps the shared cell, 10→13.
+		{"cell-shared", "function bump(c: Cell[i32]): i32 { c.set(c.get() + 1); return c.get(); } function main(): i32 { var c: Cell[i32] = cell_new(10); var a = bump(c); var b = bump(c); return bump(c); }", 13},
 		{"arr-with-chain", "function main(): i32 { var a = [0, 0, 0]; a = a.with(0, 5); a = a.with(2, 7); return a[0] * 10 + a[2]; }", 57},
 		{"arr-len-loop", "function main(): i32 { var a = [4, 8, 12, 16]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 40},
 		// for-in loops (build_for desugar → counted while). Index advance at
