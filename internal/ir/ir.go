@@ -3460,6 +3460,14 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			case "__method_Map_set", "__method_Map_clear":
 				// Aliases the receiver (Args[0]) only.
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+			case "__method_Array_set":
+				// `arr.with(i, v)` returns the receiver buffer (cow), aliasing
+				// Args[0] only — never the index/value args. The generic
+				// any-arg-tainted rule below would taint the result via a
+				// tainted scalar-binary value (`b.with(0, i % 200)`), leaving
+				// the buffer permanently ineligible and unreclaimed at loop
+				// scope (the wasm LiteralAllocReclaim / OwnInplaceSort leak).
+				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
 			case "random_bytes":
 				// random_bytes returns a string the two-word backends
 				// (arm64 / wasm) allocate as RAW n bytes with NO rc header
