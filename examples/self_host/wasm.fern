@@ -586,9 +586,39 @@ function init_is_owned_string(e: parser.Expr, cx: Ctx): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
         parser.ExprBinary(b) => { return b.op == "+" && is_string_expr(e, cx); },
+        parser.ExprSlice(_) => { return is_string_expr(e, cx); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => { if (fa.field == "get_or") { return false; } },
+                _ => {},
+            }
+            return is_string_expr(e, cx);
+        },
         _ => { return false; }
     }
     return false;
+}
+
+// ret_value_is_borrowed reports whether a returned array/string value is a
+// BORROWED reference the function must retain for the caller — a field
+// access (`obj.field`), an index read (`arr[i]`), or a bare ident (a
+// borrowed param, or a non-move local that aliases something it doesn't
+// own). A fresh literal / concat / slice / call result is already owned, so
+// it is NOT retained (re-retaining would leak). Move-on-return swept locals
+// are filtered out separately (by the mov/smov exclusion) before this runs.
+function ret_value_is_borrowed(e: parser.Expr): boolean {
+    match (e) {
+        // Definitely fresh & uniquely owned — never retained (would leak):
+        parser.ExprArray(_) => { return false; },     // array literal
+        parser.ExprString(_) => { return false; },    // string literal
+        parser.ExprBinary(_) => { return false; },    // concat
+        parser.ExprSlice(_) => { return false; },     // slice/substr (copy)
+        // Everything else may alias/borrow — a field/index read, a borrowed
+        // param ident, or a CALL that returns its borrowed arg in place
+        // (`return wcat(o, …)`), so retain to hand the caller ownership.
+        _ => { return true; }
+    }
+    return true;
 }
 
 // init_is_string_alias: the init is a bare ident naming an existing string
@@ -6184,21 +6214,28 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 _ => {},
             }
             var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov);
-            // No owned array/string locals (or a void return): emit directly.
-            if (sweep.len() == 0 || st.cx.ret_void) {
+            // Perceus return-retain: when an array/string-returning function
+            // hands back a BORROWED reference (a field / index read, or a
+            // borrowed param — anything not a fresh literal/concat/slice/call
+            // and not a move-on-return local), retain it so the caller owns a
+            // counted reference. A fresh result is already owned (no inc — that
+            // would leak); a move-on-return local is excluded from the sweep
+            // and handed over as-is. This must apply even with NO swept locals
+            // (a function that just `return obj.field` still owes the caller a
+            // retain — else the caller's release of the result is a UAF).
+            var retain: boolean = (st.cx.ret_is_array || st.cx.ret_is_string) && mov.len() == 0 && smov.len() == 0 && ret_value_is_borrowed(r.value);
+            if (st.cx.ret_void) {
                 st = st.w(sweep);
                 return st.w("    (return " + valstr + ")\n");
             }
-            st = st.w("    (local.set " + tmp + " " + valstr + ")\n");
-            // Perceus return-retain: an array/string result that is NOT a
-            // plain move-on-return local may alias a swept local (a callee
-            // returning its borrowed buffer in place), so retain it across
-            // the sweep — the sweep's dec of the aliasing slot then nets to
-            // the caller's expected rc instead of freeing it underfoot.
-            if (st.cx.ret_is_array && mov.len() == 0) {
-                st = st.w("    (drop (call $__fern_rc_inc (local.get " + tmp + ")))\n");
+            if (sweep.len() == 0) {
+                if (retain) {
+                    return st.w("    (return (call $__fern_rc_inc " + valstr + "))\n");
+                }
+                return st.w("    (return " + valstr + ")\n");
             }
-            if (st.cx.ret_is_string && smov.len() == 0) {
+            st = st.w("    (local.set " + tmp + " " + valstr + ")\n");
+            if (retain) {
                 st = st.w("    (drop (call $__fern_rc_inc (local.get " + tmp + ")))\n");
             }
             st = st.w(sweep);
