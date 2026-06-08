@@ -30,20 +30,27 @@ func wantNoErr(t *testing.T, name, src string) {
 }
 
 func TestFipAcceptsAllocationFree(t *testing.T) {
-	// In-place insertion sort over an `own` array: index writes to the unique
-	// `arr` are in-place, `len` is whitelisted, everything else is scalar.
+	// In-place insertion sort over an `own` array: `.with` on the unique
+	// `arr` is the allocation-free CoW unique-in-place element set (the
+	// value-returning replacement for the removed `arr[i] = v`, accepted
+	// because the receiver root is `own`); `len` is whitelisted, the rest
+	// is scalar.
 	wantNoErr(t, "inplace sort", `fip function sort_inplace(own arr: i32[]): i32[] {
     var n: i32 = arr.len();
     var k: i32 = 1;
     while (k < n) {
         var key: i32 = arr[k];
         var j: i32 = k - 1;
-        while (j >= 0 && arr[j] > key) { arr[j + 1] = arr[j]; j = j - 1; }
-        arr[j + 1] = key;
+        while (j >= 0 && arr[j] > key) { arr = arr.with(j + 1, arr[j]); j = j - 1; }
+        arr = arr.with(j + 1, key);
         k = k + 1;
     }
     return arr;
 }
+function main(): i32 { return 0; }`)
+
+	// `.with` on an `own` array is accepted (allocation-free in-place).
+	wantNoErr(t, "with on own", `fip function set0(own a: i32[]): i32[] { return a.with(0, 9); }
 function main(): i32 { return 0; }`)
 
 	// Pure scalar arithmetic — trivially fip.
@@ -78,7 +85,8 @@ function main(): i32 { return 0; }`)
 fip function f(): i32 { var a: i32[] = alloc(); return a[0]; }
 function main(): i32 { return 0; }`)
 
-	// Index write to a NON-`own` (shared/borrowed) array copies-on-write.
-	wantE053(t, "write to non-own array", `fip function f(arr: i32[]): i32[] { arr[0] = 9; return arr; }
+	// `.with` on a NON-`own` (shared/borrowed) array copies-on-write, so it
+	// is not allocation-free — only `.with` on an `own` receiver is accepted.
+	wantE053(t, "with on non-own array", `fip function f(arr: i32[]): i32[] { return arr.with(0, 9); }
 function main(): i32 { return 0; }`)
 }

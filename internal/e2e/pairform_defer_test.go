@@ -26,31 +26,31 @@ func TestPairFormFuncWithDeferReturnsCorrectly(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"option_some_payload_with_defer", `function f(out: i32[]): Option[i32] {
-    defer out[0] = 1;
+		{"option_some_payload_with_defer", `function f(out: Cell[i32]): Option[i32] {
+    defer out.set(1);
     return Some(42);
 }
 function main(): i32 {
-    var a: i32[] = [0];
+    var a: Cell[i32] = cell_new(0);
     var r: i32 = 0;
     match (f(a)) {
         Some(v) => { r = v; },
         None => { r = 100; },
     }
-    return r + a[0];
+    return r + a.get();
 }`, 43},
-		{"result_ok_payload_with_defer", `function g(out: i32[]): Result[i32, i32] {
-    defer out[0] = 1;
+		{"result_ok_payload_with_defer", `function g(out: Cell[i32]): Result[i32, i32] {
+    defer out.set(1);
     return Ok(7);
 }
 function main(): i32 {
-    var a: i32[] = [0];
+    var a: Cell[i32] = cell_new(0);
     var r: i32 = 0;
     match (g(a)) {
         Ok(v) => { r = v; },
         Err(e) => { r = 100; },
     }
-    return r + a[0];
+    return r + a.get();
 }`, 8},
 	}
 	for _, c := range cases {

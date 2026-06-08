@@ -3428,6 +3428,18 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					if len(s.Args) == 2 {
 						escape(s.Args[1])
 					}
+				case id.Name == "__method_Array_set":
+					// `arr.with(i, v)` — Args[0] is the receiver array
+					// (threaded / reassigned into the buffer, not retained),
+					// Args[1] is the scalar index; Args[2] is the element
+					// moved into the buffer. Taint the element so a local
+					// flowing in isn't freed at scope exit while the array
+					// still references it (the `.append` analogue — without
+					// this, `arr = arr.with(i, ptrElem)` self-assign UAF'd
+					// on a pointer-element array).
+					if len(s.Args) == 3 {
+						escape(s.Args[2])
+					}
 				default:
 					// Variant constructor (`Arr(xs)`): under the move model
 					// emitEnumNew stores the payload without an inc, so a local
@@ -3697,6 +3709,14 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				return false
 			case "__method_Map_set", "__method_Map_clear":
 				// Aliases the receiver (Args[0]) only.
+				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+			case "__method_Array_set":
+				// `arr.with(i, v)` returns the receiver buffer (cow), aliasing
+				// Args[0] only — never the index/value args. The generic
+				// any-arg-tainted rule below would taint the result via a
+				// tainted scalar-binary value (`b.with(0, i % 200)`), leaving
+				// the buffer permanently ineligible and unreclaimed at loop
+				// scope (the wasm LiteralAllocReclaim / OwnInplaceSort leak).
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
 			case "random_bytes":
 				// random_bytes returns a string the two-word backends
@@ -15105,7 +15125,14 @@ func isSelfMapMutation(value ast.Expr, targetName string) bool {
 	if !ok {
 		return false
 	}
-	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" {
+	// `__method_Array_set` is `arr.with(i, v)` — like the map mutators it
+	// goes through a `*_cow_inplace` helper that returns the SAME handle on
+	// rc==1 (no reference released) and a fresh copy on rc>1. So `arr =
+	// arr.with(...)` needs the same COW-aware dec (dec the old handle iff a
+	// copy happened) as `m = m.set(...)`; an unconditional dec over-releases
+	// the in-place handle (the rc-underflow / unbounded-leak the wasm
+	// OwnInplaceSort + LiteralAllocReclaim tests caught).
+	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" && callee.Name != "__method_Array_set" {
 		return false
 	}
 	if len(call.Args) == 0 {

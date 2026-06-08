@@ -31,42 +31,42 @@ func TestTryOpRunsDefersOnErrorPath(t *testing.T) {
 		{"result_err_path_runs_defer", `function fails(): Result[i32, string] {
     return Err("boom");
 }
-function inner(arr: i32[]): Result[i32, string] {
-    defer arr[0] = 42;
+function inner(c: Cell[i32]): Result[i32, string] {
+    defer c.set(42);
     var x: i32 = fails()?;
     return Ok(x);
 }
 function main(): i32 {
-    var a: i32[] = [0];
-    inner(a);
-    return a[0];
+    var c: Cell[i32] = cell_new(0);
+    inner(c);
+    return c.get();
 }`, 42},
 		{"option_none_path_runs_defer", `function maybe(): Option[string] {
     return None;
 }
-function inner(arr: i32[]): Option[string] {
-    defer arr[0] = 9;
+function inner(c: Cell[i32]): Option[string] {
+    defer c.set(9);
     var x: string = maybe()?;
     return Some(x);
 }
 function main(): i32 {
-    var a: i32[] = [0];
-    inner(a);
-    return a[0];
+    var c: Cell[i32] = cell_new(0);
+    inner(c);
+    return c.get();
 }`, 9},
 		{"multiple_defers_lifo_on_error_path", `function fails(): Result[i32, string] {
     return Err("e");
 }
-function inner(arr: i32[]): Result[i32, string] {
-    defer arr[0] = 10;
-    defer arr[0] = 20;
+function inner(c: Cell[i32]): Result[i32, string] {
+    defer c.set(10);
+    defer c.set(20);
     var x: i32 = fails()?;
     return Ok(x);
 }
 function main(): i32 {
-    var a: i32[] = [0];
-    inner(a);
-    return a[0];
+    var c: Cell[i32] = cell_new(0);
+    inner(c);
+    return c.get();
 }`, 10},
 	}
 	for _, c := range cases {

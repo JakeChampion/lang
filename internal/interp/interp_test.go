@@ -92,7 +92,7 @@ func TestArrayIndexAndAssign(t *testing.T) {
 	v, _ := evalProgram(t, `
 		function main(): i32 {
 			var a: i32[] = [10, 20, 30];
-			a[1] = 99;
+			a = a.with(1, 99);
 			return a[0] + a[1] + a[2];
 		}`)
 	if n, ok := v.(Number); !ok || n != 139 {
