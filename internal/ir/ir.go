@@ -3178,6 +3178,18 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					if len(s.Args) == 2 {
 						escape(s.Args[1])
 					}
+				case id.Name == "__method_Array_set":
+					// `arr.with(i, v)` — Args[0] is the receiver array
+					// (threaded / reassigned into the buffer, not retained),
+					// Args[1] is the scalar index; Args[2] is the element
+					// moved into the buffer. Taint the element so a local
+					// flowing in isn't freed at scope exit while the array
+					// still references it (the `.append` analogue — without
+					// this, `arr = arr.with(i, ptrElem)` self-assign UAF'd
+					// on a pointer-element array).
+					if len(s.Args) == 3 {
+						escape(s.Args[2])
+					}
 				default:
 					// Variant constructor (`Arr(xs)`): under the move model
 					// emitEnumNew stores the payload without an inc, so a local

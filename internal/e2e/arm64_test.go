@@ -389,13 +389,13 @@ function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
     var k: i32 = peek_kind(toks, pos);
     if (k == 0) {
         var iv: i32 = peek_int(toks, pos);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var n: Expr = Num { value: iv };
         return Ok(n);
     }
     if (k == 1) {
         var name: string = peek_ident(toks, pos);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var ve: Expr = Var { name: name };
         return Ok(ve);
     }
@@ -406,7 +406,7 @@ function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
     if (p != 40) {
         return Err(ParseError { message: "expected number, ident, or paren", pos: pos });
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (inner_r) {
         Err(e) => { return Err(e); },
@@ -415,7 +415,7 @@ function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
             if (peek_kind(toks, ep) != 2 || peek_punct(toks, ep) != 41) {
                 return Err(ParseError { message: "missing close paren", pos: ep });
             }
-            cur[0] = ep + 1;
+            cur = cur.with(0, ep + 1);
             return Ok(inner_e);
         },
     }
@@ -432,7 +432,7 @@ function parse_term(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
                 if (peek_kind(toks, pos) != 2) { return Ok(lhs); }
                 var op: i32 = peek_punct(toks, pos);
                 if (op != 42 && op != 47) { return Ok(lhs); }
-                cur[0] = pos + 1;
+                cur = cur.with(0, pos + 1);
                 var rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
@@ -457,7 +457,7 @@ function parse_expr(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
                 if (peek_kind(toks, pos) != 2) { return Ok(lhs); }
                 var op: i32 = peek_punct(toks, pos);
                 if (op != 43 && op != 45) { return Ok(lhs); }
-                cur[0] = pos + 1;
+                cur = cur.with(0, pos + 1);
                 var rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
@@ -643,7 +643,7 @@ function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
     var k: i32 = peek_kind(toks, pos);
     if (k == 0) {
         var v: i32 = peek_int(toks, pos);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var n: Expr = Num { value: v };
         return Ok(n);
     }
@@ -654,7 +654,7 @@ function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
     if (p != 40) {
         return Err(ParseError { message: "expected number or paren", pos: pos });
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (inner_r) {
         Err(e) => { return Err(e); },
@@ -663,7 +663,7 @@ function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
             if (peek_kind(toks, ep) != 1 || peek_punct(toks, ep) != 41) {
                 return Err(ParseError { message: "missing close paren", pos: ep });
             }
-            cur[0] = ep + 1;
+            cur = cur.with(0, ep + 1);
             return Ok(inner_e);
         },
     }
@@ -680,7 +680,7 @@ function parse_term(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
                 if (peek_kind(toks, pos) != 1) { return Ok(lhs); }
                 var op: i32 = peek_punct(toks, pos);
                 if (op != 42 && op != 47) { return Ok(lhs); }
-                cur[0] = pos + 1;
+                cur = cur.with(0, pos + 1);
                 var rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
@@ -705,7 +705,7 @@ function parse_expr(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
                 if (peek_kind(toks, pos) != 1) { return Ok(lhs); }
                 var op: i32 = peek_punct(toks, pos);
                 if (op != 43 && op != 45) { return Ok(lhs); }
-                cur[0] = pos + 1;
+                cur = cur.with(0, pos + 1);
                 var rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
@@ -926,32 +926,32 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
         var name: string = tok_ident_name(toks[pos]);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
-            cur[0] = cur[0] + 1;
+            cur = cur.with(0, cur[0] + 1);
             var args: Expr[] = [];
             if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
-                cur[0] = cur[0] + 1;
+                cur = cur.with(0, cur[0] + 1);
                 return Call { name: name, args: args };
             }
             args = args.append(parse_expr(toks, cur));
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur[0] = cur[0] + 1;
+                cur = cur.with(0, cur[0] + 1);
                 args = args.append(parse_expr(toks, cur));
             }
-            cur[0] = cur[0] + 1;
+            cur = cur.with(0, cur[0] + 1);
             return Call { name: name, args: args };
         }
         return Var { name: name };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -962,7 +962,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -976,7 +976,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -989,7 +989,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
     if (tok_kind(toks[pos]) != 2) { return lhs; }
     var op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
@@ -1004,72 +1004,72 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
     var cond: Expr = Num { value: 0 };
     var body: Stmt[] = [];
     if (expect_kw(toks, cur[0], "var")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         name = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);
         value = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         return VarDecl { name: name, value: value };
     }
     if (expect_kw(toks, cur[0], "return")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         value = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         return Return { value: value };
     }
     if (expect_kw(toks, cur[0], "while")) {
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);
         cond = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);
         body = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         return WhileSt { cond: cond, body: body };
     }
     if (expect_kw(toks, cur[0], "if")) {
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // (
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // (
         cond = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // )
-        cur[0] = cur[0] + 1;   // {
+        cur = cur.with(0, cur[0] + 1);   // )
+        cur = cur.with(0, cur[0] + 1);   // {
         var thn: Stmt[] = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
             thn = thn.append(parse_stmt(toks, cur));
         }
-        cur[0] = cur[0] + 1;   // }
+        cur = cur.with(0, cur[0] + 1);   // }
         // Optional else / else if.
         var els: Stmt[] = [];
         if (expect_kw(toks, cur[0], "else")) {
-            cur[0] = cur[0] + 1;
+            cur = cur.with(0, cur[0] + 1);
             if (expect_kw(toks, cur[0], "if")) {
                 // else if — recursively parse the nested if as
                 // the sole stmt of the else body.
                 els = els.append(parse_stmt(toks, cur));
             } else {
-                cur[0] = cur[0] + 1;   // {
+                cur = cur.with(0, cur[0] + 1);   // {
                 while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
                     els = els.append(parse_stmt(toks, cur));
                 }
-                cur[0] = cur[0] + 1;   // }
+                cur = cur.with(0, cur[0] + 1);   // }
             }
         }
         return IfSt { cond: cond, thn: thn, els: els };
     }
     if (tok_kind(toks[cur[0]]) == 1 && tok_kind(toks[cur[0] + 1]) == 2 && tok_punct_ch(toks[cur[0] + 1]) == 61) {
         name = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);
         value = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         return Assign { name: name, value: value };
     }
     value = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return ExprSt { value: value };
 }
 
@@ -1080,27 +1080,27 @@ function parse_program(src: string): Program {
     var cur: i32[] = [0];
     var fns: FnDef[] = [];
     while (expect_kw(toks, cur[0], "fn")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         var name: string = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);
         var params: string[] = [];
         if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
             params = params.append(tok_ident_name(toks[cur[0]]));
-            cur[0] = cur[0] + 1;
+            cur = cur.with(0, cur[0] + 1);
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur[0] = cur[0] + 1;
+                cur = cur.with(0, cur[0] + 1);
                 params = params.append(tok_ident_name(toks[cur[0]]));
-                cur[0] = cur[0] + 1;
+                cur = cur.with(0, cur[0] + 1);
             }
         }
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);
         var body: Stmt[] = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_stmts: Stmt[] = [];
@@ -1444,33 +1444,33 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
         var name: string = tok_ident_name(toks[pos]);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         // Call vs Var disambiguation on '(' lookahead.
         if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
-            cur[0] = cur[0] + 1;   // skip '('
+            cur = cur.with(0, cur[0] + 1);   // skip '('
             var args: Expr[] = [];
             if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
-                cur[0] = cur[0] + 1;
+                cur = cur.with(0, cur[0] + 1);
                 return Call { name: name, args: args };
             }
             args = args.append(parse_expr(toks, cur));
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur[0] = cur[0] + 1;   // skip ','
+                cur = cur.with(0, cur[0] + 1);   // skip ','
                 args = args.append(parse_expr(toks, cur));
             }
-            cur[0] = cur[0] + 1;   // skip ')'
+            cur = cur.with(0, cur[0] + 1);   // skip ')'
             return Call { name: name, args: args };
         }
         return Var { name: name };
     }
-    cur[0] = pos + 1;   // skip '('
+    cur = cur.with(0, pos + 1);   // skip '('
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;   // skip ')'
+    cur = cur.with(0, cur[0] + 1);   // skip ')'
     return inner;
 }
 
@@ -1481,7 +1481,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -1495,7 +1495,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -1508,7 +1508,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
     if (tok_kind(toks[pos]) != 2) { return lhs; }
     var op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
@@ -1521,18 +1521,18 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
     var name: string = "";
     var value: Expr = Num { value: 0 };
     if (expect_kw(toks, cur[0], "var")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         name = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '='
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '='
         value = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         return VarDecl { name: name, value: value };
     }
     if (expect_kw(toks, cur[0], "return")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         value = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         return Return { value: value };
     }
     // Hoist cond / body across the while / if arms — wasm
@@ -1540,29 +1540,29 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
     var cond: Expr = Num { value: 0 };
     var body: Stmt[] = [];
     if (expect_kw(toks, cur[0], "while")) {
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '('
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '('
         cond = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ')'
-        cur[0] = cur[0] + 1;   // skip '{'
+        cur = cur.with(0, cur[0] + 1);   // skip ')'
+        cur = cur.with(0, cur[0] + 1);   // skip '{'
         body = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur[0] = cur[0] + 1;   // skip '}'
+        cur = cur.with(0, cur[0] + 1);   // skip '}'
         return WhileSt { cond: cond, body: body };
     }
     if (expect_kw(toks, cur[0], "if")) {
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '('
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '('
         cond = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ')'
-        cur[0] = cur[0] + 1;   // skip '{'
+        cur = cur.with(0, cur[0] + 1);   // skip ')'
+        cur = cur.with(0, cur[0] + 1);   // skip '{'
         body = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur[0] = cur[0] + 1;   // skip '}'
+        cur = cur.with(0, cur[0] + 1);   // skip '}'
         return IfSt { cond: cond, body: body };
     }
     // Lookahead: ident '=' is assignment; ident '(' is an
@@ -1570,14 +1570,14 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
     // bare expression-as-statement (covers stray calls).
     if (tok_kind(toks[cur[0]]) == 1 && tok_kind(toks[cur[0] + 1]) == 2 && tok_punct_ch(toks[cur[0] + 1]) == 61) {
         name = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '='
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '='
         value = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         return Assign { name: name, value: value };
     }
     value = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;   // skip ';'
+    cur = cur.with(0, cur[0] + 1);   // skip ';'
     return ExprSt { value: value };
 }
 
@@ -1588,27 +1588,27 @@ function parse_program(src: string): Program {
     var cur: i32[] = [0];
     var fns: FnDef[] = [];
     while (expect_kw(toks, cur[0], "fn")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         var name: string = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '('
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '('
         var params: string[] = [];
         if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
             params = params.append(tok_ident_name(toks[cur[0]]));
-            cur[0] = cur[0] + 1;
+            cur = cur.with(0, cur[0] + 1);
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur[0] = cur[0] + 1;   // skip ','
+                cur = cur.with(0, cur[0] + 1);   // skip ','
                 params = params.append(tok_ident_name(toks[cur[0]]));
-                cur[0] = cur[0] + 1;
+                cur = cur.with(0, cur[0] + 1);
             }
         }
-        cur[0] = cur[0] + 1;   // skip ')'
-        cur[0] = cur[0] + 1;   // skip '{'
+        cur = cur.with(0, cur[0] + 1);   // skip ')'
+        cur = cur.with(0, cur[0] + 1);   // skip '{'
         var body: Stmt[] = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur[0] = cur[0] + 1;   // skip '}'
+        cur = cur.with(0, cur[0] + 1);   // skip '}'
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_stmts: Stmt[] = [];
@@ -1956,16 +1956,16 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -1976,7 +1976,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -1990,7 +1990,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -2005,7 +2005,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
     if (tok_kind(toks[pos]) != 2) { return lhs; }
     var op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
@@ -2018,39 +2018,39 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
     var name: string = "";
     var value: Expr = Num { value: 0 };
     if (expect_kw(toks, cur[0], "var")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         name = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '='
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '='
         value = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         return VarDecl { name: name, value: value };
     }
     if (expect_kw(toks, cur[0], "return")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         value = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         return Return { value: value };
     }
     if (expect_kw(toks, cur[0], "while")) {
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '('
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '('
         var cond: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ')'
-        cur[0] = cur[0] + 1;   // skip '{'
+        cur = cur.with(0, cur[0] + 1);   // skip ')'
+        cur = cur.with(0, cur[0] + 1);   // skip '{'
         var body: Stmt[] = [];
         while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur[0] = cur[0] + 1;   // skip '}'
+        cur = cur.with(0, cur[0] + 1);   // skip '}'
         return WhileSt { cond: cond, body: body };
     }
     // Assignment: ident '=' expr ';'
     name = tok_ident_name(toks[cur[0]]);
-    cur[0] = cur[0] + 1;
-    cur[0] = cur[0] + 1;   // skip '='
+    cur = cur.with(0, cur[0] + 1);
+    cur = cur.with(0, cur[0] + 1);   // skip '='
     value = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;   // skip ';'
+    cur = cur.with(0, cur[0] + 1);   // skip ';'
     return Assign { name: name, value: value };
 }
 
@@ -2335,7 +2335,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -2349,7 +2349,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -2360,16 +2360,16 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -2385,26 +2385,26 @@ function parse_stmt(toks: Token[], cur: i32[]): Stmt {
     var name: string = "";
     var value: Expr = Num { value: 0 };
     if (expect_kw(toks, cur[0], "var")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         name = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '='
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '='
         value = parse_arith(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         return VarDecl { name: name, value: value };
     }
     if (expect_kw(toks, cur[0], "return")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         value = parse_arith(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         return Return { value: value };
     }
     // Assignment: ident '=' expr ';'
     name = tok_ident_name(toks[cur[0]]);
-    cur[0] = cur[0] + 1;
-    cur[0] = cur[0] + 1;   // skip '='
+    cur = cur.with(0, cur[0] + 1);
+    cur = cur.with(0, cur[0] + 1);   // skip '='
     value = parse_arith(toks, cur);
-    cur[0] = cur[0] + 1;   // skip ';'
+    cur = cur.with(0, cur[0] + 1);   // skip ';'
     return Assign { name: name, value: value };
 }
 
@@ -2666,7 +2666,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -2680,7 +2680,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -2691,16 +2691,16 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -3004,7 +3004,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -3018,7 +3018,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -3029,16 +3029,16 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -3336,7 +3336,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -3350,7 +3350,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -3361,16 +3361,16 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -3615,7 +3615,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -3629,7 +3629,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -3640,16 +3640,16 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -3980,7 +3980,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -3994,7 +3994,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -4004,11 +4004,11 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
 function parse_expr(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     if (expect_kw(toks, pos, "if")) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var c: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip "then"
+        cur = cur.with(0, cur[0] + 1);   // skip "then"
         var thn: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip "else"
+        cur = cur.with(0, cur[0] + 1);   // skip "else"
         var els: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: thn, els: els };
     }
@@ -4019,33 +4019,33 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
         var name: string = tok_ident_name(toks[pos]);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
-            cur[0] = cur[0] + 1;   // skip '('
+            cur = cur.with(0, cur[0] + 1);   // skip '('
             var args: Expr[] = [];
             // Empty arg list — immediate ')'.
             if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
-                cur[0] = cur[0] + 1;
+                cur = cur.with(0, cur[0] + 1);
                 return Call { name: name, args: args };
             }
             args = args.append(parse_expr(toks, cur));
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur[0] = cur[0] + 1;   // skip ','
+                cur = cur.with(0, cur[0] + 1);   // skip ','
                 args = args.append(parse_expr(toks, cur));
             }
-            cur[0] = cur[0] + 1;   // skip ')'
+            cur = cur.with(0, cur[0] + 1);   // skip ')'
             return Call { name: name, args: args };
         }
         return Var { name: name };
     }
-    cur[0] = pos + 1;   // skip '('
+    cur = cur.with(0, pos + 1);   // skip '('
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;   // skip ')'
+    cur = cur.with(0, cur[0] + 1);   // skip ')'
     return inner;
 }
 
@@ -4056,24 +4056,24 @@ function parse_program(src: string): Program {
     var cur: i32[] = [0];
     var fns: FnDef[] = [];
     while (expect_kw(toks, cur[0], "fn")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         var name: string = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '('
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '('
         var params: string[] = [];
         if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
             params = params.append(tok_ident_name(toks[cur[0]]));
-            cur[0] = cur[0] + 1;
+            cur = cur.with(0, cur[0] + 1);
             while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur[0] = cur[0] + 1;   // skip ','
+                cur = cur.with(0, cur[0] + 1);   // skip ','
                 params = params.append(tok_ident_name(toks[cur[0]]));
-                cur[0] = cur[0] + 1;
+                cur = cur.with(0, cur[0] + 1);
             }
         }
-        cur[0] = cur[0] + 1;   // skip ')'
-        cur[0] = cur[0] + 1;   // skip '='
+        cur = cur.with(0, cur[0] + 1);   // skip ')'
+        cur = cur.with(0, cur[0] + 1);   // skip '='
         var body: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_expr: Expr = parse_expr(toks, cur);
@@ -4284,7 +4284,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -4298,7 +4298,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -4308,11 +4308,11 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
 function parse_expr(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     if (expect_kw(toks, pos, "if")) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var c: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip "then"
+        cur = cur.with(0, cur[0] + 1);   // skip "then"
         var thn: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip "else"
+        cur = cur.with(0, cur[0] + 1);   // skip "else"
         var els: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: thn, els: els };
     }
@@ -4323,24 +4323,24 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
         var name: string = tok_ident_name(toks[pos]);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         // Call if next is '(' — single-token lookahead.
         if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
-            cur[0] = cur[0] + 1;
+            cur = cur.with(0, cur[0] + 1);
             var arg: Expr = parse_expr(toks, cur);
-            cur[0] = cur[0] + 1;   // skip ')'
+            cur = cur.with(0, cur[0] + 1);   // skip ')'
             return Call { name: name, arg: arg };
         }
         return Var { name: name };
     }
-    cur[0] = pos + 1;   // skip '('
+    cur = cur.with(0, pos + 1);   // skip '('
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;   // skip ')'
+    cur = cur.with(0, cur[0] + 1);   // skip ')'
     return inner;
 }
 
@@ -4358,16 +4358,16 @@ function parse_program(src: string): Program {
     var fn_params: string[] = [];
     var fn_bodies: Expr[] = [];
     while (expect_kw(toks, cur[0], "fn")) {
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         var name: string = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip '('
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip '('
         var param: string = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;   // skip ')'
-        cur[0] = cur[0] + 1;   // skip '='
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);   // skip ')'
+        cur = cur.with(0, cur[0] + 1);   // skip '='
         var body: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;   // skip ';'
+        cur = cur.with(0, cur[0] + 1);   // skip ';'
         fn_names = fn_names.append(name);
         fn_params = fn_params.append(param);
         fn_bodies = fn_bodies.append(body);
@@ -4550,21 +4550,21 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 function parse_expr(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     if (expect_kw(toks, pos, "if")) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var c: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         var t: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         var el: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: t, els: el };
     }
     if (expect_kw(toks, pos, "let")) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var name: string = tok_ident_name(toks[cur[0]]);
-        cur[0] = cur[0] + 1;
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
+        cur = cur.with(0, cur[0] + 1);
         var val: Expr = parse_expr(toks, cur);
-        cur[0] = cur[0] + 1;
+        cur = cur.with(0, cur[0] + 1);
         var body: Expr = parse_expr(toks, cur);
         return Let { name: name, value: val, body: body };
     }
@@ -4578,7 +4578,7 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -4592,7 +4592,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -4603,16 +4603,16 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -4744,12 +4744,12 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         var v: i32 = tok_int_value(toks[pos]);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: v };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_relation(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -4760,7 +4760,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 1) { return lhs; }
         var ch: i32 = tok_punct_ch(toks[pos]);
         if (ch != 42 && ch != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         var op_s: string = "*";
         if (ch == 47) { op_s = "/"; }
@@ -4776,7 +4776,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
         if (tok_kind(toks[pos]) != 1) { return lhs; }
         var ch: i32 = tok_punct_ch(toks[pos]);
         if (ch != 43 && ch != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         var op_s: string = "+";
         if (ch == 45) { op_s = "-"; }
@@ -4794,7 +4794,7 @@ function parse_relation(toks: Token[], cur: i32[]): Expr {
     if (k == 1) {
         var ch: i32 = tok_punct_ch(toks[pos]);
         if (ch == 60 || ch == 62) {
-            cur[0] = pos + 1;
+            cur = cur.with(0, pos + 1);
             rhs = parse_expr(toks, cur);
             op_s = "<";
             if (ch == 62) { op_s = ">"; }
@@ -4804,7 +4804,7 @@ function parse_relation(toks: Token[], cur: i32[]): Expr {
     }
     if (k == 2) {
         op_s = tok_dpunct_text(toks[pos]);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         rhs = parse_expr(toks, cur);
         return BinOp { op: op_s, left: lhs, right: rhs };
     }
@@ -4928,12 +4928,12 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var k: i32 = peek_kind(toks, pos);
     if (k == 0) {
         var v: i32 = peek_int(toks, pos);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: v };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -4944,7 +4944,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (peek_kind(toks, pos) != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -4958,7 +4958,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
         if (peek_kind(toks, pos) != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -5066,12 +5066,12 @@ function parse_factor(toks: Token[], cur: i32[]): Expr {
     var k: i32 = peek(toks, pos);
     if (k == 0) {
         var v: i32 = peek_int(toks, pos);
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: v };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -5083,7 +5083,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (k != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -5098,7 +5098,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
         if (k != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -5420,7 +5420,7 @@ function tokenize(src: string): Token[] {
             while (i < n && src[i] != 34) {
                 if (src[i] == 92 && i + 1 < n) {
                     var bs: u8[] = __alloc_u8(1);
-                    bs[0] = escape_byte(src[i + 1]) as u8;
+                    bs = bs.with(0, escape_byte(src[i + 1]) as u8);
                     s = s + string_from_bytes(bs);
                     i = i + 2;
                 } else {
@@ -5909,7 +5909,7 @@ function tokenize(src: string): Token[] {
                 if (src[i] == 92 && i + 1 < n) {
                     var resolved: i32 = unescape(src[i + 1]);
                     var buf: u8[] = __alloc_u8(1);
-                    buf[0] = resolved as u8;
+                    buf = buf.with(0, resolved as u8);
                     out = out + string_from_bytes(buf);
                     i = i + 2;
                 } else {
@@ -8767,9 +8767,9 @@ func TestArm64SsoInline(t *testing.T) {
 		// string_from_bytes inline.
 		{"sfb-inline", `function main(): i32 {
     var bs: u8[] = __alloc_u8(3);
-    bs[0] = 65 as u8;
-    bs[1] = 66 as u8;
-    bs[2] = 67 as u8;
+    bs = bs.with(0, 65 as u8);
+    bs = bs.with(1, 66 as u8);
+    bs = bs.with(2, 67 as u8);
     var s: string = string_from_bytes(bs);
     if (s == "ABC") { return 1; }
     return 0;
@@ -10557,29 +10557,11 @@ func TestArm64SliceMake(t *testing.T) {
     var s: [i32] = arr[1:4];
     return s[1];
 }`, 30},
-		{"i32 slice write propagates", `function main(): i32 {
-    var arr: i32[] = [1, 2, 3, 4, 5];
-    var s: [i32] = arr[1:4];
-    s[0] = 99;
-    return arr[1];
-}`, 99},
 		{"u8 slice read", `function main(): i32 {
     var arr: u8[] = [10, 20, 30, 40, 50];
     var s: [u8] = arr[1:4];
     return s[1] as i32;
 }`, 30},
-		{"u8 slice write propagates", `function main(): i32 {
-    var arr: u8[] = [1, 2, 3, 4, 5];
-    var s: [u8] = arr[1:4];
-    s[0] = 99;
-    return arr[1] as i32;
-}`, 99},
-		{"u16 slice round-trip", `function main(): i32 {
-    var arr: u16[] = [100, 200, 300, 400];
-    var s: [u16] = arr[1:3];
-    s[0] = 50;
-    return arr[1] as i32;
-}`, 50},
 		{"i64 slice read", `function main(): i32 {
     var arr: i64[] = [(1i64 << 40), (1i64 << 41), (1i64 << 42)];
     var s: [i64] = arr[1:3];
@@ -11869,16 +11851,16 @@ func TestArm64Defer(t *testing.T) {
     return x;
 }
 function main(): i32 { return inner(); }`, 2},
-		{"multiple defers run LIFO", `function check(arr: i32[]): i32 {
-    arr[0] = 1;
-    defer arr[0] = 10;
-    defer arr[0] = 20;
-    return arr[0];
+		{"multiple defers run LIFO", `function check(c: Cell[i32]): i32 {
+    c.set(1);
+    defer c.set(10);
+    defer c.set(20);
+    return c.get();
 }
 function main(): i32 {
-    var a: i32[] = [0];
-    check(a);
-    return a[0];
+    var c: Cell[i32] = cell_new(0);
+    check(c);
+    return c.get();
 }`, 10},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
@@ -13351,7 +13333,7 @@ func TestArm64ArrayIndexSetInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var addr_before: usize = xs as usize;
-    xs[1] = 999;
+    xs = xs.with(1, 999);
     var addr_after: usize = xs as usize;
     if (addr_before != addr_after) { return 1; }
     if (xs[1] != 999) { return 2; }
@@ -13370,7 +13352,7 @@ func TestArm64ArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var ys = xs;            // alias, rc=2
-    ys[0] = 999;            // must COPY
+    ys = ys.with(0, 999);            // must COPY
     if (xs[0] != 10) { return 1; }   // xs unchanged
     if (xs[1] != 20) { return 2; }
     if (xs[2] != 30) { return 3; }
@@ -13391,10 +13373,10 @@ func TestArm64ArrayIndexSetAliasedCopies(t *testing.T) {
 func TestArm64ArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
     var buf: u8[] = __alloc_u8(4);
-    buf[0] = 65 as u8;
-    buf[1] = 66 as u8;
-    buf[2] = 67 as u8;
-    buf[3] = 68 as u8;
+    buf = buf.with(0, 65 as u8);
+    buf = buf.with(1, 66 as u8);
+    buf = buf.with(2, 67 as u8);
+    buf = buf.with(3, 68 as u8);
     return (buf[0] as i32) + (buf[1] as i32) + (buf[2] as i32) + (buf[3] as i32) - 266;
 }`
 	if _, code := compileAndRunArm64(t, src); code != 0 {
@@ -13410,7 +13392,7 @@ func TestArm64ArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
     var s: State = State{items: [10, 20, 30]};
-    s.items[1] = 999;
+    s = State { ...s, items: s.items.with(1, 999) };
     if (s.items[0] != 10) { return 1; }
     if (s.items[1] != 999) { return 2; }
     if (s.items[2] != 30) { return 3; }
@@ -13429,7 +13411,7 @@ func TestArm64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 function main(): i32 {
     var arr: i32[] = [10, 20, 30];
     var s: State = State{items: arr};
-    s.items[1] = 999;
+    s = State { ...s, items: s.items.with(1, 999) };
     if (arr[0] != 10) { return 1; }
     if (arr[1] != 20) { return 2; }
     if (arr[2] != 30) { return 3; }
@@ -13451,7 +13433,7 @@ func TestArm64ArrayIndexSetNestedStructField(t *testing.T) {
 struct Outer { inner: Inner }
 function main(): i32 {
     var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
-    o.inner.items[1] = 999;
+    o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (o.inner.items[0] != 10) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
     if (o.inner.items[2] != 30) { return 3; }
@@ -13471,7 +13453,7 @@ struct Outer { inner: Inner }
 function main(): i32 {
     var arr: i32[] = [10, 20, 30];
     var o: Outer = Outer{inner: Inner{items: arr}};
-    o.inner.items[1] = 999;
+    o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (arr[1] != 20) { return 1; }  // arr unchanged
     if (o.inner.items[1] != 999) { return 2; }  // o updated
     return 0;
@@ -13487,7 +13469,7 @@ function main(): i32 {
 func TestArm64ArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
     var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
-    mat[0][1] = 999;
+    mat = mat.with(0, mat[0].with(1, 999));
     if (mat[0][0] != 1) { return 1; }
     if (mat[0][1] != 999) { return 2; }
     if (mat[0][2] != 3) { return 3; }
@@ -13506,7 +13488,7 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var mat: i32[][] = [[1, 2], [3, 4]];
     var inner = mat[0];     // Phase 1d-ii inc: inner.rc = 2
-    mat[0][1] = 999;        // CoW the inner; inner alias unchanged
+    mat = mat.with(0, mat[0].with(1, 999));        // CoW the inner; inner alias unchanged
     if (inner[1] != 2) { return 1; }
     if (mat[0][1] != 999) { return 2; }
     return 0;
@@ -13549,7 +13531,7 @@ func TestArm64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 function main(): i32 {
     var inner: i32[] = [1, 2, 3];
     var s: State = State{mat: [inner, [4, 5, 6]]};
-    s.mat[0][1] = 999;
+    s = State { ...s, mat: s.mat.with(0, s.mat[0].with(1, 999)) };
     if (inner[1] != 2) { return 1; }
     if (s.mat[0][1] != 999) { return 2; }
     if (s.mat[0][0] != 1) { return 3; }

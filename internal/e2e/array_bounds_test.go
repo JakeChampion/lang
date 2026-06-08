@@ -85,7 +85,7 @@ func TestArrayInBoundsStillWorks(t *testing.T) {
 		{"read_write", `import "std/i32";
 function main(): i32 {
     var xs: i32[] = [10, 20, 30];
-    xs[1] = 99;
+    xs = xs.with(1, 99);
     print(xs[0].to_string());
     print(xs[1].to_string());
     print(xs[2].to_string());

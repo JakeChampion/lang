@@ -1848,13 +1848,13 @@ function main(): i32 {
 		name: "escape_array_into_index_assign",
 		src: `import "core/no_prelude";
 import "core/int";
-function fill(grid: i32[][], n: i32) {
+function fill(grid: i32[][], n: i32): i32[][] {
     var row: i32[] = [n, n + 1, n + 2, n + 3];
-    grid[0] = row;
+    return grid.with(0, row);
 }
 function main(): i32 {
     var grid: i32[][] = [[0, 0, 0, 0]];
-    fill(grid, 6000);
+    grid = fill(grid, 6000);
     var c: i32 = 0;
     while (c < 300) {
         var junk: i32[] = [c, c, c, c];
