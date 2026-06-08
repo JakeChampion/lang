@@ -821,12 +821,18 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): the self-host port of non-uniform / mixed-width
-     / multi-field `variant` payloads (the Go side landed; the self-host enum-box
-     payload is i32-only and single-field — 64-bit / float / multi-field payloads
-     need a backend-wide slice first); multi-field `variant` arms with mixed-width
-     or float fields (Go); sub-4-byte-element `list<T>` *results*
-     (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
+   - Still rejected (next slices): the self-host port of the variant-payload
+     generalisations (non-uniform / mixed-width / multi-field) — **blocked on the
+     self-host backend itself**: its enum-box payload is a single i32 slot, and a
+     payload-bearing variant `V(T)` is desugared (parser.fern) to a struct with a
+     *single* `__ev` field — multi-payload variants drop the extra payloads and a
+     multi-binding match is an `E015` arity error. So 64-bit / float / multi-field
+     variant payloads need a self-host backend slice (real multi-payload variants +
+     wide enum slots) *before* the extern marshalling can be ported. Also deferred:
+     multi-field `variant` arms with mixed-width or float fields (Go — the fully
+     general canonical join, combining the per-slot-width and multi-slot paths);
+     sub-4-byte-element `list<T>` *results*
+     (`u8`/`bool`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
      vehicle for these.
