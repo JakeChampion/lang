@@ -12,19 +12,20 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternRecordParamNestedCustomProvider is the P4c nested-record parameter
-// gate (docs/WIT-BRING-YOUR-OWN.md): a Fern struct with a field that is itself a
-// (flattenable) struct, passed to an `@import` extern whose WIT record nests
-// another record. The canonical ABI flattens a nested record **inline**, so
-// `record line { p: point, q: point }` flattens to (p.x, p.y, q.x,
-// q.y). A Fern struct field of struct type is a pointer, so a nested leaf is
-// reached by loading the inner value pointer at the outer field offset then the
-// leaf at the inner offset (ir.ExternRecordField.DerefPath, a one-element chain
-// here; deeper nesting extends the chain — see the deep-nested test).
+// TestExternRecordParamDeepNestedCustomProvider is the deeper-nesting (arbitrary
+// depth) record *parameter* gate (docs/WIT-BRING-YOUR-OWN.md): a Fern struct
+// whose field is a struct whose field is itself a struct, passed to an `@import`
+// extern. The canonical ABI flattens every nested record inline, so the leaves
+// arrive as positional core args in declaration order. A Fern struct field of
+// struct type is a pointer, so a leaf nested N levels deep is reached by deref-ing
+// N inner value pointers then loading the leaf — the chain recorded in
+// ir.ExternRecordField.DerefPath and replayed by the param wrapper.
 //
-// The provider exports `sum-line: func(l: line) -> s32` summing the 4 flattened
-// coords; the Fern side passes Line{p:{1,2}, q:{3,4}} and expects 10.
-func TestExternRecordParamNestedCustomProvider(t *testing.T) {
+// Shape: `record outer { l: mid, r: mid }`, `record mid { p: point, n: s32 }`,
+// `record point { x: s32, y: s32 }` — three levels. `sum-outer: func(o: outer) ->
+// s32` weights the six leaves so ordering (hence the deref chains) is checked:
+// l.p.x + l.p.y*10 + l.n*100 + r.p.x*1000 + r.p.y*10000 + r.n*100000.
+func TestExternRecordParamDeepNestedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -45,17 +46,20 @@ func TestExternRecordParamNestedCustomProvider(t *testing.T) {
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	const iface = "interface sink { record point { x: s32, y: s32 } record line { p: point, q: point } sum-line: func(l: line) -> s32; }"
+	const iface = "interface sink { record point { x: s32, y: s32 } record mid { p: point, n: s32 } record outer { l: mid, r: mid } sum-outer: func(o: outer) -> s32; }"
 	if err := os.WriteFile(filepath.Join(provWit, "sink.wit"),
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-line receives the nested record flattened to (p.x, p.y, q.x,
-	// q.y) — four i32 params — and returns their sum.
+	// sum-outer receives the doubly-nested record flattened to six i32 params in
+	// declaration order (l.p.x, l.p.y, l.n, r.p.x, r.p.y, r.n) and returns the
+	// weighted sum a + b*10 + c*100 + d*1000 + e*10000 + f*100000.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
-  (func (export "local:test/sink@0.1.0#sum-line") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (result i32)
-    (i32.add (i32.add (local.get $a) (local.get $b)) (i32.add (local.get $c) (local.get $d)))))`), 0o644); err != nil {
+  (func (export "local:test/sink@0.1.0#sum-outer") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $e i32) (param $f i32) (result i32)
+    (i32.add (i32.add (i32.add (local.get $a) (i32.mul (local.get $b) (i32.const 10)))
+                      (i32.add (i32.mul (local.get $c) (i32.const 100)) (i32.mul (local.get $d) (i32.const 1000))))
+             (i32.add (i32.mul (local.get $e) (i32.const 10000)) (i32.mul (local.get $f) (i32.const 100000))))))`), 0o644); err != nil {
 		t.Fatalf("write provider core: %v", err)
 	}
 	provider := filepath.Join(dir, "provider.wasm")
@@ -91,16 +95,18 @@ func TestExternRecordParamNestedCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	const want = "ln-ok"
+	const want = "od-ok"
 	src := `struct Point { x: i32, y: i32 }
-struct Line { p: Point, q: Point }
+struct Mid { p: Point, n: i32 }
+struct Outer { l: Mid, r: Mid }
 
-@import("local:test/sink@0.1.0", "sum-line")
-function sum_line(l: Line): i32;
+@import("local:test/sink@0.1.0", "sum-outer")
+function sum_outer(o: Outer): i32;
 
 function main(): i32 {
-	var l: Line = Line { p: Point { x: 1, y: 2 }, q: Point { x: 3, y: 4 } };
-	if (sum_line(l) == 10) { write("` + want + `"); } else { write("ln-bad"); }
+	var o: Outer = Outer { l: Mid { p: Point { x: 1, y: 2 }, n: 3 }, r: Mid { p: Point { x: 4, y: 5 }, n: 6 } };
+	// 1 + 2*10 + 3*100 + 4*1000 + 5*10000 + 6*100000 = 654321
+	if (sum_outer(o) == 654321) { write("` + want + `"); } else { write("od-bad"); }
 	return 0;
 }`
 	mainPath := filepath.Join(dir, "main.fern")
