@@ -5899,14 +5899,22 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             if (is_float_type(v.type_name)) {
                 return st.w("    (local.set $" + v.name + " " + emit_f64(v.init, st.cx, 0) + ")\n");
             }
-            st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
-            // Perceus inc-on-alias: binding a new array reference from an
-            // existing array (`var ys = xs`) retains the buffer so the exit
-            // sweep's dec of both slots balances.
-            if (contains_str(st.cx.arr_swept, v.name) && init_is_arr_alias(v.init, st.cx.arr_src)) {
-                st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+            // A swept array binding: release any prior buffer in the slot
+            // (cow-guarded) before storing, so a re-bound local — e.g. a
+            // loop body's `var r = build()` re-run each iteration — frees
+            // the previous iteration's buffer instead of leaking it. The
+            // slot is zero-init, so the first binding dec's null (a no-op).
+            // A bare-ident alias (`var ys = xs`) then retains the buffer.
+            if (contains_str(st.cx.arr_swept, v.name)) {
+                st = st.w("    (local.set $__retv_i32 " + emit_expr(v.init, st.cx, 0) + ")\n");
+                st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + v.name + ")) (then (drop (call $__fern_arr_dec (local.get $" + v.name + ")))))\n");
+                st = st.w("    (local.set $" + v.name + " (local.get $__retv_i32))\n");
+                if (init_is_arr_alias(v.init, st.cx.arr_src)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+                }
+                return st;
             }
-            return st;
+            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
         },
         parser.StmtAssign(a) => {
             if (contains_str(st.cx.i64_names, a.target)) {
