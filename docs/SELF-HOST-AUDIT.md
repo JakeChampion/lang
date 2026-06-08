@@ -61,12 +61,15 @@ dominant themes:
 
 These are not just smells — they can produce wrong output today.
 
-- [ ] **SH-001 — VM converts any user string starting with `"__"` into an error.**
-  `vm.fern:1788` — `OpPushStr` sniffs the operand and, if it starts with `"__"`,
-  pushes a `VErr` instead of a `VString`. Any legitimate literal like
-  `"__proto__"` / `"__init__"` becomes a runtime error. Severity **High**.
-  _Fix:_ add a real `OpError { msg }` opcode (or a compile-error channel on
-  `CompileResult`); never overload `OpPushStr`. See SH-040.
+- [x] **SH-001 — VM converts any user string starting with `"__"` into an error.**
+  `vm.fern:1788` — `OpPushStr` sniffed the operand and, if it started with `"__"`,
+  pushed a `VErr` instead of a `VString`. Any legitimate literal like
+  `"__proto__"` / `"__init__"` became a runtime error. Severity **High**.
+  _Done (narrow fix):_ the `OpPushStr` handler now matches only the three exact
+  compiler sentinels (`__undef:`, `__assign-undef:`, `__exprunknown__`) instead of
+  the blanket `__` prefix, so ordinary user literals stay `VString`. The fuller
+  `OpError { msg }` opcode remains the ideal end state (see SH-040) but carries a
+  3-match-site blast radius (`disasm.fern` enumerates all 60 `Op` variants).
 
 - [ ] **SH-002 — Control flow rides magic error strings.** `interp.fern:996-1009,
   1264-1286` encodes return/break/continue as `VErr("__noreturn__" /
@@ -110,11 +113,11 @@ These are not just smells — they can produce wrong output today.
   `wasm.fern:50-71` returns `24` for an un-interned string → silent wrong offset.
   Severity **Med**. _Fix:_ hard error on missing string; back the table with a map.
 
-- [ ] **SH-009 — Dead duplicate `movl` branch.** `x86_gas.fern:703-708` is
-  unreachable (the `movl` at `:667` returns first) and only handles the `$imm`
-  form — hinting the live path may be missing a case. Severity **Med** (smell +
-  possible gap). _Fix:_ delete the dead block; verify `x86_gas_movl` covers the
-  immediate form.
+- [x] **SH-009 — Dead duplicate `movl` branch.** `x86_gas.fern:703-708` was
+  unreachable (the `movl` at `:667` returns first) and additionally used the
+  *wrong* register decoder (`x86_gas_reg`, 64-bit) feeding `x86_mov_r32_imm32`.
+  _Done:_ deleted; confirmed the live `x86_gas_movl` (`:128`) handles the `$imm`
+  form correctly via `x86_gas_reg32`. Severity **Med**.
 
 - [ ] **SH-010 — `digits_to_i32` has already drifted across copies.** `interp`'s
   `str_to_i32` (`:184`) and `constfold`'s `digits_to_i32` (`:37`) do **not** strip

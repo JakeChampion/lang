@@ -700,12 +700,6 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         a.code = x86_movzwq_load(a.code, x86_gas_reg(dst), zm.base, zm.has_index, zm.index, zm.scale, zm.disp);
         return a;
     }
-    if (mnem == "movl") {
-        if (src.len() > 0 && src[0] == 36) {
-            a.code = x86_mov_r32_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src));
-        }
-        return a;
-    }
     if (mnem == "cmpb") {
         if (src.len() > 0 && src[0] == 36) {
             a.code = x86_cmpb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src));

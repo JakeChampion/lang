@@ -1782,10 +1782,14 @@ pub function exec_program(prog: CompiledProgram): Value {
             OpPushBool(o) => { stack = stack_push(stack, v_bool(o.v)); ip = ip + 1; },
             OpPushFloat(o) => { stack = stack_push(stack, v_float(o.v)); ip = ip + 1; },
             OpPushStr(o) => {
-                // Magic "__undef:..." prefix → surface as VErr.
-                if (o.v.len() >= 8 && o.v[0:8] == "__undef:") {
-                    stack = stack_push(stack, v_err(o.v));
-                } else if (o.v.len() >= 2 && o.v[0:2] == "__") {
+                // Compiler-emitted error sentinels (undefined variable /
+                // assign target, unknown expr) are pushed as a string and
+                // surfaced as VErr here. Match the exact sentinels rather
+                // than any "__"-prefixed string, so ordinary user literals
+                // like "__proto__" stay VString (SH-001).
+                if ((o.v.len() >= 8 && o.v[0:8] == "__undef:")
+                    || (o.v.len() >= 15 && o.v[0:15] == "__assign-undef:")
+                    || o.v == "__exprunknown__") {
                     stack = stack_push(stack, v_err(o.v));
                 } else {
                     stack = stack_push(stack, v_string(o.v));
