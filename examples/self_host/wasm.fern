@@ -1318,6 +1318,41 @@ function extern_plain_enum_param(mod: parser.Module, t: string): boolean {
     return false;
 }
 
+// extern_variant_param_supported is true for a general user-enum @import
+// parameter that flattens like Result to (disc, payload): a user enum (in
+// mod.enums) where every variant is a 0-field struct (payloadless) or a 1-field
+// struct whose field is i32/u32, all single-payloads uniform (the self-host slot
+// is i32 anyway), with at least one payloaded variant (else it's a plain enum).
+// The wrapper maps struct_id → variant index (extern_plain_enum_disc) for the
+// disc and reads the payload at struct_field_off(0); for a payloadless-case
+// value the payload read yields ignored garbage (the host drops it).
+function extern_variant_param_supported(mod: parser.Module, t: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.enums.len()) {
+        if (mod.enums[i].name == t) {
+            var n: i32 = mod.enums[i].variant_names.len();
+            if (n == 0) { return false; }
+            var anyp: boolean = false;
+            var j: i32 = 0;
+            while (j < n) {
+                var vn: string = mod.enums[i].variant_names[j];
+                if (!is_struct_type(mod.structs, vn)) { return false; }
+                var fc: i32 = struct_field_count(mod.structs, vn);
+                if (fc > 1) { return false; }
+                if (fc == 1) {
+                    var ft: string = struct_field_type_at(mod.structs, vn, 0);
+                    if (ft != "i32" && ft != "u32") { return false; }
+                    anyp = true;
+                }
+                j = j + 1;
+            }
+            return anyp;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // extern_plain_enum_disc emits a WAT i32 expression mapping the plain-enum value
 // at `eploc` (a pointer to `[struct_id@0]`) to its canonical WIT discriminant
 // (the variant index): a select-chain comparing the loaded struct_id against
@@ -1518,7 +1553,7 @@ function has_extern_mem_param(mod: parser.Module, f: parser.FuncDecl): boolean {
     var i: i32 = 0;
     while (i < f.params.len()) {
         var pt: string = f.params[i].type_name;
-        if (pt == "string" || extern_array_param_supported(pt) || extern_byte_array_param(pt) || extern_record_param_supported(mod, pt) || extern_sum_param_supported(pt) || extern_tuple_param_supported(pt) || extern_plain_enum_param(mod, pt)) { return true; }
+        if (pt == "string" || extern_array_param_supported(pt) || extern_byte_array_param(pt) || extern_record_param_supported(mod, pt) || extern_sum_param_supported(pt) || extern_tuple_param_supported(pt) || extern_plain_enum_param(mod, pt) || extern_variant_param_supported(mod, pt)) { return true; }
         i = i + 1;
     }
     return false;
@@ -1567,6 +1602,9 @@ function extern_imports(mod: parser.Module): string {
                     } else if (extern_plain_enum_param(mod, f.params[sp].type_name)) {
                         // WIT enum: flattens to a single i32 discriminant.
                         out = out + " (param i32)";
+                    } else if (extern_variant_param_supported(mod, f.params[sp].type_name)) {
+                        // variant: flattens to (disc, payload) = 2 i32s.
+                        out = out + " (param i32) (param i32)";
                     } else {
                         out = out + " (param " + wat_extern_valtype(f.params[sp].type_name) + ")";
                     }
@@ -1822,7 +1860,7 @@ function extern_wrappers(mod: parser.Module): string {
             var pp: i32 = 0;
             while (pp < f.params.len()) {
                 var ppn: string = "$ep" + i32_to_string(pp);
-                if (f.params[pp].type_name == "string" || extern_array_param_supported(f.params[pp].type_name) || extern_byte_array_param(f.params[pp].type_name) || extern_record_param_supported(mod, f.params[pp].type_name) || extern_sum_param_supported(f.params[pp].type_name) || extern_tuple_param_supported(f.params[pp].type_name) || extern_plain_enum_param(mod, f.params[pp].type_name)) {
+                if (f.params[pp].type_name == "string" || extern_array_param_supported(f.params[pp].type_name) || extern_byte_array_param(f.params[pp].type_name) || extern_record_param_supported(mod, f.params[pp].type_name) || extern_sum_param_supported(f.params[pp].type_name) || extern_tuple_param_supported(f.params[pp].type_name) || extern_plain_enum_param(mod, f.params[pp].type_name) || extern_variant_param_supported(mod, f.params[pp].type_name)) {
                     out = out + " (param " + ppn + " i32)";
                 } else {
                     out = out + " (param " + ppn + " " + wat_extern_valtype(f.params[pp].type_name) + ")";
@@ -1920,6 +1958,12 @@ function extern_wrappers(mod: parser.Module): string {
                     // WIT enum: push the discriminant (variant index), mapped
                     // from the value's [struct_id@0] via a select-chain.
                     out = out + " " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn);
+                } else if (extern_variant_param_supported(mod, f.params[fi].type_name)) {
+                    // variant: push the disc (struct_id → variant index) then the
+                    // payload at struct_field_off(0). For a payloadless-case value
+                    // the payload read is ignored garbage (host drops it).
+                    out = out + " " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn);
+                    out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + i32_to_string(struct_field_off(0)) + ")))";
                 } else {
                     out = out + " (local.get " + fppn + ")";
                 }
