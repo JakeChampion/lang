@@ -677,8 +677,19 @@ world-driven composer (P2) wires it.
      trailing area). Gated by `TestSelfHostExternEnumResultCustomProvider` (the
      same `choose: func(n: s32) -> color` returning `disc = n`; `rank(0/1/2)` →
      `Red/Green/Blue`).
+   - **Self-host port — general `variant` params (uniform payload) — ✅ done.**
+     The mirror of the Go variant param. A self-host payloaded variant value is a
+     `[struct_id@0][payload@4]` box and a payloadless one is `[struct_id@0]`;
+     `extern_variant_param_supported` gates a `mod.enums` enum whose every variant
+     is a 0- or 1-field struct (the 1-field ones i32/u32, ≥1 payloaded). The
+     wrapper maps `struct_id` → variant index for the disc (reusing
+     `extern_plain_enum_disc`) and reads the payload at `struct_field_off(0)`
+     (ignored garbage for a payloadless-case value). Gated by
+     `TestSelfHostExternVariantParamCustomProvider` (the same `describe:
+     func(s: shape) -> s32` over `variant shape { circle(s32), square(s32),
+     empty }`: `Circle(7)`→7, `Square(7)`→70, `Empty`→999).
    - Still rejected (next slices): general `variant` *results* + non-uniform /
-     multi-payload `variant`s + the self-host port of variant params;
+     multi-payload `variant`s;
      sub-4-byte-element `list<T>` *results* (`u8[]`/`bool[]`) via a custom
      provider (the `ComposeFromWorldAuto` `gMemRealloc` trap analysed above);
      bool / nested-composite fields. The multi-component harness
