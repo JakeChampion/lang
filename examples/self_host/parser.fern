@@ -1011,62 +1011,13 @@ function parse_primary(p: Par): ExprResult {
                 }
             }
             if (struct_lit_ok) {
-                p = p.advance();
-                var fnames: string[] = [];
-                var fvals: Expr[] = [];
-                // Struct-update: a leading `...base` spread copies the
-                // un-overridden fields from `base`, listed fields override.
-                var has_base: boolean = false;
-                var sbase: Expr = e_unknown("no-base");
-                if (p.peek_punct() == "...") {
-                    p = p.advance();
-                    var sbr = parse_expr(p);
-                    p = sbr.par;
-                    has_base = true;
-                    sbase = sbr.expr;
-                    if (p.peek_punct() == ",") {
-                        p = p.advance();
-                    } else {
-                        if (p.peek_punct() != "}") {
-                            return ExprResult { par: p, expr: e_unknown("missing } in struct update") };
-                        }
-                        p = p.advance();
-                        return parse_postfix(p, e_struct_update(x.name, fnames, fvals, sbase, idline, idcol));
-                    }
-                }
-                if (p.peek_punct() != "}") {
-                    while (true) {
-                        var fname: string = p.peek_ident();
-                        if (fname.len() == 0) {
-                            return ExprResult { par: p, expr: e_unknown("missing field name in struct lit") };
-                        }
-                        p = p.advance();
-                        if (p.peek_punct() != ":") {
-                            return ExprResult { par: p, expr: e_unknown("missing : in struct lit") };
-                        }
-                        p = p.advance();
-                        var fv = parse_expr(p);
-                        p = fv.par;
-                        fnames = fnames.append(fname);
-                        fvals = fvals.append(fv.expr);
-                        if (p.peek_punct() == ",") {
-                            p = p.advance();
-                            // Trailing comma before `}` is allowed.
-                            if (p.peek_punct() == "}") { break; }
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                if (p.peek_punct() != "}") {
-                    return ExprResult { par: p, expr: e_unknown("missing } in struct lit") };
-                }
-                p = p.advance();
-                if (has_base) {
-                    base = e_struct_update(x.name, fnames, fvals, sbase, idline, idcol);
-                } else {
-                    base = e_struct_lit(x.name, fnames, fvals, idline, idcol);
-                }
+                // Delegate to the shared body parser (same as the qualified
+                // `pkg.Type { … }` path at parse_postfix and the generic
+                // `Name[T] { … }` path) rather than re-implementing the
+                // spread / field / trailing-comma loop inline (SH-040).
+                var slr: ExprResult = parse_struct_lit_body(p, x.name, idline, idcol);
+                p = slr.par;
+                base = slr.expr;
             }
             return parse_postfix(p, base);
         },
