@@ -3318,6 +3318,17 @@ function arr_kind_of_spelling(t: string): string {
     return "i32";
 }
 
+// field_kind_of_type maps a SCALAR field/payload type spelling to its heap
+// slot kind: "i64" (64-bit int — 8-byte slot, i64 load/store), "f64" (any
+// float, incl. f32 which the self-host widens to f64 — 8-byte slot), or "i32"
+// (the 4-byte default). Drives the wide enum-payload slot (S1) the same way
+// arr_kind_of_spelling drives wide array elements.
+function field_kind_of_type(t: string): string {
+    if (t == "i64" || t == "u64") { return "i64"; }
+    if (is_float_type(t)) { return "f64"; }
+    return "i32";
+}
+
 // elem_slot_size / elem_store_op / elem_load_op give the per-element byte
 // stride and the wasm store/load instruction for an element kind.
 function elem_slot_size(kind: string): i32 {
@@ -3831,12 +3842,32 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (is_struct_type(cx.structs, id.name)) {
                         var vap: string = "$__lit" + util.i32_to_string(depth);
                         var vnf: i32 = struct_field_count(cx.structs, id.name);
+                        // Box size: the tag word + each field by its slot width
+                        // (a wide i64/f64 `__ev` payload takes 8 bytes, an
+                        // i32-class field 4). All-i32 reproduces `4 + vnf*4`. S1.
+                        var vbytes: i32 = 4;
+                        var vk: i32 = 0;
+                        while (vk < vnf) {
+                            vbytes = vbytes + elem_slot_size(field_kind_of_type(struct_field_type_at(cx.structs, id.name, vk)));
+                            vk = vk + 1;
+                        }
                         var vs: string = "(block (result i32)";
-                        vs = vs + " (local.set " + vap + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + vnf * 4) + ")))";
+                        vs = vs + " (local.set " + vap + " (call $__fern_alloc (i32.const " + util.i32_to_string(vbytes) + ")))";
                         vs = vs + " (i32.store (local.get " + vap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, id.name)) + "))";
                         var vi: i32 = 0;
                         while (vi < c.args.len()) {
-                            vs = vs + " (i32.store (i32.add (local.get " + vap + ") (i32.const " + util.i32_to_string(struct_field_off(vi)) + ")) " + emit_expr(c.args[vi], cx, depth + 1) + ")";
+                            // Store each payload at its field width: a wide
+                            // i64/f64 field uses i64/f64.store of the i64/f64-
+                            // emitted arg; i32 fields are unchanged. (struct_field_off
+                            // is the 4-byte-stride offset — correct while a wide
+                            // payload is the single `__ev` field; multi-field wide
+                            // layout is S4.)
+                            var fk: string = field_kind_of_type(struct_field_type_at(cx.structs, id.name, vi));
+                            var fval: string = "";
+                            if (fk == "i64") { fval = emit_i64(c.args[vi], cx, depth + 1); }
+                            else if (fk == "f64") { fval = emit_f64(c.args[vi], cx, depth + 1); }
+                            else { fval = emit_expr(c.args[vi], cx, depth + 1); }
+                            vs = vs + " (" + elem_store_op(fk) + " (i32.add (local.get " + vap + ") (i32.const " + util.i32_to_string(struct_field_off(vi)) + ")) " + fval + ")";
                             // Perceus construction-store inc: a user enum
                             // variant payload that is an existing array
                             // reference is retained (the variant co-owns it).
@@ -6572,7 +6603,11 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                                 // (`type E = A | B`) binds the whole struct
                                 // value (accessed via its named fields).
                                 if (struct_field_index(st.cx.structs, pv.type_name, "__ev") >= 0) {
-                                    st = st.w("    (local.set $" + pv.binding + " (i32.load (i32.add (local.get " + mv + ") (i32.const 4))))\n");
+                                    // Bind the payload at its field width: a wide
+                                    // i64/f64 `__ev` is read with i64/f64.load; an
+                                    // i32 payload is the unchanged i32.load. S1.
+                                    var pk: string = field_kind_of_type(struct_field_type(st.cx.structs, pv.type_name, "__ev"));
+                                    st = st.w("    (local.set $" + pv.binding + " (" + elem_load_op(pk) + " (i32.add (local.get " + mv + ") (i32.const 4))))\n");
                                 } else {
                                     st = st.w("    (local.set $" + pv.binding + " (local.get " + mv + "))\n");
                                 }
@@ -6946,6 +6981,10 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // i64- / f64-typed params, plus the i64- / f64-declared names in the body.
     var i64_names: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "i64"), "i64", collect_i64_var_names(f.body, []));
     var f64_names: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "f64"), "f64", collect_f64_var_names(f.body, []));
+    // Wide enum-payload match bindings (`match v { V(x) => … }` over an i64/f64
+    // payload) are 64-bit locals too. S1.
+    i64_names = collect_variant_payload_names(f.body, structs, "i64", i64_names);
+    f64_names = collect_variant_payload_names(f.body, structs, "f64", f64_names);
     var map_names: string[] = collect_map_var_names(f.body, []);
     var cell_names: string[] = collect_cell_var_names(f.body, []);
     var pj: i32 = 0;
@@ -7253,6 +7292,9 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     // decls here and the typed instruction paths in Ctx.
     var i64_set: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "i64"), "i64", collect_i64_var_names(f.body, []));
     var f64_set: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "f64"), "f64", collect_f64_var_names(f.body, []));
+    // Wide enum-payload match bindings get an i64/f64 local declaration. S1.
+    i64_set = collect_variant_payload_names(f.body, structs, "i64", i64_set);
+    f64_set = collect_variant_payload_names(f.body, structs, "f64", f64_set);
     var i: i32 = 0;
     while (i < f.params.len()) {
         if (f.params[i].type_name == "i64") {
@@ -7772,6 +7814,50 @@ function collect_i64_var_names(body: parser.Stmt[], acc: string[]): string[] {
     return acc;
 }
 
+// collect_variant_payload_names scans match arms for a user enum-variant
+// binding whose payload (`__ev`) field has the given wide kind ("i64"/"f64"),
+// appending each binding name — so `match v { V(x) => … }` over `enum E {
+// V(i64) }` types the bound `x` as a 64-bit value (declared `(local $x i64)`
+// and recognised by is_i64_expr / is_f64_expr). Option/Result variants
+// (Some/Ok/None/Err) are skipped: their box payload is the fixed i32 slot
+// (enum_box), not a wide user-variant slot. Mirrors collect_i64_var_names'
+// recursion (into if/while/for bodies + match arms). S1 wide single payload.
+function collect_variant_payload_names(body: parser.Stmt[], structs: parser.StructDecl[], kind: string, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtIf(f) => {
+                acc = collect_variant_payload_names(f.then_body, structs, kind, acc);
+                acc = collect_variant_payload_names(f.else_body, structs, kind, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_variant_payload_names(w.body, structs, kind, acc); },
+            parser.StmtFor(f) => { acc = collect_variant_payload_names(f.body, structs, kind, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    match (m.arms[k].pattern) {
+                        parser.PatVariant(pv) => {
+                            if (pv.binding.len() > 0 && pv.binding != "_" && variant_tag(pv.type_name) < 0) {
+                                if (struct_field_index(structs, pv.type_name, "__ev") >= 0
+                                    && field_kind_of_type(struct_field_type(structs, pv.type_name, "__ev")) == kind
+                                    && !contains_str(acc, pv.binding)) {
+                                    acc = acc.append(pv.binding);
+                                }
+                            }
+                        },
+                        _ => {},
+                    }
+                    acc = collect_variant_payload_names(m.arms[k].body, structs, kind, acc);
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
 // collect_i64_func_names returns the names of free functions whose
 // declared return type is i64.
 function collect_i64_func_names(mod: parser.Module): string[] {
@@ -8018,6 +8104,19 @@ function module_uses_i64(mod: parser.Module): boolean {
     if (module_uses_clocks(mod)) { return true; }
     if (collect_i64_var_names(mod.top_stmts, []).len() > 0) { return true; }
     if (stmts_use_i64_cast(mod.top_stmts)) { return true; }
+    // A desugared variant struct with an i64 `__ev` payload (S1 wide slot)
+    // pulls in the i64 runtime: constructing or matching the payload, and any
+    // i64 arithmetic on the bound value (e.g. `/`, `%` → the guarded helpers),
+    // needs the 64-bit div/rem + formatter just like an explicit i64 local.
+    var s: i32 = 0;
+    while (s < mod.structs.len()) {
+        var fj: i32 = 0;
+        while (fj < mod.structs[s].fields.len()) {
+            if (mod.structs[s].fields[fj].name == "__ev" && field_kind_of_type(mod.structs[s].fields[fj].type_name) == "i64") { return true; }
+            fj = fj + 1;
+        }
+        s = s + 1;
+    }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (func_declares_i64(mod.funcs[i])) { return true; }
