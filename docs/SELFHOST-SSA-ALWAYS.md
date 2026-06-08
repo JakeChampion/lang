@@ -488,17 +488,27 @@ whole-compiler compile sheds ~1500 functions' worth of >2 KiB buffers that never
 come back → the >2 GiB overrun. The AST path allocates fewer/smaller such arrays,
 so it fits at 726 MB.
 
-#### The actual unblock
+#### The actual unblock (and a fix that does NOT suffice)
 
-**Raise the freelist size-class cap** (e.g. 2048 → 64 KiB) in `__fern_alloc`'s
-reuse path and `__fern_free`, sizing the `__fern_freelist_heads` BSS array to
-match, on x86-64 + arm64. The append doubling-cap sizes recur exactly across
-function builds, so exact-fit reuse reclaims them. This is a localized allocator
-change; validate with the whole-compiler self-compile completing (and a bounded-
-RSS regression test from the 100k-append probe). The streaming-emit structure
-(`emit_prologue`/`emit_one`/`emit_epilogue`) is then a worthwhile *second* step —
-it caps the retained live set — but is not the unblock on its own (verified: it
-moves peak by 3 MB while the freelist cap stands).
+The freelist is not just *capped* at 2048 B — it is **exact-fit**: class
+`idx = (size>>4) − 1`, so a freed block is reused only by a request of the
+*identical* 16-byte-rounded size. **Tested**: raising the cap to 64 KiB
+(`cmp 2048 → 65536` in `__fern_alloc` + `__fern_free`, `__fern_freelist_heads`
+`.space 1024 → 32768`) moved the self-compile peak by **14 MB** (982 → 968) and
+still trapped. Reason: per-function array sizes *vary* across functions (a
+50-instruction function and a 200-instruction one grow to different lengths), so
+large freed blocks almost never match a later request exactly — the freelist
+fills with one-off sizes that nothing pops.
+
+So the real fix is **large-block reclamation that tolerates size variance** —
+coarse/power-of-two binning above ~2 KiB (a freed 12 KiB block satisfies any
+8–16 KiB request, at some internal-fragmentation cost), or best-fit + splitting
+/ coalescing, or an `munmap`-style return for big blocks. That is a genuine
+allocator change in `internal/codegen/{x86_64,arm64}` (and `internal/ir`'s reuse
+arithmetic), not a one-line cap bump. The streaming-emit structure
+(`emit_prologue`/`emit_one`/`emit_epilogue`) remains a worthwhile *second* step
+that caps the retained live set, but is not the unblock on its own (verified: 3
+MB while the allocator limitation stands).
 
 ### Phase 5 — retire the AST emitters
 
