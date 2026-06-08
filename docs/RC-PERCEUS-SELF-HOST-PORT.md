@@ -565,3 +565,17 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   sweep + dec-on-overwrite. Pointer-element arrays may free their buffer
   without an element walk (sound: elements leak, never UAF) until a
   drop-walk slice lands.
+- 2026-06-08: **Phase 1d (array + tuple construction inc), x86-64 +
+  arm64 — SHIPPED.** Array-literal elements (`[a, b]`) and tuple-literal
+  elements (`(xs, n)`) initialised from an rc-tracked array alias now
+  retain the buffer on both backends (the container owns the reference),
+  with the container pointer preserved across the retain call. Closes
+  two more free-readiness gate sites. inc-only / detector-clean / safe
+  (free off). Tests: `TestSelfHostRcConstructContainersX86_64`
+  (array-of-arrays, tuple-of-array, return-arr-of-arrs — the
+  would-be-UAF capture case) + arm64 cases in `TestSelfHostRcArm64` +
+  green tuple/array suites + byte-identical bootstrap/fixpoint on both
+  backends. Free-readiness gate now CLOSED for: struct-literal /
+  array-literal / tuple-literal element stores. Remaining before the
+  free flip: struct-UPDATE form `H{...base, f: xs}`, closure captures of
+  an array, and index/field assignment `arr[i] = xs` / `obj.f = xs`.
