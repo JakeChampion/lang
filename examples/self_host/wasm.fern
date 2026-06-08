@@ -3871,6 +3871,93 @@ function heap_alloc_helpers(heap_base: i32): string {
     return o;
 }
 
+// rc_runtime_helpers emits the Perceus reference-counting runtime for the
+// wasm backend — the wasm32 mirror of the x86-64 / arm64 helpers
+// (asm.fern `__fn___fern_rc_*`). The rc word is an i32 at [ptr-8]; the
+// "data pointer" handed to these helpers is base+8 (so the rc precedes
+// the payload). Guard chain matches the asm backends: null → SSO inline
+// low-bit tag → low-address → static sentinel (rc high bit / negative as
+// signed i32, marking an immortal data-section literal). Unlike the asm
+// backends (heap mmap'd high, so a fixed `< 0x10000` guard works), wasm
+// linear memory starts low and the bump heap sits just above the static
+// data, so the low-address threshold is `heap_base` itself: any pointer
+// below it is static data (sentinel-guarded) or a non-pointer small int,
+// and every real heap object is >= heap_base. An over-release (dec at
+// rc <= 0) bumps the `$__fern_rc_underflow` detector rather than
+// corrupting the count, surfaced by __fern_rc_underflow_count(). The
+// low-level memory pokes (__alloc / __load_i32 / __store_i32) are the
+// wasm counterparts of the x86 `__fn___alloc` / `__fn___load_i32` /
+// `__fn___store_i32` runtime funcs: __alloc forwards to the bump heap so
+// the rc tests (and any `core/map` raw-memory source that links) resolve.
+// This is the additive Phase-0c foundation for wasm RC — the array
+// layout migration + inc/dec call sites ride on it in later slices,
+// exactly as on the asm backends.
+function rc_runtime_helpers(heap_base: i32): string {
+    var lo: string = i32_to_string(heap_base);
+    var o: string = "";
+    o = o + "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
+    // __alloc(n) -> ptr: forward to the bump allocator.
+    o = o + "  (func $__alloc (param $n i32) (result i32)\n";
+    o = o + "    (call $__fern_alloc (local.get $n)))\n";
+    // __free(p): no-op (bump heap; reclamation is the freelist's job).
+    o = o + "  (func $__free (param $p i32) (result i32)\n";
+    o = o + "    (local.get $p))\n";
+    // __load_i32(a) -> i32.
+    o = o + "  (func $__load_i32 (param $a i32) (result i32)\n";
+    o = o + "    (i32.load (local.get $a)))\n";
+    // __store_i32(a, v) -> a (value-producing so the StmtExpr drop balances).
+    o = o + "  (func $__store_i32 (param $a i32) (param $v i32) (result i32)\n";
+    o = o + "    (i32.store (local.get $a) (local.get $v))\n";
+    o = o + "    (local.get $a))\n";
+    // __fern_rc_inc(p) -> p: retain.
+    o = o + "  (func $__fern_rc_inc (param $p i32) (result i32)\n";
+    o = o + "    (local $rc i32)\n";
+    o = o + "    (if (i32.eqz (local.get $p)) (then (return (local.get $p))))\n";
+    o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (local.get $p))))\n";
+    o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (local.get $p))))\n";
+    o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
+    o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $p))))\n";
+    o = o + "    (i32.store (i32.sub (local.get $p) (i32.const 8)) (i32.add (local.get $rc) (i32.const 1)))\n";
+    o = o + "    (local.get $p))\n";
+    // __fern_rc_dec(p) -> p: release; over-release bumps the detector.
+    o = o + "  (func $__fern_rc_dec (param $p i32) (result i32)\n";
+    o = o + "    (local $rc i32)\n";
+    o = o + "    (if (i32.eqz (local.get $p)) (then (return (local.get $p))))\n";
+    o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (local.get $p))))\n";
+    o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (local.get $p))))\n";
+    o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
+    o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $p))))\n";
+    o = o + "    (if (i32.le_s (local.get $rc) (i32.const 0))\n";
+    o = o + "      (then (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))))\n";
+    o = o + "    (i32.store (i32.sub (local.get $p) (i32.const 8)) (i32.sub (local.get $rc) (i32.const 1)))\n";
+    o = o + "    (local.get $p))\n";
+    // __fern_rc_is_unique(p) -> 1 iff a live heap object with rc == 1.
+    o = o + "  (func $__fern_rc_is_unique (param $p i32) (result i32)\n";
+    o = o + "    (local $rc i32)\n";
+    o = o + "    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))\n";
+    o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (i32.const 0))))\n";
+    o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (i32.const 0))))\n";
+    o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
+    o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (i32.const 0))))\n";
+    o = o + "    (if (i32.eq (local.get $rc) (i32.const 1)) (then (return (i32.const 1))))\n";
+    o = o + "    (i32.const 0))\n";
+    // __fern_rc_underflow_count() -> i32: the over-release detector.
+    o = o + "  (func $__fern_rc_underflow_count (result i32)\n";
+    o = o + "    (global.get $__fern_rc_underflow))\n";
+    return o;
+}
+
+// module_uses_rcmem reports whether the program calls any of the RC /
+// raw-memory intrinsics, gating both rc_runtime_helpers and (since
+// __alloc forwards to it) the bump heap.
+function module_uses_rcmem(mod: parser.Module): boolean {
+    return module_calls(mod, "__alloc") || module_calls(mod, "__free")
+        || module_calls(mod, "__load_i32") || module_calls(mod, "__store_i32")
+        || module_calls(mod, "__fern_rc_inc") || module_calls(mod, "__fern_rc_dec")
+        || module_calls(mod, "__fern_rc_is_unique")
+        || module_calls(mod, "__fern_rc_underflow_count");
+}
+
 // env_helpers emits the wasi environ imports + $__fern_env(name): the
 // preview-1 two-call environ pattern (sizes_get then get) into bump-heap
 // scratch, a linear scan for a `NAME=` entry, and an Option[string] tag
@@ -7320,8 +7407,14 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_options: boolean = module_uses_options(mod);
     var has_maps: boolean = module_calls(mod, "map_new_i32") || module_calls(mod, "map_new");
     var has_tostring: boolean = module_uses_tostring(mod);
-    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || export_needs_heap(mod) || (component && io)) {
+    var has_rcmem: boolean = module_uses_rcmem(mod);
+    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || export_needs_heap(mod) || has_rcmem || (component && io)) {
         out = out + heap_alloc_helpers(tab.next + 16 + heap_extra);
+    }
+    // The Perceus RC runtime + raw-memory pokes (__alloc forwards to the
+    // bump heap above). Emitted only when the program references them.
+    if (has_rcmem) {
+        out = out + rc_runtime_helpers(tab.next + 16 + heap_extra);
     }
     // component-io: the $fd_write shim over the preview2 stdout stream, so
     // every fd_write call site (print / write / print_int) works unchanged.
