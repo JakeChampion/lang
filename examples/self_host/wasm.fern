@@ -4496,6 +4496,23 @@ function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): string
     o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
     o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
     o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
+    // $__fern_str_box(p) -> s: rc-header a heap STRING block. `p` is the
+    // string payload size (4-byte len word + bytes); the 8-byte rc+bsz
+    // header is prepended and s = base+8 is returned, so [s] = len,
+    // [s+4..] = bytes keep every s-relative string access unchanged while
+    // the rc word sits at [s-8] and the block size at [s-4]. Static string
+    // literals live in the data section (below heap_base) and are left
+    // unboxed — the rc helpers' address guard treats them as immortal.
+    // Frees through the shared $__fern_arr_dec (size-class freelist), since
+    // a string is flat (no rc-tracked children). Foundation: heap strings
+    // are now rc-boxed; counting + release ride on this in later slices.
+    o = o + "  (func $__fern_str_box (param $p i32) (result i32)\n";
+    o = o + "    (local $base i32) (local $n i32)\n";
+    o = o + "    (local.set $n (i32.and (i32.add (i32.add (i32.const 8) (local.get $p)) (i32.const 7)) (i32.const -8)))\n";
+    o = o + "    (local.set $base (call $__fern_alloc (local.get $n)))\n";
+    o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
+    o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
     // $__fern_arr_dec(a) -> a: Perceus array release. Same guard chain as
     // the rc helpers (null / SSO low-bit / low-addr / sentinel). rc > 1:
     // decrement. rc <= 0: over-release (detector++), no free. rc == 1:
@@ -5485,7 +5502,7 @@ function to_string_helpers(): string {
     o = o + "      (local.set $p (i32.div_u (local.get $p) (i32.const 10)))\n";
     o = o + "      (br $cl)))\n";
     o = o + "    (if (local.get $neg) (then (local.set $len (i32.add (local.get $len) (i32.const 1)))))\n";
-    o = o + "    (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
     o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
     o = o + "    (local.set $p (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $len)))\n";
     o = o + "    (block $fd (loop $fl\n";
@@ -5515,7 +5532,7 @@ function to_string_helpers(): string {
     o = o + "      (br $cl)))\n";
     o = o + "    (local.set $mag (local.get $n))\n";
     o = o + "    (if (local.get $neg) (then (local.set $mag (i64.sub (i64.const 0) (local.get $n))) (local.set $len (i32.add (local.get $len) (i32.const 1)))))\n";
-    o = o + "    (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
     o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
     o = o + "    (local.set $p (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $len)))\n";
     o = o + "    (block $fd (loop $fl\n";
@@ -5538,7 +5555,7 @@ function string_from_bytes_helper(): string {
     o = o + "  (func $__fern_string_from_bytes (param $arr i32) (result i32)\n";
     o = o + "    (local $n i32) (local $s i32) (local $i i32)\n";
     o = o + "    (local.set $n (i32.load (local.get $arr)))\n";
-    o = o + "    (local.set $s (call $__fern_alloc (i32.add (i32.const 4) (local.get $n))))\n";
+    o = o + "    (local.set $s (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
     o = o + "    (i32.store (local.get $s) (local.get $n))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
     o = o + "    (block $d (loop $c\n";
@@ -5558,7 +5575,7 @@ function strcat_helpers(): string {
     o = o + "    (local $la i32) (local $lb i32) (local $p i32) (local $i i32)\n";
     o = o + "    (local.set $la (i32.load (local.get $a)))\n";
     o = o + "    (local.set $lb (i32.load (local.get $b)))\n";
-    o = o + "    (local.set $p (call $__fern_alloc (i32.add (i32.const 4) (i32.add (local.get $la) (local.get $lb)))))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (i32.add (local.get $la) (local.get $lb)))))\n";
     o = o + "    (i32.store (local.get $p) (i32.add (local.get $la) (local.get $lb)))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
     o = o + "    (block $da (loop $ca\n";
@@ -5657,7 +5674,7 @@ function strcat_helpers(): string {
     o = o + "  (func $__fern_str_upper (param $s i32) (result i32)\n";
     o = o + "    (local $l i32) (local $p i32) (local $i i32) (local $ch i32)\n";
     o = o + "    (local.set $l (i32.load (local.get $s)))\n";
-    o = o + "    (local.set $p (call $__fern_alloc (i32.add (i32.const 4) (local.get $l))))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $l))))\n";
     o = o + "    (i32.store (local.get $p) (local.get $l))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
     o = o + "    (block $d (loop $c\n";
@@ -5671,7 +5688,7 @@ function strcat_helpers(): string {
     o = o + "  (func $__fern_str_lower (param $s i32) (result i32)\n";
     o = o + "    (local $l i32) (local $p i32) (local $i i32) (local $ch i32)\n";
     o = o + "    (local.set $l (i32.load (local.get $s)))\n";
-    o = o + "    (local.set $p (call $__fern_alloc (i32.add (i32.const 4) (local.get $l))))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $l))))\n";
     o = o + "    (i32.store (local.get $p) (local.get $l))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
     o = o + "    (block $dl (loop $cl\n";
@@ -5687,7 +5704,7 @@ function strcat_helpers(): string {
     o = o + "    (local $l i32) (local $total i32) (local $p i32) (local $k i32) (local $i i32)\n";
     o = o + "    (local.set $l (i32.load (local.get $s)))\n";
     o = o + "    (local.set $total (i32.mul (local.get $l) (local.get $n)))\n";
-    o = o + "    (local.set $p (call $__fern_alloc (i32.add (i32.const 4) (local.get $total))))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
     o = o + "    (i32.store (local.get $p) (local.get $total))\n";
     o = o + "    (local.set $k (i32.const 0))\n";
     o = o + "    (block $dk (loop $ck\n";
@@ -5705,7 +5722,7 @@ function strcat_helpers(): string {
     o = o + "  (func $__fern_substr (param $s i32) (param $start i32) (param $end i32) (result i32)\n";
     o = o + "    (local $len i32) (local $p i32) (local $i i32)\n";
     o = o + "    (local.set $len (i32.sub (local.get $end) (local.get $start)))\n";
-    o = o + "    (local.set $p (call $__fern_alloc (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
     o = o + "    (i32.store (local.get $p) (local.get $len))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
     o = o + "    (block $d (loop $c\n";
@@ -5729,7 +5746,7 @@ function strcat_helpers(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $ct)))\n";
     o = o + "    (if (i32.gt_s (local.get $n) (i32.const 0)) (then (local.set $total (i32.add (local.get $total) (i32.mul (local.get $sl) (i32.sub (local.get $n) (i32.const 1)))))))\n";
-    o = o + "    (local.set $p (call $__fern_alloc (i32.add (i32.const 4) (local.get $total))))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
     o = o + "    (i32.store (local.get $p) (local.get $total))\n";
     o = o + "    (local.set $w (i32.const 0))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
