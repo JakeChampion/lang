@@ -663,6 +663,18 @@ same code(s) the Go checker does — restricted to
   feature or analysis the self-host doesn't yet model end-to-end.
   (E050/E051 owned-parameter move checking and E049 captured-reference
   reassignment are now done — see below.)
+- **Slice 73 (done): E003 false positive on an annotated map var.** A
+  `var m: Map[K, V] = Map { … }` (including the empty `Map {}`)
+  false-positived E003: the literal desugars to `map_new[_i32](n)…`, whose
+  key/value type the self-host leaves `unknown` (it doesn't infer K / V from
+  a literal's entries), and `type_assignable` had no map arm — so the
+  `unknown`-keyed map wasn't assignable to the annotated `Map[K, V]`. Added
+  a `TypeMap` arm that treats an `unknown` key / value side as a wildcard
+  (mirroring the empty-array `unknown[]` rule), with concrete sides checked
+  for assignability. Pure false-positive removal — `type_assignable` only
+  ever returned false for map→map before. Gated by three corpus cases
+  (annotated empty / string-keyed / i32-keyed map vars, all clean under Go
+  + self-host). Checker-only. (Closes the follow-up noted in Slice 71.)
 - **Slice 72 (done): E025 — switch scrutinee / case value types.** Unlike
   the other desugar-blocked codes, a `switch`'s lowered `scrut == value`
   comparisons can't be told apart from a hand-written if-chain, and the
