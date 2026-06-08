@@ -217,6 +217,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// backend, so the cell slot is one word (same as i32). Overwrite then
 		// read back through get().
 		{"cell-string", "function main(): i32 { var c: Cell[string] = cell_new(\"A\"); c.set(\"hi\"); write(c.get()); return 0; }", 0, "hi"},
+		// Cell stored in a STRUCT FIELD: get/set on `b.c` (a field access).
+		// is_cell_expr resolves the owner struct + the field's declared Cell
+		// type so the wasm backend dispatches the cell load/store (it
+		// previously only recognised Ident/cell_new receivers and miscompiled
+		// `b.c.get()` to a bare i32.load). This is the lam_ctr/lamdefs shape.
+		{"cell-i32-field", "struct Box { c: Cell[i32] } function main(): i32 { var b: Box = Box { c: cell_new(5) }; b.c.set(b.c.get() + 1); return b.c.get(); }", 6, ""},
+		{"cell-str-field", "struct Box { c: Cell[string] } function main(): i32 { var b: Box = Box { c: cell_new(\"ab\") }; b.c.set(\"xyz\"); return b.c.get().len(); }", 3, ""},
 		{"arr-index-first", "function main(): i32 { var a = [42, 99, 7]; return a[0]; }", 42, ""},
 		{"arr-index-middle", "function main(): i32 { var a = [42, 99, 7]; return a[1]; }", 99, ""},
 		{"arr-index-last", "function main(): i32 { var a = [42, 99, 7]; return a[2]; }", 7, ""},

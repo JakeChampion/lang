@@ -274,11 +274,21 @@ function is_cell_new_call(e: parser.Expr): boolean {
     return false;
 }
 
-// is_cell_expr is true when `e` denotes a Cell — a cell_new(...) call or a
-// tracked cell-typed local/param (docs/CELL-TYPE-PLAN.md).
+// is_cell_expr is true when `e` denotes a Cell — a cell_new(...) call, a
+// tracked cell-typed local/param, or a struct FIELD whose declared type is
+// Cell[...] (docs/CELL-TYPE-PLAN.md). The field case resolves the owner
+// struct via struct_type_of, then checks the field's declared type — so
+// `cx.lam_ctr.get()` on a `lam_ctr: Cell[i32]` field dispatches as a cell,
+// matching the asm/ssa backends (whose Ty-based detection already handles
+// fields).
 function is_cell_expr(e: parser.Expr, cx: Ctx): boolean {
     match (e) {
         parser.ExprIdent(id) => { return contains_str(cx.cell_names, id.name); },
+        parser.ExprFieldAccess(fa) => {
+            var ot: string = struct_type_of(fa.obj, cx);
+            if (ot.len() == 0) { return false; }
+            return base_type_name(struct_field_type(cx.structs, ot, fa.field)) == "Cell";
+        },
         _ => { return is_cell_new_call(e); },
     }
     return false;
