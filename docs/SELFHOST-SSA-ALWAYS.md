@@ -352,13 +352,9 @@ type before the local binding, so a local var named like a function/method
 whole `fern.fern` has **zero unknown callees** and exactly **one**
 `build_func` blocker left: **`main`**.
 
-**The last coverage blocker is `main` — a feature *cluster*, not a one-liner.**
-`main` is the CLI driver, and its remaining SSA gaps are all I/O / sum-type:
-- **File-I/O builtins** `read_file` / `write_file` — these are *builtins*
-  (syscall sequences the AST backend emits inline; no `function read_file`
-  exists), so the SSA backends would emit `call read_file` → unknown. They
-  need dedicated SSA ops + an open/read(/write)/close syscall runtime on
-  x86-64 / arm64 (wasm via WASI `path_open` etc., or fall back).
+**The last coverage blocker was `main` — a feature *cluster*, not a one-liner
+(now ✅ fully closed).** `main` is the CLI driver, and its remaining SSA gaps
+were all I/O / sum-type:
 - **Option / Result** (`Some`/`None`/`Ok`/`Err`) — ✅ **landed.**
   `build_func` now constructs the fixed 2-word box `{tag@0, payload@1}`
   (Some/Ok = 0, None/Err = 1, mirroring `asm.fern`), `None` is an `ExprIdent`
@@ -368,18 +364,40 @@ whole `fern.fern` has **zero unknown callees** and exactly **one**
   which binds the whole box). All heap ops, so wasm gets it for free.
   Payload typing is best-effort. Gated by an `option-result` case on the
   x86-64 / arm64 / wasm SSA emit matrices.
-- **File-I/O builtins** `read_file` / `write_file` — still open; the only
-  remaining `main` blocker. With Option/Result in, `main`'s `build_func`
-  now *succeeds*, but `calls_all_known` still rejects the `read_file` /
-  `write_file` builtin calls (no SSA runtime for them).
+- **File-I/O builtins** `read_file` / `write_file` — ✅ **landed.**
+  Dedicated SSA ops (`build_func` recognises the builtin calls, like `exit` /
+  `strbuf_*`) lowering to a syscall runtime on x86-64 + arm64:
+  `__fern_ssa_read_file` (openat O_RDONLY → lseek-size → read-to-EOF → a fresh
+  `[tag=0, payload=string]` Ok box, or `[tag=1, 0]` Err on error) and
+  `__fern_ssa_write_file` (openat O_WRONLY|O_CREAT|O_TRUNC → write → a
+  `[tag=1, 0]` None box, or `[tag=0, 0]` Some on error). The key wrinkle vs the
+  AST backend: SSA strings are `[len, byte-per-8-byte-word]` (not the AST
+  `{ptr,len}` over packed bytes), so both helpers pack/unpack between that
+  layout and the raw byte buffers the syscalls work on. Allocation is a shared
+  `__fern_ssa_alloc` bump off `__fern_ssa_hp`. wasm rejects them via
+  `ssa_wasm.inst_supported` → AST fallback (its WASI `path_open` path). Gated
+  by `file-io-roundtrip` / `-read-external` / `-read-missing` cases (default +
+  `-regalloc`) on the x86-64 + arm64 SSA emit matrices.
 
-So `main` is now down to file I/O, which is the most Perceus-adjacent
-remaining work (a syscall runtime) and warrants deliberate implementation.
+  Surfaced and fixed on the way: an all-arms-`return` `match` used as the last
+  statement (the idiomatic `match (read_file(p)) { Ok(s) => return …, Err(e)
+  => return … }`) failed `build_func`. `synth_match_chain` always emitted an
+  empty trailing `else` after the final variant arm, whose dead-but-reachable
+  un-terminated fall-through tripped `build_func`'s "missing return" bail. Fix:
+  the textually-last variant arm of an (exhaustive) match is now an
+  unconditional catch-all — like a wildcard — so no empty `else` is generated.
+  Behaviour-preserving for exhaustive matches (the only kind the checker
+  admits), and a strict IR simplification for the rest.
+
+With this, **`main` is fully in the `build_func` subset** — every function the
+compiler defines now lowers through SSA. The remaining blocker to a full SSA
+self-compile is purely **memory**, not coverage:
 
 Still open: the *linear* per-function retention (build + emit, freed by
 nothing) — Perceus RC (the native backend already has it; the self-host
 runtime stubs it to no-ops — `asm.fern`: "leak-everything bump heap") or a
-streaming/arena scheme; and `main`'s I/O + sum-type cluster above.
+streaming/arena scheme. This is now the *sole* thing between here and a
+byte-stable SSA self-compile fixpoint (Phase 4's success criterion).
 
 ### Phase 5 — retire the AST emitters
 
