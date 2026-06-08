@@ -58,6 +58,72 @@ func TestSelfHostRcRuntimeWasm(t *testing.T) {
 	}
 }
 
+// TestSelfHostRcCountingWasm exercises the wasm Perceus array counting
+// milestone (inc-on-alias + function-exit release sweep, free still OFF)
+// on NORMAL array programs — no manual rc intrinsic calls. Each program
+// returns a computed value plus __fern_rc_underflow_count(): the value
+// proves array semantics are unchanged (free off), and the detector being
+// 0 proves the inc retains and the exit-sweep decs BALANCE across aliases,
+// append loops, multiple calls, and borrowed array params (callers' arrays
+// survive, callees don't release them). This is the detector-cleanliness
+// gate that must hold before free is flipped on.
+func TestSelfHostRcCountingWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm RC counting e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// inc-on-alias + sweep balance: one alias, detector clean.
+		{"alias-balanced", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys = xs; return ys[1] + xs[0] + __fern_rc_underflow_count(); }", 3},
+		// Multiple aliases of the same buffer: each inc, each swept.
+		{"multi-alias-balanced", "function main(): i32 { var xs: i32[] = [10, 20]; var a = xs; var b = xs; return a[0] + b[1] + __fern_rc_underflow_count(); }", 30},
+		// Append-built array: owned, swept once, detector clean.
+		{"append-loop-balanced", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 10) { xs = xs.append(i); i = i + 1; } return xs[9] + __fern_rc_underflow_count(); }", 9},
+		// A helper that aliases + returns; called repeatedly, all balanced.
+		{"calls-balanced", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var ys = xs; return ys[0]; } function main(): i32 { var r = f(); var s = f(); return r + s + __fern_rc_underflow_count(); }", 2},
+		// Borrowed array param: the callee aliases it (inc+sweep balanced)
+		// but does NOT release the caller's buffer, which stays usable.
+		{"borrowed-param-balanced", "function g(a: i32[]): i32 { var b = a; return b[0]; } function main(): i32 { var xs: i32[] = [7, 8]; var r = g(xs); return r + xs[0] + __fern_rc_underflow_count(); }", 14},
+		// Array local declared in a not-taken branch: zero-inited slot, the
+		// sweep's dec(0) is a no-op, detector clean.
+		{"branch-local-balanced", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0] + __fern_rc_underflow_count(); } return xs[1] + __fern_rc_underflow_count(); }", 6},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(wat) == 0 {
+				t.Fatal("wasm emitter produced 0 bytes")
+			}
+			watPath := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+			_, _ = cmd.Output()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
+			}
+		})
+	}
+}
+
 // TestSelfHostRcArrayLayoutWasm proves the wasm array-layout migration
 // end to end: array blocks now reserve an rc word at [data-8] (via
 // $__fern_arr_box), initialised to 1 for a fresh owner, while every

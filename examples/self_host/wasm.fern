@@ -161,6 +161,16 @@ struct Ctx {
     // "i32"), so `return [<bare literals>]` from an i64[]/f64[] function
     // emits the literal with the right (8-byte) element width.
     ret_arr_kind: string,
+    // Perceus array reference-counting (counting milestone, free OFF).
+    // arr_swept: body array locals to release (dec) at function exit —
+    // the owned-fresh (literal/slice) + bare-ident-alias subset. arr_src:
+    // every name that holds an array (params + the above + typed [] vars),
+    // used to recognise an alias source at the inc-on-alias site.
+    arr_swept: string[],
+    arr_src: string[],
+    // True when the function returns nothing (void) — a `return` then
+    // carries no operand, so the exit-sweep temp dance is skipped.
+    ret_void: boolean,
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -522,6 +532,117 @@ function collect_fn_arr_names(body: parser.Stmt[], acc: string[]): string[] {
             parser.StmtMatch(m) => {
                 var k: i32 = 0;
                 while (k < m.arms.len()) { acc = collect_fn_arr_names(m.arms[k].body, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// ty_spelling_is_array reports whether a declared type spelling names an
+// array type — i.e. ends in the two-char "[]" suffix (i32[] / string[] /
+// Foo[] / i32[][]). Generic spellings like Map[K,V] / Box[T] end in "]"
+// but not "[]", so they are correctly excluded.
+function ty_spelling_is_array(t: string): boolean {
+    if (t.len() < 2) { return false; }
+    return t[t.len() - 2:t.len()] == "[]";
+}
+
+// init_is_owned_array: the init expression yields a freshly-owned array
+// (rc 1) — an array literal or a slice (which copies into a new block).
+function init_is_owned_array(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        parser.ExprSlice(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arr_exit_sweep emits the Perceus function-exit release: a dec of every
+// owned array local (cx.arr_swept). An unassigned slot (declared in a
+// not-taken branch) is 0, and the dec helper short-circuits null, so it
+// is a no-op. Clean while free is OFF (dec just decrements the rc word).
+function arr_exit_sweep(cx: Ctx): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < cx.arr_swept.len()) {
+        o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.arr_swept[i] + ")))\n";
+        i = i + 1;
+    }
+    return o;
+}
+
+// init_is_arr_alias: the init is a bare ident naming an existing array
+// (an alias that must be retained — the inc-on-alias site).
+function init_is_arr_alias(e: parser.Expr, src: string[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return contains_str(src, id.name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_arr_src / collect_arr_swept drive the wasm Perceus array
+// reference-counting (the counting milestone — inc-on-alias + exit
+// release sweep, free still OFF). arr_src is the set of names that hold an
+// array (used to recognise an alias source); arr_swept is the subset of
+// body locals that are DEFINITELY OWNED at rc 1 (a fresh array literal /
+// slice) or a bare-ident alias of another array (which gets an inc), so
+// dec'ing them at function exit balances. Borrowed params, field reads,
+// index reads and call results are deliberately NOT swept (no inc to
+// balance them without the construction-store machinery) — they leak,
+// which is sound while free is off and avoids any over-release. comma
+// names (`var (a, b) = …` destructures) are skipped.
+function collect_arr_src(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    if (ty_spelling_is_array(v.type_name) || init_is_owned_array(v.init)) {
+                        acc = acc.append(v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_arr_src(f.then_body, acc);
+                acc = collect_arr_src(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_arr_src(w.body, acc); },
+            parser.StmtFor(f) => { acc = collect_arr_src(f.body, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_arr_src(m.arms[k].body, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function collect_arr_swept(body: parser.Stmt[], src: string[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    if (init_is_owned_array(v.init) || init_is_arr_alias(v.init, src)) {
+                        acc = acc.append(v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_arr_swept(f.then_body, src, acc);
+                acc = collect_arr_swept(f.else_body, src, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_arr_swept(w.body, src, acc); },
+            parser.StmtFor(f) => { acc = collect_arr_swept(f.body, src, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_arr_swept(m.arms[k].body, src, acc); k = k + 1; }
             },
             _ => {},
         }
@@ -3547,6 +3668,7 @@ function is_reserved_local(n: string): boolean {
     if (n == "__fi0" || n == "__fi1" || n == "__fi2" || n == "__fi3") { return true; }
     if (n == "__fa0" || n == "__fa1" || n == "__fa2" || n == "__fa3") { return true; }
     if (n == "__m0" || n == "__m1" || n == "__m2" || n == "__m3") { return true; }
+    if (n == "__retv_i32" || n == "__retv_i64" || n == "__retv_f64") { return true; }
     return false;
 }
 
@@ -5472,7 +5594,14 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             if (is_float_type(v.type_name)) {
                 return st.w("    (local.set $" + v.name + " " + emit_f64(v.init, st.cx, 0) + ")\n");
             }
-            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+            st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+            // Perceus inc-on-alias: binding a new array reference from an
+            // existing array (`var ys = xs`) retains the buffer so the exit
+            // sweep's dec of both slots balances.
+            if (contains_str(st.cx.arr_swept, v.name) && init_is_arr_alias(v.init, st.cx.arr_src)) {
+                st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+            }
+            return st;
         },
         parser.StmtAssign(a) => {
             if (contains_str(st.cx.i64_names, a.target)) {
@@ -5484,26 +5613,37 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             return st.w("    (local.set $" + a.target + " " + emit_expr(a.value, st.cx, 0) + ")\n");
         },
         parser.StmtReturn(r) => {
-            // In an i64- / f64-returning function the return value is
-            // coerced to match the wasm `(result …)`.
-            if (st.cx.ret_i64) {
-                return st.w("    (return " + emit_i64(r.value, st.cx, 0) + ")\n");
-            }
-            if (st.cx.ret_f64) {
-                return st.w("    (return " + emit_f64(r.value, st.cx, 0) + ")\n");
-            }
-            // `return [<bare literals>]` from an i64[]/f64[] function: the
-            // literal carries no width, so build it with the declared
-            // element kind (8-byte slots).
-            if (st.cx.ret_arr_kind != "i32") {
+            // Compute the return value, then run the Perceus exit release
+            // sweep (dec every owned array local), then return. Computing
+            // the result BEFORE the sweep is the correct Perceus order:
+            // the result observes the locals' live rc, and the sweep
+            // balances the inc-on-alias retains so the over-release
+            // detector stays clean. Free is OFF, so a dec'd-but-returned
+            // buffer stays valid; the return-retain / move-on-return that
+            // free-on needs rides on top of this same shape.
+            //
+            // The result is parked in a typed temp ($__retv_*) across the
+            // sweep. i64- / f64-returning functions coerce; an i64[]/f64[]
+            // function builds a bare `return […]` literal at its width.
+            var valstr: string = "";
+            var tmp: string = "$__retv_i32";
+            if (st.cx.ret_i64) { valstr = emit_i64(r.value, st.cx, 0); tmp = "$__retv_i64"; }
+            else if (st.cx.ret_f64) { valstr = emit_f64(r.value, st.cx, 0); tmp = "$__retv_f64"; }
+            else if (st.cx.ret_arr_kind != "i32") {
                 match (r.value) {
-                    parser.ExprArray(arr) => {
-                        return st.w("    (return " + emit_array_literal_kind(arr, st.cx.ret_arr_kind, st.cx, 0) + ")\n");
-                    },
-                    _ => {},
+                    parser.ExprArray(arr) => { valstr = emit_array_literal_kind(arr, st.cx.ret_arr_kind, st.cx, 0); },
+                    _ => { valstr = emit_expr(r.value, st.cx, 0); },
                 }
+            } else { valstr = emit_expr(r.value, st.cx, 0); }
+            var sweep: string = arr_exit_sweep(st.cx);
+            // No owned array locals (or a void return): emit directly.
+            if (sweep.len() == 0 || st.cx.ret_void) {
+                st = st.w(sweep);
+                return st.w("    (return " + valstr + ")\n");
             }
-            return st.w("    (return " + emit_expr(r.value, st.cx, 0) + ")\n");
+            st = st.w("    (local.set " + tmp + " " + valstr + ")\n");
+            st = st.w(sweep);
+            return st.w("    (return (local.get " + tmp + "))\n");
         },
         parser.StmtExpr(e) => {
             // write(...) / print(...) are builtins (not user funcs), so
@@ -6215,6 +6355,8 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         sa_names: [], sa_types: [],
         i64_arr_names: i64_arrs, f64_arr_names: f64_arrs,
         ret_arr_kind: arr_kind_of_spelling(f.ret_type),
+        arr_swept: [], arr_src: [],
+        ret_void: !returns_value(f.ret_type),
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -6237,6 +6379,22 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         sap = sap + 1;
     }
     cx = Ctx { ...cx, sa_names: san, sa_types: sat };
+    // Perceus array RC sets (counting milestone, free OFF). arr_src seeds
+    // with the array-typed params/receiver (valid alias sources, but NOT
+    // swept — params are borrowed) then adds the body's array vars;
+    // arr_swept is the owned/alias body subset released at exit.
+    var asrc: string[] = [];
+    if (f.receiver_type.len() > 0 && ty_spelling_is_array(f.receiver_type)) { asrc = asrc.append(f.receiver_name); }
+    var api: i32 = 0;
+    while (api < f.params.len()) {
+        if (ty_spelling_is_array(f.params[api].type_name) && !contains_str(asrc, f.params[api].name)) {
+            asrc = asrc.append(f.params[api].name);
+        }
+        api = api + 1;
+    }
+    asrc = collect_arr_src(f.body, asrc);
+    var aswept: string[] = collect_arr_swept(f.body, asrc, []);
+    cx = Ctx { ...cx, arr_src: asrc, arr_swept: aswept };
     // String-valued maps are needed during collect_str_locals_stmts (so a
     // `for v in m.values()` binds v as string). Seed them from
     // string-literal set values first (is_string_expr is accurate for
@@ -6440,6 +6598,8 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     decls = decls + "    (local $__fi0 i32) (local $__fi1 i32) (local $__fi2 i32) (local $__fi3 i32)\n";
     decls = decls + "    (local $__m0 i32) (local $__m1 i32) (local $__m2 i32) (local $__m3 i32)\n";
     decls = decls + "    (local $__fa0 i32) (local $__fa1 i32) (local $__fa2 i32) (local $__fa3 i32)\n";
+    // Perceus return temps: park the result across the exit release sweep.
+    decls = decls + "    (local $__retv_i32 i32) (local $__retv_i64 i64) (local $__retv_f64 f64)\n";
     var li: i32 = 0;
     while (li < locals.len()) {
         if (!contains_str(pnames, locals[li]) && !is_reserved_local(locals[li])) {
@@ -6464,7 +6624,10 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         else if (f64_result) { tail = "    (f64.const 0))\n"; }
         else { tail = "    (i32.const 0))\n"; }
     }
-    return head + decls + st.out + tail;
+    // Perceus exit sweep on the fall-through path (functions that end
+    // without an explicit `return`). After a final `return` it is
+    // unreachable-but-valid wasm, like the trailing fallthrough const.
+    return head + decls + st.out + arr_exit_sweep(cx) + tail;
 }
 
 // module_uses_divrem is true when any free function body or the
@@ -7566,12 +7729,15 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_maps: boolean = module_calls(mod, "map_new_i32") || module_calls(mod, "map_new");
     var has_tostring: boolean = module_uses_tostring(mod);
     var has_rcmem: boolean = module_uses_rcmem(mod);
-    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || export_needs_heap(mod) || has_rcmem || (component && io)) {
+    var needs_heap: boolean = has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_sfb || has_args || has_readfile || has_writefile || has_maps || has_tostring || has_extern_str || export_needs_heap(mod) || has_rcmem || (component && io);
+    if (needs_heap) {
         out = out + heap_alloc_helpers(tab.next + 16 + heap_extra);
     }
-    // The Perceus RC runtime + raw-memory pokes (__alloc forwards to the
-    // bump heap above). Emitted only when the program references them.
-    if (has_rcmem) {
+    // The Perceus RC runtime (__fern_rc_*) + raw-memory pokes (__alloc
+    // forwards to the bump heap above). Emitted whenever the heap is — the
+    // array counting inc/exit-sweep emit $__fern_rc_inc / $__fern_rc_dec
+    // calls, and any heap program may carry array params to count.
+    if (needs_heap) {
         out = out + rc_runtime_helpers(tab.next + 16 + heap_extra);
     }
     // component-io: the $fd_write shim over the preview2 stdout stream, so

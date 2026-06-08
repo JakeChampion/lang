@@ -830,3 +830,37 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   i64[]/f64[]/fn[] + array-of-arrays) since a spurious inc on a non-array
   pointer would corrupt an adjacent object's header (unlike the asm
   backends, where `asmcore.ty_is_array_like` already gives this oracle).
+- 2026-06-08: **wasm backend RC — counting milestone (inc-on-alias +
+  exit-sweep, free OFF).** The wasm analogue of the asm Phase-1 counting
+  work: array references are now reference-counted, validated
+  detector-clean, with free still off (the safe precursor to flipping it
+  on). Because wasm has no ownership tracking (unlike the asm backends'
+  `asmcore.ty_is_array_like` + construction-store incs), the oracle is
+  deliberately CONSERVATIVE and sound: a body local is counted/swept only
+  when it is DEFINITELY owned at rc 1 — a fresh array literal / slice — or
+  a bare-ident alias of another array (which gets the inc). Borrowed
+  params, field reads, index reads and call results are NOT swept (no inc
+  to balance them yet) — they leak, which is sound while free is off and
+  can never over-release. The key soundness property: an inc is only ever
+  emitted on a bare-ident array source (a genuine rc-boxed array), so
+  there is no false-positive inc that could corrupt a non-array object's
+  [p-8]. Implementation: `collect_arr_src` / `collect_arr_swept` (+
+  `ty_spelling_is_array` / `init_is_owned_array` / `init_is_arr_alias`)
+  build the sets in `build_ctx` (new `arr_src` / `arr_swept` / `ret_void`
+  Ctx fields); StmtVar emits `$__fern_rc_inc` after an alias bind;
+  StmtReturn computes the result into a typed `$__retv_*` temp, runs the
+  release sweep (`arr_exit_sweep` — dec each swept local), then returns
+  (computing-before-sweep is the correct Perceus order and makes
+  rc-observation-in-return intuitive); the function epilogue sweeps the
+  fall-through path. rc_runtime_helpers is now emitted whenever the heap
+  is (the counting calls reference `$__fern_rc_inc`/`_dec`). Coverage:
+  `TestSelfHostRcCountingWasm` — alias / multi-alias / append-loop /
+  repeated-calls / borrowed-param / branch-local, each asserting the
+  computed value AND `__fern_rc_underflow_count() == 0`. The hand-built
+  rc-inspection tests (runtime + array-layout) still pass unchanged
+  thanks to the compute-before-sweep order. Full wasm suite (~94 s)
+  green. Bootstrap-safe (wasm.fern only). Next: the construction-store
+  incs (so field/call-sourced arrays can be counted too) + reassign
+  dec-on-overwrite, then `__fern_arr_dec` + freelist to flip free ON
+  (with return-retain / move-on-return riding on the temp shape already
+  in place).
