@@ -770,6 +770,55 @@ func externEnumParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnu
 	return &ExternEnumParam{RemapDisc: remap, PayloadType: payload, PayloadOffset: offs[0]}, true
 }
 
+// externVariantParamLayout describes a general user-enum `@import` PARAMETER
+// that flattens like Result: (disc, payload). It accepts a user enum (named in
+// info.Enums) with at least one payloaded variant, where every payloaded variant
+// carries exactly one scalar payload and all those payloads are the same
+// kind+width T; payloadless variants are allowed. The canonical `variant`
+// flattens to (disc:i32, payload-join), and with a uniform T the join is T — so
+// it reuses the (disc, payload) param wrapper with no discriminant remap (the
+// user-enum variant index is the WIT case order). Option/Result are handled by
+// externEnumParamLayout; an all-payloadless enum by externPlainEnumParam (this
+// requires ≥1 payloaded variant). Non-uniform / multi-payload variants are
+// deferred. The wrapper reads the tag at +0 and the payload at PayloadOffset;
+// for a payloadless-case value (a sentinel) the payload read yields ignored
+// garbage (the host drops it for that disc), so it's harmless.
+func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnumParam, bool) {
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return nil, false
+	}
+	ed, ok := info.Enums[et.Name]
+	if !ok || len(ed.Variants) == 0 {
+		return nil, false
+	}
+	var payload ast.Type
+	anyPayloaded := false
+	for _, v := range ed.Variants {
+		switch len(v.Payloads) {
+		case 0:
+			// payloadless — allowed
+		case 1:
+			if !externRecordFieldSupported(v.Payloads[0]) {
+				return nil, false
+			}
+			if payload == nil {
+				payload = v.Payloads[0]
+			} else if !externScalarTypeEq(payload, v.Payloads[0]) {
+				return nil, false // non-uniform payloads — deferred
+			}
+			anyPayloaded = true
+		default:
+			return nil, false // multi-payload variant — deferred
+		}
+	}
+	if !anyPayloaded {
+		return nil, false // all-payloadless ⇒ a plain enum (externPlainEnumParam)
+	}
+	offs, _ := payloadLayout([]ast.Type{payload}, 1, ptrW)
+	return &ExternEnumParam{RemapDisc: false, PayloadType: payload, PayloadOffset: offs[0]}, true
+}
+
 // externPlainEnumParam reports whether t is a "plain" enum — a user enum (named
 // in info.Enums) with at least one variant and *every* variant payloadless (a
 // C-style enum). Such an enum maps to a WIT `enum`, which flattens to a single
@@ -1205,6 +1254,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 						ef.ParamPlainEnums = map[int]bool{}
 					}
 					ef.ParamPlainEnums[i] = true
+				} else if el, ok := externVariantParamLayout(p.Type, info, ptrW); ok {
+					if ef.ParamEnums == nil {
+						ef.ParamEnums = map[int]*ExternEnumParam{}
+					}
+					ef.ParamEnums[i] = el
 				}
 			}
 			if rr, ok := externRecordResultLayout(fn.ReturnType, info); ok {

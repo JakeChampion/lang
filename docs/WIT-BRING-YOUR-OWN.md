@@ -503,6 +503,22 @@ world-driven composer (P2) wires it.
      func(n: s32) -> color` returning `disc = n`; `rank(0/1/2)` → `Red/Green/Blue`
      — a full disc→sentinel→tag round-trip). General payload-carrying `variant`s
      are deferred.
+   - **General `variant` params (uniform payload) — ✅ done (Go).** A Fern user
+     enum with *payload-carrying* variants passed to an `@import` extern whose
+     WIT takes a `variant`. Scoped to a **uniform** payload: every payloaded
+     variant carries exactly one scalar of the same kind+width T (payloadless
+     variants allowed; ≥1 must be payloaded — else it's a plain enum). The
+     canonical `variant` flattens to (disc, payload-join), and with uniform T the
+     join is T — i.e. exactly `Result`'s (disc, payload) shape — so
+     `externVariantParamLayout` reuses the existing enum-param wrapper with no
+     discriminant remap (the user-enum variant index is the WIT case order). The
+     wrapper reads the tag at +0 and the payload at the box offset; for a
+     payloadless-case value (a sentinel) the payload read yields ignored garbage
+     (the host drops it for that disc), so it's harmless. Gated by
+     `TestExternVariantParamCustomProvider` (a `describe: func(s: shape) -> s32`
+     over `variant shape { circle(s32), square(s32), empty }`:
+     `Circle(7)`→7, `Square(7)`→70, `Empty`→999). Non-uniform / multi-payload
+     variants and the *result* direction are deferred.
    - **Self-host port — numeric array params — ✅ started.** The self-hosted
      compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
      beyond strings: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
@@ -661,11 +677,11 @@ world-driven composer (P2) wires it.
      trailing area). Gated by `TestSelfHostExternEnumResultCustomProvider` (the
      same `choose: func(n: s32) -> color` returning `disc = n`; `rank(0/1/2)` →
      `Red/Green/Blue`).
-   - Still rejected (next slices): general payload-carrying user
-     `variant`s; sub-4-byte-element
-     `list<T>` *results* (`u8[]`/`bool[]`) via a custom provider (the
-     `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); bool /
-     nested-composite fields. The multi-component harness
+   - Still rejected (next slices): general `variant` *results* + non-uniform /
+     multi-payload `variant`s + the self-host port of variant params;
+     sub-4-byte-element `list<T>` *results* (`u8[]`/`bool[]`) via a custom
+     provider (the `ComposeFromWorldAuto` `gMemRealloc` trap analysed above);
+     bool / nested-composite fields. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
