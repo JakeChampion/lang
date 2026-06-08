@@ -34,7 +34,7 @@ import (
 func TestSelfHostMultiModuleCompiler(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
+	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -75,6 +75,7 @@ func TestSelfHostMultiModuleCompiler(t *testing.T) {
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
 	asmcoreSrc, _ := os.ReadFile("../../examples/self_host/asmcore.fern")
+	utilSrc, _ := os.ReadFile("../../examples/self_host/util.fern")
 	asmSrc, _ := os.ReadFile("../../examples/self_host/asm.fern")
 	flattenMod, _ := os.ReadFile("../../examples/self_host/flatten.fern")
 	bundleRun, _ := os.ReadFile("../../examples/self_host/bundle_run.fern")
@@ -82,6 +83,8 @@ func TestSelfHostMultiModuleCompiler(t *testing.T) {
 	mmMain = strings.ReplaceAll(mmMain, "io.read_all_stdin()", "read_all_stdin()")
 
 	var bundle bytes.Buffer
+	bundle.WriteString("///MODULE util\n")
+	bundle.Write(utilSrc)
 	bundle.WriteString("///MODULE asmcore\n")
 	bundle.Write(asmcoreSrc)
 	bundle.WriteString("\n///MODULE lexer\n")

@@ -136,8 +136,8 @@ findings. Ranked by leverage.
   and move the copy-pasted leaf helpers into it, then import everywhere.
   _In progress (staged rollout):_ `util.fern` now exists (imports only
   `core/no_prelude`) and is seeded with the canonical `i32_to_string`;
-  `disasm`, `vm`, `constfold`, `printer` (dead copy deleted), `ssa_x86`/`ssa_arm64`/`ssa_wasm`, and `wasm` are converted (8 of 9 done).
-  Remaining: the last `i32_to_string` copy in `asmcore` (footprint 74 — the largest staging-edit sweep) and the
+  all 9 `i32_to_string` copies are now retired (`disasm`, `vm`, `constfold`, `printer` (dead), `ssa_x86`/`ssa_arm64`/`ssa_wasm`, `wasm`, `asmcore` — the last also dropped the `pub` cross-module copy used by `asm.fern`/`asm_arm64.fern`).
+  The `i32_to_string` strand is **done**. Remaining for SH-020: fold in the OTHER duplicated helpers and the
   rest of the helpers below, one file per PR — each conversion must add
   `util.fern` to every Go test that stages that module (no shared staging list;
   `disasm` had a footprint of 1, most others are 4–8, `wasm`/`asmcore` are 58/74).
