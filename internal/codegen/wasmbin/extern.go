@@ -16,12 +16,46 @@
 package wasmbin
 
 import (
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 )
+
+// appendExternFieldLoad emits the load that reads a flattened record/tuple field
+// of type t at byte offset off from a struct value, leaving its canonical core
+// value on the stack. A Fern struct stores every sub-64-bit integer in a 4-byte
+// (little-endian) slot, so a sub-word field (s8/s16/u8/u16) is read with a
+// width+sign-aware load — i32.load8_s/u, i32.load16_s/u — to produce the
+// correctly sign-/zero-extended i32 the canonical ABI flattens it to. Wider
+// fields use the natural i64/f32/f64/i32 load matching externRecordFieldValtype.
+func appendExternFieldLoad(body []byte, t ast.Type, off uint32) []byte {
+	if n, ok := t.(ast.NumberType); ok {
+		switch n.NormalWidth() {
+		case 8:
+			if n.Signed {
+				return memory.InstI32Load8S(body, 0, off)
+			}
+			return memory.InstI32Load8U(body, 0, off)
+		case 16:
+			if n.Signed {
+				return memory.InstI32Load16S(body, 1, off)
+			}
+			return memory.InstI32Load16U(body, 1, off)
+		}
+	}
+	switch externRecordFieldValtype(t) {
+	case encode.ValtypeI64:
+		return memory.InstI64Load(body, 3, off)
+	case encode.ValtypeF32:
+		return memory.InstF32Load(body, 2, off)
+	case encode.ValtypeF64:
+		return memory.InstF64Load(body, 3, off)
+	}
+	return memory.InstI32Load(body, 2, off)
+}
 
 // buildExternStringResultWrapper returns the body builder for the wrapper of a
 // string/list<u8>-returning extern. nparams is the count of (scalar, one-slot)
@@ -405,17 +439,7 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 				// record flattening the raw import expects.
 				for _, f := range ex.ParamRecords[i] {
 					body = inst.InstLocalGet(body, slot)
-					off := uint32(f.Offset)
-					switch externRecordFieldValtype(f.Type) {
-					case encode.ValtypeI64:
-						body = memory.InstI64Load(body, 3, off)
-					case encode.ValtypeF32:
-						body = memory.InstF32Load(body, 2, off)
-					case encode.ValtypeF64:
-						body = memory.InstF64Load(body, 3, off)
-					default:
-						body = memory.InstI32Load(body, 2, off)
-					}
+					body = appendExternFieldLoad(body, f.Type, uint32(f.Offset))
 				}
 				slot++
 			case ex.ParamEnums[i] != nil:
