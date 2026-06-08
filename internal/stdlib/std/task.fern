@@ -194,3 +194,80 @@ pub function run(states_in: Step[], rx_in: Reactor): i32[] {
     }
     return results;
 }
+
+// __first_done(states) — index of the lowest-numbered already-Done
+// task, or -1 if none are done yet.
+function __first_done(states: Step[]): i32 {
+    var i: i32 = 0;
+    while (i < states.len()) {
+        match (states[i]) {
+            Done(v) => { return i; },
+            Wait(t, c) => { },
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// __result_at(states, i) — the result of task i if Done, else -1.
+function __result_at(states: Step[], i: i32): i32 {
+    match (states[i]) {
+        Done(v) => { return v; },
+        Wait(t, c) => { return -1; },
+    }
+}
+
+// select(states, rx) — run tasks until the FIRST one completes, then
+// return `(winnerIndex, winnerResult)` and abandon the rest. This is
+// the happy-eyeballs / race primitive (docs/CONCURRENCY-RESEARCH.md
+// Rec §5): fan out to a cache and a primary store, take whichever
+// answers first.
+//
+// CANCELLATION is structural: a losing task is simply never resumed
+// again — its parked continuation (and the live frame it captured) is
+// dropped when `states` goes out of scope, and reference counting
+// reclaims it. There is no separate cancel signal to thread; not
+// resuming IS the cancel. (The Phase-1 reactor will additionally
+// close the loser's fd so the OS stops the in-flight I/O.)
+//
+// "First" = earliest to reach Done across scheduler rounds, so a task
+// that awaits fewer times beats a deeper one. An already-Done task at
+// entry wins immediately (lowest index). Returns (-1, -1) only if the
+// reactor runs dry with no task completing (in-memory deadlock guard;
+// the real reactor's poll blocks instead).
+pub function select(states_in: Step[], rx_in: Reactor): (i32, i32) {
+    var states: Step[] = states_in;
+    var rx: Reactor = rx_in;
+    var pre: i32 = __first_done(states);
+    if (pre >= 0) {
+        return (pre, __result_at(states, pre));
+    }
+    while (true) {
+        var (toks, vals, rx2) = rx.poll();
+        rx = rx2;
+        if (toks.len() == 0) {
+            return (-1, -1);
+        }
+        var j: i32 = 0;
+        while (j < toks.len()) {
+            var i: i32 = __find_waiter(states, toks[j]);
+            if (i >= 0) {
+                var st: Step = states[i];
+                match (st) {
+                    Done(v) => { },
+                    Wait(t, resume) => {
+                        var (next, rx3) = resume(vals[j], rx);
+                        rx = rx3;
+                        states[i] = next;
+                        match (next) {
+                            Done(v) => { return (i, v); },
+                            Wait(t2, r2) => { },
+                        }
+                    },
+                }
+            }
+            j = j + 1;
+        }
+    }
+    return (-1, -1);
+}
