@@ -95,13 +95,16 @@ func TestSelfHostFileDriverX86_64(t *testing.T) {
 	// byte-identical asm to the Go-built driver for the same input.
 	t.Run("self-hostable", func(t *testing.T) {
 		bundleRunBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "bundle_run")
+		utilSrc, _ := os.ReadFile(filepath.Join(dir, "util.fern"))
 		lexerSrc, _ := os.ReadFile(filepath.Join(dir, "lexer.fern"))
 		parserSrc, _ := os.ReadFile(filepath.Join(dir, "parser.fern"))
 		asmcoreSrc, _ := os.ReadFile(filepath.Join(dir, "asmcore.fern"))
 		asmSrc, _ := os.ReadFile(filepath.Join(dir, "asm.fern"))
 		driverSrc, _ := os.ReadFile(filepath.Join(dir, "asm_file_run.fern"))
 		var bundle bytes.Buffer
-		bundle.WriteString("///MODULE asmcore\n")
+		bundle.WriteString("///MODULE util\n")
+		bundle.Write(utilSrc)
+		bundle.WriteString("\n///MODULE asmcore\n")
 		bundle.Write(asmcoreSrc)
 		bundle.WriteString("\n///MODULE lexer\n")
 		bundle.Write(lexerSrc)

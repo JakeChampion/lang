@@ -35,6 +35,7 @@ import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./asmcore";
+import "./util";
 
 
 
@@ -204,8 +205,8 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
                 var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, lit_val);
                 s = lo.state;
                 s = s.write("    movq $1, %rdi\n");
-                s = s.write("    leaq .S" + asmcore.i32_to_string(lo.idx) + "(%rip), %rsi\n");
-                s = s.write("    movq $" + asmcore.i32_to_string(lit_val.len()) + ", %rdx\n");
+                s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rsi\n");
+                s = s.write("    movq $" + util.i32_to_string(lit_val.len()) + ", %rdx\n");
                 s = s.write("    movq $1, %rax\n");
                 s = s.write("    syscall\n");
                 s = s.write("    pushq $0\n");
@@ -225,7 +226,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
                 var nlo: asmcore.StringLitOut = asmcore.add_string_lit(s, "\n");
                 s = nlo.state;
                 s = s.write("    movq $1, %rdi\n");
-                s = s.write("    leaq .S" + asmcore.i32_to_string(nlo.idx) + "(%rip), %rsi\n");
+                s = s.write("    leaq .S" + util.i32_to_string(nlo.idx) + "(%rip), %rsi\n");
                 s = s.write("    movq $1, %rdx\n");
                 s = s.write("    movq $1, %rax\n");
                 s = s.write("    syscall\n");
@@ -244,8 +245,8 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
                 var elo: asmcore.StringLitOut = asmcore.add_string_lit(s, esv.value);
                 s = elo.state;
                 s = s.write("    movq $2, %rdi\n");
-                s = s.write("    leaq .S" + asmcore.i32_to_string(elo.idx) + "(%rip), %rsi\n");
-                s = s.write("    movq $" + asmcore.i32_to_string(esv.value.len()) + ", %rdx\n");
+                s = s.write("    leaq .S" + util.i32_to_string(elo.idx) + "(%rip), %rsi\n");
+                s = s.write("    movq $" + util.i32_to_string(esv.value.len()) + ", %rdx\n");
                 s = s.write("    movq $1, %rax\n");
                 s = s.write("    syscall\n");
                 s = s.write("    pushq $0\n");
@@ -768,10 +769,10 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
                 var sf_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, sfsd.name);
                 s = sf_lit.state;
                 s = s.write("    movq (%rax), %rcx\n");
-                s = s.write("    leaq .S" + asmcore.i32_to_string(sf_lit.idx) + "(%rip), %r8\n");
+                s = s.write("    leaq .S" + util.i32_to_string(sf_lit.idx) + "(%rip), %r8\n");
                 s = s.write("    cmpq %r8, %rcx\n");
                 s = s.write("    jne " + sf_next.name + "\n");
-                s = s.write("    movq %rdx, " + asmcore.i32_to_string((sf_found + 1) * 8) + "(%rax)\n");
+                s = s.write("    movq %rdx, " + util.i32_to_string((sf_found + 1) * 8) + "(%rax)\n");
                 s = s.write("    jmp " + sf_end.name + "\n");
                 s = s.write(sf_next.name + ":\n");
             }
@@ -845,7 +846,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = enum_payload_retain(c.args[0], s);   // Perceus: retain an rc-tracked array payload
         var evLit: asmcore.StringLitOut = asmcore.add_string_lit(s, name);
         s = evLit.state;
-        s = s.write("    leaq .S" + asmcore.i32_to_string(evLit.idx) + "(%rip), %rdx\n");
+        s = s.write("    leaq .S" + util.i32_to_string(evLit.idx) + "(%rip), %rdx\n");
         s = s.write("    movq %rdx, (%rax)\n");  // shape ptr
         s = s.write("    movq %rcx, 8(%rax)\n"); // payload
         s = s.write("    pushq %rax\n");
@@ -1186,12 +1187,12 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.write("    popq %rdx\n");   // restore default
         s = s.write("    movq (%rax), %rcx\n");  // tag (0=Some, 1=None)
         s = s.write("    testq %rcx, %rcx\n");
-        s = s.write("    jnz .Lgo_def_" + asmcore.i32_to_string(or_lbl) + "\n");
+        s = s.write("    jnz .Lgo_def_" + util.i32_to_string(or_lbl) + "\n");
         s = s.write("    movq 8(%rax), %rax\n");  // Some payload
-        s = s.write("    jmp .Lgo_end_" + asmcore.i32_to_string(or_lbl) + "\n");
-        s = s.write(".Lgo_def_" + asmcore.i32_to_string(or_lbl) + ":\n");
+        s = s.write("    jmp .Lgo_end_" + util.i32_to_string(or_lbl) + "\n");
+        s = s.write(".Lgo_def_" + util.i32_to_string(or_lbl) + ":\n");
         s = s.write("    movq %rdx, %rax\n");
-        s = s.write(".Lgo_end_" + asmcore.i32_to_string(or_lbl) + ":\n");
+        s = s.write(".Lgo_end_" + util.i32_to_string(or_lbl) + ":\n");
         s = s.write("    pushq %rax\n");
         s = s.mark_heap();
         s = s.mark_str_eq();
@@ -1936,20 +1937,20 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = s.write("    movq 8(%rax), %rcx\n");       // s len
             s = s.write("    movq $1, %r10\n");            // default: trim = 1 (empty case)
             s = s.write("    testq %rcx, %rcx\n");
-            s = s.write("    jz .Llines_have_" + asmcore.i32_to_string(ln_lbl) + "\n");
+            s = s.write("    jz .Llines_have_" + util.i32_to_string(ln_lbl) + "\n");
             s = s.write("    decq %rcx\n");
             s = s.write("    movzbq (%rdx, %rcx, 1), %rcx\n");
             s = s.write("    cmpq $10, %rcx\n");
             s = s.write("    sete %r10b\n");
             s = s.write("    movzbq %r10b, %r10\n");
-            s = s.write(".Llines_have_" + asmcore.i32_to_string(ln_lbl) + ":\n");
+            s = s.write(".Llines_have_" + util.i32_to_string(ln_lbl) + ":\n");
             s = s.write("    pushq %r10\n");               // save trim_flag (stack: [trim, s])
             // Alloc "\n" delim box.
             var lo_ln: asmcore.StringLitOut = asmcore.add_string_lit(s, "\n");
             s = lo_ln.state;
             s = s.write("    movq $16, %rdi\n");
             s = s.write("    call __fern_alloc\n");
-            s = s.write("    leaq .S" + asmcore.i32_to_string(lo_ln.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq .S" + util.i32_to_string(lo_ln.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             s = s.write("    movq $1, 8(%rax)\n");
             s = s.write("    movq %rax, %rsi\n");          // delim → rsi
@@ -2079,7 +2080,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         }
         s = emit_expr(fa.obj, s);
         s = s.write("    call __fn_" + asmcore.sanitize_label(asmcore.ty_tag(prim_recv) + "." + fa.field) + "\n");
-        s = s.write("    addq $" + asmcore.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
+        s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
         s = s.write("    pushq %rax\n");
         return s;
     }
@@ -2130,14 +2131,14 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = arm_lit.state;
             var next_l: asmcore.LabelOut = asmcore.fresh_label(s);
             s = next_l.state;
-            s = s.write("    leaq .S" + asmcore.i32_to_string(arm_lit.idx) + "(%rip), %rdx\n");
+            s = s.write("    leaq .S" + util.i32_to_string(arm_lit.idx) + "(%rip), %rdx\n");
             s = s.write("    cmpq %rdx, %rcx\n");
             s = s.write("    jne " + next_l.name + "\n");
             s = s.write("    call __fn_" + asmcore.sanitize_label(asmcore.base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
             // Caller cleans up args + receiver.
-            s = s.write("    addq $" + asmcore.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
+            s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
             s = s.write("    pushq %rax\n");
-            s = s.write("    jmp .Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + "\n");
+            s = s.write("    jmp .Lmethod_end_" + util.i32_to_string(m_end_lbl) + "\n");
             s = s.write(next_l.name + ":\n");
         }
         fdi = fdi + 1;
@@ -2160,17 +2161,17 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     }
     if (enum_recv.len() > 0) {
         s = s.write("    call __fn_" + asmcore.sanitize_label(enum_recv + "." + fa.field) + "\n");
-        s = s.write("    addq $" + asmcore.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
+        s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
         s = s.write("    pushq %rax\n");
-        s = s.write(".Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + ":\n");
+        s = s.write(".Lmethod_end_" + util.i32_to_string(m_end_lbl) + ":\n");
         return s;
     }
     // Fallthrough: no matching method. Clean up
     // args + receiver, push sentinel -1.
-    s = s.write("    addq $" + asmcore.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
+    s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
     s = s.write("    movq $-1, %rax\n");
     s = s.write("    pushq %rax\n");
-    s = s.write(".Lmethod_end_" + asmcore.i32_to_string(m_end_lbl) + ":\n");
+    s = s.write(".Lmethod_end_" + util.i32_to_string(m_end_lbl) + ":\n");
     return s;
     return s;
 }
@@ -2190,10 +2191,10 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
                 s = emit_expr(c.args[la], s);
                 la = la - 1;
             }
-            s = s.write("    movq " + asmcore.i32_to_string(c.args.len() * 8) + "(%rsp), %r10\n"); // box ptr
+            s = s.write("    movq " + util.i32_to_string(c.args.len() * 8) + "(%rsp), %r10\n"); // box ptr
             s = s.write("    movq (%r10), %rdx\n");
             s = s.write("    call *%rdx\n");
-            s = s.write("    addq $" + asmcore.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n"); // pop args + box
+            s = s.write("    addq $" + util.i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n"); // pop args + box
             s = s.write("    pushq %rax\n");
             return s;
         },
@@ -2244,12 +2245,12 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
             ci = ci - 1;
         }
         var off: i32 = s.lookup_local(name);
-        s = s.write("    movq " + asmcore.i32_to_string(off) + "(%rbp), %r10\n");
+        s = s.write("    movq " + util.i32_to_string(off) + "(%rbp), %r10\n");
         s = s.write("    movq (%r10), %rdx\n");
         s = s.write("    call *%rdx\n");
         // Caller cleanup: args only (box was in a register).
         if (c.args.len() > 0) {
-            s = s.write("    addq $" + asmcore.i32_to_string(c.args.len() * 8) + ", %rsp\n");
+            s = s.write("    addq $" + util.i32_to_string(c.args.len() * 8) + ", %rsp\n");
         }
         s = s.write("    pushq %rax\n");
         return s;
@@ -2272,7 +2273,7 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
     // pure-stack args; we don't use the register-arg
     // path of the standard SysV ABI).
     if (c.args.len() > 0) {
-        s = s.write("    addq $" + asmcore.i32_to_string(c.args.len() * 8) + ", %rsp\n");
+        s = s.write("    addq $" + util.i32_to_string(c.args.len() * 8) + ", %rsp\n");
     }
     // Result is in %rax — push for the surrounding
     // expression's stack-machine semantics.
@@ -2605,7 +2606,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
         parser.ExprIdent(id) => {
             if (s.has_local(id.name)) {
                 var off: i32 = s.lookup_local(id.name);
-                s = s.write("    pushq " + asmcore.i32_to_string(off) + "(%rbp)\n");
+                s = s.write("    pushq " + util.i32_to_string(off) + "(%rbp)\n");
                 return s;
             }
             // Built-in `None` — the empty Option. Heap box whose
@@ -2654,7 +2655,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.mark_heap();
                 var uvLit: asmcore.StringLitOut = asmcore.add_string_lit(s, id.name);
                 s = uvLit.state;
-                s = s.write("    leaq .S" + asmcore.i32_to_string(uvLit.idx) + "(%rip), %rcx\n");
+                s = s.write("    leaq .S" + util.i32_to_string(uvLit.idx) + "(%rip), %rcx\n");
                 s = s.write("    movq %rcx, (%rax)\n");
                 s = s.write("    pushq %rax\n");
                 return s;
@@ -2669,7 +2670,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // cond branching on `true`).
             var v: i32 = 0;
             if (b.value) { v = 1; }
-            s = s.write("    movq $" + asmcore.i32_to_string(v) + ", %rax\n");
+            s = s.write("    movq $" + util.i32_to_string(v) + ", %rax\n");
             s = s.write("    pushq %rax\n");
             return s;
         },
@@ -2684,9 +2685,9 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             s = s.write("    movq $16, %rdi\n");
             s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
-            s = s.write("    leaq .S" + asmcore.i32_to_string(lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
-            s = s.write("    movq $" + asmcore.i32_to_string(sv.value.len()) + ", %rcx\n");
+            s = s.write("    movq $" + util.i32_to_string(sv.value.len()) + ", %rcx\n");
             s = s.write("    movq %rcx, 8(%rax)\n");
             s = s.write("    pushq %rax\n");
             return s;
@@ -2717,7 +2718,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             }
             var t_bytes: i32 = n_elems * 8;
             if (n_elems == 0) { t_bytes = 8; }
-            s = s.write("    movq $" + asmcore.i32_to_string(t_bytes) + ", %rdi\n");
+            s = s.write("    movq $" + util.i32_to_string(t_bytes) + ", %rdi\n");
             s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             var tj: i32 = n_elems - 1;
@@ -2732,7 +2733,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = s.write("    movq %rax, %rcx\n");       // element (helper returns the ptr)
                     s = s.write("    popq %rax\n");             // restore tuple ptr
                 }
-                s = s.write("    movq %rcx, " + asmcore.i32_to_string(tj * 8) + "(%rax)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string(tj * 8) + "(%rax)\n");
                 tj = tj - 1;
             }
             s = s.write("    pushq %rax\n");
@@ -2766,7 +2767,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // __fern_arr_push finds cap at -16 (rc at -8) and can grow
             // geometrically. cap = len for a literal (first push
             // reallocs, then doubles).
-            s = s.write("    movq $" + asmcore.i32_to_string(n_elems) + ", %rdi\n");   // cap = element count
+            s = s.write("    movq $" + util.i32_to_string(n_elems) + ", %rdi\n");   // cap = element count
             s = s.write("    call __fern_arr_box\n");   // -> data ptr in %rax (cap + len written)
             s = s.mark_heap();
             var aj: i32 = n_elems - 1;
@@ -2781,7 +2782,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = s.write("    movq %rax, %rcx\n");       // element (helper returns the ptr)
                     s = s.write("    popq %rax\n");             // restore array ptr
                 }
-                s = s.write("    movq %rcx, " + asmcore.i32_to_string((aj + 1) * 8) + "(%rax)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string((aj + 1) * 8) + "(%rax)\n");
                 aj = aj - 1;
             }
             s = s.write("    pushq %rax\n");
@@ -2897,13 +2898,13 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 // Allocate the new box: (dn+1)*8 bytes. Base ptr stays on
                 // the rt-stack across the call (alloc clobbers scratch).
                 var su_bytes: i32 = (dn + 1) * 8;
-                s = s.write("    movq $" + asmcore.i32_to_string(su_bytes) + ", %rdi\n");
+                s = s.write("    movq $" + util.i32_to_string(su_bytes) + ", %rdi\n");
                 s = s.write("    call __fern_alloc\n");
                 s = s.mark_heap();
                 // Shape pointer at [%rax + 0].
                 var suNameLit: asmcore.StringLitOut = asmcore.add_string_lit(s, sl.type_name);
                 s = suNameLit.state;
-                s = s.write("    leaq .S" + asmcore.i32_to_string(suNameLit.idx) + "(%rip), %rcx\n");
+                s = s.write("    leaq .S" + util.i32_to_string(suNameLit.idx) + "(%rip), %rcx\n");
                 s = s.write("    movq %rcx, (%rax)\n");
                 // Pop the base pointer into %rsi — no calls happen during
                 // the field-copy below, so %rsi survives.
@@ -2919,7 +2920,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                         oj = oj + 1;
                     }
                     if (!overridden) {
-                        s = s.write("    movq " + asmcore.i32_to_string((ci + 1) * 8) + "(%rsi), %rcx\n");
+                        s = s.write("    movq " + util.i32_to_string((ci + 1) * 8) + "(%rsi), %rcx\n");
                         // Perceus construction inc: the new struct gets a
                         // reference to the base's array field, so retain it
                         // (base + box ptrs preserved across the call).
@@ -2934,7 +2935,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                             s = s.write("    popq %rax\n");             // restore box
                             s = s.write("    popq %rsi\n");             // restore base
                         }
-                        s = s.write("    movq %rcx, " + asmcore.i32_to_string((ci + 1) * 8) + "(%rax)\n");
+                        s = s.write("    movq %rcx, " + util.i32_to_string((ci + 1) * 8) + "(%rax)\n");
                     }
                     ci = ci + 1;
                 }
@@ -2963,7 +2964,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                         s = s.write("    movq %rax, %rcx\n");       // value (helper returns ptr)
                         s = s.write("    popq %rax\n");             // restore box
                     }
-                    s = s.write("    movq %rcx, " + asmcore.i32_to_string((oidx + 1) * 8) + "(%rax)\n");
+                    s = s.write("    movq %rcx, " + util.i32_to_string((oidx + 1) * 8) + "(%rax)\n");
                     s = s.write("    pushq %rax\n");         // box back on rt-stack
                     ok = ok + 1;
                 }
@@ -2976,13 +2977,13 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 i = i + 1;
             }
             var slot_bytes: i32 = (n_fields + 1) * 8;
-            s = s.write("    movq $" + asmcore.i32_to_string(slot_bytes) + ", %rdi\n");
+            s = s.write("    movq $" + util.i32_to_string(slot_bytes) + ", %rdi\n");
             s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             // Intern the struct name string in .rodata.
             var nameLit: asmcore.StringLitOut = asmcore.add_string_lit(s, sl.type_name);
             s = nameLit.state;
-            s = s.write("    leaq .S" + asmcore.i32_to_string(nameLit.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq .S" + util.i32_to_string(nameLit.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             // Pop fields off the rt-stack into the struct. Perceus
             // construction inc (Phase 1d): a field initialised from an
@@ -3003,7 +3004,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = s.write("    movq %rax, %rcx\n");       // value (helper returns the ptr)
                     s = s.write("    popq %rax\n");             // restore box ptr
                 }
-                s = s.write("    movq %rcx, " + asmcore.i32_to_string((j + 1) * 8) + "(%rax)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string((j + 1) * 8) + "(%rax)\n");
                 j = j - 1;
             }
             s = s.write("    pushq %rax\n");
@@ -3018,7 +3019,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 var tup_idx: i32 = asmcore.digits_to_i32(fa.field);
                 s = emit_expr(fa.obj, s);
                 s = s.write("    popq %rax\n");
-                s = s.write("    movq " + asmcore.i32_to_string(tup_idx * 8) + "(%rax), %rax\n");
+                s = s.write("    movq " + util.i32_to_string(tup_idx * 8) + "(%rax), %rax\n");
                 s = s.write("    pushq %rax\n");
                 return s;
             }
@@ -3050,13 +3051,13 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, sd.name);
                     s = arm_lit.state;
                     s = s.write("    movq (%rax), %rcx\n");
-                    s = s.write("    leaq .S" + asmcore.i32_to_string(arm_lit.idx) + "(%rip), %rdx\n");
+                    s = s.write("    leaq .S" + util.i32_to_string(arm_lit.idx) + "(%rip), %rdx\n");
                     s = s.write("    cmpq %rdx, %rcx\n");
-                    s = s.write("    jne .Lfa_next_" + asmcore.i32_to_string(s.label_n) + "\n");
-                    s = s.write("    movq " + asmcore.i32_to_string((found_idx + 1) * 8) + "(%rax), %rax\n");
+                    s = s.write("    jne .Lfa_next_" + util.i32_to_string(s.label_n) + "\n");
+                    s = s.write("    movq " + util.i32_to_string((found_idx + 1) * 8) + "(%rax), %rax\n");
                     s = s.write("    pushq %rax\n");
-                    s = s.write("    jmp .Lfa_end_" + asmcore.i32_to_string(end_lbl) + "\n");
-                    s = s.write(".Lfa_next_" + asmcore.i32_to_string(s.label_n) + ":\n");
+                    s = s.write("    jmp .Lfa_end_" + util.i32_to_string(end_lbl) + "\n");
+                    s = s.write(".Lfa_next_" + util.i32_to_string(s.label_n) + ":\n");
                     s = asmcore.EmitState { ...s, label_n: s.label_n + 1 };
                 }
                 di = di + 1;
@@ -3064,7 +3065,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // No-shape-matched fallthrough: push sentinel -1.
             s = s.write("    movq $-1, %rax\n");
             s = s.write("    pushq %rax\n");
-            s = s.write(".Lfa_end_" + asmcore.i32_to_string(end_lbl) + ":\n");
+            s = s.write(".Lfa_end_" + util.i32_to_string(end_lbl) + ":\n");
             return s;
         },
         parser.ExprLambda(lm) => {
@@ -3097,8 +3098,8 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             var n_caps: i32 = caps.len();
             var lam_id: i32 = s.label_n;
             s = asmcore.EmitState { ...s, label_n: s.label_n + 2 };
-            var skip_lbl: string = ".Lskip_lambda_" + asmcore.i32_to_string(lam_id);
-            var body_lbl: string = ".Llambda_" + asmcore.i32_to_string(lam_id);
+            var skip_lbl: string = ".Lskip_lambda_" + util.i32_to_string(lam_id);
+            var body_lbl: string = ".Llambda_" + util.i32_to_string(lam_id);
             s = s.write("    jmp " + skip_lbl + "\n");
             s = s.write(body_lbl + ":\n");
             s = s.write("    pushq %rbp\n");
@@ -3115,7 +3116,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             if (total_locals_l > 0) {
                 var bytes_l: i32 = total_locals_l * 8;
                 if (bytes_l % 16 != 0) { bytes_l = bytes_l + 8; }
-                s = s.write("    subq $" + asmcore.i32_to_string(bytes_l) + ", %rsp\n");
+                s = s.write("    subq $" + util.i32_to_string(bytes_l) + ", %rsp\n");
             }
             s = s.reset_locals();
             s = s.enter_function();
@@ -3124,7 +3125,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             var box_name: string = "__closure_box";
             s = s.bind_local(box_name);
             var box_off: i32 = s.lookup_local(box_name);
-            s = s.write("    movq %r10, " + asmcore.i32_to_string(box_off) + "(%rbp)\n");
+            s = s.write("    movq %r10, " + util.i32_to_string(box_off) + "(%rbp)\n");
             // Bind each capture, load from box[+(i+1)*8]. The
             // capture preserves the outer scope's type so that
             // type-aware dispatch inside the lambda body (e.g.
@@ -3147,9 +3148,9 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 }
                 s = s.bind_local_typed(caps[ci], cap_ty);
                 var c_off: i32 = s.lookup_local(caps[ci]);
-                s = s.write("    movq " + asmcore.i32_to_string(box_off) + "(%rbp), %rcx\n");
-                s = s.write("    movq " + asmcore.i32_to_string((ci + 1) * 8) + "(%rcx), %rax\n");
-                s = s.write("    movq %rax, " + asmcore.i32_to_string(c_off) + "(%rbp) # capture " + caps[ci] + "\n");
+                s = s.write("    movq " + util.i32_to_string(box_off) + "(%rbp), %rcx\n");
+                s = s.write("    movq " + util.i32_to_string((ci + 1) * 8) + "(%rcx), %rax\n");
+                s = s.write("    movq %rax, " + util.i32_to_string(c_off) + "(%rbp) # capture " + caps[ci] + "\n");
                 ci = ci + 1;
             }
             // Bind params; args sit at +16, +24, … — IDENTICAL to a
@@ -3160,8 +3161,8 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.bind_local_typed(lm.params[pi2].name, asmcore.ty_from_name(lm.params[pi2].type_name));
                 var p_off: i32 = s.lookup_local(lm.params[pi2].name);
                 var a_off: i32 = 16 + pi2 * 8;
-                s = s.write("    movq " + asmcore.i32_to_string(a_off) + "(%rbp), %rax\n");
-                s = s.write("    movq %rax, " + asmcore.i32_to_string(p_off) + "(%rbp) # param " + lm.params[pi2].name + "\n");
+                s = s.write("    movq " + util.i32_to_string(a_off) + "(%rbp), %rax\n");
+                s = s.write("    movq %rax, " + util.i32_to_string(p_off) + "(%rbp) # param " + lm.params[pi2].name + "\n");
                 pi2 = pi2 + 1;
             }
             // Body.
@@ -3179,7 +3180,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             s = s.write(skip_lbl + ":\n");
             // Allocate box: (1 + n_caps) * 8 bytes.
             var box_bytes: i32 = (1 + n_caps) * 8;
-            s = s.write("    movq $" + asmcore.i32_to_string(box_bytes) + ", %rdi\n");
+            s = s.write("    movq $" + util.i32_to_string(box_bytes) + ", %rdi\n");
             s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             // Store fn_addr at box[0].
@@ -3192,7 +3193,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             var oi: i32 = 0;
             while (oi < n_caps) {
                 var outer_off: i32 = s.lookup_local(caps[oi]);
-                s = s.write("    movq " + asmcore.i32_to_string(outer_off) + "(%rbp), %rcx\n");
+                s = s.write("    movq " + util.i32_to_string(outer_off) + "(%rbp), %rcx\n");
                 if (asmcore.ty_is_array_like(s.local_type_of(caps[oi]))) {
                     s = s.mark_heap();
                     s = s.write("    pushq %rax\n");            // save box ptr
@@ -3202,7 +3203,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = s.write("    movq %rax, %rcx\n");       // value (helper returns ptr)
                     s = s.write("    popq %rax\n");             // restore box ptr
                 }
-                s = s.write("    movq %rcx, " + asmcore.i32_to_string((oi + 1) * 8) + "(%rax)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string((oi + 1) * 8) + "(%rax)\n");
                 oi = oi + 1;
             }
             s = s.write("    pushq %rax\n");
@@ -3239,15 +3240,15 @@ function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32)
     if (asmcore.map_key_is_i32(iter_ty)) { kvk_ty = asmcore.ty_i32(); }
     var kvv_ty: asmcore.Ty = asmcore.map_val(iter_ty);
     s = emit_expr(f.iter, s);
-    var kvm_name: string = "__forkv_map_" + asmcore.i32_to_string(s.label_n);
+    var kvm_name: string = "__forkv_map_" + util.i32_to_string(s.label_n);
     s = s.bind_local(kvm_name);
     var kvm_off: i32 = s.lookup_local(kvm_name);
     s = s.write("    popq %rax\n");
-    s = s.write("    movq %rax, " + asmcore.i32_to_string(kvm_off) + "(%rbp)\n");
-    var kvi_name: string = "__forkv_i_" + asmcore.i32_to_string(s.label_n);
+    s = s.write("    movq %rax, " + util.i32_to_string(kvm_off) + "(%rbp)\n");
+    var kvi_name: string = "__forkv_i_" + util.i32_to_string(s.label_n);
     s = s.bind_local(kvi_name);
     var kvi_off: i32 = s.lookup_local(kvi_name);
-    s = s.write("    movq $0, " + asmcore.i32_to_string(kvi_off) + "(%rbp)\n");
+    s = s.write("    movq $0, " + util.i32_to_string(kvi_off) + "(%rbp)\n");
     s = s.bind_local_typed(kvk, kvk_ty);
     var kvk_off: i32 = s.lookup_local(kvk);
     s = s.bind_local_typed(kvv, kvv_ty);
@@ -3259,24 +3260,24 @@ function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32)
     var kvend: asmcore.LabelOut = asmcore.fresh_label(s);
     s = kvend.state;
     s = s.write(kvtop.name + ":\n");
-    s = s.write("    movq " + asmcore.i32_to_string(kvm_off) + "(%rbp), %rax\n");
+    s = s.write("    movq " + util.i32_to_string(kvm_off) + "(%rbp), %rax\n");
     s = s.write("    movq (%rax), %rcx\n");   // keys arr
     s = s.write("    movq (%rcx), %rcx\n");   // keys.len
-    s = s.write("    movq " + asmcore.i32_to_string(kvi_off) + "(%rbp), %rdx\n");
+    s = s.write("    movq " + util.i32_to_string(kvi_off) + "(%rbp), %rdx\n");
     s = s.write("    cmpq %rcx, %rdx\n");
     s = s.write("    jge " + kvend.name + "\n");
-    s = s.write("    movq " + asmcore.i32_to_string(kvm_off) + "(%rbp), %rax\n");
+    s = s.write("    movq " + util.i32_to_string(kvm_off) + "(%rbp), %rax\n");
     s = s.write("    movq (%rax), %rcx\n");   // keys arr
-    s = s.write("    movq " + asmcore.i32_to_string(kvi_off) + "(%rbp), %rdx\n");
+    s = s.write("    movq " + util.i32_to_string(kvi_off) + "(%rbp), %rdx\n");
     s = s.write("    incq %rdx\n");
     s = s.write("    movq (%rcx,%rdx,8), %rax\n");   // keys[i+1]
-    s = s.write("    movq %rax, " + asmcore.i32_to_string(kvk_off) + "(%rbp)\n");
-    s = s.write("    movq " + asmcore.i32_to_string(kvm_off) + "(%rbp), %rax\n");
+    s = s.write("    movq %rax, " + util.i32_to_string(kvk_off) + "(%rbp)\n");
+    s = s.write("    movq " + util.i32_to_string(kvm_off) + "(%rbp), %rax\n");
     s = s.write("    movq 8(%rax), %rcx\n");   // values arr
-    s = s.write("    movq " + asmcore.i32_to_string(kvi_off) + "(%rbp), %rdx\n");
+    s = s.write("    movq " + util.i32_to_string(kvi_off) + "(%rbp), %rdx\n");
     s = s.write("    incq %rdx\n");
     s = s.write("    movq (%rcx,%rdx,8), %rax\n");   // values[i+1]
-    s = s.write("    movq %rax, " + asmcore.i32_to_string(kvv_off) + "(%rbp)\n");
+    s = s.write("    movq %rax, " + util.i32_to_string(kvv_off) + "(%rbp)\n");
     s = s.push_loop_labels(kvend.name, kvcont.name);
     var kvbi: i32 = 0;
     while (kvbi < f.body.len()) {
@@ -3285,9 +3286,9 @@ function emit_map_kv_for(s: asmcore.EmitState, f: parser.StmtFor, kv_comma: i32)
     }
     s = s.pop_loop_labels();
     s = s.write(kvcont.name + ":\n");
-    s = s.write("    movq " + asmcore.i32_to_string(kvi_off) + "(%rbp), %rax\n");
+    s = s.write("    movq " + util.i32_to_string(kvi_off) + "(%rbp), %rax\n");
     s = s.write("    incq %rax\n");
-    s = s.write("    movq %rax, " + asmcore.i32_to_string(kvi_off) + "(%rbp)\n");
+    s = s.write("    movq %rax, " + util.i32_to_string(kvi_off) + "(%rbp)\n");
     s = s.write("    jmp " + kvtop.name + "\n");
     s = s.write(kvend.name + ":\n");
     return s;
@@ -3311,7 +3312,7 @@ function emit_array_exit_dec_excl(s: asmcore.EmitState, excl: i32): asmcore.Emit
     while (i < s.local_names.len()) {
         if (i != excl && asmcore.ty_is_array_like(s.local_types[i])) {
             var off: i32 = 0 - 8 * (i + 1);
-            s = s.write("    pushq " + asmcore.i32_to_string(off) + "(%rbp)\n");  // slot value as dec arg
+            s = s.write("    pushq " + util.i32_to_string(off) + "(%rbp)\n");  // slot value as dec arg
             s = s.write("    call __fn___fern_arr_dec\n");
             s = s.write("    addq $8, %rsp\n");
             any = true;
@@ -3441,11 +3442,11 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.bind_local_typed(tda, tdtags.a);
                 var tda_off: i32 = s.lookup_local(tda);
                 s = s.write("    movq (%rax), %rcx\n");  // box.0
-                s = s.write("    movq %rcx, " + asmcore.i32_to_string(tda_off) + "(%rbp)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string(tda_off) + "(%rbp)\n");
                 s = s.bind_local_typed(tdb, tdtags.b);
                 var tdb_off: i32 = s.lookup_local(tdb);
                 s = s.write("    movq 8(%rax), %rcx\n"); // box.1
-                s = s.write("    movq %rcx, " + asmcore.i32_to_string(tdb_off) + "(%rbp)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string(tdb_off) + "(%rbp)\n");
                 return s;
             }
             // Compile init, then pop to the new local's slot.
@@ -3473,7 +3474,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    call __fn___fern_rc_inc\n"); // returns the ptr in %rax
                 s = s.write("    addq $8, %rsp\n");
             }
-            s = s.write("    movq %rax, " + asmcore.i32_to_string(off) + "(%rbp)\n");
+            s = s.write("    movq %rax, " + util.i32_to_string(off) + "(%rbp)\n");
             return s;
         },
         parser.StmtAssign(a) => {
@@ -3514,7 +3515,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 // Only release when the RHS produced a DIFFERENT object.
                 var skip_lbl: asmcore.LabelOut = asmcore.fresh_label(s);
                 s = skip_lbl.state;
-                s = s.write("    movq " + asmcore.i32_to_string(off) + "(%rbp), %rcx\n");  // OLD value
+                s = s.write("    movq " + util.i32_to_string(off) + "(%rbp), %rcx\n");  // OLD value
                 s = s.write("    cmpq %rax, %rcx\n");
                 s = s.write("    je " + skip_lbl.name + "\n");
                 s = s.write("    pushq %rax\n");            // save new value across the dec
@@ -3524,7 +3525,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    popq %rax\n");             // restore new value
                 s = s.write(skip_lbl.name + ":\n");
             }
-            s = s.write("    movq %rax, " + asmcore.i32_to_string(off) + "(%rbp)\n");
+            s = s.write("    movq %rax, " + util.i32_to_string(off) + "(%rbp)\n");
             return s;
         },
         parser.StmtExpr(x) => {
@@ -3546,11 +3547,11 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // No exhaustiveness check — that's the checker's job.
             s = emit_expr(m.scrutinee, s);
             // Allocate the synthetic scrutinee slot.
-            var scrut_name: string = "__match_scrut_" + asmcore.i32_to_string(s.label_n);
+            var scrut_name: string = "__match_scrut_" + util.i32_to_string(s.label_n);
             s = s.bind_local(scrut_name);
             var scrut_off: i32 = s.lookup_local(scrut_name);
             s = s.write("    popq %rax\n");
-            s = s.write("    movq %rax, " + asmcore.i32_to_string(scrut_off) + "(%rbp)\n");
+            s = s.write("    movq %rax, " + util.i32_to_string(scrut_off) + "(%rbp)\n");
             // Bump the label counter for end-of-match.
             var end_lbl: i32 = s.label_n;
             s = asmcore.EmitState { ...s, label_n: s.label_n + 1 };
@@ -3564,12 +3565,12 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                         if (pv.type_name == "true" || pv.type_name == "false") {
                             // `match (b) { true => …, false => … }`: the
                             // scrutinee is the bool itself (0/1), not a box.
-                            s = s.write("    movq " + asmcore.i32_to_string(scrut_off) + "(%rbp), %rax\n");
+                            s = s.write("    movq " + util.i32_to_string(scrut_off) + "(%rbp), %rax\n");
                             s = s.write("    testq %rax, %rax\n");
                             if (pv.type_name == "true") {
-                                s = s.write("    jz .Lmatch_next_" + asmcore.i32_to_string(next_lbl) + "\n");
+                                s = s.write("    jz .Lmatch_next_" + util.i32_to_string(next_lbl) + "\n");
                             } else {
-                                s = s.write("    jnz .Lmatch_next_" + asmcore.i32_to_string(next_lbl) + "\n");
+                                s = s.write("    jnz .Lmatch_next_" + util.i32_to_string(next_lbl) + "\n");
                             }
                         } else if (pv.type_name == "Some" || pv.type_name == "None"
                                 || pv.type_name == "Ok" || pv.type_name == "Err") {
@@ -3578,12 +3579,12 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                             // None/Err=1), not the struct shape pointer.
                             // The non-empty variant (Some/Ok) binds its
                             // PAYLOAD (offset 8), not the box.
-                            s = s.write("    movq " + asmcore.i32_to_string(scrut_off) + "(%rbp), %rax\n");
+                            s = s.write("    movq " + util.i32_to_string(scrut_off) + "(%rbp), %rax\n");
                             s = s.write("    movq (%rax), %rcx\n");
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
-                            s = s.write("    cmpq $" + asmcore.i32_to_string(want) + ", %rcx\n");
-                            s = s.write("    jne .Lmatch_next_" + asmcore.i32_to_string(next_lbl) + "\n");
+                            s = s.write("    cmpq $" + util.i32_to_string(want) + ", %rcx\n");
+                            s = s.write("    jne .Lmatch_next_" + util.i32_to_string(next_lbl) + "\n");
                             if (pv.binding.len() > 0 && pv.binding != "_") {
                                 s = s.write("    movq 8(%rax), %rcx\n");   // payload
                                 // The only Option/Result producers here
@@ -3592,17 +3593,17 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                                 // string for print / concat dispatch.
                                 s = s.bind_local_typed(pv.binding, asmcore.match_payload_type(m.scrutinee, s));
                                 var pbind_off: i32 = s.lookup_local(pv.binding);
-                                s = s.write("    movq %rcx, " + asmcore.i32_to_string(pbind_off) + "(%rbp)\n");
+                                s = s.write("    movq %rcx, " + util.i32_to_string(pbind_off) + "(%rbp)\n");
                             }
                         } else {
                         // Shape-pointer compare against pv.type_name.
-                        s = s.write("    movq " + asmcore.i32_to_string(scrut_off) + "(%rbp), %rax\n");
+                        s = s.write("    movq " + util.i32_to_string(scrut_off) + "(%rbp), %rax\n");
                         s = s.write("    movq (%rax), %rcx\n");
                         var nameLit: asmcore.StringLitOut = asmcore.add_string_lit(s, pv.type_name);
                         s = nameLit.state;
-                        s = s.write("    leaq .S" + asmcore.i32_to_string(nameLit.idx) + "(%rip), %rdx\n");
+                        s = s.write("    leaq .S" + util.i32_to_string(nameLit.idx) + "(%rip), %rdx\n");
                         s = s.write("    cmpq %rdx, %rcx\n");
-                        s = s.write("    jne .Lmatch_next_" + asmcore.i32_to_string(next_lbl) + "\n");
+                        s = s.write("    jne .Lmatch_next_" + util.i32_to_string(next_lbl) + "\n");
                         if (pv.binding.len() > 0 && pv.binding != "_") {
                             if (asmcore.is_enum_variant(pv.type_name, s)) {
                                 // Enum variant `Circle(r)`: bind the
@@ -3611,7 +3612,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                                 s = s.write("    movq 8(%rax), %rcx\n");
                                 s = s.bind_local_typed(pv.binding, asmcore.field_type_tag_in(pv.type_name, "__ev", s));
                                 var ev_off: i32 = s.lookup_local(pv.binding);
-                                s = s.write("    movq %rcx, " + asmcore.i32_to_string(ev_off) + "(%rbp)\n");
+                                s = s.write("    movq %rcx, " + util.i32_to_string(ev_off) + "(%rbp)\n");
                             } else {
                                 // `type X = A|B` union member: bind the
                                 // whole struct, typed with the variant's
@@ -3619,7 +3620,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                                 // => s.v`) resolves within that struct.
                                 s = s.bind_local_typed(pv.binding, asmcore.ty_named(pv.type_name));
                                 var bind_off: i32 = s.lookup_local(pv.binding);
-                                s = s.write("    movq %rax, " + asmcore.i32_to_string(bind_off) + "(%rbp)\n");
+                                s = s.write("    movq %rax, " + util.i32_to_string(bind_off) + "(%rbp)\n");
                             }
                         }
                         }
@@ -3639,7 +3640,7 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                     s = emit_expr(arm.guard, s);
                     s = s.write("    popq %rax\n");
                     s = s.write("    testq %rax, %rax\n");
-                    s = s.write("    jz .Lmatch_next_" + asmcore.i32_to_string(next_lbl) + "\n");
+                    s = s.write("    jz .Lmatch_next_" + util.i32_to_string(next_lbl) + "\n");
                 }
                 // Emit the arm body.
                 var bi: i32 = 0;
@@ -3647,11 +3648,11 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                     s = emit_stmt(arm.body[bi], s);
                     bi = bi + 1;
                 }
-                s = s.write("    jmp .Lmatch_end_" + asmcore.i32_to_string(end_lbl) + "\n");
-                s = s.write(".Lmatch_next_" + asmcore.i32_to_string(next_lbl) + ":\n");
+                s = s.write("    jmp .Lmatch_end_" + util.i32_to_string(end_lbl) + "\n");
+                s = s.write(".Lmatch_next_" + util.i32_to_string(next_lbl) + ":\n");
                 ai = ai + 1;
             }
-            s = s.write(".Lmatch_end_" + asmcore.i32_to_string(end_lbl) + ":\n");
+            s = s.write(".Lmatch_end_" + util.i32_to_string(end_lbl) + ":\n");
             return s;
         },
         parser.StmtFor(f) => {
@@ -3700,15 +3701,15 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             // runtime-shape dispatch instead of the primitive path.
             if (asmcore.ty_is_array(iter_ty)) { elem_ty = asmcore.ty_unknown(); }
             s = emit_expr(f.iter, s);
-            var arr_name: string = "__for_arr_" + asmcore.i32_to_string(s.label_n);
+            var arr_name: string = "__for_arr_" + util.i32_to_string(s.label_n);
             s = s.bind_local(arr_name);
             var arr_off: i32 = s.lookup_local(arr_name);
             s = s.write("    popq %rax\n");
-            s = s.write("    movq %rax, " + asmcore.i32_to_string(arr_off) + "(%rbp)\n");
-            var idx_name: string = "__for_i_" + asmcore.i32_to_string(s.label_n);
+            s = s.write("    movq %rax, " + util.i32_to_string(arr_off) + "(%rbp)\n");
+            var idx_name: string = "__for_i_" + util.i32_to_string(s.label_n);
             s = s.bind_local(idx_name);
             var idx_off: i32 = s.lookup_local(idx_name);
-            s = s.write("    movq $0, " + asmcore.i32_to_string(idx_off) + "(%rbp)\n");
+            s = s.write("    movq $0, " + util.i32_to_string(idx_off) + "(%rbp)\n");
             s = s.bind_local_typed(f.var_name, elem_ty);
             var elem_off: i32 = s.lookup_local(f.var_name);
             // Loop labels: top (cond), cont (i++), end (exit).
@@ -3716,23 +3717,23 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             var cont_lbl: i32 = s.label_n + 1;
             var end_lbl: i32 = s.label_n + 2;
             s = asmcore.EmitState { ...s, label_n: s.label_n + 3 };
-            s = s.write(".Lfor_top_" + asmcore.i32_to_string(top_lbl) + ":\n");
+            s = s.write(".Lfor_top_" + util.i32_to_string(top_lbl) + ":\n");
             // Condition: __for_i_N < len(__for_arr_N).
-            s = s.write("    movq " + asmcore.i32_to_string(arr_off) + "(%rbp), %rax\n");
+            s = s.write("    movq " + util.i32_to_string(arr_off) + "(%rbp), %rax\n");
             s = s.write("    movq (%rax), %rcx\n");        // length
-            s = s.write("    movq " + asmcore.i32_to_string(idx_off) + "(%rbp), %rdx\n");
+            s = s.write("    movq " + util.i32_to_string(idx_off) + "(%rbp), %rdx\n");
             s = s.write("    cmpq %rcx, %rdx\n");
-            s = s.write("    jge .Lfor_end_" + asmcore.i32_to_string(end_lbl) + "\n");
+            s = s.write("    jge .Lfor_end_" + util.i32_to_string(end_lbl) + "\n");
             // Bind element: x = arr[i].
-            s = s.write("    movq " + asmcore.i32_to_string(arr_off) + "(%rbp), %rax\n");
-            s = s.write("    movq " + asmcore.i32_to_string(idx_off) + "(%rbp), %rcx\n");
+            s = s.write("    movq " + util.i32_to_string(arr_off) + "(%rbp), %rax\n");
+            s = s.write("    movq " + util.i32_to_string(idx_off) + "(%rbp), %rcx\n");
             s = s.write("    incq %rcx\n");
             s = s.write("    movq (%rax,%rcx,8), %rax\n");
-            s = s.write("    movq %rax, " + asmcore.i32_to_string(elem_off) + "(%rbp)\n");
+            s = s.write("    movq %rax, " + util.i32_to_string(elem_off) + "(%rbp)\n");
             // Body — break jumps to .Lfor_end; continue jumps
             // to .Lfor_cont (the i++ block) so the loop still
             // advances.
-            s = s.push_loop_labels(".Lfor_end_" + asmcore.i32_to_string(end_lbl), ".Lfor_cont_" + asmcore.i32_to_string(cont_lbl));
+            s = s.push_loop_labels(".Lfor_end_" + util.i32_to_string(end_lbl), ".Lfor_cont_" + util.i32_to_string(cont_lbl));
             var bi: i32 = 0;
             while (bi < f.body.len()) {
                 s = emit_stmt(f.body[bi], s);
@@ -3740,12 +3741,12 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             }
             s = s.pop_loop_labels();
             // i = i + 1; jump to top.
-            s = s.write(".Lfor_cont_" + asmcore.i32_to_string(cont_lbl) + ":\n");
-            s = s.write("    movq " + asmcore.i32_to_string(idx_off) + "(%rbp), %rax\n");
+            s = s.write(".Lfor_cont_" + util.i32_to_string(cont_lbl) + ":\n");
+            s = s.write("    movq " + util.i32_to_string(idx_off) + "(%rbp), %rax\n");
             s = s.write("    incq %rax\n");
-            s = s.write("    movq %rax, " + asmcore.i32_to_string(idx_off) + "(%rbp)\n");
-            s = s.write("    jmp .Lfor_top_" + asmcore.i32_to_string(top_lbl) + "\n");
-            s = s.write(".Lfor_end_" + asmcore.i32_to_string(end_lbl) + ":\n");
+            s = s.write("    movq %rax, " + util.i32_to_string(idx_off) + "(%rbp)\n");
+            s = s.write("    jmp .Lfor_top_" + util.i32_to_string(top_lbl) + "\n");
+            s = s.write(".Lfor_end_" + util.i32_to_string(end_lbl) + ":\n");
             return s;
         },
         parser.StmtBreak(_) => {
@@ -3796,7 +3797,7 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
     if (total_locals > 0) {
         var bytes: i32 = total_locals * 8;
         if (bytes % 16 != 0) { bytes = bytes + 8; }
-        s = s.write("    subq $" + asmcore.i32_to_string(bytes) + ", %rsp\n");
+        s = s.write("    subq $" + util.i32_to_string(bytes) + ", %rsp\n");
     }
     // Zero-init the body-local slots (Perceus exit-sweep safety): a
     // `var` decl skipped on this path leaves its slot readable by the
@@ -3806,8 +3807,8 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
     // param slots (filled below) are above it and untouched. rep stosq
     // clobbers rax/rcx/rdi, which are dead here (before the param copy).
     if (n_body_locals > 0) {
-        s = s.write("    leaq " + asmcore.i32_to_string(0 - total_locals * 8) + "(%rbp), %rdi\n");
-        s = s.write("    movq $" + asmcore.i32_to_string(n_body_locals) + ", %rcx\n");
+        s = s.write("    leaq " + util.i32_to_string(0 - total_locals * 8) + "(%rbp), %rdi\n");
+        s = s.write("    movq $" + util.i32_to_string(n_body_locals) + ", %rcx\n");
         s = s.write("    xorq %rax, %rax\n");
         s = s.write("    cld\n");
         s = s.write("    rep stosq\n");
@@ -3822,7 +3823,7 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
         s = s.bind_local_typed(fd.receiver_name, asmcore.struct_local_tag(fd.receiver_type, s));
         var recv_off: i32 = s.lookup_local(fd.receiver_name);
         s = s.write("    movq 16(%rbp), %rax\n");
-        s = s.write("    movq %rax, " + asmcore.i32_to_string(recv_off) + "(%rbp) # recv " + fd.receiver_name + "\n");
+        s = s.write("    movq %rax, " + util.i32_to_string(recv_off) + "(%rbp) # recv " + fd.receiver_name + "\n");
     }
     // Bind params + copy from caller-stack offsets into local
     // slots. param[i] sits at +(16 + (i + recv_shift)*8)(%rbp).
@@ -3834,8 +3835,8 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
         s = s.bind_local_typed(fd.params[i].name, asmcore.struct_local_tag(fd.params[i].type_name, s));
         var local_off: i32 = s.lookup_local(fd.params[i].name);
         var arg_off: i32 = 16 + (i + recv_shift) * 8;
-        s = s.write("    movq " + asmcore.i32_to_string(arg_off) + "(%rbp), %rax\n");
-        s = s.write("    movq %rax, " + asmcore.i32_to_string(local_off) + "(%rbp) # param " + fd.params[i].name + "\n");
+        s = s.write("    movq " + util.i32_to_string(arg_off) + "(%rbp), %rax\n");
+        s = s.write("    movq %rax, " + util.i32_to_string(local_off) + "(%rbp) # param " + fd.params[i].name + "\n");
         i = i + 1;
     }
     // Record the receiver+param slot boundary so the Perceus exit
@@ -5072,7 +5073,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    .section .rodata\n");
         var li: i32 = 0;
         while (li < s.string_lits.len()) {
-            s = s.write(".S" + asmcore.i32_to_string(li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            s = s.write(".S" + util.i32_to_string(li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
     }
@@ -5881,7 +5882,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq 48(%rsp), %rbx\n");    // st_size
         s = s.write("    movq $32, %rdi\n");         // FileStat struct
         s = s.write("    call __fern_alloc\n");
-        s = s.write("    leaq .S" + asmcore.i32_to_string(fsLit.idx) + "(%rip), %rcx\n");
+        s = s.write("    leaq .S" + util.i32_to_string(fsLit.idx) + "(%rip), %rcx\n");
         s = s.write("    movq %rcx, (%rax)\n");      // shape
         s = s.write("    movq %r12, 8(%rax)\n");     // is_file
         s = s.write("    movq %r14, 16(%rax)\n");    // is_dir
@@ -6598,7 +6599,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // Build ProcessResult struct: [shape, stdout, stderr, exit_code].
         s = s.write("    movq $32, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        s = s.write("    leaq .S" + asmcore.i32_to_string(prLit.idx) + "(%rip), %rcx\n");
+        s = s.write("    leaq .S" + util.i32_to_string(prLit.idx) + "(%rip), %rcx\n");
         s = s.write("    movq %rcx, (%rax)\n");
         s = s.write("    movq %rbx, 8(%rax)\n");
         s = s.write("    movq %r13, 16(%rax)\n");
@@ -8004,7 +8005,7 @@ pub function emit_module(mod: parser.Module): string {
         if (n_locals > 0) {
             var bytes: i32 = n_locals * 8;
             if (bytes % 16 != 0) { bytes = bytes + 8; }
-            s = s.write("    subq $" + asmcore.i32_to_string(bytes) + ", %rsp\n");
+            s = s.write("    subq $" + util.i32_to_string(bytes) + ", %rsp\n");
         }
         var i: i32 = 0;
         while (i < mod.top_stmts.len()) {

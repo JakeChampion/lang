@@ -1,6 +1,7 @@
 import "core/no_prelude";
 import "./lexer";
 import "./parser";
+import "./util";
 
 // asmcore — the target-independent frontend shared by the x86-64
 // (asm.fern) and arm64 (asm_arm64.fern) text emitters: the Ty type
@@ -32,25 +33,7 @@ pub function sanitize_label(name: string): string {
     return out;
 }
 
-pub function i32_to_string(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    if (n < 0) { neg = true; n = 0 - n; }
-    var out: string = "";
-    while (n > 0) {
-        var d: i32 = n % 10;
-        var c: string = "";
-        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
-        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
-        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
-        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
-        else if (d == 8) { c = "8"; } else { c = "9"; }
-        out = c + out;
-        n = n / 10;
-    }
-    if (neg) { out = "-" + out; }
-    return out;
-}
+// i32_to_string now lives in util.fern (imported as `util`). See SH-020.
 
 pub function digits_to_i32(s: string): i32 {
     if (s.len() == 0) { return 0; }
@@ -1782,7 +1765,7 @@ pub function (s: EmitState) has_local(name: string): boolean {
 pub struct LabelOut { state: EmitState, name: string }
 
 pub function fresh_label(s: EmitState): LabelOut {
-    var name: string = ".L" + i32_to_string(s.label_n);
+    var name: string = ".L" + util.i32_to_string(s.label_n);
     var ns: EmitState = EmitState { ...s, label_n: s.label_n + 1 };
     return LabelOut { state: ns, name: name };
 }
@@ -1902,7 +1885,7 @@ pub function escape_for_ascii(s: string): string {
             var o0: i32 = b % 8;
             var o1: i32 = (b / 8) % 8;
             var o2: i32 = (b / 64) % 8;
-            out = out + "\\" + i32_to_string(o2) + i32_to_string(o1) + i32_to_string(o0);
+            out = out + "\\" + util.i32_to_string(o2) + util.i32_to_string(o1) + util.i32_to_string(o0);
         }
         else { out = out + s[i:i + 1]; }
         i = i + 1;
