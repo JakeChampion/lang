@@ -58,6 +58,66 @@ func TestSelfHostRcRuntimeWasm(t *testing.T) {
 	}
 }
 
+// TestSelfHostRcConstructWasm exercises the wasm Perceus construction-
+// store inc: storing an EXISTING array reference into a struct field or
+// an array-of-arrays element retains the buffer (the container co-owns it
+// alongside the source local). Each program inspects the stored array's
+// rc (now > 1 => not unique) and asserts the over-release detector stays
+// clean — the inc balances the exit sweep's dec of both the source local
+// and (eventually, once struct/array free lands) the container. Free is
+// still OFF; this is the soundness prerequisite that lets a later slice
+// free arrays without dangling a stored reference.
+func TestSelfHostRcConstructWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm RC construction e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Array stored into a struct field: source local is no longer unique
+		// (the struct co-owns it), values intact, detector clean.
+		{"struct-field-retained", "struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2, 3]; var h = H { items: xs }; var u = __fern_rc_is_unique(xs); return u + h.items[2] + __fern_rc_underflow_count(); }", 3},
+		// Array-of-arrays: each element array is retained by the outer array.
+		{"array-of-arrays-retained", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4]; var both = [a, b]; var ua = __fern_rc_is_unique(a); return ua + both[0][1] + both[1][0] + __fern_rc_underflow_count(); }", 5},
+		// Fresh literal stored (no source local): moved into the struct, NOT
+		// inc'd; still reads back correctly, detector clean.
+		{"struct-field-fresh-move", "struct H { items: i32[] } function main(): i32 { var h = H { items: [9, 8, 7] }; return h.items[0] + __fern_rc_underflow_count(); }", 9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(wat) == 0 {
+				t.Fatal("wasm emitter produced 0 bytes")
+			}
+			watPath := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+			_, _ = cmd.Output()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
+			}
+		})
+	}
+}
+
 // TestSelfHostRcCountingWasm exercises the wasm Perceus array counting
 // milestone (inc-on-alias + function-exit release sweep, free still OFF)
 // on NORMAL array programs — no manual rc intrinsic calls. Each program
