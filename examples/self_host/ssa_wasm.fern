@@ -31,26 +31,7 @@
 
 import "core/no_prelude";
 import "./ssa";
-
-function i32_to_string(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    if (n < 0) { neg = true; n = 0 - n; }
-    var out: string = "";
-    while (n > 0) {
-        var d: i32 = n % 10;
-        var c: string = "";
-        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
-        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
-        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
-        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
-        else if (d == 8) { c = "8"; } else { c = "9"; }
-        out = c + out;
-        n = n / 10;
-    }
-    if (neg) { out = "-" + out; }
-    return out;
-}
+import "./util";
 
 // str_join_range / str_join_chunks: balanced divide-and-conquer concat, so
 // emitting a large module is O(total·log n) rather than the O(total²) of a
@@ -71,7 +52,7 @@ function str_join_chunks(parts: string[]): string {
 // params occupy 0..nparams-1 (wasm function params) and the rest are the
 // declared locals, in id order.
 function loc(v: i32): string {
-    return "(local.get " + i32_to_string(v) + ")";
+    return "(local.get " + util.i32_to_string(v) + ")";
 }
 
 // index_of_str returns the position of s in xs, or 0 if absent (every
@@ -141,59 +122,59 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
         // expands it (so the IR stays small for string-heavy functions).
         var sv: string = ins.str;
         var n: i32 = sv.len();
-        var o: string = "    (local.set " + i32_to_string(ins.result) + " (global.get $__hp))\n";
-        o = o + "    (global.set $__hp (i32.add (global.get $__hp) (i32.const " + i32_to_string((n + 1) * 4) + ")))\n";
-        o = o + "    (i32.store " + loc(ins.result) + " (i32.const " + i32_to_string(n) + "))\n";
+        var o: string = "    (local.set " + util.i32_to_string(ins.result) + " (global.get $__hp))\n";
+        o = o + "    (global.set $__hp (i32.add (global.get $__hp) (i32.const " + util.i32_to_string((n + 1) * 4) + ")))\n";
+        o = o + "    (i32.store " + loc(ins.result) + " (i32.const " + util.i32_to_string(n) + "))\n";
         var ci: i32 = 0;
         while (ci < n) {
-            o = o + "    (i32.store (i32.add " + loc(ins.result) + " (i32.const " + i32_to_string((ci + 1) * 4) + ")) (i32.const " + i32_to_string(sv[ci]) + "))\n";
+            o = o + "    (i32.store (i32.add " + loc(ins.result) + " (i32.const " + util.i32_to_string((ci + 1) * 4) + ")) (i32.const " + util.i32_to_string(sv[ci]) + "))\n";
             ci = ci + 1;
         }
         return o;
     }
     if (ins.kind == "const_float") {
-        return "    (local.set " + i32_to_string(ins.result) + " (f64.const " + ins.str + "))\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " (f64.const " + ins.str + "))\n";
     }
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
-        return "    (local.set " + i32_to_string(ins.result) + " (i32.const " + i32_to_string(ins.imm) + "))\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " (i32.const " + util.i32_to_string(ins.imm) + "))\n";
     }
     if (ins.kind == "copy") {
-        return "    (local.set " + i32_to_string(ins.result) + " " + loc(ins.args[0]) + ")\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " " + loc(ins.args[0]) + ")\n";
     }
     if (ins.kind == "binary") {
         // Float arithmetic (f64 result) / comparison (f64 operands, i32 result).
         if (isfloat[ins.result] == 1) {
-            return "    (local.set " + i32_to_string(ins.result) + " (" + wasm_fbinop(ins.str) + " " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
+            return "    (local.set " + util.i32_to_string(ins.result) + " (" + wasm_fbinop(ins.str) + " " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
         }
         if (isfloat[ins.args[0]] == 1) {
-            return "    (local.set " + i32_to_string(ins.result) + " (" + wasm_fcmp(ins.str) + " " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
+            return "    (local.set " + util.i32_to_string(ins.result) + " (" + wasm_fcmp(ins.str) + " " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
         }
-        return "    (local.set " + i32_to_string(ins.result) + " " + wasm_binop(ins.str, loc(ins.args[0]), loc(ins.args[1])) + ")\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " " + wasm_binop(ins.str, loc(ins.args[0]), loc(ins.args[1])) + ")\n";
     }
     if (ins.kind == "unary") {
         if (ins.str == "-" && isfloat[ins.args[0]] == 1) {
-            return "    (local.set " + i32_to_string(ins.result) + " (f64.neg " + loc(ins.args[0]) + "))\n";
+            return "    (local.set " + util.i32_to_string(ins.result) + " (f64.neg " + loc(ins.args[0]) + "))\n";
         }
         if (ins.str == "as_f64") {
-            return "    (local.set " + i32_to_string(ins.result) + " (f64.convert_i32_s " + loc(ins.args[0]) + "))\n";
+            return "    (local.set " + util.i32_to_string(ins.result) + " (f64.convert_i32_s " + loc(ins.args[0]) + "))\n";
         }
         if (ins.str == "as_i32") {
             if (isfloat[ins.args[0]] == 1) {
-                return "    (local.set " + i32_to_string(ins.result) + " (i32.trunc_f64_s " + loc(ins.args[0]) + "))\n";
+                return "    (local.set " + util.i32_to_string(ins.result) + " (i32.trunc_f64_s " + loc(ins.args[0]) + "))\n";
             }
-            return "    (local.set " + i32_to_string(ins.result) + " " + loc(ins.args[0]) + ")\n";
+            return "    (local.set " + util.i32_to_string(ins.result) + " " + loc(ins.args[0]) + ")\n";
         }
         if (ins.str == "-") {
-            return "    (local.set " + i32_to_string(ins.result) + " (i32.sub (i32.const 0) " + loc(ins.args[0]) + "))\n";
+            return "    (local.set " + util.i32_to_string(ins.result) + " (i32.sub (i32.const 0) " + loc(ins.args[0]) + "))\n";
         }
-        return "    (local.set " + i32_to_string(ins.result) + " (i32.eqz " + loc(ins.args[0]) + "))\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " (i32.eqz " + loc(ins.args[0]) + "))\n";
     }
     if (ins.kind == "call") {
         var expr: string = "(call $__fn_" + ins.str;
         var i: i32 = 0;
         while (i < ins.args.len()) { expr = expr + " " + loc(ins.args[i]); i = i + 1; }
         expr = expr + ")";
-        return "    (local.set " + i32_to_string(ins.result) + " " + expr + ")\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " " + expr + ")\n";
     }
     // Heap: a bump allocator over linear memory. On wasm32 every value is a
     // 4-byte i32 word, so the native backends' 8-byte word stride / pointer
@@ -202,14 +183,14 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
     if (ins.kind == "alloc") {
         // Reserve the result words off __hp, then bump. The word count is imm
         // (compile-time) unless args[0] is present — a runtime size scaled ×4.
-        var out: string = "    (local.set " + i32_to_string(ins.result) + " (global.get $__hp))\n";
+        var out: string = "    (local.set " + util.i32_to_string(ins.result) + " (global.get $__hp))\n";
         if (ins.args.len() > 0) {
             return out + "    (global.set $__hp (i32.add (global.get $__hp) (i32.mul " + loc(ins.args[0]) + " (i32.const 4))))\n";
         }
-        return out + "    (global.set $__hp (i32.add (global.get $__hp) (i32.const " + i32_to_string(ins.imm * 4) + ")))\n";
+        return out + "    (global.set $__hp (i32.add (global.get $__hp) (i32.const " + util.i32_to_string(ins.imm * 4) + ")))\n";
     }
     if (ins.kind == "load_elem") {
-        return "    (local.set " + i32_to_string(ins.result) + " (i32.load (i32.add " + loc(ins.args[0]) + " (i32.shl " + loc(ins.args[1]) + " (i32.const 2)))))\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " (i32.load (i32.add " + loc(ins.args[0]) + " (i32.shl " + loc(ins.args[1]) + " (i32.const 2)))))\n";
     }
     if (ins.kind == "store_elem") {
         // No result — a pure memory store at base + index*4.
@@ -218,31 +199,31 @@ function emit_inst(ins: ssa.SInst, fnnames: string[], isfloat: i32[]): string {
     // Strings (byte arrays in the [len, c0, c1, …] word layout) + I/O, lowered
     // to calls into the runtime helpers emitted by emit_program.
     if (ins.kind == "concat") {
-        return "    (local.set " + i32_to_string(ins.result) + " (call $__fern_ssa_concat " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " (call $__fern_ssa_concat " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
     }
     if (ins.kind == "streq") {
-        return "    (local.set " + i32_to_string(ins.result) + " (call $__fern_ssa_streq " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " (call $__fern_ssa_streq " + loc(ins.args[0]) + " " + loc(ins.args[1]) + "))\n";
     }
     if (ins.kind == "print") {
         // No result — write the string's bytes (plus a trailing newline) to
         // fd imm (1=stdout, 2=stderr).
-        return "    (call $__fern_ssa_print " + loc(ins.args[0]) + " (i32.const " + i32_to_string(ins.imm) + "))\n";
+        return "    (call $__fern_ssa_print " + loc(ins.args[0]) + " (i32.const " + util.i32_to_string(ins.imm) + "))\n";
     }
     if (ins.kind == "funcaddr") {
         // A function value is its slot in the function table (wasm has no raw
         // code pointers); slot i holds the closure-callable form of funcs[i].
-        return "    (local.set " + i32_to_string(ins.result) + " (i32.const " + i32_to_string(index_of_str(fnnames, ins.str)) + "))\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " (i32.const " + util.i32_to_string(index_of_str(fnnames, ins.str)) + "))\n";
     }
     if (ins.kind == "call_indirect") {
         // args[0] is the table slot (a function value); args[1..] the call
         // args, with the closure env passed last. call_indirect takes the args
         // then the table index, typed by the call's arity ($clos<nargs>).
         var nargs: i32 = ins.args.len() - 1;
-        var ci: string = "(call_indirect (type $clos" + i32_to_string(nargs) + ")";
+        var ci: string = "(call_indirect (type $clos" + util.i32_to_string(nargs) + ")";
         var ai: i32 = 1;
         while (ai < ins.args.len()) { ci = ci + " " + loc(ins.args[ai]); ai = ai + 1; }
         ci = ci + " " + loc(ins.args[0]) + ")";
-        return "    (local.set " + i32_to_string(ins.result) + " " + ci + ")\n";
+        return "    (local.set " + util.i32_to_string(ins.result) + " " + ci + ")\n";
     }
     return "";
 }
@@ -262,7 +243,7 @@ function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32): string {
     while (k < tb.insts.len()) {
         var ins: ssa.SInst = tb.insts[k];
         if (ins.kind == "phi") {
-            out = out + "    (local.set " + i32_to_string(ins.result) + " " + loc(ins.args[sl]) + ")\n";
+            out = out + "    (local.set " + util.i32_to_string(ins.result) + " " + loc(ins.args[sl]) + ")\n";
         }
         k = k + 1;
     }
@@ -278,13 +259,13 @@ function emit_term(f: ssa.SFunc, blk: ssa.SBlock, pc: i32): string {
     }
     if (t.kind == "br") {
         var out: string = emit_phi_moves(f, blk.id, t.target);
-        out = out + "    (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, t.target)) + "))\n";
+        out = out + "    (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.target)) + "))\n";
         return out + "    (br $L)\n";
     }
     if (t.kind == "brif") {
         var out2: string = "    (if " + loc(t.cond) + "\n";
-        out2 = out2 + "      (then (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, t.t)) + ")))\n";
-        out2 = out2 + "      (else (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, t.f)) + "))))\n";
+        out2 = out2 + "      (then (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.t)) + ")))\n";
+        out2 = out2 + "      (else (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, t.f)) + "))))\n";
         return out2 + "    (br $L)\n";
     }
     return "";
@@ -360,23 +341,23 @@ pub function emit_func(f: ssa.SFunc, fnnames: string[]): string {
     var pc: i32 = f.nvals;
     var nb: i32 = f.blocks.len();
     // Initialise $pc to the entry block's dispatch index.
-    chunks = chunks.append("    (local.set " + i32_to_string(pc) + " (i32.const " + i32_to_string(block_index(f, f.entry)) + "))\n");
+    chunks = chunks.append("    (local.set " + util.i32_to_string(pc) + " (i32.const " + util.i32_to_string(block_index(f, f.entry)) + "))\n");
     chunks = chunks.append("    (block $exit (loop $L\n");
     // Open the nested dispatch blocks, outermost ($blk nb-1) to innermost
     // ($blk0), then the br_table that branches to each by dispatch index.
     var bo: i32 = nb - 1;
-    while (bo >= 0) { chunks = chunks.append("    (block $blk" + i32_to_string(bo) + "\n"); bo = bo - 1; }
+    while (bo >= 0) { chunks = chunks.append("    (block $blk" + util.i32_to_string(bo) + "\n"); bo = bo - 1; }
     var brt: string = "    (br_table";
     var bi: i32 = 0;
-    while (bi < nb) { brt = brt + " $blk" + i32_to_string(bi); bi = bi + 1; }
-    brt = brt + " (local.get " + i32_to_string(pc) + "))\n";
+    while (bi < nb) { brt = brt + " $blk" + util.i32_to_string(bi); bi = bi + 1; }
+    brt = brt + " (local.get " + util.i32_to_string(pc) + "))\n";
     chunks = chunks.append(brt);
     // Close $blk0 then emit block 0's code, close $blk1 then block 1, … —
     // a br_table jump to $blkK lands right after $blkK's close, i.e. at
     // block K's code.
     bi = 0;
     while (bi < nb) {
-        chunks = chunks.append("    ) ;; blk" + i32_to_string(bi) + "\n");
+        chunks = chunks.append("    ) ;; blk" + util.i32_to_string(bi) + "\n");
         chunks = chunks.append(emit_block(f, f.blocks[bi], pc, fnnames, isfloat));
         bi = bi + 1;
     }
@@ -567,7 +548,7 @@ function clos_wrapper(f: ssa.SFunc): string {
     o = o + " (param i32) (result i32)\n";   // trailing env param (ignored)
     o = o + "    (call $__fn_" + f.name;
     var a: i32 = 0;
-    while (a < f.nparams) { o = o + " (local.get " + i32_to_string(a) + ")"; a = a + 1; }
+    while (a < f.nparams) { o = o + " (local.get " + util.i32_to_string(a) + ")"; a = a + 1; }
     o = o + "))\n";
     return o;
 }
@@ -600,13 +581,13 @@ pub function emit_program(funcs: ssa.SFunc[]): string {
         var maxa: i32 = max_indirect_arity(funcs);
         var a: i32 = 0;
         while (a <= maxa) {
-            var ty: string = "  (type $clos" + i32_to_string(a) + " (func";
+            var ty: string = "  (type $clos" + util.i32_to_string(a) + " (func";
             var pj: i32 = 0;
             while (pj < a) { ty = ty + " (param i32)"; pj = pj + 1; }
             out = out + ty + " (result i32)))\n";
             a = a + 1;
         }
-        out = out + "  (table " + i32_to_string(funcs.len()) + " funcref)\n";
+        out = out + "  (table " + util.i32_to_string(funcs.len()) + " funcref)\n";
         var el: string = "  (elem (i32.const 0)";
         var ei: i32 = 0;
         while (ei < funcs.len()) {

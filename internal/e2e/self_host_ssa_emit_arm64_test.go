@@ -24,7 +24,7 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_emit_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "ssa.fern", "util.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_emit_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
