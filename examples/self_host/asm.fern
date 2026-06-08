@@ -3506,6 +3506,27 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    call __fn___fern_rc_inc\n"); // returns the ptr in %rax
                 s = s.write("    addq $8, %rsp\n");
             }
+            // Perceus dec-on-overwrite at a re-bound array slot: a loop
+            // body's `var r = …` maps to ONE frame slot (zero-init at entry,
+            // so the first binding releases null — a no-op), so releasing the
+            // slot's prior buffer here frees each iteration's value instead
+            // of leaking all but the last. Cow-guarded (skip when the RHS is
+            // the same object, as an in-place mutator can return); balanced
+            // with the alias-inc above.
+            if (asmcore.ty_is_array_like(ity)) {
+                s = s.mark_heap();
+                var dvov: asmcore.LabelOut = asmcore.fresh_label(s);
+                s = dvov.state;
+                s = s.write("    movq " + util.i32_to_string(off) + "(%rbp), %rcx\n");  // OLD slot value
+                s = s.write("    cmpq %rax, %rcx\n");
+                s = s.write("    je " + dvov.name + "\n");
+                s = s.write("    pushq %rax\n");            // save new value across the dec
+                s = s.write("    pushq %rcx\n");            // OLD value as dec arg
+                s = s.write("    call __fn___fern_arr_dec\n");
+                s = s.write("    addq $8, %rsp\n");         // pop dec arg
+                s = s.write("    popq %rax\n");             // restore new value
+                s = s.write(dvov.name + ":\n");
+            }
             s = s.write("    movq %rax, " + util.i32_to_string(off) + "(%rbp)\n");
             return s;
         },

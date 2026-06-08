@@ -703,6 +703,11 @@ func TestSelfHostRcFreeReclaimX86_64(t *testing.T) {
 		// source local going out of scope does not free it (would UAF
 		// once free is on -- the JSON nested-structure gap).
 		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function mk(): Box { var xs: i32[] = [3, 4, 5]; return Arr(xs); } function main(): i32 { var b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __fern_rc_underflow_count(); }, Empty => { return 0; } } }", 9},
+		// Loop-local array rebind: `var r = build(n)` re-bound each iteration
+		// is released per-iteration (StmtVar cow-guarded dec-on-overwrite),
+		// not leaked until function exit. 100k rebinds stay value-correct and
+		// over-release-detector clean.
+		{"loop-local-rebind", "function build(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var s = 0; var k = 0; while (k < 100000) { var r: i32[] = build(32); s = s + r[31]; k = k + 1; } return (s % 5) + __fern_rc_underflow_count(); }", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
