@@ -84,6 +84,30 @@ func TestTypeErrors(t *testing.T) {
 // is imported. A program that calls `.split` without `import
 // "std/string";` should get a clean type error rather than silently
 // resolving against a magic prelude.
+// TestUseWithoutAnnotationDoesNotPanicFormatting guards the regression
+// where a `use x <- f()` with no binding annotation, whose callback
+// parameter type the checker couldn't infer (inferUseParam bails with
+// E032), left the synthesised callback's first param nil. Formatting
+// that callback's function type for the follow-on E038 diagnostic then
+// dereferenced nil, surfacing as `got %!s(PANIC=...)` instead of a
+// readable type. The diagnostic must mention the `use` failure and never
+// contain a PANIC marker.
+func TestUseWithoutAnnotationDoesNotPanicFormatting(t *testing.T) {
+	src := `function withResource(cb: () => i32): i32 { return cb(); }
+function g(): i32 { use x <- withResource(); return 0; }
+function main(): i32 { return g(); }`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("expected a `use` inference error, got nil")
+	}
+	if strings.Contains(err.Error(), "PANIC") {
+		t.Errorf("diagnostic formatting panicked: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "use:") {
+		t.Errorf("error %q does not look like the expected E032 use diagnostic", err.Error())
+	}
+}
+
 func TestUnimportedStdlibMethodIsRejected(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
     var xs: string[] = "a,b,c".split(",");
