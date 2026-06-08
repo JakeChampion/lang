@@ -1007,3 +1007,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   practical surface: literals, slices, append-built, aliases, call results,
   construction stores, AND loop/rebind churn. Remaining: Phase 1e
   (strings / structs / enums / maps) across all backends.
+- 2026-06-08: **asm backends (x86-64 + arm64) — per-iteration release of
+  re-bound array locals (StmtVar dec-on-overwrite).** Ported the wasm fix
+  to the PRIMARY backends, where it was a real leak: `StmtAssign` already
+  did cow-guarded dec-on-overwrite, but `StmtVar` did not — so a loop
+  body's `var r = build()` re-bound each iteration leaked every value but
+  the last (swept only at function exit). `StmtVar` of an array-typed local
+  now releases the slot's prior buffer (`__fern_arr_dec`) before storing,
+  cow-guarded (`cmp; je/b.eq` skip when the RHS is the same object) and
+  balanced with the existing alias-inc. Sound on the bootstrap path:
+  `bind_local_typed` maps a `var` to ONE pre-counted frame slot (emit runs
+  once), the frame is zero-init at entry so the FIRST binding releases null
+  (a no-op), and intra-loop aliasing stays balanced because both aliasing
+  slots get the dec-on-overwrite. Mirror added to `asm.fern` (x86-64,
+  `movq`/`je`) and `asm_arm64.fern` (`frame_ldr`/`cmp`/`b.eq`). Validated:
+  the byte-identical bootstrap fixpoints — which EXECUTE the self-host
+  (itself full of loop-local array rebinds) — pass on both backends
+  (`Fixpoint` / `Stage2FixedPoint` x86 + arm64), plus `StdTestE2E`, the RC
+  reassign/exit-sweep suites, and a new
+  `TestSelfHostRcFreeReclaimX86_64/loop-local-rebind` (100k rebinds,
+  value-correct + detector 0). With this, all three backends release
+  re-bound array locals per-iteration. (The wasm slice landed this first;
+  this brings x86-64 + arm64 to the same behaviour.)

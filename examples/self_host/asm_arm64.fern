@@ -3227,6 +3227,26 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    bl __fn___fern_rc_inc\n");  // returns the ptr in x0
                 s = s.write("    add sp, sp, #16\n");
             }
+            // Perceus dec-on-overwrite at a re-bound array slot: a loop
+            // body's `var r = …` maps to ONE frame slot (zero-init at entry,
+            // so the first binding releases null — a no-op), so releasing the
+            // slot's prior buffer here frees each iteration's value instead
+            // of leaking all but the last. Cow-guarded; balanced with the
+            // alias-inc above. (Mirror of the x86-64 StmtVar release.)
+            if (asmcore.ty_is_array_like(ity)) {
+                s = s.mark_heap();
+                var dvov: asmcore.LabelOut = asmcore.fresh_label(s);
+                s = dvov.state;
+                s = s.frame_ldr("x1", off);                  // OLD slot value
+                s = s.write("    cmp x0, x1\n");
+                s = s.write("    b.eq " + dvov.name + "\n");
+                s = s.write("    str x0, [sp, #-16]!\n");     // save new value across the dec
+                s = s.write("    str x1, [sp, #-16]!\n");     // dec arg = OLD value
+                s = s.write("    bl __fn___fern_arr_dec\n");
+                s = s.write("    add sp, sp, #16\n");         // pop dec arg
+                s = s.write("    ldr x0, [sp], #16\n");       // restore new value
+                s = s.write(dvov.name + ":\n");
+            }
             s = s.frame_str("x0", off);
             return s;
         },
