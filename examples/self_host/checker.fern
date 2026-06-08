@@ -476,6 +476,10 @@ function is_builtin_function(name: string): boolean {
     if (name == "map_new" || name == "map_new_i32"
         || name == "strbuf_append" || name == "strbuf_reset" || name == "strbuf_take"
         || name == "string_from_bytes" || name == "chr" || name == "len") { return true; }
+    // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
+    // front-end builtin (like map_new); get/set are method calls, not bare
+    // names, so only the constructor needs the E001 suppression here.
+    if (name == "cell_new") { return true; }
     // float / int bit reinterprets
     if (name == "f64_bits" || name == "f64_from_bits"
         || name == "f32_bits" || name == "f32_from_bits") { return true; }

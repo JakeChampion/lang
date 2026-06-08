@@ -133,14 +133,14 @@ struct Ctx {
     tup_svtypes: string[],
     // Closure support. fn_names: locals/params that hold a closure value
     // (a lambda or an `fn`-typed param), so calling them lowers to
-    // call_indirect. lam_ctr / lamdefs are module-wide shared cells (a
-    // 1-element array each, mutated in place): lam_ctr[0] is the next
-    // lambda's table index, lamdefs[0] accumulates the emitted
-    // `$__lambda<i>` function texts. arities[0] records which call_indirect
-    // param-counts have been used (digits, for emitting the $clos<N> types).
+    // call_indirect. lam_ctr / lamdefs are module-wide shared Cells, mutated
+    // in place: lam_ctr.get() is the next lambda's table index, lamdefs.get()
+    // accumulates the emitted `$__lambda<i>` function texts. arities[0]
+    // records which call_indirect param-counts have been used (digits, for
+    // emitting the $clos<N> types).
     fn_names: string[],
-    lam_ctr: i32[],
-    lamdefs: string[],
+    lam_ctr: Cell[i32],
+    lamdefs: Cell[string],
     // all_locals: every var/param name in the enclosing function — used to
     // decide which free idents in a lambda body are real captures.
     // cap_names: this (lambda) function's captures, in box order, so an
@@ -3218,13 +3218,13 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // the value goes through call_indirect (see the ExprCall path).
             // Non-capturing: the $__env param is ignored.
             var caps: string[] = lambda_captures(lm, cx);
-            var idx: i32 = cx.lam_ctr[0];
-            cx.lam_ctr[0] = idx + 1;
+            var idx: i32 = cx.lam_ctr.get();
+            cx.lam_ctr.set(idx + 1);
             // Emit the body FIRST (it may append nested lambdas to the
             // shared cell), THEN append this lambda's text — reading
-            // cx.lamdefs[0] only after, so nested defs aren't clobbered.
+            // cx.lamdefs.get() only after, so nested defs aren't clobbered.
             var lamtext: string = emit_lambda(lm, idx, cx, caps);
-            cx.lamdefs[0] = cx.lamdefs[0] + lamtext;
+            cx.lamdefs.set(cx.lamdefs.get() + lamtext);
             var ap: string = "$__lit" + i32_to_string(depth);
             var s: string = "(block (result i32)";
             s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(4 + caps.len() * 4) + ")))";
@@ -5788,7 +5788,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: i32[], lamdefs: string[], cap_names: string[], cap_str: string[], cap_sv_names: string[], cap_sv_types: string[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: Cell[i32], lamdefs: Cell[string], cap_names: string[], cap_str: string[], cap_sv_names: string[], cap_sv_types: string[]): Ctx {
     // Every var/param name in this function (for lambda capture analysis).
     var all_locals: string[] = collect_locals(f.body, []);
     var alp: i32 = 0;
@@ -6090,7 +6090,7 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: i32[], lamdefs: string[], cap_names: string[], cap_str: string[], cap_sv_names: string[], cap_sv_types: string[]): string {
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: Cell[i32], lamdefs: Cell[string], cap_names: string[], cap_str: string[], cap_sv_names: string[], cap_sv_types: string[]): string {
     // A receiver method `function (r: T) m(...)` emits as `$T__m` with the
     // receiver prepended as the first param; a free function as `$name`.
     var fname: string = f.name;
@@ -7334,8 +7334,8 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // Shared lambda cells (1-element arrays, mutated in place so the index
     // counter + accumulated $__lambda<i> defs persist across every
     // function's emission).
-    var lam_ctr: i32[] = [0];
-    var lamdefs: string[] = [""];
+    var lam_ctr: Cell[i32] = cell_new(0);
+    var lamdefs: Cell[string] = cell_new("");
 
     var has_main: boolean = false;
     var j: i32 = 0;
@@ -7370,7 +7370,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // Closure support: the accumulated lambda functions, the shared
     // call_indirect signature types ($clos<N> = env + N i32 args → i32),
     // and the function table + elem segment indexing them.
-    if (lam_ctr[0] > 0) {
+    if (lam_ctr.get() > 0) {
         var ai: i32 = 0;
         while (ai <= 8) {
             out = out + "  (type $clos" + i32_to_string(ai) + " (func (param i32";
@@ -7379,11 +7379,11 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             out = out + ") (result i32)))\n";
             ai = ai + 1;
         }
-        out = out + lamdefs[0];
-        out = out + "  (table " + i32_to_string(lam_ctr[0]) + " funcref)\n";
+        out = out + lamdefs.get();
+        out = out + "  (table " + i32_to_string(lam_ctr.get()) + " funcref)\n";
         out = out + "  (elem (i32.const 0)";
         var ei: i32 = 0;
-        while (ei < lam_ctr[0]) {
+        while (ei < lam_ctr.get()) {
             out = out + " $__lambda" + i32_to_string(ei);
             ei = ei + 1;
         }

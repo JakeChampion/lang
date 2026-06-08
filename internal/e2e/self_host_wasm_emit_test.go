@@ -116,6 +116,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"if-expr-true", "function main(): i32 { var x: i32 = if (true) { 3 } else { 4 }; return x; }", 3, ""},
 		{"if-expr-capture", "function main(): i32 { var n: i32 = 10; var x: i32 = if (n > 5) { n + 1 } else { 0 }; return x; }", 11, ""},
 		{"if-expr-else-if", "function main(): i32 { var n: i32 = 2; var x: i32 = if (n == 1) { 10 } else if (n == 2) { 20 } else { 30 }; return x; }", 20, ""},
+		// Two SEPARATE lambdas in one module — exercises the shared lam_ctr /
+		// lamdefs Cells incrementing (0→1→2) and accumulating both bodies
+		// (the array-as-cell idiom migrated to Cell). 1 + 4 = 5.
+		{"two-lambdas", "function main(): i32 { var a: i32 = if (true) { 1 } else { 2 }; var b: i32 = if (false) { 3 } else { 4 }; return a + b; }", 5, ""},
 		{"direct-iife", "function main(): i32 { return (function(): i32 { return 7; })(); }", 7, ""},
 		// Local (nested) functions — desugar to a closure-valued local.
 		{"local-fn-basic", "function main(): i32 { function helper(): i32 { return 5; } return helper(); }", 5, ""},
