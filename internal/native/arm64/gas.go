@@ -154,6 +154,8 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmCmn(a, ops)
 	case "neg":
 		return asm2Reg(a, ops, NEG)
+	case "clz":
+		return asm2Reg(a, ops, CLZ)
 	case "msub":
 		return asmMsub(a, ops)
 	case "fadd", "fsub", "fmul", "fdiv":

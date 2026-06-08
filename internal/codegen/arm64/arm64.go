@@ -672,9 +672,10 @@ func (g *generator) emitDataSections() {
 		g.line(`	.quad 0`)
 	}
 	if ast.RcFreeEnabled && (g.usesAlloc || g.usesFree) {
-		// Phase 3 step-4 segregated freelist: 128 heads, one per
-		// 16-byte size class (16..2048). Mirrors the x86_64 BSS.
-		// Either alloc or free reaches into it (alloc pops, free
+		// Two-tier segregated freelist heads (256 slots): 0..127 the
+		// 16-byte exact-fit small classes (16..2048), 128+b the
+		// power-of-two large classes (capacity 2^b). Mirrors the x86_64
+		// BSS. Either alloc or free reaches into it (alloc pops, free
 		// pushes), so emit when EITHER is used — without this the
 		// arm64 string-LOCAL freeEligible widening (str_dec →
 		// box_free → free) referenced freelist_heads without
@@ -682,7 +683,7 @@ func (g *generator) emitDataSections() {
 		// but never explicitly alloc otherwise.
 		g.line(`.align 3`)
 		g.label("__fern_freelist_heads")
-		g.line(`	.space 1024`)
+		g.line(`	.space 2048`)
 	}
 }
 
@@ -731,15 +732,34 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("add x0, x0, #15")
 	g.emit("and x0, x0, #-16")
 	if ast.RcFreeEnabled {
-		// Phase 3 step-4: reuse a freed block of the same size class
-		// before bumping. x0 is the 16-byte-rounded request; classes
-		// cover 16..2048. idx = (x0>>4)-1; pop heads[idx] if non-nil.
+		// Two-tier segregated freelist (arm64 mirror of the x86_64 helper).
+		// Small tier (16..2048 B): 16-byte exact-fit classes 0..127,
+		// idx = (x0>>4)-1. Large tier (>2048 B): round the request up to the
+		// next power of two (the bytes actually bumped) and bin by that
+		// power's bit position + 128 — so reuse tolerates the size variance
+		// exact-fit can't (a 12 KiB and 13 KiB array share the 16 KiB class).
+		// Blocks >1 GiB stay bump-only so the class index can't run off the
+		// 256-slot heads array.
 		g.emit("cmp x0, #16")
 		g.emit("b.lo .Lalloc_bump")
 		g.emit("cmp x0, #2048")
-		g.emit("b.hi .Lalloc_bump")
+		g.emit("b.hi .Lalloc_large")
 		g.emit("lsr x1, x0, #4")
-		g.emit("sub x1, x1, #1") // class index
+		g.emit("sub x1, x1, #1") // small class index 0..127
+		g.emit("b .Lalloc_fltry")
+		g.label(".Lalloc_large")
+		g.emit("mov x5, #1")
+		g.emit("lsl x5, x5, #30") // x5 = 1 GiB
+		g.emit("cmp x0, x5")
+		g.emit("b.hi .Lalloc_bump")
+		g.emit("sub x1, x0, #1")
+		g.emit("clz x2, x1")      // x2 = leading zeros of (size-1)
+		g.emit("mov x3, #64")
+		g.emit("sub x3, x3, x2")  // x3 = 64-clz = bit position of next pow2
+		g.emit("mov x0, #1")
+		g.emit("lsl x0, x0, x3")  // x0 = rounded-up pow2 = bytes to bump
+		g.emit("add x1, x3, #128") // large class index (offset past 128 small)
+		g.label(".Lalloc_fltry")
 		g.adrpAdd("x2", "__fern_freelist_heads")
 		g.emit("ldr x3, [x2, x1, lsl #3]") // head = heads[idx]
 		g.emit("cbz x3, .Lalloc_bump")
@@ -820,9 +840,23 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("cmp x1, #16")
 		g.emit("b.lo .Lfree_ret")
 		g.emit("cmp x1, #2048")
-		g.emit("b.hi .Lfree_ret")
+		g.emit("b.hi .Lfree_large")
 		g.emit("lsr x2, x1, #4")
-		g.emit("sub x2, x2, #1") // class index
+		g.emit("sub x2, x2, #1") // small class index 0..127
+		g.emit("b .Lfree_push")
+		g.label(".Lfree_large")
+		// Mirror __fern_alloc's large tier: bin by next-power-of-two bit
+		// position + 128. >1 GiB is dropped (alloc never freelisted it).
+		g.emit("mov x5, #1")
+		g.emit("lsl x5, x5, #30")
+		g.emit("cmp x1, x5")
+		g.emit("b.hi .Lfree_ret")
+		g.emit("sub x2, x1, #1")
+		g.emit("clz x3, x2")
+		g.emit("mov x4, #64")
+		g.emit("sub x4, x4, x3")
+		g.emit("add x2, x4, #128") // large class index
+		g.label(".Lfree_push")
 		g.adrpAdd("x3", "__fern_freelist_heads")
 		g.emit("ldr x4, [x3, x2, lsl #3]") // old head
 		g.emit("str x4, [x0]")             // base.next = old head
