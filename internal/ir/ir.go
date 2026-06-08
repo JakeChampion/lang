@@ -14739,7 +14739,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
-			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && b.freeEligible[t.Name] {
+			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && (b.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, at)) {
 				// Phase 3 step-4: free the OLD array buffer at rc==0.
 				// On a push copy-grow the old buffer's pointer elements
 				// were transferred to the new buffer (no inc), so freeing
@@ -14747,14 +14747,26 @@ func (b *builder) assign(n *ast.Assign) error {
 				// in-place push (rc bumped to 2) dec's to 1 and doesn't
 				// free. This is the O(N²)→O(N) push-loop reclamation.
 				//
-				// Gated on freeEligible: only OWNED array locals free
-				// here. Borrowed / borrowed-derived locals (params, and
-				// anything aliased from them - e.g. the self-host VM's
-				// `ops` threaded through compile_stmt/compile_block) keep
-				// the plain dec: the owner upstream still references the
-				// buffer (the borrow model gives no caller-side inc, so
-				// the rc undercounts the borrow - freeing would be a
-				// use-after-free). See computeFreeEligible.
+				// Gated on freeEligible OR selfReassignOwnedLocal: only
+				// OWNED array locals free here. Borrowed / borrowed-derived
+				// locals (params, and anything aliased from them - e.g. the
+				// self-host VM's `ops` threaded through compile_stmt/
+				// compile_block) keep the plain dec: the owner upstream
+				// still references the buffer (the borrow model gives no
+				// caller-side inc, so the rc undercounts the borrow -
+				// freeing would be a use-after-free). See computeFreeEligible.
+				//
+				// The selfReassignOwnedLocal escape mirrors the struct /
+				// enum branch below: a self-reassign `a = a.append(x)` /
+				// `a = f(a)` taints `a` out of the conservative freeEligible
+				// set (the call result may alias it), but the rc-gated buffer
+				// free is balanced anyway — __fern_arr_dec only reclaims at
+				// rc==0, and typeSelfDropSafe restricts this to arrays whose
+				// elements are inc'd at construction (no bare strings / Maps).
+				// Without it `a = a.append(x)` in a loop leaked the OLD buffer
+				// on every grow (the copy path orphans it; the flat
+				// __fern_rc_dec the catch-all else emits never frees) — the
+				// dominant churn in the self-host SSA build_func loops.
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})

@@ -2979,14 +2979,17 @@ func (g *generator) emitDataSections() {
 			g.line("\t.quad 0")
 		}
 		if ast.RcFreeEnabled && g.usesAlloc {
-			// Phase 3 step-4 segregated freelist. 128 heads, one per
-			// 16-byte size class (16, 32, …, 2048); head i is the
-			// freelist for blocks of size (i+1)*16. Each free block
-			// stores its successor's pointer in its first 8 bytes.
-			// Zero = empty class.
+			// Two-tier segregated freelist heads (256 slots).
+			//   0..127  — small tier: 16-byte exact-fit classes; head i is
+			//             the freelist for blocks of size (i+1)*16 (16..2048).
+			//   128+b   — large tier: power-of-two class; head 128+b holds
+			//             freed blocks of capacity 2^b (b = 12..30, i.e.
+			//             4 KiB..1 GiB). See __fern_alloc for the binning.
+			// Each free block stores its successor's pointer in its first 8
+			// bytes; zero = empty class.
 			g.line(".align 8")
 			g.label("__fern_freelist_heads")
-			g.line("\t.space 1024")
+			g.line("\t.space 2048")
 		}
 	}
 }
@@ -3010,7 +3013,7 @@ func (g *generator) emitDataSections() {
 // persistent cursors were deleted. See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 1024 * 1024 * 1024 // 1 GiB per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source (the unified fern.fern + all modules) in one process; that needs ~0.75 GiB live (512 MiB, the old size, only fit lexer.fern). Lazy MAP_ANONYMOUS so it costs nothing until touched. Kept ≤ INT32_MAX so the `lea [base + heapBytes]` disp32 / `mov esi, heapBytes` size stay valid.
+	const heapBytes = 1024 * 1024 * 1024 // 1 GiB per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process (the AST path needs ~0.75 GiB live). Lazy MAP_ANONYMOUS so it costs nothing until touched. Kept ≤ INT32_MAX so the `lea [base + heapBytes]` disp32 / `mov esi, heapBytes` size stay valid.
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")
@@ -3028,16 +3031,45 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
 	if ast.RcFreeEnabled {
-		// Phase 3 step-4: reuse a freed block of the same size class
-		// before bumping. rdi is the 16-byte-rounded request; classes
-		// cover 16..2048. idx = (rdi>>4)-1; if heads[idx] != 0, pop it.
+		// Two-tier segregated freelist — reuse a freed block before bumping.
+		//
+		// Small tier (16..2048 B): 16-byte exact-fit classes 0..127,
+		// idx = (rdi>>4)-1. Perfect reuse for the many identically-sized
+		// small structs / strings / boxes — unchanged from the original
+		// Phase-3 design.
+		//
+		// Large tier (>2048 B): power-of-two classes. The request is
+		// rounded UP to the next power of two — the bytes actually bumped —
+		// and binned by that power's bit position + 128. Because every
+		// block in a class is bumped at the class's power-of-two capacity, a
+		// popped block always fits any later same-class request, so reuse
+		// tolerates the size *variance* that exact-fit cannot: a 12 KiB and
+		// a 13 KiB array both land in the 16 KiB class and recycle each
+		// other. This is what lets a whole-compiler self-compile reclaim its
+		// per-function array churn (instruction / block / value lists grow
+		// past 2 KiB and vary per function) instead of leaking it. Cost is
+		// ≤2x internal waste on large blocks — bounded, demand-paged, and
+		// vastly cheaper than the exact-fit alternative, which reclaims none
+		// of it. Blocks >1 GiB skip the freelist (bump-only) so the class
+		// index can never run off the heads array.
 		g.emit("cmp rdi, 16")
 		g.emit("jb .Lalloc_bump")
 		g.emit("cmp rdi, 2048")
-		g.emit("ja .Lalloc_bump")
+		g.emit("ja .Lalloc_large")
 		g.emit("mov rax, rdi")
 		g.emit("shr rax, 4")
-		g.emit("sub rax, 1") // class index
+		g.emit("sub rax, 1") // small class index 0..127
+		g.emit("jmp .Lalloc_fltry")
+		g.label(".Lalloc_large")
+		g.emit("cmp rdi, 0x40000000") // >1 GiB: bump-only, never freelisted
+		g.emit("ja .Lalloc_bump")
+		g.emit("lea rax, [rdi - 1]")
+		g.emit("bsr rcx, rax")          // rcx = floor(log2(rdi-1)) >= 11
+		g.emit("inc rcx")               // bit position of the next power of two
+		g.emit("mov rdi, 1")
+		g.emit("shl rdi, cl")           // rdi = rounded-up pow2 = bytes to bump
+		g.emit("lea rax, [rcx + 128]")  // large class index (offset past 128 small)
+		g.label(".Lalloc_fltry")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // head
 		g.emit("test rdx, rdx")
@@ -3098,14 +3130,14 @@ func (g *generator) emitAllocRuntime() {
 }
 
 // emitFreeRuntime emits `__fern_free(base: i64, size: i64)` — the
-// Phase 3 step-4 freelist return path. When the freelist is enabled
-// it pushes the `size`-byte block at `base` onto its size class's
-// intrusive freelist (the successor pointer lives in the block's
-// first 8 bytes). Blocks outside the 16..2048 class range are
-// dropped (the bump region keeps them — they're reclaimed only by
-// the eventual large-alloc unmap path, not yet built). When the
-// freelist is disabled the helper is a no-op so a stray `__free`
-// call in a non-step-4 build is harmless.
+// freelist return path. When the freelist is enabled it pushes the
+// `size`-byte block at `base` onto its size class's intrusive
+// freelist (the successor pointer lives in the block's first 8
+// bytes), using the same two-tier classing as __fern_alloc: 16-byte
+// exact-fit for 16..2048 B, next-power-of-two for 2048 B..1 GiB.
+// Blocks <16 B or >1 GiB are dropped (the bump region keeps them).
+// When the freelist is disabled the helper is a no-op so a stray
+// `__free` call in a non-freeing build is harmless.
 //
 // System V: rdi = base, rsi = size. Leaf; no frame.
 func (g *generator) emitFreeRuntime() {
@@ -3119,10 +3151,24 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("cmp rsi, 16")
 		g.emit("jb .Lfree_ret")
 		g.emit("cmp rsi, 2048")
-		g.emit("ja .Lfree_ret")
+		g.emit("ja .Lfree_large")
 		g.emit("mov rax, rsi")
 		g.emit("shr rax, 4")
-		g.emit("sub rax, 1") // class index
+		g.emit("sub rax, 1") // small class index 0..127
+		g.emit("jmp .Lfree_push")
+		g.label(".Lfree_large")
+		// Mirror __fern_alloc's large tier: bin by next-power-of-two bit
+		// position + 128. The same logical size that was rounded up at
+		// alloc rounds up to the same class here, so the block returns to
+		// the class whose capacity it was bumped at. >1 GiB is dropped
+		// (alloc never freelisted it).
+		g.emit("cmp rsi, 0x40000000")
+		g.emit("ja .Lfree_ret")
+		g.emit("lea rax, [rsi - 1]")
+		g.emit("bsr rcx, rax")
+		g.emit("inc rcx")
+		g.emit("lea rax, [rcx + 128]")
+		g.label(".Lfree_push")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // old head
 		g.emit("mov [rdi], rdx")         // base.next = old head

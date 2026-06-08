@@ -319,6 +319,10 @@ func (a *Assembler) insn(line string) error {
 		return a.test(ops)
 	case "imul":
 		return a.imul(ops)
+	case "bsr":
+		return a.bitscan(ops, 0xBD)
+	case "bsf":
+		return a.bitscan(ops, 0xBC)
 	case "idiv":
 		return a.unaryF7(ops, 7)
 	case "div":
@@ -737,6 +741,34 @@ func (a *Assembler) imul(ops []operand) error {
 		return nil
 	}
 	return fmt.Errorf("unsupported imul form")
+}
+
+// bitscan encodes "bsr reg, r/m" (op 0xBD) / "bsf reg, r/m" (op 0xBC):
+// REX.W? 0F <op> /r, dst = reg, src = r/m. Same shape as the two-operand
+// imul, differing only in the second opcode byte.
+func (a *Assembler) bitscan(ops []operand, op byte) error {
+	if len(ops) != 2 || ops[0].kind != opReg {
+		return fmt.Errorf("bsr/bsf expects reg, r/m")
+	}
+	dst := ops[0]
+	w := dst.size == 64
+	if ops[1].kind == opReg {
+		if rex := rexFor(w, dst.reg, ops[1].reg, false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, op)
+		a.emit(modrmReg(dst.reg, ops[1].reg))
+		return nil
+	}
+	if ops[1].kind == opMem {
+		if rex := memRex(w, dst.reg, ops[1], false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, op)
+		a.encodeMem(dst.reg, ops[1])
+		return nil
+	}
+	return fmt.Errorf("unsupported bsr/bsf form")
 }
 
 // imul3 encodes the three-operand "imul reg, r/m, imm" (multiply by a
