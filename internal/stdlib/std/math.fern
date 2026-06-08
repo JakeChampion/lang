@@ -10,18 +10,29 @@
 // wasm), combines into a 24-bit value, and modulo-maps to
 // the range width. 24 bits caps the maximum bias-free range
 // at ~16M which covers the common short-range use cases
-// (port pick, ID generation, jitter). Stays at 24 bits
-// rather than 32 because the natives' u32 modulo path goes
-// signed when the high bit is set — a real codegen bug, but
-// 24-bit randomness sidesteps it.
+// (port pick, ID generation, jitter).
+//
+// The range local is named `rng`, NOT `range`: a local named
+// `range` collides with the module-level `range()` function and
+// the self-host x86 codegen mis-resolves the identifier in this
+// function's expression context to the function value (a boxed
+// funcaddr) instead of the local, so `u % range` divided by a
+// heap pointer and returned out-of-range garbage. That made
+// `random_int` return indices far outside [lo, hi), which is the
+// root cause of the intermittent TestSelfHostStdTestE2E/
+// fuzz_shrink crash (out-of-range mutation indices → a
+// negative-length string slice → __fern_str_concat overrun).
+// The underlying codegen shadowing bug is a separate follow-up;
+// the rename sidesteps it. (The earlier "u32 modulo goes signed"
+// note here was a misdiagnosis of this collision.)
 pub function random_int(lo: i32, hi: i32): i32 {
     if (hi <= lo) { return lo; }
     var b: string = random_bytes(3);
     var u: u32 = ((b[0] as u32) << (16 as u32)) |
                  ((b[1] as u32) << (8 as u32)) |
                  (b[2] as u32);
-    var range: u32 = (hi - lo) as u32;
-    return lo + ((u % range) as i32);
+    var rng: u32 = (hi - lo) as u32;
+    return lo + ((u % rng) as i32);
 }
 
 // `range(start, end)` — i32[] of [start, end). Empty if

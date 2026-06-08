@@ -120,6 +120,69 @@ func TestSelfHostRcFreeWasm(t *testing.T) {
 	}
 }
 
+// TestSelfHostRcCallResultWasm exercises reclamation of CALL-RESULT array
+// locals (`var x = build()`): previously leaked (never swept), now counted
+// and released at function exit because the callee is a user function
+// declared to return an array (so its StmtReturn applies return-retain).
+// Each program asserts the value AND a clean over-release detector — the
+// crucial case being a callee that returns a BORROWED param (return-retain
+// inc'd it, so the caller can sweep both source and result without a
+// double-free). Method calls / in-place receivers are deliberately NOT
+// swept, so a self-append result never double-frees.
+func TestSelfHostRcCallResultWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm RC call-result e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	const genFn = "function gen(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } "
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Two call-result locals: both swept (freed) at exit, detector clean.
+		{"callresult-balanced", genFn + "function main(): i32 { var a: i32[] = gen(5); var b: i32[] = gen(7); return a[4] + b[6] + __fern_rc_underflow_count(); }", 10},
+		// Aliasing a call result: the alias is inc'd, both swept, balanced.
+		{"callresult-aliased", genFn + "function main(): i32 { var a: i32[] = gen(5); var c = a; return a[0] + c[4] + __fern_rc_underflow_count(); }", 4},
+		// Callee returns a BORROWED param: return-retain protects the buffer
+		// so the caller sweeping BOTH source and result is not a double-free.
+		{"callresult-borrowed-return", "function pick(xs: i32[]): i32[] { return xs; } function main(): i32 { var src: i32[] = [1, 2, 3]; var got: i32[] = pick(src); return got[1] + src[0] + __fern_rc_underflow_count(); }", 3},
+		// A self-append (method call, in-place receiver) result is NOT swept,
+		// so it never double-frees the receiver's buffer.
+		{"self-append-not-double-freed", "function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs.append(3); return ys[2] + __fern_rc_underflow_count(); }", 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(wat) == 0 {
+				t.Fatal("wasm emitter produced 0 bytes")
+			}
+			watPath := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+			_, _ = cmd.Output()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
+			}
+		})
+	}
+}
+
 // TestSelfHostRcConstructWasm exercises the wasm Perceus construction-
 // store inc: storing an EXISTING array reference into a struct field or
 // an array-of-arrays element retains the buffer (the container co-owns it
