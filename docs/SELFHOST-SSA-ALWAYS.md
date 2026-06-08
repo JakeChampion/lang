@@ -344,10 +344,38 @@ set:
 (Small programs are unaffected and all SSA suites stay green; only the
 whole-compiler self-compile reaches any of this, and no test exercises it.)
 
+**Update — `w` / `cur_id` ✅ fixed (#2388).** They were *not* a
+`type_of_expr` gap: `build_func`'s `ExprIdent` arm tested the function-value
+type before the local binding, so a local var named like a function/method
+(loop var `w`; block-id var `cur_id`) became a `funcaddr`. Fixed by checking
+`get_var` first (a local shadows a same-named function). With that, the
+whole `fern.fern` has **zero unknown callees** and exactly **one**
+`build_func` blocker left: **`main`**.
+
+**The last coverage blocker is `main` — a feature *cluster*, not a one-liner.**
+`main` is the CLI driver, and its remaining SSA gaps are all I/O / sum-type:
+- **File-I/O builtins** `read_file` / `write_file` — these are *builtins*
+  (syscall sequences the AST backend emits inline; no `function read_file`
+  exists), so the SSA backends would emit `call read_file` → unknown. They
+  need dedicated SSA ops + an open/read(/write)/close syscall runtime on
+  x86-64 / arm64 (wasm via WASI `path_open` etc., or fall back).
+- **Option / Result** (`Some`/`None`/`Ok`/`Err`) — `build_match` only
+  handles user struct-unions (tag = struct index); these builtin sum types
+  use a fixed 2-word box `{tag@0, payload@8}` (Some/Ok = 0, None/Err = 1).
+  Needs: construction in `build_func` (mirror `asm.fern`), and a `build_match`
+  path that dispatches on the fixed tag and binds the payload from word 1
+  (the user-variant path binds the whole box, so this is a distinct case —
+  cleanest via a synthesized `__opt_payload` load builtin so the AST-level
+  `synth_match_chain` still works). Payload typing is best-effort (in `main`
+  the bindings are only assigned or unused, so an empty type suffices).
+
+This (file I/O + sum types) is the most Perceus-adjacent remaining work and
+warrants deliberate, coordinated implementation rather than a tail-end rush.
+
 Still open: the *linear* per-function retention (build + emit, freed by
 nothing) — Perceus RC (the native backend already has it; the self-host
 runtime stubs it to no-ops — `asm.fern`: "leak-everything bump heap") or a
-streaming/arena scheme; and the `strbuf_*` runtime port above.
+streaming/arena scheme; and `main`'s I/O + sum-type cluster above.
 
 ### Phase 5 — retire the AST emitters
 
