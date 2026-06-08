@@ -152,9 +152,10 @@ function main(): i32 {
 `
 
 // arm64MachOMaxDriverMain assembles max(42, 17) with a forward b.ge:
-//   0 movz x0,#42 (a); 4 movz x1,#17 (b); 8 cmp x0,x1;
-//   12 b.ge done (placeholder, patched); 16 mov x0,x1; 20 (done) movz
-//   x16,#1; 24 svc #0x80. a >= b so the branch is taken, skipping the mov.
+//
+//	0 movz x0,#42 (a); 4 movz x1,#17 (b); 8 cmp x0,x1;
+//	12 b.ge done (placeholder, patched); 16 mov x0,x1; 20 (done) movz
+//	x16,#1; 24 svc #0x80. a >= b so the branch is taken, skipping the mov.
 const arm64MachOMaxDriverMain = `
 function main(): i32 {
     var code: i32[] = [];

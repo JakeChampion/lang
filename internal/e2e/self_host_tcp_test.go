@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 )
 

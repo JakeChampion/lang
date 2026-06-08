@@ -271,10 +271,10 @@ function arm64_read_word(buf: i32[], at: i32): i64 {
 // arm64_write_word overwrites the 4 little-endian bytes of the instruction
 // word at byte offset `at`.
 function arm64_write_word(buf: i32[], at: i32, w: i64): i32[] {
-    buf[at] = (w & 255) as i32;
-    buf[at + 1] = ((w >> 8) & 255) as i32;
-    buf[at + 2] = ((w >> 16) & 255) as i32;
-    buf[at + 3] = ((w >> 24) & 255) as i32;
+    buf = buf.with(at, (w & 255) as i32);
+    buf = buf.with(at + 1, ((w >> 8) & 255) as i32);
+    buf = buf.with(at + 2, ((w >> 16) & 255) as i32);
+    buf = buf.with(at + 3, ((w >> 24) & 255) as i32);
     return buf;
 }
 

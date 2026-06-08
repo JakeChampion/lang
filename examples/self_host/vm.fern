@@ -1903,7 +1903,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                             var bi: i32 = 0;
                             while (bi < unames.len()) {
                                 if (unames[bi] == oname) {
-                                    uvals[bi] = oval;
+                                    uvals = uvals.with(bi, oval);
                                     replaced = true;
                                 }
                                 bi = bi + 1;

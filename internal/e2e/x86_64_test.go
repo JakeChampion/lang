@@ -467,9 +467,9 @@ func TestX86_64SsoInline(t *testing.T) {
 		// string_from_bytes: u8[] → string. Inline when ≤ 7.
 		{"sfb-inline", `function main(): i32 {
     var bs: u8[] = __alloc_u8(3);
-    bs[0] = 65 as u8; // 'A'
-    bs[1] = 66 as u8; // 'B'
-    bs[2] = 67 as u8; // 'C'
+    bs = bs.with(0, 65 as u8); // 'A'
+    bs = bs.with(1, 66 as u8); // 'B'
+    bs = bs.with(2, 67 as u8); // 'C'
     var s: string = string_from_bytes(bs);
     if (s == "ABC") { return 1; }
     return 0;
@@ -2009,16 +2009,16 @@ func TestX86_64Defer(t *testing.T) {
     return x;
 }
 function main(): i32 { return inner(); }`, 2},
-		{"multiple defers run LIFO", `function check(arr: i32[]): i32 {
-    arr[0] = 1;
-    defer arr[0] = 10;
-    defer arr[0] = 20;
-    return arr[0];
+		{"multiple defers run LIFO", `function check(c: Cell[i32]): i32 {
+    c.set(1);
+    defer c.set(10);
+    defer c.set(20);
+    return c.get();
 }
 function main(): i32 {
-    var a: i32[] = [0];
-    check(a);
-    return a[0];
+    var c: Cell[i32] = cell_new(0);
+    check(c);
+    return c.get();
 }`, 10},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -2613,29 +2613,11 @@ func TestX86_64SliceMake(t *testing.T) {
     var s: [i32] = arr[1:4];
     return s[1];
 }`, 30},
-		{"i32 slice write propagates", `function main(): i32 {
-    var arr: i32[] = [1, 2, 3, 4, 5];
-    var s: [i32] = arr[1:4];
-    s[0] = 99;
-    return arr[1];
-}`, 99},
 		{"u8 slice read", `function main(): i32 {
     var arr: u8[] = [10, 20, 30, 40, 50];
     var s: [u8] = arr[1:4];
     return s[1] as i32;
 }`, 30},
-		{"u8 slice write propagates", `function main(): i32 {
-    var arr: u8[] = [1, 2, 3, 4, 5];
-    var s: [u8] = arr[1:4];
-    s[0] = 99;
-    return arr[1] as i32;
-}`, 99},
-		{"u16 slice round-trip", `function main(): i32 {
-    var arr: u16[] = [100, 200, 300, 400];
-    var s: [u16] = arr[1:3];
-    s[0] = 50;
-    return arr[1] as i32;
-}`, 50},
 		{"i64 slice read", `function main(): i32 {
     var arr: i64[] = [(1i64 << 40), (1i64 << 41), (1i64 << 42)];
     var s: [i64] = arr[1:3];
@@ -3404,7 +3386,7 @@ func TestX86_64ArrayIndexSetInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var addr_before: usize = xs as usize;
-    xs[1] = 999;
+    xs = xs.with(1, 999);
     var addr_after: usize = xs as usize;
     if (addr_before != addr_after) { return 1; }
     if (xs[1] != 999) { return 2; }
@@ -3422,7 +3404,7 @@ func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var ys = xs;
-    ys[0] = 999;
+    ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 20) { return 2; }
     if (xs[2] != 30) { return 3; }
@@ -3444,10 +3426,10 @@ func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
     var buf: u8[] = __alloc_u8(4);
-    buf[0] = 65 as u8;
-    buf[1] = 66 as u8;
-    buf[2] = 67 as u8;
-    buf[3] = 68 as u8;
+    buf = buf.with(0, 65 as u8);
+    buf = buf.with(1, 66 as u8);
+    buf = buf.with(2, 67 as u8);
+    buf = buf.with(3, 68 as u8);
     return (buf[0] as i32) + (buf[1] as i32) + (buf[2] as i32) + (buf[3] as i32) - 266;
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 0 {
@@ -3460,7 +3442,7 @@ func TestX86_64ArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
     var s: State = State{items: [10, 20, 30]};
-    s.items[1] = 999;
+    s = State { ...s, items: s.items.with(1, 999) };
     if (s.items[0] != 10) { return 1; }
     if (s.items[1] != 999) { return 2; }
     if (s.items[2] != 30) { return 3; }
@@ -3477,7 +3459,7 @@ func TestX86_64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 function main(): i32 {
     var arr: i32[] = [10, 20, 30];
     var s: State = State{items: arr};
-    s.items[1] = 999;
+    s = State { ...s, items: s.items.with(1, 999) };
     if (arr[0] != 10) { return 1; }
     if (arr[1] != 20) { return 2; }
     if (arr[2] != 30) { return 3; }
@@ -3497,7 +3479,7 @@ func TestX86_64ArrayIndexSetNestedStructField(t *testing.T) {
 struct Outer { inner: Inner }
 function main(): i32 {
     var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
-    o.inner.items[1] = 999;
+    o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (o.inner.items[0] != 10) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
     if (o.inner.items[2] != 30) { return 3; }
@@ -3515,7 +3497,7 @@ struct Outer { inner: Inner }
 function main(): i32 {
     var arr: i32[] = [10, 20, 30];
     var o: Outer = Outer{inner: Inner{items: arr}};
-    o.inner.items[1] = 999;
+    o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (arr[1] != 20) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
     return 0;
@@ -3529,7 +3511,7 @@ function main(): i32 {
 func TestX86_64ArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
     var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
-    mat[0][1] = 999;
+    mat = mat.with(0, mat[0].with(1, 999));
     if (mat[0][0] != 1) { return 1; }
     if (mat[0][1] != 999) { return 2; }
     if (mat[0][2] != 3) { return 3; }
@@ -3546,7 +3528,7 @@ func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var mat: i32[][] = [[1, 2], [3, 4]];
     var inner = mat[0];
-    mat[0][1] = 999;
+    mat = mat.with(0, mat[0].with(1, 999));
     if (inner[1] != 2) { return 1; }
     if (mat[0][1] != 999) { return 2; }
     return 0;
@@ -3582,7 +3564,7 @@ func TestX86_64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 function main(): i32 {
     var inner: i32[] = [1, 2, 3];
     var s: State = State{mat: [inner, [4, 5, 6]]};
-    s.mat[0][1] = 999;
+    s = State { ...s, mat: s.mat.with(0, s.mat[0].with(1, 999)) };
     if (inner[1] != 2) { return 1; }
     if (s.mat[0][1] != 999) { return 2; }
     if (s.mat[0][0] != 1) { return 3; }

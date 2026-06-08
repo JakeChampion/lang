@@ -1662,7 +1662,7 @@ function env_set_at(vals: i32[], i: i32, v: i32): i32[] {
 // tables). Arrays are reference-typed and index assignment is in place, so
 // the caller's `x = env_put(x, …)` and the mutation refer to the same array.
 function env_put(vals: i32[], i: i32, v: i32): i32[] {
-    vals[i] = v;
+    vals = vals.with(i, v);
     return vals;
 }
 

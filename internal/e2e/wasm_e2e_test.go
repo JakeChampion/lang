@@ -1342,21 +1342,21 @@ function main(): i32 {
 func TestWASMSubI32ArrayWrites(t *testing.T) {
 	src := `function main(): i32 {
     var bytes: u8[] = [1, 2, 3, 4];
-    bytes[0] = 250;
-    bytes[2] = 99;
+    bytes = bytes.with(0, 250);
+    bytes = bytes.with(2, 99);
     if (bytes[0] != 250) { return 1; }
     if (bytes[1] != 2) { return 2; }
     if (bytes[2] != 99) { return 3; }
     if (bytes[3] != 4) { return 4; }
 
     var halves: u16[] = [10, 20, 30];
-    halves[1] = 65000;
+    halves = halves.with(1, 65000);
     if (halves[0] != 10) { return 5; }
     if (halves[1] != 65000) { return 6; }
     if (halves[2] != 30) { return 7; }
 
     var sgn: i8[] = [0, 0, 0];
-    sgn[1] = -42;
+    sgn = sgn.with(1, -42);
     if ((sgn[0] as i32) != 0) { return 8; }
     if ((sgn[1] as i32) != -42) { return 9; }
     if ((sgn[2] as i32) != 0) { return 10; }
@@ -1383,7 +1383,7 @@ func TestWASMI64Array(t *testing.T) {
 }
 function main(): i32 {
     var xs: i64[] = [1, 2, 3, 4];
-    xs[1] = (1 << 62) + 1;
+    xs = xs.with(1, (1 << 62) + 1);
     var s: i64 = i64Sum(xs, 4);
     // 1 + ((1 << 62) + 1) + 3 + 4 == (1 << 62) + 9
     if (s != (1 << 62) + 9) { return 1; }
@@ -1402,7 +1402,7 @@ function main(): i32 {
 func TestWASMF64Array(t *testing.T) {
 	src := `function main(): i32 {
     var xs: f64[] = [1.5, 2.5, 3.5];
-    xs[1] = 99.25;
+    xs = xs.with(1, 99.25);
     if (xs[0] != 1.5) { return 1; }
     if (xs[1] != 99.25) { return 2; }
     if (xs[2] != 3.5) { return 3; }
@@ -1450,31 +1450,9 @@ func TestWASMSubI32Slices(t *testing.T) {
 // __slice_idx_N helper (same as the read path) and the
 // width-aware store op. Verifies that mutations through a
 // slice show up when reading back from the parent.
-func TestWASMSliceWrites(t *testing.T) {
-	src := `function main(): i32 {
-    var bytes: u8[] = [1, 2, 3, 4, 5];
-    var view: [u8] = bytes[1:4];
-    view[0] = 99;
-    view[2] = 100;
-    if (bytes[1] != 99) { return 1; }
-    if (bytes[2] != 3) { return 2; }
-    if (bytes[3] != 100) { return 3; }
-    if (bytes[0] != 1) { return 4; }
-    if (bytes[4] != 5) { return 5; }
-
-    // Wide-element slice writes too.
-    var wide: i64[] = [10, 20, 30, 40];
-    var w: [i64] = wide[1:3];
-    w[0] = (1 << 40);
-    if (wide[1] != (1 << 40)) { return 6; }
-    if (wide[0] != 10) { return 7; }
-    if (wide[2] != 30) { return 8; }
-    return 0;
-}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got %d, want 0 (slice writes)", got)
-	}
-}
+// (Removed TestWASMSliceWrites: writing through a slice mutated the backing
+// array, which immutability (E056) forbids — slices are read-only views now.
+// Slice reads are covered by TestWASMStringSlice and the slice-read cases.)
 
 // String slicing — `s[a:b]` returns a freshly allocated
 // substring. Bounds checked; default low/high mean 0 and
@@ -1840,7 +1818,7 @@ function main(): i32 {
     if (bs[3] != 108) { return 5; }   // 'l'
     if (bs[4] != 111) { return 6; }   // 'o'
     // Mutating the bytes shouldn't affect the source string.
-    bs[0] = 72; // 'H'
+    bs = bs.with(0, 72); // 'H'
     if (s != "hello") { return 7; }
     var s2: string = string_from_bytes(bs);
     if (s2 != "Hello") { return 8; }
@@ -3966,7 +3944,7 @@ func TestWASMForEachBreakContinue(t *testing.T) {
 func TestWASMArraySumAndMutation(t *testing.T) {
 	src := `function main(): i32 {
 		var a: i32[] = [10, 20, 30, 40];
-		a[2] = 100;
+		a = a.with(2, 100);
 		return a[0] + a[1] + a[2] + a[3];
 	}`
 	if got := runWasm(t, src); got != 170 {
@@ -16759,7 +16737,7 @@ func TestWASMArrayIndexSetInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var addr_before: usize = xs as usize;
-    xs[1] = 999;
+    xs = xs.with(1, 999);
     var addr_after: usize = xs as usize;
     if (addr_before != addr_after) { return 1; }
     if (xs[1] != 999) { return 2; }
@@ -16777,7 +16755,7 @@ func TestWASMArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var ys = xs;
-    ys[0] = 999;
+    ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 20) { return 2; }
     if (xs[2] != 30) { return 3; }
@@ -16798,10 +16776,10 @@ func TestWASMArrayIndexSetAliasedCopies(t *testing.T) {
 func TestWASMArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
     var buf: u8[] = __alloc_u8(4);
-    buf[0] = 65 as u8;
-    buf[1] = 66 as u8;
-    buf[2] = 67 as u8;
-    buf[3] = 68 as u8;
+    buf = buf.with(0, 65 as u8);
+    buf = buf.with(1, 66 as u8);
+    buf = buf.with(2, 67 as u8);
+    buf = buf.with(3, 68 as u8);
     return (buf[0] as i32) + (buf[1] as i32) + (buf[2] as i32) + (buf[3] as i32) - 266;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -16814,7 +16792,7 @@ func TestWASMArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
     var s: State = State{items: [10, 20, 30]};
-    s.items[1] = 999;
+    s = State { ...s, items: s.items.with(1, 999) };
     if (s.items[0] != 10) { return 1; }
     if (s.items[1] != 999) { return 2; }
     if (s.items[2] != 30) { return 3; }
@@ -16831,7 +16809,7 @@ func TestWASMArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 function main(): i32 {
     var arr: i32[] = [10, 20, 30];
     var s: State = State{items: arr};
-    s.items[1] = 999;
+    s = State { ...s, items: s.items.with(1, 999) };
     if (arr[0] != 10) { return 1; }
     if (arr[1] != 20) { return 2; }
     if (arr[2] != 30) { return 3; }
@@ -16851,7 +16829,7 @@ func TestWASMArrayIndexSetNestedStructField(t *testing.T) {
 struct Outer { inner: Inner }
 function main(): i32 {
     var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
-    o.inner.items[1] = 999;
+    o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (o.inner.items[0] != 10) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
     if (o.inner.items[2] != 30) { return 3; }
@@ -16869,7 +16847,7 @@ struct Outer { inner: Inner }
 function main(): i32 {
     var arr: i32[] = [10, 20, 30];
     var o: Outer = Outer{inner: Inner{items: arr}};
-    o.inner.items[1] = 999;
+    o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (arr[1] != 20) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
     return 0;
@@ -16883,7 +16861,7 @@ function main(): i32 {
 func TestWASMArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
     var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
-    mat[0][1] = 999;
+    mat = mat.with(0, mat[0].with(1, 999));
     if (mat[0][0] != 1) { return 1; }
     if (mat[0][1] != 999) { return 2; }
     if (mat[0][2] != 3) { return 3; }
@@ -16900,7 +16878,7 @@ func TestWASMArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var mat: i32[][] = [[1, 2], [3, 4]];
     var inner = mat[0];
-    mat[0][1] = 999;
+    mat = mat.with(0, mat[0].with(1, 999));
     if (inner[1] != 2) { return 1; }
     if (mat[0][1] != 999) { return 2; }
     return 0;
@@ -16936,7 +16914,7 @@ func TestWASMArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 function main(): i32 {
     var inner: i32[] = [1, 2, 3];
     var s: State = State{mat: [inner, [4, 5, 6]]};
-    s.mat[0][1] = 999;
+    s = State { ...s, mat: s.mat.with(0, s.mat[0].with(1, 999)) };
     if (inner[1] != 2) { return 1; }
     if (s.mat[0][1] != 999) { return 2; }
     if (s.mat[0][0] != 1) { return 3; }

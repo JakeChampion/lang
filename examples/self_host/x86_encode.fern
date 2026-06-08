@@ -961,10 +961,10 @@ function x86_call_rel32(buf: i32[], rel: i32): i32[] {
 // branch placeholder). Used to resolve a forward reference once its
 // target offset is known.
 function x86_patch_rel32(buf: i32[], at: i32, rel: i32): i32[] {
-    buf[at] = rel & 255;
-    buf[at + 1] = (rel >> 8) & 255;
-    buf[at + 2] = (rel >> 16) & 255;
-    buf[at + 3] = (rel >> 24) & 255;
+    buf = buf.with(at, rel & 255);
+    buf = buf.with(at + 1, (rel >> 8) & 255);
+    buf = buf.with(at + 2, (rel >> 16) & 255);
+    buf = buf.with(at + 3, (rel >> 24) & 255);
     return buf;
 }
 

@@ -1137,7 +1137,7 @@ pub function assert_subset[T: cmp.Eq + cmp.Display](superset: T[], subset: T[]):
         var k: i32 = 0;
         while (k < sn && !matched) {
             if (!used[k] && superset[k].eq(want)) {
-                used[k] = true;
+                used = used.with(k, true);
                 matched = true;
             }
             k = k + 1;
@@ -1167,7 +1167,7 @@ pub function assert_set_eq[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]):
         var matched: boolean = false;
         var k: i32 = 0;
         while (k < en && !matched) {
-            if (!used[k] && expected[k].eq(want)) { used[k] = true; matched = true; }
+            if (!used[k] && expected[k].eq(want)) { used = used.with(k, true); matched = true; }
             k = k + 1;
         }
         if (!matched) {

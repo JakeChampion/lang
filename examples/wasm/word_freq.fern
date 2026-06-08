@@ -72,10 +72,10 @@ function sort_pairs(keys: string[], counts: i32[]): void {
   function swap(i: i32, j: i32): void {
     var tk: string = keys[i];
     var tc: i32 = counts[i];
-    keys[i] = keys[j];
-    counts[i] = counts[j];
-    keys[j] = tk;
-    counts[j] = tc;
+    keys = keys.with(i, keys[j]);
+    counts = counts.with(i, counts[j]);
+    keys = keys.with(j, tk);
+    counts = counts.with(j, tc);
   }
   var i: i32 = 1;
   while (i < counts.len()) {
