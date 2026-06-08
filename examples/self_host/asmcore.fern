@@ -2054,13 +2054,4 @@ pub function check_module(mod: parser.Module, s: EmitState): string {
     return errs;
 }
 
-pub function contains(haystack: string, needle: string): boolean {
-    if (needle.len() == 0) { return true; }
-    if (haystack.len() < needle.len()) { return false; }
-    var i: i32 = 0;
-    while (i <= haystack.len() - needle.len()) {
-        if (haystack[i:i + needle.len()] == needle) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
+// contains -> util.contains (SH-020).
