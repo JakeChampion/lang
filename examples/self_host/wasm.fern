@@ -1268,11 +1268,12 @@ function extern_record_param_supported(mod: parser.Module, t: string): boolean {
     return false;
 }
 
-// extern_record_result_supported is the result-side gate: like the param gate
-// but i32/u32 fields only. A sub-word *result* field would need the canonical
-// return-area's tightly-packed (1-/2-byte) layout, which differs from the
-// self-host struct's 4-byte slots — a separate dual-layout slice. Params
-// sidestep it because the flattening is to i32 core values, not memory.
+// extern_record_result_supported is the result-side gate: 1..16 fields, each an
+// 8-/16-/32-bit integer. Sub-word fields (s8/s16/u8/u16) are supported via a
+// dual layout — the canonical return-area packs them at their natural 1-/2-byte
+// size + alignment (extern_canon_field_off / extern_canon_record_size), which
+// differs from the self-host struct's 4-byte slots; the wrapper reads each with
+// a width+sign-aware load and stores it into the wider slot.
 function extern_record_result_supported(mod: parser.Module, t: string): boolean {
     var i: i32 = 0;
     while (i < mod.structs.len()) {
@@ -1282,7 +1283,7 @@ function extern_record_result_supported(mod: parser.Module, t: string): boolean 
             var j: i32 = 0;
             while (j < n) {
                 var ft: string = mod.structs[i].fields[j].type_name;
-                if (ft != "i32" && ft != "u32") { return false; }
+                if (ft != "i32" && ft != "u32" && ft != "i8" && ft != "u8" && ft != "i16" && ft != "u16") { return false; }
                 j = j + 1;
             }
             return true;
@@ -1303,6 +1304,53 @@ function extern_field_load_op(ft: string): string {
     if (ft == "i16") { return "i32.load16_s"; }
     if (ft == "u16") { return "i32.load16_u"; }
     return "i32.load";
+}
+
+// extern_canon_field_size returns the canonical-ABI memory size (== alignment)
+// of a record field type: i8/u8 → 1, i16/u16 → 2, else 4.
+function extern_canon_field_size(ft: string): i32 {
+    if (ft == "i8" || ft == "u8") { return 1; }
+    if (ft == "i16" || ft == "u16") { return 2; }
+    return 4;
+}
+
+// extern_canon_field_off returns the canonical-ABI memory offset of field `idx`
+// in struct `tn`: each field placed at its natural size+alignment (the layout
+// the host writes a record result into the return area).
+function extern_canon_field_off(structs: parser.StructDecl[], tn: string, idx: i32): i32 {
+    var pos: i32 = 0;
+    var i: i32 = 0;
+    while (i < idx) {
+        var sz: i32 = extern_canon_field_size(struct_field_type_at(structs, tn, i));
+        var rem: i32 = pos % sz;
+        if (rem != 0) { pos = pos + (sz - rem); }
+        pos = pos + sz;
+        i = i + 1;
+    }
+    var fsz: i32 = extern_canon_field_size(struct_field_type_at(structs, tn, idx));
+    var frem: i32 = pos % fsz;
+    if (frem != 0) { pos = pos + (fsz - frem); }
+    return pos;
+}
+
+// extern_canon_record_size returns the canonical-ABI memory size of struct `tn`:
+// the end of the last field, rounded up to the record's max field alignment.
+function extern_canon_record_size(structs: parser.StructDecl[], tn: string): i32 {
+    var n: i32 = struct_field_count(structs, tn);
+    if (n == 0) { return 0; }
+    var last: i32 = n - 1;
+    var lsz: i32 = extern_canon_field_size(struct_field_type_at(structs, tn, last));
+    var size: i32 = extern_canon_field_off(structs, tn, last) + lsz;
+    var maxa: i32 = 1;
+    var i: i32 = 0;
+    while (i < n) {
+        var a: i32 = extern_canon_field_size(struct_field_type_at(structs, tn, i));
+        if (a > maxa) { maxa = a; }
+        i = i + 1;
+    }
+    var rem: i32 = size % maxa;
+    if (rem != 0) { size = size + (maxa - rem); }
+    return size;
 }
 
 // struct_field_type_at returns the declared type of field `idx` in struct `tn`
@@ -1824,10 +1872,13 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + "    (local.get $s))\n";
         } else if (f.import_iface.len() > 0 && extern_record_result_supported(mod, f.ret_type)) {
             // record result (P4c): a multi-field record returns indirectly; the
-            // host writes the fields inline into the return area (field i @
-            // i*4, all i32). The wrapper materializes a self-host struct
-            // (type-id@0, fields@+4) from them and returns its pointer.
+            // host writes the fields into the return area at the canonical memory
+            // layout (sub-word fields pack tighter than the self-host struct's
+            // 4-byte slots). The wrapper reads each field at its canonical offset
+            // (width+sign-aware) and stores it into the self-host struct
+            // (type-id@0, fields@+4 in 4-byte slots), returning its pointer.
             var nf: i32 = struct_field_count(mod.structs, f.ret_type);
+            var canonsz: i32 = extern_canon_record_size(mod.structs, f.ret_type);
             out = out + "  (func $" + f.name;
             var rp: i32 = 0;
             while (rp < f.params.len()) {
@@ -1836,10 +1887,10 @@ function extern_wrappers(mod: parser.Module): string {
             }
             out = out + " (result i32)\n";
             out = out + "    (local $rb i32) (local $s i32)\n";
-            // Return area: nf i32 fields, 8-aligned. Over-allocate by 7 so the
+            // Return area: canonical size, 8-aligned. Over-allocate by 7 so the
             // aligned pointer + area stays within the reserved block (the heap
             // bump isn't aligned, so the next alloc would otherwise overlap).
-            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.add (i32.mul (i32.const " + i32_to_string(nf) + ") (i32.const 4)) (i32.const 7))) (i32.const 7)) (i32.const -8)))\n";
+            out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + i32_to_string(canonsz + 7) + ")) (i32.const 7)) (i32.const -8)))\n";
             out = out + "    (call $" + f.name + "__import";
             var ra: i32 = 0;
             while (ra < f.params.len()) {
@@ -1847,12 +1898,15 @@ function extern_wrappers(mod: parser.Module): string {
                 ra = ra + 1;
             }
             out = out + " (local.get $rb))\n";
-            // Materialize the struct: type id at slot 0, then each field.
+            // Materialize the struct: type id at slot 0, then each field, read
+            // from its canonical return-area offset and stored into the 4-byte slot.
             out = out + "    (local.set $s (call $__fern_alloc (i32.const " + i32_to_string(4 + nf * 4) + ")))\n";
             out = out + "    (i32.store (local.get $s) (i32.const " + i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
             var rc: i32 = 0;
             while (rc < nf) {
-                out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + i32_to_string(struct_field_off(rc)) + ")) (i32.load (i32.add (local.get $rb) (i32.const " + i32_to_string(rc * 4) + "))))\n";
+                var rcft: string = struct_field_type_at(mod.structs, f.ret_type, rc);
+                var coff: i32 = extern_canon_field_off(mod.structs, f.ret_type, rc);
+                out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + i32_to_string(struct_field_off(rc)) + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + i32_to_string(coff) + "))))\n";
                 rc = rc + 1;
             }
             out = out + "    (local.get $s))\n";

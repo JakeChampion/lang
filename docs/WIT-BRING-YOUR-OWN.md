@@ -531,15 +531,26 @@ world-driven composer (P2) wires it.
      wrong-width or wrong-sign load).
    - **Self-host port — record (struct) results — ✅ done.** The symmetric
      counterpart: an extern returning a record materializes a self-host struct.
-     The host writes the record's fields inline into the return area (field i @
-     i*4, all i32); the wrapper allocs a self-host struct (`type-id@0`,
-     fields@+4 via `struct_field_off`), stores the struct's `struct_id` + each
-     field, and returns its pointer. `is_extern_composite_ret` (now `mod`-aware)
-     also matches a record return, giving it the trailing return-area pointer +
-     `cabi_realloc`. The return area is over-allocated by 7 before 8-aligning so
-     the next (struct) alloc doesn't overlap it — the self-host heap bump isn't
-     aligned. Gated by `TestSelfHostExternRecordResultCustomProvider` (a
-     `make-point: func(a, b: s32) -> record { x, y: s32 }`, fields read back).
+     The host writes the record's fields into the return area at the **canonical
+     memory layout**; the wrapper allocs a self-host struct (`type-id@0`,
+     fields@+4 via `struct_field_off`), reads each field from its canonical
+     offset, stores the struct's `struct_id` + each field, and returns its
+     pointer. `is_extern_composite_ret` (now `mod`-aware) also matches a record
+     return, giving it the trailing return-area pointer + `cabi_realloc`. The
+     return area (canonical size) is over-allocated by 7 before 8-aligning so the
+     next (struct) alloc doesn't overlap it — the self-host heap bump isn't
+     aligned. **Sub-word integer result fields (`s8`/`s16`/`u8`/`u16`) are
+     supported** via the same dual layout as the Go side: the canonical
+     return-area packs them at their natural 1-/2-byte size + offset
+     (`extern_canon_field_off` / `extern_canon_record_size`), which differs from
+     the self-host struct's 4-byte slots, so the wrapper reads each with a
+     width+sign-aware load (`extern_field_load_op`) and stores it into the wider
+     slot; for word-only records the layouts coincide. Gated by
+     `TestSelfHostExternRecordResultCustomProvider` (a `make-point: func(a, b:
+     s32) -> record { x, y: s32 }`, fields read back) and
+     `TestSelfHostExternRecordResultSubwordCustomProvider` (a `make-mix: func()
+     -> record { a: s8, b: u16, c: s32 }` with `{-5, 300, 1000}` at canonical
+     offsets 0/2/4).
    - **Self-host port — sum-type (option/result) params — ✅ done.** An
      Option/Result `@import` parameter flattens to (disc, payload). A self-host
      enum is a heap box `[tag:i32 @0][payload:i32 @4]` (Some/Ok=0, None/Err=1) —
@@ -610,9 +621,8 @@ world-driven composer (P2) wires it.
      self-hosted backend).
    - Still rejected (next slices): general user `variant`s; sub-4-byte-element
      `list<T>` *results* (`u8[]`/`bool[]`) via a custom provider (the
-     `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); the self-host
-     port of sub-word record *result* fields (the Go dual-layout just landed);
-     bool / nested-composite fields. The multi-component harness
+     `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); bool /
+     nested-composite fields. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
