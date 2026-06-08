@@ -1257,7 +1257,15 @@ function extern_record_param_supported(mod: parser.Module, t: string): boolean {
     return false;
 }
 
-// extern_sum_param_supported is true for an `@import` Option[i32]/Result[i32,i32]
+// extern_record_ret_direct is true for a supported record RESULT with exactly
+// one field. A single-field record flattens to exactly one core value (fits
+// MAX_FLAT_RESULTS=1), so the canonical ABI returns it by value — the import
+// returns the field's i32 directly (no return-area pointer / cabi_realloc), and
+// the wrapper materializes the one-field struct from that value (mirrors the Go
+// ExternRecordResult.Direct path). Multi-field records return indirectly.
+function extern_record_ret_direct(mod: parser.Module, t: string): boolean {
+    return extern_record_param_supported(mod, t) && struct_field_count(mod.structs, t) == 1;
+}
 // parameter (P4c): a sum type whose arm payload(s) are i32/u32. A self-host
 // Option/Result is a heap box `[tag:i32 @0][payload:i32 @4]`; the canonical
 // option/result flattens to (disc, payload).
@@ -1379,7 +1387,11 @@ function extern_imports(mod: parser.Module): string {
                     }
                     sp = sp + 1;
                 }
-                if (is_extern_composite_ret(mod, f.ret_type)) {
+                if (extern_record_ret_direct(mod, f.ret_type)) {
+                    // Single-field record result: returned by value (all
+                    // self-host record fields are i32), no return area.
+                    out = out + " (result i32)))\n";
+                } else if (is_extern_composite_ret(mod, f.ret_type)) {
                     // Composite result: trailing return-area pointer, no result.
                     out = out + " (param i32)))\n";
                 } else {
@@ -1721,6 +1733,29 @@ function extern_wrappers(mod: parser.Module): string {
                 fi = fi + 1;
             }
             out = out + "))\n";
+        } else if (f.import_iface.len() > 0 && extern_record_ret_direct(mod, f.ret_type)) {
+            // single-field record result (P4c): returned by value (one i32),
+            // no return area. The wrapper materializes the one-field self-host
+            // struct (type-id@0, field@+4) from the import's i32 result.
+            out = out + "  (func $" + f.name;
+            var dp: i32 = 0;
+            while (dp < f.params.len()) {
+                out = out + " (param $ep" + i32_to_string(dp) + " " + wat_extern_valtype(f.params[dp].type_name) + ")";
+                dp = dp + 1;
+            }
+            out = out + " (result i32)\n";
+            out = out + "    (local $s i32)\n";
+            out = out + "    (local.set $s (call $__fern_alloc (i32.const 8)))\n";
+            out = out + "    (i32.store (local.get $s) (i32.const " + i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
+            // field @ struct_field_off(0) = the import's by-value i32 result.
+            out = out + "    (i32.store (i32.add (local.get $s) (i32.const " + i32_to_string(struct_field_off(0)) + ")) (call $" + f.name + "__import";
+            var da: i32 = 0;
+            while (da < f.params.len()) {
+                out = out + " (local.get $ep" + i32_to_string(da) + ")";
+                da = da + 1;
+            }
+            out = out + "))\n";
+            out = out + "    (local.get $s))\n";
         } else if (f.import_iface.len() > 0 && extern_record_param_supported(mod, f.ret_type)) {
             // record result (P4c): a multi-field record returns indirectly; the
             // host writes the fields inline into the return area (field i @
