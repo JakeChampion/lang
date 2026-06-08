@@ -285,7 +285,19 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             var sd: parser.StructDecl = s.structs[si];
             var f: i32 = 0;
             while (f < sd.fields.len()) {
-                if (sd.fields[f].name == fa.field) { return sd.fields[f].type_name; }
+                if (sd.fields[f].name == fa.field) {
+                    // Normalise the field's declared type the same way params
+                    // are (build_func_seeded), so a Cell / Map struct field
+                    // dispatches its .get/.set / map methods: a Cell[T] field
+                    // accessed as `s.f.get()` must read back as "cell", not the
+                    // raw "Cell[T]" (which the cell path's `urt == "cell"` check
+                    // would miss → build_func bail). Same for Map[...] fields.
+                    var ftn: string = sd.fields[f].type_name;
+                    if (ftn.len() >= 5 && ftn[0:5] == "Cell[") { return "cell"; }
+                    if (ftn.len() >= 10 && ftn[0:10] == "Map[string") { return "SMap"; }
+                    if (ftn.len() >= 3 && ftn[0:3] == "Map") { return "Map"; }
+                    return ftn;
+                }
                 f = f + 1;
             }
             return "";

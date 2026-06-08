@@ -155,6 +155,10 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		// Receiver methods `function (r: T) m(...)` — receiver as implicit
 		// param 0, `recv.m(args)` → call "T__m" with the receiver first.
 		{"method-basic", "struct Counter { n: i32 } function (c: Counter) get(): i32 { return c.n; } function (c: Counter) plus(d: i32): i32 { return c.n + d; } function main(): i32 { var c = Counter { n: 40 }; return c.get() + c.plus(2) - c.n; }", 42},
+		// A Cell-typed struct field: b.ctr.get()/.set() resolves the "Cell[i32]"
+		// field type to "cell" (the type_of_expr field-normalisation fix that
+		// closed the last whole-compiler build_func holdout, wasm__emit_expr).
+		{"cell-struct-field", "struct Box { ctr: Cell[i32], label: string } function main(): i32 { var b = Box { ctr: cell_new(10), label: \"x\" }; b.ctr.set(b.ctr.get() + 5); return b.ctr.get() + b.label.len(); }", 16},
 		{"method-calls-method", "struct Lex { s: string, i: i32 } function (l: Lex) at_end(): boolean { return l.i >= l.s.len(); } function (l: Lex) cur(): i32 { if (l.at_end()) { return 0 - 1; } return l.s[l.i]; } function main(): i32 { var l = Lex { s: \"AB\", i: 0 }; return l.cur(); }", 65},
 		{"method-chained", "struct Box { v: i32 } function (b: Box) bump(): Box { return Box { v: b.v + 1 }; } function main(): i32 { var b = Box { v: 10 }; var c = b.bump().bump(); return c.v; }", 12},
 		{"method-loop", "struct Lex { s: string, i: i32 } function (l: Lex) at_end(): boolean { return l.i >= l.s.len(); } function (l: Lex) peek(): i32 { return l.s[l.i]; } function (l: Lex) adv(): Lex { return Lex { s: l.s, i: l.i + 1 }; } function main(): i32 { var l = Lex { s: \"hello\", i: 0 }; var sum = 0; while (!l.at_end()) { sum = sum + l.peek(); l = l.adv(); } return sum; }", 532 % 256},

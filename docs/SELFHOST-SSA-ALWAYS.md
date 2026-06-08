@@ -410,17 +410,34 @@ remaining coverage set is **small and enumerated**:
   `print` before them (`write` is trivial — `print` with a no-newline flag;
   `args` needs an argv→`string[]` materialiser over the `_start`-saved vector).
 
-So the honest state: file I/O closed three of the four `main`-cluster items
-(Option/Result, the match-all-return bug, read/write_file), and the
-whole-compiler scan now shows **exactly three holdouts left** (`write`, `args`,
-`wasm__emit_expr`) before per-function coverage is genuinely 100%.
+Those three holdouts have since been closed:
 
-After those: the *linear* per-function retention (build + emit, freed by
-nothing) — Perceus RC (the native backend already has it; the self-host
-runtime stubs it to no-ops — `asm.fern`: "leak-everything bump heap") or a
-streaming/arena scheme — is the memory wall that gates a byte-stable SSA
-self-compile fixpoint (Phase 4's success criterion) even once coverage is
-complete.
+- **`write`** ✅ — a dedicated op → `__fern_ssa_write` (`print` minus the
+  trailing newline).
+- **`args`** ✅ — a dedicated op → `__fern_ssa_args`, materialising the SSA
+  `[argc, strptr…]` array of SSA strings from the argv pointer the SSA
+  `_start` now saves.
+- **`wasm__emit_expr`** ✅ — *not* a missing feature but a `type_of_expr`
+  field-normalisation gap: a Cell-typed **struct field** (`cx.lam_ctr:
+  Cell[i32]`) accessed as `cx.lam_ctr.get()` reported its raw declared type
+  `"Cell[i32]"`, which the cell-method path's `urt == "cell"` check missed →
+  `build_func` bail. `type_of_expr`'s field arm now normalises a field's type
+  the same way params are (`Cell[…]` → `"cell"`, `Map[…]` → `"Map"`/`"SMap"`),
+  so Cell / Map struct fields dispatch their methods. Gated by a
+  `cell-struct-field` case on the x86-64 + arm64 SSA emit matrices.
+
+**`-ssa-scan` over the whole compiler (1505 functions) now reports
+`0 failures, 0 unknown callees` — per-function SSA coverage is genuinely 100%.**
+Every function the self-host compiler defines lowers through `build_func`.
+
+The *only* thing now between here and a byte-stable SSA self-compile fixpoint
+(Phase 4's success criterion) is the **memory wall**: the *linear* per-function
+retention (build + emit, freed by nothing) — Perceus RC (the native backend
+already has it; the self-host runtime stubs it to no-ops — `asm.fern`:
+"leak-everything bump heap") or a streaming/arena scheme. `try_ssa` is
+all-or-nothing per program, so a full SSA self-compile still falls back to the
+AST emitter when it overruns the bootstrap heap — but that is now purely a
+retention problem, not a coverage one.
 
 ### Phase 5 — retire the AST emitters
 
