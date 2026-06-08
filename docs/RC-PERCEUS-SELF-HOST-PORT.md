@@ -704,3 +704,16 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (rc-track + free strings/structs/enums/maps), the wasm backend, and
   the eventual Perceus optimisation passes (move/reuse/precise-drop)
   which all ride on this counting foundation.
+- 2026-06-08: **Phase 3 refinement — freelist class cap 1024 → 65536,
+  both backends.** Array buffers up to 512 KiB now recycle (was 8 KiB),
+  so the self-host's larger token/AST arrays AND their geometric-growth
+  garbage reclaim, not just small arrays — a real peak-memory cut on the
+  self-host's own workload. BSS freelist grows 8 KiB → 512 KiB
+  (zero-page, no file cost). arm64 uses the register form
+  `mov x2/x9,#0x10000; cmp` (a shifted `cmp` immediate may be
+  unsupported by the in-process Mach-O assembler — same class of issue
+  as the `bic` fix). Blocks > 512 KiB still bump-only (a fixed .bss bump
+  heap can't cheaply recycle arbitrarily large blocks; a large-block
+  free-list/first-fit is a possible follow-up). Verified on both
+  backends + both arm64 assemblers: std-test (JSON), bootstrap/fixpoint,
+  reclaim-churn, RC suites — all green, detector 0.
