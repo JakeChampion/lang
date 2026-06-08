@@ -5080,7 +5080,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // internal/codegen/x86_64/x86_64.go).
         s = s.write("__fern_rc_underflow: .quad 0\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_freelist: .skip 8192\n");
+        s = s.write("__fern_freelist: .skip 524288\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost)
         s = s.write("    .section .text\n");
@@ -5095,7 +5095,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %rdx\n");
         s = s.write("    movq %rdi, %rcx\n");
         s = s.write("    shrq $3, %rcx\n");
-        s = s.write("    cmpq $1024, %rcx\n");
+        s = s.write("    cmpq $65536, %rcx\n");
         s = s.write("    jae .Lalloc_nofl\n");
         s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
         s = s.write("    movq (%rdx,%rcx,8), %rax\n");
@@ -5347,7 +5347,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movl $0, -8(%rax)\n");
         s = s.write("    movl -16(%rax), %ecx\n");
         s = s.write("    addq $3, %rcx\n");
-        s = s.write("    cmpq $1024, %rcx\n");
+        s = s.write("    cmpq $65536, %rcx\n");
         s = s.write("    jae .Larrdec_ret\n");
         s = s.write("    leaq -16(%rax), %rdx\n");
         s = s.write("    leaq __fern_freelist(%rip), %r8\n");

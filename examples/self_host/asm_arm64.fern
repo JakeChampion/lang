@@ -4692,7 +4692,7 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         // Phase 3 size-class freelist (mirror of x86-64): head pointers
         // indexed by idx = roundup8(size)/8; <= 8 KiB classes. Pushed by
         // __fern_arr_dec, popped by __fern_alloc before bumping.
-        s = s.write("__fern_freelist: .skip 8192\n");
+        s = s.write("__fern_freelist: .skip 524288\n");
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
         s = s.write("    .text\n");
@@ -4707,7 +4707,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    add x0, x0, #7\n");
         s = s.write("    lsr x3, x0, #3\n");        // idx = roundup8(size)/8
         s = s.write("    lsl x0, x3, #3\n");        // rounded size = idx*8 (avoids bic, unsupported by the in-process arm64-darwin assembler)
-        s = s.write("    cmp x3, #1024\n");
+        s = s.write("    mov x2, #0x10000\n");      // freelist class cap (65536); reg form (shifted cmp imm may be unsupported)
+        s = s.write("    cmp x3, x2\n");
         s = s.write("    b.hs .Lalloc_nofl\n");
         s = s.write("    adrp x1, __fern_freelist\n");
         s = s.write("    add x1, x1, :lo12:__fern_freelist\n");
@@ -5048,7 +5049,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    stur wzr, [x0, #-8]\n");      // clear rc
         s = s.write("    ldur x1, [x0, #-16]\n");      // cap
         s = s.write("    add x1, x1, #3\n");           // idx = cap + 3
-        s = s.write("    cmp x1, #1024\n");
+        s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
+        s = s.write("    cmp x1, x9\n");
         s = s.write("    bhs .Larrdec_ret\n");
         s = s.write("    sub x2, x0, #16\n");          // base = data - 16
         s = s.write("    adrp x3, __fern_freelist\n");
