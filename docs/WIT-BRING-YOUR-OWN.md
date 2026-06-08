@@ -407,7 +407,11 @@ world-driven composer (P2) wires it.
      field, emitting one leaf per inner scalar. A Fern struct field of struct
      type is a *pointer*, so a nested leaf carries `DerefOffset` (the outer field
      offset): the wrapper loads the inner value pointer there, then the leaf at
-     its inner offset. bool, strings, arrays, and a *second* level of nesting are
+     its inner offset. A **`bool` field** is also supported (both directions),
+     treated as an unsigned 8-bit: the Fern bool is 0/1 in a 4-byte slot, read
+     with `i32.load8_u` (low byte) and sized at 1 byte in the canonical memory
+     layout (`externCanonicalFieldSizeAlign`) — see the bool-field test below.
+     strings, arrays, and a *second* level of nesting are
      still deferred — a struct param outside this shape is rejected with a clear
      message. Gated by `TestExternRecordParamCustomProvider` (a `record point
      { x: s32, y: s32 }` summed), `TestExternRecordParamWideCustomProvider` (a
@@ -416,7 +420,9 @@ world-driven composer (P2) wires it.
      `record { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that
      fail under the wrong-width or wrong-sign load), and
      `TestExternRecordParamNestedCustomProvider` (a `record line { p: point,
-     q: point }` flattened to its 4 inner coords).
+     q: point }` flattened to its 4 inner coords). The `bool`-field round-trip
+     (param + result) is gated by `TestExternBoolRecordFieldCustomProvider` (a
+     `record flag { on: bool, n: s32 }` via `mk`/`rd`).
    - **Record (struct) results — ✅ done (Go).** An `@import` extern returning a
      `record` lifts into a Fern struct. A multi-field record flattens to > 1
      core value, so the canonical ABI returns it indirectly through a
@@ -739,11 +745,11 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): nested-record *results*; second-level /
-     deeper nesting; non-uniform /
+   - Still rejected (next slices): the self-host port of bool record fields;
+     nested-record *results*; second-level / deeper nesting; non-uniform /
      multi-payload `variant`s; sub-4-byte-element `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
-     `gMemRealloc` trap analysed above); bool composite fields. The
+     `gMemRealloc` trap analysed above). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
      vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
