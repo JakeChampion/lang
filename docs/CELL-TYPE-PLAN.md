@@ -208,8 +208,13 @@ with `arr.with` / `Cell.set` as the two sanctioned writes.
    in struct fields mutated through params. *Remaining:* `checker.fern`
    E057 parity (a cyclic `Cell[T]` isn't rejected self-host yet; not in the
    differential code set, so no divergence).
-3. **Migrate the array-as-cell idioms** (`lam_ctr`, `lamdefs`, and the
-   handful of `obj.arr[i] = v` mutable-cell sites) to `Cell`.
+3. **Migrate the array-as-cell idioms** to `Cell`. ✅ **`wasm.fern`'s
+   `lam_ctr` / `lamdefs` done** — the lambda emitter's two module-wide
+   shared cells (`lam_ctr: i32[]` → `Cell[i32]`, `lamdefs: string[]` →
+   `Cell[string]`, accessed as `cx.lam_ctr.get()` / `.set()` on `Ctx`
+   fields). Prerequisite was self-host wasm field-access cell dispatch
+   (done). *Remaining:* audit any other `obj.arr[i] = v` mutable-cell
+   sites across the tree before E056.
 4. **Remove `arr[i] = v`** → E056, migrating the remaining *local* array
    element writes to `arr = arr.with(i, v)`. Finishes
    `docs/PURE-COLLECTION-API-PLAN.md` §3a.
