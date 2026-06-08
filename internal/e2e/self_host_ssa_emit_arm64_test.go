@@ -73,6 +73,10 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"strbuf-build", "function main(): i32 { strbuf_reset(); strbuf_append(\"ab\"); strbuf_append(\"cde\"); var s = strbuf_take(); if (s == \"abcde\") { return s.len(); } return 0; }", 5},
 		{"strbuf-reuse", "function main(): i32 { strbuf_reset(); strbuf_append(\"xy\"); var a = strbuf_take(); strbuf_reset(); strbuf_append(\"zzz\"); var b = strbuf_take(); return a.len() * 10 + b.len(); }", 23},
 		{"arith", "function main(): i32 { return 2 + 3 * 4; }", 14},
+		// Option / Result (Some/None/Ok/Err): 2-word tag+payload boxes,
+		// constructed + matched (payload bound from word 1).
+		{"option-result", "function get(b: boolean): Result[i32] { if (b) { return Ok(42); } return Err(7); } function opt(b: boolean): Option[i32] { if (b) { return Some(5); } return None; } function main(): i32 { var r = 0; match (get(true)) { Ok(v) => { r = r + v; }, Err(e) => { r = r + 100 + e; } } match (get(false)) { Ok(v) => { r = r + v; }, Err(e) => { r = r + e; } } match (opt(true)) { Some(x) => { r = r + x; }, None => { r = r + 1000; } } match (opt(false)) { Some(x) => { r = r + x; }, None => { r = r + 9; } } return r; }", 63},
+
 		// A local var shadowing a top-level function name must read the var,
 		// not take the function's address (build_func ExprIdent shadowing).
 		{"local-shadows-fn", "function w(): i32 { return 99; } function main(): i32 { var w = 3; var s = 0; var i = 0; while (i < w) { s = s + i; i = i + 1; } return s + w; }", 6},
