@@ -712,16 +712,18 @@ world-driven composer (P2) wires it.
      indirectly (disc:u8 @0, payload @4); the self-host materializes a payloaded
      user-enum value as a `[struct_id@0][payload@4]` box, so the wrapper maps the
      disc to the matching variant's `struct_id` (`extern_plain_enum_sid`) and
-     stores it with the payload — leak-free, identical to normal variant
-     construction. `extern_variant_result_supported` gates it (every variant a
-     1-field i32/u32 struct — no payloadless cases, since the wrapper always
-     materializes a box) and `is_extern_composite_ret` matches it (trailing
-     return-area pointer). Gated by
-     `TestSelfHostExternVariantResultCustomProvider` (the same `classify:
+     stores it with the payload. `extern_variant_result_supported` now matches
+     the param gate (`extern_variant_param_supported`), so **payloadless variants
+     are allowed** (a mixed `variant`, e.g. `{ some(s32), none }`): a payloadless
+     case gets the same `[struct_id@0][payload@4]` box with an unused payload
+     (tag-correct, match-correct — the payload is never read for it), as on the
+     Go side. `is_extern_composite_ret` matches it (trailing return-area pointer).
+     Gated by `TestSelfHostExternVariantResultCustomProvider` (a `classify:
      func(n: s32) -> grade` over `variant grade { low(s32), mid(s32), high(s32)
-     }`; the Fern side matches and recovers (tag, payload) for all three cases).
-   - Still rejected (next slices): the self-host port of mixed (payloadless-case)
-     `variant` results; non-uniform / multi-payload `variant`s;
+     }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
+     (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
+     none }`, exercising a payloaded + a payloadless case).
+   - Still rejected (next slices): non-uniform / multi-payload `variant`s;
      sub-4-byte-element `list<T>` *results* (`u8[]`/`bool[]`) via a custom
      provider (the `ComposeFromWorldAuto` `gMemRealloc` trap analysed above);
      bool / nested-composite fields. The multi-component harness
