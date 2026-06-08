@@ -300,6 +300,10 @@ func TestSelfHostRcCountingWasm(t *testing.T) {
 		// Array local declared in a not-taken branch: zero-inited slot, the
 		// sweep's dec(0) is a no-op, detector clean.
 		{"branch-local-balanced", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0] + __fern_rc_underflow_count(); } return xs[1] + __fern_rc_underflow_count(); }", 6},
+		// A loop-local array re-bound each iteration is released per-iteration
+		// (StmtVar cow-guarded dec-on-overwrite), not just at function exit —
+		// 1000 rebinds stay value-correct and over-release-detector clean.
+		{"loop-local-rebind-clean", "function gen(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var r: i32[] = gen(8); s = s + r[7]; k = k + 1; } return (s % 100) + __fern_rc_underflow_count(); }", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

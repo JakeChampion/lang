@@ -990,3 +990,20 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   bootstrap-safe. (Loop-local call results — `var r = build()` re-bound
   each iteration — still leak per-iteration; that needs block-scope drops
   / drop-on-last-use, tracked separately.)
+- 2026-06-08: **wasm backend RC — per-iteration release of re-bound array
+  locals (StmtVar dec-on-overwrite).** Closes the loop-local leak noted in
+  the previous slice: a `var r = build()` re-run each loop iteration mapped
+  to one wasm local, and only the final value was swept (at function exit),
+  so every prior iteration's buffer leaked. StmtVar of a swept array local
+  now does the same cow-guarded dec-on-overwrite as StmtAssign — release
+  the slot's prior buffer before storing the new one. Sound because wasm
+  locals are zero-init, so the FIRST binding dec's null (a no-op), and the
+  `i32.ne` cow-guard skips an in-place rebind; a bare-ident alias is still
+  retained. Now every iteration's array is reclaimed as the next is bound
+  (the final one at the exit sweep), keeping a build-in-a-loop's memory
+  bounded. Coverage: `TestSelfHostRcCountingWasm/loop-local-rebind-clean`
+  (1000 rebinds, value-correct + detector 0). Full wasm suite (~98 s)
+  green; bootstrap-safe. With this, wasm array reclamation covers the
+  practical surface: literals, slices, append-built, aliases, call results,
+  construction stores, AND loop/rebind churn. Remaining: Phase 1e
+  (strings / structs / enums / maps) across all backends.
