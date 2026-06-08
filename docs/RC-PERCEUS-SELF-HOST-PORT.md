@@ -864,3 +864,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   dec-on-overwrite, then `__fern_arr_dec` + freelist to flip free ON
   (with return-retain / move-on-return riding on the temp shape already
   in place).
+- 2026-06-08: **wasm backend RC — construction-store incs (struct fields
+  + array-of-arrays).** Storing an EXISTING array reference into a
+  container retains the buffer so the container co-owns it alongside the
+  source local — the soundness prerequisite that lets a later slice free
+  arrays without dangling a stored reference. Wired at the two main
+  construction sites: struct-literal field stores (`H { items: xs }`) and
+  array-of-arrays element stores (`[a, b]`), each emitting
+  `$__fern_rc_inc` when the stored value is a bare-ident array (an
+  existing owner, via `init_is_arr_alias`). A FRESH literal stored
+  (`H { items: [9,8,7] }`) is moved, not inc'd (it arrives at rc 1 and the
+  container takes that reference). Sound by the same property as the
+  counting milestone: an inc only ever fires on a genuine rc-boxed array
+  source. Coverage: `TestSelfHostRcConstructWasm` — struct-field-retained
+  (source no longer unique), array-of-arrays-retained, struct-field-fresh-
+  move (no spurious inc) — each asserting values + detector 0. Full wasm
+  suite (~89 s) green; free still OFF; bootstrap-safe. Remaining
+  construction sites before free can flip on: struct-update base-copy,
+  tuple elements, enum / Option / Result payloads, and reassign
+  dec-on-overwrite; then `__fern_arr_dec` + freelist + return-retain /
+  move-on-return (the `$__retv_*` temp shape is already in place).

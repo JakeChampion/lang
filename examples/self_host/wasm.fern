@@ -3145,6 +3145,13 @@ function emit_array_literal_kind(a: parser.ExprArray, kind: string, cx: Ctx, dep
         else if (kind == "f64") { ev = emit_f64(a.elements[i], cx, depth + 1); }
         else { ev = emit_expr(a.elements[i], cx, depth + 1); }
         s = s + " (" + sop + " (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(8 + i * slot) + ")) " + ev + ")";
+        // Perceus construction-store inc: an array-of-arrays element that
+        // is an existing array reference is retained (the outer array now
+        // co-owns it alongside the source local). Only the i32-slot path
+        // can hold a pointer element (i64/f64 elements are scalars).
+        if (kind == "i32" && init_is_arr_alias(a.elements[i], cx.arr_src)) {
+            s = s + " (drop (call $__fern_rc_inc " + emit_expr(a.elements[i], cx, depth + 1) + "))";
+        }
         i = i + 1;
     }
     s = s + " (local.get " + ap + "))";
@@ -3664,6 +3671,12 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 var idx: i32 = struct_field_index(cx.structs, sl.type_name, sl.field_names[i]);
                 if (idx >= 0) {
                     s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(struct_field_off(idx)) + ")) " + emit_expr(sl.field_values[i], cx, depth + 1) + ")";
+                    // Perceus construction-store inc: storing an existing
+                    // array reference into a struct field retains the buffer
+                    // (the struct now co-owns it alongside the source local).
+                    if (init_is_arr_alias(sl.field_values[i], cx.arr_src)) {
+                        s = s + " (drop (call $__fern_rc_inc " + emit_expr(sl.field_values[i], cx, depth + 1) + "))";
+                    }
                 }
                 i = i + 1;
             }
