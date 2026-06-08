@@ -184,6 +184,9 @@ function main(): i32 {
     // ret (x30) -> 0xD65F03C0 -> C0 03 5F D6
     var k: i32[] = arm64_ret([], arm64_lr());
     if (k[0] != 192 || k[1] != 3 || k[2] != 95 || k[3] != 214) { return 11; }
+    // blr x1 (indirect call) -> 0xD63F0020 -> 20 00 3F D6
+    var l: i32[] = arm64_blr([], arm64_x1());
+    if (l[0] != 32 || l[1] != 0 || l[2] != 63 || l[3] != 214) { return 12; }
     return 0;
 }
 `

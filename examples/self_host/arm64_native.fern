@@ -161,6 +161,16 @@ function arm64_ret(buf: i32[], rn: i32): i32[] {
     return arm64_le32(buf, arm64_ret_word(rn));
 }
 
+// arm64_blr_word encodes `blr Xn` (branch-with-link to register — the
+// indirect call a closure / function-pointer call lowers to) ->
+// 0xD63F0000 | Rn<<5.
+function arm64_blr_word(rn: i32): i64 {
+    return 0xd63f0000 | (((rn & 31) as i64) << 5);
+}
+function arm64_blr(buf: i32[], rn: i32): i32[] {
+    return arm64_le32(buf, arm64_blr_word(rn));
+}
+
 // ---- compare (subs to XZR) ----
 
 // arm64_cmpreg_word encodes `cmp Xn, Xm` — AArch64 spells it
@@ -1296,6 +1306,10 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "bl") {
         return arm64_asm_bl(a, ops[0]);
     }
+    if (mnem == "blr") {
+        a = Arm64Asm { ...a, code: arm64_blr(a.code, arm64_gas_reg(ops[0])) };
+        return a;
+    }
     if (mnem == "cbz") {
         return arm64_asm_cbz(a, arm64_gas_reg(ops[0]), ops[1]);
     }
@@ -1608,7 +1622,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "add" || mnem == "sub" || mnem == "cmp" || mnem == "neg" || mnem == "mul") { return true; }
     if (mnem == "ldr" || mnem == "str" || mnem == "ldur" || mnem == "stur") { return true; }
     if (mnem == "stp" || mnem == "ldp") { return true; }
-    if (mnem == "b" || mnem == "bl" || mnem == "ret" || mnem == "svc") { return true; }
+    if (mnem == "b" || mnem == "bl" || mnem == "blr" || mnem == "ret" || mnem == "svc") { return true; }
     if (mnem == "cbz" || mnem == "cbnz" || mnem == "tbz" || mnem == "tbnz") { return true; }
     if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw") { return true; }
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
