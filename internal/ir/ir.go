@@ -819,6 +819,39 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 	return &ExternEnumParam{RemapDisc: false, PayloadType: payload, PayloadOffset: offs[0]}, true
 }
 
+// externVariantResultLayout describes a general user-enum `@import` RESULT that
+// flattens like Result to (disc, payload) and is returned indirectly. It accepts
+// a user enum where *every* variant carries exactly one scalar payload, all the
+// same kind+width T (no payloadless variants — those would have to materialize a
+// sentinel rather than the always-a-box the result wrapper emits; deferred). The
+// uniform payload makes the canonical join T, so it reuses
+// buildExternEnumResultWrapper (which materializes a Fern enum box `[rc][tag@0]
+// [payload@off]`) with no discriminant remap — matching how a payloaded user-enum
+// variant is represented. Option/Result are handled by externEnumParamLayout.
+func externVariantResultLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnumParam, bool) {
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return nil, false
+	}
+	ed, ok := info.Enums[et.Name]
+	if !ok || len(ed.Variants) == 0 {
+		return nil, false
+	}
+	var payload ast.Type
+	for _, v := range ed.Variants {
+		if len(v.Payloads) != 1 || !externRecordFieldSupported(v.Payloads[0]) {
+			return nil, false // payloadless / multi-payload / unsupported — deferred
+		}
+		if payload == nil {
+			payload = v.Payloads[0]
+		} else if !externScalarTypeEq(payload, v.Payloads[0]) {
+			return nil, false // non-uniform payloads — deferred
+		}
+	}
+	offs, _ := payloadLayout([]ast.Type{payload}, 1, ptrW)
+	return &ExternEnumParam{RemapDisc: false, PayloadType: payload, PayloadOffset: offs[0]}, true
+}
+
 // externPlainEnumParam reports whether t is a "plain" enum — a user enum (named
 // in info.Enums) with at least one variant and *every* variant payloadless (a
 // C-style enum). Such an enum maps to a WIT `enum`, which flattens to a single
@@ -1267,6 +1300,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				ef.ResultEnum = re
 			} else if externPlainEnumParam(fn.ReturnType, info) {
 				ef.ResultPlainEnumN = len(info.Enums[fn.ReturnType.(ast.EnumType).Name].Variants)
+			} else if re, ok := externVariantResultLayout(fn.ReturnType, info, ptrW); ok {
+				ef.ResultEnum = re
 			}
 			out.Externs = append(out.Externs, ef)
 			continue
