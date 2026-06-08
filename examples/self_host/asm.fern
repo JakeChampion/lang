@@ -2282,6 +2282,44 @@ function emit_call(c: parser.ExprCall, s: asmcore.EmitState): asmcore.EmitState 
     return s;
 }
 
+// emit_divmod emits `/` (is_mod=false) or `%` (is_mod=true) with the
+// dividend already in %rax and the divisor in %rcx. UNSIGNED operands must
+// use the unsigned `divq` (not the signed `cqto; idivq`), and u32 operands
+// are zero-extended first: a u32 lives in a 64-bit register that can carry
+// garbage in its high 32 bits (e.g. `range` in std/math.random_int), and a
+// 64-bit signed/garbage-divisor divide then returns a wrong result — an
+// intermittent, heap-corrupting bug (random_int returned out-of-range
+// values, producing a negative-length string slice that crashed
+// __fern_str_concat). See std/math.random_int's note on the u32 modulo path.
+function emit_divmod(b: parser.ExprBinary, s: asmcore.EmitState, is_mod: boolean): asmcore.EmitState {
+    var lt: asmcore.Ty = asmcore.infer_expr_type(b.left, s);
+    var rt: asmcore.Ty = asmcore.infer_expr_type(b.right, s);
+    // Normalize 32-bit operands to a clean 64-bit value first. A 32-bit
+    // value lives in a 64-bit register that can carry GARBAGE in its high
+    // 32 bits (the codegen doesn't keep them extended), and a 64-bit
+    // divide (idivq/divq) over that garbage returns a wrong quotient /
+    // remainder. Sign-extend i32 (movslq), zero-extend u32 (movl); 64-bit
+    // types (i64/u64/usize) already fill the register and are left alone.
+    // This was an intermittent, heap-corrupting bug: `iter % n` and
+    // random_int's `u % range` returned out-of-range values that produced
+    // negative-length string slices and crashed __fern_str_concat.
+    if (asmcore.ty_is_u32(lt)) { s = s.write("    movl %eax, %eax\n"); }
+    else if (asmcore.ty_is_i32(lt)) { s = s.write("    movslq %eax, %rax\n"); }
+    if (asmcore.ty_is_u32(rt)) { s = s.write("    movl %ecx, %ecx\n"); }
+    else if (asmcore.ty_is_i32(rt)) { s = s.write("    movslq %ecx, %rcx\n"); }
+    if (asmcore.is_unsigned_tag(lt) || asmcore.is_unsigned_tag(rt)) {
+        s = s.write("    xorq %rdx, %rdx\n");
+        s = s.write("    divq %rcx\n");             // unsigned
+    } else {
+        s = s.write("    cqto\n");
+        s = s.write("    idivq %rcx\n");            // signed
+    }
+    if (is_mod) {
+        s = s.write("    movq %rdx, %rax\n");
+    }
+    return s;
+}
+
 function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
     match (e) {
         parser.ExprNumber(n) => {
@@ -2473,15 +2511,9 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             } else if (b.op == "*") {
                 s = s.write("    imulq %rcx, %rax\n");
             } else if (b.op == "/") {
-                // idivq: dividend in rdx:rax (sign-extended via
-                // cqto), divisor in operand. Result quotient in
-                // rax, remainder in rdx.
-                s = s.write("    cqto\n");
-                s = s.write("    idivq %rcx\n");
+                s = emit_divmod(b, s, false);
             } else if (b.op == "%") {
-                s = s.write("    cqto\n");
-                s = s.write("    idivq %rcx\n");
-                s = s.write("    movq %rdx, %rax\n");
+                s = emit_divmod(b, s, true);
             } else if (b.op == "&") {
                 s = s.write("    andq %rcx, %rax\n");
             } else if (b.op == "|") {
@@ -4077,6 +4109,14 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %r13\n");
         s = s.write("    pushq %r14\n");
         s = s.write("    pushq %r15\n");
+        // %rbx is callee-saved (SysV) and used below as the result data
+        // buffer — save/restore it or the caller's live %rbx is trashed
+        // (the `subq $8` keeps %rsp 16-byte aligned for the __fern_alloc
+        // calls). Was the cause of an intermittent heap corruption once
+        // the self-host register allocator began holding values in %rbx
+        // across str_concat calls.
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    subq $8, %rsp\n");
         s = s.write("    movq %rdi, %r12\n");   // box A
         s = s.write("    movq %rsi, %r13\n");   // box B
         s = s.write("    movq 8(%r12), %r14\n");// lenA
@@ -4120,6 +4160,8 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %r14, %rcx\n");
         s = s.write("    addq %r15, %rcx\n");
         s = s.write("    movq %rcx, 8(%rax)\n");
+        s = s.write("    addq $8, %rsp\n");
+        s = s.write("    popq %rbx\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
         s = s.write("    popq %r13\n");
