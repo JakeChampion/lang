@@ -305,17 +305,26 @@ frontend fixes (param-spread, extern arrays, …) on top of the `exit` and
 `strbuf_take`): a global amortised-O(1) output accumulator used by `asmcore`
 (the shared frontend) and the AST emitters.
 
-`strbuf` is the heavy one, and the last piece:
-- It needs a backend runtime (a global buffer + reset/append/take), so it
-  can't be a pure-Fern injected helper — the SSA subset has no global
-  mutable state.
-- The AST runtime (`asm.fern`'s `__fern_strbuf_*`) uses the 16-byte-box
-  string ABI (`{data@0, len@8}`); the SSA backends use the `[len, b0, …]`
-  8-byte-word layout, so the runtime must be **re-derived** for SSA (x86-64
-  + arm64), not copied. wasm would reject it (`inst_supported`) and fall
-  back, as for `f64_bits`.
-- Once it lands, the whole compiler should compile through SSA on
-  x86-64/arm64 — the Phase 4 fixpoint — modulo validating byte-stability.
+**`strbuf` ✅ landed** — the last *coverage* blocker. A dedicated op each
+(`strbuf_reset` / `strbuf_append` / `strbuf_take`) with a re-derived SSA
+runtime: a global byte buffer in `.bss` (256 MiB, demand-zero) + a length;
+`append` copies a source string's bytes out of the `[len, byte-per-word]`
+layout, `take` materialises a fresh `[len, bytes…]` string and clears the
+buffer. x86-64 + arm64 emit it (validated under qemu); wasm rejects it via
+`inst_supported` → AST fallback (it can't be a pure-Fern helper — the SSA
+subset has no global mutable state). Gated by `strbuf-build` / `strbuf-reuse`
+cases on both native backends.
+
+**Coverage is now complete.** With `strbuf` in, the whole `fern.fern` no
+longer trips any `try_ssa` bail — `build_func` succeeds on every function and
+every callee resolves. The all-or-nothing gate now *commits* the full
+compiler to SSA instead of falling back. Compiling it that way immediately
+hits the **cumulative-allocation wall**: the SSA pipeline's bump allocations
+exceed the 1 GiB `cmd/fern` bootstrap heap (exit 137 at ~0.85 GiB resident).
+So Phase 4 has flipped from a *coverage* problem to purely a *memory* one —
+exactly the no-GC retention below. (Small programs are unaffected and all
+SSA suites stay green; only the whole-compiler self-compile is large enough
+to hit it, and no test exercises that path.)
 
 Still open: the *linear* per-function retention (build + emit, freed by
 nothing) — Perceus RC (the native backend already has it; the self-host

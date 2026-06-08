@@ -69,6 +69,9 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"exit-computed", "function main(): i32 { var n = 3 + 4; exit(n); return 1; }", 7},
 		// f64_bits / f64_from_bits — bit reinterpret f64<->i64 (8-byte pass-through).
 		{"f64-bits-roundtrip", "function main(): i32 { var x = 3.5; var b = f64_bits(x); var y = f64_from_bits(b); if (y == 3.5) { return 7; } return 0; }", 7},
+		// strbuf — global string builder (reset / append / take).
+		{"strbuf-build", "function main(): i32 { strbuf_reset(); strbuf_append(\"ab\"); strbuf_append(\"cde\"); var s = strbuf_take(); if (s == \"abcde\") { return s.len(); } return 0; }", 5},
+		{"strbuf-reuse", "function main(): i32 { strbuf_reset(); strbuf_append(\"xy\"); var a = strbuf_take(); strbuf_reset(); strbuf_append(\"zzz\"); var b = strbuf_take(); return a.len() * 10 + b.len(); }", 23},
 		{"arith", "function main(): i32 { return 2 + 3 * 4; }", 14},
 		{"locals", "function main(): i32 { var x = 10; var y = x - 3; return y * 2; }", 14},
 		{"division", "function main(): i32 { return 84 / 2; }", 42},

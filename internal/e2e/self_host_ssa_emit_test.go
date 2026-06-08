@@ -56,6 +56,10 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// f64_bits / f64_from_bits — bit reinterpret f64<->i64 (a pure 8-byte
 		// pass-through). Round-trips a float through its bit pattern.
 		{"f64-bits-roundtrip", "function main(): i32 { var x = 3.5; var b = f64_bits(x); var y = f64_from_bits(b); if (y == 3.5) { return 7; } return 0; }", 7},
+		// strbuf — the global string builder (reset / append / take). Build a
+		// string across appends; reuse the buffer across takes with a reset.
+		{"strbuf-build", "function main(): i32 { strbuf_reset(); strbuf_append(\"ab\"); strbuf_append(\"cde\"); var s = strbuf_take(); if (s == \"abcde\") { return s.len(); } return 0; }", 5},
+		{"strbuf-reuse", "function main(): i32 { strbuf_reset(); strbuf_append(\"xy\"); var a = strbuf_take(); strbuf_reset(); strbuf_append(\"zzz\"); var b = strbuf_take(); return a.len() * 10 + b.len(); }", 23},
 		{"arith", "function main(): i32 { return 2 + 3 * 4; }", 14},
 		{"parens", "function main(): i32 { return (1 + 2) * 3; }", 9},
 		{"locals", "function main(): i32 { var x = 10; var y = x - 3; return y * 2; }", 14},
