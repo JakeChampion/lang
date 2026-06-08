@@ -3399,11 +3399,23 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             }
             if (target_is_arr) {
                 s = s.mark_heap();
+                // Cow-aware dec (Phase 3 prep): skip the release when the
+                // new value IS the old value the slot held — i.e. an
+                // in-place mutator (`xs = xs.append(v)` growing in place)
+                // returned the same buffer. Releasing it then would
+                // over-count (the buffer is still live as the new value).
+                // Only release when the RHS produced a DIFFERENT object.
+                var skip_lbl: asmcore.LabelOut = asmcore.fresh_label(s);
+                s = skip_lbl.state;
+                s = s.write("    movq " + asmcore.i32_to_string(off) + "(%rbp), %rcx\n");  // OLD value
+                s = s.write("    cmpq %rax, %rcx\n");
+                s = s.write("    je " + skip_lbl.name + "\n");
                 s = s.write("    pushq %rax\n");            // save new value across the dec
-                s = s.write("    pushq " + asmcore.i32_to_string(off) + "(%rbp)\n");  // OLD value as dec arg
+                s = s.write("    pushq %rcx\n");            // OLD value as dec arg
                 s = s.write("    call __fn___fern_rc_dec\n");
                 s = s.write("    addq $8, %rsp\n");         // pop dec arg
                 s = s.write("    popq %rax\n");             // restore new value
+                s = s.write(skip_lbl.name + ":\n");
             }
             s = s.write("    movq %rax, " + asmcore.i32_to_string(off) + "(%rbp)\n");
             return s;

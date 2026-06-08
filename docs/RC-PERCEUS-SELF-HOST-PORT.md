@@ -517,3 +517,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   wasm backend (`wasm.fern`), Phase 1e (strings/structs/enums/closures/
   tuples), and Phase 3 (freelist + free, after the self-reassign drift
   fix) — the reclamation win.
+- 2026-06-08: **Phase 3 prep (cow-aware dec-on-overwrite), x86-64 +
+  arm64 — SHIPPED.** Fixed the self-reassign rc drift on both backends:
+  `StmtAssign`'s dec-on-overwrite now SKIPS the release when the new
+  value equals the old value the slot held (`cmpq;je` on x86-64,
+  `cmp;b.eq` on arm64). This is the in-place-mutator case — e.g.
+  `xs = xs.append(v)` growing within capacity returns the SAME buffer,
+  which is still live, so releasing it would over-count. A genuine
+  reassignment to a DIFFERENT buffer still releases the old. Measured:
+  a 20-iteration `xs = xs.append(i)` loop went from 4 over-releases to
+  **0** (the native drift audit's headline case). Tests:
+  `TestSelfHostRcSelfMutateX86_64` (self-append-no-underflow / values /
+  reassign-different-clean) + `TestSelfHostRcArm64` self-append cases
+  (under qemu). Full suites + byte-identical bootstrap/fixpoint green on
+  both backends. This removes the last known benign drift, so the
+  over-release detector is now clean across ordinary code AND
+  self-mutation — the go/no-go signal for flipping `free` on. Next:
+  Phase 3 proper — a size-class freelist + flip `__fern_free` and the
+  rc==1 free path on (array buffers reclaimed via __fern_arr_dec / the
+  drop helpers), gated on the corpus-wide clean detector.
