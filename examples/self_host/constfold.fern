@@ -132,7 +132,8 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             return parser.ExprLambda {
                 params: lm.params,
                 ret_type: lm.ret_type,
-                body: fold_block(lm.body)
+                body: fold_block(lm.body),
+                is_use_cb: lm.is_use_cb
             };
         },
         parser.ExprUnknown(_) => { return e; },

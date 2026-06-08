@@ -53,7 +53,15 @@ pub struct ExprArray { elements: Expr[] }
 // b: T): U { body }` — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
 // just builds the AST node.
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[] }
+// `is_use_cb` marks the continuation lambda the parser synthesises from a
+// `use x [: T] <- f(…);` desugar (the rest of the block becomes its body,
+// and it's appended as f's last argument). The checker reads it to (a) skip
+// the E038 argument-type check for this lambda (its type intentionally
+// doesn't match the callback parameter — Go models it as a separate
+// synthesised FuncDecl, also not arg-checked) and (b) run the E032 `use`
+// binding-type inference when the binding had no `: T` annotation (signalled
+// by the param type_name sentinel `__use_infer`). Codegen ignores it.
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], is_use_cb: boolean }
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
 // fixed-arity / heterogeneous; arrays are homogeneous and
@@ -333,7 +341,12 @@ function e_field_access_at(obj: Expr, field: string, line: i32, col: i32): Expr 
     return ExprFieldAccess { obj: obj, field: field, line: line, col: col };
 }
 function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
-    return ExprLambda { params: params, ret_type: ret_type, body: body };
+    return ExprLambda { params: params, ret_type: ret_type, body: body, is_use_cb: false };
+}
+// e_lambda_use_cb builds the continuation lambda for a `use` desugar; see
+// ExprLambda.is_use_cb.
+function e_lambda_use_cb(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
+    return ExprLambda { params: params, ret_type: ret_type, body: body, is_use_cb: true };
 }
 function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 
@@ -1771,6 +1784,55 @@ function parse_stmt(p: Par): StmtResult {
         p = fb.par;
         return StmtResult { par: p, stmt: s_for(fvar, fiter.expr, fb.body) };
     }
+    // `use IDENT [: TYPE] <- EXPR;` — sequencing sugar. EXPR must be a
+    // call; the rest of the enclosing block becomes a continuation lambda
+    // bound to IDENT, appended as EXPR's last argument, and the whole thing
+    // is returned (mirroring the Go parser's parseUse, which synthesises a
+    // `__use_N` callback FuncDecl). `<-` lexes as `<` then `-`. When the
+    // `: TYPE` annotation is omitted, the continuation param carries the
+    // `__use_infer` sentinel so the checker runs E032 binding-type
+    // inference; the lambda is flagged is_use_cb so its argument-type check
+    // (E038) is skipped. Like let-else, no new AST node — this desugars to
+    // shapes every backend already compiles.
+    if (kw == "use") {
+        var uline: i32 = p.peek_line();
+        var ucol: i32 = p.peek_col();
+        p = p.advance();  // consume `use`
+        var ubind: string = p.peek_ident();
+        if (ubind.len() > 0) { p = p.advance(); }
+        var utype: string = "__use_infer";
+        if (p.peek_punct() == ":") {
+            p = p.advance();
+            var utr: TypeNameResult = parse_type_name(p);
+            p = utr.par;
+            utype = utr.name;
+        }
+        if (p.peek_punct() == "<") { p = p.advance(); }
+        if (p.peek_punct() == "-") { p = p.advance(); }
+        var usrc: ExprResult = parse_expr(p);
+        p = usrc.par;
+        if (p.peek_punct() == ";") { p = p.advance(); }
+        var ubody: Stmt[] = [];
+        while (p.peek_punct() != "}" && !p.at_end()) {
+            var ur: StmtResult = parse_stmt(p);
+            if (ur.par.pos == p.pos) { p = p.advance(); continue; }
+            p = ur.par;
+            ubody = ubody.append(ur.stmt);
+        }
+        var uparams: ParamDecl[] = [ParamDecl { name: ubind, type_name: utype, own: false }];
+        var ucb: Expr = e_lambda_use_cb(uparams, "", ubody);
+        match (usrc.expr) {
+            ExprCall(uc) => {
+                var nargs: Expr[] = uc.args;
+                nargs = nargs.append(ucb);
+                var ucall: Expr = ExprCall { callee: uc.callee, args: nargs, line: uc.line, col: uc.col, type_argc: uc.type_argc };
+                return StmtResult { par: p, stmt: s_return_at(ucall, uline, ucol) };
+            },
+            _ => {
+                return StmtResult { par: p, stmt: s_return_at(usrc.expr, uline, ucol) };
+            }
+        }
+    }
     // `let` and `var` introduce a binding the same way here — the
     // self-host compiler doesn't track the immutability distinction
     // (the Go checker enforces it), so both parse to the same StmtVar.
@@ -3069,7 +3131,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         },
         ExprLambda(lm) => {
             var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins);
-            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: lm.ret_type, body: bodyr.rstmts }, rins: bodyr.rins3 };
+            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: lm.ret_type, body: bodyr.rstmts, is_use_cb: lm.is_use_cb }, rins: bodyr.rins3 };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -3539,7 +3601,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
                 nparams = nparams.append(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own });
                 pi = pi + 1;
             }
-            return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts }, rins: pcur };
+            return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts, is_use_cb: lm.is_use_cb }, rins: pcur };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }

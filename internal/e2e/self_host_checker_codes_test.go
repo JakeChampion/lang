@@ -76,6 +76,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E025": true, // switch on float / case value type mismatch
 	"E022": true, // if-let / let-else source not an enum; let-else else must diverge
 	"E057": true, // cell_new(v) element type must be a scalar or string
+	"E032": true, // use-binding type can't be inferred from the source call
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -533,6 +534,22 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cellnew-array-bad", "function main(): i32 { var a: i32[] = [1]; var c = cell_new(a); return 0; }\n", []string{"E057"}},
 		{"cellnew-tuple-bad", "function main(): i32 { var t = (1, 2); var c = cell_new(t); return 0; }\n", []string{"E057"}},
 		{"cellnew-nested-bad", "function main(): i32 { var c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
+		// E032: `use x [: T] <- f(…);` desugars (parser) to a continuation
+		// lambda appended as f's last arg + a `return f(…, cb);`. When the
+		// binding has no `: T`, the type is inferred from f's signature —
+		// f's last parameter must be a function (the callback). The checker
+		// flags E032 when that inference can't be pinned: the callee isn't a
+		// bare identifier, has no signature (unknown function — also E001),
+		// or its last parameter isn't a function (the appended cb then makes
+		// the call over-arity — also E004). The continuation lambda is typed
+		// `unknown` so it never draws a spurious E038. The self-host can't
+		// recover the *bound* type (it coarsens function types to "fn"), but
+		// E032 only needs the failure signal, so a function-typed last param
+		// stays quiet — matching the Go checker. Cross-checked against Go.
+		{"use-unknown-callee", "function g(): i32 { use x <- nope(1); return 0; }\nfunction main(): i32 { return g(); }\n", []string{"E001", "E032"}},
+		{"use-last-param-not-func", "function f(a: i32): i32 { return a; }\nfunction g(): i32 { use x <- f(1); return 0; }\nfunction main(): i32 { return g(); }\n", []string{"E004", "E032"}},
+		{"use-infer-ok", "function withResource(cb: (i32) => i32): i32 { return cb(42); }\nfunction g(): i32 { use x <- withResource(); return 0; }\nfunction main(): i32 { return g(); }\n", nil},
+		{"use-annotated-ok", "function withResource(cb: (i32) => i32): i32 { return cb(42); }\nfunction g(): i32 { use x: i32 <- withResource(); return 0; }\nfunction main(): i32 { return g(); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

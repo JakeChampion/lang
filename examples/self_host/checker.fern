@@ -263,7 +263,14 @@ function as_cast_allowed(src: Type, tgt: Type): boolean {
 // the module, then read at every ExprCall site. ret_type is a
 // Type (post type-name resolution); param_types parallels the
 // FuncDecl's params in declaration order.
-pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32 }
+// param_type_names keeps each parameter's raw type-name spelling
+// alongside the resolved param_types. It's needed where the resolved
+// type is too coarse: a function-typed parameter `(T,…) => R` is parsed
+// to the spelling "fn" (its param/return types discarded), which resolves
+// to `unknown` — indistinguishable from any other unresolved type. The
+// E032 `use` inference reads these spellings to tell "the callee's last
+// parameter is a function" (spelling "fn") from "isn't a function".
+pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32, param_type_names: string[] }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -529,7 +536,8 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
     // Sentinel: empty name + empty param list + unknown ret_type
     // tells callers the name isn't a function.
     var empty: Type[] = [];
-    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0 };
+    var empty_names: string[] = [];
+    return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, param_type_names: empty_names };
 }
 
 function (s: Scope) lookup_struct(name: string): StructSig {
@@ -1113,6 +1121,13 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                 bi = bi + 1;
             }
             check_block(lm.body, body_scope);
+            // A `use` continuation lambda's type intentionally doesn't
+            // match the callback parameter it's appended to (the Go
+            // desugar models it as a separate synthesised FuncDecl, not an
+            // arg-checked value). Typing it `unknown` makes the call-arg
+            // E038 check skip it (E038 only fires for a known arg type),
+            // matching the Go checker, which never arg-checks the callback.
+            if (lm.is_use_cb) { return t_unknown("use continuation lambda"); }
             return t_func(pts, rt);
         },
         parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
@@ -1429,16 +1444,19 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
         // Skip receiver methods — they live in MethodSig table.
         if (fd.receiver_name.len() > 0) { i = i + 1; continue; }
         var pts: Type[] = [];
+        var ptns: string[] = [];
         var j: i32 = 0;
         while (j < fd.params.len()) {
             pts = pts.append(type_from_name_with_structs_unions(fd.params[j].type_name, structs, unions));
+            ptns = ptns.append(fd.params[j].type_name);
             j = j + 1;
         }
         out = out.append(FuncSig {
             name: fd.name,
             param_types: pts,
             ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions),
-            type_param_count: fd.type_param_count
+            type_param_count: fd.type_param_count,
+            param_type_names: ptns
         });
         i = i + 1;
     }
@@ -2915,6 +2933,56 @@ function mlit_is_base(e: parser.Expr): boolean {
     return false;
 }
 
+// use_infer_diags emits E032 for a `use x <- f(…);` whose binding had no
+// `: TYPE` annotation and whose source call can't supply one. The parser
+// appends the continuation lambda (is_use_cb, param sentinel
+// `__use_infer`) as the call's last argument, so this fires only on such a
+// call. Mirrors the Go checker's inferUseParam: the callee must be a bare
+// identifier with a signature whose last parameter is a function (the
+// callback). The self-host coarsens function types to the spelling "fn"
+// (param/return types discarded), so it can detect "last param is a
+// function" but not the bound type itself — which is all E032 (a failure
+// diagnostic) needs: on a function-typed last param it assumes inference
+// would succeed and stays quiet, matching Go's no-error path.
+function use_infer_diags(c: parser.ExprCall, s: Scope): Diag[] {
+    var out: Diag[] = [];
+    var n: i32 = c.args.len();
+    if (n == 0) { return out; }
+    var needs: boolean = false;
+    match (c.args[n - 1]) {
+        parser.ExprLambda(lm) => {
+            if (lm.is_use_cb && lm.params.len() == 1 && lm.params[0].type_name == "__use_infer") {
+                needs = true;
+            }
+        },
+        _ => { }
+    }
+    if (!needs) { return out; }
+    var cname: string = "";
+    var is_ident: boolean = false;
+    match (c.callee) {
+        parser.ExprIdent(id) => { cname = id.name; is_ident = true; },
+        _ => { }
+    }
+    if (!is_ident) {
+        out = out.append(dg_at("E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation", c.line, c.col));
+        return out;
+    }
+    var sig: FuncSig = s.lookup_sig(cname);
+    if (sig.name.len() == 0 || sig.param_type_names.len() == 0) {
+        out = out.append(dg_at("E032", "use: callee \"" + cname + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
+        return out;
+    }
+    // The callback the parser appended is the EXTRA last argument; the
+    // callee's own last DECLARED parameter is the one that must be a
+    // function (spelling "fn").
+    var last_pt: string = sig.param_type_names[sig.param_type_names.len() - 1];
+    if (last_pt != "fn") {
+        out = out.append(dg_at("E032", "use: callee \"" + cname + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
+    }
+    return out;
+}
+
 function call_diags(e: parser.Expr, s: Scope): Diag[] {
     var out: Diag[] = [];
     match (e) {
@@ -2953,6 +3021,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             }
             var i: i32 = 0;
             while (i < c.args.len()) { out = append_diags(out, call_diags(c.args[i], s)); i = i + 1; }
+            // E032: a `use x <- f(…);` with no `: TYPE` annotation infers the
+            // binding type from the source call's signature — the callee's
+            // last parameter must be a function whose first parameter is the
+            // bound type. The parser appends the continuation lambda (flagged
+            // is_use_cb, param sentinel `__use_infer`) as the call's last arg;
+            // here we re-derive that inference and report E032 at the call
+            // when it can't be pinned, mirroring the Go checker's
+            // inferUseParam. (An explicit annotation skips this — its param
+            // type isn't the sentinel.)
+            out = append_diags(out, use_infer_diags(c, s));
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     // E048: a field assignment `obj.field = v` is desugared

@@ -1094,15 +1094,28 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   defensively in `stmts_call_diags` but effectively **unreachable**: an
   enum-typed scrutinee always resolves to a registered union sig, so the
   "enum decl missing" branch can't fire. No corpus case possible.
-- **E032** (`use` binding-type inference failure) — the self-host parser
-  has no `use` support; porting it means replicating the whole desugar
-  (rest-of-block → a synthesised callback closure appended as the source
-  call's last arg). E032 is also never isolable — in every real failure
-  case it co-fires with E004 (the desugar makes a malformed-arity call),
-  E001 (unknown callee) or E038 (callback arg type) — so a differential
-  case can't pin it alone. (Probing this surfaced + fixed a Go-checker
+- **E032** (`use` binding-type inference failure) — **done.** The
+  self-host parser now desugars `use x [: T] <- f(…);` (rest-of-block → a
+  continuation lambda appended as f's last arg + `return f(…, cb);`),
+  mirroring the Go parser's `__use_N` callback synthesis — no new AST node
+  (every backend already compiles the call+lambda shape; `use` appears in
+  no compiled source, so the fixpoint stays byte-identical). The lambda is
+  flagged `ExprLambda.is_use_cb`, which makes the checker (a) type it
+  `unknown` so it never draws a spurious E038 (Go never arg-checks the
+  callback) and (b) run E032 inference when the binding had no `: T`
+  (param sentinel `__use_infer`). E032 is never isolable — it always
+  co-fires with E004 (over-arity call) or E001 (unknown callee), both of
+  which the self-host already emits through the same desugared shape, so
+  the code *sets* match. The self-host coarsens function types to the
+  spelling `"fn"` (param/return types discarded), so it can't recover the
+  bound type — but E032 is a *failure* signal, so a function-typed last
+  param (`"fn"`) just stays quiet, matching Go's no-error path;
+  `FuncSig.param_type_names` carries the spellings the resolved
+  `param_types` lose. (Probing this earlier surfaced + fixed a Go-checker
   nil-pointer panic formatting the un-inferred callback type for E038 —
-  see `ast.FuncType.String` and `TestUseWithoutAnnotationDoesNotPanicFormatting`.)
+  see `ast.FuncType.String`, #2417.) Gated by corpus cases
+  `use-unknown-callee`, `use-last-param-not-func`, `use-infer-ok`,
+  `use-annotated-ok`.
 - **E044** (closure captures a void / generic-param-typed var) — fires
   only on an unrepresentable capture type. The self-host `Ty` system has
   no generic-parameter type (generics are out of scope); a captured
