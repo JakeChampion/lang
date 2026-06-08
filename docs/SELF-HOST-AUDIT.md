@@ -250,8 +250,12 @@ appendix §6.)
 - [ ] **SH-042 — `parser.fern:2079-2243`** `parse_type_name` is a ~165-line giant
   whose recovery exists "to avoid OOM spin" — split into `parse_type_atom` +
   `parse_type_suffixes` and return structured types (feeds T2).
-- [ ] **SH-043 — `lexer.fern:397-485`** the C-escape decoder (`\n\t\r\0\"\\\xNN`) is
-  copy-pasted between `scan_string` and `scan_fstring` — extract `apply_escape`.
+- [x] **SH-043 — `lexer.fern:397-485`** the C-escape decoder (`\n\t\r\0\"\\\xNN`)
+  was copy-pasted between `scan_string` and `scan_fstring`. _Done:_ extracted
+  `apply_escape(l, esc) -> EscResult` (decoded fragment + `hexerr`/`unknown`
+  flags) so both scanners share one decode ladder while keeping their own
+  literal-kind error messages. The escape grammar now lives in one place (no
+  drift risk; a future `\u` escape is a one-site change).
 
 ### Checker / asmcore
 - [ ] **SH-044 — `asmcore.fern:1374-1686`** `infer_expr_type` is a ~310-line monster

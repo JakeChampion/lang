@@ -373,6 +373,34 @@ function scan_ident(l: Lex, start_line: i32, start_col: i32): NumResult {
     return NumResult { lex: l, tok: tok };
 }
 
+// apply_escape decodes a C-style escape whose escape byte `esc` has
+// already been consumed (so `l` is positioned just past it). It returns
+// the decoded fragment plus flags for the two failure shapes — `\x`
+// needing two hex digits (`hexerr`) and an unrecognised escape
+// (`unknown`) — so scan_string and scan_fstring share one decode ladder
+// while keeping their own literal-kind error messages (SH-043).
+struct EscResult { lex: Lex, frag: string, hexerr: boolean, unknown: boolean }
+
+function apply_escape(l: Lex, esc: i32): EscResult {
+    if (esc == 110) { return EscResult { lex: l, frag: "\n", hexerr: false, unknown: false }; }
+    if (esc == 116) { return EscResult { lex: l, frag: "\t", hexerr: false, unknown: false }; }
+    if (esc == 114) { return EscResult { lex: l, frag: "\r", hexerr: false, unknown: false }; }
+    if (esc == 48) { return EscResult { lex: l, frag: "\0", hexerr: false, unknown: false }; }
+    if (esc == 34) { return EscResult { lex: l, frag: "\"", hexerr: false, unknown: false }; }
+    if (esc == 92) { return EscResult { lex: l, frag: "\\", hexerr: false, unknown: false }; }
+    if (esc == 120) {
+        // \xNN — two hex digits → one byte.
+        if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i]) || !is_hex_digit(l.src[l.i + 1])) {
+            return EscResult { lex: l, frag: "", hexerr: true, unknown: false };
+        }
+        var b: i32 = hex_val(l.src[l.i]) * 16 + hex_val(l.src[l.i + 1]);
+        l = l.advance();
+        l = l.advance();
+        return EscResult { lex: l, frag: string_from_bytes([b]), hexerr: false, unknown: false };
+    }
+    return EscResult { lex: l, frag: "", hexerr: false, unknown: true };
+}
+
 // scan_string reads `"…"` with C-style escapes. The Go lexer
 // uses strings.Builder + WriteRune; here we build the unescaped
 // value by walking the source and concatenating. Errors (newline
@@ -394,24 +422,15 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
             }
             var esc: i32 = l.peek_byte();
             l = l.advance();
-            if (esc == 110) { out = out + "\n"; }
-            else if (esc == 116) { out = out + "\t"; }
-            else if (esc == 114) { out = out + "\r"; }
-            else if (esc == 48) { out = out + "\0"; }
-            else if (esc == 34) { out = out + "\""; }
-            else if (esc == 92) { out = out + "\\"; }
-            else if (esc == 120) {
-                // \xNN — two hex digits → one byte.
-                if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i]) || !is_hex_digit(l.src[l.i + 1])) {
-                    return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
-                }
-                out = out + string_from_bytes([hex_val(l.src[l.i]) * 16 + hex_val(l.src[l.i + 1])]);
-                l = l.advance();
-                l = l.advance();
+            var er: EscResult = apply_escape(l, esc);
+            l = er.lex;
+            if (er.hexerr) {
+                return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
             }
-            else {
+            if (er.unknown) {
                 return NumResult { lex: l, tok: error_tok("unknown escape in string literal", start_line, start_col) };
             }
+            out = out + er.frag;
             continue;
         }
         out = out + l.src[l.i:l.i + 1];
@@ -464,25 +483,16 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             }
             var esc: i32 = l.peek_byte();
             l = l.advance();
-            if (esc == 110) { lit = lit + "\n"; have_lit = true; }
-            else if (esc == 116) { lit = lit + "\t"; have_lit = true; }
-            else if (esc == 114) { lit = lit + "\r"; have_lit = true; }
-            else if (esc == 48) { lit = lit + "\0"; have_lit = true; }
-            else if (esc == 34) { lit = lit + "\""; have_lit = true; }
-            else if (esc == 92) { lit = lit + "\\"; have_lit = true; }
-            else if (esc == 120) {
-                // \xNN — two hex digits → one byte.
-                if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i]) || !is_hex_digit(l.src[l.i + 1])) {
-                    return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
-                }
-                lit = lit + string_from_bytes([hex_val(l.src[l.i]) * 16 + hex_val(l.src[l.i + 1])]);
-                have_lit = true;
-                l = l.advance();
-                l = l.advance();
+            var fer: EscResult = apply_escape(l, esc);
+            l = fer.lex;
+            if (fer.hexerr) {
+                return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
             }
-            else {
+            if (fer.unknown) {
                 return NumResult { lex: l, tok: error_tok("unknown escape in f-string", start_line, start_col) };
             }
+            lit = lit + fer.frag;
+            have_lit = true;
             continue;
         }
         if (c == 123) {   // {
