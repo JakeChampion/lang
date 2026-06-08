@@ -500,8 +500,21 @@ world-driven composer (P2) wires it.
      trailing return-area pointer + `cabi_realloc`. Gated by
      `TestSelfHostExternSumTypeResultCustomProvider` (`div(a,b) ->
      result<s32,s32>`, `half(n) -> option<s32>`, matched and checked).
-   - Still rejected (next slices): the rest of the self-host port (u8[] params
-     with repacking; tuple params); general user `variant`s;
+   - **Self-host port — u8[] params — ✅ done.** A self-host `u8[]` stores each
+     byte widened to a full 4-byte element slot, while the canonical `list<u8>`
+     wants the bytes packed one-per-byte. So — unlike the wider numeric arrays,
+     whose slot already matches the canonical element size and only need an
+     aligned copy — a u8[] param needs a *byte-repacking* copy: the wrapper
+     (`extern_u8_array_param` gate) allocs `len` bytes and writes each element's
+     low byte contiguously (`i32.store8`; alignment is moot for 1-byte
+     elements), then forwards `(buf, len)`. Threaded through
+     `has_extern_mem_param`, the `extern_imports` `(param i32)(param i32)`
+     lowering, and the wrapper's param-decl / buffer-locals / call-forward
+     branches alongside `extern_array_param_supported`. Gated by
+     `TestSelfHostExternU8ArrayParamCustomProvider` (a
+     `sum-bytes: func(b: list<u8>) -> s32` provider; `[10,20,12]` → 42).
+   - Still rejected (next slices): the rest of the self-host port (tuple
+     params); general user `variant`s;
      single-element records/tuples (direct return); bool arrays; sub-word /
      nested-composite fields. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
