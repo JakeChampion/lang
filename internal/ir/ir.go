@@ -947,6 +947,12 @@ func externRecordFieldSupported(t ast.Type) bool {
 		return w == 8 || w == 16 || w == 32 || w == 64
 	case ast.FloatType:
 		return true
+	case ast.BoolType:
+		// bool flattens to a single i32 core value (param) and is one byte in the
+		// canonical record memory layout (result) — handled like an unsigned
+		// 8-bit: a Fern bool is 0/1 in a 4-byte slot, so the field helpers read it
+		// with i32.load8_u and size it at 1 byte canonically.
+		return true
 	}
 	return false
 }
@@ -1010,6 +1016,8 @@ func externCanonicalFieldSizeAlign(t ast.Type) int32 {
 			return 8
 		}
 		return 4
+	case ast.BoolType:
+		return 1 // canonical bool is one byte
 	}
 	return 4
 }
