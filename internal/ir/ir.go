@@ -1093,32 +1093,6 @@ func externCanonicalFieldSizeAlign(t ast.Type) int32 {
 	return 4
 }
 
-// externCanonicalRecordLayout computes the canonical-ABI memory layout of a
-// record's fields: each field at its natural size + alignment, the record's
-// total size rounded up to its max field alignment. This is how the host writes
-// a record result into the return area (and differs from the Fern struct's
-// 4-byte-slot layout when sub-word fields are present).
-func externCanonicalRecordLayout(types []ast.Type) ([]int32, int32) {
-	offs := make([]int32, len(types))
-	pos := int32(0)
-	maxAlign := int32(1)
-	for i, t := range types {
-		sz := externCanonicalFieldSizeAlign(t)
-		if sz > maxAlign {
-			maxAlign = sz
-		}
-		if rem := pos % sz; rem != 0 {
-			pos += sz - rem
-		}
-		offs[i] = pos
-		pos += sz
-	}
-	if rem := pos % maxAlign; rem != 0 {
-		pos += maxAlign - rem
-	}
-	return offs, pos
-}
-
 // ExternExport binds a defined function (Name) to the WIT world export
 // (Iface, WITName) it implements, via an `@export(...)` attribute (P6 —
 // docs/WIT-BRING-YOUR-OWN.md). Unlike ExternFunc the function keeps its body
