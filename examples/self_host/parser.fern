@@ -378,6 +378,148 @@ function s_match(scrutinee: Expr, arms: MatchArm[]): Stmt {
 function s_match_at(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32): Stmt {
     return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "" };
 }
+
+// array_builder_elem extracts T from an "ArrayBuilder[T]" type spelling
+// (the self-host parser keeps param types as strings). Returns "" when the
+// spelling isn't ArrayBuilder[...]. See docs/ARRAY-BUILDER-PLAN.md.
+function array_builder_elem(t: string): string {
+    var prefix: string = "ArrayBuilder[";
+    var pl: i32 = prefix.len();
+    if (t.len() < pl + 1) { return ""; }
+    if (t[t.len() - 1] != 93) { return ""; }  // 93 = ']'
+    // Manual prefix match (parser.fern doesn't import std/string for
+    // starts_with) — byte-compare against "ArrayBuilder[".
+    var i: i32 = 0;
+    while (i < pl) {
+        if (t[i] != prefix[i]) { return ""; }
+        i = i + 1;
+    }
+    return t[pl : t.len() - 1];
+}
+
+// is_builder_mutation is true when `c` is `b.append(...)` / `b.with(...)` —
+// an in-place builder mutation that becomes a reassignment.
+function is_builder_mutation(c: ExprCall, b: string): boolean {
+    match (c.callee) {
+        ExprFieldAccess(fa) => {
+            if (fa.field != "append" && fa.field != "with") { return false; }
+            match (fa.obj) {
+                ExprIdent(id) => { return id.name == b; },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// rewrite_builder_stmt retargets statement-position `b.append(...)` /
+// `b.with(...)` into `b = b.append(...)`, recursing into every statement
+// container so a builder mutated inside a loop / branch is handled. A
+// builder call left unrewritten (e.g. inside a nested lambda, not descended
+// into) stays a discarded value-returning result and trips E055 — loud, not
+// a silent lost write.
+function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
+    match (s) {
+        StmtExpr(es) => {
+            match (es.value) {
+                ExprCall(c) => {
+                    if (is_builder_mutation(c, b)) { return s_assign(b, es.value); }
+                    return s;
+                },
+                _ => { return s; },
+            }
+        },
+        StmtIf(f) => {
+            return StmtIf { cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b) };
+        },
+        StmtWhile(w) => {
+            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b) };
+        },
+        StmtFor(fr) => {
+            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b) };
+        },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: MatchArm = m.arms[ai];
+                arms = arms.append(MatchArm { pattern: arm.pattern, body: rewrite_builder_stmts(arm.body, b), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                ai = ai + 1;
+            }
+            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        StmtSwitch(sw) => {
+            var cases: SwitchCase[] = [];
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                var cs: SwitchCase = sw.cases[ci];
+                cases = cases.append(SwitchCase { values: cs.values, body: rewrite_builder_stmts(cs.body, b) });
+                ci = ci + 1;
+            }
+            return StmtSwitch { scrutinee: sw.scrutinee, cases: cases, has_default: sw.has_default, default_body: rewrite_builder_stmts(sw.default_body, b), line: sw.line, col: sw.col };
+        },
+        _ => { return s; },
+    }
+    return s;
+}
+
+function rewrite_builder_stmts(stmts: Stmt[], b: string): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = out.append(rewrite_builder_stmt(stmts[i], b));
+        i = i + 1;
+    }
+    return out;
+}
+
+// maybe_desugar_array_build lowers `Array.build(function(b: ArrayBuilder[T]):
+// void { BODY })` into a unique-local IIFE — the self-host mirror of the Go
+// parser desugar (docs/ARRAY-BUILDER-PLAN.md). Returns `base` unchanged when
+// it isn't a well-formed Array.build call.
+function maybe_desugar_array_build(base: Expr): Expr {
+    match (base) {
+        ExprCall(call) => {
+            match (call.callee) {
+                ExprFieldAccess(fa) => {
+                    if (fa.field != "build") { return base; }
+                    match (fa.obj) {
+                        ExprIdent(id) => {
+                            if (id.name != "Array") { return base; }
+                            if (call.args.len() != 1) { return base; }
+                            match (call.args[0]) {
+                                ExprLambda(lam) => {
+                                    if (lam.params.len() != 1) { return base; }
+                                    var elem: string = array_builder_elem(lam.params[0].type_name);
+                                    if (elem.len() == 0) { return base; }
+                                    var bname: string = lam.params[0].name;
+                                    var arrty: string = elem + "[]";
+                                    var stmts: Stmt[] = [];
+                                    stmts = stmts.append(s_var(bname, arrty, e_array([])));
+                                    var rewritten: Stmt[] = rewrite_builder_stmts(lam.body, bname);
+                                    var ri: i32 = 0;
+                                    while (ri < rewritten.len()) {
+                                        stmts = stmts.append(rewritten[ri]);
+                                        ri = ri + 1;
+                                    }
+                                    stmts = stmts.append(s_return(e_ident(bname)));
+                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts };
+                                    return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0 };
+                                },
+                                _ => { return base; },
+                            }
+                        },
+                        _ => { return base; },
+                    }
+                },
+                _ => { return base; },
+            }
+        },
+        _ => { return base; },
+    }
+    return base;
+}
 // s_match_origin is s_match_at tagged with the desugar that produced it
 // ("if_let" / "let_else"); see StmtMatch.origin.
 function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string): Stmt {
@@ -726,6 +868,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             }
             p = p.advance();
             base = ExprCall { callee: base, args: args, line: oline, col: ocol, type_argc: pending_type_argc };
+            base = maybe_desugar_array_build(base);
             pending_type_argc = 0;
         } else if (pk == "[") {
             p = p.advance();

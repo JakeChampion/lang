@@ -122,13 +122,17 @@ takes the pragmatic, low-risk path.
 
 ## Phasing
 
-1. **`Array.build` desugar + `append` + `len`** (this track) — parser
-   desugar, parser test, e2e (build via append-in-loop returns the right
-   contents; a churn case confirms no over-release). Go reference compiler
-   first; because it desugars to existing constructs, every backend
-   (incl. self-host) gets it with no backend changes.
-2. **`b.with(i, v)`** — the in-place element set (the encoders'
-   `buf[at] = byte` replacement). Same desugar, one more rewritten method.
+1. **`Array.build` desugar + `append` + `with` + `len`** — ✅ **done.**
+   Go parser desugar (`maybeDesugarArrayBuild`) + parser tests + e2e
+   (append-while / append-for-in / with-elem-set / len-read / churn on
+   x86-64 / wasm / interp). Because it desugars to existing constructs,
+   no checker/IR/backend changes.
+2. **Self-host `parser.fern` parity** — ✅ **done.** The same desugar in
+   `parser.fern` (`maybe_desugar_array_build`, byte-level prefix match —
+   no `std/string` import), so the self-host compiler handles `Array.build`
+   on every backend. Verified: `array-build` in the self-host prog
+   (x86/arm64) + wasm-run suites, and an `array_build` differential case
+   (Go vs self-host, x86-64 / arm64 / wasm — identical output).
 3. **`Map.build` / `MapBuilder`** — the symmetric map builder.
 4. **Migrate the genuine `arr[i] = v` sites** (x86_encode / arm64_native
    `buf[at]=`, the `word_freq` sort, `interp` `bvals[bi]=`) to builders or

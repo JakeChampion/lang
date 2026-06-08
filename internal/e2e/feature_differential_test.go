@@ -520,6 +520,18 @@ function main(): i32 {
     print(c.get().len().to_string());
     return 0;
 }`},
+		// Array.build (docs/ARRAY-BUILDER-PLAN.md): the parser desugar runs in
+		// both the Go and self-host parsers, so the built array is identical.
+		{"array_build", `import "std/i32";
+function main(): i32 {
+    var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
+        var i: i32 = 0;
+        while (i < 4) { b.append(i * i); i = i + 1; }
+    });
+    print(out.len().to_string());
+    print(out[3].to_string());
+    return 0;
+}`},
 	}
 	for _, c := range cases {
 		c := c
