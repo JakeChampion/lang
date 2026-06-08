@@ -14739,7 +14739,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
-			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && (b.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, at)) {
+			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && (b.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, at) || b.isSelfArrayPushLocal(n.Value, t.Name)) {
 				// Phase 3 step-4: free the OLD array buffer at rc==0.
 				// On a push copy-grow the old buffer's pointer elements
 				// were transferred to the new buffer (no inc), so freeing
@@ -15270,6 +15270,46 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 		return !mentions
 	})
 	return mentions
+}
+
+// isSelfArrayPushLocal reports whether `rhs` is `name.append(x)` — lowered to
+// `__method_Array_push(name, x)` — for a LOCAL `name` (not a param). This is the
+// rc-SAFE subset of an array self-reassign overwrite, and the one that lets the
+// array branch's buffer-only __fern_arr_dec reclaim the OLD buffer for element
+// types selfReassignOwnedLocal's typeSelfDropSafe rejects (string[] / struct[] /
+// nested arrays) — e.g. the self-host SSA builder's `vn = vn.append(..)` over
+// `string[]`, which otherwise orphans every grow's buffer.
+//
+// Why append is safe where the general `x = f(x)` is NOT: __fern_arr_push_grow
+// is rc-gated. A uniquely-owned buffer (rc==1) either mutates in place (no old
+// buffer to free) or, when full, allocates a fresh buffer and leaves the old at
+// rc==1 — so the overwrite's __fern_arr_dec frees exactly the orphan. A
+// borrowed-DERIVED local (`var x = param`, alias-inc'd to rc≥2) takes the COPY
+// path and the overwrite dec only lowers rc to ≥1 — never freeing the param's
+// still-live buffer. A general `x = f(x)` has no such guarantee (f may return a
+// borrowed buffer at rc==1 that the result still aliases → buffer-UAF), which is
+// why the broad form segfaulted the self-compile; the push form does not.
+// __fern_arr_dec is buffer-only (never walks elements), so a shared string /
+// struct element is never over-released either.
+func (b *builder) isSelfArrayPushLocal(value ast.Expr, name string) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return false
+		}
+	}
+	call, ok := value.(*ast.Call)
+	if !ok {
+		return false
+	}
+	callee, ok := call.Callee.(*ast.Ident)
+	if !ok || callee.Name != "__method_Array_push" {
+		return false
+	}
+	if len(call.Args) == 0 {
+		return false
+	}
+	recv, ok := call.Args[0].(*ast.Ident)
+	return ok && recv.Name == name
 }
 
 // typeSelfDropSafe reports whether a value of type `t` can be deep-dropped on a
