@@ -1,0 +1,275 @@
+# Async / concurrency implementation plan
+
+Companion to the research docs `ASYNC-IMPLEMENTATION-RESEARCH.md`
+(Koka / Lean 4 / Roc / AOT+WASM mechanics) and
+`CONCURRENCY-RESEARCH.md` (the menu + the chosen surface). Those
+decided *what* to build; this doc decides *how*, sequences the work
+into shippable slices, and records what the first slice already
+landed.
+
+## The decision, in one paragraph
+
+Fern gets **colorless structured concurrency**, implemented as a
+**stackless CPS / state-machine transform** driven by a
+**single-threaded readiness reactor**. A `concurrent { … }` block
+fans out `spawn`ed tasks whose I/O overlaps on one thread; `await`
+joins them. There is **no function coloring** (suspension is a
+property of the block, not the function signature), **no stackful
+green threads** (they need per-arch assembly and have no WASM
+story), and **no general algebraic-effect system yet** (effects are
+the eventual colorless substrate, not the cheapest first step). This
+matches `CONCURRENCY-RESEARCH.md`'s recommendation and the
+mechanism analysis in `ASYNC-IMPLEMENTATION-RESEARCH.md`.
+
+## Why an AST-level desugar (not an IR pass)
+
+The single most important implementation choice. There are two
+compilers and the Go one is being retired:
+
+- **Go compiler** (`internal/`): a target-agnostic IR
+  (`internal/ir`) with **structured control flow, not SSA** — a flat
+  op list with `OpBlock`/`OpLoop`/`OpIf`. A true IR-level CPS
+  transform here would mean flattening structured control flow into
+  a state machine: hard, and **thrown away when the Go compiler
+  retires**.
+- **Self-hosted compiler** (`examples/self_host/`, the future): the
+  default path goes **AST → asm directly** via the shared
+  `asmcore.fern` frontend; there is *no* target-agnostic IR on that
+  path (there is an optional SSA layer, `ssa.fern` →
+  `ssa_{x86,arm64,wasm}.fern`, which is **becoming the default** —
+  work in progress as of 2026-06).
+
+Conclusion: lower async **at the AST level, desugaring into ordinary
+Fern constructs** (a state struct, a state enum, continuation
+closures, a driver loop). This is **IR-agnostic** — it survives
+whether a backend is AST→asm or AST→SSA→asm, and whether SSA is on
+or off — and it **rides machinery every backend already has**:
+closures (capture = the task's live frame), enums, structs, and
+loops all lower today on x86-64, arm64, and wasm32 in *both*
+compilers. **No codegen, no IR, and no backend changes are required
+for the core mechanism.** The only per-compiler frontend work is
+lexer + parser (+ one checker rule); the desugar's *output* is
+plain AST.
+
+> Alternative noted, not chosen: once SSA-by-default lands for the
+> self-hosted compiler, an SSA-level CPS transform becomes viable
+> and would be shared across the self-host's x86/arm64/wasm SSA
+> backends. It is still rejected as the *primary* path because (a)
+> it would not benefit the Go compiler during the transition, (b)
+> it duplicates a transform the AST desugar gives both compilers for
+> free, and (c) the AST desugar is far easier to test (its output is
+> readable Fern). Revisit only if the AST desugar proves to produce
+> pathologically bad code that an SSA-level transform would avoid.
+
+## The validated core shape
+
+A task is uniformly a **`Step`**: stepping it either completes it
+(`Done`) or suspends it on a reactor token, carrying a continuation
+to resume with the woken value (`Wait`). The continuation is a
+closure that **captures the task's live locals by value** — its
+"stack frame" across the suspension point. This is the stackless-CPS
+shape from the research, and it gives a **heterogeneous, generic-free
+task interface**: every task is a `Step` regardless of internal
+structure, so the runtime needs no generics, no `dyn`, and no
+per-backend support.
+
+```fern
+pub enum Step {
+    Done(i32),
+    Wait(i32, (i32) => Step),   // token, resume(wokenValue) -> Step
+}
+```
+
+**This compiles and runs unchanged on every backend** — verified in
+Phase 0 (below): interp = 33, x86-64 = 33, arm64/qemu = 33, wasm
+compiles (the recursive enum-through-function-type resolves and the
+closure captures lower correctly everywhere). De-risking this
+recursive type before committing was the gating spike.
+
+What the eventual `concurrent { … }` desugar emits, by example —
+the user writes:
+
+```fern
+concurrent {
+    var a = spawn fetch(plat, url_a);   // suspends at the await inside fetch
+    var b = spawn fetch(plat, url_b);
+    return combine(await a, await b);
+}
+```
+
+and the desugar produces (conceptually) one continuation per
+suspension point, each a nested function capturing the live locals,
+seeded into the scheduler — i.e. exactly the `Step` machinery in
+`std/task`, generated rather than hand-written. The Phase-0 test
+file `examples/tests/async_runtime_test.fern` *is* that output,
+hand-written, so the desugar's target is proven before the desugar
+exists.
+
+## Where the impurity lives (the Roc lesson)
+
+The **reactor lives in the platform-glue / stdlib layer**, not in
+codegen — the "host owns the event loop" insight from Roc, kept
+*in-binary* because Fern owns all backends (no host-ABI marshalling
+cost). User code and the scheduler stay pure-ish and portable; the
+one impure seam is the `poll` primitive plus non-blocking I/O, added
+once per backend.
+
+## Phased plan
+
+Each phase is independently shippable with tests, per the engineering
+bar ("every feature ships with tests"; "confirm passing tests before
+a PR").
+
+### Phase 0 — research, plan, runtime core — **DONE (this PR)**
+
+- `ASYNC-IMPLEMENTATION-RESEARCH.md` (merged) + this plan.
+- `std/task` Phase-1 runtime core: the `Step` vocabulary, an
+  in-memory `Reactor` (token allocation + poll-drain), and a `run`
+  driver that multiplexes single-await tasks and proves fan-out
+  *overlap* (both tasks suspend before either resumes).
+- `examples/tests/async_runtime_test.fern` — reactor unit tests +
+  single-task resume + two-task fan-out + immediate-done, wired into
+  the `internal/e2e` test-runner gate
+  (`TestRunnerAsyncRuntimeExamplePasses`).
+- Validated end-to-end on interp / x86-64 / arm64(qemu); compiles on
+  wasm. **Zero codegen, IR, or backend changes.**
+
+Limitation deliberately accepted in Phase 0: a continuation
+`(i32) => Step` does not thread the `Reactor`, so a task may await at
+most **once** before completing (covers the canonical fan-out:
+issue N requests, await each). Lifted in Phase 2.
+
+### Phase 1 — the real reactor (the hard plumbing)
+
+Replace the in-memory reactor internals with real readiness, behind
+the same `std/task` API shape. This is the one phase that touches
+backends — one new primitive plus non-blocking I/O — in **both**
+compilers' codegen.
+
+- **Native (arm64, x86-64):** add `__fern_poll` (epoll on Linux;
+  kqueue on Darwin) and non-blocking variants of accept/recv/send
+  (`O_NONBLOCK` + `EAGAIN` handling). Emit in
+  `internal/codegen/{arm64,x86_64}` (Go) and `asm.fern` /
+  `asm_arm64.fern` (self-host).
+- **wasm:** add `wasi:io/poll.poll(list<pollable>) -> list<u32>` (the
+  multi-pollable form; today only single-pollable `.block` is used)
+  in `internal/codegen/wasmbin` (Go) and `wasm.fern` (self-host).
+- **Tests:** a reactor that waits on two real sockets and reports the
+  ready one first; the existing HTTP serving path re-expressed over
+  the reactor (behavior-preserving) for a single connection.
+
+Risk: this is the most backend-heavy slice and the only one needing
+arm64/qemu + wasmtime in the loop. Gate locally on x86-64 + interp +
+wasm; let CI run arm64.
+
+### Phase 2 — generalize the runtime
+
+- Thread the `Reactor` through continuations
+  (`(i32, Reactor) => (Step, Reactor)`) so a task can await **more
+  than once** (a loop of awaits, sequential dependent fetches).
+- A proper scheduler over a ready-queue (FIFO) + a waiter map
+  (`token -> parked continuation`) — `core/map` + a small `Queue`
+  (a stdlib gap worth filling regardless). Re-poll until all tasks
+  finish, not just one round.
+- **Generic `Task[T]`** instead of the i32-concrete Phase-0 core.
+  *Gated on self-host generic monomorphization* — the self-hosted
+  compiler currently does generic *erasure* with known field-dispatch
+  gaps (see `SELF-HOST-AUDIT.md`), so until monomorphization lands
+  the runtime stays i32/pointer-concrete to keep it compiling on the
+  self-hosted path. (The Go compiler already monomorphizes; this is
+  purely a self-host-readiness gate.)
+
+### Phase 3 — the surface syntax (`concurrent` / `spawn` / `await`)
+
+The user-facing slice. Parser-time desugar, **emitting the Phase-2
+`Step`/scheduler shape**, so no codegen changes.
+
+- Lexer: add `concurrent`, `spawn`, `await` keywords — in
+  `internal/lexer/lexer.go` **and** `examples/self_host/lexer.fern`.
+- Parser: `parseConcurrent` (block), `spawn EXPR`, `await EXPR` — in
+  `internal/parser/parser.go` **and** `examples/self_host/parser.fern`.
+  Model on the existing `for..in` and `use <-` desugars, which
+  already build synthetic AST (nested functions, rewritten calls) at
+  parse time.
+- AST: `*ast.Concurrent`, `*ast.Spawn`, `*ast.Await` (Go) + parallel
+  union variants (Fern).
+- Checker: `await e` requires `e : Task[T]`, yields `T`; `spawn` in a
+  `concurrent` scope yields a `Task[T]`; scope-bounded — a `Task`
+  may not escape its `concurrent` block (structured concurrency).
+  One rule, in `internal/checker` + (if needed) `asmcore.fern`.
+- The desugar lowers `concurrent`/`spawn`/`await` into the state
+  machine: split each task body at its await points into
+  continuations (nested functions capturing live locals), seed the
+  scheduler, join on `await`.
+- **Tests:** parser test (desugar shape), checker test (escape /
+  type rules), e2e on all backends (two-task fan-out at the surface
+  level produces the same result as the hand-written Phase-0 spec).
+
+The hardest engineering in this phase is **splitting a task body at
+await points into continuations** when awaits sit inside arbitrary
+control flow (loops, conditionals). Start restricted: awaits at
+statement position in straight-line and simple-branch bodies (covers
+fan-out); generalize to awaits-in-loops incrementally, each with its
+own test.
+
+### Phase 4 — the first real awaitable: `plat.fetch`
+
+Make the concurrency useful: outbound HTTP. Promote the `Platform`
+capability bag (`PLATFORM-RESEARCH.md` Rec §1) so
+`plat.fetch(req) : Task[HttpResponse]`, implemented over the Phase-1
+reactor (non-blocking connect/send/recv on native; `wasi:http`
+outgoing-handler on wasm). Now a handler can issue two fetches and
+await both — the trigger condition that motivated the whole design
+(`CONCURRENCY-RESEARCH.md`).
+
+### Phase 5 — composition: `select`, cancellation, timeouts
+
+- `select` / happy-eyeballs (first task to finish wins, the rest
+  cancel).
+- Scope-bounded **cancellation** on `concurrent` exit (resume a
+  cancelled task zero times — Koka `cancelable` shape; an unused
+  continuation is just dropped, which RC/Perceus reclaims).
+- Timeouts (a timer pollable in the reactor).
+
+## Cross-cutting concerns
+
+- **RC / Perceus.** Continuations are ordinary reference-counted
+  heap closures; a completed or cancelled task's continuation is
+  dropped (RC reclaims it), so the model needs no special collector.
+  Async uses only **one-shot** resumptions (each continuation runs
+  exactly once), which is the cheap case — no continuation `dup`
+  (the expensive multi-shot path Koka pays for and async never
+  needs). Confirm `insert_resource_drops` treats parked
+  continuations as held resources.
+- **Per-request arena.** Preserve `tcp_serve`'s per-request
+  reclamation. The scheduler's allocations (ready-queue, waiter map,
+  continuations) live within the request and drop at its end.
+- **Memory model.** Single-threaded interleaving within a handler:
+  two `concurrent` tasks share locals freely because they never
+  execute simultaneously — only their suspension points interleave.
+  No cross-task data races, no atomics. (Matches
+  `CONCURRENCY-RESEARCH.md` Rec §9; and dodges Lean 4's mark-mt
+  graph-walk cost — Fern data stays single-threaded by
+  construction.) Parallelism (multi-core) is a separate, later,
+  host-scheduler concern, never baked into the language surface.
+- **Two frontends.** Until the Go compiler retires, every syntax
+  change lands in both `internal/{lexer,parser,ast,checker}` and
+  `examples/self_host/{lexer,parser}.fern` (+ `asmcore.fern` for a
+  shared checker rule). The desugar output is plain AST, so codegen
+  is untouched in both.
+
+## Open decisions (revisit with the user when reached)
+
+1. **Surface keywords.** `concurrent`/`spawn`/`await` vs a block
+   form like `parallel { … }` + `.value` joins (the
+   `CONCURRENCY-RESEARCH.md` Rec §1 sketch used `concurrent { … }` +
+   `select` + `.value`). Naming/ergonomics fork — decide at Phase 3.
+2. **`Task[T]` genericity timing.** Tie Phase 2's generic runtime to
+   self-host monomorphization, or ship an i32/pointer-concrete
+   runtime first and generalize later? (Leaning: concrete first; it
+   keeps the self-hosted path green and is what Phase 0 already
+   does.)
+3. **Awaits-in-loops** in the Phase-3 desugar — restrict initially
+   (straight-line + simple branches) and generalize, or build the
+   general CFG-split up front? (Leaning: restrict, since fan-out
+   doesn't need loop-awaits.)

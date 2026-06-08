@@ -1,0 +1,98 @@
+import "core/no_prelude";
+import "std/test";
+import "std/task";
+
+// examples/tests/async_runtime_test.fern — exercises the Phase-1
+// cooperative task runtime (std/task). This file is also the
+// EXECUTABLE SPECIFICATION of what the future `concurrent { … }`
+// desugar (docs/ASYNC-IMPLEMENTATION-PLAN.md, Phase 3) will emit:
+// each `spawn`ed task becomes a hand-rolled state machine here, so
+// proving these compile + run on every backend proves the desugar's
+// target is sound before the desugar machinery exists.
+//
+// Run:  fern -interp examples/tests/async_runtime_test.fern
+
+// --- reactor unit tests -------------------------------------------
+
+// register() hands out distinct, monotonically increasing tokens.
+function test_reactor_register_distinct_tokens(): Option[string] {
+    var rx: task.Reactor = task.reactor_new();
+    var (a, rx1) = rx.register(100);
+    var (b, rx2) = rx1.register(200);
+    if (a == b) { return test.fail("tokens should be distinct"); }
+    return test.assert_eq(rx2.pending(), 2);
+}
+
+// poll() drains every queued completion, then leaves the reactor empty.
+function test_reactor_poll_drains(): Option[string] {
+    var rx: task.Reactor = task.reactor_new();
+    var (t1, rx1) = rx.register(11);
+    var (t2, rx2) = rx1.register(22);
+    var (toks, vals, rx3) = rx2.poll();
+    if (toks.len() != 2) { return test.fail("expected 2 completions"); }
+    if (vals.len() != 2) { return test.fail("expected 2 values"); }
+    return test.assert_eq(rx3.pending(), 0);
+}
+
+// --- task state-machine helpers (the desugar's eventual output) ---
+
+// A "fetch then add" task: registers a wait whose completion will
+// deliver `simulated`, and resumes by adding `addend`. The nested
+// `resume` function is the continuation; it captures `addend` by
+// value — i.e. the task's live frame across the suspension point.
+function start_add_task(rx: task.Reactor, simulated: i32, addend: i32): (task.Step, task.Reactor) {
+    var (tok, rx2) = rx.register(simulated);
+    function resume(woken: i32): task.Step {
+        return Done(woken + addend);
+    }
+    return (Wait(tok, resume), rx2);
+}
+
+// --- runtime behaviour tests --------------------------------------
+
+// A single task suspends on one token and resumes to its result.
+function test_single_task(): Option[string] {
+    var rx0: task.Reactor = task.reactor_new();
+    var (s0, rx1) = start_add_task(rx0, 41, 1);
+    var tasks: task.Step[] = [s0];
+    var results: i32[] = task.run(tasks, rx1);
+    if (results.len() != 1) { return test.fail("expected 1 result"); }
+    return test.assert_eq(results[0], 42);   // 41 woken + 1 addend
+}
+
+// Two tasks fan out: BOTH register their waits before either resumes,
+// so their I/O overlaps on one thread — the canonical edge-handler
+// "issue two fetches, await both" pattern. The scheduler resumes each
+// with its own completion value.
+function test_fanout_overlap(): Option[string] {
+    var rx0: task.Reactor = task.reactor_new();
+    var (s0, rx1) = start_add_task(rx0, 10, 1);   // -> 11
+    var (s1, rx2) = start_add_task(rx1, 20, 2);   // -> 22
+    // At this point both waits are in flight simultaneously.
+    if (rx2.pending() != 2) { return test.fail("both tasks should be suspended concurrently"); }
+    var tasks: task.Step[] = [s0, s1];
+    var results: i32[] = task.run(tasks, rx2);
+    if (results.len() != 2) { return test.fail("expected 2 results"); }
+    if (results[0] != 11) { return test.fail("task 0 wrong: " + results[0].to_string()); }
+    return test.assert_eq(results[1], 22);
+}
+
+// A task that completes immediately (no suspension) still works:
+// seed the scheduler with a Done step directly.
+function test_immediate_done(): Option[string] {
+    var rx: task.Reactor = task.reactor_new();
+    var imm: task.Step = Done(7);
+    var tasks: task.Step[] = [imm];
+    var results: i32[] = task.run(tasks, rx);
+    return test.assert_eq(results[0], 7);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("async_runtime");
+    r = r.it("reactor register distinct tokens", test_reactor_register_distinct_tokens());
+    r = r.it("reactor poll drains", test_reactor_poll_drains());
+    r = r.it("single task resumes", test_single_task());
+    r = r.it("fanout tasks overlap", test_fanout_overlap());
+    r = r.it("immediate done", test_immediate_done());
+    return r.finish();
+}

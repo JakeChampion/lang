@@ -1,0 +1,151 @@
+// std/task — cooperative single-threaded task runtime (Phase-1 core).
+//
+// This is the backend-independent core of Fern's concurrency model
+// (docs/ASYNC-IMPLEMENTATION-RESEARCH.md, docs/ASYNC-IMPLEMENTATION-PLAN.md,
+// docs/CONCURRENCY-RESEARCH.md). The design is COLORLESS structured
+// concurrency implemented as STACKLESS continuations driven by a
+// single-threaded readiness reactor — never stackful green threads
+// (which need per-arch assembly and have no WASM story) and never a
+// general algebraic-effect system (deferred; effects are the eventual
+// colorless substrate, not the cheapest first step).
+//
+// A task is a STATE MACHINE. Stepping it once either completes it
+// with a result (Done) or suspends it on a reactor token until the
+// corresponding I/O is ready, carrying the continuation to resume
+// with the woken value (Wait). Crucially, every task — regardless of
+// its internal structure — is uniformly a `Step` value: a closure
+// inside `Wait` captures the task's live locals (its "stack frame")
+// by value, so the runtime needs no generics, no `dyn`, and no
+// per-backend support code. The recursive `Step`/continuation type
+// compiles unchanged on x86-64, arm64, and wasm32 (verified).
+//
+// Phase 1 (this module): the runtime vocabulary (`Step`, `Reactor`,
+// `run`) plus an in-memory reactor, so the suspend/resume/overlap
+// model is testable in pure Fern on every backend. Phase 2 swaps the
+// reactor internals for epoll/kqueue (native) and wasi:io/poll (wasm)
+// over real fds — the lang-side API shape is unchanged. Phase 3 adds
+// the `concurrent { … }` / `spawn` / `await` surface syntax as a
+// parser-time desugar that EMITS exactly this `Step` shape, so user
+// code never writes a state machine by hand.
+//
+// LIMITATION (Phase 1): a continuation `(i32) => Step` cannot itself
+// register a new wait (it doesn't thread the Reactor), so a task may
+// await at most once before completing. This covers the canonical
+// edge-handler fan-out (issue N requests, await each). Multi-await
+// tasks (a loop of awaits) need the Reactor threaded through the
+// continuation; that generalization lands with the Phase-3 desugar.
+
+import "core/no_prelude";
+
+// The uniform task step.
+//
+//   Done(result)        — the task finished with this i32 result.
+//   Wait(token, resume) — the task is suspended on reactor `token`;
+//                         call `resume(value)` once the token's I/O
+//                         completes (with the i32 the I/O yielded —
+//                         a byte count, an fd, a status, …) to obtain
+//                         the next Step.
+pub enum Step {
+    Done(i32),
+    Wait(i32, (i32) => Step),
+}
+
+// Reactor — the readiness registry that multiplexes pending I/O.
+//
+// Phase-1 in-memory model: `register(value)` allocates a token and
+// queues the value its completion will deliver (simulating a known
+// I/O result); `poll()` reports the completed (token, value) pairs.
+// Phase 2 replaces these fields with an epoll/kqueue fd-set (native)
+// or a `list<pollable>` (wasm) and `poll()` blocks in the OS until at
+// least one is ready — the public methods keep the same shapes.
+pub struct Reactor {
+    next_token: i32,
+    tokens: i32[],
+    values: i32[],
+}
+
+// reactor_new() — a fresh, empty reactor. Tokens start at 1 so 0 can
+// serve as a "no token" sentinel in later phases.
+pub function reactor_new(): Reactor {
+    var t: i32[] = [];
+    var v: i32[] = [];
+    return Reactor { next_token: 1, tokens: t, values: v };
+}
+
+// (rx).register(value) — allocate a fresh token and queue its
+// completion value, returning `(token, advancedReactor)` per the
+// cursor idiom (docs/CURSOR-IDIOM.md). In Phase 2 `value` is supplied
+// by the syscall layer when the fd becomes ready rather than up front.
+pub function (rx: Reactor) register(value: i32): (i32, Reactor) {
+    var tok: i32 = rx.next_token;
+    var t2: i32[] = rx.tokens.append(tok);
+    var v2: i32[] = rx.values.append(value);
+    return (tok, Reactor { ...rx, next_token: tok + 1, tokens: t2, values: v2 });
+}
+
+// (rx).poll() — drain the completed (token, value) pairs, returning
+// `(tokens, values, drainedReactor)`. Phase 1 reports every queued
+// completion in one round (sufficient for single-await fan-out);
+// Phase 2 blocks in the OS poll and reports only the fds that are
+// actually ready, looping until all tasks finish.
+pub function (rx: Reactor) poll(): (i32[], i32[], Reactor) {
+    var empty_t: i32[] = [];
+    var empty_v: i32[] = [];
+    return (rx.tokens, rx.values, Reactor { ...rx, tokens: empty_t, values: empty_v });
+}
+
+// (rx).pending() — how many registered tokens have not yet been
+// drained by `poll()`. Zero means no outstanding I/O.
+pub function (rx: Reactor) pending(): i32 {
+    return rx.tokens.len();
+}
+
+// __lookup(tokens, values, tok) — find the value paired with `tok`,
+// or -1 if absent. Linear scan: the pending set is tiny (one entry
+// per in-flight I/O within a single handler).
+function __lookup(tokens: i32[], values: i32[], tok: i32): i32 {
+    var i: i32 = 0;
+    while (i < tokens.len()) {
+        if (tokens[i] == tok) { return values[i]; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// run(tasks, rx) — drive a set of already-started tasks to completion
+// on a single thread, multiplexing their waits through the reactor,
+// and return their i32 results in task order.
+//
+// `tasks[i]` is the current Step of task i (what its start function
+// returned). Every task has already registered its wait with `rx`
+// BEFORE this call, so all their I/O is in flight simultaneously —
+// that overlap is the fan-out the edge-handler use case needs (issue
+// two upstream fetches, await both). A single `poll()` round then
+// resumes each suspended task with its completion value.
+//
+// Phase 1 assumes single-await tasks (each Wait resumes straight to
+// Done); a continuation that itself suspends again is recorded as -1
+// pending the Phase-3 multi-await generalization.
+pub function run(tasks: Step[], rx: Reactor): i32[] {
+    var (toks, vals, rx2) = rx.poll();
+    var results: i32[] = [];
+    var i: i32 = 0;
+    while (i < tasks.len()) {
+        var step: Step = tasks[i];
+        match (step) {
+            Done(v) => {
+                results = results.append(v);
+            },
+            Wait(tok, resume) => {
+                var value: i32 = __lookup(toks, vals, tok);
+                var next: Step = resume(value);
+                match (next) {
+                    Done(v2) => { results = results.append(v2); },
+                    Wait(t2, r2) => { results = results.append(-1); },
+                }
+            },
+        }
+        i = i + 1;
+    }
+    return results;
+}
