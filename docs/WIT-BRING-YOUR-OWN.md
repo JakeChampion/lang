@@ -608,24 +608,24 @@ world-driven composer (P2) wires it.
      so the wrapper reads each with a width+sign-aware load
      (`extern_field_load_op` → `i32.load8_s/u`, `i32.load16_s/u`) to get the
      correctly extended canonical i32; word fields use plain `i32.load`. **A
-     nested record field is flattened one level** (mirroring the Go side): a
-     field that is itself an all-scalar struct (`extern_record_all_scalar`)
-     expands to one leaf per inner field; since a self-host struct-of-struct field
-     is a pointer, the wrapper loads the inner value pointer at `struct+outerOff`
-     then each leaf at `+innerOff`. `extern_record_leaf_count` sizes the import's
-     `(param i32)` list (a second level of nesting is rejected). `mod` is
-     threaded into `has_extern_mem_param` / `extern_needs_wrapper` for the
-     struct-decl lookup. Sub-word *result* fields stay rejected
-     (`extern_record_result_supported`, the result-side gate, stays i32/u32-only)
-     — the canonical return-area packs them tightly, a dual-layout slice, same as
-     the Go side. Gated by `TestSelfHostExternRecordParamCustomProvider` (a
-     `sum-point: func(p: record { x, y: s32 }) -> s32`, x+y) and
-     `TestSelfHostExternRecordParamSubwordCustomProvider` (a `record { a: s8,
-     b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under the
-     wrong-width or wrong-sign load) and
-     `TestSelfHostExternRecordParamNestedCustomProvider` (a `sum-line: func(l:
-     line) -> s32` over `record line { p: point, q: point }`,
-     `Line{p:{1,2},q:{3,4}}` → 10). **`bool` fields** are also supported (both
+     nested record field is flattened, to *arbitrary depth*** (mirroring the Go
+     side): a field that is itself a record (`extern_record_nestable`) expands to
+     one leaf per inner scalar; since a self-host struct-of-struct field is a
+     pointer, the recursive `extern_emit_record_param_leaves` deref-s the inner
+     value pointer at `struct+outerOff` and recurses with that as the new base, to
+     any depth. `extern_record_leaf_count` (recursive) sizes the import's
+     `(param i32)` list. `mod` is threaded into `has_extern_mem_param` /
+     `extern_needs_wrapper` for the struct-decl lookup. Gated by
+     `TestSelfHostExternRecordParamCustomProvider` (a `sum-point: func(p: record {
+     x, y: s32 }) -> s32`, x+y), `TestSelfHostExternRecordParamSubwordCustomProvider`
+     (a `record { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that
+     fail under the wrong-width or wrong-sign load),
+     `TestSelfHostExternRecordParamNestedCustomProvider` (one level — a `sum-line:
+     func(l: line) -> s32` over `record line { p: point, q: point }`,
+     `Line{p:{1,2},q:{3,4}}` → 10), and
+     `TestSelfHostExternRecordParamDeepNestedCustomProvider` (three levels —
+     `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` / `point { x, y }`,
+     the six leaves weighted so the deref recursion's ordering is checked). **`bool` fields** are also supported (both
      directions), treated as an unsigned 8-bit (`extern_field_is_scalar` accepts
      `boolean`, `extern_field_load_op` → `i32.load8_u`, `extern_canon_field_size`
      → 1), gated by `TestSelfHostExternBoolRecordFieldCustomProvider` (a `record
@@ -784,10 +784,8 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): the self-host port of deeper-nested record
-     *params* (the Go param side now recurses to arbitrary depth via a `DerefPath`
-     chain); non-uniform / multi-payload `variant`s; sub-4-byte-element `list<T>`
-     *results*
+   - Still rejected (next slices): non-uniform / multi-payload `variant`s;
+     sub-4-byte-element `list<T>` *results*
      (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
      `gMemRealloc` trap analysed above). The
      multi-component harness (`TestExternImportCustomProvider`) is the test

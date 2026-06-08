@@ -11,19 +11,20 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordParamNestedCustomProvider is the self-host port of the
-// nested-record parameter (docs/WIT-BRING-YOUR-OWN.md, Go-side
-// TestExternRecordParamNestedCustomProvider). The canonical ABI flattens a
-// nested record inline, so `record line { p: point, q: point }` flattens to
-// (p.x, p.y, q.x, q.y). A self-host struct field of struct type is a pointer, so
-// a nested leaf loads the inner value pointer at struct+outerOff then the leaf at
-// +innerOff (extern_record_param_supported recurses via extern_record_nestable /
-// extern_record_leaf_count; extern_emit_record_param_leaves emits the loads —
-// to arbitrary depth, see the deep-nested test).
+// TestSelfHostExternRecordParamDeepNestedCustomProvider is the self-host port of
+// the deeper-nesting (arbitrary depth) record *parameter* gate
+// (docs/WIT-BRING-YOUR-OWN.md, Go-side TestExternRecordParamDeepNestedCustomProvider).
+// A self-host struct whose field is a struct whose field is itself a struct is
+// passed to an `@import` extern; the canonical ABI flattens every nested record
+// inline, so the leaves arrive as positional core args in declaration order. A
+// self-host struct field of struct type is a pointer, so a leaf nested N levels
+// deep is reached by deref-ing N inner value pointers then loading the leaf —
+// emitted by the recursive extern_emit_record_param_leaves.
 //
-// The provider exports `sum-line: func(l: line) -> s32` summing the 4 flattened
-// coords; the self-host program passes Line{p:{1,2}, q:{3,4}} and expects 10.
-func TestSelfHostExternRecordParamNestedCustomProvider(t *testing.T) {
+// Shape: `record outer { l: mid, r: mid }`, `record mid { p: point, n: s32 }`,
+// `record point { x: s32, y: s32 }` — three levels. `sum-outer: func(o: outer) ->
+// s32` weights the six leaves so ordering (hence the deref recursion) is checked.
+func TestSelfHostExternRecordParamDeepNestedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -45,15 +46,20 @@ func TestSelfHostExternRecordParamNestedCustomProvider(t *testing.T) {
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	const iface = "interface sink { record point { x: s32, y: s32 } record line { p: point, q: point } sum-line: func(l: line) -> s32; }"
+	const iface = "interface sink { record point { x: s32, y: s32 } record mid { p: point, n: s32 } record outer { l: mid, r: mid } sum-outer: func(o: outer) -> s32; }"
 	if err := os.WriteFile(filepath.Join(provWit, "sink.wit"),
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
+	// sum-outer receives the doubly-nested record flattened to six i32 params in
+	// declaration order (l.p.x, l.p.y, l.n, r.p.x, r.p.y, r.n) and returns the
+	// weighted sum a + b*10 + c*100 + d*1000 + e*10000 + f*100000.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
-  (func (export "local:test/sink@0.1.0#sum-line") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (result i32)
-    (i32.add (i32.add (local.get $a) (local.get $b)) (i32.add (local.get $c) (local.get $d)))))`), 0o644); err != nil {
+  (func (export "local:test/sink@0.1.0#sum-outer") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $e i32) (param $f i32) (result i32)
+    (i32.add (i32.add (i32.add (local.get $a) (i32.mul (local.get $b) (i32.const 10)))
+                      (i32.add (i32.mul (local.get $c) (i32.const 100)) (i32.mul (local.get $d) (i32.const 1000))))
+             (i32.add (i32.mul (local.get $e) (i32.const 10000)) (i32.mul (local.get $f) (i32.const 100000))))))`), 0o644); err != nil {
 		t.Fatalf("write provider core: %v", err)
 	}
 	provider := filepath.Join(dir, "provider.wasm")
@@ -111,19 +117,21 @@ function main(): i32 {
     return 0;
 }
 `
-	if err := os.WriteFile(filepath.Join(dir, "rn_run.fern"), []byte(driver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "rpd_run.fern"), []byte(driver), 0o644); err != nil {
 		t.Fatalf("write driver: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "rn_run.fern", "rn_run")
+	driverBin := buildSelfHostBin(t, gcc, dir, "rpd_run.fern", "rpd_run")
 
-	const want = "ln-ok"
+	const want = "od-ok"
 	prog := `struct Point { x: i32, y: i32 }
-struct Line { p: Point, q: Point }
-@import("local:test/sink@0.1.0", "sum-line")
-function sum_line(l: Line): i32;
+struct Mid { p: Point, n: i32 }
+struct Outer { l: Mid, r: Mid }
+@import("local:test/sink@0.1.0", "sum-outer")
+function sum_outer(o: Outer): i32;
 function main(): i32 {
-    var l: Line = Line { p: Point { x: 1, y: 2 }, q: Point { x: 3, y: 4 } };
-    if (sum_line(l) == 10) { write("` + want + `"); } else { write("ln-bad"); }
+    var o: Outer = Outer { l: Mid { p: Point { x: 1, y: 2 }, n: 3 }, r: Mid { p: Point { x: 4, y: 5 }, n: 6 } };
+    // 1 + 2*10 + 3*100 + 4*1000 + 5*10000 + 6*100000 = 654321
+    if (sum_outer(o) == 654321) { write("` + want + `"); } else { write("od-bad"); }
     return 0;
 }`
 	watBytes := runCapture(t, gcc, runner, driverBin, []byte(prog))
