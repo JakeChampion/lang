@@ -57,6 +57,24 @@ func appendExternFieldLoad(body []byte, t ast.Type, off uint32) []byte {
 	return memory.InstI32Load(body, 2, off)
 }
 
+// appendExternFieldStore stores a field's already-on-stack canonical value of
+// type t into the Fern struct slot at byte offset off. The Fern slot is sized
+// by the field's flat valtype — 4 bytes for any sub-64-bit integer (the value
+// arrived sign-/zero-extended to i32), 8 for i64/f64, 4 for f32 — so a sub-word
+// field is stored with a plain i32.store, not a narrowing store: the Fern struct
+// widens it, matching how the constructor lays it out.
+func appendExternFieldStore(body []byte, t ast.Type, off uint32) []byte {
+	switch externRecordFieldValtype(t) {
+	case encode.ValtypeI64:
+		return memory.InstI64Store(body, 3, off)
+	case encode.ValtypeF32:
+		return memory.InstF32Store(body, 2, off)
+	case encode.ValtypeF64:
+		return memory.InstF64Store(body, 3, off)
+	}
+	return memory.InstI32Store(body, 2, off)
+}
+
 // buildExternStringResultWrapper returns the body builder for the wrapper of a
 // string/list<u8>-returning extern. nparams is the count of (scalar, one-slot)
 // parameters; rawImport is the raw import's name in helperIdxs. The wrapper's
@@ -218,8 +236,9 @@ func buildExternRecordResultWrapper(nparams int, rawImport string, rr *ir.Extern
 		base := uint32(nparams + 1)
 
 		var body []byte
-		// rb = __fern_alloc(size) — 8-aligned canonical return area.
-		body = inst.InstI32Const(body, rr.Size)
+		// rb = __fern_alloc(canonical size) — the canonical return-area memory
+		// layout (sub-word fields pack tighter than the Fern struct's 4-byte slots).
+		body = inst.InstI32Const(body, rr.CanonicalSize)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalSet(body, rb)
 		// call import(params…, rb).
@@ -228,33 +247,21 @@ func buildExternRecordResultWrapper(nparams int, rawImport string, rr *ir.Extern
 		}
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
-		// base = __fern_alloc(rcHeaderBytes + size); rc = 1 at base+0.
+		// base = __fern_alloc(rcHeaderBytes + Fern size); rc = 1 at base+0.
 		body = inst.InstI32Const(body, rcHeaderBytes+rr.Size)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalSet(body, base)
 		body = inst.InstLocalGet(body, base)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 0)
-		// Copy each field: [base + rcHeaderBytes + off] = [rb + off].
+		// Copy each field: read from the canonical return area (width+sign-aware)
+		// and store into the Fern struct slot.
+		// [base + rcHeaderBytes + Offset] = [rb + CanonicalOffset].
 		for _, f := range rr.Fields {
-			off := uint32(f.Offset)
-			vt := externRecordFieldValtype(f.Type)
-			body = inst.InstLocalGet(body, base) // dst base (store offset adds rcHeaderBytes+off)
-			body = inst.InstLocalGet(body, rb)   // src base (load offset adds off)
-			switch vt {
-			case encode.ValtypeI64:
-				body = memory.InstI64Load(body, 3, off)
-				body = memory.InstI64Store(body, 3, rcHeaderBytes+off)
-			case encode.ValtypeF32:
-				body = memory.InstF32Load(body, 2, off)
-				body = memory.InstF32Store(body, 2, rcHeaderBytes+off)
-			case encode.ValtypeF64:
-				body = memory.InstF64Load(body, 3, off)
-				body = memory.InstF64Store(body, 3, rcHeaderBytes+off)
-			default:
-				body = memory.InstI32Load(body, 2, off)
-				body = memory.InstI32Store(body, 2, rcHeaderBytes+off)
-			}
+			body = inst.InstLocalGet(body, base) // store addr (Fern slot)
+			body = inst.InstLocalGet(body, rb)   // load addr (canonical area)
+			body = appendExternFieldLoad(body, f.Type, uint32(f.CanonicalOffset))
+			body = appendExternFieldStore(body, f.Type, rcHeaderBytes+uint32(f.Offset))
 		}
 		// return base + rcHeaderBytes (user-visible struct pointer).
 		body = inst.InstLocalGet(body, base)

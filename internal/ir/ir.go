@@ -655,20 +655,32 @@ type ExternEnumParam struct {
 // field by value (it fits MAX_FLAT_RESULTS=1), so the raw import returns the
 // field's core valtype directly rather than through a trailing return-area
 // pointer, and the wrapper materializes the one-field struct from that value.
+//
+// The canonical return-area (memory) layout can differ from the Fern struct's:
+// a Fern struct stores every sub-64-bit int in a 4-byte slot, while the
+// canonical record packs s8/s16/u8/u16 at their natural 1-/2-byte size +
+// alignment. So each field carries both its Fern struct Offset and its
+// CanonicalOffset (into the return area), and the result holds the canonical
+// CanonicalSize of the return area alongside the Fern struct Size. For
+// word-only records (i32/i64/f32/f64) the two layouts coincide.
 type ExternRecordResult struct {
-	Fields []ExternRecordField
-	Size   int32
-	Direct bool
+	Fields        []ExternRecordField
+	Size          int32
+	CanonicalSize int32
+	Direct        bool
 }
 
 // ExternRecordField is one scalar field of a record `@import` parameter,
 // flattened to the canonical ABI: Offset is the field's byte offset from the
 // struct *value* (the user-visible data pointer, i.e. base + rc header — field
-// reads index straight off it), and Type decides the load op + the flat core
-// valtype the wasm wrapper uses.
+// reads index straight off it), CanonicalOffset is its byte offset in the
+// canonical return-area memory layout (used for record results, where sub-word
+// fields pack tighter than the Fern struct's 4-byte slots), and Type decides
+// the load op + the flat core valtype the wasm wrapper uses.
 type ExternRecordField struct {
-	Offset int32
-	Type   ast.Type
+	Offset          int32
+	CanonicalOffset int32
+	Type            ast.Type
 }
 
 // maxFlatExternRecordFields caps how many fields a flattened record parameter
@@ -803,35 +815,80 @@ func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bo
 }
 
 // externRecordResultLayout flattens a record (struct) or tuple `@import`
-// *result* to its scalar fields' offsets + types + size, or ok=false if it
-// can't be lowered. Requires 1..maxFlatExternRecordFields scalar fields. A
-// multi-field composite flattens to > 1 core value, so it returns indirectly
-// through a return-area pointer; a single-field composite flattens to exactly
-// one core value (fits MAX_FLAT_RESULTS=1) and so the canonical ABI returns it
-// by value — recorded as Direct, the raw import returns the field's valtype
-// directly rather than via a trailing area pointer. Offsets and size come from
-// the same layout the constructor uses, so the wrapper writes fields where a
-// `p.field` read would find them.
+// *result* to its scalar fields' (Fern + canonical) offsets + types + sizes, or
+// ok=false if it can't be lowered. Requires 1..maxFlatExternRecordFields scalar
+// fields. A multi-field composite flattens to > 1 core value, so it returns
+// indirectly through a return-area pointer; a single-field composite flattens
+// to exactly one core value (fits MAX_FLAT_RESULTS=1) and so the canonical ABI
+// returns it by value — recorded as Direct, the raw import returns the field's
+// valtype directly rather than via a trailing area pointer.
+//
+// Each field gets two offsets: its Fern struct Offset (4-byte slots, where a
+// `p.field` read finds it) and its CanonicalOffset (the canonical memory layout
+// of the return area, where sub-word fields pack tighter). For word-only records
+// the two coincide.
 func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResult, bool) {
 	types, ok := externCompositeFieldTypes(t, info)
 	if !ok || len(types) < 1 || len(types) > maxFlatExternRecordFields {
 		return nil, false
 	}
-	// Sub-word integer fields (s8/s16/u8/u16) are allowed as *params* but not as
-	// *result* fields yet: the canonical return-area packs them at their natural
-	// 1-/2-byte size + offset, which differs from the Fern struct's 4-byte slots,
-	// so lifting them needs a separate (dual-layout) slice.
-	for _, ft := range types {
-		if n, isNum := ft.(ast.NumberType); isNum && n.NormalWidth() < 32 {
-			return nil, false
-		}
-	}
 	offs, size := tupleElemLayout(types, 4)
+	coffs, csize := externCanonicalRecordLayout(types)
 	fields := make([]ExternRecordField, len(types))
 	for i, ft := range types {
-		fields[i] = ExternRecordField{Offset: offs[i], Type: ft}
+		fields[i] = ExternRecordField{Offset: offs[i], CanonicalOffset: coffs[i], Type: ft}
 	}
-	return &ExternRecordResult{Fields: fields, Size: size, Direct: len(types) == 1}, true
+	return &ExternRecordResult{Fields: fields, Size: size, CanonicalSize: csize, Direct: len(types) == 1}, true
+}
+
+// externCanonicalFieldSizeAlign returns the canonical-ABI memory size + alignment
+// (in bytes) of a flattenable record field type: s8/u8 → 1, s16/u16 → 2,
+// s32/u32/f32 → 4, s64/u64/f64 → 8. Size == alignment for these scalars.
+func externCanonicalFieldSizeAlign(t ast.Type) int32 {
+	switch x := t.(type) {
+	case ast.NumberType:
+		switch x.NormalWidth() {
+		case 8:
+			return 1
+		case 16:
+			return 2
+		case 64:
+			return 8
+		}
+		return 4
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return 8
+		}
+		return 4
+	}
+	return 4
+}
+
+// externCanonicalRecordLayout computes the canonical-ABI memory layout of a
+// record's fields: each field at its natural size + alignment, the record's
+// total size rounded up to its max field alignment. This is how the host writes
+// a record result into the return area (and differs from the Fern struct's
+// 4-byte-slot layout when sub-word fields are present).
+func externCanonicalRecordLayout(types []ast.Type) ([]int32, int32) {
+	offs := make([]int32, len(types))
+	pos := int32(0)
+	maxAlign := int32(1)
+	for i, t := range types {
+		sz := externCanonicalFieldSizeAlign(t)
+		if sz > maxAlign {
+			maxAlign = sz
+		}
+		if rem := pos % sz; rem != 0 {
+			pos += sz - rem
+		}
+		offs[i] = pos
+		pos += sz
+	}
+	if rem := pos % maxAlign; rem != 0 {
+		pos += maxAlign - rem
+	}
+	return offs, pos
 }
 
 // ExternExport binds a defined function (Name) to the WIT world export
