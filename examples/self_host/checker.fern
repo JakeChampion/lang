@@ -849,6 +849,15 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             if (!is_method && name == "map_new") {
                 return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
             }
+            // cell_new(v) builtin — the Cell[T] constructor
+            // (docs/CELL-TYPE-PLAN.md). T is the argument's type; the
+            // result is modelled as a nominal `Cell` struct handle. Typing
+            // it (rather than leaving it unknown) lets a nested
+            // `cell_new(cell_new(x))` see the inner cell as a composite
+            // element, which is the E057 case the call-diag walk flags.
+            if (!is_method && name == "cell_new") {
+                return t_struct("Cell");
+            }
             // Built-in VMap method dispatch — handled ahead of
             // the user MethodSig lookup.
             if (is_method) {
@@ -2964,6 +2973,20 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                             _ => { }
                         }
                         out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
+                    }
+                    // E057: cell_new(v) — a Cell's element type must be
+                    // cycle-free, i.e. a scalar (i32/i64/f64/bool) or string.
+                    // A composite / reference value (struct, array, tuple,
+                    // another Cell, …) could reconstruct a reference cycle,
+                    // which the immutable-data model forbids so Perceus RC
+                    // needs no cycle collector (docs/CELL-TYPE-PLAN.md).
+                    // Reported at the argument, matching the Go checker
+                    // (n.Args[0].Pos()). An unresolved arg type is skipped.
+                    if (id.name == "cell_new" && c.args.len() == 1) {
+                        var cnat: Type = check_expr(c.args[0], s);
+                        if (!is_unknown(cnat) && !is_primitive_type(cnat)) {
+                            out = out.append(dg_at("E057", "Cell[" + type_label(cnat) + "] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid", expr_line(c.args[0]), expr_col(c.args[0])));
+                        }
                     }
                     if (is_unknown(s.lookup(id.name))) {
                         var sig: FuncSig = s.lookup_sig(id.name);
