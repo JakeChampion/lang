@@ -394,13 +394,22 @@ world-driven composer (P2) wires it.
      `info.Structs` is in scope; the wasm backend has no `info`), and the param
      wrapper loads each field off the struct value and pushes it in declaration
      order. `canonicalExternParamValtypes` flattens the record to the field
-     valtypes for the raw import. Scoped to records of ≤16 fields, each a 32-/
-     64-bit integer or float (sub-word ints, bool, strings, arrays, and nested
-     records are deferred — a struct param outside this shape is rejected with a
-     clear message). Gated by `TestExternRecordParamCustomProvider` (a
-     `record point { x: s32, y: s32 }` summed) and
-     `TestExternRecordParamWideCustomProvider` (a mixed `record mix { a: s32,
-     b: s64 }`, exercising the i64 field's 8-byte offset + i64 flat valtype).
+     valtypes for the raw import. Scoped to records of ≤16 fields, each an
+     8-/16-/32-/64-bit integer or a float. **Sub-word integer fields
+     (`s8`/`s16`/`u8`/`u16`) are supported as params**: a Fern struct stores
+     every sub-64-bit int in a 4-byte slot, but the canonical ABI flattens an
+     s8/u16 field to a single sign-/zero-extended i32, so the wrapper reads a
+     sub-word field with a width+sign-aware load (`i32.load8_s/u`,
+     `i32.load16_s/u` via `appendExternFieldLoad`) to produce the correct i32
+     (`externRecordFieldValtype` keeps the flat valtype i32). bool, strings,
+     arrays, and nested records are still deferred — a struct param outside this
+     shape is rejected with a clear message. Gated by
+     `TestExternRecordParamCustomProvider` (a `record point { x: s32, y: s32 }`
+     summed), `TestExternRecordParamWideCustomProvider` (a mixed `record mix
+     { a: s32, b: s64 }`, exercising the i64 field's 8-byte offset + i64 flat
+     valtype), and `TestExternRecordParamSubwordCustomProvider` (a `record
+     { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under
+     the wrong-width or wrong-sign load).
    - **Record (struct) results — ✅ done (Go).** An `@import` extern returning a
      `record` lifts into a Fern struct. A multi-field record flattens to > 1
      core value, so the canonical ABI returns it indirectly through a
@@ -417,9 +426,13 @@ world-driven composer (P2) wires it.
      (no return area / `cabi_realloc`), and `buildExternRecordResultDirectWrapper`
      materializes the one-field struct from it (push the store address, call the
      import for the value, typed-store, return the pointer). Scoped to 1..16
-     32-/64-bit numeric/float fields. Gated by
-     `TestExternRecordResultCustomProvider` (a `make-point: func(s32, s32) ->
-     point` lifted to a Fern struct, fields read back) and
+     32-/64-bit numeric/float fields — **sub-word result fields are still
+     rejected** (`externRecordResultLayout` guards them out): the canonical
+     return-area packs s8/s16/u8/u16 at their natural 1-/2-byte size + offset,
+     which differs from the Fern struct's 4-byte slots, so lifting them needs a
+     dual-layout slice (unlike params, where the flattening to i32 sidesteps it).
+     Gated by `TestExternRecordResultCustomProvider` (a `make-point: func(s32,
+     s32) -> point` lifted to a Fern struct, fields read back) and
      `TestExternSingleFieldRecordResultCustomProvider` (a `make-wrapped:
      func(a: s32) -> record { v: s32 }` returned by value).
    - **Tuple params + results — ✅ done (Go).** A Fern tuple is laid out exactly
@@ -581,9 +594,11 @@ world-driven composer (P2) wires it.
      self-hosted backend).
    - Still rejected (next slices): general user `variant`s; sub-4-byte-element
      `list<T>` *results* (`u8[]`/`bool[]`) via a custom provider (the
-     `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); sub-word /
-     nested-composite fields. The multi-component harness
-     (`TestExternImportCustomProvider`) is the test vehicle for these.
+     `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); sub-word record
+     *result* fields (the dual-layout slice — params are done) + the self-host
+     port of sub-word record params; bool / nested-composite fields. The
+     multi-component harness (`TestExternImportCustomProvider`) is the test
+     vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern

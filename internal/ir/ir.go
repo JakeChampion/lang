@@ -760,15 +760,21 @@ func externScalarTypeEq(a, b ast.Type) bool {
 }
 
 // externRecordFieldSupported reports whether a record/tuple field type is one
-// this slice flattens: a 32-/64-bit integer or a float. Those load naturally
-// (i32/i64/f32/f64.load) at the field's slot and flatten to a single core
-// value of the matching type. Sub-word ints (s8/s16), bool, and composites are
-// deferred.
+// this slice flattens as a PARAMETER: an 8-/16-/32-/64-bit integer or a float.
+// Each flattens to a single core value — i64 for a 64-bit int, f32/f64 for
+// floats, i32 for everything narrower (the canonical ABI flattens s8/s16/u8/u16
+// to i32). A Fern struct stores every sub-64-bit int in a 4-byte slot, so the
+// param wrapper reads a sub-word field with a width+sign-aware load
+// (i32.load8_s/u, i32.load16_s/u) to produce the correctly extended i32. Sub-word
+// fields in a *result* are still rejected (see externRecordResultLayout): the
+// canonical return-area packs them tightly (1/2-byte, different offsets) than
+// the Fern struct's 4-byte slots, which needs a separate slice. bool and
+// composites are deferred.
 func externRecordFieldSupported(t ast.Type) bool {
 	switch x := t.(type) {
 	case ast.NumberType:
 		w := x.NormalWidth()
-		return w == 32 || w == 64
+		return w == 8 || w == 16 || w == 32 || w == 64
 	case ast.FloatType:
 		return true
 	}
@@ -810,6 +816,15 @@ func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResu
 	types, ok := externCompositeFieldTypes(t, info)
 	if !ok || len(types) < 1 || len(types) > maxFlatExternRecordFields {
 		return nil, false
+	}
+	// Sub-word integer fields (s8/s16/u8/u16) are allowed as *params* but not as
+	// *result* fields yet: the canonical return-area packs them at their natural
+	// 1-/2-byte size + offset, which differs from the Fern struct's 4-byte slots,
+	// so lifting them needs a separate (dual-layout) slice.
+	for _, ft := range types {
+		if n, isNum := ft.(ast.NumberType); isNum && n.NormalWidth() < 32 {
+			return nil, false
+		}
 	}
 	offs, size := tupleElemLayout(types, 4)
 	fields := make([]ExternRecordField, len(types))
