@@ -1,10 +1,13 @@
 # Cell[T] — a sanctioned mutable cell for the immutable-data world
 
 Date: 2026-06-07 (updated 2026-06-08).
-Status: implemented on the Go reference compiler for scalar **and `string`**
-element types (`cell_new` / `get` / `set` + cycle-free E057 + full rc
-reclamation). Self-host backends are scalar-only (follow-up). §3a (`arr[i]
-= v` → E056) is the remaining downstream step.
+Status: implemented for scalar **and `string`** element types. The Go
+reference compiler does `cell_new` / `get` / `set` + cycle-free E057 + full
+rc reclamation; the self-host backends handle `Cell[string]` for free
+(single-pointer strings → the slot is one word, same as `Cell[i32]`),
+verified across every backend. §3a (migrate the `lam_ctr`/`lamdefs`
+array-cells to `Cell`, then `arr[i] = v` → E056) is the remaining
+downstream step — now unblocked on both compilers.
 
 ## Purpose
 
@@ -94,12 +97,21 @@ the struct `__fern_box_free` path, whose `data - 8` base assumption
 mis-frees the cell's header (this was a latent over-/mis-free for
 `Cell[i32]`, fixed alongside the `string` work).
 
-**Self-host backends remain scalar-only.** The self-host emitters lower
-`Cell` as alloc + load/store with no slot RC (their heap is
-leak-everything), which is correct for scalars; `Cell[string]` there would
-miscompile, so the self-host `checker.fern` E057 parity (and self-host
-`Cell[string]` codegen) is a follow-up. The differential corpus uses only
-`Cell[i32]`, so the compilers don't diverge.
+**Self-host backends handle `Cell[string]` for free.** The self-host
+emitters lower `Cell` as alloc + load/store with no slot RC (their heap is
+leak-everything). Crucially, the self-host string representation is a
+**single pointer** to a `[len][bytes]` block (not the Go compiler's
+two-word `(data, len)`), so a `Cell[string]` slot is one pointer-word —
+*identical* to a `Cell[i32]` slot. The existing single-slot cell machinery
+therefore compiles `Cell[string]` correctly on every self-host backend
+(asm x86-64 / arm64, SSA x86-64 / wasm, direct wasm), including cells
+stored in struct fields and mutated through function params (the
+`lam_ctr`/`lamdefs` shape). Verified by `cell-string*` cases across the
+self-host prog / wasm-run / SSA-emit tests and a `cell_string` differential
+case (Go vs self-host, x86-64 / arm64 / wasm). The only remaining
+self-host gap is `checker.fern` E057 parity (it doesn't yet reject a cyclic
+`Cell[T]`); since E057 isn't in the differential code set, the compilers
+don't diverge.
 
 ## 3. Surface
 
@@ -184,14 +196,18 @@ with `arr.with` / `Cell.set` as the two sanctioned writes.
 
 1. **`Cell[T]` scalars** — ✅ **done** on Go + all self-host backends;
    E057 (cycle-free restriction); e2e get/set on every backend.
-2. **`Cell[string]` RC (Go reference compiler)** — ✅ **done**: E057
-   widened to allow `string`, retain/release wired through `cell_new` /
-   `get` / `set` / drop (reusing the completed string rc arc), and the
-   cell drop routed through the array reclamation path (also fixing the
-   latent `Cell[i32]` mis-free). Tests: `TestCellElemTypeE057` (checker)
-   + `cell_i32_churn` / `cell_string_overwrite_churn` rc-corpus entries
-   (x86_64 / arm64 / wasm, corpus + freelist-reuse). *Follow-up:*
-   self-host `Cell[string]` codegen + `checker.fern` E057 parity.
+2. **`Cell[string]`** — ✅ **done on every backend.** Go reference
+   compiler: E057 widened to allow `string`, retain/release wired through
+   `cell_new` / `get` / `set` / drop (reusing the completed string rc arc),
+   and the cell drop routed through the array reclamation path (also fixing
+   the latent `Cell[i32]` mis-free) — `TestCellElemTypeE057` +
+   `cell_i32_churn` / `cell_string_overwrite_churn` rc-corpus entries.
+   Self-host: works for free (single-pointer strings) — `cell-string*`
+   cases in the prog / wasm-run / SSA-emit suites + a `cell_string`
+   differential case (Go vs self-host, x86-64 / arm64 / wasm), incl. cells
+   in struct fields mutated through params. *Remaining:* `checker.fern`
+   E057 parity (a cyclic `Cell[T]` isn't rejected self-host yet; not in the
+   differential code set, so no divergence).
 3. **Migrate the array-as-cell idioms** (`lam_ctr`, `lamdefs`, and the
    handful of `obj.arr[i] = v` mutable-cell sites) to `Cell`.
 4. **Remove `arr[i] = v`** → E056, migrating the remaining *local* array

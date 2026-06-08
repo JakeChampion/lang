@@ -213,6 +213,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3, ""},
 		{"cell-get-set", "function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }", 10, ""},
 		{"cell-shared", "function bump(c: Cell[i32]) { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }", 13, ""},
+		// Cell[string] — a string is a single pointer on the self-host wasm
+		// backend, so the cell slot is one word (same as i32). Overwrite then
+		// read back through get().
+		{"cell-string", "function main(): i32 { var c: Cell[string] = cell_new(\"A\"); c.set(\"hi\"); write(c.get()); return 0; }", 0, "hi"},
 		{"arr-index-first", "function main(): i32 { var a = [42, 99, 7]; return a[0]; }", 42, ""},
 		{"arr-index-middle", "function main(): i32 { var a = [42, 99, 7]; return a[1]; }", 99, ""},
 		{"arr-index-last", "function main(): i32 { var a = [42, 99, 7]; return a[2]; }", 7, ""},
