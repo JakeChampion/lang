@@ -32,23 +32,36 @@ The decision's 4-step sequencing is:
      cycle vector is closed). The detection keys off the
      `captureChain` + `ast.IsPointerType`.
 
-   **Remaining (deferred):** the self-host compiler's own
-   enforcement. The self-host parser still desugars `obj.field = v`
-   to `__set_field` and the emitter lowers it, so the bootstrap
-   compiler *accepts* field assignment for programs it compiles. It
-   does NOT reject — and can't cleanly yet: the asm_run / asm_arm64_run
-   drivers run lexer → parser → asm with no checker pass, and the
-   emitter turns an unknown statement into a `# unsupported` comment
-   rather than failing the build, so there is no error-exit path to
-   surface a rejection. Full self-host rejection waits on
-   error-reporting infrastructure in the bootstrap compiler. In the
-   meantime the self-host compiler fully supports the replacement
-   idiom — struct-update (`T { ...old, f: v }`) parses, emits, and
-   runs (verified end-to-end by `self_host_struct_update_test.go` and
-   `self_host_functional_update_test.go`, the latter being the
-   functional rewrite of the old field-assignment cases) — so it
-   compiles modern Fern; the residual `__set_field` lowering is dead
-   for code that doesn't use it.
+   **Self-host enforcement — error-reporting groundwork now in place,
+   compile-driver wiring still to come.** The self-host *checker*
+   (`checker.fern`) already detects the cycle rules — **E048** (field
+   assign, via the `__set_field` desugar), **E056** (subscript assign,
+   via `__set_index`), **E055** (discarded pure result), **E049**
+   (reference-capture write-back) — and the bootstrap now has an
+   error-reporting path: `checker.format_diags` renders
+   `Diag{code,message,line,col}` as `error[CODE]: message (line:col)`,
+   and `checker_run.fern` (the self-host `fern -check`) surfaces it to
+   stderr and exits non-zero. `checker.is_immutability_code` /
+   `filter_immutability` isolate the cycle rules from the rest of the
+   (still-partial) checker, so a build gate can enforce just these
+   without risking false positives from unported rules. Verified by
+   `self_host_checker_driver_test.go` (the driver prints `error[E048]`
+   / `error[E056]` and exits 1) and the `index-assign-e056` differential
+   case (self-host E056 matches the Go checker).
+
+   **Still deferred:** wiring that gate into the *compile* drivers
+   (asm_load_run / asm_run / …) so codegen itself rejects — they run
+   lexer → parser → asm with no checker pass today. The remaining work
+   is to run `filter_immutability(check_module(mod).diags)` in those
+   drivers and `eprint` + exit non-zero on any hit (deferred mainly to
+   first confirm `check_module` is robust + fast on the *full* merged
+   self-host source under fixpoint). Meanwhile the self-host fully
+   supports the replacement idioms — struct-update (`T { ...old, f: v }`)
+   and `arr = arr.with(i, v)` parse, emit, and run on every backend
+   (verified by `self_host_struct_update_test.go`,
+   `self_host_functional_update_test.go`, and the `array_build` /
+   `map_build` differentials) — so it compiles modern Fern; the residual
+   `__set_field` / `__set_index` lowerings are dead for migrated code.
 
 This doc covers **step-3 scoping** plus a concrete **step-2 design
 sketch**. Every code claim below was verified against the file at the
