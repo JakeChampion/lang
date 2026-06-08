@@ -285,7 +285,19 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             var sd: parser.StructDecl = s.structs[si];
             var f: i32 = 0;
             while (f < sd.fields.len()) {
-                if (sd.fields[f].name == fa.field) { return sd.fields[f].type_name; }
+                if (sd.fields[f].name == fa.field) {
+                    // Normalise the field's declared type the same way params
+                    // are (build_func_seeded), so a Cell / Map struct field
+                    // dispatches its .get/.set / map methods: a Cell[T] field
+                    // accessed as `s.f.get()` must read back as "cell", not the
+                    // raw "Cell[T]" (which the cell path's `urt == "cell"` check
+                    // would miss → build_func bail). Same for Map[...] fields.
+                    var ftn: string = sd.fields[f].type_name;
+                    if (ftn.len() >= 5 && ftn[0:5] == "Cell[") { return "cell"; }
+                    if (ftn.len() >= 10 && ftn[0:10] == "Map[string") { return "SMap"; }
+                    if (ftn.len() >= 3 && ftn[0:3] == "Map") { return "Map"; }
+                    return ftn;
+                }
                 f = f + 1;
             }
             return "";
@@ -554,6 +566,29 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         s = s.fresh();
                         var pa: i32[] = [sv];
                         return s.emit(SInst { kind: "print", result: s.cur_id(), args: pa, imm: fd, str: "" });
+                    }
+                    // write(s) — like print but WITHOUT the trailing newline:
+                    // the driver's raw-output primitive (Fern's print == println,
+                    // so the self-hosted emitter uses `write` to stay byte-
+                    // identical to the Go-built compiler). A dedicated op →
+                    // __fern_ssa_write (fd 1, no newline); not a generic call.
+                    if (cid.name == "write" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var wv: i32 = s.cur_id();
+                        s = s.fresh();
+                        var wa: i32[] = [wv];
+                        return s.emit(SInst { kind: "write", result: s.cur_id(), args: wa, imm: 0, str: "" });
+                    }
+                    // args() — the argv accessor: returns a string[] of every
+                    // command-line argument (argv[0] first). A dedicated op →
+                    // __fern_ssa_args, which materialises the SSA array
+                    // [len, strptr…] of SSA [len, byte-per-word] strings from the
+                    // argv pointer the SSA `_start` saves. wasm falls back.
+                    if (cid.name == "args" && c.args.len() == 0) {
+                        s = s.fresh();
+                        var aa: i32[] = [];
+                        return s.emit(SInst { kind: "args", result: s.cur_id(), args: aa, imm: 0, str: "" });
                     }
                     // exit(code) — terminate the process with the given i32
                     // exit code. A dedicated op (the native backends emit the
@@ -2864,6 +2899,7 @@ pub function compute_widths(f: SFunc): i32[] {
                 else if (ins.kind == "strbuf_take") { make64 = true; }   // a string pointer
                 else if (ins.kind == "read_file") { make64 = true; }   // a Result box pointer
                 else if (ins.kind == "write_file") { make64 = true; }   // an Option box pointer
+                else if (ins.kind == "args") { make64 = true; }   // a string[] array pointer
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
                 else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
@@ -3147,7 +3183,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
+            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "write" || ins.kind == "args" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -3312,7 +3348,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "write" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.append(ins); } else { changed = true; }
                 k = k + 1;
             }

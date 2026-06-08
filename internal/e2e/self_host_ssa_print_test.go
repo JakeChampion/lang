@@ -94,6 +94,13 @@ func TestSelfHostSSAPrint(t *testing.T) {
 		{"print-number", i32ToString + " function main(): i32 { print(i32_to_string(12345)); print(i32_to_string(0 - 67)); print(i32_to_string(0)); return 0; }", "12345\n-67\n0\n"},
 		// eprint goes to stderr, so only the print() output lands on stdout.
 		{"eprint-separate", "function main(): i32 { print(\"OK\"); eprint(\"ERR\"); print(\"!\"); return 0; }", "OK\n!\n"},
+		// write() is print WITHOUT the trailing newline (the driver's raw-output
+		// primitive) — __fern_ssa_write. Bytes land verbatim; interleaving with
+		// print() shows the newline difference.
+		{"write-no-newline", "function main(): i32 { write(\"hi\"); return 0; }", "hi"},
+		{"write-multi", "function main(): i32 { write(\"x\"); write(\"y\"); write(\"z\"); return 0; }", "xyz"},
+		{"write-then-print", "function main(): i32 { write(\"a\"); print(\"b\"); return 0; }", "ab\n"},
+		{"write-concat", "function main(): i32 { var a = \"foo\"; write(a + \"bar\"); return 0; }", "foobar"},
 	}
 
 	run := func(t *testing.T, asm []byte, gcc string, pie bool, runner func(string) *exec.Cmd) string {

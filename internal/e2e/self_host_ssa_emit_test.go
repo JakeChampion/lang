@@ -107,6 +107,11 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// backend, so the slot is one word like i32. "ab" overwritten to
 		// "xyz"; get().len() = 3.
 		{"cell-string", "function main(): i32 { var c: Cell[string] = cell_new(\"ab\"); c.set(\"xyz\"); return c.get().len(); }", 3},
+		// A Cell-typed STRUCT FIELD: `b.ctr.get()` / `.set()` must resolve the
+		// field's "Cell[i32]" to the normalized "cell" type so the cell method
+		// path fires (a type_of_expr field-normalisation gap that made
+		// wasm__emit_expr — the last whole-compiler build_func holdout — bail).
+		{"cell-struct-field", "struct Box { ctr: Cell[i32], label: string } function main(): i32 { var b = Box { ctr: cell_new(10), label: \"x\" }; b.ctr.set(b.ctr.get() + 5); return b.ctr.get() + b.label.len(); }", 16},
 		{"arr-with-chain", "function main(): i32 { var a = [0, 0, 0]; a = a.with(0, 5); a = a.with(2, 7); return a[0] * 10 + a[2]; }", 57},
 		{"arr-len-loop", "function main(): i32 { var a = [4, 8, 12, 16]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 40},
 		// for-in loops (build_for desugar → counted while). Index advance at
