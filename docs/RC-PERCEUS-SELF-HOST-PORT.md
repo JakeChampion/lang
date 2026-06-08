@@ -971,3 +971,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   native compiler: non-array heap reclamation (strings / structs / enums /
   maps — Phase 1e, all backends) and the liveness-based optimisations
   (drop-on-last-use, FBIP reuse).
+- 2026-06-08: **wasm backend RC — reclaim call-result array locals.** A
+  real (non-inert) extension: `var x = build()` array locals were the main
+  remaining un-reclaimed array class (only literal/slice/alias inits were
+  swept; call results leaked entirely). Now an init that is a direct call
+  to a USER free function declared to return an array (new
+  `init_is_user_arr_call` against `collect_arr_ret_fns`) is counted +
+  swept. Sound because such a callee's StmtReturn always applies
+  return-retain, so the result arrives at a counted rc — a borrowed-param
+  return (`function pick(xs){ return xs }`) is inc'd, so the caller
+  sweeping BOTH the source and the result is not a double-free. Method
+  calls / in-place receivers (`xs.append(v)`, which can hand back the
+  receiver) and un-annotated returns are deliberately excluded (no
+  return-retain → would double-free). Coverage:
+  `TestSelfHostRcCallResultWasm` — two call results both swept clean,
+  aliased call result, the borrowed-return double-free guard, and a
+  self-append result that is NOT swept. Full wasm suite (~98 s) green;
+  bootstrap-safe. (Loop-local call results — `var r = build()` re-bound
+  each iteration — still leak per-iteration; that needs block-scope drops
+  / drop-on-last-use, tracked separately.)

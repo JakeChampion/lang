@@ -599,6 +599,26 @@ function init_is_arr_alias(e: parser.Expr, src: string[]): boolean {
     return false;
 }
 
+// init_is_user_arr_call: the init is a direct call to a user free function
+// declared to return an array (callee is a bare ident in `arr_ret_fns`).
+// The result is OWNED — the callee's return-retain (StmtReturn incs any
+// non-move array result) hands it over at a counted rc, so the caller may
+// sweep it. Method calls (`xs.append(v)`, which can return the receiver in
+// place) and un-annotated returns are deliberately excluded: they carry no
+// return-retain, so sweeping their result could double-free.
+function init_is_user_arr_call(e: parser.Expr, arr_ret_fns: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return contains_str(arr_ret_fns, id.name); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // collect_arr_src / collect_arr_swept drive the wasm Perceus array
 // reference-counting (the counting milestone — inc-on-alias + exit
 // release sweep, free still OFF). arr_src is the set of names that hold an
@@ -610,26 +630,26 @@ function init_is_arr_alias(e: parser.Expr, src: string[]): boolean {
 // balance them without the construction-store machinery) — they leak,
 // which is sound while free is off and avoids any over-release. comma
 // names (`var (a, b) = …` destructures) are skipped.
-function collect_arr_src(body: parser.Stmt[], acc: string[]): string[] {
+function collect_arr_src(body: parser.Stmt[], arr_ret_fns: string[], acc: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
-                    if (ty_spelling_is_array(v.type_name) || init_is_owned_array(v.init)) {
+                    if (ty_spelling_is_array(v.type_name) || init_is_owned_array(v.init) || init_is_user_arr_call(v.init, arr_ret_fns)) {
                         acc = acc.append(v.name);
                     }
                 }
             },
             parser.StmtIf(f) => {
-                acc = collect_arr_src(f.then_body, acc);
-                acc = collect_arr_src(f.else_body, acc);
+                acc = collect_arr_src(f.then_body, arr_ret_fns, acc);
+                acc = collect_arr_src(f.else_body, arr_ret_fns, acc);
             },
-            parser.StmtWhile(w) => { acc = collect_arr_src(w.body, acc); },
-            parser.StmtFor(f) => { acc = collect_arr_src(f.body, acc); },
+            parser.StmtWhile(w) => { acc = collect_arr_src(w.body, arr_ret_fns, acc); },
+            parser.StmtFor(f) => { acc = collect_arr_src(f.body, arr_ret_fns, acc); },
             parser.StmtMatch(m) => {
                 var k: i32 = 0;
-                while (k < m.arms.len()) { acc = collect_arr_src(m.arms[k].body, acc); k = k + 1; }
+                while (k < m.arms.len()) { acc = collect_arr_src(m.arms[k].body, arr_ret_fns, acc); k = k + 1; }
             },
             _ => {},
         }
@@ -638,32 +658,47 @@ function collect_arr_src(body: parser.Stmt[], acc: string[]): string[] {
     return acc;
 }
 
-function collect_arr_swept(body: parser.Stmt[], src: string[], acc: string[]): string[] {
+function collect_arr_swept(body: parser.Stmt[], src: string[], arr_ret_fns: string[], acc: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
-                    if (init_is_owned_array(v.init) || init_is_arr_alias(v.init, src)) {
+                    if (init_is_owned_array(v.init) || init_is_arr_alias(v.init, src) || init_is_user_arr_call(v.init, arr_ret_fns)) {
                         acc = acc.append(v.name);
                     }
                 }
             },
             parser.StmtIf(f) => {
-                acc = collect_arr_swept(f.then_body, src, acc);
-                acc = collect_arr_swept(f.else_body, src, acc);
+                acc = collect_arr_swept(f.then_body, src, arr_ret_fns, acc);
+                acc = collect_arr_swept(f.else_body, src, arr_ret_fns, acc);
             },
-            parser.StmtWhile(w) => { acc = collect_arr_swept(w.body, src, acc); },
-            parser.StmtFor(f) => { acc = collect_arr_swept(f.body, src, acc); },
+            parser.StmtWhile(w) => { acc = collect_arr_swept(w.body, src, arr_ret_fns, acc); },
+            parser.StmtFor(f) => { acc = collect_arr_swept(f.body, src, arr_ret_fns, acc); },
             parser.StmtMatch(m) => {
                 var k: i32 = 0;
-                while (k < m.arms.len()) { acc = collect_arr_swept(m.arms[k].body, src, acc); k = k + 1; }
+                while (k < m.arms.len()) { acc = collect_arr_swept(m.arms[k].body, src, arr_ret_fns, acc); k = k + 1; }
             },
             _ => {},
         }
         i = i + 1;
     }
     return acc;
+}
+
+// collect_arr_ret_fns lists the module's free functions declared to return
+// an array — the set whose call results are safe to count/sweep (their
+// StmtReturn applies return-retain).
+function collect_arr_ret_fns(mod_funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod_funcs.len()) {
+        if (mod_funcs[i].receiver_type.len() == 0 && ty_spelling_is_array(mod_funcs[i].ret_type)) {
+            out = out.append(mod_funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string[], fnmeths: string[], fnarrs: string[]): string[] {
@@ -6598,8 +6633,9 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         }
         api = api + 1;
     }
-    asrc = collect_arr_src(f.body, asrc);
-    var aswept: string[] = collect_arr_swept(f.body, asrc, []);
+    var arr_ret_fns: string[] = collect_arr_ret_fns(mod_funcs);
+    asrc = collect_arr_src(f.body, arr_ret_fns, asrc);
+    var aswept: string[] = collect_arr_swept(f.body, asrc, arr_ret_fns, []);
     cx = Ctx { ...cx, arr_src: asrc, arr_swept: aswept };
     // String-valued maps are needed during collect_str_locals_stmts (so a
     // `for v in m.values()` binds v as string). Seed them from
