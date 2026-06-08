@@ -634,6 +634,13 @@ type ExternFunc struct {
 	// through a return-area pointer (disc + payload); the wasm result wrapper
 	// reads them and materializes a Fern enum box (remapping the discriminant).
 	ResultEnum *ExternEnumParam
+	// ParamPlainEnums marks a parameter index whose type is a "plain" enum — a
+	// user enum with only payloadless variants (a C-style enum), which maps to a
+	// WIT `enum`. A Fern payloadless enum value is a pointer to a 4-byte sentinel
+	// `[tag:i32 @0]`, and the canonical WIT enum flattens to a single i32
+	// discriminant, so the wasm param wrapper reads `i32.load(ptr)` and pushes
+	// it. The Fern variant order must match the WIT enum case order (no remap).
+	ParamPlainEnums map[int]bool
 }
 
 // ExternEnumParam describes a flattened option/result `@import` parameter
@@ -755,6 +762,31 @@ func externEnumParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnu
 	}
 	offs, _ := payloadLayout([]ast.Type{payload}, 1, ptrW)
 	return &ExternEnumParam{RemapDisc: remap, PayloadType: payload, PayloadOffset: offs[0]}, true
+}
+
+// externPlainEnumParam reports whether t is a "plain" enum — a user enum (named
+// in info.Enums) with at least one variant and *every* variant payloadless (a
+// C-style enum). Such an enum maps to a WIT `enum`, which flattens to a single
+// i32 discriminant. A Fern payloadless enum value is a pointer to a 4-byte
+// sentinel `[tag:i32 @0]`, so the wasm wrapper reads `i32.load(ptr)` for the
+// canonical disc (param) or allocs a `[tag]` box from it (result, deferred).
+// Option/Result are excluded — their Some/Ok variants carry a payload, so they
+// fail the all-payloadless test (and are handled by externEnumParamLayout).
+func externPlainEnumParam(t ast.Type, info *checker.Info) bool {
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return false
+	}
+	ed, ok := info.Enums[et.Name]
+	if !ok || len(ed.Variants) == 0 {
+		return false
+	}
+	for _, v := range ed.Variants {
+		if len(v.Payloads) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // externScalarTypeEq reports whether two extern-supported scalar types are the
@@ -1162,6 +1194,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 						ef.ParamEnums = map[int]*ExternEnumParam{}
 					}
 					ef.ParamEnums[i] = el
+				} else if externPlainEnumParam(p.Type, info) {
+					if ef.ParamPlainEnums == nil {
+						ef.ParamPlainEnums = map[int]bool{}
+					}
+					ef.ParamPlainEnums[i] = true
 				}
 			}
 			if rr, ok := externRecordResultLayout(fn.ReturnType, info); ok {

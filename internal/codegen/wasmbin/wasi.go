@@ -787,6 +787,10 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			case ex.ParamEnums[i] != nil:
 				// option/result: flattens to (disc, payload), read off the box.
 				hasMemParam = true
+			case ex.ParamPlainEnums[i]:
+				// plain (payloadless) enum → WIT enum: a single i32 disc read off
+				// the Fern sentinel/box pointer.
+				hasMemParam = true
 			case externScalarType(p.Type):
 				// plain scalar — passes through, no wrapper needed for this param
 			default:

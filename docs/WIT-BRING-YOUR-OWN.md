@@ -482,6 +482,22 @@ world-driven composer (P2) wires it.
      ResultEnum`). Same scope as the param side. Gated by
      `TestExternSumTypeResultCustomProvider` (a `div: -> result<s32,s32>` and
      `half: -> option<s32>`, the Fern side matching Ok/Err/Some/None).
+   - **WIT `enum` params — ✅ done (Go).** A Fern "plain" enum — a user enum
+     whose variants are *all* payloadless (a C-style enum) — passed to an
+     `@import` extern whose WIT takes an `enum`. A WIT enum flattens to a single
+     i32 discriminant; a Fern payloadless enum value is a pointer to a 4-byte
+     sentinel `[tag:i32 @0]` (`OpEnumSentinel`), so the wrapper reads
+     `i32.load(ptr)` and pushes the tag. `externPlainEnumParam` gates it (an
+     `ast.EnumType` whose `info.Enums` decl has ≥1 variant, all payloadless;
+     Option/Result naturally fail the all-payloadless test and keep their own
+     remapping path), recorded as `ir.ExternFunc.ParamPlainEnums`. **The Fern
+     variant order must match the WIT enum case order** — no remap — a
+     declaration-order contract (the canonical disc is just the tag). Gated by
+     `TestExternEnumParamCustomProvider` (a `pick: func(c: color) -> s32` over
+     `enum color { red, green, blue }` returning `disc + 100`; Fern passes
+     `Green` (tag 1), expects 101). Enum *results* (materializing a Fern
+     sentinel/box from a returned disc) and general payload-carrying `variant`s
+     are deferred.
    - **Self-host port — numeric array params — ✅ started.** The self-hosted
      compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
      beyond strings: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
@@ -619,7 +635,8 @@ world-driven composer (P2) wires it.
      `TestSelfHostExternSingleFieldRecordResultCustomProvider` (the same
      `make-wrapped: func(a: s32) -> record { v: s32 }` provider, run through the
      self-hosted backend).
-   - Still rejected (next slices): general user `variant`s; sub-4-byte-element
+   - Still rejected (next slices): WIT `enum` *results* + the self-host port of
+     enum params; general payload-carrying user `variant`s; sub-4-byte-element
      `list<T>` *results* (`u8[]`/`bool[]`) via a custom provider (the
      `ComposeFromWorldAuto` `gMemRealloc` trap analysed above); bool /
      nested-composite fields. The multi-component harness
