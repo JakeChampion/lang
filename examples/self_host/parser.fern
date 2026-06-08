@@ -2459,7 +2459,13 @@ function parse_struct_decl(p: Par): StructResult {
             var fr: StructFieldResult = parse_struct_field(p);
             p = fr.par;
             fields = fields.append(fr.field);
-            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            // A trailing comma before `}` must not start another (empty-named)
+            // field — mirrors the struct-literal parser and the Go parser.
+            if (p.peek_punct() == ",") {
+                p = p.advance();
+                if (p.peek_punct() == "}") { break; }
+                continue;
+            }
             break;
         }
     }
@@ -5585,6 +5591,15 @@ function main(): i32 {
     if (modSt.structs[1].fields.len() != 0) { return 727; }
     if (modSt.funcs.len() != 1) { return 728; }
     if (modSt.funcs[0].name != "main") { return 729; }
+
+    // A trailing comma after the last struct field must NOT produce a phantom
+    // empty-named field (it did — breaking struct-literal field matching in the
+    // SSA build_func for any struct written with a trailing comma, e.g. Ctx).
+    var srcTc: string = "struct Tc { a: i32, b: i32, } function main(): i32 { return 0; }";
+    var modTc: Module = parse_module(lexer.tokenize(srcTc));
+    if (modTc.structs.len() != 1) { return 730; }
+    if (modTc.structs[0].fields.len() != 2) { return 731; }
+    if (modTc.structs[0].fields[1].name != "b") { return 732; }
 
     // Struct literal: `var p = Point { x: 3, y: 4 };`
     var srcL: string = "var p = Point { x: 3, y: 4 }; return 0;";
