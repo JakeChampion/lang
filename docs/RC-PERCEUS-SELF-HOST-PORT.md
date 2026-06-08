@@ -1088,3 +1088,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Next: string counting (sweep string locals via arr_dec — the address
   guard no-ops literals, so no conservative oracle needed; inc-on-alias,
   construction-incs, reassign/rebind dec, return-retain) then flip free.
+- 2026-06-08: **wasm string RC — counting milestone (free OFF).** Mirrors
+  the array counting milestone for heap strings, validated detector-clean.
+  New conservative oracle `collect_str_swept` (+ `init_is_owned_string` /
+  `init_is_string_alias`, both on the existing `is_string_expr`): a body
+  string local is released at exit when it's OWNED — a fresh concat
+  (`a + b`, a str_box block) or a string literal — or a bare-ident alias.
+  Borrowed sources (params, field/index reads, get_or, method results) are
+  conservatively NOT swept (they leak, sound while free is off). `Ctx`
+  gains `str_swept` (populated last in `build_ctx`, once all string locals
+  are known so alias sources resolve). StmtVar emits `$__fern_rc_inc` after
+  a string alias bind; `str_exit_sweep` (rc DEC via `$__fern_rc_dec` — no
+  free yet) runs at StmtReturn (alongside the array sweep) and the
+  function epilogue. A literal slot is a guard no-op; a heap concat
+  balances its inc-on-alias so the over-release detector stays clean — even
+  for an alias of a borrowed param (the inc on the alias binding nets
+  against the alias's sweep, leaving the caller's string untouched).
+  Coverage: `TestSelfHostRcStrBoxWasm` gains concat-swept-clean,
+  concat-alias-clean, concat-loop-clean (value-correct + detector 0). Full
+  wasm suite (~93 s) green; bootstrap-safe. Next: string construction-incs
+  (strings stored into containers) + reassign/rebind dec + return-retain,
+  then flip the string sweep from `__fern_rc_dec` to `__fern_arr_dec` to
+  reclaim heap strings.
