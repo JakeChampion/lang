@@ -359,18 +359,22 @@ whole `fern.fern` has **zero unknown callees** and exactly **one**
   exists), so the SSA backends would emit `call read_file` → unknown. They
   need dedicated SSA ops + an open/read(/write)/close syscall runtime on
   x86-64 / arm64 (wasm via WASI `path_open` etc., or fall back).
-- **Option / Result** (`Some`/`None`/`Ok`/`Err`) — `build_match` only
-  handles user struct-unions (tag = struct index); these builtin sum types
-  use a fixed 2-word box `{tag@0, payload@8}` (Some/Ok = 0, None/Err = 1).
-  Needs: construction in `build_func` (mirror `asm.fern`), and a `build_match`
-  path that dispatches on the fixed tag and binds the payload from word 1
-  (the user-variant path binds the whole box, so this is a distinct case —
-  cleanest via a synthesized `__opt_payload` load builtin so the AST-level
-  `synth_match_chain` still works). Payload typing is best-effort (in `main`
-  the bindings are only assigned or unused, so an empty type suffices).
+- **Option / Result** (`Some`/`None`/`Ok`/`Err`) — ✅ **landed.**
+  `build_func` now constructs the fixed 2-word box `{tag@0, payload@1}`
+  (Some/Ok = 0, None/Err = 1, mirroring `asm.fern`), `None` is an `ExprIdent`
+  box, and `build_match` / `synth_match_chain` dispatch on the fixed tag and
+  bind the payload from word 1 via a synthesized `__opt_payload(box)` load
+  (so the AST-level chain still works; distinct from the user-variant path
+  which binds the whole box). All heap ops, so wasm gets it for free.
+  Payload typing is best-effort. Gated by an `option-result` case on the
+  x86-64 / arm64 / wasm SSA emit matrices.
+- **File-I/O builtins** `read_file` / `write_file` — still open; the only
+  remaining `main` blocker. With Option/Result in, `main`'s `build_func`
+  now *succeeds*, but `calls_all_known` still rejects the `read_file` /
+  `write_file` builtin calls (no SSA runtime for them).
 
-This (file I/O + sum types) is the most Perceus-adjacent remaining work and
-warrants deliberate, coordinated implementation rather than a tail-end rush.
+So `main` is now down to file I/O, which is the most Perceus-adjacent
+remaining work (a syscall runtime) and warrants deliberate implementation.
 
 Still open: the *linear* per-function retention (build + emit, freed by
 nothing) — Perceus RC (the native backend already has it; the self-host

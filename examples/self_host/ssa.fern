@@ -457,6 +457,24 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 var a1: i32[] = [v];
                 return s.emit(SInst { kind: "copy", result: s.cur_id(), args: a1, imm: 0, str: "" });
             }
+            // None — the empty Option, a 2-word box { tag@0 = 1, payload@1 = 0 }
+            // (matches Some/Ok/Err construction above; tag 1 like None/Err).
+            if (id.name == "None") {
+                s = s.fresh();
+                var nbx: i32 = s.cur_id();
+                var nna2: i32[] = [];
+                s = s.emit(SInst { kind: "alloc", result: nbx, args: nna2, imm: 2, str: "" });
+                s = s.kconst(0);
+                var nz: i32 = s.cur_id();
+                s = s.kconst(1);
+                var n1: i32 = s.cur_id();
+                s = s.fresh();
+                var nta: i32[] = [nbx, nz, n1];
+                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: nta, imm: 32, str: "" });
+                s = s.fresh();
+                var ncp: i32[] = [nbx];
+                return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ncp, imm: 0, str: "" });
+            }
             // Not a local: a no-capture lambda or a named top-level function
             // used as a VALUE → a 1-slot closure box [funcaddr]. (A capturing
             // lambda binding "fn:…|…" holds its box in the var, so it took the
@@ -605,6 +623,51 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         s = s.fresh();
                         var sbta: i32[] = [];
                         return s.emit(SInst { kind: "strbuf_take", result: s.cur_id(), args: sbta, imm: 0, str: "" });
+                    }
+                    // Option / Result construction: Some(x) / Ok(x) / Err(x) →
+                    // a 2-word box { tag@0, payload@1 } (Some/Ok tag 0, Err
+                    // tag 1), mirroring the AST backend. None is an ExprIdent
+                    // (handled below). __opt_payload(box) reads word 1 — used
+                    // by the synthesized match-arm binding for Some/Ok/Err.
+                    if ((cid.name == "Some" || cid.name == "Ok" || cid.name == "Err") && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var opv: i32 = s.cur_id();
+                        s = s.fresh();
+                        var obox: i32 = s.cur_id();
+                        var ona: i32[] = [];
+                        s = s.emit(SInst { kind: "alloc", result: obox, args: ona, imm: 2, str: "" });
+                        s = s.kconst(0);
+                        var oz: i32 = s.cur_id();
+                        var otag: i32 = 0;
+                        if (cid.name == "Err") { otag = 1; }
+                        s = s.kconst(otag);
+                        var otv: i32 = s.cur_id();
+                        s = s.fresh();
+                        var ota: i32[] = [obox, oz, otv];
+                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: ota, imm: 32, str: "" });
+                        s = s.kconst(1);
+                        var oo: i32 = s.cur_id();
+                        s = s.fresh();
+                        var opa: i32[] = [obox, oo, opv];
+                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: opa, imm: 64, str: "" });
+                        s = s.fresh();
+                        var ocp: i32[] = [obox];
+                        return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ocp, imm: 0, str: "" });
+                    }
+                    // __opt_payload(box) — read an Option/Result box's payload
+                    // (word 1). Synthesized by synth_match_chain for the
+                    // Some/Ok/Err arm binding (so the binding lowers via the
+                    // normal AST path rather than a raw load).
+                    if (cid.name == "__opt_payload" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var pbx: i32 = s.cur_id();
+                        s = s.kconst(1);
+                        var p1: i32 = s.cur_id();
+                        s = s.fresh();
+                        var pla: i32[] = [pbx, p1];
+                        return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: pla, imm: 64, str: "" });
                     }
                     // arr[idx] = val — the parser desugars an indexed
                     // assignment to the builtin __set_index(arr, idx, val).
@@ -1266,6 +1329,15 @@ function build_stmts(body: parser.Stmt[], s: BState): BState {
 // AST nodes: each variant arm becomes `if ($tag == <variant tag>) { <bind>
 // <body> } else <rest>`, with a trailing wildcard arm as the final else.
 // $scrut / $tag are synthetic vars bound by build_match.
+// opt_tag returns the fixed discriminant for an Option/Result variant —
+// Some/Ok = 0, None/Err = 1 — or -1 for a user-defined struct-union variant
+// (whose tag is its struct index). Matches the AST backend's box layout.
+function opt_tag(name: string): i32 {
+    if (name == "Some" || name == "Ok") { return 0; }
+    if (name == "None" || name == "Err") { return 1; }
+    return 0 - 1;
+}
+
 function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]): parser.Stmt[] {
     var chain: parser.Stmt[] = [];
     var i: i32 = arms.len() - 1;
@@ -1274,11 +1346,20 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
         match (arm.pattern) {
             parser.PatWildcard(_) => { chain = arm.body; },
             parser.PatVariant(pv) => {
-                var tag: i32 = find_struct_index(structs, pv.type_name);
+                // Option/Result variants carry a fixed tag and bind the
+                // payload (box word 1) rather than the whole box.
+                var ot: i32 = opt_tag(pv.type_name);
+                var tag: i32 = ot;
+                if (ot < 0) { tag = find_struct_index(structs, pv.type_name); }
                 var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0 }, right: parser.ExprNumber { text: int_str(tag), suffix: "", is_float: false, line: 0, col: 0 } };
                 var then_body: parser.Stmt[] = [];
                 if (pv.binding.len() > 0 && pv.binding != "_") {
-                    then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: parser.ExprIdent { name: "$scrut", line: 0, col: 0 }, line: 0, col: 0 });
+                    var binit: parser.Expr = parser.ExprIdent { name: "$scrut", line: 0, col: 0 };
+                    if (ot >= 0) {
+                        var oargs: parser.Expr[] = [parser.ExprIdent { name: "$scrut", line: 0, col: 0 }];
+                        binit = parser.ExprCall { callee: parser.ExprIdent { name: "__opt_payload", line: 0, col: 0 }, args: oargs, line: 0, col: 0, type_argc: 0 };
+                    }
+                    then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0 });
                 }
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) { then_body = then_body.append(arm.body[bi]); bi = bi + 1; }
@@ -1299,7 +1380,7 @@ function build_match(m: parser.StmtMatch, s: BState): BState {
     var ci: i32 = 0;
     while (ci < m.arms.len()) {
         match (m.arms[ci].pattern) {
-            parser.PatVariant(pv) => { if (find_struct_index(s.structs, pv.type_name) < 0) { return s.fail(); } },
+            parser.PatVariant(pv) => { if (opt_tag(pv.type_name) < 0 && find_struct_index(s.structs, pv.type_name) < 0) { return s.fail(); } },
             parser.PatWildcard(_) => {}
         }
         ci = ci + 1;
