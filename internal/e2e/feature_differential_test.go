@@ -508,6 +508,18 @@ function main(): i32 {
     print(acc.get().to_string());
     return 0;
 }`},
+		// Cell[string]: construct / get / overwrite-with-concat / read back.
+		// Both compilers represent the slot as a single string reference
+		// (the Go side rc-tracks it, self-host leaks it) — identical output.
+		{"cell_string", `import "std/i32";
+import "std/string";
+function main(): i32 {
+    var c: Cell[string] = cell_new("hi");
+    c.set(c.get() + "!");
+    print(c.get());
+    print(c.get().len().to_string());
+    return 0;
+}`},
 	}
 	for _, c := range cases {
 		c := c

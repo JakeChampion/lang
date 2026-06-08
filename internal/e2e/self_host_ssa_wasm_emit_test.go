@@ -96,6 +96,8 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3},
 		{"arr-with", "function main(): i32 { var a = [1, 2, 3]; a = a.with(1, 20); return a[0] + a[1] + a[2]; }", 24},
 		{"cell-get-set", "function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }", 10},
+		// Cell[string] — single-pointer string slot, same machinery as i32.
+		{"cell-string", "function main(): i32 { var c: Cell[string] = cell_new(\"ab\"); c.set(\"xyz\"); return c.get().len(); }", 3},
 		{"for-sum", "function main(): i32 { var a = [5, 10, 15]; var s = 0; for x in a { s = s + x; } return s; }", 30},
 		{"for-break", "function main(): i32 { var a = [1, 2, 3, 4, 5]; var s = 0; for x in a { if (x > 3) { break; } s = s + x; } return s; }", 6},
 		{"for-continue", "function main(): i32 { var a = [1, 2, 3, 4]; var s = 0; for x in a { if (x == 2) { continue; } s = s + x; } return s; }", 8},

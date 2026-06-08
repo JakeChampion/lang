@@ -35,6 +35,17 @@ var selfHostProgCases = []struct {
 	{"cell-get-set", `function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }`, 10},
 	// Cell shared mutation through a function param: 10 bumped 3× = 13.
 	{"cell-shared", `function bump(c: Cell[i32]) { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }`, 13},
+	// Cell[string] — single-pointer string slot (self-host strings are
+	// single-pointer, heap is leak-everything), so it reuses the i32 cell
+	// machinery. "A" then overwritten to "Z"; first byte 'Z' = 90.
+	{"cell-string", `function main(): i32 { var c: Cell[string] = cell_new("A"); c.set("Z"); return c.get()[0]; }`, 90},
+	// Cell[string] stored in a STRUCT FIELD — the lamdefs/Ctx shape. "ab"
+	// overwritten to "xyz" through the field; len 3.
+	{"cell-string-field", `struct Box { c: Cell[string] } function main(): i32 { var b: Box = Box { c: cell_new("ab") }; b.c.set("xyz"); return b.c.get().len(); }`, 3},
+	// Cell[string] field mutated through a function PARAM (shared mutation) —
+	// exactly how lam_ctr/lamdefs thread through the lambda emitter. "hi" →
+	// "hi!" → "hi!!", len 4.
+	{"cell-string-shared", `struct Box { c: Cell[string] } function bump(b: Box) { b.c.set(b.c.get() + "!"); } function main(): i32 { var b: Box = Box { c: cell_new("hi") }; bump(b); bump(b); return b.c.get().len(); }`, 4},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.
 	{"array-with-chain", `function main(): i32 { var a: i32[] = [0, 0, 0]; a = a.with(0, 5); a = a.with(2, 7); return a[0] * 10 + a[2]; }`, 57},
 	// Map.insert (value-returning) with overwrite: {1:99, 2:20}.
