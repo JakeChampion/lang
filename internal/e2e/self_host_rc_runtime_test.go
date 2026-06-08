@@ -240,8 +240,8 @@ func TestSelfHostRcReassignX86_64(t *testing.T) {
 		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
 			t.Errorf("expected a retain (__fern_rc_inc) for the reassigned alias")
 		}
-		if !strings.Contains(asm, "call __fn___fern_rc_dec") {
-			t.Errorf("expected a release (__fern_rc_dec) of the overwritten value")
+		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
+			t.Errorf("expected a release (__fern_arr_dec) of the overwritten value")
 		}
 	})
 }
@@ -315,8 +315,8 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		if !strings.Contains(asm, "rep stosq") {
 			t.Errorf("expected body-local zero-init (rep stosq) in a function with locals")
 		}
-		if !strings.Contains(asm, "call __fn___fern_rc_dec") {
-			t.Errorf("expected the exit-dec sweep (__fern_rc_dec) for the array local")
+		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
+			t.Errorf("expected the exit-dec sweep (__fern_arr_dec) for the array local")
 		}
 	})
 }
@@ -565,6 +565,57 @@ func TestSelfHostRcClosureX86_64(t *testing.T) {
 		{"closure-captures-array", "function main(): i32 { var xs: i32[] = [3, 4, 5]; var f = function (): i32 { return xs[1] + xs[2]; }; return f() + __fern_rc_underflow_count(); }", 9},
 		// Closure escaping its defining function, capturing an array.
 		{"closure-escapes-with-array", "function mk(xs: i32[]): () => i32 { return function (): i32 { return xs[0] + xs[1]; }; } function main(): i32 { var a: i32[] = [3, 4]; var f = mk(a); return f() + __fern_rc_underflow_count(); }", 7},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
+
+// Phase 3: free is ON for arrays (x86-64) -- buffers reclaimed via a
+// size-class freelist + __fern_arr_dec at rc==1. Reclamation proof + the
+// enum-payload retain that closed the JSON nested-structure gap.
+func TestSelfHostRcFreeReclaimX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Total allocation far exceeds the 1 GiB bump heap; completes
+		// (exit 0) only because freed buffers are reused. (n<256 avoids a
+		// pre-existing, unrelated .append grow bug.)
+		{"reclaim-churn", "function work(n: i32): i32 { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs[n - 1]; } function main(): i32 { var k = 0; var s = 0; while (k < 500000) { s = work(200); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 3},
+		// Borrowed-param builder: callee must not free the caller's buffer.
+		{"borrowed-param-builder", "function add(toks: i32[], t: i32): i32[] { return toks.append(t); } function main(): i32 { var ts: i32[] = []; var i = 0; while (i < 200) { ts = add(ts, i); i = i + 1; } return ts[199] + __fern_rc_underflow_count(); }", 199},
+		// Enum payload holding an array: the variant retains it, so the
+		// source local going out of scope does not free it (would UAF
+		// once free is on -- the JSON nested-structure gap).
+		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function mk(): Box { var xs: i32[] = [3, 4, 5]; return Arr(xs); } function main(): i32 { var b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __fern_rc_underflow_count(); }, Empty => { return 0; } } }", 9},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
