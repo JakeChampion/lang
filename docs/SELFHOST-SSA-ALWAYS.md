@@ -315,16 +315,34 @@ buffer. x86-64 + arm64 emit it (validated under qemu); wasm rejects it via
 subset has no global mutable state). Gated by `strbuf-build` / `strbuf-reuse`
 cases on both native backends.
 
-**Coverage is now complete.** With `strbuf` in, the whole `fern.fern` no
-longer trips any `try_ssa` bail — `build_func` succeeds on every function and
-every callee resolves. The all-or-nothing gate now *commits* the full
-compiler to SSA instead of falling back. Compiling it that way immediately
-hits the **cumulative-allocation wall**: the SSA pipeline's bump allocations
-exceed the 1 GiB `cmd/fern` bootstrap heap (exit 137 at ~0.85 GiB resident).
-So Phase 4 has flipped from a *coverage* problem to purely a *memory* one —
-exactly the no-GC retention below. (Small programs are unaffected and all
-SSA suites stay green; only the whole-compiler self-compile is large enough
-to hit it, and no test exercises that path.)
+**Correction — coverage was NOT complete after `strbuf`.** That earlier
+claim was wrong: `try_ssa` reports only the *first* bail per run, so each
+fix unmasks the next. Driving an actual full-`fern.fern` SSA compile (with
+extra bootstrap headroom to get past the AST-fallback memory) and a
+*non-bailing* instrumented scan (record every `build_func` failure and
+unknown callee across all functions in one pass) gives the true remaining
+set:
+
+- **A parser bug** (✅ fixed here): `parse_struct_decl` parsed a phantom
+  empty-named field for a struct decl with a **trailing comma** after the
+  last field (it consumed the `,` then unconditionally parsed another field
+  instead of checking for `}`). `Ctx` (in `wasm.fern`) is the one struct so
+  written, so `build_ctx`'s `Ctx { … }` literal (40 fields) failed to match
+  the decl's phantom 41st → `build_func` bailed. The Go parser and the
+  struct-*literal* parser already handled trailing commas; this aligns the
+  struct-*decl* parser. Gated by a parser self-test.
+- **Still open** (the genuine remainder): `main` fails `build_func` (one
+  unhandled construct in the CLI driver), and the receiver-method calls
+  `w` (38, `WState.w` in `wasm.fern`) and `cur_id` (3, `BState.cur_id`) are
+  unknown callees — a `type_of_expr` receiver-resolution gap (the dispatch
+  falls back to a bare method name when the receiver's type isn't inferred).
+- **And then** the cumulative-allocation wall: even once those are closed,
+  a full SSA self-compile exceeds the 1 GiB `cmd/fern` bootstrap heap
+  (~0.85 GiB resident before falling back today; the SSA path needs more) —
+  the no-GC retention below.
+
+(Small programs are unaffected and all SSA suites stay green; only the
+whole-compiler self-compile reaches any of this, and no test exercises it.)
 
 Still open: the *linear* per-function retention (build + emit, freed by
 nothing) — Perceus RC (the native backend already has it; the self-host
