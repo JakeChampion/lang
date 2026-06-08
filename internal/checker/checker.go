@@ -3312,16 +3312,23 @@ func isVoidReturn(t ast.Type) bool {
 // type position. It's nil outside of enum-body contexts. When
 // the name is in `params`, we always rewrite to ParamType —
 // the parameter wins over a same-named enum or struct.
-// isCellElemType reports whether T is permitted as Cell[T] (E057). v1 is
-// cycle-free *scalars* only — they hold no pointer so a cell over them can
-// never be part of a reference cycle, and the slot needs no RC. `string`
-// and richer cycle-free types follow once the owning-slot RC integration
-// lands (docs/CELL-TYPE-PLAN.md). An unresolved generic param is allowed
-// through here (there's no v1 generic-Cell use; monomorph-time checking is
-// a follow-up) so generic signatures still resolve.
+// isCellElemType reports whether T is permitted as Cell[T] (E057). The
+// element must be cycle-free: a cell over a value that can transitively
+// hold another cell could reconstruct a reference cycle, which the
+// immutable-data model forbids so Perceus RC needs no cycle collector.
+// Scalars (i32/i64/f64/bool) hold no pointer at all; `string` is a heap
+// buffer of bytes that references no other Fern value, so a Cell[string]
+// can never close a cycle either, and its owning slot participates in
+// the string rc arc (cell_new / get / set / drop retain+release the
+// buffer — docs/CELL-TYPE-PLAN.md, docs/RC-STRINGS-PLAN.md). Composite /
+// reference types (struct / enum / array / tuple / closure / another
+// Cell) stay rejected: those CAN form cycles. An unresolved generic
+// param is allowed through here (there's no v1 generic-Cell use;
+// monomorph-time checking is a follow-up) so generic signatures still
+// resolve.
 func isCellElemType(t ast.Type) bool {
 	switch t.(type) {
-	case ast.NumberType, ast.FloatType, ast.BoolType, ast.ParamType:
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType, ast.ParamType:
 		return true
 	}
 	return false
@@ -3391,7 +3398,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 			// types wait on the owning-slot RC integration.
 			if t.Name == "Cell" && len(args) == 1 && !isCellElemType(args[0]) {
 				c.errfCode(sd.P, "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool); a reference type could form a cycle, which immutable data structures forbid",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid",
 					args[0])
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
@@ -6323,7 +6330,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if !isCellElemType(at) {
 				c.errfCode(n.Args[0].Pos(), "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool); a reference type could form a cycle, which immutable data structures forbid",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid",
 					at)
 			}
 			n.TypeArgs = []ast.Type{at}

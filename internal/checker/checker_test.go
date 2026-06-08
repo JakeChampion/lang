@@ -2419,9 +2419,10 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 	}
 }
 
-// E057: Cell[T] is only allowed for a cycle-free T (v1: scalars). A
-// reference element type could reconstruct a reference cycle, which the
-// immutable-data model forbids (docs/CELL-TYPE-PLAN.md).
+// E057: Cell[T] is only allowed for a cycle-free T — a scalar or a
+// `string`. A composite / reference element type could reconstruct a
+// reference cycle, which the immutable-data model forbids
+// (docs/CELL-TYPE-PLAN.md, docs/RC-STRINGS-PLAN.md).
 func TestCellElemTypeE057(t *testing.T) {
 	// Cell[i32] — scalar, fine. cell_new infers T; get/set type-check.
 	if err := checkSource(t, `function main(): i32 {
@@ -2431,21 +2432,33 @@ func TestCellElemTypeE057(t *testing.T) {
 }`); err != nil {
 		t.Errorf("Cell[i32] should check, got %v", err)
 	}
-	// Cell[string] (reference type) — rejected.
-	err := checkSource(t, `function main(): i32 { var c: Cell[string] = cell_new("x"); return c.get().len(); }`)
-	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
-		t.Errorf("Cell[string] should be E057, got %v", err)
+	// Cell[string] — string is cycle-free (a buffer of bytes, references no
+	// other value) and its owning slot is rc-tracked, so it's allowed.
+	if err := checkSource(t, `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
+	var c: Cell[string] = cell_new("x");
+	c.set("yy");
+	return c.get().len();
+}`); err != nil {
+		t.Errorf("Cell[string] should check, got %v", err)
 	}
-	// Inferred from a reference-typed cell_new arg — also rejected.
-	err = checkSource(t, `function main(): i32 { var c = cell_new("x"); return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
-		t.Errorf("inferred Cell[string] should be E057, got %v", err)
+	// Inferred Cell[string] from the cell_new arg — also allowed.
+	if err := checkSource(t, `import "core/no_prelude";
+import "std/string";
+function main(): i32 { var c = cell_new("x"); return c.get().len(); }`); err != nil {
+		t.Errorf("inferred Cell[string] should check, got %v", err)
 	}
-	// Cell[Point] (struct) — rejected.
-	err = checkSource(t, `struct Point { x: i32 }
+	// Cell[Point] (struct) — a composite type can form a cycle: rejected.
+	err := checkSource(t, `struct Point { x: i32 }
 function main(): i32 { var c: Cell[Point] = cell_new(Point { x: 1 }); return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
 		t.Errorf("Cell[Point] should be E057, got %v", err)
+	}
+	// Cell[i32[]] (array) — also a reference/composite type: rejected.
+	err = checkSource(t, `function main(): i32 { var c: Cell[i32[]] = cell_new([1, 2]); return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
+		t.Errorf("Cell[i32[]] should be E057, got %v", err)
 	}
 }
 
