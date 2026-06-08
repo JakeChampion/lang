@@ -480,6 +480,68 @@ func appendVariantParamPayloadI64(body []byte, slot uint32, vs []ir.ExternEnumVa
 	return body
 }
 
+// appendVariantParamMultiField emits, for a multi-field variant `@import`
+// parameter, the SlotCount i32 join slots. For each slot j it builds an i32-result
+// if/else chain on the box tag: the matching arm pushes its field j (i32.load at
+// the field's box offset) or 0 if the arm has fewer than j+1 fields (padding).
+func appendVariantParamMultiField(body []byte, slot uint32, ep *ir.ExternEnumParam) []byte {
+	n := len(ep.Variants)
+	slotVal := func(b []byte, v ir.ExternEnumVariant, j int32) []byte {
+		if int(j) < len(v.Fields) {
+			b = inst.InstLocalGet(b, slot)
+			return memory.InstI32Load(b, 2, uint32(v.Fields[j]))
+		}
+		return inst.InstI32Const(b, 0)
+	}
+	for j := int32(0); j < ep.SlotCount; j++ {
+		for k := 0; k < n-1; k++ {
+			body = inst.InstLocalGet(body, slot)
+			body = memory.InstI32Load(body, 2, 0) // tag @ box+0
+			body = inst.InstI32Const(body, int32(k))
+			body = numeric.InstI32Eq(body)
+			body = inst.InstIfStart(body, encode.ValtypeI32)
+			body = slotVal(body, ep.Variants[k], j)
+			body = inst.InstElse(body)
+		}
+		body = slotVal(body, ep.Variants[n-1], j) // innermost (default) arm
+		for k := 0; k < n-1; k++ {
+			body = inst.InstEnd(body)
+		}
+	}
+	return body
+}
+
+// appendVariantResultStoreMultiField emits, for a multi-field variant `@import`
+// *result*, the per-arm payload store: branching on the disc, the matching arm
+// stores each of its fields from the corresponding i32 join slot in the return
+// area (slot j @ rb + 4 + 4*j) into the Fern box at the field's box offset.
+func appendVariantResultStoreMultiField(body []byte, base, rb, disc uint32, ep *ir.ExternEnumParam) []byte {
+	const rcHeaderBytes = 8
+	storeArm := func(b []byte, v ir.ExternEnumVariant) []byte {
+		for j, off := range v.Fields {
+			b = inst.InstLocalGet(b, base) // store address
+			b = inst.InstLocalGet(b, rb)
+			b = memory.InstI32Load(b, 2, uint32(4+4*j)) // slot j in the area
+			b = memory.InstI32Store(b, 2, uint32(rcHeaderBytes)+uint32(off))
+		}
+		return b
+	}
+	n := len(ep.Variants)
+	for k := 0; k < n-1; k++ {
+		body = inst.InstLocalGet(body, disc)
+		body = inst.InstI32Const(body, int32(k))
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = storeArm(body, ep.Variants[k])
+		body = inst.InstElse(body)
+	}
+	body = storeArm(body, ep.Variants[n-1]) // innermost (default) arm
+	for k := 0; k < n-1; k++ {
+		body = inst.InstEnd(body)
+	}
+	return body
+}
+
 // appendVariantResultStore emits, for a mixed-width variant `@import` *result*,
 // the per-arm payload store: it branches on the disc (local `disc`) and, for the
 // matching arm, reads the i64 canonical join slot at `rb+poff` and stores it into
@@ -545,9 +607,20 @@ func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEn
 		}
 		areaSize := ep.PayloadOffset + psize // canonical return area (disc + join slot)
 		// The Fern box holds the matched arm's payload at its own offset; for a
-		// mixed-width variant that's per-arm, so size the box to the widest arm end.
+		// mixed-width / multi-field variant that's per-arm, so size the box to the
+		// widest arm end (and the area to the join: SlotCount i32 slots when multi).
 		boxSize := areaSize
-		if ep.Variants != nil {
+		if ep.SlotCount > 0 {
+			areaSize = 4 + ep.SlotCount*4
+			boxSize = 0
+			for _, v := range ep.Variants {
+				for _, off := range v.Fields {
+					if end := off + 4; end > boxSize {
+						boxSize = end
+					}
+				}
+			}
+		} else if ep.Variants != nil {
 			boxSize = 0
 			for _, v := range ep.Variants {
 				if v.Type == nil {
@@ -595,7 +668,11 @@ func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEn
 			body = inst.InstLocalGet(body, disc)
 		}
 		body = memory.InstI32Store(body, 2, rcHeaderBytes)
-		if ep.Variants != nil {
+		if ep.SlotCount > 0 {
+			// Multi-field: store each of the matched arm's fields from its i32 join
+			// slot into the box, branching on the disc.
+			body = appendVariantResultStoreMultiField(body, base, rb, disc, ep)
+		} else if ep.Variants != nil {
 			// Mixed-width: store the matched arm's payload (coerced from the i64
 			// join slot) at that arm's box offset, branching on the disc.
 			body = appendVariantResultStore(body, base, rb, disc, poff, ep.Variants)
@@ -680,7 +757,11 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 					body = inst.InstLocalGet(body, slot)
 					body = memory.InstI32Load(body, 2, 0)
 				}
-				if ep.Variants != nil {
+				if ep.SlotCount > 0 {
+					// Multi-field variant: push SlotCount i32 join slots, each chosen
+					// by branching on the box tag (arm's field j, or 0 to pad).
+					body = appendVariantParamMultiField(body, slot, ep)
+				} else if ep.Variants != nil {
 					// Mixed-width variant: produce the i64 join value by branching on
 					// the box tag — each arm loads its payload at its own box offset
 					// and coerces to i64 (a 32-bit arm extends; a 64-bit arm loads it

@@ -1,0 +1,143 @@
+package e2e
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/wasm/component"
+	"github.com/jakechampion/lang/internal/wasm/componenttype"
+)
+
+// TestExternVariantMultiFieldParamCustomProvider is the *multi-field* `variant`
+// *parameter* gate (docs/WIT-BRING-YOUR-OWN.md): a Fern enum whose cases carry
+// more than one payload — `enum Ev { Click(i32, i32), Key(i32), Close }` — passed
+// to an `@import` extern taking the WIT `variant ev { click(tuple<u32, u32>),
+// key(u32), close }` (a WIT case carries one type, so multiple values ride a
+// tuple, which flattens identically). The canonical join is SlotCount=2 i32 slots;
+// the param wrapper pushes each slot by branching on the box tag — the matching
+// arm's field j, or 0 to pad shorter arms (appendVariantParamMultiField).
+//
+// `take: func(e: ev) -> s32`: click(a,b) → a + b*1000, key(k) → 100000+k,
+// close → -1. The Fern side passes Click(3,4), Key(7), Close.
+func TestExternVariantMultiFieldParamCustomProvider(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	run := func(name string, args ...string) {
+		t.Helper()
+		if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
+			t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+		}
+	}
+
+	provWit := filepath.Join(dir, "provwit")
+	if err := os.MkdirAll(provWit, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const iface = "interface sink { variant ev { click(tuple<u32, u32>), key(u32), close } take: func(e: ev) -> s32; }"
+	if err := os.WriteFile(filepath.Join(provWit, "sink.wit"),
+		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
+		t.Fatalf("write provider wit: %v", err)
+	}
+	// take receives the variant flattened to (disc:i32, slot0:i32, slot1:i32).
+	// click=0 uses both slots; key=1 uses slot0 (slot1 padded); close=2 neither.
+	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
+  (memory (export "memory") 1)
+  (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $s0 i32) (param $s1 i32) (result i32)
+    (if (result i32) (i32.eqz (local.get $disc))
+      (then (i32.add (local.get $s0) (i32.mul (local.get $s1) (i32.const 1000))))
+      (else (if (result i32) (i32.eq (local.get $disc) (i32.const 1))
+        (then (i32.add (i32.const 100000) (local.get $s0)))
+        (else (i32.const -1)))))))`), 0o644); err != nil {
+		t.Fatalf("write provider core: %v", err)
+	}
+	provider := filepath.Join(dir, "provider.wasm")
+	run(wasmtools, "parse", filepath.Join(dir, "prov_core.wat"), "-o", filepath.Join(dir, "prov_core.wasm"))
+	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
+	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
+
+	userWit := filepath.Join(dir, "userwit")
+	if out, err := exec.Command("cp", "-r", "../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
+		_ = os.MkdirAll(userWit, 0o755)
+		run("cp", "-r", "../../cmd/fern/wit/deps", filepath.Join(userWit, "deps"))
+		_ = out
+	}
+	if err := os.MkdirAll(filepath.Join(userWit, "deps", "test"), 0o755); err != nil {
+		t.Fatalf("mkdir deps/test: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(userWit, "deps", "test", "sink.wit"),
+		[]byte("package local:test@0.1.0;\n"+iface+"\n"), 0o644); err != nil {
+		t.Fatalf("write user sink dep: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/sink@0.1.0;\n}\n"), 0o644); err != nil {
+		t.Fatalf("write user world: %v", err)
+	}
+	run(wasmtools, "parse", mustWrite(t, dir, "empty.wat", "(module)"), "-o", filepath.Join(dir, "empty.wasm"))
+	run(wasmtools, "component", "embed", userWit, "-w", "u", filepath.Join(dir, "empty.wasm"), "-o", filepath.Join(dir, "embedded.wasm"))
+	embeddedBytes, err := os.ReadFile(filepath.Join(dir, "embedded.wasm"))
+	if err != nil {
+		t.Fatalf("read embedded: %v", err)
+	}
+	w, err := componenttype.DecodeWorldBytes(extractComponentType(t, embeddedBytes))
+	if err != nil {
+		t.Fatalf("DecodeWorldBytes: %v", err)
+	}
+
+	const want = "mfp-ok"
+	src := `enum Ev { Click(i32, i32), Key(i32), Close }
+
+@import("local:test/sink@0.1.0", "take")
+function take(e: Ev): i32;
+
+function main(): i32 {
+	if (take(Click(3, 4)) == 4003 && take(Key(7)) == 100007 && take(Close) == -1) { write("` + want + `"); } else { write("mfp-bad"); }
+	return 0;
+}`
+	mainPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write prog: %v", err)
+	}
+	info, prog := loadCheckMono(t, mainPath)
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		ForceMemorySection: true,
+		Preview2WASI:       true,
+		SynthCliRun:        true,
+		PrintMainResult:    true,
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+	if !bytes.Contains(core, []byte("local:test/sink@0.1.0")) {
+		t.Fatalf("core is missing the custom extern import")
+	}
+	userComp, err := component.ComposeFromWorldAuto(core, w)
+	if err != nil {
+		t.Fatalf("ComposeFromWorldAuto: %v", err)
+	}
+	userPath := filepath.Join(dir, "user.wasm")
+	if err := os.WriteFile(userPath, userComp, 0o644); err != nil {
+		t.Fatalf("write user component: %v", err)
+	}
+
+	final := filepath.Join(dir, "final.wasm")
+	run(wasmtools, "compose", userPath, "--definitions", provider, "-o", final)
+	run(wasmtools, "validate", final)
+	out, err := exec.Command(wasmtime, "run", final).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run: %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte(want)) {
+		t.Fatalf("stdout = %q, want it to contain %q", out, want)
+	}
+}

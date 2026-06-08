@@ -658,23 +658,29 @@ type ExternEnumParam struct {
 	RemapDisc     bool
 	PayloadType   ast.Type
 	PayloadOffset int32
-	// Variants is set only for a MIXED-WIDTH variant (some payloaded arm is
-	// 32-bit core, another 64-bit) — where the canonical join is i64 and each arm
-	// must be coerced to/from it (32-bit arms extend/wrap) at its own box payload
-	// offset. Indexed by variant/disc index; a payloadless arm has Type nil. When
-	// nil the (uniform or non-uniform-same-width) single-slot path applies:
-	// PayloadType is the join slot and PayloadOffset its box/area offset.
+	// Variants is set for a MIXED-WIDTH variant (some payloaded arm is 32-bit
+	// core, another 64-bit — join i64, per-arm coerce) OR a MULTI-FIELD variant
+	// (some arm carries ≥2 payloads — join is SlotCount i32 slots). Indexed by
+	// variant/disc index. When nil the single-slot path applies (PayloadType is
+	// the join slot, PayloadOffset its box/area offset).
 	Variants []ExternEnumVariant
+	// SlotCount > 0 marks a MULTI-FIELD variant: the canonical join is SlotCount
+	// i32 slots (all arms' fields are i32-class integers). Each arm's Fields give
+	// its payload box offsets (field j → slot j; arms with < SlotCount fields pad
+	// the trailing slots with 0). 0 ⇒ single-field (BoxOffset/Type) or non-Variants.
+	SlotCount int32
 }
 
-// ExternEnumVariant is one arm's box payload descriptor for a mixed-width variant
-// (see ExternEnumParam.Variants). BoxOffset is the payload's byte offset in the
-// Fern enum box (== payloadLayout of this arm's payload); Type is the arm's scalar
-// payload type (nil ⇒ payloadless). The wrapper branches on the disc to load/store
-// at this offset+width, coercing to/from the i64 join slot.
+// ExternEnumVariant is one arm's box payload descriptor for a mixed-width or
+// multi-field variant (see ExternEnumParam.Variants). For a mixed-width
+// (single-payload) variant, BoxOffset is the payload's box byte offset and Type
+// its scalar type (nil ⇒ payloadless). For a multi-field variant, Fields holds
+// the arm's i32 payload box offsets in order (empty ⇒ payloadless). The wrapper
+// branches on the disc to load/store at the right offset(s).
 type ExternEnumVariant struct {
 	BoxOffset int32
 	Type      ast.Type
+	Fields    []int32
 }
 
 // ExternRecordResult is the flattened layout of a record (struct) `@import`
@@ -874,36 +880,59 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 	if !ok || len(ed.Variants) == 0 {
 		return nil, false
 	}
-	var firstPayload ast.Type
-	uniform := true
-	mixedWidth := false
+	maxFields := 0
 	anyPayloaded := false
 	for _, v := range ed.Variants {
-		switch len(v.Payloads) {
-		case 0:
-			// payloadless — allowed
-		case 1:
-			p := v.Payloads[0]
-			if !externRecordFieldSupported(p) {
-				return nil, false
-			}
-			if firstPayload == nil {
-				firstPayload = p
-			} else {
-				if externCanonicalCoreWidth(firstPayload) != externCanonicalCoreWidth(p) {
-					mixedWidth = true // 32-bit and 64-bit arms — join is i64, per-arm coerce
-				}
-				if !externScalarTypeEq(firstPayload, p) {
-					uniform = false // non-uniform — join is a bit-container
-				}
-			}
+		if len(v.Payloads) > maxFields {
+			maxFields = len(v.Payloads)
+		}
+		if len(v.Payloads) >= 1 {
 			anyPayloaded = true
-		default:
-			return nil, false // multi-payload variant — deferred
 		}
 	}
 	if !anyPayloaded {
 		return nil, false // all-payloadless ⇒ a plain enum (externPlainEnumParam)
+	}
+	if maxFields >= 2 {
+		// Multi-field variant: the canonical join is maxFields i32 slots. Scoped to
+		// i32-class integer fields (every slot a plain i32, no coercion). Each arm
+		// maps field j → slot j; shorter arms pad the trailing slots with 0.
+		variants := make([]ExternEnumVariant, len(ed.Variants))
+		for i, v := range ed.Variants {
+			for _, p := range v.Payloads {
+				if !externIsI32ClassInt(p) {
+					return nil, false // non-i32 field in a multi-field arm — deferred
+				}
+			}
+			if len(v.Payloads) > 0 {
+				offs, _ := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
+				variants[i] = ExternEnumVariant{Fields: offs}
+			}
+		}
+		return &ExternEnumParam{RemapDisc: false, PayloadType: ast.NumberType{Width: 32, Signed: true}, SlotCount: int32(maxFields), Variants: variants}, true
+	}
+	// Single-field arms (0 or 1 payload each).
+	var firstPayload ast.Type
+	uniform := true
+	mixedWidth := false
+	for _, v := range ed.Variants {
+		if len(v.Payloads) != 1 {
+			continue
+		}
+		p := v.Payloads[0]
+		if !externRecordFieldSupported(p) {
+			return nil, false
+		}
+		if firstPayload == nil {
+			firstPayload = p
+		} else {
+			if externCanonicalCoreWidth(firstPayload) != externCanonicalCoreWidth(p) {
+				mixedWidth = true // 32-bit and 64-bit arms — join is i64, per-arm coerce
+			}
+			if !externScalarTypeEq(firstPayload, p) {
+				uniform = false // non-uniform — join is a bit-container
+			}
+		}
 	}
 	if mixedWidth {
 		// The canonical join of a mixed-width arm set is i64; each arm is coerced
@@ -1004,6 +1033,15 @@ func externCanonicalCoreWidth(t ast.Type) int32 {
 		}
 	}
 	return 32
+}
+
+// externIsI32ClassInt reports whether t is an integer that flattens to a single
+// i32 core value (i8/i16/i32 and their unsigned forms; not 64-bit, not float).
+// Multi-field variants are scoped to these so every join slot is a plain i32 with
+// no reinterpret/extend coercion.
+func externIsI32ClassInt(t ast.Type) bool {
+	n, ok := t.(ast.NumberType)
+	return ok && n.NormalWidth() <= 32
 }
 
 // externRecordFieldSupported reports whether a record/tuple field type is one
