@@ -32,7 +32,14 @@ import "core/no_prelude";
 import "./lexer";
 import "./parser";
 
-pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[] }
+// `locals` lists the value-binding names in scope for the body being
+// rewritten (params + every `var` / `for` / match-arm binding in the
+// function). A bare ident matching one of these is a LOCAL variable, so
+// it must NOT be mangled even when it shares a name with a module-level
+// decl (e.g. a local `range` shadowing the `range()` function). Without
+// this, a shadowing local was rewritten to the decl's mangled name and
+// the codegen resolved it to the function value — see std/math.random_int.
+pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[], locals: string[] }
 
 // first_dot / first_bracket: byte index of the first '.' / '[' in s,
 // or -1. Used to split a type spelling into its qualifier / base.
@@ -143,6 +150,11 @@ function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
 pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
     match (e) {
         parser.ExprIdent(id) => {
+            // A local variable shadowing a module-level decl keeps its bare
+            // name (don't mangle it into the decl's reference).
+            if (is_in(id.name, ctx.locals)) {
+                return parser.ExprIdent { name: id.name, line: id.line, col: id.col };
+            }
             return parser.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col };
         },
         parser.ExprFieldAccess(fa) => {
@@ -340,6 +352,81 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
 // keeps them; mangle renames them); this rewrites the bodies + type
 // spellings + the receiver type, plus mangles each non-receiver
 // function name and struct/alias name when ctx.prefix is set.
+// add_split appends each comma-separated, space-trimmed piece of `name`
+// to `into` (tuple-destructure `var (a, b)` arrives as one "a,b" name).
+function add_split(into: string[], name: string): string[] {
+    var out: string[] = into;
+    var cur: string = "";
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == 44) {                       // ','
+            if (cur.len() > 0) { out = out.append(cur); }
+            cur = "";
+        } else if (name[i] != 32) {                // skip spaces
+            cur = cur + name[i:i + 1];
+        }
+        i = i + 1;
+    }
+    if (cur.len() > 0) { out = out.append(cur); }
+    return out;
+}
+
+// collect_locals_stmt / collect_locals_stmts gather every value-binding
+// name introduced anywhere in a statement list (over-approximating scope:
+// a name bound anywhere in the function is treated as a local throughout,
+// which is what shadowing means for bare references).
+function collect_locals_stmts(stmts: parser.Stmt[], into: string[]): string[] {
+    var out: string[] = into;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = collect_locals_stmt(stmts[i], out);
+        i = i + 1;
+    }
+    return out;
+}
+
+function collect_locals_stmt(st: parser.Stmt, into: string[]): string[] {
+    var out: string[] = into;
+    match (st) {
+        parser.StmtVar(v) => { out = add_split(out, v.name); },
+        parser.StmtFor(f) => { out = add_split(out, f.var_name); out = collect_locals_stmts(f.body, out); },
+        parser.StmtIf(f) => { out = collect_locals_stmts(f.then_body, out); out = collect_locals_stmts(f.else_body, out); },
+        parser.StmtWhile(w) => { out = collect_locals_stmts(w.body, out); },
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                match (m.arms[i].pattern) {
+                    parser.PatVariant(pv) => {
+                        if (pv.binding.len() > 0) { out = out.append(pv.binding); }
+                        var e: i32 = 0;
+                        while (e < pv.extra_bindings.len()) { out = out.append(pv.extra_bindings[e]); e = e + 1; }
+                    },
+                    parser.PatWildcard(_) => { },
+                }
+                out = collect_locals_stmts(m.arms[i].body, out);
+                i = i + 1;
+            }
+        },
+        parser.StmtSwitch(sw) => {
+            var i: i32 = 0;
+            while (i < sw.cases.len()) { out = collect_locals_stmts(sw.cases[i].body, out); i = i + 1; }
+            out = collect_locals_stmts(sw.default_body, out);
+        },
+        _ => { },
+    }
+    return out;
+}
+
+// collect_local_names — all value-binding names in a function (receiver +
+// params + body bindings).
+function collect_local_names(fd: parser.FuncDecl): string[] {
+    var out: string[] = [];
+    if (fd.receiver_name.len() > 0) { out = out.append(fd.receiver_name); }
+    var i: i32 = 0;
+    while (i < fd.params.len()) { out = out.append(fd.params[i].name); i = i + 1; }
+    return collect_locals_stmts(fd.body, out);
+}
+
 function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
@@ -352,14 +439,20 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         if (fd.receiver_type == "") {
             new_name = mangle_bare(fd.name, ctx);
         }
+        // Body/params rewrite under a ctx that knows this function's local
+        // bindings, so a local shadowing a module decl is left unmangled.
+        var bctx: RewriteCtx = RewriteCtx {
+            modnames: ctx.modnames, prefix: ctx.prefix,
+            declnames: ctx.declnames, locals: collect_local_names(fd)
+        };
         funcs = funcs.append(parser.FuncDecl {
             name: new_name,
             receiver_name: fd.receiver_name,
             receiver_type: rewrite_type_name(fd.receiver_type, ctx),
             type_params: fd.type_params,
-            params: rewrite_params(fd.params, ctx),
+            params: rewrite_params(fd.params, bctx),
             ret_type: rewrite_type_name(fd.ret_type, ctx),
-            body: rewrite_block(fd.body, ctx),
+            body: rewrite_block(fd.body, bctx),
             line: fd.line, col: fd.col,
             import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count
         });
@@ -399,7 +492,10 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         structs: structs,
         aliases: aliases,
         imports: mod.imports,
-        top_stmts: rewrite_block(mod.top_stmts, ctx),
+        top_stmts: rewrite_block(mod.top_stmts, RewriteCtx {
+            modnames: ctx.modnames, prefix: ctx.prefix, declnames: ctx.declnames,
+            locals: collect_locals_stmts(mod.top_stmts, [])
+        }),
         enums: mod.enums,
         resources: mod.resources,
         exports: mod.exports
@@ -411,7 +507,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 // the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty, locals: empty };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -448,7 +544,8 @@ pub function mangle_module(mod: parser.Module, prefix: string): parser.Module {
     var ctx: RewriteCtx = RewriteCtx {
         modnames: mod_names(mod),
         prefix: prefix,
-        declnames: collect_decl_names(mod)
+        declnames: collect_decl_names(mod),
+        locals: []
     };
     return rewrite_module_bodies(mod, ctx);
 }
@@ -680,7 +777,7 @@ function main(): i32 {
     mn = mn.append("lexer");
     var dn: string[] = [];
     dn = dn.append("Token");
-    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [] };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
     if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
