@@ -20,32 +20,6 @@ import "./parser";
 
 // =================== EXPRESSIONS ====================
 
-// Helper: produce the source-text form of an integer literal.
-// Implemented inline (no Int.toString in the prelude here) by
-// walking the digits LSB-first, prepending a `-` for negative
-// values. Used for the (rare) places we synthesise numeric
-// output — the parser's TokNumber-derived ExprNumber preserves
-// the original text, so most prints just echo n.text directly.
-function i32_to_string(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    if (n < 0) { neg = true; n = 0 - n; }
-    var out: string = "";
-    while (n > 0) {
-        var d: i32 = n % 10;
-        var c: string = "";
-        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
-        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
-        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
-        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
-        else if (d == 8) { c = "8"; } else { c = "9"; }
-        out = c + out;
-        n = n / 10;
-    }
-    if (neg) { out = "-" + out; }
-    return out;
-}
-
 // quote_string wraps a string value in `"`-delimited form, with
 // the same escape set scan_string in the lexer recognises (so
 // the result re-parses). The lang strings here don't carry the

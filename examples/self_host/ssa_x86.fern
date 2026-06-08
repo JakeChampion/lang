@@ -19,26 +19,7 @@
 
 import "core/no_prelude";
 import "./ssa";
-
-function i32_to_string(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    if (n < 0) { neg = true; n = 0 - n; }
-    var out: string = "";
-    while (n > 0) {
-        var d: i32 = n % 10;
-        var c: string = "";
-        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
-        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
-        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
-        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
-        else if (d == 8) { c = "8"; } else { c = "9"; }
-        out = c + out;
-        n = n / 10;
-    }
-    if (neg) { out = "-" + out; }
-    return out;
-}
+import "./util";
 
 // str_join_range concatenates parts[lo..hi) by balanced divide-and-conquer.
 // A left fold (out = out + parts[i]) copies the whole accumulator on every
@@ -59,7 +40,7 @@ function str_join_chunks(parts: string[]): string {
 
 // slot returns the AT&T memory operand for SSA value v's stack slot.
 function slot(v: i32): string {
-    return "-" + i32_to_string(8 * (v + 1)) + "(%rbp)";
+    return "-" + util.i32_to_string(8 * (v + 1)) + "(%rbp)";
 }
 
 // argreg32 maps a parameter index to its System V 32-bit argument register.
@@ -179,14 +160,14 @@ function emit_binary(op: string, out: string): string {
 // function + value id), holding the f64 bits the assembler computes from the
 // literal text.
 function fconst_label(fname: string, result: i32): string {
-    return ".LCf_" + fname + "_" + i32_to_string(result);
+    return ".LCf_" + fname + "_" + util.i32_to_string(result);
 }
 
 // sconst_label is the .data label for a const_str value (a static
 // [len, b0, b1, …] string, one 8-byte word per element — matching the heap
 // string layout the runtime helpers read).
 function sconst_label(fname: string, result: i32): string {
-    return ".LCs_" + fname + "_" + i32_to_string(result);
+    return ".LCs_" + fname + "_" + util.i32_to_string(result);
 }
 
 // fsetcc maps a float comparison operator to its x86 set-condition mnemonic.
@@ -225,7 +206,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
-        return out + "    movl $" + i32_to_string(ins.imm) + ", " + regn(reg_of, ins.result, 32) + "\n";
+        return out + "    movl $" + util.i32_to_string(ins.imm) + ", " + regn(reg_of, ins.result, 32) + "\n";
     }
     if (ins.kind == "copy") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);
@@ -292,7 +273,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         var i: i32 = 0;
         while (i < ins.args.len()) {
             if (isfloat[ins.args[i]] == 1) {
-                out = out + "    movsd " + slot(ins.args[i]) + ", %xmm" + i32_to_string(fi) + "\n";
+                out = out + "    movsd " + slot(ins.args[i]) + ", %xmm" + util.i32_to_string(fi) + "\n";
                 fi = fi + 1;
             } else {
                 var aw: i32 = widths[ins.args[i]];
@@ -340,7 +321,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
             return store_res(reg_of, widths, ins.result, "a", out);
         }
         out = out + "    movq __fern_ssa_hp(%rip), %rax\n";
-        out = out + "    addq $" + i32_to_string(ins.imm * 8) + ", __fern_ssa_hp(%rip)\n";
+        out = out + "    addq $" + util.i32_to_string(ins.imm * 8) + ", __fern_ssa_hp(%rip)\n";
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "load_elem") {
@@ -364,7 +345,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         // print/eprint(handle): write each byte to fd (imm: 1=stdout,2=stderr).
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // handle (64-bit) → %rax
         out = out + "    movq %rax, %rdi\n";
-        out = out + "    movl $" + i32_to_string(ins.imm) + ", %esi\n";   // fd
+        out = out + "    movl $" + util.i32_to_string(ins.imm) + ", %esi\n";   // fd
         return out + "    call __fern_ssa_print\n";
     }
     if (ins.kind == "exit") {
@@ -425,7 +406,7 @@ function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], widths: i32[], pred: i32, t
 }
 
 function blk_label(name: string, id: i32): string {
-    return ".L_" + name + "_" + i32_to_string(id);
+    return ".L_" + name + "_" + util.i32_to_string(id);
 }
 
 function emit_term(f: ssa.SFunc, name: string, reg_of: i32[], widths: i32[], isfloat: i32[], blk: ssa.SBlock, out: string): string {
@@ -472,7 +453,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     chunks = chunks.append("    pushq %rbp\n    movq %rsp, %rbp\n");
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
-    if (frame > 0) { chunks = chunks.append("    subq $" + i32_to_string(frame) + ", %rsp\n"); }
+    if (frame > 0) { chunks = chunks.append("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
     // Spill incoming arguments to their slots. f64 params arrive in xmm0,…
     // (a separate sequence from the integer/pointer argregs), matching the
     // System V split the call site uses.
@@ -481,7 +462,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var fip: i32 = 0;
     while (p < f.nparams) {
         if (isfloat[p] == 1) {
-            chunks = chunks.append("    movsd %xmm" + i32_to_string(fip) + ", " + slot(p) + "\n");
+            chunks = chunks.append("    movsd %xmm" + util.i32_to_string(fip) + ", " + slot(p) + "\n");
             fip = fip + 1;
         } else {
             var pw: i32 = widths[p];
@@ -564,9 +545,9 @@ function emit_str_consts(funcs: ssa.SFunc[]): string {
                 if (ins.kind == "const_str") {
                     var sv: string = ins.str;
                     var parts: string[] = [];
-                    parts = parts.append("    .align 8\n" + sconst_label(funcs[i].name, ins.result) + ":\n    .quad " + i32_to_string(sv.len()) + "\n");
+                    parts = parts.append("    .align 8\n" + sconst_label(funcs[i].name, ins.result) + ":\n    .quad " + util.i32_to_string(sv.len()) + "\n");
                     var ci: i32 = 0;
-                    while (ci < sv.len()) { parts = parts.append("    .quad " + i32_to_string(sv[ci]) + "\n"); ci = ci + 1; }
+                    while (ci < sv.len()) { parts = parts.append("    .quad " + util.i32_to_string(sv[ci]) + "\n"); ci = ci + 1; }
                     out = out + str_join_chunks(parts);
                 }
                 k = k + 1;

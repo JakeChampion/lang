@@ -13,26 +13,7 @@
 
 import "core/no_prelude";
 import "./ssa";
-
-function i32_to_string(n: i32): string {
-    if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    if (n < 0) { neg = true; n = 0 - n; }
-    var out: string = "";
-    while (n > 0) {
-        var d: i32 = n % 10;
-        var c: string = "";
-        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
-        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
-        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
-        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
-        else if (d == 8) { c = "8"; } else { c = "9"; }
-        out = c + out;
-        n = n / 10;
-    }
-    if (neg) { out = "-" + out; }
-    return out;
-}
+import "./util";
 
 // str_join_range concatenates parts[lo..hi) by balanced divide-and-conquer.
 // A left fold (out = out + parts[i]) copies the whole accumulator on every
@@ -53,13 +34,13 @@ function str_join_chunks(parts: string[]): string {
 
 // slot returns the AArch64 memory operand for SSA value v's stack slot.
 function slot(v: i32): string {
-    return "[sp, #" + i32_to_string(8 * v) + "]";
+    return "[sp, #" + util.i32_to_string(8 * v) + "]";
 }
 
 // argreg maps a parameter index to its AAPCS64 32-bit argument register.
-function argreg(i: i32): string { return "w" + i32_to_string(i); }
+function argreg(i: i32): string { return "w" + util.i32_to_string(i); }
 // argreg64 is the 64-bit (x-register) view, for pointer args/params.
-function argreg64(i: i32): string { return "x" + i32_to_string(i); }
+function argreg64(i: i32): string { return "x" + util.i32_to_string(i); }
 function argreg_w(i: i32, width: i32): string {
     if (width == 64) { return argreg64(i); }
     return argreg(i);
@@ -136,8 +117,8 @@ function pred_slot(blk: ssa.SBlock, prev: i32): i32 {
 function emit_const(imm: i32, reg: string, out: string): string {
     var lo: i32 = imm & 65535;
     var hi: i32 = (imm >> 16) & 65535;
-    out = out + "    movz " + reg + ", #" + i32_to_string(lo) + "\n";
-    out = out + "    movk " + reg + ", #" + i32_to_string(hi) + ", lsl #16\n";
+    out = out + "    movz " + reg + ", #" + util.i32_to_string(lo) + "\n";
+    out = out + "    movk " + reg + ", #" + util.i32_to_string(hi) + ", lsl #16\n";
     return out;
 }
 
@@ -180,12 +161,12 @@ function store_reg(reg_of: i32[], v: i32, src: string, width: i32, out: string):
 // function + value id). f_arith / f_cc map float operators to AArch64 FP
 // instructions / fcmp condition codes (a<b → mi: unordered/NaN yields false).
 function fconst_label(fname: string, result: i32): string {
-    return ".LCf_" + fname + "_" + i32_to_string(result);
+    return ".LCf_" + fname + "_" + util.i32_to_string(result);
 }
 // sconst_label is the .data label for a const_str (static [len, b0, …] string,
 // one 8-byte word per element — the heap string layout the helpers read).
 function sconst_label(fname: string, result: i32): string {
-    return ".LCs_" + fname + "_" + i32_to_string(result);
+    return ".LCs_" + fname + "_" + util.i32_to_string(result);
 }
 function f_arith(op: string): string {
     if (op == "+") { return "fadd"; }
@@ -278,7 +259,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         var i: i32 = 0;
         while (i < ins.args.len()) {
             if (isfloat[ins.args[i]] == 1) {
-                out = out + "    ldr d" + i32_to_string(fi) + ", " + slot(ins.args[i]) + "\n";
+                out = out + "    ldr d" + util.i32_to_string(fi) + ", " + slot(ins.args[i]) + "\n";
                 fi = fi + 1;
             } else {
                 var aw: i32 = widths[ins.args[i]];
@@ -340,7 +321,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    adrp x10, __fern_ssa_hp\n";
         out = out + "    add x10, x10, :lo12:__fern_ssa_hp\n";
         out = out + "    ldr x9, [x10]\n";
-        out = out + "    add x11, x9, #" + i32_to_string(ins.imm * 8) + "\n";
+        out = out + "    add x11, x9, #" + util.i32_to_string(ins.imm * 8) + "\n";
         out = out + "    str x11, [x10]\n";
         return store_res(reg_of, widths, ins.result, "a", out);
     }
@@ -366,7 +347,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
     if (ins.kind == "print") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // handle → x9
         out = out + "    mov x0, x9\n";
-        out = out + "    mov x1, #" + i32_to_string(ins.imm) + "\n";   // fd (1=stdout,2=stderr)
+        out = out + "    mov x1, #" + util.i32_to_string(ins.imm) + "\n";   // fd (1=stdout,2=stderr)
         return out + "    bl __fern_ssa_print\n";
     }
     if (ins.kind == "exit") {
@@ -423,7 +404,7 @@ function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], widths: i32[], pred: i32, t
 }
 
 function blk_label(name: string, id: i32): string {
-    return ".L_" + name + "_" + i32_to_string(id);
+    return ".L_" + name + "_" + util.i32_to_string(id);
 }
 
 function emit_term(f: ssa.SFunc, reg_of: i32[], widths: i32[], isfloat: i32[], blk: ssa.SBlock, out: string): string {
@@ -475,7 +456,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     chunks = chunks.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
-    if (frame > 0) { chunks = chunks.append("    sub sp, sp, #" + i32_to_string(frame) + "\n"); }
+    if (frame > 0) { chunks = chunks.append("    sub sp, sp, #" + util.i32_to_string(frame) + "\n"); }
     // Spill incoming args: f64 params arrive in d0…, integer/pointer params in
     // x0… (two AAPCS64 sequences).
     var p: i32 = 0;
@@ -483,7 +464,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var fip: i32 = 0;
     while (p < f.nparams) {
         if (isfloat[p] == 1) {
-            chunks = chunks.append("    str d" + i32_to_string(fip) + ", " + slot(p) + "\n");
+            chunks = chunks.append("    str d" + util.i32_to_string(fip) + ", " + slot(p) + "\n");
             fip = fip + 1;
         } else {
             var pw: i32 = widths[p];
@@ -560,9 +541,9 @@ function emit_str_consts(funcs: ssa.SFunc[]): string {
                 if (ins.kind == "const_str") {
                     var sv: string = ins.str;
                     var parts: string[] = [];
-                    parts = parts.append("    .align 8\n" + sconst_label(funcs[i].name, ins.result) + ":\n    .quad " + i32_to_string(sv.len()) + "\n");
+                    parts = parts.append("    .align 8\n" + sconst_label(funcs[i].name, ins.result) + ":\n    .quad " + util.i32_to_string(sv.len()) + "\n");
                     var ci: i32 = 0;
-                    while (ci < sv.len()) { parts = parts.append("    .quad " + i32_to_string(sv[ci]) + "\n"); ci = ci + 1; }
+                    while (ci < sv.len()) { parts = parts.append("    .quad " + util.i32_to_string(sv[ci]) + "\n"); ci = ci + 1; }
                     out = out + str_join_chunks(parts);
                 }
                 k = k + 1;
