@@ -619,6 +619,25 @@ function init_is_user_arr_call(e: parser.Expr, arr_ret_fns: string[]): boolean {
     return false;
 }
 
+// init_is_fresh_array_builtin: the init is a builtin / method call that
+// always returns a FRESH, uniquely-owned array (rc 1) — `args()`,
+// `random_bytes(n)`, and a map's `.keys()` / `.values()` snapshot. Unlike
+// `.append(v)` (which can hand back the receiver in place), these never
+// alias an existing buffer, so the result can be counted + swept directly.
+function init_is_fresh_array_builtin(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return id.name == "args" || id.name == "random_bytes"; },
+                parser.ExprFieldAccess(fa) => { return fa.field == "keys" || fa.field == "values"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // collect_arr_src / collect_arr_swept drive the wasm Perceus array
 // reference-counting (the counting milestone — inc-on-alias + exit
 // release sweep, free still OFF). arr_src is the set of names that hold an
@@ -636,7 +655,7 @@ function collect_arr_src(body: parser.Stmt[], arr_ret_fns: string[], acc: string
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
-                    if (ty_spelling_is_array(v.type_name) || init_is_owned_array(v.init) || init_is_user_arr_call(v.init, arr_ret_fns)) {
+                    if (ty_spelling_is_array(v.type_name) || init_is_owned_array(v.init) || init_is_user_arr_call(v.init, arr_ret_fns) || init_is_fresh_array_builtin(v.init)) {
                         acc = acc.append(v.name);
                     }
                 }
@@ -664,7 +683,7 @@ function collect_arr_swept(body: parser.Stmt[], src: string[], arr_ret_fns: stri
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
-                    if (init_is_owned_array(v.init) || init_is_arr_alias(v.init, src) || init_is_user_arr_call(v.init, arr_ret_fns)) {
+                    if (init_is_owned_array(v.init) || init_is_arr_alias(v.init, src) || init_is_user_arr_call(v.init, arr_ret_fns) || init_is_fresh_array_builtin(v.init)) {
                         acc = acc.append(v.name);
                     }
                 }

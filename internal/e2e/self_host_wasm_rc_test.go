@@ -163,6 +163,12 @@ func TestSelfHostRcCallResultWasm(t *testing.T) {
 		// A self-append (method call, in-place receiver) result is NOT swept,
 		// so it never double-frees the receiver's buffer.
 		{"self-append-not-double-freed", "function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs.append(3); return ys[2] + __fern_rc_underflow_count(); }", 3},
+		// Fresh-array builtins/methods bound to a local are reclaimed too.
+		{"freshbuiltin-random-swept", "function main(): i32 { var b: i32[] = random_bytes(4); return b.len() + __fern_rc_underflow_count(); }", 4},
+		{"freshbuiltin-mapkeys-swept", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var ks: i32[] = m.keys(); return ks.len() + __fern_rc_underflow_count(); }", 2},
+		// A .values() snapshot re-bound each loop iteration: fresh + swept +
+		// per-iteration dec-on-overwrite, value-correct + detector clean.
+		{"freshbuiltin-values-loop", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; var k = 0; while (k < 100) { var vs: i32[] = m.values(); s = s + vs[0]; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
