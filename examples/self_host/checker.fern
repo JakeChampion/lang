@@ -2414,6 +2414,15 @@ function block_exits(stmts: parser.Stmt[]): boolean {
         },
         parser.StmtMatch(m) => {
             if (m.arms.len() == 0) { return false; }
+            // A `let … else` desugar folds the rest of the enclosing block
+            // into its success arm (arm[0]); the trailing `_` arm is the else
+            // branch, which is REQUIRED to diverge (enforced separately by
+            // E022). So the construct's only fall-through path is the success
+            // arm — exits iff that arm exits, regardless of the else arm. (A
+            // non-diverging else is E022, not a missing-return E052.)
+            if (m.origin == "let_else") {
+                return block_exits(m.arms[0].body);
+            }
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 if (!block_exits(m.arms[i].body)) { return false; }
@@ -2551,7 +2560,7 @@ function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
                     arms = arms.append(parser.MatchArm { pattern: m.arms[a].pattern, body: switch_diag_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
                     a = a + 1;
                 }
-                out = out.append(parser.StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col });
+                out = out.append(parser.StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin });
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
@@ -3359,7 +3368,35 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                 // `true` / `false` are literal bool patterns (also skipped),
                 // so this fires only on genuine variant patterns.
                 var mst: Type = check_expr(m.scrutinee, cur);
-                if (is_primitive_type(mst)) {
+                // E022 / E023: a match synthesised from `if let` / `let … else`
+                // (origin != "") carries the dedicated pattern-binding
+                // diagnostics the Go checker emits on the LetElse / IfLet nodes,
+                // rather than the generic E035 the desugared shape would draw.
+                // The scrutinee must be an enum value (typed TypeUnion here —
+                // enums register as union sigs); a primitive / struct source is
+                // E022. For `let … else`, the else branch (the trailing wildcard
+                // arm) must additionally diverge.
+                if (m.origin == "if_let" || m.origin == "let_else") {
+                    var src_is_enum: boolean = false;
+                    match (mst) {
+                        TypeUnion(_) => { src_is_enum = true; },
+                        _ => { }
+                    }
+                    var kind_label: string = "if-let";
+                    if (m.origin == "let_else") { kind_label = "let-else"; }
+                    if (!src_is_enum && !is_unknown(mst)) {
+                        out = out.append(dg_at("E022", kind_label + " source must be an enum value, got " + type_label(mst), expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                    } else if (m.origin == "let_else" && src_is_enum) {
+                        // The else block is the synthesised trailing `_` arm; it
+                        // must diverge (return / break / continue) so the
+                        // bindings are live for the fall-through path.
+                        var le_last: i32 = m.arms.len() - 1;
+                        if (le_last >= 0 && !block_exits(m.arms[le_last].body)) {
+                            out = out.append(dg_at("E022", "let-else: else branch must diverge (return / break / continue)", m.line, m.col));
+                        }
+                    }
+                }
+                if (is_primitive_type(mst) && m.origin == "") {
                     var ea: i32 = 0;
                     while (ea < m.arms.len()) {
                         match (m.arms[ea].pattern) {
