@@ -460,34 +460,45 @@ alone* overruns the heap.
 
 So the wall is **transient build-time allocation**, not retained output.
 
-#### Root cause: array `.append`'s grow path leaks (the Go backend's RC)
+#### Root cause: the heap freelist only reclaims blocks ≤ 2048 bytes
 
-The `cmd/fern`-built compiler's RC **does** free — verified directly: a program
-that allocates a fresh array literal and drops it **200 million** times runs at
-flat, few-MB RSS (free + freelist reuse working). So this is *not* a global
-"free OFF".
+The `cmd/fern`-built compiler's RC **does** free — `ast.RcFreeEnabled` is `true`
+by default (`internal/ast/ast.go`), and a program that allocates a fresh array
+literal and drops it **200 million** times runs at flat, few-MB RSS (free +
+freelist reuse working). So this is *not* a global "free OFF".
 
-The leak is specific to **`a = a.append(x)`'s grow/realloc path**. Measured: a
-program that builds a 1000-element array via `.append` and drops it, repeated
-100 000×, **traps at ~1 GiB** — while building the same array *once* and keeping
-it is flat. The Go backend's `__fern_arr_push_grow` copy path
-(`internal/codegen/x86_64/x86_64.go`) allocates the larger buffer, copies, and
-returns it **without reclaiming the old buffer** on a grow. Since `build_func` /
-`optimize` / emit construct every per-function array (instruction lists, block
-lists, value/edge arrays) via `.append`, a whole-compiler compile churns ~1500
-functions' worth of grow-discarded buffers that never return to the freelist →
-the >2 GiB overrun. The AST path leans on `.append` far less, so its churn stays
-under 1 GiB.
+The limit is the **freelist size-class range**: both `__fern_alloc`'s reuse path
+and `__fern_free` cover only the **16..2048-byte** classes
+(`internal/codegen/x86_64/x86_64.go`: `cmp rdi, 2048; ja .Lalloc_bump`, and
+`__fern_free` likewise skips blocks "outside the 16..2048 class range"). A block
+larger than **2048 bytes is never returned to a freelist** — it is bump-only, so
+its space is lost for the rest of the process even after its rc hits 0.
+
+This explains every measurement exactly:
+
+- a 10-element array (~56 B ≤ 2048) dropped 200M× → reused → **flat**;
+- a 1000-element array (>2048 B), built via `.append` and dropped 100 000× →
+  **traps at ~1 GiB** (building it once and keeping it is flat — one build's
+  garbage is small).
+
+`build_func` / `optimize` / emit grow per-function arrays (instruction lists,
+block lists, value/edge arrays; `.append`'s doubling caps march 4, 10, 22, … →
+past 512 i32 / 256 ptr elements = 2048 B) well beyond the class cap, so a
+whole-compiler compile sheds ~1500 functions' worth of >2 KiB buffers that never
+come back → the >2 GiB overrun. The AST path allocates fewer/smaller such arrays,
+so it fits at 726 MB.
 
 #### The actual unblock
 
-Fix array `.append`'s grow path to reclaim the old buffer when the array is
-uniquely owned (rc == 1) — return it to the freelist on realloc, the way a plain
-drop already does. That is a localized Go-backend RC fix (mirrored in arm64).
-Once grow-discarded buffers are reused, the whole-compiler SSA compile's churn
-should fall toward the AST path's. The streaming-emit structure above is then a
-worthwhile *second* step — it caps the retained live set — but is unnecessary on
-its own (verified: it moves peak by 3 MB while the append leak stands).
+**Raise the freelist size-class cap** (e.g. 2048 → 64 KiB) in `__fern_alloc`'s
+reuse path and `__fern_free`, sizing the `__fern_freelist_heads` BSS array to
+match, on x86-64 + arm64. The append doubling-cap sizes recur exactly across
+function builds, so exact-fit reuse reclaims them. This is a localized allocator
+change; validate with the whole-compiler self-compile completing (and a bounded-
+RSS regression test from the 100k-append probe). The streaming-emit structure
+(`emit_prologue`/`emit_one`/`emit_epilogue`) is then a worthwhile *second* step —
+it caps the retained live set — but is not the unblock on its own (verified: it
+moves peak by 3 MB while the freelist cap stands).
 
 ### Phase 5 — retire the AST emitters
 
