@@ -822,16 +822,26 @@ func externEnumParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnu
 // externVariantParamLayout describes a general user-enum `@import` PARAMETER
 // that flattens like Result: (disc, payload). It accepts a user enum (named in
 // info.Enums) with at least one payloaded variant, where every payloaded variant
-// carries exactly one scalar payload and all those payloads are the same
-// kind+width T; payloadless variants are allowed. The canonical `variant`
-// flattens to (disc:i32, payload-join), and with a uniform T the join is T — so
-// it reuses the (disc, payload) param wrapper with no discriminant remap (the
-// user-enum variant index is the WIT case order). Option/Result are handled by
-// externEnumParamLayout; an all-payloadless enum by externPlainEnumParam (this
-// requires ≥1 payloaded variant). Non-uniform / multi-payload variants are
-// deferred. The wrapper reads the tag at +0 and the payload at PayloadOffset;
-// for a payloadless-case value (a sentinel) the payload read yields ignored
-// garbage (the host drops it for that disc), so it's harmless.
+// carries exactly one scalar payload; payloadless variants are allowed. The
+// canonical `variant` flattens to (disc:i32, payload-join).
+//
+// Two payload shapes are lowered:
+//   - Uniform: every payload is the same kind+width T, so the canonical join is
+//     T and PayloadType is T (an f32 payload passes as an f32, etc.).
+//   - Non-uniform but same core WIDTH (e.g. `{ i(s32), f(f32) }` — both 32-bit,
+//     or `{ l(s64), d(f64) }` — both 64-bit): the canonical join is the integer
+//     bit-container of that width (i32 or i64), so PayloadType is that synthetic
+//     int. Lowering just moves the payload's bits (`i32.load`/`i64.load` of the
+//     box slot); the consumer reinterprets per the disc. This works without any
+//     per-arm branch because same-width payloads sit at the same box offset and
+//     a bit-load is value-preserving for both int and float arms.
+//
+// Mixed-width (a 32-bit and a 64-bit arm) and multi-payload variants are still
+// deferred. Option/Result are handled by externEnumParamLayout; an all-payloadless
+// enum by externPlainEnumParam (this requires ≥1 payloaded variant). The wrapper
+// reads the tag at +0 and the payload at PayloadOffset; for a payloadless-case
+// value (a sentinel) the payload read yields ignored garbage (the host drops it
+// for that disc), so it's harmless.
 func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnumParam, bool) {
 	et, ok := t.(ast.EnumType)
 	if !ok {
@@ -841,20 +851,27 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 	if !ok || len(ed.Variants) == 0 {
 		return nil, false
 	}
-	var payload ast.Type
+	var firstPayload ast.Type
+	uniform := true
 	anyPayloaded := false
 	for _, v := range ed.Variants {
 		switch len(v.Payloads) {
 		case 0:
 			// payloadless — allowed
 		case 1:
-			if !externRecordFieldSupported(v.Payloads[0]) {
+			p := v.Payloads[0]
+			if !externRecordFieldSupported(p) {
 				return nil, false
 			}
-			if payload == nil {
-				payload = v.Payloads[0]
-			} else if !externScalarTypeEq(payload, v.Payloads[0]) {
-				return nil, false // non-uniform payloads — deferred
+			if firstPayload == nil {
+				firstPayload = p
+			} else {
+				if externCanonicalCoreWidth(firstPayload) != externCanonicalCoreWidth(p) {
+					return nil, false // mixed-width payloads — deferred
+				}
+				if !externScalarTypeEq(firstPayload, p) {
+					uniform = false // non-uniform but same width — join is the bit-container
+				}
 			}
 			anyPayloaded = true
 		default:
@@ -864,8 +881,14 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 	if !anyPayloaded {
 		return nil, false // all-payloadless ⇒ a plain enum (externPlainEnumParam)
 	}
-	offs, _ := payloadLayout([]ast.Type{payload}, 1, ptrW)
-	return &ExternEnumParam{RemapDisc: false, PayloadType: payload, PayloadOffset: offs[0]}, true
+	// The canonical join slot: the payload type itself when uniform, else the
+	// integer bit-container of the shared core width.
+	slot := firstPayload
+	if !uniform {
+		slot = ast.NumberType{Width: int(externCanonicalCoreWidth(firstPayload)), Signed: true}
+	}
+	offs, _ := payloadLayout([]ast.Type{slot}, 1, ptrW)
+	return &ExternEnumParam{RemapDisc: false, PayloadType: slot, PayloadOffset: offs[0]}, true
 }
 
 // externVariantResultLayout describes a general user-enum `@import` RESULT that
@@ -923,6 +946,26 @@ func externScalarTypeEq(a, b ast.Type) bool {
 		return ok && x.NormalWidth() == y.NormalWidth()
 	}
 	return false
+}
+
+// externCanonicalCoreWidth returns the canonical core width (32 or 64) a scalar
+// flattens to: 64 for a 64-bit integer or f64, 32 for everything narrower (i8…i32,
+// bool, f32). Two scalars of the same core width share a single canonical flat
+// slot — and, since a Fern enum box lays out same-width payloads at the same
+// offset, a single box payload offset — which is what lets a non-uniform variant
+// with same-width arms reuse the one-slot (disc, payload) wrapper.
+func externCanonicalCoreWidth(t ast.Type) int32 {
+	switch x := t.(type) {
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return 64
+		}
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return 64
+		}
+	}
+	return 32
 }
 
 // externRecordFieldSupported reports whether a record/tuple field type is one
