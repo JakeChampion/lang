@@ -477,9 +477,9 @@ caused by SH-022 — astwalk's collectors are byte-identical to the old copies).
 
 | engine | result | |
 |---|---|---|
-| Go reference (`fern -interp`) | **49** | `x` mutated to 42 → by-reference capture; `7 + 42` |
-| self-host interp | **8** | `x` not captured → write lost → `7 + 1` |
-| self-host vm | **254** (VErr) | `x` not captured → `x = 42` compiles to an assign-to-undefined sentinel |
+| Go reference (`fern -interp`) | **49** ✓ correct | `x` mutated to 42 → by-reference scalar capture; `7 + 42` |
+| self-host interp | **8** (bug) | captured **by value** → the write doesn't propagate → `7 + 1` |
+| self-host vm | **254**/VErr (bug) | write-only scalar never captured → `x = 42` → assign-to-undefined sentinel |
 
 **Root cause:** the free-variable collector's `collect_idents_stmt` `StmtAssign` arm
 (now in `astwalk.fern`, inherited identically from asmcore/ssa/vm) collects only
@@ -492,11 +492,35 @@ left wasm un-converged.)
 **Why CI misses it:** the cross-validation suite's closure cases capture vars they
 *read*; none assign a captured var write-only.
 
-**Fix direction (needs a decision):** make `astwalk.collect_idents_stmt` collect
-`a.target` (converge *up* to wasm's behavior) so write-captured outer vars are
-captured. BUT this is only correct if the language intends by-reference write
-capture (the Go reference does → likely yes); it touches closure codegen across
-asmcore/ssa/vm, so it needs a focused test (write-capture round-trips to the Go
-reference's 49 on x86/arm64/wasm) and a call on the intended semantics
-(by-ref vs. read-only-with-a-checker-error). The interp(8)/vm(254) split also means
-**vm's closure-assign path needs checking** independently.
+**Confirmed semantics (from the authoritative Go reference).** The language has a
+principled, deliberate split — not an undecided one:
+- **Scalar captures (`i32`/`bool`/`f64`) are mutable, by-reference.** A closure may
+  read *and* write a captured scalar and the writes persist/propagate — closures-as-
+  counters are a supported feature. Verified: `var x = 0; var inc = function (): i32
+  { x = x + 1; return x; }; inc(); inc(); return x;` → **2** under the Go reference,
+  and `fern -check` accepts it (exit 0). The repro above is **49** (by-ref) in the
+  reference.
+- **Reference captures (`string`/array/struct) are read-only — E049.** Writing one
+  back could close an RC reference cycle (Perceus), so it's a compile error. This is
+  why E049 (`checker.go:7067`, `checker.fern:4475`) is intentionally
+  *reference-typed only*.
+
+So **E049 must stay reference-only — do _not_ extend it to scalars** (that would
+reject the intentionally-supported mutable-scalar-capture feature).
+
+**The actual bug:** the self-host doesn't implement mutable scalar captures
+correctly. The reference says the repro is 49 (and the counter is 2); the self-host
+gives interp **8** (captured by value → the write is lost) and vm **254** (the
+write-only scalar is never captured → assign-to-undefined). CLAUDE.md notes the
+self-host stores captures "by value" — so this is an unimplemented-semantics gap,
+not a missing checker rule.
+
+**Fix (deferred — substantial, multi-PR; scope before starting):** make self-host
+scalar captures by-reference/mutable to match the reference. That means: (1) the
+collector must capture write-assigned scalars (collect `a.target` in
+`astwalk.collect_idents_stmt`), and (2) the capture *codegen* must make scalar
+captures writable-and-shared rather than by-value snapshots — across interp's env,
+vm's `OpMakeClosure`/capture slots, and the asm/wasm closure boxes — with a
+cross-engine test that the repro → 49 and the counter → 2 on x86/arm64/wasm.
+`wasm`'s collector already collects `a.target`, so its capture analysis is ahead of
+the others here.
