@@ -1,0 +1,40 @@
+import "core/no_prelude";
+
+// util — shared leaf helpers for the self-hosted compiler.
+//
+// The self-host tree had grown ~9 byte-identical copies of
+// i32_to_string (and similar duplicates of digits_to_i32,
+// is_all_digits, string-membership, etc. — see SH-020 in
+// docs/SELF-HOST-AUDIT.md). This module is the single home for
+// those pure, dependency-free helpers; consumer modules
+// `import "./util"` and call them qualified (`util.i32_to_string`).
+//
+// It deliberately imports only `core/no_prelude` so any self-host
+// module can depend on it without pulling in the lexer/parser. The
+// module grows one helper at a time as files are converted off
+// their local copies; keeping each conversion small bounds the
+// blast radius on the Go-side test staging lists (each test that
+// compiles a converted module must also stage util.fern).
+
+// i32_to_string renders a signed 32-bit integer in base 10 — the
+// LSB-first digit loop the printer / disassembler / constfold /
+// vm / wasm / ssa backends each used to carry their own copy of.
+pub function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
