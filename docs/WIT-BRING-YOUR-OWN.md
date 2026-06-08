@@ -538,13 +538,21 @@ world-driven composer (P2) wires it.
      this, the self-host port reaches parity with the Go backend for the param /
      result composite shapes (string, numeric arrays, u8[], records, sum types,
      tuples).
-   - **Single-field record results (direct return) — ✅ done (Go).** A
-     single-field record result returns its field by value rather than through a
-     return-area pointer (`ResultRecord.Direct`); see the record-results entry
-     above. The self-host port of this is a follow-up.
+   - **Single-field record results (direct return) — ✅ done (Go + self-host).**
+     A single-field record result returns its field by value rather than through
+     a return-area pointer (`ResultRecord.Direct` on the Go side); see the
+     record-results entry above. The self-host port mirrors it: a new
+     `extern_record_ret_direct` gate (a supported record result with exactly one
+     field — every self-host record field is i32) makes the import return that
+     i32 directly (no return area, `extern_imports` emits `(result i32)` instead
+     of the trailing area pointer), and a dedicated `extern_wrappers` branch
+     materializes the one-field self-host struct (`[type-id@0][field@+4]`) from
+     the by-value result. Gated by
+     `TestSelfHostExternSingleFieldRecordResultCustomProvider` (the same
+     `make-wrapped: func(a: s32) -> record { v: s32 }` provider, run through the
+     self-hosted backend).
    - Still rejected (next slices): general user `variant`s; bool arrays;
-     sub-word / nested-composite fields; the self-host port of single-field
-     direct-return record results. The multi-component harness
+     sub-word / nested-composite fields. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
