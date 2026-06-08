@@ -2820,7 +2820,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // Numeric field name → tuple access (offset idx*8,
             // no shape dispatch). See asm.fern for rationale.
             if (asmcore.is_all_digits(fa.field)) {
-                var tup_idx: i32 = asmcore.digits_to_i32(fa.field);
+                var tup_idx: i32 = util.digits_to_i32(fa.field);
                 s = emit_expr(fa.obj, s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    ldr x0, [x0, #" + util.i32_to_string(tup_idx * 8) + "]\n");
@@ -8349,7 +8349,7 @@ pub function darwinize(asm: string): string {
                 var idx: i32 = darwin_index_of(line, ":lo12:");
                 out_line = line[0:idx] + line[idx + 6:line.len()] + "@PAGEOFF";
             } else if (darwin_starts_with(line, "    mov x8, #")) {
-                var num: i32 = asmcore.digits_to_i32(line[13:line.len()]);
+                var num: i32 = util.digits_to_i32(line[13:line.len()]);
                 var m: i32 = darwin_sysno(num);
                 if (m >= 0) {
                     out_line = "    mov x16, #" + util.i32_to_string(m);

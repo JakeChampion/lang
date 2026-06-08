@@ -26,20 +26,11 @@
 
 import "core/no_prelude";
 import "./parser";
+import "./util";
 
 // digits_to_i32 parses a decimal literal's text (non-negative; unary minus
 // is a separate ExprUnary). Mirrors the private helper in the emitters.
-function digits_to_i32(s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < s.len()) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) { return acc; }
-        acc = acc * 10 + (b - 48);
-        i = i + 1;
-    }
-    return acc;
-}
+// digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 
 // is_all_digits reports whether every byte of s is an ASCII digit (and s is
 // non-empty) — used to tell a tuple index `t.0` from a struct field `t.x`.
@@ -435,7 +426,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 // the source text; the backend emits it as a `.double` constant.
                 return s.emit(SInst { kind: "const_float", result: s.cur_id(), args: args0, imm: 0, str: n.text });
             }
-            return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: digits_to_i32(n.text), str: "" });
+            return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: util.digits_to_i32(n.text), str: "" });
         },
         parser.ExprBool(b) => {
             s = s.fresh();
@@ -1033,7 +1024,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 s = build_expr(fa.obj, s);
                 if (!s.ok) { return s; }
                 var tptr: i32 = s.cur_id();
-                s = s.kconst(digits_to_i32(fa.field));
+                s = s.kconst(util.digits_to_i32(fa.field));
                 var tidx: i32 = s.cur_id();
                 s = s.fresh();
                 var tla: i32[] = [tptr, tidx];

@@ -38,3 +38,26 @@ pub function i32_to_string(n: i32): string {
     if (neg) { out = "-" + out; }
     return out;
 }
+
+// digits_to_i32 parses a leading optional `-` then a run of decimal
+// digits, stopping at the first non-digit. The canonical sign-aware
+// version — several self-host copies were sign-naive (SH-010).
+pub function digits_to_i32(s: string): i32 {
+    if (s.len() == 0) { return 0; }
+    var neg: boolean = false;
+    var start: i32 = 0;
+    if (s[0] == 45) { neg = true; start = 1; }
+    var acc: i32 = 0;
+    var i: i32 = start;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) {
+            if (neg) { return 0 - acc; }
+            return acc;
+        }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    if (neg) { return 0 - acc; }
+    return acc;
+}

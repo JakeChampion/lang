@@ -20,6 +20,7 @@
 import "core/no_prelude";
 import "./lexer";
 import "./parser";
+import "./util";
 
 // =================== VALUES ====================
 
@@ -181,18 +182,7 @@ function (e: Env) update(name: string, v: Value): Env {
 // digit run. Turn that into an i32. No suffix handling here —
 // we lump everything into i32 at this layer, mirroring the
 // checker's TypeI32-only stance for the first cut.
-function str_to_i32(s: string): i32 {
-    var n: i32 = s.len();
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        var b: i32 = s[i];
-        if (b < 48 || b > 57) { return acc; }
-        acc = acc * 10 + (b - 48);
-        i = i + 1;
-    }
-    return acc;
-}
+// str_to_i32 now lives in util.fern (imported as `util`). See SH-020.
 
 // str_to_f64 parses a decimal float literal: an optional `-`,
 // integer digits, optional `.` + fractional digits. No
@@ -354,7 +344,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
     match (e) {
         parser.ExprNumber(n) => {
             if (n.is_float) { return v_float(str_to_f64(n.text)); }
-            return v_int(str_to_i32(n.text));
+            return v_int(util.digits_to_i32(n.text));
         },
         parser.ExprBool(b) => { return v_bool(b.value); },
         parser.ExprString(s) => { return v_string(s.value); },
@@ -659,7 +649,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
                 },
                 VTuple(tv) => {
-                    var idx: i32 = str_to_i32(fa.field);
+                    var idx: i32 = util.digits_to_i32(fa.field);
                     if (idx < 0 || idx >= tv.elements.len()) {
                         return v_err("tuple index `" + fa.field + "` out of range");
                     }
