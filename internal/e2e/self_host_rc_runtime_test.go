@@ -359,6 +359,7 @@ func TestSelfHostRcArm64(t *testing.T) {
 		// Construction store: struct field + array-of-arrays capture.
 		{"struct-holds-array", "struct H { items: i32[] } function mk(): H { var xs: i32[] = [7, 8]; return H { items: xs }; } function main(): i32 { var h = mk(); return h.items[0] + h.items[1] + __fern_rc_underflow_count(); }", 15},
 		{"array-of-arrays", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4]; var both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __fern_rc_underflow_count(); }", 5},
+		{"struct-update-copy", "struct H { items: i32[], n: i32 } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs, n: 0 }; var h2: H = H { ...h, n: 5 }; return h2.items[1] + h2.n + __fern_rc_underflow_count(); }", 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -457,6 +458,9 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 		{"struct-outlives-source", "struct H { items: i32[] } function mk(): H { var xs: i32[] = [7, 8]; return H { items: xs }; } function main(): i32 { var h = mk(); return h.items[0] + h.items[1] + __fern_rc_underflow_count(); }", 15},
 		// A struct field from a fresh literal is owned — not re-incremented.
 		{"struct-fresh-literal", "struct H { items: i32[] } function main(): i32 { var h: H = H { items: [4, 5, 6] }; return h.items[2] + __fern_rc_underflow_count(); }", 6},
+		// Struct-update copies the base's array field (retained for soundness).
+		{"struct-update-copy", "struct H { items: i32[], n: i32 } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs, n: 0 }; var h2: H = H { ...h, n: 5 }; return h2.items[1] + h2.n + __fern_rc_underflow_count(); }", 7},
+		{"struct-update-override", "struct H { items: i32[], n: i32 } function main(): i32 { var xs: i32[] = [9, 8]; var h: H = H { items: [0], n: 1 }; var h2: H = H { ...h, items: xs }; return h2.items[0] + __fern_rc_underflow_count(); }", 9},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

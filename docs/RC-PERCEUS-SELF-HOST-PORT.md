@@ -579,3 +579,19 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   array-literal / tuple-literal element stores. Remaining before the
   free flip: struct-UPDATE form `H{...base, f: xs}`, closure captures of
   an array, and index/field assignment `arr[i] = xs` / `obj.f = xs`.
+- 2026-06-08: **Phase 1d (struct-update construction inc), x86-64 +
+  arm64 — SHIPPED.** The struct-update form `H { ...base, f: v }` now
+  retains BOTH the copied non-overridden array fields (the new struct
+  references the base's arrays) AND override array values, on both
+  backends (base + box ptrs preserved across the retain calls). This is
+  the heavy self-host path (`EmitState { ...s, … }` is threaded
+  everywhere and carries many array fields), so it's the most important
+  remaining gate site — and matches the native IR lowering, which inc's
+  copied pointer fields. Tests: `struct-update-copy` /
+  `struct-update-override` in `TestSelfHostRcConstructX86_64` +
+  `TestSelfHostRcArm64` + green struct-update / functional-update suites
+  + byte-identical bootstrap/fixpoint (the fixpoint exercises the
+  EmitState-spread path heavily). Free-readiness gate now CLOSED for:
+  struct-literal / array-literal / tuple-literal element stores AND the
+  struct-update form. Remaining before the free flip: closure captures
+  of an array, and index/field assignment `arr[i] = xs` / `obj.f = xs`.
