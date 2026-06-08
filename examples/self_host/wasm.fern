@@ -1374,7 +1374,7 @@ function extern_byte_array_param(t: string): boolean {
 // extern_field_is_scalar reports whether a record field type is a flattenable
 // scalar (a 8-/16-/32-bit integer — every self-host slot is i32-class).
 function extern_field_is_scalar(ft: string): boolean {
-    return ft == "i32" || ft == "u32" || ft == "i8" || ft == "u8" || ft == "i16" || ft == "u16";
+    return ft == "i32" || ft == "u32" || ft == "i8" || ft == "u8" || ft == "i16" || ft == "u16" || ft == "boolean";
 }
 
 // extern_record_all_scalar reports whether `t` is a known struct of 1..16
@@ -1458,8 +1458,7 @@ function extern_record_result_supported(mod: parser.Module, t: string): boolean 
             if (n == 0 || n > 16) { return false; }
             var j: i32 = 0;
             while (j < n) {
-                var ft: string = mod.structs[i].fields[j].type_name;
-                if (ft != "i32" && ft != "u32" && ft != "i8" && ft != "u8" && ft != "i16" && ft != "u16") { return false; }
+                if (!extern_field_is_scalar(mod.structs[i].fields[j].type_name)) { return false; }
                 j = j + 1;
             }
             return true;
@@ -1596,7 +1595,7 @@ function extern_plain_enum_sid(mod: parser.Module, t: string, dloc: string): str
 // so the low byte(s) at the field offset are the meaningful ones).
 function extern_field_load_op(ft: string): string {
     if (ft == "i8") { return "i32.load8_s"; }
-    if (ft == "u8") { return "i32.load8_u"; }
+    if (ft == "u8" || ft == "boolean") { return "i32.load8_u"; }
     if (ft == "i16") { return "i32.load16_s"; }
     if (ft == "u16") { return "i32.load16_u"; }
     return "i32.load";
@@ -1605,7 +1604,7 @@ function extern_field_load_op(ft: string): string {
 // extern_canon_field_size returns the canonical-ABI memory size (== alignment)
 // of a record field type: i8/u8 → 1, i16/u16 → 2, else 4.
 function extern_canon_field_size(ft: string): i32 {
-    if (ft == "i8" || ft == "u8") { return 1; }
+    if (ft == "i8" || ft == "u8" || ft == "boolean") { return 1; }
     if (ft == "i16" || ft == "u16") { return 2; }
     return 4;
 }
