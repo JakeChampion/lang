@@ -536,3 +536,32 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Phase 3 proper — a size-class freelist + flip `__fern_free` and the
   rc==1 free path on (array buffers reclaimed via __fern_arr_dec / the
   drop helpers), gated on the corpus-wide clean detector.
+- 2026-06-08: **Phase 1d (struct-literal construction inc), x86-64 +
+  arm64 — SHIPPED.** A struct field initialised from an rc-tracked array
+  alias (`H { items: xs }`) now retains the buffer on both backends (the
+  struct owns a new reference). This is the **free-readiness gate**: it
+  closes the uncounted-alias hole that would become a use-after-free
+  once free is on — a struct outliving the source local
+  (`function mk(): H { var xs = [..]; return H{items: xs}; }`) keeps its
+  array alive. inc-only (struct drop isn't wired — Phase 1e), so it's
+  over-release-detector clean and a safe leak today. A fresh literal /
+  call field value is owned and not re-incremented. Tests:
+  `TestSelfHostRcConstructX86_64` (struct-holds-array,
+  struct-outlives-source, struct-fresh-literal, emission) + green
+  struct/json suites + byte-identical bootstrap/fixpoint on both
+  backends.
+
+  **Free-readiness gate (remaining uncounted-alias sites to close
+  before flipping `free` on — each would be a UAF once buffers are
+  reclaimed):** (a) the struct-UPDATE form `H{...base, f: xs}`;
+  (b) array-literal elements `[xs, ys]` and tuple elements `(xs, n)`;
+  (c) closure captures of an array; (d) index/field assignment
+  `arr[i] = xs` / `obj.f = xs`. All are inc-only, detector-clean, safe
+  while free is off. Once all are closed (and the corpus-wide detector
+  stays 0 on the self-host itself), Phase 3 can flip free: a size-class
+  freelist (`__fern_free` push + `__fern_alloc` pop, round-to-16 so
+  classes are exact) and an array `__fern_arr_dec` that frees the buffer
+  (size `(cap+3)*8`, base `data-16`) at rc==1 — routed from the exit
+  sweep + dec-on-overwrite. Pointer-element arrays may free their buffer
+  without an element walk (sound: elements leak, never UAF) until a
+  drop-walk slice lands.
