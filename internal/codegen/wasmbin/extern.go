@@ -476,6 +476,14 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 					body = memory.InstI32Load(body, 2, poff)
 				}
 				slot++
+			case ex.ParamPlainEnums[i]:
+				// plain (payloadless) enum → WIT enum: the Fern slot holds a
+				// pointer to a 4-byte sentinel/box `[tag:i32 @0]`; push the tag as
+				// the canonical discriminant (Fern variant order == WIT case order,
+				// no remap).
+				body = inst.InstLocalGet(body, slot)
+				body = memory.InstI32Load(body, 2, 0)
+				slot++
 			case isScalarArrayParamType(p.Type):
 				// (ptr, len) = (elemPtr, load(elemPtr-4)). The count prefix holds
 				// the element count, which is the canonical list length for any
