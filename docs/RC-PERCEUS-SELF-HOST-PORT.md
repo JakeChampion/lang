@@ -901,3 +901,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   payload. Remaining before free flips on: struct-update base-copy and
   general user-enum-variant payloads, plus reassign dec-on-overwrite;
   then `__fern_arr_dec` + freelist + return-retain / move-on-return.
+- 2026-06-08: **wasm backend RC — construction-store incs COMPLETE
+  (struct-update base-copy + user-enum-variant payloads).** The last two
+  container-store sites now retain array references, so EVERY place a wasm
+  array can be stored into a container is counted — the final soundness
+  prerequisite for the free flip. (1) struct-update `S { ...base, … }`:
+  copying a base struct's array field into the new struct creates a second
+  owner, so it is retained — UNLESS that field is overridden in the same
+  literal (its copy is about to be replaced; retaining would leak), so the
+  base-copy inc skips overridden indices. (2) positional user-enum-variant
+  constructors `Arr(xs)`: an array payload arg is retained like the
+  Option/Result payloads. Coverage: `TestSelfHostRcConstructWasm` gains
+  struct-update-base-copy-retained + enum-variant-payload-retained. Full
+  wasm suite (~93 s) green; free still OFF; bootstrap-safe. **All
+  construction sites now covered:** struct field, array-of-arrays, tuple,
+  Option/Result payload, struct-update base-copy, user-enum-variant
+  payload. The remaining work to flip free ON: reassign dec-on-overwrite
+  (reclaim replaced buffers, with the cow-guard for in-place append) +
+  return-retain / move-on-return (so a returned array survives its exit
+  sweep) + the `__fern_arr_dec` + size-class freelist runtime; then change
+  the exit-sweep / overwrite decs from `__fern_rc_dec` to `__fern_arr_dec`
+  and validate detector-clean + reclaim-churn, mirroring the asm Phase-3
+  flip.

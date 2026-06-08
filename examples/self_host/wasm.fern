@@ -3394,6 +3394,12 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         var vi: i32 = 0;
                         while (vi < c.args.len()) {
                             vs = vs + " (i32.store (i32.add (local.get " + vap + ") (i32.const " + util.i32_to_string(struct_field_off(vi)) + ")) " + emit_expr(c.args[vi], cx, depth + 1) + ")";
+                            // Perceus construction-store inc: a user enum
+                            // variant payload that is an existing array
+                            // reference is retained (the variant co-owns it).
+                            if (init_is_arr_alias(c.args[vi], cx.arr_src)) {
+                                vs = vs + " (drop (call $__fern_rc_inc " + emit_expr(c.args[vi], cx, depth + 1) + "))";
+                            }
                             vi = vi + 1;
                         }
                         return vs + " (local.get " + vap + "))";
@@ -3672,6 +3678,19 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 var fi: i32 = 0;
                 while (fi < nf) {
                     s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")) (i32.load (i32.add " + bp + " (i32.const " + util.i32_to_string(struct_field_off(fi)) + "))))";
+                    // Perceus construction-store inc: copying a base struct's
+                    // array field into the new struct creates a second owner,
+                    // so retain it — UNLESS this field is overridden below (its
+                    // copy is about to be replaced, so retaining would leak).
+                    var overridden: boolean = false;
+                    var ok: i32 = 0;
+                    while (ok < sl.field_names.len()) {
+                        if (struct_field_index(cx.structs, sl.type_name, sl.field_names[ok]) == fi) { overridden = true; }
+                        ok = ok + 1;
+                    }
+                    if (!overridden && ty_spelling_is_array(struct_field_type_at(cx.structs, sl.type_name, fi))) {
+                        s = s + " (drop (call $__fern_rc_inc (i32.load (i32.add " + bp + " (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")))))";
+                    }
                     fi = fi + 1;
                 }
             }
