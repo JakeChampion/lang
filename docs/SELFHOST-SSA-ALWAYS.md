@@ -431,13 +431,54 @@ Those three holdouts have since been closed:
 Every function the self-host compiler defines lowers through `build_func`.
 
 The *only* thing now between here and a byte-stable SSA self-compile fixpoint
-(Phase 4's success criterion) is the **memory wall**: the *linear* per-function
-retention (build + emit, freed by nothing) — Perceus RC (the native backend
-already has it; the self-host runtime stubs it to no-ops — `asm.fern`:
-"leak-everything bump heap") or a streaming/arena scheme. `try_ssa` is
-all-or-nothing per program, so a full SSA self-compile still falls back to the
-AST emitter when it overruns the bootstrap heap — but that is now purely a
-retention problem, not a coverage one.
+(Phase 4's success criterion) is the **memory wall**.
+
+#### Measured (current `main`, x86-64, RSS of a full whole-compiler compile)
+
+| path | result | peak RSS |
+|------|--------|----------|
+| `-no-ssa` (AST emitter) | ✅ completes, 28 MB asm | **726 MB** |
+| default (SSA pipeline)  | ✗ **traps (exit 137)** | **~1 GiB** (overruns the `cmd/fern` bootstrap heap; needs **>2 GiB** — a 1.9 GiB heap still trapped) |
+
+Note the *behaviour change* 100% coverage brought: previously the default path
+bailed **early** (a coverage gap → `try_ssa` returns `ok=false` cheaply → AST
+fallback). Now that every function is in-subset, `try_ssa` proceeds through the
+**entire** build of all ~1500 functions before it could fall back — and OOMs
+mid-build. (Users are unaffected: only a ~1500-function in-subset program — i.e.
+the self-compile itself — reaches this; ordinary small programs compile fine.)
+
+#### What the wall is NOT (measured, not assumed)
+
+The intuitive culprit — `try_ssa` holding **all** the final `SFunc`s in
+`sfuncs[]` until `emit_program` — was **tested and ruled out**. A streaming
+rewrite (build → `emit_one` → drop each function, so RC could reclaim it; the
+backends split into `emit_prologue`/`emit_one`/`emit_epilogue`) moved peak RSS
+by **3 MB** (982 → 979) and still trapped. The reason: `try_ssa` is
+all-or-nothing, so even a streaming driver must **build every function once** up
+front to verify the whole program is in-subset — and *that first build pass
+alone* overruns the heap.
+
+So the wall is **transient allocation inside `build_func` + `optimize`**, not
+retained output. Those passes churn `.append` / functional-update garbage per
+function, and **nothing is freed**: the `cmd/fern`-built compiler is at RC
+"free OFF" (the Perceus self-host port is mid-flight — see #2491 "string RC
+counting milestone (free OFF)" and `docs/RC-PERCEUS-SELF-HOST-PORT.md`). With
+freeing off, total transient allocation across ~1500 builds exceeds the arena
+regardless of how the output is streamed. The AST path fits only because its
+total churn happens to stay under 1 GiB.
+
+#### The actual unblock (two viable levers)
+
+1. **Turn RC freeing ON** (the Perceus track already in progress). Once dead
+   per-function build garbage is reclaimed, the streaming-emit structure above
+   becomes worthwhile and the self-compile should fit. This is the project's
+   chosen direction.
+2. **Cut `build_func` / `optimize` transient allocation** (the seed-overlay and
+   pass early-out fixes already did this once, removing an O(functions²) term).
+   A further reduction could get total churn under the arena even with free off.
+
+Streaming the emit is *necessary but not sufficient* — keep it for after
+freeing lands; on its own it does nothing.
 
 ### Phase 5 — retire the AST emitters
 
