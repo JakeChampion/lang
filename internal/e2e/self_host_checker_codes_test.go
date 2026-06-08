@@ -74,6 +74,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E031": true, // match/if-expression arms have incompatible types
 	"E045": true, // map literal key type must be i32 or string
 	"E025": true, // switch on float / case value type mismatch
+	"E022": true, // if-let / let-else source not an enum; let-else else must diverge
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -498,6 +499,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"map-ann-empty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map {}; return 0; }\n", nil},
 		{"map-ann-nonempty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map { \"a\": 1 }; return 0; }\n", nil},
 		{"map-ann-i32keys-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32,i32] = Map { 1: 2 }; return 0; }\n", nil},
+		// E022: `if let` / `let … else` carry dedicated pattern-binding
+		// diagnostics. The self-host parser desugars both to a StmtMatch
+		// tagged with `origin` ("if_let" / "let_else"); the checker reads
+		// that tag to emit E022 (instead of the generic E035 the desugared
+		// shape would otherwise draw) when the source isn't an enum, and —
+		// for let-else — when the else branch doesn't diverge. The binding
+		// is left unreferenced in the error cases so the Go checker's E001
+		// for the now-unbound name (a separate rule) stays out of the set.
+		// Cross-checked against the Go checker.
+		{"iflet-source-nonenum", "function main(): i32 { var n: i32 = 5; if let Has(v) = n { return 0; } return 0; }\n", []string{"E022"}},
+		{"letelse-source-nonenum", "function main(): i32 { var n: i32 = 5; let Has(v) = n else { return 0; }; return 0; }\n", []string{"E022"}},
+		{"letelse-source-struct", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; let Has(v) = p else { return 0; }; return 0; }\n", []string{"E022"}},
+		{"letelse-else-nondiverge", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { var x: i32 = 1; }; return 0; }\n", []string{"E022"}},
+		{"iflet-enum-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; if let Has(v) = o { return v; } return 0; }\n", nil},
+		{"letelse-enum-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { return 0; }; return v; }\n", nil},
+		{"iflet-bad-variant", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; if let Bogus(v) = o { return 0; } return 0; }\n", []string{"E014"}},
+		{"iflet-bad-arity", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; if let Has(a, b) = o { return 0; } return 0; }\n", []string{"E015"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

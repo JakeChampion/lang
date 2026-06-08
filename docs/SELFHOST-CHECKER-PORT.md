@@ -1047,6 +1047,29 @@ same code(s) the Go checker does — restricted to
   cases `export-generic`, `export-method`, `export-plain-ok`.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
+- **Slice (done): `if let` / `let … else` diagnostics** (E022). The
+  self-host parser already desugars both forms to a `StmtMatch` (so every
+  backend compiles them with no new node); this slice tags that match with
+  a new `StmtMatch.origin` field (`"if_let"` / `"let_else"`, `""` for a
+  hand-written match) so the checker can tell a desugared binding-match
+  apart from a real one. The checker then emits E022 — *source must be an
+  enum value* (a primitive / struct source, where a hand-written match
+  would draw E035, now suppressed for `origin != ""`) and, for `let … else`,
+  *else branch must diverge* — matching the Go checker's dedicated
+  `LetElse` / `IfLet` handling instead of the generic match-arm codes.
+  `block_exits` (E052) special-cases a `let_else` match: its only
+  fall-through path is the success arm (the else must diverge), so the
+  desugar that folds the rest of the block into that arm doesn't draw a
+  spurious missing-return. Bad-variant (E014) and payload-arity (E015)
+  already aligned through the desugared match, so they need no change.
+  Codegen ignores `origin`, so the fixpoint stays byte-identical (x86
+  verified). Gated by corpus cases `iflet-source-nonenum`,
+  `letelse-source-nonenum`, `letelse-source-struct`,
+  `letelse-else-nondiverge`, `iflet-enum-ok`, `letelse-enum-ok`,
+  `iflet-bad-variant`, `iflet-bad-arity`. **E023** (*unknown enum*) is the
+  sibling rule for an enum-typed source whose decl is missing; it's
+  effectively unreachable in the self-host (an enum-typed scrutinee always
+  resolves to a registered union sig), so it carries no corpus case yet.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
 - **Slice 7: `?` / slices / tuples / maps / literal-fits** (E042, E037,
   E024/E046, E045, E047).
