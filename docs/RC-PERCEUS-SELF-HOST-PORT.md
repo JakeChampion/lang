@@ -639,3 +639,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the self-host's array-returning helpers), after which the freelist +
   `__fern_arr_dec` flip above can be re-applied and validated against the
   bootstrap/fixpoint + a corpus-wide-0 detector.
+- 2026-06-08: **Phase 3 free flip — ATTEMPT #2, REVERTED (second
+  residual gap: JSON/nested-structure corruption).** Re-applied the
+  x86-64 freelist + `__fern_arr_dec` flip with the borrow fix (a
+  reassigned array PARAM no longer releases its caller-owned buffer),
+  which DID close the bootstrap double-free: the full self-host
+  bootstrap + `Stage2FixedPoint` ran byte-identical with free on, the
+  reclaim-churn proof completed (workload >> heap, reclaimed), and all
+  the targeted RC + array/struct/map suites were green + detector 0.
+  BUT CI's `TestSelfHostStdTestE2E` (not on the bootstrap path) FAILED:
+  the **JSON nested-arrays** test miscompared under the asm backend
+  (interp passed), i.e. a buffer inside a nested array/object/string
+  tree was freed while still referenced and reused → corruption. So the
+  borrow fix was necessary but NOT sufficient — there is at least one
+  more uncounted reference in the nested-structure path (prime suspects:
+  **Map values that are arrays/strings**, and **string elements** of
+  string[] which aren't rc-tracked yet). Reverted to the sound free-off
+  state. CONCLUSION: point-fixes won't close free; it needs the
+  **complete counting model** — port the native `computeFreeEligible`
+  borrow-aware taint (only untainted owned locals are free-eligible;
+  borrowed-derived values never free) AND rc-track the remaining heap
+  types (Phase 1e: strings/structs/enums/maps) so nested structures are
+  fully counted — BEFORE re-applying the freelist + `__fern_arr_dec`
+  flip (which is correct and recorded above). Until then free stays off
+  (safe-leak); every inc/dec/construction-inc slice already merged is
+  sound and is the foundation that flip will switch on.
