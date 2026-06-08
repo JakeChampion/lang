@@ -636,12 +636,23 @@ world-driven composer (P2) wires it.
      (`extern_canon_field_off` / `extern_canon_record_size`), which differs from
      the self-host struct's 4-byte slots, so the wrapper reads each with a
      width+sign-aware load (`extern_field_load_op`) and stores it into the wider
-     slot; for word-only records the layouts coincide. Gated by
+     slot; for word-only records the layouts coincide. **A nested-record field is
+     also lifted (one level)** (mirroring the Go side): the canonical area inlines
+     the nested record's leaves at the nested record's alignment
+     (`extern_canon_field_align` / `extern_canon_field_csize` / nesting-aware
+     `extern_canon_top_off` + `extern_canon_record_size_nested`), and the wrapper
+     allocs a separate inner self-host struct per nested field, fills it from the
+     inlined canonical offsets, and stores its pointer in the outer slot. A
+     single-leaf-via-nested result (returned by value) is rejected — only a single
+     *scalar* field is `extern_record_ret_direct`-eligible (the by-value Direct
+     wrapper can't reconstruct nesting). Gated by
      `TestSelfHostExternRecordResultCustomProvider` (a `make-point: func(a, b:
-     s32) -> record { x, y: s32 }`, fields read back) and
+     s32) -> record { x, y: s32 }`, fields read back),
      `TestSelfHostExternRecordResultSubwordCustomProvider` (a `make-mix: func()
      -> record { a: s8, b: u16, c: s32 }` with `{-5, 300, 1000}` at canonical
-     offsets 0/2/4).
+     offsets 0/2/4), and `TestSelfHostExternRecordResultNestedCustomProvider` (a
+     `make-line: func(...) -> record line { p: point, q: point }`; the Fern side
+     reads `l.p.x`/`l.q.y`).
    - **Self-host port — sum-type (option/result) params — ✅ done.** An
      Option/Result `@import` parameter flattens to (disc, payload). A self-host
      enum is a heap box `[tag:i32 @0][payload:i32 @4]` (Some/Ok=0, None/Err=1) —
