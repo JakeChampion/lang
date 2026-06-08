@@ -194,9 +194,9 @@ findings. Ranked by leverage.
   all three are converted (asmcore carried the `///MODULE astwalk` bundle cascade +
   a 73-list staging sweep). The `expr` collector
   also converges with `wasm`'s (wasm's accumulator-dedup is **redundant** — every
-  consumer dedups again when building the capture list), but wasm's **stmt**
-  collector genuinely diverges in coverage (`_ => {}`-skips `StmtSwitch`/`StmtDefer`
-  the others handle), so wasm is deferred pending a deliberate look. Every analysis
+  consumer dedups again). wasm's **stmt** collector genuinely diverges, but the
+  real reason is its `StmtAssign` arm collecting the assign **target** name
+  (`a.target`) which astwalk/asmcore/ssa/vm do NOT — see appendix; wasm is deferred. Every analysis
   re-enumerates all Expr/Stmt variants by hand: `parser.fern` ~10 walkers
   (`expr_mentions:1574`, `mono_*`, `ms_*`, `rw_call_*`, …); `checker.fern` ~15
   scope-threading passes (`ret_diags`, `lret_*`, `mx_*`, `slit_diags`,
@@ -399,11 +399,20 @@ and couldn't be merged. That was over-cautious — the real picture:
   no-op arms. So one **non-deduping** collector serves all four with zero behaviour
   change.
 - **`collect_idents_stmt` converges across `asmcore`/`ssa`/`vm`** (identical, all 13
-  Stmt variants) but **wasm genuinely diverges**: its `collect_idents_stmts` is
-  list-shaped and `_ => {}`-skips `StmtSwitch`/`StmtDefer` (which the others recurse
-  into). Unifying wasm there could change which vars a lambda captures through a
-  switch/defer, so wasm is **deferred** pending a deliberate look (latent bugfix vs.
-  regression).
+  Stmt variants) but **wasm genuinely diverges**. The `StmtSwitch`/`StmtDefer`
+  difference I first cited turns out to be a no-op (`module_with_builtins` runs
+  `desugar_switches_module` + `lower_defers_module` before `wasm.emit_module`, so
+  those nodes never reach any collector). The **real** divergence: wasm's
+  `StmtAssign` arm collects the assign **target** name (`if (!contains_str(acc,
+  a.target)) acc.append(a.target)`), which astwalk/asmcore/ssa/vm do **not**. So for
+  a lambda that *writes* an outer var without reading it (`{ x = 5; }`), wasm
+  captures `x` and the others wouldn't. Converging wasm is therefore **not** a safe
+  no-op — wasm stays separate.
+
+  **Open question (worth its own investigation):** this discrepancy is either a
+  **latent capture bug in `asmcore`/`ssa`/`vm`** (they miss capturing a
+  write-only-assigned outer var) or **redundant work in `wasm`** (if such captures
+  aren't needed — e.g. captures are read-only). Resolve before any wasm merge.
 
 **Status:** `astwalk.fern` holds the canonical (non-deduping, full-coverage)
 `collect_idents_expr`/`_stmt`/`collect_bound_stmt`; **`asmcore`, `ssa`, and `vm` are
