@@ -779,6 +779,9 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				hasStringParam, hasMemParam = true, true
 			case isScalarArrayParamType(p.Type):
 				hasMemParam = true
+			case isBoolArrayParamType(p.Type):
+				// bool[]: byte-repacked to canonical list<bool> (1 byte/elem).
+				hasMemParam = true
 			case ex.ParamRecords[i] != nil:
 				hasMemParam = true
 			case ex.ParamEnums[i] != nil:

@@ -455,6 +455,48 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 				body = numeric.InstI32Sub(body)
 				body = memory.InstI32Load(body, 2, 0) // count @ ptr-4
 				slot++
+			case isBoolArrayParamType(p.Type):
+				// bool[] → canonical list<bool> (1 byte/elem): the Fern bools are
+				// 4-byte slots, so byte-repack into a fresh count-byte buffer and
+				// push (buf, count). byteLenL holds the count (== byte length for
+				// 1-byte elements). The buffer pointer is pushed onto the stack
+				// now, so a later param reusing bufL doesn't disturb it.
+				body = inst.InstLocalGet(body, slot) // count = load(ptr-4)
+				body = inst.InstI32Const(body, 4)
+				body = numeric.InstI32Sub(body)
+				body = memory.InstI32Load(body, 2, 0)
+				body = inst.InstLocalSet(body, byteLenL)
+				body = inst.InstLocalGet(body, byteLenL) // buf = alloc(count)
+				body = inst.InstCall(body, idxs["__fern_alloc"])
+				body = inst.InstLocalSet(body, bufL)
+				body = inst.InstI32Const(body, 0) // i = 0
+				body = inst.InstLocalSet(body, iL)
+				body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+				body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+				body = inst.InstLocalGet(body, iL) // if i >= count: break
+				body = inst.InstLocalGet(body, byteLenL)
+				body = numeric.InstI32GeU(body)
+				body = inst.InstBrIf(body, 1)
+				body = inst.InstLocalGet(body, bufL) // store8(buf+i, load(ptr+i*4))
+				body = inst.InstLocalGet(body, iL)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalGet(body, slot)
+				body = inst.InstLocalGet(body, iL)
+				body = inst.InstI32Const(body, 4)
+				body = numeric.InstI32Mul(body)
+				body = numeric.InstI32Add(body)
+				body = memory.InstI32Load(body, 2, 0)
+				body = memory.InstI32Store8(body, 0, 0)
+				body = inst.InstLocalGet(body, iL) // i++
+				body = inst.InstI32Const(body, 1)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalSet(body, iL)
+				body = inst.InstBr(body, 0)
+				body = inst.InstEnd(body)            // loop
+				body = inst.InstEnd(body)            // block
+				body = inst.InstLocalGet(body, bufL) // push (buf, count)
+				body = inst.InstLocalGet(body, byteLenL)
+				slot++
 			default:
 				body = inst.InstLocalGet(body, slot)
 				slot++

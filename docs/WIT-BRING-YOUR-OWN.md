@@ -359,9 +359,22 @@ world-driven composer (P2) wires it.
      (`i64[]`/`u64[]`/`f64[]`) need no special handling — the canonical lower of
      `list<u64>`/`list<f64>` accepts the 4-byte-aligned element pointer (bytes
      read in place, no alignment trap), confirmed by the i64/f64 e2e tests.
-     **bool** arrays stay rejected (a Fern bool is 4 bytes but the canonical
-     `list<bool>` element is 1 byte — stride mismatch); the self-host port is a
-     follow-up.
+   - **bool[] parameters — ✅ done (Go).** A Fern bool is a 4-byte i32 (0/1) but
+     the canonical `list<bool>` element is a single byte, so — unlike the numeric
+     arrays, whose native stride already matches the canonical element size and
+     pass zero-copy — a bool array can't pass directly. `isBoolArrayParamType`
+     gates a dedicated branch in `buildExternMemParamWrapper` that byte-repacks:
+     it allocs a `count`-byte buffer and writes each 4-byte bool's low byte
+     contiguously (`i32.store8`) in a loop, then forwards `(buf, count)`.
+     `canonicalExternParamValtypes` flattens it to the same `(i32, i32)` as the
+     other arrays. Gated by `TestExternBoolArrayParamCustomProvider` (a
+     `count-true: func(b: list<bool>) -> s32` provider; `[true,false,true]` → 2).
+     **bool[] *results* stay rejected**: the canonical `list<bool>` lowers
+     through the world composer (`ComposeFromWorldAuto`) in a way that traps at
+     runtime inside the generated `canon lower` adapter — independent of the
+     result wrapper — even though `list<i32>`/`list<u8>` results work through the
+     same path; that needs separate composer-level investigation, so it (and the
+     self-host port of bool[] params) is a follow-up.
    - **Record (struct) parameters — ✅ done (Go).** A Fern struct passed to an
      `@import` extern whose WIT signature takes a `record` flattens to its
      fields' core types (the canonical ABI passes a small record inline). The
@@ -551,8 +564,9 @@ world-driven composer (P2) wires it.
      `TestSelfHostExternSingleFieldRecordResultCustomProvider` (the same
      `make-wrapped: func(a: s32) -> record { v: s32 }` provider, run through the
      self-hosted backend).
-   - Still rejected (next slices): general user `variant`s; bool arrays;
-     sub-word / nested-composite fields. The multi-component harness
+   - Still rejected (next slices): general user `variant`s; bool[] *results*
+     (the composer trap above) + the self-host port of bool[] params; sub-word /
+     nested-composite fields. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
