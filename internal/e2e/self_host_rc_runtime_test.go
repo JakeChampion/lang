@@ -425,3 +425,61 @@ func TestSelfHostRcSelfMutateX86_64(t *testing.T) {
 		})
 	}
 }
+
+// Phase 1d (construction store): a struct field initialised from an
+// rc-tracked array alias retains the buffer, so the struct's reference
+// is counted. This is the free-readiness prerequisite — without it, a
+// struct outliving the source local would dangle once free is on.
+// inc-only here (struct drop isn't wired), so detector-clean + safe.
+func TestSelfHostRcConstructX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// Struct captures an array alias; both readable, detector clean.
+		{"struct-holds-array", "struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2, 3]; var h: H = H { items: xs }; return h.items[1] + xs[0] + __fern_rc_underflow_count(); }", 3},
+		// The capture survives the source local going out of scope (the
+		// case that would UAF once free is on without the construction inc).
+		{"struct-outlives-source", "struct H { items: i32[] } function mk(): H { var xs: i32[] = [7, 8]; return H { items: xs }; } function main(): i32 { var h = mk(); return h.items[0] + h.items[1] + __fern_rc_underflow_count(); }", 15},
+		// A struct field from a fresh literal is owned — not re-incremented.
+		{"struct-fresh-literal", "struct H { items: i32[] } function main(): i32 { var h: H = H { items: [4, 5, 6] }; return h.items[2] + __fern_rc_underflow_count(); }", 6},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+	// Emission: a struct field from an array alias retains.
+	t.Run("emits-retain-at-field-init", func(t *testing.T) {
+		asm := string(runCapture(t, gcc, runner, driverBin,
+			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0]; }")))
+		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
+			t.Errorf("expected a retain (__fern_rc_inc) at the struct field init")
+		}
+	})
+}
