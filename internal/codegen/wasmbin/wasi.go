@@ -891,6 +891,22 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")
 			helpers.add("cabi_realloc")
+		case ex.ResultRecord != nil && ex.ResultRecord.Direct:
+			// single-field record/tuple result (P4c): flattens to exactly one
+			// core value, so the canonical ABI returns it by value — the raw
+			// import returns the field's valtype directly (no return area). The
+			// wrapper materializes the one-field Fern struct/tuple from it.
+			rawName := ex.Name + "$import"
+			fieldVT := externRecordFieldValtype(ex.ResultRecord.Fields[0].Type)
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: params, results: []byte{fieldVT}}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: []byte{encode.ValtypeI32},
+				body:    buildExternRecordResultDirectWrapper(len(ex.Params), rawName, ex.ResultRecord),
+			}
+			helpers.add(ex.Name)
+			helpers.add("__fern_alloc")
 		case ex.ResultRecord != nil:
 			// record result (P4c): a multi-field record flattens to > 1 core
 			// value, so the canonical ABI returns it indirectly — the raw import
@@ -929,7 +945,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		default:
 			switch ret.(type) {
 			case ast.StructType, ast.TupleType:
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): record/tuple result (type %s) is not lowerable yet — it must have 2..%d fields, each a 32-/64-bit integer or float (P4c)", ex.Name, ex.Iface, ex.WITName, ret, 16)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): record/tuple result (type %s) is not lowerable yet — it must have 1..%d fields, each a 32-/64-bit integer or float (P4c)", ex.Name, ex.Iface, ex.WITName, ret, 16)
 			case ast.EnumType:
 				return nil, nil, fmt.Errorf("@import %q (%s/%s): enum result (type %s) is not lowerable yet — only Option[T] / Result[T, E] with a 32-/64-bit numeric/float payload (Result's arms same width) are supported (P4c)", ex.Name, ex.Iface, ex.WITName, ret)
 			}

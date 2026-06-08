@@ -650,10 +650,15 @@ type ExternEnumParam struct {
 // ExternRecordResult is the flattened layout of a record (struct) `@import`
 // result: the scalar fields (offsets from the struct value + types) and the
 // struct's field-area Size (excluding the rc header). The wasm result wrapper
-// allocs the canonical return area + the Fern struct from Size.
+// allocs the canonical return area + the Fern struct from Size. Direct is set
+// when the composite has a single field: the canonical ABI then returns that
+// field by value (it fits MAX_FLAT_RESULTS=1), so the raw import returns the
+// field's core valtype directly rather than through a trailing return-area
+// pointer, and the wrapper materializes the one-field struct from that value.
 type ExternRecordResult struct {
 	Fields []ExternRecordField
 	Size   int32
+	Direct bool
 }
 
 // ExternRecordField is one scalar field of a record `@import` parameter,
@@ -793,15 +798,17 @@ func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bo
 
 // externRecordResultLayout flattens a record (struct) or tuple `@import`
 // *result* to its scalar fields' offsets + types + size, or ok=false if it
-// can't be lowered. Requires 2..maxFlatExternRecordFields scalar fields (a
+// can't be lowered. Requires 1..maxFlatExternRecordFields scalar fields. A
 // multi-field composite flattens to > 1 core value, so it returns indirectly
-// through a return-area pointer — the only result shape this slice handles; a
-// single-field composite returns its field directly and is deferred). Offsets
-// and size come from the same layout the constructor uses, so the wrapper
-// writes fields where a `p.field` read would find them.
+// through a return-area pointer; a single-field composite flattens to exactly
+// one core value (fits MAX_FLAT_RESULTS=1) and so the canonical ABI returns it
+// by value — recorded as Direct, the raw import returns the field's valtype
+// directly rather than via a trailing area pointer. Offsets and size come from
+// the same layout the constructor uses, so the wrapper writes fields where a
+// `p.field` read would find them.
 func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResult, bool) {
 	types, ok := externCompositeFieldTypes(t, info)
-	if !ok || len(types) < 2 || len(types) > maxFlatExternRecordFields {
+	if !ok || len(types) < 1 || len(types) > maxFlatExternRecordFields {
 		return nil, false
 	}
 	offs, size := tupleElemLayout(types, 4)
@@ -809,7 +816,7 @@ func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResu
 	for i, ft := range types {
 		fields[i] = ExternRecordField{Offset: offs[i], Type: ft}
 	}
-	return &ExternRecordResult{Fields: fields, Size: size}, true
+	return &ExternRecordResult{Fields: fields, Size: size, Direct: len(types) == 1}, true
 }
 
 // ExternExport binds a defined function (Name) to the WIT world export

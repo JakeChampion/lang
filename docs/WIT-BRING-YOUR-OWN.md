@@ -386,11 +386,18 @@ world-driven composer (P2) wires it.
      `buildExternRecordResultWrapper` allocs the return area, calls the import,
      then materializes a Fern struct exactly as the constructor does — alloc
      `rcHeaderBytes + size`, rc=1 at base+0, copy each field to `base +
-     rcHeaderBytes + offset`, return `base + rcHeaderBytes`. Scoped to 2..16
-     32-/64-bit numeric/float fields (a single-field record returns its field
-     directly — a different shape — and is deferred). Gated by
+     rcHeaderBytes + offset`, return `base + rcHeaderBytes`. A **single-field**
+     record flattens to exactly one core value (fits `MAX_FLAT_RESULTS=1`), so
+     the canonical ABI returns it *by value* — recorded as
+     `ResultRecord.Direct`, the raw import returns the field's valtype directly
+     (no return area / `cabi_realloc`), and `buildExternRecordResultDirectWrapper`
+     materializes the one-field struct from it (push the store address, call the
+     import for the value, typed-store, return the pointer). Scoped to 1..16
+     32-/64-bit numeric/float fields. Gated by
      `TestExternRecordResultCustomProvider` (a `make-point: func(s32, s32) ->
-     point` lifted to a Fern struct, fields read back).
+     point` lifted to a Fern struct, fields read back) and
+     `TestExternSingleFieldRecordResultCustomProvider` (a `make-wrapped:
+     func(a: s32) -> record { v: s32 }` returned by value).
    - **Tuple params + results — ✅ done (Go).** A Fern tuple is laid out exactly
      like a struct (rc header + elements at the same packing), so the record
      machinery generalises to tuples for free: `externCompositeFieldTypes`
@@ -398,8 +405,11 @@ world-driven composer (P2) wires it.
      `externRecordLayout` / `externRecordResultLayout` / wrappers handle both.
      `tuple<...>` params flatten to their elements; multi-element `tuple<...>`
      results return indirectly and materialize a Fern tuple. Same scope as
-     records (32-/64-bit numeric/float elements; 1..16 for params, 2..16 for
-     results). Gated by `TestExternTupleParamCustomProvider` (a `sum-pair:
+     records (32-/64-bit numeric/float elements; 1..16 for params and results —
+     a single-field tuple would return its element directly like a single-field
+     record, but Fern has no 1-tuple syntax (`(T)` parses as a parenthesised
+     `T`), so only multi-element tuple results arise). Gated by
+     `TestExternTupleParamCustomProvider` (a `sum-pair:
      func(p: tuple<s32, s32>) -> s32`) and `TestExternTupleResultCustomProvider`
      (a `make-pair: func(s32, s32) -> tuple<s32, s32>`).
    - **Sum-type (option / result) params — ✅ done (Go).** A Fern Option / Result
@@ -528,9 +538,13 @@ world-driven composer (P2) wires it.
      this, the self-host port reaches parity with the Go backend for the param /
      result composite shapes (string, numeric arrays, u8[], records, sum types,
      tuples).
-   - Still rejected (next slices): general user `variant`s;
-     single-element records/tuples (direct return); bool arrays; sub-word /
-     nested-composite fields. The multi-component harness
+   - **Single-field record results (direct return) — ✅ done (Go).** A
+     single-field record result returns its field by value rather than through a
+     return-area pointer (`ResultRecord.Direct`); see the record-results entry
+     above. The self-host port of this is a follow-up.
+   - Still rejected (next slices): general user `variant`s; bool arrays;
+     sub-word / nested-composite fields; the self-host port of single-field
+     direct-return record results. The multi-component harness
      (`TestExternImportCustomProvider`) is the test vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`

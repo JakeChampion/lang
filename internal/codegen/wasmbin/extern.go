@@ -232,6 +232,61 @@ func buildExternRecordResultWrapper(nparams int, rawImport string, rr *ir.Extern
 	}
 }
 
+// buildExternRecordResultDirectWrapper builds the wrapper for an `@import`
+// extern returning a single-field record/tuple (P4c). A single-field composite
+// flattens to exactly one core value, so the canonical ABI returns it by value
+// (no return area): the raw import returns the field's core valtype directly.
+// The wrapper calls it, then materializes the one-field Fern struct/tuple —
+// alloc `rcHeaderBytes + size`, rc=1 at base+0, store the returned value at
+// base+rcHeaderBytes (the single field is at offset 0), and return the
+// user-visible pointer base+rcHeaderBytes. Wrapper type is (params…) -> i32.
+//
+// Locals after the params: 0:$base (struct block). The returned field value
+// needs no local — the store address (base) is pushed first, then the import is
+// called to leave the value on top, then the typed store consumes both.
+func buildExternRecordResultDirectWrapper(nparams int, rawImport string, rr *ir.ExternRecordResult) func(map[string]uint32) []byte {
+	const rcHeaderBytes = 8
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		vt := externRecordFieldValtype(rr.Fields[0].Type)
+		base := uint32(nparams)
+
+		var body []byte
+		// base = __fern_alloc(rcHeaderBytes + size); rc = 1 at base+0.
+		body = inst.InstI32Const(body, rcHeaderBytes+rr.Size)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, base)
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		// Store the field at base + rcHeaderBytes (single field @ offset 0):
+		// push the store address, then the import's by-value result, then store.
+		body = inst.InstLocalGet(body, base)
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstCall(body, imp)
+		switch vt {
+		case encode.ValtypeI64:
+			body = memory.InstI64Store(body, 3, rcHeaderBytes)
+		case encode.ValtypeF32:
+			body = memory.InstF32Store(body, 2, rcHeaderBytes)
+		case encode.ValtypeF64:
+			body = memory.InstF64Store(body, 3, rcHeaderBytes)
+		default:
+			body = memory.InstI32Store(body, 2, rcHeaderBytes)
+		}
+		// return base + rcHeaderBytes (user-visible struct pointer).
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstI32Const(body, rcHeaderBytes)
+		body = numeric.InstI32Add(body)
+
+		locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32) // base
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
 // buildExternEnumResultWrapper builds the wrapper for an `@import` extern
 // returning an option/result (P4c). The canonical variant flattens to
 // (disc, payload) > 1 core value, so it returns indirectly: the raw import
