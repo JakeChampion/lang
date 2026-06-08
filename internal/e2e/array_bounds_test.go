@@ -55,7 +55,7 @@ function main(): i32 { var xs: i32[] = [10, 20, 30]; print(xs[5].to_string()); r
 		{"read_negative", `import "std/i32";
 function main(): i32 { var xs: i32[] = [10, 20, 30]; var i: i32 = 0 - 1; print(xs[i].to_string()); return 0; }`},
 		{"write_past_end", `import "std/i32";
-function main(): i32 { var xs: i32[] = [1, 2, 3]; xs[7] = 9; return 0; }`},
+function main(): i32 { var xs: i32[] = [1, 2, 3]; xs = xs.with(7, 9); return 0; }`},
 		{"read_u8_past_end", `import "std/i32";
 function main(): i32 { var xs: u8[] = [1, 2, 3]; print((xs[9] as i32).to_string()); return 0; }`},
 		{"read_i64_past_end", `import "std/i64";

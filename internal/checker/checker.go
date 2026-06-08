@@ -4115,6 +4115,17 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 					return true
 				}
 				if x.Method != nil {
+					// `recv.with(i, v)` on an `own` array is the in-place
+					// element set (no size change → the COW unique-in-place
+					// branch, no allocation). It is the method-call form of
+					// the `arr[i] = v` write already allowed below, so it
+					// carries the same `own`-root uniqueness assumption. This
+					// is what lets the value-returning collection API
+					// (`arr = arr.with(i, v)`, post-E056) stay fip — e.g. the
+					// in-place insertion sorts.
+					if x.Method.Field == "with" && len(x.Args) > 0 && own[fipRootIdent(x.Args[0])] {
+						return true
+					}
 					if !fipNonAllocMethods[x.Method.Field] {
 						c.errfCode(x.Pos(), "E053", "`fip` function %q may not call method %q (not proven allocation-free)", fn.Name, x.Method.Field)
 					}
@@ -7043,12 +7054,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// unconstructible, so RC stays garbage-free with no cycle
 		// collector. The fix is a functional struct-update:
 		// `p = Foo { ...p, field: v }`. (Local variable reassignment
-		// and array-element assignment `arr[i] = v` — a CoW path —
-		// stay legal; only `*ast.FieldAccess` targets are banned.)
+		// stays legal; only `*ast.FieldAccess` targets are banned.)
 		if fa, ok := n.Target.(*ast.FieldAccess); ok {
 			c.errfCode(fa.Pos(), "E048",
 				"cannot assign to field %q: fields are immutable after construction; rebuild with `T { ...old, %s: value }`",
 				fa.Field, fa.Field)
+		}
+		// Array elements are immutable after construction too (E056) —
+		// the subscript counterpart of E048, completing the immutable-
+		// data-structures surface (docs/PURE-COLLECTION-API-PLAN.md §3a).
+		// `arr[i] = v` becomes the value-returning `arr = arr.with(i, v)`,
+		// which is the CoW unique-in-place branch on an unowned/`fip`
+		// array (allocation-free — see E053's `.with`-on-`own` rule), so
+		// subscripts are read-only just like struct fields.
+		if idx, ok := n.Target.(*ast.Index); ok {
+			c.errfCode(idx.Pos(), "E056",
+				"cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`")
 		}
 		// A closure may not write back a REFERENCE-shaped captured
 		// variable. This is the other half of immutability

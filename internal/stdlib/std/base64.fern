@@ -46,27 +46,27 @@ pub function base64_encode(s: string): string {
         b0 = s[i];
         b1 = s[i + 1];
         b2 = s[i + 2];
-        buf[j]     = __b64_alphabet(b0 >> 2) as u8;
-        buf[j + 1] = __b64_alphabet(((b0 & 3) << 4) | (b1 >> 4)) as u8;
-        buf[j + 2] = __b64_alphabet(((b1 & 15) << 2) | (b2 >> 6)) as u8;
-        buf[j + 3] = __b64_alphabet(b2 & 63) as u8;
+        buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
+        buf = buf.with(j + 1, __b64_alphabet(((b0 & 3) << 4) | (b1 >> 4)) as u8);
+        buf = buf.with(j + 2, __b64_alphabet(((b1 & 15) << 2) | (b2 >> 6)) as u8);
+        buf = buf.with(j + 3, __b64_alphabet(b2 & 63) as u8);
         i = i + 3;
         j = j + 4;
     }
     var rem: i32 = n - i;
     if (rem == 1) {
         b0 = s[i];
-        buf[j]     = __b64_alphabet(b0 >> 2) as u8;
-        buf[j + 1] = __b64_alphabet((b0 & 3) << 4) as u8;
-        buf[j + 2] = 61 as u8;                      // '='
-        buf[j + 3] = 61 as u8;
+        buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
+        buf = buf.with(j + 1, __b64_alphabet((b0 & 3) << 4) as u8);
+        buf = buf.with(j + 2, 61 as u8);                      // '='
+        buf = buf.with(j + 3, 61 as u8);
     } else if (rem == 2) {
         b0 = s[i];
         b1 = s[i + 1];
-        buf[j]     = __b64_alphabet(b0 >> 2) as u8;
-        buf[j + 1] = __b64_alphabet(((b0 & 3) << 4) | (b1 >> 4)) as u8;
-        buf[j + 2] = __b64_alphabet((b1 & 15) << 2) as u8;
-        buf[j + 3] = 61 as u8;
+        buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
+        buf = buf.with(j + 1, __b64_alphabet(((b0 & 3) << 4) | (b1 >> 4)) as u8);
+        buf = buf.with(j + 2, __b64_alphabet((b1 & 15) << 2) as u8);
+        buf = buf.with(j + 3, 61 as u8);
     }
     return string_from_bytes(buf);
 }
@@ -93,7 +93,7 @@ pub function base64_decode(s: string): string {
         bits = bits + 6;
         if (bits >= 8) {
             bits = bits - 8;
-            buf[j] = ((acc >> bits) & 255) as u8;
+            buf = buf.with(j, ((acc >> bits) & 255) as u8);
             j = j + 1;
         }
         i = i + 1;

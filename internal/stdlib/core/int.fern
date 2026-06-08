@@ -42,17 +42,17 @@ pub function int_to_string(n: i32): string {
     var u: u32 = n as u32;
     if (u == (0 as u32)) {
         end = end - 1;
-        scratch[end] = 48 as u8;
+        scratch = scratch.with(end, 48 as u8);
     } else {
         while (u != (0 as u32)) {
             end = end - 1;
-            scratch[end] = (((u % (10 as u32)) as i32) + 48) as u8;
+            scratch = scratch.with(end, (((u % (10 as u32)) as i32) + 48) as u8);
             u = u / (10 as u32);
         }
     }
     if (neg) {
         end = end - 1;
-        scratch[end] = 45 as u8;
+        scratch = scratch.with(end, 45 as u8);
     }
     var n_bytes: i32 = 16 - end;
     var buf: u8[] = __alloc_u8(n_bytes);
@@ -75,17 +75,17 @@ pub function __int_to_string_u64(mag: i64, neg: i32): string {
     var end: i32 = 24;
     if (mag == (0 as i64)) {
         end = end - 1;
-        scratch[end] = 48 as u8;
+        scratch = scratch.with(end, 48 as u8);
     } else {
         while (mag != (0 as i64)) {
             end = end - 1;
-            scratch[end] = ((((mag as u64) % (10 as u64)) as i32) + 48) as u8;
+            scratch = scratch.with(end, ((((mag as u64) % (10 as u64)) as i32) + 48) as u8);
             mag = ((mag as u64) / (10 as u64)) as i64;
         }
     }
     if (neg != 0) {
         end = end - 1;
-        scratch[end] = 45 as u8;
+        scratch = scratch.with(end, 45 as u8);
     }
     var n_bytes: i32 = 24 - end;
     var buf: u8[] = __alloc_u8(n_bytes);
@@ -142,7 +142,7 @@ pub function int_to_string_radix(n: i32, base: i32): string {
     var b64: i64 = base as i64;
     while (mag > (0 as i64)) {
         var d: i32 = (mag % b64) as i32;
-        digits[k] = __radix_char(d) as u8;
+        digits = digits.with(k, __radix_char(d) as u8);
         k = k + 1;
         mag = mag / b64;
     }
@@ -151,12 +151,12 @@ pub function int_to_string_radix(n: i32, base: i32): string {
     var buf: u8[] = __alloc_u8(out_len);
     var bi: i32 = 0;
     if (neg) {
-        buf[0] = 45 as u8;        // '-'
+        buf = buf.with(0, 45 as u8);        // '-'
         bi = 1;
     }
     var j: i32 = k - 1;
     while (j >= 0) {
-        buf[bi] = digits[j];
+        buf = buf.with(bi, digits[j]);
         bi = bi + 1;
         j = j - 1;
     }

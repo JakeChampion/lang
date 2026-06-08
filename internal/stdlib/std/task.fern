@@ -176,7 +176,7 @@ pub function run(states_in: Step[], rx_in: Reactor): i32[] {
                     Wait(t, resume) => {
                         var (next, rx3) = resume(val, rx);
                         rx = rx3;
-                        states[i] = next;
+                        states = states.with(i, next);
                     },
                 }
             }
@@ -258,7 +258,7 @@ pub function select(states_in: Step[], rx_in: Reactor): (i32, i32) {
                     Wait(t, resume) => {
                         var (next, rx3) = resume(vals[j], rx);
                         rx = rx3;
-                        states[i] = next;
+                        states = states.with(i, next);
                         match (next) {
                             Done(v) => { return (i, v); },
                             Wait(t2, r2) => { },

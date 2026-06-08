@@ -138,6 +138,15 @@ Note `arr[i] = v` is included: indexed element assignment is the one CoW
 so subscript-assignment is no longer a statement at all — subscripts are
 read-only, exactly like struct fields after E048.
 
+**Done (E056).** This is now enforced: the checker rejects an `*ast.Assign`
+with an `*ast.Index` target (`arr[i] = v`, and compound `arr[i] += v`) as
+**E056**, the subscript counterpart of E048. All ~83 sites are migrated to
+`arr = arr.with(i, v)`. The genuine in-place mutators (`fip` insertion
+sorts) stay allocation-free because **E053 accepts `.with` on an `own`
+receiver** (the method-call form of the in-place write). (The E056 number
+here supersedes the speculative "CoW hint" use sketched in §3/§5 below,
+which is dropped.)
+
 ### 3b. The enforcement: E055 "unused result of a pure operation"
 
 A new checker rule rejects an `*ast.ExprStmt` whose expression is a call
@@ -286,12 +295,14 @@ This plan's contribution is **policy, not mechanism**:
    whitelist the builder ops inside a `build` closure, so a `fip`
    function may construct via `Array.build`/`Map.build` without tripping
    the allocation check — the builder's writes are provably in-place.
-3. Add the symmetric **diagnostic-only** hint (E056, non-fatal): when a
+3. Add a symmetric **diagnostic-only** CoW hint (non-fatal): when a
    non-`fip` function performs a collection write through a value the
    inference believes may be aliased, surface a note ("this `insert` may
    copy; mark the function `fip` or thread ownership to guarantee
    in-place"). Off by default; opt-in via a `-Whint-cow` flag so it
-   never becomes noise.
+   never becomes noise. (NOTE: the E056 code was reassigned to the
+   shipped subscript-read-only rule in §3a; this future hint, if built,
+   needs a fresh code.)
 
 The honest framing for the docs: this change trades a silent *wrong
 answer* (today) for a silent *slowdown* (after), and `fip` is how you
@@ -355,8 +366,9 @@ before flipping the gate):
    **rejection** fixture for the discarded form — including the
    aliased-`bump`-through-fn case from §1, which is the regression this
    whole plan exists to prevent.
-4. **Document `fip` policy** + extend `fipNonAllocMethods` for builders;
-   land the opt-in E056 hint behind `-Whint-cow`.
+4. **Document `fip` policy** + extend the `fip` allow-set for builders
+   (done for `.with` on `own`); land the opt-in CoW hint behind
+   `-Whint-cow` (under a fresh code — E056 is now the subscript rule).
 5. **Remove the deprecation aliases** and the indexed-assignment
    statement path (`arr[i] = v` → parse error pointing at `.with`).
 6. **Self-host parity.** As with E048/E049, the bootstrap compiler lags

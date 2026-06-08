@@ -606,7 +606,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             var bi: i32 = 0;
                             while (bi < bnames.len()) {
                                 if (bnames[bi] == oname) {
-                                    bvals[bi] = ov2;
+                                    bvals = bvals.with(bi, ov2);
                                     replaced = true;
                                 }
                                 bi = bi + 1;

@@ -2426,13 +2426,15 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 }`); err != nil {
 		t.Errorf("var _ discard should check, got %v", err)
 	}
-	// `arr[i] = v` is subscript assignment, not a bare method call — exempt.
+	// `arr = arr.with(i, v)` (the value-returning replacement for the removed
+	// `arr[i] = v`) is an assignment, not a discarded result — exempt from
+	// E055 (and it is not subscript assignment, so no E056 either).
 	if err := checkSource(t, `function main(): i32 {
 	var a: i32[] = [1, 2];
-	a[0] = 9;
+	a = a.with(0, 9);
 	return a[0];
 }`); err != nil {
-		t.Errorf("subscript assignment must not trip E055, got %v", err)
+		t.Errorf("a = a.with(...) must check clean, got %v", err)
 	}
 	// Using the result in a larger expression is fine (not a bare statement).
 	if err := checkSource(t, `function main(): i32 {
@@ -2440,6 +2442,39 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 	return a.append(2)[0];
 }`); err != nil {
 		t.Errorf("used append result must not trip E055, got %v", err)
+	}
+}
+
+// E056: array elements are immutable after construction — the subscript
+// counterpart of E048 (field immutability). `arr[i] = v` is rejected; the
+// replacement is the value-returning `arr = arr.with(i, v)`. This completes
+// the immutable-data surface (docs/PURE-COLLECTION-API-PLAN.md §3a).
+func TestArrayElementImmutabilityE056(t *testing.T) {
+	// Plain subscript assignment is rejected.
+	err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1, 2, 3];
+	a[0] = 9;
+	return a[0];
+}`)
+	if err == nil || !strings.Contains(err.Error(), "subscripts are read-only after construction") {
+		t.Errorf("expected E056 for subscript assignment, got: %v", err)
+	}
+	// Compound subscript assignment (`arr[i] += v` desugars to `arr[i] = arr[i] + v`).
+	err = checkSource(t, `function main(): i32 {
+	var a: i32[] = [1, 2, 3];
+	a[1] += 5;
+	return a[1];
+}`)
+	if err == nil || !strings.Contains(err.Error(), "subscripts are read-only after construction") {
+		t.Errorf("expected E056 for compound subscript assignment, got: %v", err)
+	}
+	// The replacement form checks clean.
+	if err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1, 2, 3];
+	a = a.with(0, 9);
+	return a[0];
+}`); err != nil {
+		t.Errorf("a = a.with(...) must check clean, got: %v", err)
 	}
 }
 

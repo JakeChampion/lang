@@ -29,8 +29,8 @@ pub function hex_encode(s: string): string {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
-        buf[i * 2]     = __hex_lower_char((b >> 4) & 15) as u8;
-        buf[i * 2 + 1] = __hex_lower_char(b & 15) as u8;
+        buf = buf.with(i * 2, __hex_lower_char((b >> 4) & 15) as u8);
+        buf = buf.with(i * 2 + 1, __hex_lower_char(b & 15) as u8);
         i = i + 1;
     }
     return string_from_bytes(buf);
@@ -52,7 +52,7 @@ pub function hex_decode(s: string): string {
     while (i < pairs) {
         var hi: i32 = __hex_value(s[i * 2]);
         var lo: i32 = __hex_value(s[i * 2 + 1]);
-        buf[i] = ((hi << 4) | lo) as u8;
+        buf = buf.with(i, ((hi << 4) | lo) as u8);
         i = i + 1;
     }
     return string_from_bytes(buf);

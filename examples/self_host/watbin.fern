@@ -1910,10 +1910,10 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
     i = 0;
     while (i < n) {
         if (imp_kind[i] == 1 || imp_kind[i] == 2) {
-            tramp_mod[i] = n_mod;
+            tramp_mod = tramp_mod.with(i, n_mod);
             n_mod = n_mod + 1;
             o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], none)));
-            fixup_mod[i] = n_mod;
+            fixup_mod = fixup_mod.with(i, n_mod);
             n_mod = n_mod + 1;
             o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], none)));
         }
@@ -1923,7 +1923,7 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
     i = 0;
     while (i < n) {
         if (imp_kind[i] == 1 || imp_kind[i] == 2) {
-            tramp_inst[i] = n_coreinst;
+            tramp_inst = tramp_inst.with(i, n_coreinst);
             n_coreinst = n_coreinst + 1;
             o = wcat(o, comp_core_instance_instantiate(tramp_mod[i]));
         }
@@ -1960,8 +1960,8 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
             group_names = group_names.append([imp_name[i]]);
             group_idxs = group_idxs.append([idx]);
         } else {
-            group_names[gi] = group_names[gi].append(imp_name[i]);
-            group_idxs[gi] = group_idxs[gi].append(idx);
+            group_names = group_names.with(gi, group_names[gi].append(imp_name[i]));
+            group_idxs = group_idxs.with(gi, group_idxs[gi].append(idx));
         }
         i = i + 1;
     }
@@ -2010,7 +2010,7 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
     i = 0;
     while (i < n) {
         if (imp_kind[i] == 1 || imp_kind[i] == 2) {
-            tbl[i] = n_coretab;
+            tbl = tbl.with(i, n_coretab);
             n_coretab = n_coretab + 1;
             o = wcat(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
         }
@@ -2023,14 +2023,14 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
             o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
             var cfg: i32 = n_cfunc;
             n_cfunc = n_cfunc + 1;
-            coref[i] = n_corefunc;
+            coref = coref.with(i, n_corefunc);
             o = wcat(o, comp_canon_lower_mem(cfg, 0));
             n_corefunc = n_corefunc + 1;
         } else if (imp_kind[i] == 2) {
             o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
             var cfr: i32 = n_cfunc;
             n_cfunc = n_cfunc + 1;
-            coref[i] = n_corefunc;
+            coref = coref.with(i, n_corefunc);
             o = wcat(o, comp_canon_lower_mem_realloc(cfr, 0, realloc_f));
             n_corefunc = n_corefunc + 1;
         }
