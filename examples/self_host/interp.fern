@@ -340,6 +340,48 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
     return v_err("unknown binary op: " + op);
 }
 
+// eval_unary applies a unary operator to an already-evaluated
+// operand. Pure in (op, ov) — extracted from eval_expr's ExprUnary
+// arm, mirroring eval_binary (SH-048).
+function eval_unary(op: string, ov: Value): Value {
+    if (op == "-") {
+        match (ov) {
+            VInt(i) => { return v_int(0 - i.v); },
+            VFloat(f) => { return v_float(0.0 - f.v); },
+            _ => { return v_err("unary `-` operand not i32 or f64"); }
+        }
+    }
+    if (op == "!") {
+        match (ov) {
+            VBool(b) => { return v_bool(!b.v); },
+            _ => { return v_err("unary `!` operand not bool"); }
+        }
+    }
+    // `expr as <Type>` numeric casts (desugared to `as_<Type>`).
+    // The interp's numeric model is VInt (i32) + VFloat (f64): an
+    // integer-target cast is identity on an int and truncates a
+    // float; a float-target cast widens an int and is identity on a
+    // float. Without these every cast fell through to the
+    // "unknown unary op" error below.
+    if (op == "as_i32" || op == "as_u32" || op == "as_i64" || op == "as_u64"
+        || op == "as_i16" || op == "as_u16" || op == "as_i8" || op == "as_u8"
+        || op == "as_byte") {
+        match (ov) {
+            VInt(i) => { return v_int(i.v); },
+            VFloat(f) => { return v_int(f.v as i32); },
+            _ => { return v_err("`as` integer cast operand not numeric"); }
+        }
+    }
+    if (op == "as_f64" || op == "as_f32") {
+        match (ov) {
+            VInt(i) => { return v_float(i.v as f64); },
+            VFloat(f) => { return v_float(f.v); },
+            _ => { return v_err("`as` float cast operand not numeric"); }
+        }
+    }
+    return v_err("unknown unary op: " + op);
+}
+
 function eval_expr(e: parser.Expr, env: Env): Value {
     match (e) {
         parser.ExprNumber(n) => {
@@ -359,42 +401,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
         parser.ExprUnary(u) => {
             var ov: Value = eval_expr(u.operand, env);
             if (is_err(ov)) { return ov; }
-            if (u.op == "-") {
-                match (ov) {
-                    VInt(i) => { return v_int(0 - i.v); },
-                    VFloat(f) => { return v_float(0.0 - f.v); },
-                    _ => { return v_err("unary `-` operand not i32 or f64"); }
-                }
-            }
-            if (u.op == "!") {
-                match (ov) {
-                    VBool(b) => { return v_bool(!b.v); },
-                    _ => { return v_err("unary `!` operand not bool"); }
-                }
-            }
-            // `expr as <Type>` numeric casts (desugared to `as_<Type>`).
-            // The interp's numeric model is VInt (i32) + VFloat (f64): an
-            // integer-target cast is identity on an int and truncates a
-            // float; a float-target cast widens an int and is identity on a
-            // float. Without these every cast fell through to the
-            // "unknown unary op" error below.
-            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_i64" || u.op == "as_u64"
-                || u.op == "as_i16" || u.op == "as_u16" || u.op == "as_i8" || u.op == "as_u8"
-                || u.op == "as_byte") {
-                match (ov) {
-                    VInt(i) => { return v_int(i.v); },
-                    VFloat(f) => { return v_int(f.v as i32); },
-                    _ => { return v_err("`as` integer cast operand not numeric"); }
-                }
-            }
-            if (u.op == "as_f64" || u.op == "as_f32") {
-                match (ov) {
-                    VInt(i) => { return v_float(i.v as f64); },
-                    VFloat(f) => { return v_float(f.v); },
-                    _ => { return v_err("`as` float cast operand not numeric"); }
-                }
-            }
-            return v_err("unknown unary op: " + u.op);
+            return eval_unary(u.op, ov);
         },
         parser.ExprCall(c) => {
             // Bare-ident callee → plain function call OR
