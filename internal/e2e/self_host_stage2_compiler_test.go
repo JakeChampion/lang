@@ -30,7 +30,7 @@ import (
 func TestSelfHostStage2Compiler(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -67,6 +67,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 
 	// stage 1: bundle into a stdin-driven self-hosted compiler.
 	asmcoreSrc, _ := os.ReadFile("../../examples/self_host/asmcore.fern")
+	astwalkSrc, _ := os.ReadFile("../../examples/self_host/astwalk.fern")
 	utilSrc, _ := os.ReadFile("../../examples/self_host/util.fern")
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
@@ -89,6 +90,8 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 	var bundle bytes.Buffer
 	bundle.WriteString("///MODULE util\n")
 	bundle.Write(utilSrc)
+	bundle.WriteString("///MODULE astwalk\n")
+	bundle.Write(astwalkSrc)
 	bundle.WriteString("///MODULE asmcore\n")
 	bundle.Write(asmcoreSrc)
 	bundle.WriteString("\n")

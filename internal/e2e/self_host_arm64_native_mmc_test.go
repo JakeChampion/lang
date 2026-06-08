@@ -51,7 +51,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"util.fern", "asmcore.fern", "flatten.fern", "asm_arm64.fern", "asm_arm64_load_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "asm_arm64.fern", "asm_arm64_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

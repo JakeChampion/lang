@@ -191,7 +191,8 @@ findings. Ranked by leverage.
   (`astwalk.fern` started; see appendix for the corrected analysis):_ the
   free-variable collectors (`collect_idents_expr`/`_stmt`/`collect_bound_stmt`) are
   byte-identical across `asmcore`/`ssa`/`vm` and now live once in `astwalk.fern`;
-  `ssa` and `vm` are converted (asmcore next — it's bundled). The `expr` collector
+  all three are converted (asmcore carried the `///MODULE astwalk` bundle cascade +
+  a 73-list staging sweep). The `expr` collector
   also converges with `wasm`'s (wasm's accumulator-dedup is **redundant** — every
   consumer dedups again when building the capture list), but wasm's **stmt**
   collector genuinely diverges in coverage (`_ => {}`-skips `StmtSwitch`/`StmtDefer`
@@ -404,11 +405,11 @@ and couldn't be merged. That was over-cautious — the real picture:
   switch/defer, so wasm is **deferred** pending a deliberate look (latent bugfix vs.
   regression).
 
-**Status:** `astwalk.fern` now holds the canonical (non-deduping, full-coverage)
-`collect_idents_expr`/`_stmt`/`collect_bound_stmt`; `ssa` and `vm` are converted.
-Remaining: `asmcore` (identical collectors — safe, but bundled, so it carries the
-`///MODULE astwalk` cascade + a ~74-list staging sweep), then `wasm` (the genuine
-divergence above).
+**Status:** `astwalk.fern` holds the canonical (non-deduping, full-coverage)
+`collect_idents_expr`/`_stmt`/`collect_bound_stmt`; **`asmcore`, `ssa`, and `vm` are
+all converted** (asmcore's bundle cascade + 73-list sweep done). The only remaining
+backend is **`wasm`**, whose *stmt* collector genuinely diverges (skips
+`StmtSwitch`/`StmtDefer`) — a deliberate bugfix-vs-regression call, not a sweep.
 
 ### What the bootstrap language supports
 Closures/lambdas with captures lower on every backend (`OpMakeClosure` etc.), and
