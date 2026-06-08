@@ -1171,3 +1171,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   reached. (Stacks on the string free flip.) Remaining string follow-up:
   the extern/canonical-ABI builders (env / args / read_file / @export,
   still unboxed). Then the container types.
+- 2026-06-08: **Finding (deferred) — expanding the wasm swept-string oracle
+  to method/call/slice results miscompiles string-heavy code.** Attempted
+  to extend `init_is_owned_string` from {concat, literal} to also cover
+  string-returning CALLS (`x.to_upper()`, `build_str()`), SLICES
+  (`s[a:b]`), excluding `get_or` (borrowed map value). The plain-mode WAT
+  for simple programs was byte-identical, but the component-adapter tests
+  failed wasm-tools validation ("expected i32 but nothing on stack") — and
+  the root cause is that the assembler those tests build FROM `watbin.fern`
+  (string-method/slice heavy) was itself miscompiled by the expanded
+  oracle, then emitted invalid wasm. So the expansion has a latent
+  emission bug for swept method/call/slice STRING results (likely in the
+  StmtVar/StmtReturn string dec-on-overwrite / temp-dance interaction with
+  some watbin pattern). REVERTED — the merged string reclamation (concat /
+  literal / alias / construction / return / reassign-rebind) is unaffected
+  and correct (watbin compiles + validates fine without the expansion).
+  Before re-attempting: reproduce by compiling `watbin.fern` through the
+  self-host wasm backend with the expanded oracle and bisect which string
+  pattern emits the stack-underflow, then fix the str-sweep emission for
+  that shape. The same care applies to the extern/canonical-ABI string
+  builders (env / args / read_file / @export) — they stay unboxed/unswept.
