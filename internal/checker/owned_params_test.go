@@ -183,6 +183,30 @@ function f(): i32 {
 }`)
 }
 
+// A call to a function whose EVERY pointer parameter is `own` returns a
+// freshly-owned result (the callee consumed each pointer input, so it can't
+// hand back a borrowed one) — so it passes the E051 transfer guard. This is
+// the self-host `consume(build(own ops, s))` shape: a threaded `own` array
+// param grown and returned is owned by the caller, transferable onward.
+func TestOwnGuardAllowsAllOwnPtrParamCallResult(t *testing.T) {
+	wantOK(t, "all-own-ptr-param-result", ownConsumer+`
+function build(own ops: i32[], x: i32): i32[] { return ops.append(x); }
+function f(): i32 {
+    return consume(build([1, 2], 3));   // build's result is freshly owned → transfer OK
+}`)
+}
+
+// The dual: a function with a BORROWED pointer parameter could return it
+// (`id(xs) -> xs`), so its result is NOT provably owned — transferring it stays
+// E051.
+func TestOwnGuardRejectsBorrowedPtrParamCallResult(t *testing.T) {
+	wantE051(t, "borrowed-ptr-param-result", ownConsumer+`
+function pick(a: i32[], b: i32[]): i32[] { return a; }
+function f(): i32 {
+    return consume(pick([1, 2], [3, 4]));   // pick may return a borrowed input → E051
+}`)
+}
+
 // --- parser: contextual `own` --------------------------------------------
 
 func TestParamNamedOwnStillWorks(t *testing.T) {
