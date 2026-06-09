@@ -2014,27 +2014,113 @@ function extern_variant_param_supported(mod: parser.Module, t: string): boolean 
             var n: i32 = mod.enums[i].variant_names.len();
             if (n == 0) { return false; }
             var anyp: boolean = false;
+            var maxf: i32 = 0;
             var j: i32 = 0;
             while (j < n) {
                 var vn: string = mod.enums[i].variant_names[j];
                 if (!is_struct_type(mod.structs, vn)) { return false; }
                 var fc: i32 = struct_field_count(mod.structs, vn);
-                if (fc > 1) { return false; }
-                if (fc == 1) {
-                    var ft: string = struct_field_type_at(mod.structs, vn, 0);
-                    // i32/u32 (4-byte) or i64/u64 (8-byte, S1 wide slot) payloads.
-                    // A mixed-width set joins to an i64 canonical slot (per-arm
-                    // extend/load); a uniform i32 set keeps the i32 join.
-                    if (ft != "i32" && ft != "u32" && ft != "i64" && ft != "u64") { return false; }
-                    anyp = true;
-                }
+                if (fc > maxf) { maxf = fc; }
+                if (fc >= 1) { anyp = true; }
                 j = j + 1;
             }
-            return anyp;
+            if (!anyp) { return false; }
+            if (maxf >= 2) {
+                // Multi-field variant (a case carries >=2 payloads, in WIT a
+                // tuple): joins to maxf i32 slots. Scoped to i32/u32 fields.
+                var k: i32 = 0;
+                while (k < n) {
+                    var vn2: string = mod.enums[i].variant_names[k];
+                    var fcc: i32 = struct_field_count(mod.structs, vn2);
+                    var fj: i32 = 0;
+                    while (fj < fcc) {
+                        var ft2: string = struct_field_type_at(mod.structs, vn2, fj);
+                        if (ft2 != "i32" && ft2 != "u32") { return false; }
+                        fj = fj + 1;
+                    }
+                    k = k + 1;
+                }
+                return true;
+            }
+            // Single-field arms (0 or 1 payload): i32/u32 (4-byte) or i64/u64
+            // (8-byte, S1 wide slot). A mixed-width set joins to an i64 canonical
+            // slot (per-arm extend/load); a uniform i32 set keeps the i32 join.
+            var k2: i32 = 0;
+            while (k2 < n) {
+                var vn3: string = mod.enums[i].variant_names[k2];
+                if (struct_field_count(mod.structs, vn3) == 1) {
+                    var ft3: string = struct_field_type_at(mod.structs, vn3, 0);
+                    if (ft3 != "i32" && ft3 != "u32" && ft3 != "i64" && ft3 != "u64") { return false; }
+                }
+                k2 = k2 + 1;
+            }
+            return true;
         }
         i = i + 1;
     }
     return false;
+}
+
+// extern_variant_max_fields returns the maximum payload-field count across a
+// supported variant's arms (the multi-field SlotCount); 1 (or 0) for a
+// single-field variant.
+function extern_variant_max_fields(mod: parser.Module, t: string): i32 {
+    var i: i32 = 0;
+    while (i < mod.enums.len()) {
+        if (mod.enums[i].name == t) {
+            var n: i32 = mod.enums[i].variant_names.len();
+            var maxf: i32 = 0;
+            var j: i32 = 0;
+            while (j < n) {
+                var fc: i32 = struct_field_count(mod.structs, mod.enums[i].variant_names[j]);
+                if (fc > maxf) { maxf = fc; }
+                j = j + 1;
+            }
+            return maxf;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// extern_variant_is_multifield is true when a supported variant has any arm with
+// >=2 payload fields — it joins to SlotCount=max_fields i32 slots rather than the
+// single (disc, payload) slot.
+function extern_variant_is_multifield(mod: parser.Module, t: string): boolean {
+    return extern_variant_max_fields(mod, t) >= 2;
+}
+
+// extern_variant_multifield_slot builds slot j of a multi-field variant @import
+// parameter: a lazy if/else chain on the box struct_id that, for the matched arm,
+// i32.loads its field j (at struct_field_off(j)) if it has one, else 0 (padding a
+// shorter arm). Lazy (not select): a shorter arm's box has no slot j, so the
+// non-matched branches must not read it.
+function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i32, boxloc: string): string {
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        if (mod.enums[ei].name == t) {
+            var n: i32 = mod.enums[ei].variant_names.len();
+            var acc: string = extern_variant_arm_slot(mod, mod.enums[ei].variant_names[n - 1], j, boxloc);
+            var k: i32 = n - 2;
+            while (k >= 0) {
+                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                acc = "(if (result i32) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_slot(mod, mod.enums[ei].variant_names[k], j, boxloc) + ") (else " + acc + "))";
+                k = k - 1;
+            }
+            return acc;
+        }
+        ei = ei + 1;
+    }
+    return "(i32.const 0)";
+}
+
+// extern_variant_arm_slot emits one arm's slot-j value: i32.load at
+// struct_field_off(j) if the arm has a field j, else i32.const 0 (padding).
+function extern_variant_arm_slot(mod: parser.Module, vn: string, j: i32, boxloc: string): string {
+    if (j < struct_field_count(mod.structs, vn)) {
+        return "(i32.load (i32.add (local.get " + boxloc + ") (i32.const " + util.i32_to_string(struct_field_off(j)) + ")))";
+    }
+    return "(i32.const 0)";
 }
 
 // extern_variant_join_is64 is true when a supported variant's canonical payload
@@ -2451,12 +2537,18 @@ function extern_imports(mod: parser.Module): string {
                         // WIT enum: flattens to a single i32 discriminant.
                         out = out + " (param i32)";
                     } else if (extern_variant_param_supported(mod, f.params[sp].type_name)) {
-                        // variant: flattens to (disc:i32, payload-join). The join
-                        // is i64 for a mixed-width / 64-bit-bearing set, else i32.
-                        if (extern_variant_join_is64(mod, f.params[sp].type_name)) {
-                            out = out + " (param i32) (param i64)";
+                        // variant: flattens to (disc:i32, payload-join). A multi-
+                        // field variant joins to SlotCount i32 slots; otherwise the
+                        // join is i64 (mixed-width / 64-bit-bearing) or i32.
+                        out = out + " (param i32)";
+                        if (extern_variant_is_multifield(mod, f.params[sp].type_name)) {
+                            var sc: i32 = extern_variant_max_fields(mod, f.params[sp].type_name);
+                            var si: i32 = 0;
+                            while (si < sc) { out = out + " (param i32)"; si = si + 1; }
+                        } else if (extern_variant_join_is64(mod, f.params[sp].type_name)) {
+                            out = out + " (param i64)";
                         } else {
-                            out = out + " (param i32) (param i32)";
+                            out = out + " (param i32)";
                         }
                     } else {
                         out = out + " (param " + wat_extern_valtype(f.params[sp].type_name) + ")";
@@ -2809,11 +2901,20 @@ function extern_wrappers(mod: parser.Module): string {
                     out = out + " " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn);
                 } else if (extern_variant_param_supported(mod, f.params[fi].type_name)) {
                     // variant: push the disc (struct_id → variant index) then the
-                    // payload at struct_field_off(0). For a payloadless-case value
-                    // the payload read is ignored garbage (host drops it). An i64
-                    // join (mixed-width) coerces each arm to i64 via a disc-branch.
+                    // payload-join. A multi-field variant pushes SlotCount i32 slots
+                    // (each disc-branched — the arm's field j or 0 padding); an i64
+                    // join (mixed-width) coerces each arm to i64 via a disc-branch;
+                    // else the single i32 payload at struct_field_off(0). For a
+                    // payloadless-case value the payload read is ignored garbage.
                     out = out + " " + extern_plain_enum_disc(mod, f.params[fi].type_name, fppn);
-                    if (extern_variant_join_is64(mod, f.params[fi].type_name)) {
+                    if (extern_variant_is_multifield(mod, f.params[fi].type_name)) {
+                        var msc: i32 = extern_variant_max_fields(mod, f.params[fi].type_name);
+                        var msi: i32 = 0;
+                        while (msi < msc) {
+                            out = out + " " + extern_variant_multifield_slot(mod, f.params[fi].type_name, msi, fppn);
+                            msi = msi + 1;
+                        }
+                    } else if (extern_variant_join_is64(mod, f.params[fi].type_name)) {
                         out = out + " " + extern_variant_payload_join_i64(mod, f.params[fi].type_name, fppn);
                     } else {
                         out = out + " (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(0)) + ")))";
@@ -2955,6 +3056,8 @@ function extern_wrappers(mod: parser.Module): string {
             // 32-bit arm then reads only its low 4 bytes (S1 width-aware bind), so
             // no per-arm result branch is needed.
             var vj64: boolean = extern_variant_join_is64(mod, f.ret_type);
+            var vmf: boolean = extern_variant_is_multifield(mod, f.ret_type);
+            var vsc: i32 = extern_variant_max_fields(mod, f.ret_type);
             out = out + "  (func $" + f.name;
             var vrp: i32 = 0;
             while (vrp < f.params.len()) {
@@ -2964,8 +3067,11 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + " (result i32)\n";
             out = out + "    (local $rb i32) (local $d i32) (local $s i32)\n";
             // Return area, 8-aligned with slack: i32 join needs 8 usable bytes
-            // (payload @4), i64 join 16 (payload @8) — over-alloc by 7 to align.
-            if (vj64) {
+            // (payload @4), i64 join 16 (payload @8), a multi-field join 4 +
+            // SlotCount*4 (slots @4,8,…) — over-alloc by 7 to align.
+            if (vmf) {
+                out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(4 + vsc * 4 + 7) + ")) (i32.const 7)) (i32.const -8)))\n";
+            } else if (vj64) {
                 out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 23)) (i32.const 7)) (i32.const -8)))\n";
             } else {
                 out = out + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 15)) (i32.const 7)) (i32.const -8)))\n";
@@ -2979,8 +3085,21 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + " (local.get $rb))\n";
             out = out + "    (local.set $d (i32.load8_u (local.get $rb)))\n";
             // Materialize [struct_id@0][payload@4] (struct_id mapped from disc); box
-            // sized for the join (12 bytes for an i64 payload, else 8).
-            if (vj64) {
+            // sized for the join (12 bytes for an i64 payload, 4+SlotCount*4 for a
+            // multi-field one, else 8).
+            if (vmf) {
+                // Multi-field: copy every SlotCount slot (area @4+4*j) into the box
+                // field j (@struct_field_off(j) = 4+4*j). The return area is sized
+                // for the widest arm, so reading all slots is in-bounds; a match on
+                // a shorter arm reads only its own fields (the rest stay unread).
+                out = out + "    (local.set $s (call $__fern_alloc (i32.const " + util.i32_to_string(4 + vsc * 4) + ")))\n";
+                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
+                var cj: i32 = 0;
+                while (cj < vsc) {
+                    out = out + "    (i32.store offset=" + util.i32_to_string(struct_field_off(cj)) + " (local.get $s) (i32.load offset=" + util.i32_to_string(struct_field_off(cj)) + " (local.get $rb)))\n";
+                    cj = cj + 1;
+                }
+            } else if (vj64) {
                 out = out + "    (local.set $s (call $__fern_alloc (i32.const 12)))\n";
                 out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
                 out = out + "    (i64.store offset=4 (local.get $s) (i64.load offset=8 (local.get $rb)))\n";
