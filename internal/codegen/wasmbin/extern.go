@@ -203,6 +203,98 @@ func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) 
 	}
 }
 
+// buildExternBoolListResultWrapper lifts a canonical `list<bool>` result into a
+// Fern `bool[]`. Unlike the numeric-array wrapper (a straight memory.copy at
+// native stride), a Fern bool array element is a 4-byte slot while the canonical
+// `list<bool>` element is a single byte, so the host bytes must be byte-EXPANDED:
+// the wrapper reads each canonical byte (i32.load8_u, a 0/1) and stores it as a
+// 4-byte i32 element. The native array is length-prefixed (count at `ptr-4`), so
+// it allocs `4 + count*4`, stores the count, runs the expand loop, and returns
+// the element pointer. Wrapper type is (scalar params…) -> i32.
+//
+// Locals after the params: 0:$rb 1:$dp (host data) 2:$n (count) 3:$arr 4:$i.
+func buildExternBoolListResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		rb := uint32(nparams)
+		dp := uint32(nparams + 1)
+		n := uint32(nparams + 2)
+		arr := uint32(nparams + 3)
+		i := uint32(nparams + 4)
+
+		var body []byte
+		// rb = (__fern_alloc(12) + 3) & ~3 — 4-byte aligned return area.
+		body = inst.InstI32Const(body, 12)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 3)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -4)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, rb)
+		for p := 0; p < nparams; p++ {
+			body = inst.InstLocalGet(body, uint32(p))
+		}
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		// dp = load(rb+0); n = load(rb+4).
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, dp)
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalSet(body, n)
+		// arr = __fern_alloc(4 + count*4); store count @ arr+0.
+		body = inst.InstI32Const(body, 4)
+		body = inst.InstLocalGet(body, n)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, arr)
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstLocalGet(body, n)
+		body = memory.InstI32Store(body, 2, 0)
+		// for i in 0..n: i32.store(arr+4+i*4, i32.load8_u(dp+i)).
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, i)
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, i)
+		body = inst.InstLocalGet(body, n)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// store address: arr + 4 + i*4
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, i)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		// value: load8_u(dp + i)
+		body = inst.InstLocalGet(body, dp)
+		body = inst.InstLocalGet(body, i)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, i)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, i)
+		body = inst.InstBr(body, 0)
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+		// return arr + 4.
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+
+		locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
 // buildExternMemParamWrapper handles an extern with one or more memory
 // parameters (`string` and/or `u8[]`) and a scalar (or void) result (P4c). Both
 // kinds lower to the canonical `(ptr, len)` of contiguous bytes, but reach the

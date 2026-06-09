@@ -898,6 +898,23 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")
 			helpers.add("cabi_realloc")
+		case isBoolArrayParamType(ret):
+			// list<bool> result lifted into a Fern bool[] (P4c): the canonical
+			// element is 1 byte but a Fern bool array slot is 4 bytes, so the
+			// wrapper byte-EXPANDS each host byte into a 4-byte i32 element
+			// (vs the straight memory.copy the numeric-array wrapper uses).
+			rawName := ex.Name + "$import"
+			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: []byte{encode.ValtypeI32},
+				body:    buildExternBoolListResultWrapper(len(ex.Params), rawName),
+			}
+			helpers.add(ex.Name)
+			helpers.add("__fern_alloc")
+			helpers.add("cabi_realloc")
 		case ex.ResultRecord != nil && ex.ResultRecord.Direct:
 			// single-field record/tuple result (P4c): flattens to exactly one
 			// core value, so the canonical ABI returns it by value — the raw

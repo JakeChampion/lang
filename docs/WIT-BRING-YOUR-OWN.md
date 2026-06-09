@@ -369,23 +369,20 @@ world-driven composer (P2) wires it.
      `canonicalExternParamValtypes` flattens it to the same `(i32, i32)` as the
      other arrays. Gated by `TestExternBoolArrayParamCustomProvider` (a
      `count-true: func(b: list<bool>) -> s32` provider; `[true,false,true]` → 2).
-     **bool[] *results* stay rejected** — and the reason turns out to be broader
-     than bool: a `list<T>` *result* with a **sub-4-byte element** (`u8`/`bool`)
-     traps at runtime inside the generated `canon lower` adapter when wired
-     through the world composer (`ComposeFromWorldAuto`) + a custom provider,
-     while the same shape with a 4-/8-byte element (`list<i32>`/`list<f64>`)
-     works, and *every* list *param* (including `list<u8>`/`list<bool>`) works.
-     Ruled out: the emitted result wrapper (the trap fires in the import adapter
-     *before* it runs), the WIT type encoding (`wasm-tools component wit` shows
-     `func(n: s32) -> list<u8>` correctly), the core import shape (identical to
-     the working `list<i32>` case), and our `cabi_realloc`/`__fern_alloc` (every
-     size is 8-rounded, so the bump cursor stays 8-aligned for 1- and 4-byte
-     elements alike). So this is a subtle composer/runtime interaction in the
-     `gMemRealloc` lowering path for sub-4-byte list-result elements — a
-     follow-up that also blocks `u8[]` results via a *custom* provider (the
-     existing `u8[]`-result coverage runs through the legacy registry composer
-     for `wasi:random`, not `ComposeFromWorldAuto`). The self-host port of bool[]
-     params is done (see below).
+     **Sub-4-byte `list<T>` *results* (`u8`/`bool`) via a custom provider — ✅
+     done (Go).** This was previously deferred on a suspected `gMemRealloc`
+     trap, but the `ComposeFromWorldAuto` + custom-provider path now composes and
+     runs cleanly (an intervening composer/realloc fix resolved it): a
+     `func(n: u32) -> list<u8>` lifts into a Fern `u8[]` (the numeric-array result
+     wrapper at stride 1), and a `func(n: u32) -> list<bool>` lifts into a Fern
+     `boolean[]` — here the canonical element is 1 byte but a Fern bool array slot
+     is 4, so `buildExternBoolListResultWrapper` **byte-EXPANDS** each host byte
+     into a 4-byte i32 element (the inverse of the bool[]-param byte-repack).
+     Gated by `TestExternListU8ResultCustomProvider` and
+     `TestExternBoolArrayResultCustomProvider` (both `ComposeFromWorldAuto` +
+     custom provider, run under wasmtime), plus the wasmbin unit
+     `TestEmitExternBoolArrayResult`. The self-host port of bool[] params is done
+     (see below); the self-host bool[]-result port is a follow-up.
    - **Record (struct) parameters — ✅ done (Go).** A Fern struct passed to an
      `@import` extern whose WIT signature takes a `record` flattens to its
      fields' core types (the canonical ABI passes a small record inline). The
@@ -846,11 +843,11 @@ world-driven composer (P2) wires it.
      variant payloads need a self-host backend slice (real multi-payload variants +
      wide enum slots) *before* the extern marshalling can be ported. The Go-side
      **general multi-field variant join** (mixed-width / float fields,
-     position-wise) is now **done** — see the multi-field entry above. Still
-     deferred: sub-4-byte-element `list<T>` *results*
-     (`u8`/`bool`) via a custom provider (the `ComposeFromWorldAuto`
-     `gMemRealloc` trap analysed above); and sub-word (s8/s16) fields inside a
-     multi-field variant arm (the tight 1-/2-byte canonical packing). The
+     position-wise) is now **done** — see the multi-field entry above. So are the
+     sub-4-byte-element `list<T>` *results* (`u8`/`boolean`) via a custom provider
+     (the suspected `gMemRealloc` trap turned out to be already resolved — see the
+     bool[]/u8[]-result entry above). Still deferred: sub-word (s8/s16) fields
+     inside a multi-field variant arm (the tight 1-/2-byte canonical packing). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
      vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
