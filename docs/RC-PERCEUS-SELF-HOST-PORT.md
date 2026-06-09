@@ -1768,3 +1768,21 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   depth — the struct/enum/array AST is fully deep-freed. Remaining toward exact
   native parity: tuple drop fns + array-of-tuple, map string keys/values,
   closure-env capture release.
+- 2026-06-09: **wasm transitive reclamation — Stage E: tuple struct/enum
+  element deep-release (native __drop_tuple_).** `tup_exit_sweep_excl` now, for
+  each tuple element carrying a struct/enum svtype (from `tup_svtypes`, even
+  though its kind char is 'i'), deep-releases it through `$__fern_release_<T>`
+  (struct field release / enum variant dispatch) instead of skipping it — so a
+  tuple holding a struct-with-an-array, or an enum-with-a-payload, reclaims to
+  arbitrary depth. ('s'/'a'/'A' element kinds keep their string / scalar-array /
+  pointer-array release; Option/Result svtypes route to their own
+  emit_option_release path elsewhere, so they're excluded here.) Coverage:
+  `TestSelfHostRcDeepNestWasm` gains tuple-enum-payload-released (a Circle string
+  payload in a tuple, freed; value via match) and tuple-struct-element-churn
+  (50k struct-in-tuple, the Inner struct + its array reclaimed each cycle, no
+  OOM, detector 0). Full RC + component + binary + shim + interp + cli wasm
+  suites green; bootstrap-safe. (Noted in passing, NOT fixed here: tuple-of-
+  struct FIELD access `t.0.field` reads 0 — a pre-existing, RC-orthogonal value
+  bug in tuple-element typing; the enum-in-tuple match path is unaffected and
+  the deep-release is sound regardless.) Remaining toward exact native parity:
+  array-of-tuple deep release, map string keys/values, closure-env captures.
