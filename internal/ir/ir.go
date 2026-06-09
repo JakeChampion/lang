@@ -15332,7 +15332,12 @@ func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
 		return true
 	case ast.StringType:
-		return false
+		// Strings are now rc-tracked (inc'd at construction, dec'd on drop —
+		// docs/RC-STRINGS-PLAN.md, every slice DONE), so a string field shared
+		// via a functional-copy self-reassign is a COUNTED alias: the deep-drop
+		// dec's it (rc>=2 -> no free) rather than freeing a buffer the new value
+		// still points at. The old exclusion predated string rc-tracking.
+		return true
 	case ast.ArrayType:
 		return typeSelfDropSafe(ty.Elem, info, seen)
 	case ast.SliceType:
