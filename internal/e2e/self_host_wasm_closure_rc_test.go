@@ -59,6 +59,15 @@ func TestSelfHostRcClosureWasm(t *testing.T) {
 		// Slice 2: mixed captures (string + scalar) — the string is released, the
 		// scalar carries no rc and is skipped; value-correct + detector 0.
 		{"cap-mixed", "function main(): i32 { var s: string = \"xy\" + \"zw\"; var a: i32 = 38; var f = function (): i32 { return s.len() + a; }; return f() + __fern_rc_underflow_count(); }", 42},
+		// Struct-ARRAY capture: the captured struct[] keeps its element type
+		// inside the lambda body (cap_sa), so `ps[i].field` resolves (it read 0
+		// before — a capture-typing gap), AND it deep-releases each element via
+		// $__fern_arr_release_Inner on the closure's death. Value-correct.
+		{"cap-structarr-val", "struct Inner { xs: i32[], n: i32 } function main(): i32 { var ps: Inner[] = [Inner { xs: [1, 2], n: 40 }, Inner { xs: [3, 4], n: 9 }]; var f = function (): i32 { return ps[0].n + ps[1].xs[1]; }; return f() + __fern_rc_underflow_count(); }", 44},
+		// Struct-array capture churn: 200k closures each capturing a struct[]
+		// holding arrays; every element's array field reclaims each cycle (no
+		// OOM), detector 0 — the deep per-element capture release.
+		{"cap-structarr-churn", "struct Inner { xs: i32[], n: i32 } function mk(): i32 { var ps: Inner[] = [Inner { xs: [1, 2, 3], n: 4 }, Inner { xs: [5, 6, 7], n: 8 }]; var f = function (): i32 { return ps[0].n; }; return f(); } function main(): i32 { var k = 0; var s = 0; while (k < 200000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

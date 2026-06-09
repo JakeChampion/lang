@@ -1937,3 +1937,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   matching or narrower than the native edge cases: struct-array / array-of-tuple
   closure CAPTURES route one level (vs the deep per-element release the direct
   locals get), and map ARRAY values aren't tracked (only string + struct/enum).
+- 2026-06-09: **wasm closure struct-array capture — deep release + the coupled
+  capture-typing fix.** Closes a residual: a closure capturing a struct/enum
+  ARRAY (`var f = function(){ … ps[i].field … }` over `ps: Inner[]`) now (1)
+  keeps the captured array's element type inside the lambda body so
+  `cap[i].field` resolves — it read 0 before, a capture-typing gap separate from
+  RC that made struct-array captures value-unusable — and (2) deep-releases each
+  element through `$__fern_arr_release_<Elem>` on the closure's death (native
+  arrElemStructDropName parity), not just the buffer. The typing fix threads
+  `cap_sa_names` / `cap_sa_types` (struct-array captures, computed in
+  emit_lambda from the parent's `sa_names`) through `emit_func` → `build_ctx`,
+  which seeds them into the lambda's `sa_names` (mirrors the cap_sv struct-
+  capture seeding). The RC deepening adds an "A:<Elem>" `capture_kind` routed by
+  `capture_release_op` to `$__fern_arr_release_<Elem>` (the construction-inc
+  side already fired — sa_names captures were rc-tracked). Coverage:
+  `TestSelfHostRcClosureWasm` gains cap-structarr-val (value-correct field
+  access, the typing fix) and cap-structarr-churn (200k struct[]-capturing
+  closures, each element's array field reclaimed, no OOM). Full RC + bootstrap
+  fixpoint + binary + component + closures suites green; bootstrap-safe. Sole
+  remaining residual vs exact native parity: map ARRAY values aren't value-type-
+  tracked (string + struct/enum are) + array-of-tuple closure captures route one
+  level.

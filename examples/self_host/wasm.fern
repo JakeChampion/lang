@@ -2275,6 +2275,15 @@ function capture_kind(name: string, cx: Ctx): string {
         return "S:" + svt;
     }
     if (contains_str(cx.arr_src, name)) {
+        // A struct/enum-element array capture deep-releases each element through
+        // $__fern_arr_release_<Elem> (mirrors native arrElemStructDropName), so
+        // the elements' own fields reclaim — not just the buffer. A string[]
+        // (or other pointer-element) array frees one level (arr_dec_ptr); a
+        // scalar array frees flat (arr_dec).
+        var sae: string = lookup_pair(cx.sa_names, cx.sa_types, name);
+        if (sae.len() > 0 && (is_struct_type(cx.structs, sae) || (is_enum_type_name(cx, sae) && sae != "Option" && sae != "Result"))) {
+            return "A:" + sae;
+        }
         if (contains_str(cx.str_arrays, name) || contains_str(cx.sa_names, name)) { return "p"; }
         return "a";
     }
@@ -2288,6 +2297,7 @@ function capture_release_op(kind: string, load: string): string {
     if (kind == "s" || kind == "a") { return " (drop (call $__fern_arr_dec " + load + "))"; }
     if (kind == "p") { return " (drop (call $__fern_arr_dec_ptr " + load + "))"; }
     if (kind.len() > 2 && kind[0:2] == "S:") { return " (drop (call $__fern_release_" + kind[2:kind.len()] + " " + load + "))"; }
+    if (kind.len() > 2 && kind[0:2] == "A:") { return " (drop (call $__fern_arr_release_" + kind[2:kind.len()] + " " + load + "))"; }
     return "";
 }
 
@@ -8857,7 +8867,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: Cell[i32], lamdefs: Cell[string], cap_names: string[], cap_str: string[], cap_sv_names: string[], cap_sv_types: string[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: Cell[i32], lamdefs: Cell[string], cap_names: string[], cap_str: string[], cap_sv_names: string[], cap_sv_types: string[], cap_sa_names: string[], cap_sa_types: string[]): Ctx {
     // Every var/param name in this function (for lambda capture analysis).
     var all_locals: string[] = collect_locals(f.body, []);
     var alp: i32 = 0;
@@ -9024,6 +9034,17 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
             }
         }
         sap = sap + 1;
+    }
+    // Struct-array captures keep their element struct type inside the lambda
+    // body, so `cap[i].field` resolves (otherwise the element field read emits a
+    // bogus `(i32.const 0)`). Mirrors the cap_sv struct-capture seeding above.
+    var casi: i32 = 0;
+    while (casi < cap_sa_names.len()) {
+        if (!contains_str(san, cap_sa_names[casi])) {
+            san = san.append(cap_sa_names[casi]);
+            sat = sat.append(cap_sa_types[casi]);
+        }
+        casi = casi + 1;
     }
     cx = Ctx { ...cx, sa_names: san, sa_types: sat };
     // Perceus array RC sets (counting milestone, free OFF). arr_src seeds
@@ -9205,6 +9226,8 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
     var cap_str: string[] = [];
     var cap_sv_names: string[] = [];
     var cap_sv_types: string[] = [];
+    var cap_sa_names: string[] = [];
+    var cap_sa_types: string[] = [];
     var ci: i32 = 0;
     while (ci < caps.len()) {
         if (contains_str(cx.locals, caps[ci])) { cap_str = cap_str.append(caps[ci]); }
@@ -9213,9 +9236,16 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
             cap_sv_names = cap_sv_names.append(caps[ci]);
             cap_sv_types = cap_sv_types.append(cst);
         }
+        // A struct-array capture keeps its element type so `cap[i].field`
+        // resolves inside the lambda body.
+        var sae: string = lookup_pair(cx.sa_names, cx.sa_types, caps[ci]);
+        if (sae.len() > 0) {
+            cap_sa_names = cap_sa_names.append(caps[ci]);
+            cap_sa_types = cap_sa_types.append(sae);
+        }
         ci = ci + 1;
     }
-    return emit_func(synth, cx.tab, cx.funcs, cx.str_arr_funcs, cx.structs, cx.sf_names, cx.sf_types, cx.of_names, cx.of_payloads, cx.mr_types, cx.mr_names, cx.mr_rets, cx.i64_funcs, cx.mod_funcs, cx.f64_funcs, cx.lam_ctr, cx.lamdefs, caps, cap_str, cap_sv_names, cap_sv_types);
+    return emit_func(synth, cx.tab, cx.funcs, cx.str_arr_funcs, cx.structs, cx.sf_names, cx.sf_types, cx.of_names, cx.of_payloads, cx.mr_types, cx.mr_names, cx.mr_rets, cx.i64_funcs, cx.mod_funcs, cx.f64_funcs, cx.lam_ctr, cx.lamdefs, caps, cap_str, cap_sv_names, cap_sv_types, cap_sa_names, cap_sa_types);
 }
 
 // emit_func emits one wasm function. Params become wasm params (locals
@@ -9223,7 +9253,7 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: Cell[i32], lamdefs: Cell[string], cap_names: string[], cap_str: string[], cap_sv_names: string[], cap_sv_types: string[]): string {
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: Cell[i32], lamdefs: Cell[string], cap_names: string[], cap_str: string[], cap_sv_names: string[], cap_sv_types: string[], cap_sa_names: string[], cap_sa_types: string[]): string {
     // A receiver method `function (r: T) m(...)` emits as `$T__m` with the
     // receiver prepended as the first param; a free function as `$name`.
     var fname: string = f.name;
@@ -9295,7 +9325,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         li = li + 1;
     }
 
-    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod_funcs, f64_funcs, lam_ctr, lamdefs, cap_names, cap_str, cap_sv_names, cap_sv_types);
+    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod_funcs, f64_funcs, lam_ctr, lamdefs, cap_names, cap_str, cap_sv_names, cap_sv_types, cap_sa_names, cap_sa_types);
     var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0, md: 0 };
     st = emit_stmts(f.body, st);
 
@@ -10654,7 +10684,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (f.import_iface.len() > 0) { j = j + 1; continue; }
         // Emit free functions and receiver methods alike; emit_func
         // mangles a method's name to `$<RecvType>__<name>`.
-        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], [], [], []);
+        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], [], [], [], [], []);
         if (f.receiver_type.len() == 0 && f.name == "main") { has_main = true; }
         j = j + 1;
     }
@@ -10672,7 +10702,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             body: mod.top_stmts, line: 0, col: 0,
             import_iface: "", import_wit: "", type_param_count: 0,
         };
-        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], [], [], []);
+        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], [], [], [], [], []);
     }
 
     // Closure support: the accumulated lambda functions, the shared
