@@ -1,0 +1,141 @@
+// cat.fern — concatenate files (or stdin) to stdout, like `cat(1)`.
+//
+// Reads each path in argv (or stdin when none are given, or for the
+// "-" pseudo-path) and writes its bytes straight through. Supports a
+// useful slice of the GNU cat flags:
+//
+//   -n / --number            number every output line
+//   -b / --number-nonblank   number only non-blank lines (overrides -n)
+//   -s / --squeeze-blank     collapse runs of blank lines into one
+//   -E / --show-ends         print a `$` at the end of each line
+//   -T / --show-tabs         display tab characters as `^I`
+//
+//   $ fern -target x86-64 -o cat cat.fern
+//   $ ./cat -n file.txt
+//   $ printf 'a\n\n\nb\n' | ./cat -s
+//
+// Showcases: argv flag parsing, `read_file` + stdin `Reader`,
+// per-line transformation, and building output incrementally.
+import "core/no_prelude";
+import "std/string";
+import "std/i32";
+import "std/io";
+
+struct Opts { number: boolean, number_nonblank: boolean, squeeze: boolean, show_ends: boolean, show_tabs: boolean }
+
+// Read an input named by `path`: "-" (or empty) means stdin, anything
+// else is a file. Returns None when the file can't be opened (the
+// caller reports the error and keeps going).
+function slurp(path: string): Option[string] {
+  if (path == "-" || path == "") {
+    return Some(io.read_all_stdin());
+  }
+  match (read_file(path)) {
+    Ok(contents) => {
+      return Some(contents);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+// Expand a single line under the active display flags (tabs → ^I,
+// trailing `$`). The line text never includes its own newline.
+function render_line(line: string, o: Opts): string {
+  var body: string = line;
+  if (o.show_tabs) {
+    body = body.replace("\t", "^I");
+  }
+  if (o.show_ends) {
+    body = body + "$";
+  }
+  return body;
+}
+
+// Emit `text` under the active flags, threading the running line
+// counter (for -n / -b) and the "previous line was blank" flag (for
+// -s) through and back out so they persist across multiple inputs.
+function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, boolean) {
+  var lines: string[] = text.lines();
+  var n: i32 = lines.len();
+  var i: i32 = 0;
+  while (i < n) {
+    var line: string = lines[i];
+    var is_blank: boolean = line.is_empty();
+    if (o.squeeze && is_blank && prev_blank) {
+      i = i + 1;
+      continue;
+    }
+    prev_blank = is_blank;
+    var rendered: string = render_line(line, o);
+    // -b (number-nonblank) wins over -n and skips blank lines.
+    var want_number: boolean = false;
+    if (o.number_nonblank) {
+      want_number = !is_blank;
+    } else if (o.number) {
+      want_number = true;
+    }
+    if (want_number) {
+      counter = counter + 1;
+      // GNU cat right-aligns the line number in a 6-wide field
+      // followed by a tab.
+      var num: string = counter.to_string().pad_start(6, " ");
+      print(num + "\t" + rendered);
+    } else {
+      print(rendered);
+    }
+    i = i + 1;
+  }
+  return (counter, prev_blank);
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var o: Opts = Opts { number: false, number_nonblank: false, squeeze: false, show_ends: false, show_tabs: false };
+  var inputs: string[] = [];
+  var status: i32 = 0;
+
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "-n" || a == "--number") {
+      o = Opts { ...o, number: true };
+    } else if (a == "-b" || a == "--number-nonblank") {
+      o = Opts { ...o, number_nonblank: true };
+    } else if (a == "-s" || a == "--squeeze-blank") {
+      o = Opts { ...o, squeeze: true };
+    } else if (a == "-E" || a == "--show-ends") {
+      o = Opts { ...o, show_ends: true };
+    } else if (a == "-T" || a == "--show-tabs") {
+      o = Opts { ...o, show_tabs: true };
+    } else {
+      inputs = inputs.append(a);
+    }
+    i = i + 1;
+  }
+
+  // No file operands → act as a stdin filter.
+  if (inputs.len() == 0) {
+    inputs = inputs.append("-");
+  }
+
+  var counter: i32 = 0;
+  var prev_blank: boolean = false;
+  var j: i32 = 0;
+  while (j < inputs.len()) {
+    match (slurp(inputs[j])) {
+      Some(text) => {
+        var st: (i32, boolean) = emit(text, o, counter, prev_blank);
+        counter = st.0;
+        prev_blank = st.1;
+      },
+      None => {
+        eprint("cat: " + inputs[j] + ": No such file or directory");
+        status = 1;
+      }
+    }
+    j = j + 1;
+  }
+  return status;
+}

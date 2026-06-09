@@ -1,0 +1,153 @@
+// wc.fern — count lines, words, and bytes, like `wc(1)`.
+//
+//   -l   print the line count
+//   -w   print the word count
+//   -c   print the byte count
+//   -m   print the character count (same as bytes for ASCII; counts
+//        UTF-8 code points for multi-byte input)
+//
+// With no count flags it prints lines, words, and bytes (the wc
+// default). Multiple files each get a row plus a `total` row.
+//
+//   $ ./wc file.txt
+//        3      12      57 file.txt
+//   $ printf 'a b c\n' | ./wc -w     ->  3
+//
+// A more flag-complete companion to examples/wasm/wc.fern (which
+// reads line-by-line via the Reader API); this version slurps each
+// input and counts in one pass.
+//
+// Showcases: a counts struct, UTF-8 code-point counting, selectable
+// output columns, multi-file totals.
+import "core/no_prelude";
+import "std/string";
+import "std/i32";
+import "std/io";
+
+struct Counts { lines: i32, words: i32, bytes: i32, chars: i32 }
+
+struct Show { lines: boolean, words: boolean, bytes: boolean, chars: boolean }
+
+function slurp(path: string): Option[string] {
+  if (path == "-" || path == "") {
+    return Some(io.read_all_stdin());
+  }
+  match (read_file(path)) {
+    Ok(contents) => {
+      return Some(contents);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+function count(text: string): Counts {
+  var bytes: i32 = text.len();
+  // Lines = number of '\n' bytes (wc counts newlines, so a final
+  // line without a trailing '\n' isn't counted — matching wc(1)).
+  var lines: i32 = 0;
+  // Characters = UTF-8 code points: count bytes that are not
+  // continuation bytes (0b10xxxxxx, i.e. 0x80..0xBF).
+  var chars: i32 = 0;
+  var i: i32 = 0;
+  while (i < bytes) {
+    var b: i32 = text[i];
+    if (b == 10) {
+      lines = lines + 1;
+    }
+    if (b < 128 || b >= 192) {
+      chars = chars + 1;
+    }
+    i = i + 1;
+  }
+  var words: i32 = text.fields().len();
+  return Counts { lines: lines, words: words, bytes: bytes, chars: chars };
+}
+
+function add(a: Counts, b: Counts): Counts {
+  return Counts { lines: a.lines + b.lines, words: a.words + b.words, bytes: a.bytes + b.bytes, chars: a.chars + b.chars };
+}
+
+function format_row(c: Counts, sh: Show, label: string): string {
+  var out: string = "";
+  if (sh.lines) {
+    out = out + c.lines.to_string().pad_start(7, " ");
+  }
+  if (sh.words) {
+    out = out + c.words.to_string().pad_start(8, " ");
+  }
+  if (sh.bytes) {
+    out = out + c.bytes.to_string().pad_start(8, " ");
+  }
+  if (sh.chars) {
+    out = out + c.chars.to_string().pad_start(8, " ");
+  }
+  if (!label.is_empty()) {
+    out = out + " " + label;
+  }
+  return out.trim_start();
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var sh: Show = Show { lines: false, words: false, bytes: false, chars: false };
+  var any_flag: boolean = false;
+  var inputs: string[] = [];
+
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "-l") {
+      sh = Show { ...sh, lines: true };
+      any_flag = true;
+    } else if (a == "-w") {
+      sh = Show { ...sh, words: true };
+      any_flag = true;
+    } else if (a == "-c") {
+      sh = Show { ...sh, bytes: true };
+      any_flag = true;
+    } else if (a == "-m") {
+      sh = Show { ...sh, chars: true };
+      any_flag = true;
+    } else {
+      inputs = inputs.append(a);
+    }
+    i = i + 1;
+  }
+  if (!any_flag) {
+    sh = Show { lines: true, words: true, bytes: true, chars: false };
+  }
+  if (inputs.len() == 0) {
+    inputs = inputs.append("-");
+  }
+
+  var total: Counts = Counts { lines: 0, words: 0, bytes: 0, chars: 0 };
+  var nfiles: i32 = 0;
+  var status: i32 = 0;
+
+  var j: i32 = 0;
+  while (j < inputs.len()) {
+    var label: string = inputs[j];
+    if (label == "-") {
+      label = "";
+    }
+    match (slurp(inputs[j])) {
+      Some(text) => {
+        var c: Counts = count(text);
+        print(format_row(c, sh, label));
+        total = add(total, c);
+        nfiles = nfiles + 1;
+      },
+      None => {
+        eprint("wc: " + inputs[j] + ": No such file or directory");
+        status = 1;
+      }
+    }
+    j = j + 1;
+  }
+  if (nfiles > 1) {
+    print(format_row(total, sh, "total"));
+  }
+  return status;
+}
