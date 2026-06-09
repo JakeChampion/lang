@@ -2130,18 +2130,26 @@ function extern_variant_param_supported(mod: parser.Module, t: string): boolean 
                 }
                 return true;
             }
-            // Single-field arms (0 or 1 payload): i32/u32 (4-byte) or i64/u64
-            // (8-byte, S1 wide slot). A mixed-width set joins to an i64 canonical
-            // slot (per-arm extend/load); a uniform i32 set keeps the i32 join.
+            // Single-field arms (0 or 1 payload): i32/u32 (4-byte), i64/u64 or
+            // f64 (8-byte, S1 wide slot). A mixed-width set joins to an i64
+            // canonical slot (per-arm extend/load — an f64 arm reinterprets via
+            // the i64 bit-load); a uniform i32 set keeps the i32 join.
             var k2: i32 = 0;
+            var pcount: i32 = 0;
+            var f64count: i32 = 0;
             while (k2 < n) {
                 var vn3: string = mod.enums[i].variant_names[k2];
                 if (struct_field_count(mod.structs, vn3) == 1) {
                     var ft3: string = struct_field_type_at(mod.structs, vn3, 0);
-                    if (ft3 != "i32" && ft3 != "u32" && ft3 != "i64" && ft3 != "u64") { return false; }
+                    if (ft3 != "i32" && ft3 != "u32" && ft3 != "i64" && ft3 != "u64" && ft3 != "f64") { return false; }
+                    pcount = pcount + 1;
+                    if (ft3 == "f64") { f64count = f64count + 1; }
                 }
                 k2 = k2 + 1;
             }
+            // A uniform-f64 variant (every payloaded arm f64) joins to an f64
+            // canonical slot, not the i64 bit-container this path emits — defer it.
+            if (f64count > 0 && f64count == pcount) { return false; }
             return true;
         }
         i = i + 1;
@@ -2225,7 +2233,7 @@ function extern_variant_join_is64(mod: parser.Module, t: string): boolean {
                 var vn: string = mod.enums[i].variant_names[j];
                 if (struct_field_count(mod.structs, vn) == 1) {
                     var ft: string = struct_field_type_at(mod.structs, vn, 0);
-                    if (ft == "i64" || ft == "u64") { return true; }
+                    if (ft == "i64" || ft == "u64" || ft == "f64") { return true; }
                 }
                 j = j + 1;
             }
@@ -2268,7 +2276,11 @@ function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxloc: 
 function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc: string): string {
     if (struct_field_count(mod.structs, vn) == 1) {
         var ft: string = struct_field_type_at(mod.structs, vn, 0);
-        if (ft == "i64" || ft == "u64") {
+        // A 64-bit arm (i64/u64, or an f64 read as its raw bits) loads i64
+        // directly; a 32-bit arm zero-extends. The box holds an f64 payload's
+        // bits, so i64.load is the value-preserving reinterpret the canonical
+        // f64->i64 coercion wants.
+        if (ft == "i64" || ft == "u64" || ft == "f64") {
             return "(i64.load offset=4 (local.get " + boxloc + "))";
         }
         return "(i64.extend_i32_u (i32.load offset=4 (local.get " + boxloc + ")))";

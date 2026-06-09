@@ -112,13 +112,23 @@ assume a single `i32` enum payload and 4-byte struct fields:
    already parses). *Gated by a `TestSelfHostWasm…` run test that round-trips
    a value needing 64 bits through an enum, + the self-compile oracle stays
    green.* **Unblocks the self-host mixed-width single-field extern port.**
-2. **S2 — non-uniform same-width self-host extern port.** With S1's wide
-   slot, widen `extern_variant_param_supported` / `…result…` to accept an
-   `f32`/`f64` payload alongside the int arms (the bit-container join the Go
-   side does). *Gated by `TestSelfHostExternVariantNonUniform…`.*
-3. **S3 — mixed-width self-host extern port.** The i64 join slot + per-arm
-   coerce, mirroring the Go `appendVariantParamPayloadI64` path. *Gated by
-   `TestSelfHostExternVariantMixedWidth…`.*
+2. **S2 — non-uniform same-width self-host extern port. ⏸ f32 deferred.** The
+   `f32` arm of a `{ i(s32), f(f32) }` set rides the canonical 32-bit (i32)
+   join — but the self-host has **no distinct f32** (it widens f32 to f64
+   everywhere, `is_float_type`), so an f32 enum payload is stored in an 8-byte
+   f64 slot, a 4-vs-8-byte impedance against the i32 join that needs a
+   demote+reinterpret bridge. Deferred until/if the self-host grows a real f32.
+3. **S3 — mixed-width self-host extern port. ✅ Done (#2515) + f64 arm.** The
+   i64 join slot + per-arm coerce, mirroring the Go `appendVariantPayloadI64`
+   path (i32 arm zero-extends, 64-bit arm `i64.load`s). Initially i32/i64
+   (#2515); now also an **f64 arm** — an f64 has no width impedance (it rides
+   the i64 join as its raw bits, `i64.load` being the value-preserving
+   reinterpret the canonical f64→i64 coercion wants), so `{ i(s32), d(f64) }`
+   works by accepting f64 single-field arms in the gate / `join_is64` /
+   `arm_join_i64`. A **uniform-f64** variant (every arm f64) joins to an f64
+   slot, not the i64 container, so it stays deferred (rejected by the gate).
+   *Gated by `TestSelfHostExternVariantMixedWidth…` +
+   `TestSelfHostExternVariantF64Arm{Param,Result}CustomProvider`.*
 4. **S4 — multi-payload variants in `wasm.fern` + parser + checker. ✅ Done.**
    The parser desugar keeps every payload as a field `__ev`, `__ev1`, … (no
    longer dropping all but the first); `variant_payload_count` (checker) counts
