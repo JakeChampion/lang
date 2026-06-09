@@ -126,9 +126,13 @@ assume a single `i32` enum payload and 4-byte struct fields:
    reinterpret the canonical f64→i64 coercion wants), so `{ i(s32), d(f64) }`
    works by accepting f64 single-field arms in the gate / `join_is64` /
    `arm_join_i64`. A **uniform-f64** variant (every arm f64) joins to an f64
-   slot, not the i64 container, so it stays deferred (rejected by the gate).
-   *Gated by `TestSelfHostExternVariantMixedWidth…` +
-   `TestSelfHostExternVariantF64Arm{Param,Result}CustomProvider`.*
+   slot, not the i64 container — **now done** too (a separate
+   `extern_variant_is_uniform_f64` path: an f64 import param, an `f64.load` of
+   the box payload, an `f64.store` into the result box). Only **f32** arms stay
+   deferred (the f32-as-f64 impedance above).
+   *Gated by `TestSelfHostExternVariantMixedWidth…`,
+   `TestSelfHostExternVariantF64Arm{Param,Result}CustomProvider`, and
+   `TestSelfHostExternVariantUniformF64{Param,Result}CustomProvider`.*
 4. **S4 — multi-payload variants in `wasm.fern` + parser + checker. ✅ Done.**
    The parser desugar keeps every payload as a field `__ev`, `__ev1`, … (no
    longer dropping all but the first); `variant_payload_count` (checker) counts

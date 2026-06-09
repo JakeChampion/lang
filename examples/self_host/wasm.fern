@@ -2135,21 +2135,18 @@ function extern_variant_param_supported(mod: parser.Module, t: string): boolean 
             // canonical slot (per-arm extend/load — an f64 arm reinterprets via
             // the i64 bit-load); a uniform i32 set keeps the i32 join.
             var k2: i32 = 0;
-            var pcount: i32 = 0;
-            var f64count: i32 = 0;
             while (k2 < n) {
                 var vn3: string = mod.enums[i].variant_names[k2];
                 if (struct_field_count(mod.structs, vn3) == 1) {
                     var ft3: string = struct_field_type_at(mod.structs, vn3, 0);
                     if (ft3 != "i32" && ft3 != "u32" && ft3 != "i64" && ft3 != "u64" && ft3 != "f64") { return false; }
-                    pcount = pcount + 1;
-                    if (ft3 == "f64") { f64count = f64count + 1; }
                 }
                 k2 = k2 + 1;
             }
-            // A uniform-f64 variant (every payloaded arm f64) joins to an f64
-            // canonical slot, not the i64 bit-container this path emits — defer it.
-            if (f64count > 0 && f64count == pcount) { return false; }
+            // A uniform-f64 variant (every payloaded arm f64) is accepted too: it
+            // joins to an f64 canonical slot (not the i64 bit-container the mixed-
+            // width path emits) — see extern_variant_is_uniform_f64 + the f64-join
+            // branches in the import sig / param push / result wrapper.
             return true;
         }
         i = i + 1;
@@ -2238,6 +2235,33 @@ function extern_variant_join_is64(mod: parser.Module, t: string): boolean {
                 j = j + 1;
             }
             return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// extern_variant_is_uniform_f64 is true when EVERY payloaded arm of a supported
+// variant carries an f64 (>=1 such arm). Its canonical join is an f64 slot — so
+// it takes the f64-join path (an f64 import param, an f64.load of the box payload)
+// rather than the i64 bit-container the mixed-width path emits. Checked BEFORE
+// extern_variant_join_is64 (which also fires for an f64 arm).
+function extern_variant_is_uniform_f64(mod: parser.Module, t: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.enums.len()) {
+        if (mod.enums[i].name == t) {
+            var n: i32 = mod.enums[i].variant_names.len();
+            var anyp: boolean = false;
+            var j: i32 = 0;
+            while (j < n) {
+                var vn: string = mod.enums[i].variant_names[j];
+                if (struct_field_count(mod.structs, vn) == 1) {
+                    if (struct_field_type_at(mod.structs, vn, 0) != "f64") { return false; }
+                    anyp = true;
+                }
+                j = j + 1;
+            }
+            return anyp;
         }
         i = i + 1;
     }
@@ -2645,6 +2669,8 @@ function extern_imports(mod: parser.Module): string {
                             var sc: i32 = extern_variant_max_fields(mod, f.params[sp].type_name);
                             var si: i32 = 0;
                             while (si < sc) { out = out + " (param i32)"; si = si + 1; }
+                        } else if (extern_variant_is_uniform_f64(mod, f.params[sp].type_name)) {
+                            out = out + " (param f64)";
                         } else if (extern_variant_join_is64(mod, f.params[sp].type_name)) {
                             out = out + " (param i64)";
                         } else {
@@ -3014,6 +3040,9 @@ function extern_wrappers(mod: parser.Module): string {
                             out = out + " " + extern_variant_multifield_slot(mod, f.params[fi].type_name, msi, fppn);
                             msi = msi + 1;
                         }
+                    } else if (extern_variant_is_uniform_f64(mod, f.params[fi].type_name)) {
+                        // uniform f64: push the box's f64 payload directly.
+                        out = out + " (f64.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(struct_field_off(0)) + ")))";
                     } else if (extern_variant_join_is64(mod, f.params[fi].type_name)) {
                         out = out + " " + extern_variant_payload_join_i64(mod, f.params[fi].type_name, fppn);
                     } else {
@@ -3199,6 +3228,13 @@ function extern_wrappers(mod: parser.Module): string {
                     out = out + "    (i32.store offset=" + util.i32_to_string(struct_field_off(cj)) + " (local.get $s) (i32.load offset=" + util.i32_to_string(struct_field_off(cj)) + " (local.get $rb)))\n";
                     cj = cj + 1;
                 }
+            } else if (extern_variant_is_uniform_f64(mod, f.ret_type)) {
+                // uniform f64: the return area packs the f64 payload @8 (8-aligned);
+                // store it into the box @4 as an f64. Checked before vj64 (which
+                // also fires for an f64 arm).
+                out = out + "    (local.set $s (call $__fern_alloc (i32.const 12)))\n";
+                out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
+                out = out + "    (f64.store offset=4 (local.get $s) (f64.load offset=8 (local.get $rb)))\n";
             } else if (vj64) {
                 out = out + "    (local.set $s (call $__fern_alloc (i32.const 12)))\n";
                 out = out + "    (i32.store (local.get $s) " + extern_plain_enum_sid(mod, f.ret_type, "$d") + ")\n";
