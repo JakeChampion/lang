@@ -1023,7 +1023,20 @@ function struct_enum_drop_helpers(mod: parser.Module, cx: Ctx): string {
         // Option/Result locals use emit_option_release, not a $__fern_release_
         // fn; an enum sharing a struct name (shouldn't happen) is skipped.
         if (en != "Option" && en != "Result" && !is_struct_type(mod.structs, en)) {
+            // Stage C — variant payload dispatch (native genEnumDrops): an enum
+            // value is a variant box [struct_id@0][fields@4…]. Dispatch on the
+            // tag to the matching variant struct's release fn (which releases
+            // that variant's payload fields then frees the box). A struct_id
+            // that matches no variant falls through to a flat free.
             o = o + "  (func $__fern_release_" + en + " (param $p i32) (result i32)\n";
+            o = o + "    (if (i32.eqz (local.get $p)) (then (return (local.get $p))))\n";
+            var vi: i32 = 0;
+            while (vi < mod.enums[e].variant_names.len()) {
+                var vn: string = mod.enums[e].variant_names[vi];
+                var sid: i32 = struct_id(mod.structs, vn);
+                o = o + "    (if (i32.eq (i32.load (local.get $p)) (i32.const " + util.i32_to_string(sid) + ")) (then (return (call $__fern_release_" + vn + " (local.get $p)))))\n";
+                vi = vi + 1;
+            }
             o = o + "    (call $__fern_arr_dec (local.get $p)))\n";
         }
         e = e + 1;

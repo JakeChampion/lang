@@ -1726,3 +1726,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   native parity: enum variant payload dispatch (`genEnumDrops`), tuple drop fns,
   array-of-enum / array-of-tuple deep release, map string keys/values,
   closure-env capture release.
+- 2026-06-09: **wasm transitive reclamation — Stage C: enum variant payload
+  dispatch ($__fern_release_<Enum> → struct_id).** Closes the enum half of the
+  deep-nesting gap (native genEnumDrops). An enum value is a variant box
+  `[struct_id@0][fields@4…]`; `$__fern_release_<E>` (previously a flat free) now
+  dispatches on the tag — `if [p]==struct_id(Vi) → $__fern_release_<Vi>(p)` for
+  each variant Vi — routing to the variant STRUCT's own release fn (already
+  generated in the struct loop, since variants are structs), which releases that
+  variant's payload fields (deep, transitively) then frees the box. A struct_id
+  matching no variant falls through to a flat free. Option/Result keep using
+  emit_option_release (their tag-guarded payload release), unchanged. Because
+  the variant fns are the same `$__fern_release_<S>` used everywhere, enum
+  payloads that are themselves nested (a variant holding a struct holding an
+  array, or another enum) reclaim to arbitrary depth — the AST (`parser.Expr`
+  and friends, the most enum-heavy structure) now deep-frees. Coverage:
+  `TestSelfHostRcDeepNestWasm` gains enum-string-payload-released,
+  enum-array-payload-released, enum-payload-churn (50k enum-with-string-payload,
+  reclaimed each cycle, no OOM, detector 0). Full RC + component + binary + shim
+  + interp + cli wasm suites green — the compiler's own enum-heavy AST routes
+  through the variant dispatch safely; bootstrap-safe. Remaining toward full
+  native parity: tuple drop fns, array-of-enum / array-of-tuple deep release,
+  map string keys/values, closure-env capture release.
