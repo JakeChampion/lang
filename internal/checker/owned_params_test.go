@@ -198,11 +198,62 @@ function f(p: Pair): i32 {
 }`)
 }
 
-func TestOwnGuardRejectsPlainLocal(t *testing.T) {
-	wantE051(t, "plain-local-arg", ownConsumer+`
+// A local bound to a FRESH owned value is owned, so it can be moved into an
+// `own` parameter.
+func TestOwnGuardAllowsOwnedLocalMove(t *testing.T) {
+	wantOK(t, "owned-local-move", ownConsumer+`
 function f(): i32 {
-    var xs: i32[] = [1, 2];
-    return consume(xs);        // E051: a plain local isn't tracked as owned yet
+    var xs: i32[] = [1, 2];    // fresh construction -> owned local
+    return consume(xs);        // move xs (last use) -> OK
+}`)
+}
+
+// A local DERIVED from a borrowed value (alias of a borrowed param) is NOT
+// owned — moving it would transfer a buffer the caller still holds, so E051.
+func TestOwnGuardRejectsBorrowedDerivedLocal(t *testing.T) {
+	wantE051(t, "borrowed-derived-local-arg", ownConsumer+`
+function f(bs: i32[]): i32 {   // bs BORROWED
+    var ys: i32[] = bs;        // ys aliases a borrowed value -> not owned
+    return consume(ys);        // E051
+}`)
+}
+
+// Move-and-rebind threading: a local owned value moved into an `own` parameter
+// and rebound from the (owned) result, in a loop.
+func TestOwnGuardAllowsLocalMoveAndRebind(t *testing.T) {
+	wantOK(t, "local-move-and-rebind", ownConsumer+`
+function add1(own p: i32[], x: i32): i32[] { return p.append(x); }
+function build(n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = add1(out, i); i = i + 1; }
+    return out;
+}`)
+}
+
+// Alias-reuse: `b = a` where `a` is REUSED afterwards is an rc alias (the IR
+// alias-incs a), NOT a move — so a's later read is fine, no false E050. This is
+// the std/fuzz `best = candidate; ... candidate.len()` idiom.
+func TestOwnGuardLocalAliasReuseOK(t *testing.T) {
+	wantOK(t, "alias-then-reuse", ownConsumer+`
+function f(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var best: i32[] = a;       // alias (a reused below) -> co-own, not a move
+    return best[0] + a.len();  // a still usable
+}`)
+}
+
+// Matching an owned scrutinee and returning it INSIDE an arm is not a
+// use-after-move (the match's consume is post-match). std/derive `match (lt) {
+// Some(_) => return lt }` shape.
+func TestOwnGuardMatchReturnScrutineeInArmOK(t *testing.T) {
+	wantOK(t, "match-return-scrutinee-in-arm", ownConsumer+`
+enum Opt { Yep(i32), Nope }
+function mk(): Opt { return Yep(1); }
+function f(): Opt {
+    var lt: Opt = mk();
+    match (lt) { Yep(_) => { return lt; }, Nope => {} }
+    return Nope;
 }`)
 }
 

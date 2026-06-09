@@ -4682,17 +4682,56 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.Block:
 			walkStmts(x.Stmts, moved)
 		case *ast.Var:
-			recordExprUses(x.Init, moved)
+			// Track owned locals (so they can be moved into `own` params) and
+			// handle the alias case. A bare-ident init `var b = a` of an OWNED
+			// source ALIASES it — the IR alias-incs `a` (or moves only at its
+			// last use), so `b` co-owns and `a` stays usable. Do NOT consume `a`
+			// (`best = candidate; ... candidate.len()` must not be a false move).
+			// Any other owned init (fresh construction / owned call result)
+			// makes the local owned and is recorded normally.
+			if id, ok := x.Init.(*ast.Ident); ok && owned[id.Name] {
+				if at, m := moved[id.Name]; m {
+					c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
+				}
+				owned[x.Name] = true
+			} else {
+				initOwned := isOwnedExpr(x.Init)
+				recordExprUses(x.Init, moved)
+				if initOwned {
+					owned[x.Name] = true
+					delete(moved, x.Name)
+				}
+			}
 		case *ast.ExprStmt:
-			// `x = e` is an Assign EXPRESSION wrapped in an ExprStmt. Reassigning
-			// the bare owned param rebinds it to a fresh value, so its consumed
-			// state resets (the new value's ownership is the transfer slice's
-			// concern; here the reassign just clears the move) — distinct from a
-			// plain read, which recordExprUses would treat as a consume.
+			// `x = e` is an Assign EXPRESSION wrapped in an ExprStmt. A bare-ident
+			// RHS of an owned source aliases it (co-own, don't consume — same as
+			// the `var` case). Otherwise the target rebinds: an OWNED value (the
+			// move-and-rebind `t = f(.., t, ..)`) keeps it owned; a BORROWED value
+			// un-owns it.
 			if asn, ok := x.Expr.(*ast.Assign); ok {
+				if rid, ok := asn.Value.(*ast.Ident); ok && owned[rid.Name] {
+					if at, m := moved[rid.Name]; m {
+						c.errfCode(rid.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", rid.Name, at.Line)
+					}
+					if id, ok := asn.Target.(*ast.Ident); ok {
+						owned[id.Name] = true
+						delete(moved, id.Name)
+					}
+					return
+				}
+				valOwned := isOwnedExpr(asn.Value)
 				recordExprUses(asn.Value, moved)
-				if id, ok := asn.Target.(*ast.Ident); ok && owned[id.Name] {
-					delete(moved, id.Name)
+				if id, ok := asn.Target.(*ast.Ident); ok {
+					switch {
+					case valOwned:
+						owned[id.Name] = true
+						delete(moved, id.Name)
+					case owned[id.Name]:
+						delete(owned, id.Name)
+						delete(moved, id.Name)
+					default:
+						recordExprUses(asn.Target, moved)
+					}
 				} else {
 					recordExprUses(asn.Target, moved)
 				}
@@ -4729,7 +4768,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// (not owned). Capture ownership BEFORE recordExprUses consumes the
 			// scrutinee.
 			scrutOwned := isOwnedExpr(x.Tag)
-			recordExprUses(x.Tag, moved) // a bare-ident scrutinee is consumed here
+			// Walk the arms with the scrutinee STILL LIVE — an arm may read or
+			// return the scrutinee itself (`match (lt) { Some(_) => return lt }`),
+			// which is not a use-after-move. The match's consume is recorded
+			// AFTER the arms, so a use AFTER the match still flags (E050).
 			for _, arm := range x.Arms {
 				armMoved := cloneMoved(moved)
 				var added []string
@@ -4757,6 +4799,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 				joinInto(moved, armMoved, arm.Body != nil && blockDiverges(arm.Body))
 			}
+			recordExprUses(x.Tag, moved) // scrutinee consumed by the match (post-match state)
 		default:
 			// Any other statement that carries expressions (IfLet, LetElse,
 			// Defer, …) — conservatively scan it for owned-ident uses so a
