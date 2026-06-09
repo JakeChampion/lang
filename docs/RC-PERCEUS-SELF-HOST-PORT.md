@@ -1876,3 +1876,31 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   reclaimed, no OOM — and clos-return, the move-on-return no-double-free path).
   Full RC + bootstrap fixpoint + binary + component + closures suites green;
   bootstrap-safe (the compiler's own lambdas now rc-box + free).
+- 2026-06-09: **wasm closure-env reclamation — Slice 2: per-capture release.**
+  Completes the closure-RC subsystem (native genClosureDropThunk parity): a
+  closure's rc-tracked captures (string / array / struct / enum) now reclaim on
+  the closure's death, balanced by a construction-inc at the env's build site.
+  A shared `capture_kind(name, cx)` classifier drives BOTH sides so they're
+  exactly balanced: "" scalar/fn/map/option/tuple (skip), "s" string, "a"
+  scalar array, "p" pointer-element array (string[]/struct[], one level via
+  arr_dec_ptr), "S:<T>" struct/enum value (deep via $__fern_release_<T>). At the
+  lambda build site, each capture whose kind is non-"" is `$__fern_rc_inc`'d
+  after being stored into the env (the env co-owns it). At the closure's death,
+  `clos_release_snippet` emits the rc==1-gated release of each capture (loaded
+  from env 4+i*4 via `capture_release_op`) BEFORE the env block is freed —
+  parallel to clos_swept via `clos_caps` (computed from the full cx so capture
+  types resolve; `clos_snippet_for` finds each swept local's lambda). The
+  inc/release pair balances against the source local's own sweep (source rc1 →
+  inc rc2 → source swept rc1 → closure death rc0 free), so the over-release
+  detector stays 0. Coverage: `TestSelfHostRcClosureWasm` gains
+  cap-string-released, cap-string-churn (200k string-capturing closures
+  reclaimed, no OOM), cap-array-churn (200k i32[]-capturing), cap-struct-churn
+  (200k struct-with-array-capturing, deep-released via $__fern_release_Inner),
+  and cap-mixed (string released + scalar skipped). Full RC + bootstrap fixpoint
+  + binary + component + closures suites green; bootstrap-safe. With this, every
+  heap shape the self-host allocates — string, array, struct, enum, tuple,
+  option/result, map (string K/V), and now closures (box + captures) —
+  reference-counts and reclaims. Remaining vs exact native parity: map
+  struct/enum VALUES (deep __drop_map_via_, beyond the string-value column) +
+  deeper closure-capture shapes (struct-array / array-of-tuple captures route
+  one level).

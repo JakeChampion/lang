@@ -242,6 +242,11 @@ struct Ctx {
     // lambda-literal bindings are swept; closure-returning calls, aliases, and
     // bare function-name values are NOT (leak, sound).
     clos_swept: string[],
+    // Parallel to clos_swept: the precomputed per-capture release snippet for
+    // each closure local (rc==1-gated release of its rc-tracked captures via
+    // capture_release_op). "" when the closure has no rc-tracked captures.
+    // Balances the capture construction-inc done at the lambda's build site.
+    clos_caps: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -1123,6 +1128,7 @@ function release_module_ctx(structs: parser.StructDecl[], mr_types: string[], mo
         opt_swept: [],
         map_swept: [],
         clos_swept: [],
+        clos_caps: [],
     };
 }
 
@@ -1347,11 +1353,91 @@ function clos_exit_sweep_excl(cx: Ctx, excl: string): string {
     var i: i32 = 0;
     while (i < cx.clos_swept.len()) {
         if (cx.clos_swept[i] != excl) {
+            // Release rc-tracked captures (rc==1-gated, so a shared closure at
+            // rc>1 just dec's the box below) BEFORE freeing the env block.
+            if (i < cx.clos_caps.len()) { o = o + cx.clos_caps[i]; }
             o = o + "    (drop (call $__fern_arr_dec (local.get $" + cx.clos_swept[i] + ")))\n";
         }
         i = i + 1;
     }
     return o;
+}
+
+// clos_release_snippet builds the rc==1-gated per-capture release WAT for a
+// closure local `name` bound to lambda `lm`: for each rc-tracked capture
+// (capture_kind), load it from the env at 4+i*4 and release via
+// capture_release_op. "" when no capture needs release. The null + rc==1
+// guards mirror the struct/tuple sweeps (a shared env at rc>1 just dec's).
+function clos_release_snippet(name: string, lm: parser.ExprLambda, cx: Ctx): string {
+    var caps: string[] = lambda_captures(lm, cx);
+    var inner: string = "";
+    var i: i32 = 0;
+    while (i < caps.len()) {
+        var kind: string = capture_kind(caps[i], cx);
+        if (kind.len() > 0) {
+            var load: string = "(i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(4 + i * 4) + ")))";
+            inner = inner + capture_release_op(kind, load);
+        }
+        i = i + 1;
+    }
+    if (inner.len() == 0) { return ""; }
+    return "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then" + inner + "))))\n";
+}
+
+// clos_snippet_for walks the body for the `var name = function(…){…}` binding
+// and returns its capture-release snippet (or "" if not found / no rc
+// captures). Driven per clos_swept name so the result array stays parallel.
+function clos_snippet_for(body: parser.Stmt[], name: string, cx: Ctx): string {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprLambda(lm) => { return clos_release_snippet(name, lm, cx); },
+                        _ => {},
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                var t: string = clos_snippet_for(f.then_body, name, cx);
+                if (t.len() > 0) { return t; }
+                var e: string = clos_snippet_for(f.else_body, name, cx);
+                if (e.len() > 0) { return e; }
+            },
+            parser.StmtWhile(w) => {
+                var r: string = clos_snippet_for(w.body, name, cx);
+                if (r.len() > 0) { return r; }
+            },
+            parser.StmtFor(f) => {
+                var r: string = clos_snippet_for(f.body, name, cx);
+                if (r.len() > 0) { return r; }
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    var r: string = clos_snippet_for(m.arms[k].body, name, cx);
+                    if (r.len() > 0) { return r; }
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// collect_clos_caps builds the per-closure-local release snippet array,
+// parallel to clos_swept (one entry per swept closure name, in order).
+function collect_clos_caps(body: parser.Stmt[], names: string[], cx: Ctx): string[] {
+    var acc: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        acc = acc.append(clos_snippet_for(body, names[i], cx));
+        i = i + 1;
+    }
+    return acc;
 }
 
 function clos_exit_sweep(cx: Ctx): string {
@@ -1951,6 +2037,38 @@ function lambda_captures(lm: parser.ExprLambda, cx: Ctx): string[] {
         ri = ri + 1;
     }
     return caps;
+}
+
+// capture_kind classifies a closure capture by its release shape, shared by
+// the construction-inc (at lambda build) and the per-capture release (at
+// closure death) so the two are exactly balanced. Returns:
+//   ""       — scalar / fn / map / option / tuple: not rc-released (skip)
+//   "s"      — string (release via $__fern_arr_dec)
+//   "a"      — scalar (i32) array (release via $__fern_arr_dec)
+//   "p"      — pointer-element array, string[] / struct[] (one level via
+//              $__fern_arr_dec_ptr)
+//   "S:<T>"  — struct/enum value (deep release via $__fern_release_<T>)
+// A capture not matched here is conservatively skipped (leak one level, sound).
+function capture_kind(name: string, cx: Ctx): string {
+    var svt: string = lookup_pair(cx.sv_names, cx.sv_types, name);
+    if (svt.len() > 0 && (is_struct_type(cx.structs, svt) || (is_enum_type_name(cx, svt) && svt != "Option" && svt != "Result"))) {
+        return "S:" + svt;
+    }
+    if (contains_str(cx.arr_src, name)) {
+        if (contains_str(cx.str_arrays, name) || contains_str(cx.sa_names, name)) { return "p"; }
+        return "a";
+    }
+    if (is_string_expr(parser.ExprIdent { name: name, line: 0, col: 0 }, cx)) { return "s"; }
+    return "";
+}
+
+// capture_release_op emits the WAT that releases one capture (loaded from
+// `load`) according to its kind — the death side of capture_kind.
+function capture_release_op(kind: string, load: string): string {
+    if (kind == "s" || kind == "a") { return " (drop (call $__fern_arr_dec " + load + "))"; }
+    if (kind == "p") { return " (drop (call $__fern_arr_dec_ptr " + load + "))"; }
+    if (kind.len() > 2 && kind[0:2] == "S:") { return " (drop (call $__fern_release_" + kind[2:kind.len()] + " " + load + "))"; }
+    return "";
 }
 
 // tuple_kind_string builds the per-element kind tag for a tuple literal:
@@ -5359,6 +5477,14 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             var ic: i32 = 0;
             while (ic < caps.len()) {
                 s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(4 + ic * 4) + ")) " + emit_expr(parser.ExprIdent { name: caps[ic], line: 0, col: 0 }, cx, depth + 1) + ")";
+                // Perceus capture construction-inc: an rc-tracked capture (string
+                // / array / struct / enum) is co-owned by the env, so retain it;
+                // the closure's death releases it (capture_kind classifies both
+                // sides identically, so they balance). A guard no-op for an
+                // immortal literal; scalars carry no rc and are skipped.
+                if (capture_kind(caps[ic], cx).len() > 0) {
+                    s = s + " (drop (call $__fern_rc_inc " + emit_expr(parser.ExprIdent { name: caps[ic], line: 0, col: 0 }, cx, depth + 1) + "))";
+                }
                 ic = ic + 1;
             }
             s = s + " (local.get " + ap + "))";
@@ -8645,6 +8771,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         opt_swept: [],
         map_swept: [],
         clos_swept: [],
+        clos_caps: [],
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -8709,8 +8836,12 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // Perceus map RC set — computed once map_names are known so map aliases
     // resolve.
     var cx9: Ctx = Ctx { ...cx8, map_swept: collect_map_swept(f.body, cx8, []) };
-    // Perceus closure RC set — lambda-literal-bound closure locals freed at exit.
-    return Ctx { ...cx9, clos_swept: collect_clos_swept(f.body, []) };
+    // Perceus closure RC set — lambda-literal-bound closure locals freed at
+    // exit, with a parallel per-capture release snippet (computed from the full
+    // cx so capture types resolve). clos_caps must be set together with
+    // clos_swept so the two arrays stay index-parallel.
+    var cnames: string[] = collect_clos_swept(f.body, []);
+    return Ctx { ...cx9, clos_swept: cnames, clos_caps: collect_clos_caps(f.body, cnames, cx9) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning

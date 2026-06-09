@@ -44,6 +44,21 @@ func TestSelfHostRcClosureWasm(t *testing.T) {
 		// returned closure (move-on-return) excluded from sweep; caller's
 		// binding (call init) not swept — no double free, value-correct.
 		{"clos-return", "function adder(a: i32): (i32) => i32 { var f = function (b: i32): i32 { return a + b; }; return f; } function main(): i32 { var add10 = adder(10); var add20 = adder(20); return add10(5) + add20(7) + __fern_rc_underflow_count(); }", 42},
+		// Slice 2 — per-capture release. A heap STRING capture is released on the
+		// closure's death (construction-inc'd at build, capture_kind-balanced),
+		// value-correct + detector 0.
+		{"cap-string-released", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var f = function (): i32 { return s.len(); }; return f() + 38 + __fern_rc_underflow_count(); }", 42},
+		// Slice 2 churn: 200k closures each capturing a heap string; the capture
+		// reclaims each cycle (no OOM) — without capture release this leaks.
+		{"cap-string-churn", "function mk(): i32 { var s: string = \"ab\" + \"cd\"; var f = function (): i32 { return s.len(); }; return f(); } function main(): i32 { var k = 0; var n = 0; while (k < 200000) { n = mk(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 4},
+		// Slice 2: an ARRAY capture (i32[]) reclaims each cycle across 200k.
+		{"cap-array-churn", "function mk(): i32 { var xs: i32[] = [10, 20, 30]; var f = function (): i32 { return xs[1]; }; return f(); } function main(): i32 { var k = 0; var n = 0; while (k < 200000) { n = mk(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 6},
+		// Slice 2: a STRUCT capture (deep) — the struct + its array field reclaim
+		// via $__fern_release_Inner each cycle across 200k, no OOM, detector 0.
+		{"cap-struct-churn", "struct Inner { xs: i32[], n: i32 } function mk(): i32 { var i = Inner { xs: [1, 2, 3, 4], n: 5 }; var f = function (): i32 { return i.n; }; return f(); } function main(): i32 { var k = 0; var n = 0; while (k < 200000) { n = mk(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 5},
+		// Slice 2: mixed captures (string + scalar) — the string is released, the
+		// scalar carries no rc and is skipped; value-correct + detector 0.
+		{"cap-mixed", "function main(): i32 { var s: string = \"xy\" + \"zw\"; var a: i32 = 38; var f = function (): i32 { return s.len() + a; }; return f() + __fern_rc_underflow_count(); }", 42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
