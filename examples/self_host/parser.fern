@@ -1,5 +1,5 @@
 // examples/self_host/parser.fern — recursive-descent parser
-// layered on the lang-port lexer (`./lexer`). Together they form
+// layered on the Fern-port lexer (`./lexer`). Together they form
 // the second concrete step of the self-host port (after the
 // standalone lexer in `lexer.fern`). Now that cross-module
 // qualified variant patterns work (`lexer.TokIdent(x) => …`),
@@ -58,7 +58,7 @@ pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[] }
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
 // fixed-arity / heterogeneous; arrays are homogeneous and
-// dynamic. Field access in lang uses `.0`, `.1`, etc. but
+// dynamic. Field access in Fern uses `.0`, `.1`, etc. but
 // that's a later milestone — this slice only adds parsing.
 pub struct ExprTuple { elements: Expr[] }
 // Postfix indexing `a[i]`. `a` can be any Expr that evaluates to

@@ -1,6 +1,6 @@
 import "core/no_prelude";
 import "std/test";
-// examples/tests/arithmetic_test.fern — example Lang-native
+// examples/tests/arithmetic_test.fern — example Fern-native
 // test file using `std/test`. Demonstrates the shape we'll
 // adopt once the compiler is self-hosted and the Go-side
 // `*_test.go` harness retires.

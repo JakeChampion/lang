@@ -32,12 +32,12 @@ $ printf 'one\ntwo\n' | fern -interp examples/cli/tac.fern
 $ fern -interp examples/cli/seq.fern -- 1 2 10
 ```
 
-And they build to wasm like any other program (see
-`examples/wasm/README.md` for the adapter flags):
+And they build to wasm like any other program — `-target wasm`
+emits a self-contained preview-2 component (no external adapter):
 
 ```
-$ fern -target wasm -wasi-adapter ... -o wc.wasm examples/cli/wc.fern
-$ wasmtime --dir=. wc.wasm file.txt
+$ fern -target wasm -o wc.wasm examples/cli/wc.fern
+$ wasmtime run --dir=. wc.wasm file.txt
 ```
 
 ## The tools

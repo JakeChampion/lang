@@ -1,5 +1,5 @@
 // examples/self_host/bundle_run.fern — multi-module self-host driver.
-// Reads a bundle of Lang modules from stdin, flattens + merges them
+// Reads a bundle of Fern modules from stdin, flattens + merges them
 // into one Module (flatten.bundle), and emits x86-64 asm for the
 // result. This is the multi-module counterpart of asm_run.fern: where
 // that compiles a single self-contained file, this one accepts the

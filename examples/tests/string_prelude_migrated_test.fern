@@ -1,11 +1,11 @@
 import "core/no_prelude";
 import "std/test";
 // examples/tests/string_prelude_migrated_test.fern —
-// Proof-of-concept Lang port of `TestInterpScriptStringPrelude`
+// Proof-of-concept Fern port of `TestInterpScriptStringPrelude`
 // from `internal/e2e/interp_script_test.go`.
 //
 // The original Go test pinned the same surface by piping
-// an inline Lang program through `fern -interp` and
+// an inline Fern program through `fern -interp` and
 // checking the exit code + stdout. The migration replaces
 // that subprocess-and-grep shape with direct in-process
 // assertions: the program *IS* the test, and the

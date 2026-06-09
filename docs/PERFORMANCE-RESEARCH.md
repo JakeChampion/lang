@@ -581,7 +581,7 @@ are exactly WUFFS's target. The codebase already has
 - **Hand-written parser DSL for the prelude.** Long term:
   if/when we add `Cookie`, `multipart/form-data`, JSON-Pointer,
   query-string-with-arrays parsing to the prelude, a small
-  WUFFS-flavoured DSL inside the lang would make them
+  WUFFS-flavoured DSL inside the Fern would make them
   formally-bounded.
 
 ### Jai (Jonathan Blow)
@@ -616,7 +616,7 @@ Source: Jonathan Blow's YouTube series + community summaries
 
 - Full compile-time execution. We have `constfold.go`
   doing the easy cases. Going from "fold scalar arithmetic"
-  to "run arbitrary lang code at compile time" is a huge
+  to "run arbitrary Fern code at compile time" is a huge
   effort and only pays off for very specific patterns
   (lookup tables, parser tables). Revisit when there's
   demand.

@@ -4,7 +4,7 @@ Status: policy doc. Resolves IMPROVEMENTS.md #16.
 
 ## Summary
 
-Lang's float types (`f32`, `f64`) follow IEEE 754 for **ordinary
+Fern's float types (`f32`, `f64`) follow IEEE 754 for **ordinary
 arithmetic** but deliberately **under-specify** the edge cases:
 
 | Behaviour                                  | Portable? |
@@ -46,7 +46,7 @@ source bytes and same inputs.
 
 "Not portable" means: each backend gets to do what its hardware
 gives it. Code that depends on these edges is non-portable by
-spec — Lang won't add canonicalisation passes to make them agree.
+spec — Fern won't add canonicalisation passes to make them agree.
 
 ## Why under-specify
 
@@ -62,7 +62,7 @@ Strict cross-backend bit-equality for IEEE edges requires:
   hardware default may differ from wasm
 
 That's a real ongoing maintenance tax — and parity bugs caught in
-review would block backend work. Lang's stated use cases (small
+review would block backend work. Fern's stated use cases (small
 CLIs, edge HTTP) almost never care about NaN bit-payloads or
 `-0.0`-vs-`+0.0` discrimination through arithmetic. The cost / value
 ratio comes out against strict mode.
@@ -71,8 +71,8 @@ This is the same calculus that retired arm32 (see `CLAUDE.md` —
 the "ARM32 was retired" note): when parity costs outpace the user
 value, the responsible move is to scope down.
 
-Lang is in good company here: C, C++, Rust, Go, Zig all under-specify
-NaN bit-patterns. Strict-IEEE Lang would be the outlier, not the
+Fern is in good company here: C, C++, Rust, Go, Zig all under-specify
+NaN bit-patterns. Strict-IEEE Fern would be the outlier, not the
 default.
 
 ## What this means in practice

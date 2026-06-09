@@ -1,7 +1,7 @@
 # Bootstrap research — self-hosting strategies from Rust, Zig, Crystal, OCaml, Go, TinyCC
 
 `ROADMAP-AND-SELF-HOSTING.md ▸ Part 2` covers *what's missing*
-from lang to make a self-host viable (union sugar, sort,
+from Fern to make a self-host viable (union sugar, sort,
 process spawn, etc.). It does *not* cover the orthogonal
 question of **bootstrap strategy** — how the Go-implemented
 production compiler should hand over to the fern-implemented
@@ -372,7 +372,7 @@ change to the compiler must be testable against itself.
 
 - **WASM as the bytecode-analogue.** Same idea as the Zig
   takeaway. WASM is platform-independent, smaller than
-  native binaries, validated-by-construction. The lang-
+  native binaries, validated-by-construction. The Fern-
   compiled-to-WASM compiler is the natural "bytecode" boot.
   Lands the platform-independence of the OCaml model
   *without* needing a bytecode VM in the language proper
@@ -442,7 +442,7 @@ specific previous release."
 - **The translation-tool approach is *not* what we want.**
   Our Go compiler is already idiomatic Go, not a mechanical
   translation. Hand-porting (which is what `examples/self_host/`
-  already does) is the right path — the target lang is
+  already does) is the right path — the target Fern is
   imperative-flavoured and the Go code's structure
   translates 1:1.
 
@@ -456,13 +456,13 @@ specific previous release."
   for builds. The user can pin a specific version or
   download a tagged release. Cheaper than a checked-in
   snapshot binary, at the cost of "you need a working
-  previous lang to build the new one" — which is exactly
+  previous Fern to build the new one" — which is exactly
   Go's posture and works fine.
 
 **Considered, left:**
 
-- *Mechanical translation tool from Go to lang.* Wrong fit;
-  the existing manual port is producing readable lang code.
+- *Mechanical translation tool from Go to Fern.* Wrong fit;
+  the existing manual port is producing readable Fern code.
 
 ### TypeScript → tsgo — keep two impls forever
 
@@ -575,7 +575,7 @@ wrong.
   be ≤2× normal build time. Watch this number as a CI
   metric.
 
-- **The "one-step self-compile" property.** Once lang is
+- **The "one-step self-compile" property.** Once Fern is
   self-hosting, a normal `make` should be: stage0 (snapshot)
   compiles current source → stage1; stage1 recompiles
   current source → stage2; assert stage1 = stage2. Three
@@ -750,7 +750,7 @@ Once the fern-impl is feature-complete:
   *previous-previous* snapshot — defence-in-depth.
 
 CI cost: roughly +2 minutes per PR (assuming the
-lang-compile is in the same league as the Go-compile).
+Fern-compile is in the same league as the Go-compile).
 Worth it.
 
 ### 5. Regenerate snapshots on a cadence, not per-PR
@@ -831,9 +831,9 @@ Specifically:
   + small AST-level rewrites) is fine.
 - **No language-runtime dependency that requires a
   current-language toolchain to bootstrap.** E.g. if the
-  lang's stdlib starts shelling out to `lang fmt`, the
-  bootstrap snapshot needs `lang fmt`, which needs
-  `lang`, which needs the snapshot. Avoid cycles.
+  Fern's stdlib starts shelling out to `fern fmt`, the
+  bootstrap snapshot needs `fern fmt`, which needs
+  `fern`, which needs the snapshot. Avoid cycles.
 
 ### 9. Keep `clang`, `lld`, `wasm-tools` as build-time deps
 
@@ -881,7 +881,7 @@ mechanism, not a design proposal.
   TypeScript-tsgo posture instead.
 
 - **Mechanical translation tools** (Go's `grind`). Our
-  `examples/self_host/` is hand-port-quality lang code,
+  `examples/self_host/` is hand-port-quality Fern code,
   not mechanically-converted Go. Mechanical translation
   was right for Go (millions of lines of C) and wrong
   for us (~50k Go LOC, already idiomatic).

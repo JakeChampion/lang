@@ -2,16 +2,16 @@
 
 Captures a survey of seven reference languages — Roc, Rust,
 MoonBit, Gleam, Elixir, Go, Zig — and proposes a prioritised
-list of stdlib additions for lang. Companion to
+list of stdlib additions for Fern. Companion to
 `ROADMAP-AND-SELF-HOSTING.md` and `LANGUAGE-DIRECTION.md`.
 
-Lang's target use cases are small fast-startup CLI tools and
+Fern's target use cases are small fast-startup CLI tools and
 short-lived edge-function-style HTTP servers. The picks below
 favour those over general-purpose breadth.
 
 ## Current state
 
-What lang's prelude / built-ins cover today, as a baseline:
+What Fern's prelude / built-ins cover today, as a baseline:
 
 - **strings**: `is_empty`, `to_string`, `repeat`, `starts_with`,
   `ends_with`, `contains`, `index_of`, `trim`, `bytes` /
@@ -36,7 +36,7 @@ What lang's prelude / built-ins cover today, as a baseline:
   `http_parse_request`, `http_serialize_response`, `tcp_serve`.
 - **misc**: `format(fmt, args)`, f-string literals.
 
-## Per-language highlights (gaps lang doesn't have)
+## Per-language highlights (gaps Fern doesn't have)
 
 Survey done 2026-05-15. URLs of doc sites surveyed:
 - Roc: https://www.roc-lang.org/builtins
@@ -51,7 +51,7 @@ Survey done 2026-05-15. URLs of doc sites surveyed:
 /`keepIf`/`walk`/`sortWith`/`chunksOf`/`mapWithIndex`,
 `Result.map`/`mapErr`/`withDefault`/`try`, `Num.toStr` with
 format records, `Dict.update` (insert-or-modify in one pass),
-`Set` type, `Str.replaceEach` (vs lang's single replace).
+`Set` type, `Str.replaceEach` (vs Fern's single replace).
 
 **Rust** — `str::char_indices` & `chars()`,
 `str::splitn/rsplit`, `str::trim_start_matches`/`trim_end_matches`,
@@ -269,7 +269,7 @@ fd 1.
 **Inspiration**: Go `io.ReadAll`, Elixir `IO.puts`.
 
 **Status**: `read_all_stdin()` shipped. `print` / `eprint`
-already exist (lang's `print` is the println variant — appends
+already exist (Fern's `print` is the println variant — appends
 a newline). `copy(reader, writer)` deferred — needs a real
 Reader/Writer plumbing decision.
 
@@ -410,7 +410,7 @@ think they're free additions to make.
   tail since the lossy fold is rarely what callers want).
 - **i32 bit ops**: `count_ones()`, `leading_zeros()`,
   `trailing_zeros()`, `byte_swap()`. Software implementations
-  (no intrinsic surface in lang yet) — O(width) per call.
+  (no intrinsic surface in Fern yet) — O(width) per call.
 - **i64 pow/gcd/lcm**: parity with the i32 versions. `pow`
   takes an i32 exponent.
 - **`range(start, end)` / `range_step(start, end, step)`**:
@@ -471,7 +471,7 @@ think they're free additions to make.
   the count into the result themselves.
 - **Range constants**: `i32_max()` / `i32_min()` /
   `i64_max()` / `i64_min()` as function-style accessors
-  (lang has no const declaration syntax yet).
+  (Fern has no const declaration syntax yet).
 - **One-sided trim**: `s.trim_start()` / `s.trim_end()`.
   Asymmetric whitespace strip.
 - **`s.trim_chars(chars)`**: strip any byte in `chars`
@@ -483,7 +483,7 @@ think they're free additions to make.
 - **String sort**: `sort_strings_asc(arr)` /
   `sort_strings_desc(arr)`. Insertion-sort, like the i32
   variants. Backed by a new `string_cmp(a, b)` three-way
-  comparator since lang's `<` / `>` operators are
+  comparator since Fern's `<` / `>` operators are
   numerics-only.
 - **String splitn**: `s.splitn(sep, n)` caps the result at
   n pieces; the last piece carries the unsplit tail. Useful
@@ -613,7 +613,7 @@ think they're free additions to make.
 - **`s.snake_case()` / `s.kebab_case()`**: convert
   camelCase / PascalCase / space-separated to lower-case
   with underscore / hyphen separators.
-- **`s.is_valid_identifier()`**: lang / C / JS identifier
+- **`s.is_valid_identifier()`**: Fern / C / JS identifier
   pattern: `[a-zA-Z_][a-zA-Z0-9_]*`.
 - **`is_valid_http_status(code)`**: `[100, 599]` per RFC
   9110.

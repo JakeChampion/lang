@@ -19,7 +19,7 @@ implementation — see the resolutions noted there.
 
 ## Why
 
-Lang has value semantics: arrays, strings, structs, enums, closures
+Fern has value semantics: arrays, strings, structs, enums, closures
 all look immutable to the programmer. Today that's implemented by
 *always copying* on any operation that conceptually mutates (`arr.push`,
 hypothetical `arr.set`, etc.). Two consequences:
@@ -240,7 +240,7 @@ mutates or copies.
 
 ## The example, walked through
 
-```lang
+```Fern
 var nfuncs: FuncDecl[] = into.funcs;        // (1)
 var fi: i32 = 0;
 while (fi < from.funcs.len()) {
@@ -338,7 +338,7 @@ mutate.
 
 The Roc-style "immutable surface, mutate underneath" only works
 if the surface IS immutable everywhere a user reaches. Today's
-lang surface is mostly there but has rough edges where the syntax
+Fern surface is mostly there but has rough edges where the syntax
 or method name implies mutation, which would mislead readers
 once Phase 2 lands. The cleanup is allowed to break API: callers
 update at the same time we flip the implementation.
@@ -3123,7 +3123,7 @@ on the rc word + freelist state.
 
 Run every existing e2e test under a "leak detector" build mode
 that, on program exit, walks the heap and reports any value with
-rc > 0. (Like a poor-man's ASAN, scoped to lang values.)
+rc > 0. (Like a poor-man's ASAN, scoped to Fern values.)
 
 ### Integration: rc-correctness fuzzer
 
@@ -3185,7 +3185,7 @@ native-arm64 heap-string rc is still blocked on the SSO flip — item 5g
      in phase 4 alongside Perceus.
 
 5. **What happens when a drop handler crashes?** (E.g. dereferences
-   a value that was already freed due to a bug.) The lang
+   a value that was already freed due to a bug.) The Fern
    runtime today has no signal handlers. Probably: abort. Same
    as today.
 
@@ -3205,7 +3205,7 @@ native-arm64 heap-string rc is still blocked on the SSO flip — item 5g
    creation). With rc, captures of pointer values must inc on
    creation. Drop of the closure decs each captured pointer.
 
-9. **Recursive types: how to terminate?** Currently lang's types
+9. **Recursive types: how to terminate?** Currently Fern's types
    are tree-shaped at the type level (no cycles). Recursive
    types like linked lists go through enum variants (e.g.
    `Cons(i32, Box<List>) | Nil`). The drop handler recurses,

@@ -11,7 +11,7 @@ This doc is about the **inter-project** story: what happens
 when the language picks up its first third-party package.
 That question is unavoidable once the codebase has more than
 one user / repo (which is technically not yet, but will be
-once self-hosting completes and the lang ecosystem grows
+once self-hosting completes and the Fern ecosystem grows
 organically from the same repository structure).
 
 The constraints carried over from `BOOTSTRAP-RESEARCH.md`:
@@ -166,18 +166,18 @@ and the parts that *don't* are widely cited as warts.
 
 #### What translates
 
-- **TOML manifest** — `lang.toml` (or `package.toml`) per
+- **TOML manifest** — `fern.toml` (or `package.toml`) per
   package, human-readable. Yes.
 
-- **Lockfile** — `lang.lock`. Records the exact resolved
+- **Lockfile** — `fern.lock`. Records the exact resolved
   version + content hash per dep. Bin crates (apps) check
   in; lib crates don't.
 
 - **Workspace support** — multi-package monorepo from day
-  one. Top-level `lang.toml` lists members; one lockfile;
+  one. Top-level `fern.toml` lists members; one lockfile;
   one target directory.
 
-- **Single `lang` CLI for build/test/fmt/doc/run.** Already
+- **Single `fern` CLI for build/test/fmt/doc/run.** Already
   the case; preserve.
 
 - **Content-hash record per published version** — same as
@@ -253,7 +253,7 @@ mode.
   but the URL-is-the-identifier story is fragile.
 
 - **Type stripping at runtime.** Deno-specific; doesn't
-  apply to lang (we're AOT-compiled).
+  apply to Fern (we're AOT-compiled).
 
 #### What translates
 
@@ -268,7 +268,7 @@ mode.
 
 - **Versioning as part of the import.** Optional sugar:
   `import "github:foo/bar@1.2.3"` is the long form;
-  a `lang.toml`-listed dep gets a short form
+  a `fern.toml`-listed dep gets a short form
   `import "bar"`.
 
 #### Considered, left
@@ -361,7 +361,7 @@ tag" attacks. Modeled on Certificate Transparency.
 
 - **The transparency log infrastructure.** Go's
   sum.golang.org is a real service. For a single-user
-  language, in-repo `lang.lock` with content hashes is
+  language, in-repo `fern.lock` with content hashes is
   enough.
 
 ### npm — what to learn from the failure modes
@@ -404,8 +404,8 @@ Sources:
 
 Anti-patterns to avoid:
 
-- **Auto-modify-manifest-on-install.** No. `lang add foo`
-  is explicit; modifying `lang.toml` is what the command
+- **Auto-modify-manifest-on-install.** No. `fern add foo`
+  is explicit; modifying `fern.toml` is what the command
   does, not a side effect of build.
 - **`postinstall`-shape scripts.** No.
 - **Default to latest-compatible.** Use MVS (Go's
@@ -446,10 +446,10 @@ content-hashed, with a "preferred CDN" for fetches.**
 - **Signing.** When/if a registry exists, sign every
   release. Verification at fetch.
 
-- **Auto-generated central docs.** A `lang doc` workflow
+- **Auto-generated central docs.** A `fern doc` workflow
   that produces structured documentation per published
   package; hostable on a single shared site. Even if
-  there's no central registry, having `lang doc` *work*
+  there's no central registry, having `fern doc` *work*
   for any package is the foundation.
 
 ### Nix flakes — pure-functional, content-addressed
@@ -481,18 +481,18 @@ dependency's hash + the registry resolution.
 
 #### What translates
 
-- **Pure-functional build.** Already aligned: the lang
+- **Pure-functional build.** Already aligned: the Fern
   compiler is a deterministic function of source files +
   config + dep set. Stay there. Per
   `BOOTSTRAP-RESEARCH.md`, "don't add build-time code
   execution beyond constfold" is the same principle.
 
 - **Lockfile records content hashes, not just versions.**
-  `lang.lock` lists `(name, version, content-hash)` per
+  `fern.lock` lists `(name, version, content-hash)` per
   dep. Verification on fetch.
 
 - **Inputs explicit, no implicit environment.** A
-  `lang.toml`'s dep list is the *whole* dependency
+  `fern.toml`'s dep list is the *whole* dependency
   specification — no env-var-driven path resolution,
   no parent-shell influence.
 
@@ -520,7 +520,7 @@ GitHub).
   Trade-off: easier to express conditional config; harder
   to parse without a swift compiler. *Not* what we want
   (manifests must be parseable cheaply during dependency
-  resolution, often before the lang compiler is built).
+  resolution, often before the Fern compiler is built).
 
 ### Bazel / Buck — monorepo build systems
 
@@ -573,13 +573,13 @@ The interesting bit is the *separation of concerns*: the
 language's module system is module shapes; the package
 manager handles *files on disk + remote retrieval*. Our
 `internal/modload` is the file-on-disk part; a future
-`lang.toml` + remote-fetch is the package-manager part.
+`fern.toml` + remote-fetch is the package-manager part.
 
 #### What translates
 
 - **Strict separation.** Module-as-language-construct is
   what `pub` is for. Package-as-distribution-unit is what
-  `lang.toml` + lockfile + registry are for. Don't
+  `fern.toml` + lockfile + registry are for. Don't
   conflate; OCaml's separation is what lets ML modules
   scale across decades.
 
@@ -626,7 +626,7 @@ ordered after the bootstrap-and-self-host work — the
 package manager is a *post-self-host* concern; nothing
 here blocks the current trajectory.
 
-### 1. Define `lang.toml` as the manifest format
+### 1. Define `fern.toml` as the manifest format
 
 **Cost: 1 week.** **Impact: foundation; gates §2-9.**
 
@@ -651,11 +651,11 @@ local-helper = { path = "../helpers" }
 config = { path = "../config", optional = false }
 ```
 
-A `lang.toml`-less single-file program stays valid (today's
+A `fern.toml`-less single-file program stays valid (today's
 behaviour). The manifest is opt-in; once present, becomes
 the build-system root.
 
-### 2. Lockfile design: `lang.lock`
+### 2. Lockfile design: `fern.lock`
 
 **Cost: 1 week (after §1).** **Impact: gates §3.**
 
@@ -686,7 +686,7 @@ dependents).
 
 Resolution algorithm:
 
-- Walk transitive `lang.toml`s.
+- Walk transitive `fern.toml`s.
 - For each unique package name, pick the **maximum of the
   minimum** versions across all manifests that declare it.
 - Pin that exact version.
@@ -694,8 +694,8 @@ Resolution algorithm:
 Mirrors Go's MVS. Reproducible by construction; no
 "latest compatible" surprises.
 
-Upgrade is explicit: `lang upgrade <pkg> [version]`
-mutates `lang.toml` + `lang.lock`.
+Upgrade is explicit: `fern upgrade <pkg> [version]`
+mutates `fern.toml` + `fern.lock`.
 
 ### 4. Content-addressed cache
 
@@ -707,7 +707,7 @@ Each package version's tarball is content-hashed; the
 hash is the directory name; the contents are unpacked
 once and reused.
 
-`lang.lock` references the hash; mismatched hash on
+`fern.lock` references the hash; mismatched hash on
 fetch → fail. No `node_modules`-style recursive trees;
 build references the cache.
 
@@ -716,7 +716,7 @@ build references the cache.
 **Cost: 1 week.** **Impact: medium-high; needed once the
 codebase has multiple fern-implemented packages.**
 
-Top-level `lang.toml` declares:
+Top-level `fern.toml` declares:
 
 ```toml
 [workspace]
@@ -729,11 +729,11 @@ members = [
 ]
 ```
 
-Each member is a sub-package with its own `lang.toml`.
+Each member is a sub-package with its own `fern.toml`.
 One lockfile at the workspace root; one `target/`
 directory.
 
-For the eventual self-hosted lang compiler (per
+For the eventual self-hosted Fern compiler (per
 `BOOTSTRAP-RESEARCH.md`), the workspace shape lets the
 lexer / parser / checker / codegen modules live as
 separate packages without leaving the repo.
@@ -744,11 +744,11 @@ separate packages without leaving the repo.
 `BOOTSTRAP-RESEARCH.md` constraint of no build-time
 network.**
 
-`lang vendor` copies all transitive deps into a `vendor/`
+`Fern vendor` copies all transitive deps into a `vendor/`
 directory at the workspace root. Subsequent builds with
 `--offline` use `vendor/` exclusively; no network access.
 
-CI / release builds run `--offline` mode; `lang vendor`
+CI / release builds run `--offline` mode; `Fern vendor`
 runs as a separate explicit step.
 
 This is the right shape for `BOOTSTRAP-RESEARCH.md`'s
@@ -761,13 +761,13 @@ never does.
 **Cost: 0 (a deferral).** **Impact: avoids a Cargo wart.**
 
 Packages that need code generation ship the generator as
-a separate `lang` binary (e.g. via `bin/` in the package
+a separate `fern` binary (e.g. via `bin/` in the package
 or as a separate dev-tool dep). Users run the generator
-*before* `lang build`. The generated code is checked in
+*before* `fern build`. The generated code is checked in
 to the consuming package.
 
 No `[build-script]` config. No "this package runs Python
-during build." Build is `lang.toml` + source files in,
+during build." Build is `fern.toml` + source files in,
 binary out, deterministic.
 
 ### 8. Cross-target via `[target.X]` sections
@@ -797,7 +797,7 @@ descriptor sketched in `PLATFORM-RESEARCH.md ▸ Rec §2`.
 low for one user; high for the eventual ecosystem.**
 
 Skip the run-our-own-registry investment. Packages live
-in git repos; `lang.toml` declares them by URL + tag /
+in git repos; `fern.toml` declares them by URL + tag /
 git-ref. Content hash verification at fetch.
 
 A *curated index* (a single markdown / JSON file at
@@ -824,7 +824,7 @@ import "std/http" as http;
 import "outbound/http" as outbound_http;
 ```
 
-### 11. Documentation tooling: `lang doc`
+### 11. Documentation tooling: `fern doc`
 
 **Cost: 2 weeks.** **Impact: medium-high; discoverability
 is the difference between an ecosystem and a graveyard.**
@@ -836,7 +836,7 @@ For each `pub` declaration:
 - Generate a per-package documentation site.
 
 Mirror godoc / rustdoc / hexdocs in shape. Run as part
-of `lang doc`; outputs `target/doc/`. If a hosted index
+of `fern doc`; outputs `target/doc/`. If a hosted index
 exists (Rec §9), packages submit to it.
 
 ### 12. Signing and verification
@@ -863,7 +863,7 @@ Hex.pm's signed-by-default posture is the model.
   cautionary tale.
 
 - **Auto-modifying-manifest on `install`/`add`.**
-  Mutating `lang.toml` is what `lang add` does; nothing
+  Mutating `fern.toml` is what `fern add` does; nothing
   else.
 
 - **Default to latest-compatible resolution.** Use MVS;

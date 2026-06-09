@@ -8,9 +8,9 @@ import "std/test";
 // / exit code, and asserts.
 //
 // To keep the example deterministic this file spawns ordinary
-// POSIX commands (`echo`, `cat`, `sh`) rather than `lang`
+// POSIX commands (`echo`, `cat`, `sh`) rather than `fern`
 // itself. The migration's compiler-binary tests follow the
-// same pattern with `subprocess("/path/to/lang", ["-interp", ...],
+// same pattern with `subprocess("/path/to/fern", ["-interp", ...],
 // "")`.
 
 function test_echo_stdout_eq(): Option[string] {
@@ -67,7 +67,7 @@ function main(): i32 {
 
     // Gate the whole suite on having a POSIX shell — every
     // case here spawns `echo` / `cat` / `sh`. On hosts where
-    // those aren't on $PATH (rare for Lang's actual targets,
+    // those aren't on $PATH (rare for Fern's actual targets,
     // but possible in stripped CI images) the suite skips
     // cleanly instead of cascading false failures.
     var probe: ProcessResult = subprocess("sh", ["-c", "exit 0"], "");

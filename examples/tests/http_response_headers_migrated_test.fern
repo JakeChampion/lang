@@ -3,7 +3,7 @@ import "std/test";
 import "std/http";
 
 // examples/tests/http_response_headers_migrated_test.fern
-// — Lang port of `TestInterpScriptHttpResponseHeaders`
+// — Fern port of `TestInterpScriptHttpResponseHeaders`
 // from `internal/e2e/interp_script_test.go`. Pins the
 // HeaderMap → HttpResponse wiring +
 // `http_serialize_response` emission behaviour
@@ -17,7 +17,7 @@ import "std/http";
 //     response.
 //
 // The Go original was 4 table-driven subprocess cases.
-// Migrated to one Lang file: instead of print-then-grep
+// Migrated to one Fern file: instead of print-then-grep
 // the serialized wire, we assert directly on it via
 // `assert_eq` (whole-wire compare) and the new
 // `assert_contains` / `assert_not_contains` for

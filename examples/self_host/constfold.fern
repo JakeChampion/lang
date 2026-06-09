@@ -52,7 +52,7 @@ function lit_string(s: string): parser.Expr {
     return parser.ExprString { value: s, line: 0, col: 0 };
 }
 
-// Optional-Int sentinel: lang-port has no Option in the stdlib
+// Optional-Int sentinel: Fern-port has no Option in the stdlib
 // (no generics in our parser stub). Encode "absent" as the
 // boolean `ok` field; consumers check that first.
 struct OptInt { ok: boolean, v: i32 }

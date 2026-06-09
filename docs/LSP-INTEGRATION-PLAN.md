@@ -2,7 +2,7 @@
 
 ## Goal
 
-Ship a Language Server Protocol implementation for `lang` and surface it in
+Ship a Language Server Protocol implementation for `fern` and surface it in
 the existing web playground (`web/index.html`) so users get diagnostics,
 hover-for-type, go-to-definition, and completion both in their editor of
 choice and in the browser.

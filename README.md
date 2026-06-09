@@ -137,7 +137,11 @@ Supported:
   erased at runtime.
 - **Methods** on structs via the `function (p: Point) name(): T` receiver
   clause.
-- **Nested functions** with closure-by-value over scalar outer-scope variables.
+- **Nested functions** with closures that capture outer-scope
+  variables by value — scalars and pointer-shaped values (strings,
+  arrays, structs) alike. Reference-typed captures are read-only
+  inside the closure (reassigning one is rejected, since it could
+  close a reference cycle); return the new value instead.
 - `var x: T = expr;` (annotation optional — inferred from the initialiser).
 - Statements: `if` / `else`, `while`, `for(init; cond; step)`,
   `for x in arr / "string"`, `switch` (comma-separated cases, `default`),

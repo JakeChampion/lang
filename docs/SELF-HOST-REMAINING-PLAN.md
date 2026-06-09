@@ -708,7 +708,7 @@ planned order:
     AsmRun case (uses an inline `Wrap.try_get(): Option[i32]` so the
     fixture is self-contained); `json_field_eq_test` joins the
     differential gate.
-  - ✅ **`Map.get_or(k, default)`.** core/map's pure-Lang
+  - ✅ **`Map.get_or(k, default)`.** core/map's pure-Fern
     `__map_get_or_impl` body uses an open-addressed layout that doesn't
     match the self-host's native `__fern_map_*` runtime, so falling
     through to it (via the generic method-call path) read garbage and

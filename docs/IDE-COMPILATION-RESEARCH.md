@@ -331,7 +331,7 @@ the hash is stable.
   dependent modules don't re-check. Same trick as gopls;
   ~30% of edits are private-only.
 
-- **Re-using the same type-checker for `lang build` and
+- **Re-using the same type-checker for `fern build` and
   the LSP.** Already true — both go through
   `internal/checker`. Stay there. Resist the urge to
   fork a "fast IDE checker."
@@ -436,14 +436,14 @@ mid-typing.
 
 - **Use tree-sitter as a *syntax-highlighter* feed.**
   Tangential: tree-sitter grammars exist for editor
-  highlighting; writing one for lang would give us
+  highlighting; writing one for Fern would give us
   GitHub syntax highlighting, Neovim treesitter support,
   etc., for free. Doesn't change the LSP architecture
   but is high-value-for-low-cost.
 
 **Considered, left:**
 
-- *tree-sitter as the LSP's parser.* Wrong shape; the lang
+- *tree-sitter as the LSP's parser.* Wrong shape; the Fern
   parser is in Go alongside the rest of the compiler, and
   tree-sitter is C with bindings. Two parsers = two
   things to keep in sync.
@@ -484,7 +484,7 @@ Carbon's argument: salsa is necessary if the checker is slow.
 If the checker is sub-millisecond per kLOC, just re-run it
 on every edit. Less infrastructure, simpler code.
 
-**Whether this works for lang:** depends on
+**Whether this works for Fern:** depends on
 `PERFORMANCE-RESEARCH.md ▸ Rec §1 SSA`. After SSA + the
 other passes, the checker (which doesn't depend on SSA, but
 benefits from clean IR layering) should hit < 5 ms / kLOC.

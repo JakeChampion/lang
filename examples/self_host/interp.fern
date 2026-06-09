@@ -2,8 +2,8 @@
 // self-host port. Imports lexer + parser and evaluates the
 // Stmt[] tree directly, producing a runtime value rather than a
 // static type or compiled artifact. Completes the
-// lexer → parser → interpreter vertical slice in lang —
-// the lang-port pipeline can now actually run lang code, end to
+// lexer → parser → interpreter vertical slice in Fern —
+// the Fern-port pipeline can now actually run Fern code, end to
 // end, from a thin self-validating driver.
 //
 // Scope (matches the parser's): i32 / bool / string runtime
@@ -530,7 +530,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 },
                 VString(s) => {
                     // String indexing returns the byte at the
-                    // given position as i32 — matches the lang
+                    // given position as i32 — matches the Fern
                     // semantics in the Go pipeline. Useful for
                     // any text-processing code (the lexer's
                     // own implementation reads bytes this way).

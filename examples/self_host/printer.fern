@@ -22,7 +22,7 @@ import "./parser";
 
 // quote_string wraps a string value in `"`-delimited form, with
 // the same escape set scan_string in the lexer recognises (so
-// the result re-parses). The lang strings here don't carry the
+// the result re-parses). The Fern strings here don't carry the
 // surrounding `"`s — they store decoded bytes — so we re-encode
 // on emit.
 function quote_string(s: string): string {

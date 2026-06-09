@@ -979,7 +979,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             match (at) {
                 TypeArray(ta) => { return ta.elem; },
                 // String indexing returns the byte as i32 — same
-                // semantics as the production lang pipeline.
+                // semantics as the production Fern pipeline.
                 TypeString(_) => { return t_i32(); },
                 _ => { return t_unknown("can only index into an array or string"); }
             }

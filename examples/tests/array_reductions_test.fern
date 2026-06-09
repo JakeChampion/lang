@@ -7,7 +7,7 @@ import "std/test";
 //
 // The i32[] receiver-method family (`arr.sum()` /
 // `arr.max()` / `arr.min()` / `arr.avg()`) doesn't extend
-// to i64 / u32 / u64 / f64 today because lang's
+// to i64 / u32 / u64 / f64 today because Fern's
 // array-method dispatch keys on the method name only — it
 // can't be overloaded by element type. The free functions
 // here fill the gap until a generic-monomorphisation pass

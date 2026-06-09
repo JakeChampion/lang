@@ -223,7 +223,7 @@ the shape the project plans to migrate to once the compiler is
 self-hosted and Go-side `*_test.go` files retire. With the
 auto-prelude gone (Phase 5), test programs `import "std/test";`
 and call its functions qualified (`test.test_new`,
-`test.assert_eq_i32`, `test.fail`, …) with the runner type
+`test.assert_eq`, `test.fail`, …) with the runner type
 written `test.TestRunner`; receiver methods (`.it`, `.finish`)
 stay bare. Output is
 TAP-13. Examples under `examples/tests/` (`arithmetic_test.fern`,

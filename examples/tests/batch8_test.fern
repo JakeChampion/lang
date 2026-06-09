@@ -14,7 +14,7 @@ import "std/test";
 
 function test_argv_basic(): Option[string] {
     // args()[0] is conventionally the program path; subsequent
-    // entries come from `-- ...` on the lang command line. We
+    // entries come from `-- ...` on the Fern command line. We
     // can't pin a specific argv shape here (this file is
     // invoked from CI via `fern -interp FILE`), so just check
     // the call doesn't crash and returns a string array.

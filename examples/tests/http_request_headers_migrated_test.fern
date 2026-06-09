@@ -3,7 +3,7 @@ import "std/test";
 import "std/http";
 
 // examples/tests/http_request_headers_migrated_test.fern —
-// Lang port of `TestInterpScriptHttpRequestHeaders` from
+// Fern port of `TestInterpScriptHttpRequestHeaders` from
 // `internal/e2e/interp_script_test.go`. Pins the
 // HeaderMap → HttpRequest wiring
 // (docs/STDLIB-DESIGN-RESEARCH.md Rec §2):
@@ -13,7 +13,7 @@ import "std/http";
 //
 // The Go original spawned three `fern -interp`
 // subprocesses, each running an inline parse-and-print
-// program. The migrated form folds them into one Lang
+// program. The migrated form folds them into one Fern
 // file with assertions on the parsed shape directly —
 // no subprocess, no print-then-grep.
 

@@ -1,6 +1,6 @@
 # Test runner migration audit
 
-The pure-Lang test runner (`internal/stdlib/std/test.fern`,
+The pure-Fern test runner (`internal/stdlib/std/test.fern`,
 TAP-13) was built so the project's regression suite can
 eventually run without a Go dependency — landing point
 for the compiler self-host effort. This doc inventories
@@ -8,40 +8,40 @@ every `*_test.go` in the repo and classifies each by
 **what blocks migration today**.
 
 The runner side is essentially feature-complete: every
-assertion shape the Go suite uses has a Lang equivalent,
+assertion shape the Go suite uses has a Fern equivalent,
 plus `--filter` / `--fail-fast` / `--quiet` CLI flags,
 fuzz harness, bench harness, subsuites + skip + merge,
 golden files, file/timing/JSON assertion families,
 Option/Result helpers, and so on.
-What's left is **which Go tests can flip to Lang now**
+What's left is **which Go tests can flip to Fern now**
 vs **which need other work first**.
 
 ## Summary
 
 | Category                                  | Files | Status                                                                                            |
 | ----------------------------------------- | ----: | ------------------------------------------------------------------------------------------------- |
-| **A) Partially migrated (PoC campaign)**  |     1 | `interp_script_test.go` — 5 of its 10 cases now have side-by-side Lang versions; rest unmigratable |
+| **A) Partially migrated (PoC campaign)**  |     1 | `interp_script_test.go` — 5 of its 10 cases now have side-by-side Fern versions; rest unmigratable |
 | **B) Subprocess-shape, low migration ROI** |     1 | `check_test.go` — could flip via `subprocess(...)` but stays subprocess-shaped                    |
-| **C) Cross-backend orchestration**        |     7 | Inherently spawn N backends per case. Need a Lang-driven multi-backend runner first (see below)   |
-| **D) Self-host Lang programs**            |    13 | The `.fern` file IS the test; Go side is a cross-backend gate. Same blocker as C.                 |
+| **C) Cross-backend orchestration**        |     7 | Inherently spawn N backends per case. Need a Fern-driven multi-backend runner first (see below)   |
+| **D) Self-host Fern programs**            |    13 | The `.fern` file IS the test; Go side is a cross-backend gate. Same blocker as C.                 |
 | **E) Compiler-internal Go API tests**     |    39 | Call Go-side parser / checker / IR / codegen directly. Gated on **self-hosting the compiler**.    |
-| **F) LSP + wasm-binary infrastructure**   |    22 | Test Go service code that has no Lang counterpart (LSP, raw wasm encoding). Likely stay Go.       |
+| **F) LSP + wasm-binary infrastructure**   |    22 | Test Go service code that has no Fern counterpart (LSP, raw wasm encoding). Likely stay Go.       |
 | **G) Test-runner gate itself**            |     1 | `internal/e2e/test_runner_test.go` — collapses to a shell wrapper post-self-host.                 |
 |                                           |       |                                                                                                   |
 | **Total**                                 |    84 |                                                                                                   |
 
 Roughly: ~1% (case-level: ~5 cases) actively migrated /
-in-progress; ~24% (C + D, 20 files) gated on a Lang-driven
+in-progress; ~24% (C + D, 20 files) gated on a Fern-driven
 multi-backend runner; ~46% (39 files) gated on compiler
 self-hosting; ~26% (22 files) likely stays Go forever.
 
 ## A) Already migrated
 
-Lang versions live in `examples/tests/*_migrated_test.fern`
+Fern versions live in `examples/tests/*_migrated_test.fern`
 with `TestRunner*MigratedExample` gates. Originals stay
 live until the wider campaign cuts over.
 
-| Lang file                                  | Original                                                                                                              |
+| Fern file                                  | Original                                                                                                              |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
 | `string_prelude_migrated_test.fern`        | `TestInterpScriptStringPrelude` ([#874](https://github.com/JakeChampion/lang/pull/874))                               |
 | `unions_migrated_test.fern`                | `TestInterpScriptUnions` ([#878](https://github.com/JakeChampion/lang/pull/878))                                      |
@@ -58,26 +58,26 @@ the PoC campaign:
   `TestInterpScriptReadAllStdin` — test the
   `fern -interp` binary's source-loading mechanics
   (file path vs stdin vs piped stdin). **NOT
-  migratable**: the Lang version would still need to
+  migratable**: the Fern version would still need to
   drive the binary as a subprocess to test how it
   consumes its input.
 - `TestInterpScriptInteropIntToStringViaMangling` —
   four subcases each in an isolated process to exercise
   different `import` shapes against the modload
   mangling bug. **NOT migratable**: collapsing into one
-  Lang file would defeat the per-subcase isolation.
+  Fern file would defeat the per-subcase isolation.
 - `TestInterpScriptMissingMain` — tests the error path
   of `fern -interp` itself. **NOT migratable** for the
   same reason as the file/stdin tests.
 
 That essentially **exhausts the easy-migration pool**
 inside `interp_script_test.go`. The shape that migrated
-cleanly — inline Lang source + check exit/stdout —
+cleanly — inline Fern source + check exit/stdout —
 appears nowhere else in the repo as of writing.
 
 The `check_test.go` family (6 functions exercising
 `fern -check` exit codes + diagnostic text) **technically
-could** flip to Lang via `subprocess(...)`, but the
+could** flip to Fern via `subprocess(...)`, but the
 migrated version stays subprocess-shaped — there's no
 ergonomic win.
 
@@ -85,7 +85,7 @@ ergonomic win.
 
 Each case compiles a single source through every
 available backend (arm64 / x86_64 / wasm) and asserts
-they agree on the result. The Lang version of this
+they agree on the result. The Fern version of this
 shape would still need to invoke multiple compiler
 backends from one test driver.
 
@@ -98,19 +98,19 @@ backends from one test driver.
 - `internal/e2e/wasm_e2e_test.go`
 - `internal/e2e/wasm_preview2_test.go`
 
-**Unblock:** add a Lang-driven multi-backend runner — a
-helper that takes a Lang source string and a list of
-backends, invokes `lang` once per backend (or `wasmtime`
+**Unblock:** add a Fern-driven multi-backend runner — a
+helper that takes a Fern source string and a list of
+backends, invokes `fern` once per backend (or `wasmtime`
 for the wasm path), and returns the {exit, stdout}
 tuple per backend. Once that lives in `std/test` (or
 its own module), every case in this category becomes
 `assert_all_backends_match(src, expected_exit)`-shaped.
 
-## D) Self-host Lang programs
+## D) Self-host Fern programs
 
 The `examples/self_host/*.fern` files are the Go
 compiler stages (lexer, parser, checker, IR passes,
-codegen) re-implemented in Lang. The Go tests for
+codegen) re-implemented in Fern. The Go tests for
 those (`self_host_*_test.go`) are **cross-backend
 gates** — same `.fern` file compiled by N backends,
 expected to exit 0.
@@ -134,8 +134,8 @@ contain in-program assertions and return non-zero on
 failure. The Go gates only multiplex them across
 backends.
 
-**Unblock:** same as C — once a Lang-driven multi-
-backend runner exists, these become trivial Lang
+**Unblock:** same as C — once a Fern-driven multi-
+backend runner exists, these become trivial Fern
 `r.it("lexer (arm64)", run_backend("arm64", lexer_src))`
 calls.
 
@@ -143,7 +143,7 @@ calls.
 
 Build Go AST values, call Go checker functions, inspect
 Go IR opcodes, etc. The Go tests poke at internals
-that aren't reachable from Lang because the compiler is
+that aren't reachable from Fern because the compiler is
 in Go.
 
 Parser / checker / type system:
@@ -203,8 +203,8 @@ Stdlib + utility:
 
 **Unblock:** **the compiler being self-hosted.** Once
 the parser / checker / IR / codegen are themselves
-written in Lang and exposed as `std/compiler/...`
-modules, these tests can call those modules from Lang
+written in Fern and exposed as `std/compiler/...`
+modules, these tests can call those modules from Fern
 and assert on the results. Tracked separately (the
 other Claude session's mandate).
 
@@ -214,7 +214,7 @@ preserve the introspection these tests rely on.
 
 ## F) LSP + wasm-binary infrastructure
 
-Service-level tests for code that has no Lang
+Service-level tests for code that has no Fern
 counterpart and probably never will:
 
 LSP server (Go-only — the LSP runs as a Go binary
@@ -234,7 +234,7 @@ talking JSON-RPC):
 - `internal/lsp/workspace_test.go`
 
 Wasm binary encoding (Go-side byte-level emitter — the
-compiler invokes this from Go, not from Lang):
+compiler invokes this from Go, not from Fern):
 
 - `internal/wasm/componenttype/componenttype_test.go`
 - `internal/wasm/convert/convert_test.go`
@@ -249,14 +249,14 @@ compiler invokes this from Go, not from Lang):
 
 **Unblock:** none planned. These stay Go even after
 self-hosting unless the LSP / wasm-emitter themselves
-get rewritten in Lang, which isn't a stated goal.
+get rewritten in Fern, which isn't a stated goal.
 
 ## G) Test-runner gate itself
 
 `internal/e2e/test_runner_test.go` — the file that
-runs every `examples/tests/*.fern` through `lang
+runs every `examples/tests/*.fern` through `Fern
 -interp` and pins TAP outputs. **Collapses to a shell
-wrapper post-self-host** (`lang test_dir/*.fern` would
+wrapper post-self-host** (`fern test_dir/*.fern` would
 just be the test command).
 
 Right now it's the most useful Go test in the repo
@@ -271,7 +271,7 @@ hardest:
 
 1. **D) Self-host programs** (12 files). All
    structurally identical — same `compileAndRunBackend`
-   pattern. A Lang-driven multi-backend runner unlocks
+   pattern. A Fern-driven multi-backend runner unlocks
    the whole set in one stroke; each migrated file is
    a 3–5-line `r.it("stage (backend)", ...)` per
    backend.
@@ -291,7 +291,7 @@ hardest:
 
 ## What the runner gives you today
 
-For reference, the Lang assertion surface that's
+For reference, the Fern assertion surface that's
 already in place — every entry has a Go-suite
 analogue and the migration playbook in
 `examples/tests/string_prelude_migrated_test.fern`

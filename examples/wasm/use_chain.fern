@@ -16,10 +16,11 @@
 // call (or fully inlined when the body fits) with no
 // call_indirect at all.
 //
-// Note on `use`: the lang's closure capture today is
-// scalar-only (i32 / i64 / floats / bool — no arrays /
-// strings / structs), so `use` chains across array values
-// don't work yet. The chain here threads scalars only.
+// Note on `use`: closures capture outer-scope variables by
+// value on every backend — scalars and pointer-shaped values
+// (arrays / strings / structs) alike — though a reference-typed
+// capture is read-only inside the closure. The chain here
+// threads scalars, which the factory pattern returns directly.
 //
 //   $ wasmtime use_chain.wasm
 //   triple-doubled then plus two: 10

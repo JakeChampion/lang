@@ -4,7 +4,7 @@ import "std/test";
 // receiver methods from std/string via the test runner.
 //
 // This is the shape unit tests for a stdlib module will take
-// once the Lang test runner replaces the Go-side `*_test.go`
+// once the Fern test runner replaces the Go-side `*_test.go`
 // harness: per-module test file, explicit list of cases in
 // main(), single TAP-13 stream on stdout.
 

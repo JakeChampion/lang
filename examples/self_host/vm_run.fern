@@ -1,5 +1,5 @@
 // examples/self_host/vm_run.fern — stdin-driven driver for
-// vm.fern's bytecode evaluator. Reads lang source from stdin,
+// vm.fern's bytecode evaluator. Reads Fern source from stdin,
 // runs lexer + parser + vm.compile_program + vm.exec_program,
 // and exits with the program's VInt return value (or 254 if
 // the program failed / returned non-i32). Companion to
