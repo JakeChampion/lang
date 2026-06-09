@@ -5111,7 +5111,16 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (is_map_expr(fa.obj, cx)) {
                         var mrecv: string = emit_expr(fa.obj, cx, depth);
                         if ((fa.field == "insert") && c.args.len() == 2) {
-                            return "(call $__fern_map_set " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + " " + emit_expr(c.args[1], cx, depth + 1) + ")";
+                            // vis (value-is-string) is determined statically from
+                            // the value expr's type so $__fern_map_set can
+                            // construction-inc a string value on insert and
+                            // $__fern_map_release can release it on the map's
+                            // death (mirrors kis for keys + native
+                            // __drop_map_str_values). A map's value type is
+                            // homogeneous, so the per-insert flag is stable.
+                            var visf: string = "(i32.const 0)";
+                            if (is_string_expr(c.args[1], cx)) { visf = "(i32.const 1)"; }
+                            return "(call $__fern_map_set " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + " " + emit_expr(c.args[1], cx, depth + 1) + " " + visf + ")";
                         }
                         if (fa.field == "get" && c.args.len() == 1) {
                             return "(call $__fern_map_get " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + ")";
@@ -6721,16 +6730,18 @@ function map_helpers(): string {
     // $__fern_map_new_str(hint) → empty string-keyed box (kis=1 @ +20).
     o = o + "  (func $__fern_map_new_str (param $hint i32) (result i32)\n";
     o = o + "    (return (call $__fern_map_new_k (local.get $hint) (i32.const 1))))\n";
-    // The box is 28 bytes: [count@0][cap@4][keys@8][vals@12][used@16]
-    // [kis@20][tombs@24]; `used[i]` is 0 = empty, 1 = occupied, 2 =
-    // tombstone (a deleted slot the probe must skip past).
+    // The box is 32 bytes: [count@0][cap@4][keys@8][vals@12][used@16]
+    // [kis@20][tombs@24][vis@28]; `used[i]` is 0 = empty, 1 = occupied, 2 =
+    // tombstone (a deleted slot the probe must skip past). vis (value-is-
+    // string) mirrors kis: set by $__fern_map_set when a string value is
+    // inserted, read by $__fern_map_release to release the values.
     o = o + "  (func $__fern_map_new_k (param $hint i32) (param $kis i32) (result i32)\n";
     o = o + "    (local $box i32) (local $zi i32)\n";
     // The map box is rc-headered via $__fern_str_box (returns base+8, so every
     // box-relative field [box+N] is unchanged) so a map local can be counted
-    // and freed; the 28-byte payload holds [count@0][cap@4][keys@8][vals@12]
-    // [used@16][kis@20][tombs@24].
-    o = o + "    (local.set $box (call $__fern_str_box (i32.const 28)))\n";
+    // and freed; the 32-byte payload holds [count@0][cap@4][keys@8][vals@12]
+    // [used@16][kis@20][tombs@24][vis@28].
+    o = o + "    (local.set $box (call $__fern_str_box (i32.const 32)))\n";
     o = o + "    (i32.store (local.get $box) (i32.const 0))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (i32.const 8))\n";
     // keys/vals/used are rc-boxed via $__fern_str_box (flat: data ptr at
@@ -6752,6 +6763,10 @@ function map_helpers(): string {
     o = o + "      (br $zl)))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 20)) (local.get $kis))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 24)) (i32.const 0))\n";
+    // vis starts 0 (no string value seen yet); $__fern_map_set sets it on the
+    // first string-value insert. A freelist-recycled box carries stale bytes,
+    // so the explicit zero matters.
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 28)) (i32.const 0))\n";
     o = o + "    (local.get $box))\n";
     // $__fern_map_grow(box): double the capacity and rehash live entries.
     o = o + "  (func $__fern_map_grow (param $box i32)\n";
@@ -6804,8 +6819,11 @@ function map_helpers(): string {
     o = o + "    (drop (call $__fern_arr_dec (local.get $ov)))\n";
     o = o + "    (drop (call $__fern_arr_dec (local.get $ou))))\n";
     // $__fern_map_set(box, k, v) → box. Grows at load factor 3/4.
-    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (result i32)\n";
+    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (param $vis i32) (result i32)\n";
     o = o + "    (local $cap i32) (local $keys i32) (local $vals i32) (local $used i32) (local $idx i32) (local $kis i32) (local $ff i32) (local $u i32) (local $slot i32)\n";
+    // Record value-is-string on the box (homogeneous value type, so always the
+    // same flag) so $__fern_map_release knows to release the value column.
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 28)) (local.get $vis))\n";
     // Grow when (live + tombstones + 1) crosses load factor 3/4, so a run
     // of delete+insert can't fill the table with tombstones and loop.
     o = o + "    (if (i32.gt_s (i32.mul (i32.add (i32.add (i32.load (local.get $box)) (i32.load (i32.add (local.get $box) (i32.const 24)))) (i32.const 1)) (i32.const 4)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 3))) (then\n";
@@ -6831,6 +6849,11 @@ function map_helpers(): string {
     // word read from input — now reclaims.) i32 keys (kis 0) carry no rc.
     o = o + "        (if (local.get $kis) (then (drop (call $__fern_rc_inc (local.get $k)))))\n";
     o = o + "        (i32.store (i32.add (local.get $vals) (i32.mul (local.get $slot) (i32.const 4))) (local.get $v))\n";
+    // Perceus map value construction-inc: a NEW string-valued entry retains its
+    // value (the map co-owns it alongside the source) so $__fern_map_release
+    // can release it on the map's death; the source local's own sweep balances
+    // it. A guard no-op for an immortal literal; i32 values (vis 0) carry no rc.
+    o = o + "        (if (local.get $vis) (then (drop (call $__fern_rc_inc (local.get $v)))))\n";
     o = o + "        (i32.store (i32.add (local.get $used) (i32.mul (local.get $slot) (i32.const 4))) (i32.const 1))\n";
     o = o + "        (i32.store (local.get $box) (i32.add (i32.load (local.get $box)) (i32.const 1)))\n";
     o = o + "        (if (i32.ge_s (local.get $ff) (i32.const 0)) (then\n";
@@ -6838,6 +6861,12 @@ function map_helpers(): string {
     o = o + "        (br $d)))\n";
     o = o + "      (if (i32.eq (local.get $u) (i32.const 1)) (then\n";
     o = o + "        (if (call $__fern_map_keq (i32.load (i32.add (local.get $keys) (i32.mul (local.get $idx) (i32.const 4)))) (local.get $k) (local.get $kis)) (then\n";
+    // Overwrite: the slot already co-owns the OLD string value — release it
+    // before storing, then construction-inc the NEW one, so the net rc is
+    // balanced (no leak of the replaced value, no over-release of the new).
+    o = o + "          (if (local.get $vis) (then\n";
+    o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))))))\n";
+    o = o + "            (drop (call $__fern_rc_inc (local.get $v)))))\n";
     o = o + "          (i32.store (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))) (local.get $v))\n";
     o = o + "          (br $d)))))\n";
     // Remember the first tombstone so we can reclaim it once the chain ends.
@@ -6925,14 +6954,14 @@ function map_helpers(): string {
     // $__fern_map_release(box) -> box: Perceus map free. When `box` is the LAST
     // owner ([box-8]==1, about to free) release its three structural arrays —
     // keys ([box+8]), vals ([box+12]), used ([box+16]) — FLAT via the shared
-    // $__fern_arr_dec, then free the box itself. One level: the string KEYS /
-    // VALUES held in the keys/vals arrays are NOT released (a sound leak — they
-    // aren't construction-inc'd into the map, so dec'ing them would double-free
-    // the source locals; closing that needs map_set key/value retains). Guarded
-    // like $__fern_arr_dec (null / low-bit / low-addr); an aliased map (rc>1)
-    // just decrements the box, its arrays untouched.
+    // $__fern_arr_dec, then free the box itself. The string KEYS (kis@+20) and
+    // VALUES (vis@+28) held in those arrays are construction-inc'd by
+    // $__fern_map_set, so each occupied slot's key / value is released here
+    // (balancing the inc) before the buffer is freed. Guarded like
+    // $__fern_arr_dec (null / low-bit / low-addr); an aliased map (rc>1) just
+    // decrements the box, its arrays untouched.
     o = o + "  (func $__fern_map_release (param $box i32) (result i32)\n";
-    o = o + "    (local $i i32) (local $cap i32) (local $keys i32) (local $used i32)\n";
+    o = o + "    (local $i i32) (local $cap i32) (local $keys i32) (local $used i32) (local $vals i32)\n";
     o = o + "    (if (i32.eqz (local.get $box)) (then (return (local.get $box))))\n";
     o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $box) (i32.const 8))) (i32.const 1)) (then\n";
     // String-keyed map (kis@[box+20]==1): release each occupied slot's key
@@ -6948,6 +6977,20 @@ function map_helpers(): string {
     o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $keys) (i32.mul (local.get $i) (i32.const 4))))))))\n";
     o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "          (br $mkl))))) \n";
+    // String-valued map (vis@[box+28]==1): release each occupied slot's value
+    // (construction-inc'd on insert) before freeing the vals buffer. Mirrors
+    // the key loop + native __drop_map_str_values.
+    o = o + "      (if (i32.load (i32.add (local.get $box) (i32.const 28))) (then\n";
+    o = o + "        (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
+    o = o + "        (local.set $vals (i32.load (i32.add (local.get $box) (i32.const 12))))\n";
+    o = o + "        (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
+    o = o + "        (local.set $i (i32.const 0))\n";
+    o = o + "        (block $mvd (loop $mvl\n";
+    o = o + "          (br_if $mvd (i32.ge_u (local.get $i) (local.get $cap)))\n";
+    o = o + "          (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
+    o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $i) (i32.const 4))))))))\n";
+    o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "          (br $mvl))))) \n";
     o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 8)))))\n";
     o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 12)))))\n";
     o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 16)))))))\n";

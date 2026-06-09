@@ -1803,3 +1803,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   map-literal-key-clean, map-heap-key-churn (50k heap-keyed maps, keys reclaimed,
   no OOM, detector 0). Full map + RC + component + binary + shim + interp + cli
   wasm suites green; bootstrap-safe.
+- 2026-06-09: **wasm map RC — string VALUE release (native
+  __drop_map_str_values).** Symmetric to the key slice: a string-valued map's
+  heap values are now reclaimed on the map's death. The map box grows to 32
+  bytes with a `vis` (value-is-string) flag at `+28`, mirroring `kis@+20`. The
+  `.insert(k, v)` call site decides `vis` statically from the value expr's type
+  (`is_string_expr`) — a map's value type is homogeneous, so the per-insert flag
+  is stable — and passes it as a 4th `$__fern_map_set` argument. `map_set`
+  records `vis` on the box and, when set, construction-incs the value on a NEW
+  insert AND, on an OVERWRITE of an existing key, releases the OLD value before
+  storing + incs the new (so a replaced value doesn't leak and the new isn't
+  over-released). `$__fern_map_release`, when the map is the last owner and
+  vis==1, loops the occupied slots releasing each value via `$__fern_arr_dec`
+  before freeing the vals buffer — balancing the insert inc against the source
+  local's own sweep (get_or results are borrows, excluded from str-sweep by
+  `init_is_owned_string`, so no double-dec). `map_new_k` zeroes `vis@28` (a
+  freelist-recycled box carries stale bytes); the grow rehash copies value
+  pointers unchanged, so value rc is stable across resize. Works for every
+  K/V combo (i32-keyed/string-valued via `map_new_i32`, string-keyed/string-
+  valued via `map_new` — both kis + vis release independently). Coverage:
+  `TestSelfHostRcMapGrowWasm` gains map-str-value-released, map-str-value-
+  literal-clean, map-str-value-overwrite, map-str-key-and-value, and map-str-
+  value-churn (50k heap-valued maps, values reclaimed each cycle, no OOM,
+  detector 0). Full map + RC suites + bootstrap fixpoint + binary + component
+  wasm suites green; bootstrap-safe. Remaining toward exact native parity:
+  array-of-tuple deep release, closure-env capture release.
