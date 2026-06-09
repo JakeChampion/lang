@@ -1747,3 +1747,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   through the variant dispatch safely; bootstrap-safe. Remaining toward full
   native parity: tuple drop fns, array-of-enum / array-of-tuple deep release,
   map string keys/values, closure-env capture release.
+- 2026-06-09: **wasm transitive reclamation — Stage D: array-of-enum
+  deep-release ($__fern_arr_release_<Enum>).** For each user enum E,
+  `struct_enum_drop_helpers` now also generates `$__fern_arr_release_<E>(a)`: per
+  element call the enum's DISPATCHING release fn `$__fern_release_<E>` (so each
+  element's variant payload reclaims), then free the buffer. Routing:
+  `struct_release_field_inner` sends an enum-element array field (`E[]`) there,
+  and `arr_exit_sweep_excl` sends an enum-element array LOCAL (sa_types is an
+  enum) there. This drives the deepest part of the compiler's own AST — the
+  `Stmt[]` / `Expr[]` arrays (Expr is an enum) — which previously freed only one
+  level (the variant boxes, leaking their payloads). Now a `Expr[]` of
+  `ExprBinary { left: Expr, right: Expr }` reclaims the whole subtree.
+  Coverage: `TestSelfHostRcDeepNestWasm` gains arr-of-enum-released and
+  arr-of-enum-churn (50k arrays-of-enums-with-string-payloads, every element
+  payload reclaimed, no OOM, detector 0). Full RC + component + binary + shim +
+  interp + cli wasm suites green — the compiler's own Stmt[]/Expr[] route
+  through the deep enum-array release safely; bootstrap-safe. With Stages A–D
+  the four composite carriers (nested struct fields, arrays-of-structs, enum
+  variant payloads, arrays-of-enums) all reclaim transitively to arbitrary
+  depth — the struct/enum/array AST is fully deep-freed. Remaining toward exact
+  native parity: tuple drop fns + array-of-tuple, map string keys/values,
+  closure-env capture release.

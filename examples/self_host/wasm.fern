@@ -963,7 +963,7 @@ function struct_release_field_inner(pe: string, sty: string, cx: Ctx): string {
             // (Stage B, $__fern_arr_release_<Elem>); a string-element (or other
             // pointer) array frees one level (arr_dec_ptr); a scalar array flat.
             var elem: string = ft[0:ft.len() - 2];
-            if (is_struct_type(cx.structs, elem)) {
+            if (is_struct_type(cx.structs, elem) || (is_enum_type_name(cx, elem) && elem != "Option" && elem != "Result")) {
                 inner = inner + " (drop (call $__fern_arr_release_" + elem + " " + load + "))";
             } else if (array_field_elem_is_ptr(ft, cx)) {
                 inner = inner + " (drop (call $__fern_arr_dec_ptr " + load + "))";
@@ -1038,6 +1038,21 @@ function struct_enum_drop_helpers(mod: parser.Module, cx: Ctx): string {
                 vi = vi + 1;
             }
             o = o + "    (call $__fern_arr_dec (local.get $p)))\n";
+            // Stage D — array-of-enum deep release: per element call the enum's
+            // (dispatching) release fn so each variant's payload reclaims, then
+            // free the buffer. Drives the AST's Stmt[] / Expr[] etc.
+            o = o + "  (func $__fern_arr_release_" + en + " (param $a i32) (result i32)\n";
+            o = o + "    (local $i i32) (local $n i32)\n";
+            o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
+            o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
+            o = o + "      (local.set $n (i32.load (local.get $a)))\n";
+            o = o + "      (local.set $i (i32.const 0))\n";
+            o = o + "      (block $erd (loop $erl\n";
+            o = o + "        (br_if $erd (i32.ge_u (local.get $i) (local.get $n)))\n";
+            o = o + "        (drop (call $__fern_release_" + en + " (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
+            o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+            o = o + "        (br $erl)))))\n";
+            o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
         }
         e = e + 1;
     }
@@ -1384,7 +1399,7 @@ function arr_exit_sweep_excl(cx: Ctx, excl: string): string {
             // its strings one level (arr_dec_ptr); a scalar array (or
             // array-of-array / array-of-tuple, still one-level-flat) frees flat.
             var sat: string = lookup_pair(cx.sa_names, cx.sa_types, name);
-            if (sat.len() > 0 && is_struct_type(cx.structs, sat)) {
+            if (sat.len() > 0 && (is_struct_type(cx.structs, sat) || (is_enum_type_name(cx, sat) && sat != "Option" && sat != "Result"))) {
                 o = o + "    (drop (call $__fern_arr_release_" + sat + " (local.get $" + name + ")))\n";
             } else if (contains_str(cx.str_arrays, name) || contains_str(cx.sa_names, name)) {
                 o = o + "    (drop (call $__fern_arr_dec_ptr (local.get $" + name + ")))\n";
