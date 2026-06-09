@@ -158,6 +158,19 @@ func TestPutTypeSectionOneFuncResultIdx_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutTypeSectionOneFuncGeneral_Bytes pins a functype with a mix of a list
+// (defined-type index 0) param and a scalar result — the P6 composite param/
+// result export encoding. Body = vec(1) | functype | vec(1) param "xs" sleb(0)
+// | single-anon | s32 result.
+func TestPutTypeSectionOneFuncGeneral_Bytes(t *testing.T) {
+	got := component.PutTypeSectionOneFuncGeneral(nil,
+		[]string{"xs"}, [][]byte{{0x00}}, []byte{component.CValtypeS32})
+	want := []byte{0x07, 0x09, 0x01, 0x40, 0x01, 0x02, 'x', 's', 0x00, 0x00, 0x7a}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutTypeSectionOneFuncGeneral(xs:#0 -> s32) = % x, want % x", got, want)
+	}
+}
+
 // TestPutCanonSectionLiftWithMemoryRealloc_Bytes pins the lift-with-memory+realloc
 // entry (string/list PARAM exports): opts vec(2) = memory + realloc, then typeidx.
 func TestPutCanonSectionLiftWithMemoryRealloc_Bytes(t *testing.T) {

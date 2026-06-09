@@ -2740,6 +2740,35 @@ func PutTypeSectionOneFuncResultIdx(buf []byte, paramNames []string, paramValtyp
 	return wrapSection(buf, SectionType, body)
 }
 
+// leb128SlebBytes returns the sleb-encoded (s33) bytes of a defined-type index
+// — the valtype form a functype param/result uses to reference a list/record
+// type by index. (≥ 64 needs more than one byte.)
+func leb128SlebBytes(idx uint32) []byte { return leb128.SlebI64(nil, int64(idx)) }
+
+// PutTypeSectionOneFuncGeneral emits a functype where each parameter and the
+// single anonymous result is supplied as pre-encoded valtype bytes — either a
+// primitive's single byte (CValtype*) or the sleb-encoded (s33) index of a
+// defined type emitted earlier (a `list<T>`, record, …). It generalises
+// PutTypeSectionOneFunc (all-prim) and PutTypeSectionOneFuncResultIdx
+// (index result): the P6 composite param/result exports need a mix. The caller
+// emits any referenced defined types first so the indices resolve.
+func PutTypeSectionOneFuncGeneral(buf []byte, paramNames []string, paramVals [][]byte, resultVal []byte) []byte {
+	if len(paramNames) != len(paramVals) {
+		panic("component: paramNames and paramVals must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, 0x40)      // functype form
+	body = leb128.UlebU64(body, uint64(len(paramNames)))
+	for i := range paramNames {
+		body = putName(body, paramNames[i])
+		body = append(body, paramVals[i]...)
+	}
+	body = append(body, 0x00) // resultlist: single anonymous
+	body = append(body, resultVal...)
+	return wrapSection(buf, SectionType, body)
+}
+
 // PutCanonSectionLiftNoOpts emits a canon section with one
 // canon-lift entry (no opts). Mirrors
 // `put_canon_section_lift_no_opts`.

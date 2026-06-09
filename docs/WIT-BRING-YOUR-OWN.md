@@ -1154,6 +1154,27 @@ world-driven composer (P2) wires it.
      checker oracles stay green (the self-host source has no array `@export`, so
      the shared paths are unchanged). **P6 numeric-array result exports are now
      complete in both compilers.**
+   - **Slice 5f — numeric-array (`list<T>`) parameter export from Fern (Go). ✅
+     Done.** The inverse of the list-result export: a Fern reactor
+     `@export sum(xs: i32[]): i32` takes a WIT `list<T>` parameter. The composer
+     lifts it with the realloc lift (`PutCanonSectionLiftWithMemoryRealloc` — the
+     canonical ABI materialises the incoming list in the core memory via
+     `cabi_realloc`, then passes `(ptr,len)`), emitting the `list<elem>` param
+     component type. `liftExport` was generalised to build the functype from
+     per-slot valtype encodings (`PutTypeSectionOneFuncGeneral` — each param /
+     result is a primitive byte *or* a sleb-encoded defined-type index), so a
+     mix of scalar and list params/results encodes correctly; the string/list
+     param + result detection moved to a shared `isStringOrList` helper. The
+     wasmbin wrapper (`buildExportListParamWrapper`) rebuilds the length-prefixed
+     Fern array from each canonical `(ptr,len)` (`alloc 4+len*stride`, store the
+     count, `memory.copy` the elements) and calls the user func with the element
+     pointer — strings forward their `(ptr,len)` directly, scalars pass through.
+     A numeric-array param combined with a composite *result* is rejected for now
+     (a later slice). Byte-pinned by `TestPutTypeSectionOneFuncGeneral_Bytes`;
+     run end-to-end by `TestExportListParamRunsViaConsumer` (a Fern exporter sums
+     an `i32[]`, a Fern consumer `@import`s `sum(xs: list<s32>) -> s32` and gets
+     `100` from `[10,20,30,40]`, linked + run under wasmtime). The self-host port
+     follows next.
    - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`
