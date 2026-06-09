@@ -94,6 +94,10 @@ struct Ctx {
     of_payloads: string[],
     ol_names: string[],
     ol_payloads: string[],
+    // ol_err_payloads: parallel to ol_names/ol_payloads — the Result Err type E
+    // ("" for an Option / non-Result), so a freed Ok-or-Err box releases the
+    // Err payload too when it's rc-tracked.
+    ol_err_payloads: string[],
     mr_types: string[],
     mr_names: string[],
     mr_rets: string[],
@@ -1044,11 +1048,12 @@ function collect_opt_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[
 // payload at [p+4] according to its declared type (string / pointer-array via
 // $__fern_arr_dec_ptr / scalar-array / nested struct one level — a scalar
 // payload like Option<i32> is skipped), THEN free the box via $__fern_arr_dec.
-// `pt` is the Some/Ok payload type (from ol_payloads); the Err payload of a
-// Result (tag 1, untracked type) is a sound leak, like nested fields elsewhere.
-// Null-guarded (a conditionally-unassigned option local is 0). The
-// construction-incs (enum_box_retain's payload retain + the option-into-
-// container retains) pair with these decs so the payload balances.
+// `pt` is the Some/Ok payload type (from ol_payloads); a Result's Err payload
+// type is recovered from ol_err_payloads and released on the tag-1 path (an
+// Option's None is tag 1 with no Err type → skipped). Null-guarded (a
+// conditionally-unassigned option local is 0). The construction-incs
+// (enum_box_retain's payload retain + the option-into-container retains) pair
+// with these decs so the payload balances.
 function emit_option_release(name: string, pt: string, cx: Ctx): string {
     var o: string = "";
     var pk: string = struct_field_kind_char(pt, cx);
@@ -1056,6 +1061,14 @@ function emit_option_release(name: string, pt: string, cx: Ctx): string {
         var dec: string = "$__fern_arr_dec";
         if (pk == "a" && array_field_elem_is_ptr(pt, cx)) { dec = "$__fern_arr_dec_ptr"; }
         o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then (if (i32.eqz (i32.load (local.get $" + name + "))) (then (drop (call " + dec + " (i32.load (i32.add (local.get $" + name + ") (i32.const 4)))))))))))\n";
+    }
+    // Result Err payload (tag 1): release when the Err type is rc-tracked.
+    var et: string = lookup_pair(cx.ol_names, cx.ol_err_payloads, name);
+    var ek: string = struct_field_kind_char(et, cx);
+    if (ek == "a" || ek == "s" || ek == "S") {
+        var edec: string = "$__fern_arr_dec";
+        if (ek == "a" && array_field_elem_is_ptr(et, cx)) { edec = "$__fern_arr_dec_ptr"; }
+        o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then (if (i32.eq (i32.load (local.get $" + name + ")) (i32.const 1)) (then (drop (call " + edec + " (i32.load (i32.add (local.get $" + name + ") (i32.const 4)))))))))))\n";
     }
     o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
     return o;
@@ -3882,6 +3895,25 @@ function method_ret(cx: Ctx, t: string, n: string): string {
 }
 
 // parse_option_payload extracts the Some/Ok payload type from an
+// parse_result_err_payload extracts the Err type E from a `Result[T, E]` type
+// spelling (the part after the first top-level comma), or "" for an Option (no
+// Err arm) or a non-Result type. Used to release a Result's Err payload on free.
+function parse_result_err_payload(t: string): string {
+    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
+        var inner: string = t[7:t.len() - 1];
+        var i: i32 = 0;
+        var depth: i32 = 0;
+        while (i < inner.len()) {
+            var c: i32 = inner[i];
+            if (c == 91) { depth = depth + 1; }
+            else if (c == 93) { depth = depth - 1; }
+            else if (c == 44 && depth == 0) { return trim_str(inner[i + 1:inner.len()]); }
+            i = i + 1;
+        }
+    }
+    return "";
+}
+
 // `Option[T]` / `Result[T, E]` type spelling, or "" otherwise.
 function parse_option_payload(t: string): string {
     if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == 93) {
@@ -8033,7 +8065,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     // type when the declared type is neither struct nor enum.
                     if (!is_struct_type(cx.structs, styp) && !is_enum_type_name(cx, styp)) { styp = struct_type_of(v.init, cx); }
                     if (optpay.len() > 0) {
-                        cx = Ctx { ...cx, ol_names: cx.ol_names.append(v.name), ol_payloads: cx.ol_payloads.append(optpay) };
+                        cx = Ctx { ...cx, ol_names: cx.ol_names.append(v.name), ol_payloads: cx.ol_payloads.append(optpay), ol_err_payloads: cx.ol_err_payloads.append(parse_result_err_payload(v.type_name)) };
                     } else if (is_struct_type(cx.structs, styp) || is_enum_type_name(cx, styp)) {
                         cx = Ctx { ...cx, sv_names: cx.sv_names.append(v.name), sv_types: cx.sv_types.append(styp) };
                     } else if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
@@ -8163,6 +8195,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var sv_types: string[] = [];
     var ol_names: string[] = [];
     var ol_payloads: string[] = [];
+    var ol_err_payloads: string[] = [];
     // i64- / f64-typed params, plus the i64- / f64-declared names in the body.
     var i64_names: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "i64"), "i64", collect_i64_var_names(f.body, []));
     var f64_names: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "f64"), "f64", collect_f64_var_names(f.body, []));
@@ -8200,6 +8233,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         if (pop.len() > 0) {
             ol_names = ol_names.append(f.params[i].name);
             ol_payloads = ol_payloads.append(pop);
+            ol_err_payloads = ol_err_payloads.append(parse_result_err_payload(f.params[i].type_name));
         } else if (is_str_array_type(f.params[i].type_name)) {
             str_arrays = str_arrays.append(f.params[i].name);
         } else if (is_struct_type(structs, util.base_type_name(f.params[i].type_name))) {
@@ -8243,7 +8277,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cx: Ctx = Ctx {
         tab: tab, locals: locals, funcs: funcs, str_arrays: str_arrays, str_arr_funcs: str_arr_funcs,
         structs: structs, sv_names: sv_names, sv_types: sv_types, sf_names: sf_names, sf_types: sf_types,
-        of_names: of_names, of_payloads: of_payloads, ol_names: ol_names, ol_payloads: ol_payloads,
+        of_names: of_names, of_payloads: of_payloads, ol_names: ol_names, ol_payloads: ol_payloads, ol_err_payloads: ol_err_payloads,
         mr_types: mr_types, mr_names: mr_names, mr_rets: mr_rets,
         i64_names: i64_names, i64_funcs: i64_funcs,
         ret_i64: f.ret_type == "i64", mod_funcs: mod_funcs,
