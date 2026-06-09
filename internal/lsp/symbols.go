@@ -30,9 +30,9 @@ const (
 
 // runDocumentSymbols emits a flat (single-level) outline of every
 // user-authored top-level declaration in state.prog. Synthetic
-// stdlib + prelude entries (which carry SourceModule pointing at
+// stdlib entries (which carry SourceModule pointing at
 // `stdlib://…`) are filtered out so the outline matches what the
-// user typed, not the auto-prelude noise.
+// user typed, not the stdlib noise.
 func runDocumentSymbols(state *docState, uri string) []documentSymbol {
 	if state == nil || state.prog == nil {
 		return []documentSymbol{}

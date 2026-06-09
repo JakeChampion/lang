@@ -73,16 +73,15 @@ type Info struct {
 	// universally visible — that's the case for synthetic methods
 	// the checker registers itself (Reader / Writer / Map /
 	// MapIter, the inline-IR `Array.push`, and the built-in string
-	// methods) plus anything sourced from the auto-injected magic
-	// prelude.
+	// methods).
 	//
 	// The dispatch path filters method resolutions against the
 	// call site's enclosing module + the program's `ModuleImports`
 	// closure so that methods declared in a module are only callable
 	// from files whose import closure reaches that module
 	// (`docs/PRELUDE-TO-MODULES.md`). Empty entries on either side
-	// skip the filter (transitional accommodation for prelude-
-	// injected decls and single-file programs).
+	// skip the filter (accommodation for checker-synthesised decls
+	// and single-file programs).
 	MethodSources map[string]string
 	// ModuleImports mirrors `ast.Program.ModuleImports` — the per-
 	// module transitive import closure modload computes during
@@ -612,7 +611,7 @@ func Check(prog *ast.Program) (*Info, error) {
 //
 // On cancel, returns (nil, ctx.Err()) — same convention as
 // ParseContext. The body-check loop is by far the dominant
-// cost in Check; the preceding builtin / prelude injection
+// cost in Check; the preceding builtin registration
 // + first-pass collection runs are O(decl-count) walks with
 // no recursive descent, so a single up-front ctx check
 // suffices for them.
@@ -625,13 +624,13 @@ func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
 
 func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// Prepend the built-in Option / Result / IoError /
-	// JsonValue enums so user code (and the lang prelude)
+	// JsonValue enums so user code (and the stdlib)
 	// can reference them without an explicit declaration.
 	// Each is injected individually if the user hasn't
 	// already declared the same name — earlier the
 	// "auto-inject only when prog.Enums[0].Name != Option"
 	// heuristic skipped EVERY builtin if the user declared
-	// their own Option, which broke the prelude's json_encode
+	// their own Option, which broke the stdlib's json_encode
 	// (uses JsonValue).
 	//
 	// Builtin names are RESERVED: if the user declared one
@@ -1392,12 +1391,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.Methods["Map.cleared"] = "__method_Map_clear"  // m.cleared() — value-returning clear
 
 	// `arr.push(v)` is the one Array method that DOESN'T have a
-	// prelude function declaration — the IR intercepts the
+	// stdlib function declaration — the IR intercepts the
 	// rewritten `__method_Array_push(arr, v)` call and emits the
 	// alloc + memcpy + width-correct tail store inline (see
 	// `emitArrayPush` in `internal/ir/ir.go`). One codepath covers
 	// every stride class — no per-stride mangled names, no
-	// per-stride prelude functions. Because there's no source-
+	// per-stride stdlib functions. Because there's no source-
 	// level decl, the auto-discovery loop below can't see push:
 	// we register it manually here along with its generic
 	// signature so dispatch + type-checking work.
@@ -1488,12 +1487,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 
 	// Auto-discover the remaining Array methods from the
-	// `__method_Array_<name>` naming convention. Every prelude
+	// `__method_Array_<name>` naming convention. Every stdlib
 	// function (and, post-migration, every `std/array` module
 	// function) that follows the convention registers itself for
 	// the `arr.<name>(…)` dispatch path without a hand-written
 	// line per method. The receiver-element constraint stays
-	// inside the prelude function signature (e.g.
+	// inside the stdlib function signature (e.g.
 	// `function __method_Array_join(arr: string[], …)`); the
 	// checker's type unification surfaces a clean
 	// "cannot match i32[] to string[]" diagnostic when callers
@@ -1563,7 +1562,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `memory.copy` / `memory.fill`. The doc-roadmap calls
 	// them out as the unlock for moving the json buffer
 	// family + the Map runtime from hand-written wat into
-	// the lang prelude (every growable-byte-buffer pattern
+	// the stdlib (every growable-byte-buffer pattern
 	// needs them). All three params are i32 byte counts /
 	// pointers; the helpers return void. arm64 inlines them
 	// via plain loads/stores; wat uses memory.copy.
@@ -1578,19 +1577,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	// `__alloc_u8(n)` returns a fresh `u8[]` of length n,
 	// zero-initialised. Pairs with `__memcpy` / `__memset` /
-	// the `[u8] → i32` data-pointer cast so prelude code can
+	// the `[u8] → i32` data-pointer cast so stdlib code can
 	// build a single-pass byte buffer.
 	c.info.FuncSigs["__alloc_u8"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 	}
-	// Raw-memory escape hatches for prelude code that
+	// Raw-memory escape hatches for stdlib code that
 	// builds typed-pointer arrays (`__array_append_string`)
 	// or runtime structures (the Map runtime migration).
 	// `__alloc(n)` returns a raw n-byte block, no length
 	// prefix; `__load_i32` / `__store_i32` peek and poke a
 	// 4-byte word at any address. Out-of-bounds traps at
-	// the wasm level — the prelude is expected to bounds-
+	// the wasm level — the stdlib is expected to bounds-
 	// check at the lang level.
 	// `__alloc(n)` returns a fresh n-byte block on the bump heap.
 	// Returns `usize` so the full address survives on arm64-darwin
@@ -1698,7 +1697,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// were removed when `arr.push(v)` moved to inline IR
 	// lowering — the IR emits the typed wasm store ops
 	// directly, no callable wat shim needed. Reintroduce here
-	// next to `__store_i32` if a future lang-prelude helper
+	// next to `__store_i32` if a future stdlib helper
 	// needs them.
 
 	// Built-in numeric methods. The receiver type is `NumberType`
@@ -2054,11 +2053,9 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 // is callable from a file F only if M ∈ closure(F).
 //
 // Empty source modules on either side skip the check —
-// transitional accommodation for prelude-injected decls,
-// checker-synthetic methods (Reader / Writer / Map / MapIter /
-// the inline-IR `Array.push`), and single-file programs that
-// bypass modload. Both sides go away once Phase 5 removes the
-// magic prelude and every method lives in a module.
+// accommodation for checker-synthesised methods (Reader /
+// Writer / Map / MapIter / the inline-IR `Array.push`) and
+// single-file programs that bypass modload.
 //
 // Same-module always passes (a module can always call its own
 // methods regardless of import graph). Cross-module visibility
@@ -2071,11 +2068,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 // natural cycles (std/string's bodies call (i32) byte methods
 // from std/i32; std/i32's bodies call (string) methods from
 // std/string) that modload's cycle-detector would otherwise
-// reject, and the auto-prelude path already side-steps the
-// gate by clearing `SourceModule` on every loaded fn. The
-// shortcut keeps no-prelude semantically identical to auto-
-// prelude for stdlib internals — only USER → stdlib visibility
-// still requires an explicit import.
+// reject; modload clears `SourceModule` on every stdlib-loaded
+// fn, so the shortcut lets stdlib internals call each other
+// freely — only USER → stdlib visibility still requires an
+// explicit import.
 // methodTypeName maps a type to the canonical name used in the
 // `__method_<Type>_<name>` mangling and the Info.Methods keys. It
 // mirrors the receiver-hoist switch so impl-conformance lookups land
@@ -3771,7 +3767,7 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 }
 
 // inStdlibContext reports whether the checker is currently inside a
-// stdlib/prelude function body, where the low-level usize escape-hatch
+// stdlib/stdlib function body, where the low-level usize escape-hatch
 // conversions in assignable are permitted. User code (c.current nil or a
 // non-stdlib module) must use an explicit `as` cast instead. See
 // docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
@@ -3851,8 +3847,8 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	// Option[usize] / Option[V] cross-assign for the codegen
 	// alias boundary. `__method_Map_get(Map[K, V]): Option[V]`
 	// (user-facing) routes to `__map_get_impl(m: usize):
-	// Option[usize]` (prelude). The user-code Option[V] flows
-	// through the prelude's Option[usize] return without an
+	// Option[usize]` (stdlib). The user-code Option[V] flows
+	// through the stdlib's Option[usize] return without an
 	// explicit cast — same pointer, different type-level view.
 	if de, dok := dst.(ast.EnumType); dok {
 		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
@@ -4195,7 +4191,7 @@ func (c *checker) collectNames(s *scope) []string {
 }
 
 // isUserFuncOrLocal reports whether `name` is bound by an in-scope
-// variable or a user-declared (or prelude-injected) function. Callers
+// variable or a user-declared (or checker-synthesised) function. Callers
 // use it to disambiguate bare identifiers from same-named enum
 // variants — a user-defined `Red` should win over `Color.Red`.
 func (c *checker) isUserFuncOrLocal(name string, s *scope) bool {
@@ -6002,7 +5998,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// to `i32` to recover its data-pointer for the
 		// bulk-memory primitives (__memcpy / __memset). It's
 		// an explicit low-level escape hatch — useful inside
-		// prelude buffer-management helpers, marked by the
+		// stdlib buffer-management helpers, marked by the
 		// cast at the source level.
 		inner := c.checkExpr(n.Inner, s)
 		// `1 as u64`: settle the literal at the cast target's
@@ -6046,7 +6042,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// recover the data / wrapper pointer for the bulk-
 		// memory primitives. All four lower to a single pointer
 		// at runtime; the cast is the source-level escape hatch
-		// the prelude uses to call __memcpy / __store_ptr against
+		// the stdlib uses to call __memcpy / __store_ptr against
 		// the underlying memory. i32 stays the historical hop
 		// (truncates to 32 bits on natives — fine until heap
 		// > 4 GiB); usize is the target-aware shape that
@@ -6063,7 +6059,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// arrays/strings is "value = data pointer, length prefix
 		// at base-4"; for structs, "value = base pointer, fields
 		// at constant offsets") — only the type-level view
-		// changes. Used by the prelude when a builtin returns a
+		// changes. Used by the stdlib when a builtin returns a
 		// freshly allocated raw block that the caller wants to
 		// expose as a typed collection (`__array_append_string`'s
 		// rebuild loop) or as a wrapper struct (`map_new`'s
@@ -6630,7 +6626,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// Wide-V Map: `m.values()` is intercepted by
 					// the IR (emitMapValues) which dispatches by
 					// V stride — narrow V routes to the existing
-					// `__map_values_impl` lang prelude function,
+					// `__map_values_impl` stdlib function,
 					// wide V (i64 / u64 / f64) follows each entry's
 					// cell pointer + `__memcpy`s the 8 payload
 					// bytes into a real wide-stride result. Both
@@ -6908,7 +6904,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// resolved sides differ in width (same signedness
 			// already enforced by commonIntegerWidth). This
 			// keeps pointer-arithmetic-style code in the
-			// prelude — `buf64 + 16` where `buf64` is i64 and
+			// stdlib — `buf64 + 16` where `buf64` is i64 and
 			// `16` is the default i32 NumberLit — type-correct
 			// without an explicit `as i64`.
 			if ln, ok := lt.(ast.NumberType); ok {
@@ -8521,7 +8517,7 @@ func commonFloatWidth(lt, rt ast.Type) (ast.FloatType, bool) {
 // resolved operand type's width doesn't match `target`'s. Lang
 // requires explicit `as` casts between integer widths in user
 // code, but the checker auto-inserts them for binop operands so
-// `i64 + i32` (mixed-width pointer arithmetic in the prelude,
+// `i64 + i32` (mixed-width pointer arithmetic in the stdlib,
 // for example) doesn't require sprinkling `as i64` everywhere.
 // Signedness must already match — see commonIntegerWidth.
 func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) {
@@ -8563,11 +8559,11 @@ func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 		return ln, true
 	}
 	// Pointer-width arithmetic: `usize + i32` (or `i32 + usize`)
-	// auto-widens to usize so prelude pointer math stays
+	// auto-widens to usize so stdlib pointer math stays
 	// readable. usize is unsigned and i32 is signed, so the
 	// signedness check below would otherwise reject. The
 	// 2's-complement representation makes the result identical
-	// to what the prelude computed before via explicit
+	// to what the stdlib computed before via explicit
 	// `as i64 / as usize` casts.
 	if ln.IsPointerWidth() || rn.IsPointerWidth() {
 		if ln.IsPointerWidth() {
@@ -8669,10 +8665,10 @@ func hasInitDecl(prog *ast.Program) bool {
 // alongside it costs nothing (wasi-http's _start is an empty
 // stub anyway).
 //
-// Under the auto-prelude, both `tcp_serve` and `__port_from_env`
-// live at their bare names (LoadStdlibFlat doesn't mangle).
-// Under no-prelude with `import "std/tcp";` they get the
-// modload `tcp__` prefix instead. We probe `prog.Funcs` for
+// Loaded flat via `LoadStdlibFlat` (e.g. in tests), both
+// `tcp_serve` and `__port_from_env` live at their bare names
+// (no mangling). Loaded via modload with `import "std/tcp";`
+// they get the `tcp__` prefix instead. We probe `prog.Funcs` for
 // whichever name exists and stamp the Ident accordingly so the
 // synthesised main resolves cleanly through both load paths.
 func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {

@@ -173,7 +173,7 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 		// select(c, true, false) → c. Front-ends emit this shape
 		// when lowering `if (cond) true else false` literally;
 		// real programs in this codebase do it via the bool-cast
-		// idiom in the prelude.
+		// idiom in the stdlib.
 		if tv, tok := constBool(op.Args[1], defs); tok && tv {
 			if fv, fok := constBool(op.Args[2], defs); fok && !fv {
 				return op.Args[0], true

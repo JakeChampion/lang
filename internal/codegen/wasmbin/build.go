@@ -98,7 +98,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// PrintMainResult's _start wrapper calls int_to_string from
 	// a synthesised position that isn't an AST reference, so
 	// pin it (and its modload-qualified twin) past tree-shake.
-	// Either variant covers the auto-prelude case vs the
+	// Either variant covers the flat-load case vs the
 	// explicit-`import "core/int"` case; the emitter picks
 	// whichever survives.
 	var treeshakeExtras []string
@@ -123,7 +123,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		// `__method_HeaderMap_append` — the wrapper calls it
 		// per header entry from the canonical-ABI fields list.
 		treeshakeExtras = append(treeshakeExtras, "handle", "__method_HeaderMap_append")
-		// The auto-synthesised `main()` (in std/tcp's prelude)
+		// The auto-synthesised `main()` (synthesised by the checker)
 		// calls `tcp_serve` and pulls in wasi:sockets imports
 		// the http world's WIT doesn't have. Drop it before
 		// tree-shake so it doesn't hold tcp_serve / tcp_listen
@@ -161,8 +161,8 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// IR-level dead-function elimination: drop top-level
 	// functions whose body the optimiser left without any
 	// remaining callers. Critical for the binary path since
-	// the auto-injected stdlib drags in ~250 helpers most of
-	// which never get called from user code.
+	// the stdlib a program imports drags in ~250 helpers most
+	// of which never get called from user code.
 	//
 	// Pass CallDirectAliases so the reachability walker knows
 	// about emit-time rewrites — without this, a user-code
