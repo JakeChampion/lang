@@ -10,7 +10,6 @@
 // `///MODULE <name>` stdin bundle format — see bundle_run.fern
 // for the input-format documentation.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

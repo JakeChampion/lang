@@ -46,7 +46,7 @@ func runSelfHostSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern,
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";

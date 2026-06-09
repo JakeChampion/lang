@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "core/map";
 // Alias-safety contract of the value-returning (immutable-looking)
 // collection API (docs/PURE-COLLECTION-API-PLAN.md §1). This is the

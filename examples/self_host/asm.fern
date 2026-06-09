@@ -31,7 +31,6 @@
 // and issues `sys_exit_group`. Same lowering the production
 // codegen uses for the same shape — just typeset as text.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./asmcore";

@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/sort";
 import "std/test";
 // examples/tests/filesystem_ops_test.fern — exercises the

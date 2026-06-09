@@ -24,11 +24,10 @@
 //   prefix    — own-module mangle prefix ("" = entry, no mangling)
 //   declnames — own top-level decl names; a bare ref to one → prefix__name
 //
-// no_prelude file: string handling is hand-rolled over the byte
+// Imports nothing: string handling is hand-rolled over the byte
 // builtins (s[i], s[i:j], .len(), ==, +), matching the rest of the
 // self-host sources.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 

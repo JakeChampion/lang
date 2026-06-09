@@ -14,7 +14,7 @@ import (
 func TestLiterateUnusedChunkWarning(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	doc := "```fern\n<<*>>=\nimport \"core/no_prelude\";\nfunction main(): i32 { return 0; }\n```\n" +
+	doc := "```fern\n<<*>>=\nfunction main(): i32 { return 0; }\n```\n" +
 		"```fern\n<<orphan>>=\nleftover\n```\n"
 	src := filepath.Join(dir, "p.fern.md")
 	if err := os.WriteFile(src, []byte(doc), 0o644); err != nil {
@@ -35,7 +35,7 @@ func TestLiterateUnusedChunkWarning(t *testing.T) {
 func TestLiterateNoUnusedWarningWhenClean(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	doc := "```fern\n<<*>>=\nimport \"core/no_prelude\";\n<<body>>\n```\n" +
+	doc := "```fern\n<<*>>=\n<<body>>\n```\n" +
 		"```fern\n<<body>>=\nfunction main(): i32 { return 0; }\n```\n"
 	src := filepath.Join(dir, "p.fern.md")
 	if err := os.WriteFile(src, []byte(doc), 0o644); err != nil {

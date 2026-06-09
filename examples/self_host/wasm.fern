@@ -28,7 +28,6 @@
 //     correct while conditions are side-effect-free (no calls yet).
 //   - function calls, match, for, strings/memory: later slices.
 
-import "core/no_prelude";
 import "./parser";
 import "./util";
 

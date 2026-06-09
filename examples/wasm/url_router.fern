@@ -14,7 +14,6 @@
 //   $ wasmtime serve url.wasm &
 //   $ curl 'http://localhost:8080/search?q=lang&tag=fast&tag=small'
 //   {"path":"/search","q":"lang","tags":["fast","small"]}
-import "core/no_prelude";
 // HttpRequest / HttpResponse + the synthesised tcp_serve main;
 // Url + url_parse + query_parse; JsonValue + json_encode; the
 // Map runtime; (string).split-style methods needed by the JSON

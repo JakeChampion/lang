@@ -17,7 +17,6 @@
 // threads (value, position, ok) state through `Eval` structs — the
 // idiomatic shape for parsers in a language with immutable structs
 // and no exceptions.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/i64";

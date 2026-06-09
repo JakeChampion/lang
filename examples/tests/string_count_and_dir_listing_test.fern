@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/string_count_and_dir_listing_test.fern —
 // batch 35 additions to std/test:

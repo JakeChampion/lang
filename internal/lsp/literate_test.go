@@ -13,7 +13,7 @@ func literateDiagnosticsFor(src string) []Diagnostic {
 
 // A clean literate document produces no diagnostics.
 func TestLiterateLSP_Clean(t *testing.T) {
-	src := "# ok\n```fern\n<<*>>=\nimport \"core/no_prelude\";\nfunction main(): i32 { return 0; }\n```\n"
+	src := "# ok\n```fern\n<<*>>=\nfunction main(): i32 { return 0; }\n```\n"
 	if got := literateDiagnosticsFor(src); len(got) != 0 {
 		t.Fatalf("clean literate doc produced %d diagnostics: %+v", len(got), got)
 	}
@@ -22,15 +22,15 @@ func TestLiterateLSP_Clean(t *testing.T) {
 // A type error in a chunk is reported on the *document* line, not the
 // tangled-intermediate line.
 func TestLiterateLSP_DiagnosticRemapped(t *testing.T) {
-	// Document lines:        1            2       3                          4 (error)                                5
-	src := "```fern\n<<*>>=\nimport \"core/no_prelude\";\nfunction main(): i32 { return \"nope\"; }\n```\n"
+	// Document lines:        1            2       3 (error)
+	src := "```fern\n<<*>>=\nfunction main(): i32 { return \"nope\"; }\n```\n"
 	got := literateDiagnosticsFor(src)
 	if len(got) == 0 {
 		t.Fatal("expected a type-error diagnostic")
 	}
-	// The bad `return "nope"` is on document line 4 → 0-based line 3.
-	if got[0].Range.Start.Line != 3 {
-		t.Errorf("diagnostic remapped to line %d, want 3 (document line 4):\n%+v",
+	// The bad `return "nope"` is on document line 3 → 0-based line 2.
+	if got[0].Range.Start.Line != 2 {
+		t.Errorf("diagnostic remapped to line %d, want 2 (document line 3):\n%+v",
 			got[0].Range.Start.Line, got[0])
 	}
 }

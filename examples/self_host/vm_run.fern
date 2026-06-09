@@ -6,7 +6,6 @@
 // asm_run.fern and interp_run.fern; used by the cross-
 // validation test to assert all three engines agree.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

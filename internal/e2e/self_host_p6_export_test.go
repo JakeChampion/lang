@@ -31,7 +31,7 @@ func TestSelfHostExportAttributeCompiles(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -99,7 +99,7 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -279,7 +279,7 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -449,7 +449,7 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";

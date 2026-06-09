@@ -39,8 +39,8 @@ missing imports (e.g. `std/time` used `.index_of` without importing
 isolation post-flip — the prelude had always loaded the whole tree.
 
 **Fix.** A Go test that, for each embedded `std/*` and `core/*` module,
-builds a trivial program (`import "core/no_prelude"; import "<mod>";
-function main(): i32 { return 0; }`) and runs it through modload +
+builds a trivial program (`import "<mod>"; function main(): i32 { return 0; }`)
+and runs it through modload +
 checker. Fails if any module can't be imported standalone.
 
 ## 3. `std/test` ergonomics — ADDRESSED via import aliases

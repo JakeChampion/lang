@@ -23,7 +23,6 @@
 //     stub treats them as opaque ExprUnknown)
 //   - Receivers, type-params, `pub`, `import`
 
-import "core/no_prelude";
 import "./util";
 import "./lexer";
 

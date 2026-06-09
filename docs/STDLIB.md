@@ -731,20 +731,13 @@ The built-in integer widths, `boolean`, and `string` all satisfy
 these, which is why `test.assert_eq[T: cmp.Eq + cmp.Display]` and
 friends work across every primitive with one generic helper.
 
-### `core/no_prelude`
+### Module resolution
 
-Empty sentinel module. There is no longer an auto-injected
-prelude (Phase 5 of `docs/PRELUDE-TO-MODULES.md` is complete — a
-program sees only what it `import`s), so this module's body is
-empty and importing it is functionally a no-op.
-
-By convention, programs that depend on nothing but built-ins
-(`putchar`, `print`, `len`, array indexing, arithmetic) still
-write `import "core/no_prelude";` as a readability marker: it
-states up front that the import list *is* the program's complete
-dependency surface, rather than leaving the reader to wonder
-whether a prelude is being relied on. It is optional — such a
-program compiles identically without it.
+There is no auto-injected prelude (Phase 5 of
+`docs/PRELUDE-TO-MODULES.md` is complete) — a program sees only
+what it `import`s. A program that uses nothing but built-ins
+(`putchar`, `print`, `len`, array indexing, arithmetic) needs no
+imports at all.
 
 Free-function calls into stdlib are qualified —
 `int.int_to_string_radix(s, 16)` rather than a bare

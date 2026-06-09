@@ -6,7 +6,6 @@
 // asserting the process exit code matches the program's value — end-to-end
 // proof that AST → SSA → optimise → emit → execute preserves semantics.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

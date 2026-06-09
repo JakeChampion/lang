@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "core/map";
 // Map with string keys and i32 values (a portable K/V combo).
 function main(): i32 {

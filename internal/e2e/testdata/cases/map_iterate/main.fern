@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "core/map";
 // `for (k, v) in m` cursor iteration over a Map literal.
 // (1+10) + (2+20) + (3+12) = 48.

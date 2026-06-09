@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "core/map";
 // `if let` pattern binding with an else arm.
 function main(): i32 {

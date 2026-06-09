@@ -15,7 +15,7 @@ import (
 // on any parse failure. Encoded into the exit code: 42 (parsed) + 7
 // (fallback for "nope") + 5 (fallback for "") + 9 (fallback for the
 // overflow case) = 63.
-const parseIntOrSrc = `import "core/no_prelude";
+const parseIntOrSrc = `
 import "std/string";
 function main(): i32 {
     var a: i32 = "42".parse_int_or(0);
@@ -47,7 +47,7 @@ func TestWASMParseIntOr(t *testing.T) {
 // main's return value onto stdout, so we assert the written bytes
 // are present rather than matching stdout exactly.)
 func TestWASMReadInputStdin(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 import "std/io";
 function main(): i32 {
@@ -66,7 +66,7 @@ function main(): i32 {
 // missing one — the two arms every cli tool relies on. The arms
 // write distinct markers so we can assert which fired from stdout.
 func TestWASMReadInputFile(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 import "std/io";
 function main(): i32 {
@@ -80,7 +80,7 @@ function main(): i32 {
 		t.Errorf("Ok path stdout = %q, want it to contain %q", out, "OK:from a file")
 	}
 
-	missSrc := `import "core/no_prelude";
+	missSrc := `
 import "std/string";
 import "std/io";
 function main(): i32 {

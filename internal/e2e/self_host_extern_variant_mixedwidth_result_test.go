@@ -115,7 +115,7 @@ func TestSelfHostExternVariantMixedWidthResultCustomProvider(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";

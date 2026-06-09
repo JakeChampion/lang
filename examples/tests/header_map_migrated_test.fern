@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "core/map";
 import "std/test";
 import "std/headers";
@@ -17,7 +16,7 @@ import "std/headers";
 // `assert_is_some_eq_string` (no subprocess, no
 // print-then-grep).
 //
-// Needs `import "std/headers";` — not in the auto-prelude.
+// Needs `import "std/headers";`.
 
 function test_case_insensitive_get(): Option[string] {
     var h: HeaderMap = headers.header_map_new();

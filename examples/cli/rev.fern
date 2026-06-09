@@ -10,7 +10,6 @@
 //
 // Showcases: building a string by walking another backwards, the
 // single-byte slice idiom `s[i:i+1]`.
-import "core/no_prelude";
 import "std/string";
 import "std/io";
 

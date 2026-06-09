@@ -23,7 +23,6 @@
 // gives us that view in ~150 lines of Fern, validating that
 // the bytecode shape is stable + observable from a third party.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./vm";

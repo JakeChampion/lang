@@ -28,7 +28,6 @@
 // bytes per push but keeps sp 16-aligned for any nested
 // syscalls / function calls that follow.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./asmcore";

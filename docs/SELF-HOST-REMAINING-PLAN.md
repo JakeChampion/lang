@@ -438,7 +438,7 @@ planned order:
   (`<root>/std/foo.fern`), loading them transitively through the same
   worklist + `flatten.bundle` machinery it already used for local
   `./…` imports (the worklist tracks full import paths, not just
-  basenames). `core/no_prelude` is treated as a directive, not a file.
+  basenames).
   With no root given, std/core imports are skipped — identical to the
   prior behaviour, so the file-driven fixpoint is untouched. Proven
   end-to-end by `self_host_stdlib_import_test.go`: a program

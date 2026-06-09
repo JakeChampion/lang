@@ -8766,9 +8766,8 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 	// (docs/PLATFORM-RESEARCH.md Rec §3). The return value is
 	// currently dropped — Phase 1 init() is side-effect-only;
 	// Phase 2 will thread the result as a `state` parameter
-	// to handle. `init` is the BARE name; if the user
-	// `import "core/no_prelude";`s and qualifies it, modload
-	// rewrites the call separately.
+	// to handle. `init` is the BARE name; if a module import
+	// qualifies it, modload rewrites the call separately.
 	var stmts []ast.Stmt
 	if hasInitDecl(prog) {
 		stmts = append(stmts, &ast.ExprStmt{

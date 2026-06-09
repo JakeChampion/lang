@@ -28,7 +28,6 @@
 // sibling files; resolve `std/…` / `core/…` under an optional stdlib
 // root).
 
-import "core/no_prelude";
 import "./util";
 import "./lexer";
 import "./parser";
@@ -130,12 +129,11 @@ function join_path(dir: string, name: string): string {
 
 // should_load decides whether an import path names a module file to
 // load. Local (`./…`) imports always load; `std/…` / `core/…` load only
-// when a stdlib root is given; `core/no_prelude` is a directive.
+// when a stdlib root is given.
 function should_load(import_path: string, root: string): boolean {
     if (import_path.len() == 0) { return false; }
     if (is_local(import_path)) { return true; }
     if (root.len() == 0) { return false; }
-    if (import_path == "core/no_prelude") { return false; }
     return true;
 }
 

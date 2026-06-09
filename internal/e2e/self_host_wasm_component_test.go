@@ -424,7 +424,7 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	}
 }
 
-const p1Driver = `import "core/no_prelude";
+const p1Driver = `
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -432,7 +432,7 @@ import "./wasm";
 function main(): i32 { write(wasm.emit_module(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))))); return 0; }
 `
 
-const p2Driver = `import "core/no_prelude";
+const p2Driver = `
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -685,7 +685,7 @@ func TestSelfHostWasmComponentStdout(t *testing.T) {
 	}
 }
 
-const p2IODriver = `import "core/no_prelude";
+const p2IODriver = `
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -948,7 +948,7 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 	})
 }
 
-const p2FSDriver = `import "core/no_prelude";
+const p2FSDriver = `
 import "std/io";
 import "./lexer";
 import "./parser";

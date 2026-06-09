@@ -18,7 +18,6 @@
 //       3.14
 //     ]
 //   }
-import "core/no_prelude";
 // json.json_parse / json.json_encode for the read/write halves;
 // std/string for (string).repeat used by the indent helper.
 import "std/json";

@@ -13,7 +13,6 @@
 //
 // Showcases: chunking a string to a width, optional word-boundary
 // breaking via `last_index_of`.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

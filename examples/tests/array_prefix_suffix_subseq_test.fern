@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/array_prefix_suffix_subseq_test.fern —
 // batch 27 additions to std/test:

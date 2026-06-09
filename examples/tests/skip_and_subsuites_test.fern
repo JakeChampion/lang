@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/skip_and_subsuites_test.fern — exercise the
 // skip / skip_if / subsuite / merge surface added on top of

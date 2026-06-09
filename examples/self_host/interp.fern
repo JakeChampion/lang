@@ -17,7 +17,6 @@
 // flow (`if` / `while` / `for`), structs / unions, generics. The
 // parser stub doesn't emit those yet either.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./util";

@@ -1,7 +1,5 @@
 // `putchar` is a built-in, and the divisibility check is
 // pure arithmetic — no stdlib needed.
-import "core/no_prelude";
-
 function divisible(n: i32, by: i32): boolean {
   return n - n / by * by == 0;
 }

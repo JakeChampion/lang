@@ -26,7 +26,6 @@
 //     elements, Index, If cond/branches, While cond/body, etc.)
 //     so nested foldings cascade in a single pass.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./util";

@@ -25,7 +25,7 @@ func TestRunRewritesGenericCallSitesInsideEveryExprShape(t *testing.T) {
 	}{
 		{
 			name: "MapLit value position",
-			src: `import "core/no_prelude";
+			src: `
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -35,7 +35,7 @@ function main(): i32 {
 		},
 		{
 			name: "MapLit key position",
-			src: `import "core/no_prelude";
+			src: `
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -45,7 +45,7 @@ function main(): i32 {
 		},
 		{
 			name: "FString interpolant",
-			src: `import "core/no_prelude";
+			src: `
 import "std/i32";
 function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -336,14 +336,14 @@ function main(): i32 {
     var p: P = P { x: id(1), y: id(2) };
     return p.x + p.y;
 }`},
-		{node: "MapLit.Key+Value", src: `import "core/no_prelude";
+		{node: "MapLit.Key+Value", src: `
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
     var m: Map[i32, i32] = Map { id(1): id(10) };
     return m.len();
 }`},
-		{node: "FString.Interpolant", src: `import "core/no_prelude";
+		{node: "FString.Interpolant", src: `
 import "std/i32";
 function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -698,7 +698,7 @@ function main(): i32 {
 // must substitute the concrete instantiation into the argument's
 // ElemType at the call site.
 func TestRunSubstitutesArrayLiteralElemTypeAtCallSite(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct Box { v: i32 }
 function len_of[T](xs: T[]): i32 { return xs.len(); }
@@ -748,7 +748,7 @@ function main(): i32 {
 // generic `id` (which gets removed after the pass), and the
 // post-monomorph re-check failed with "expected T, got i32".
 func TestRunTransitiveInstantiation(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 function id[T](x: T): T { return x; }
 function wrap[T](x: T): T { return id(x); }

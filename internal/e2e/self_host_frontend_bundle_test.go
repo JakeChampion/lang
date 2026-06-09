@@ -15,7 +15,7 @@ import (
 
 // Real-frontend self-host milestone: bundle the ACTUAL lexer.fern +
 // parser.fern (the compiler's own front end — both pure, importing
-// only core/no_prelude and using byte builtins, no stdlib) with a
+// nothing and using byte builtins, no stdlib) with a
 // tiny entry that lexes + parses an embedded program and returns its
 // function count. The bundle is fed through bundle_run; the merged
 // asm is assembled + run and must return the function count (1).
