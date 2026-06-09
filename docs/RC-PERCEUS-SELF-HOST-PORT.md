@@ -1828,3 +1828,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   detector 0). Full map + RC suites + bootstrap fixpoint + binary + component
   wasm suites green; bootstrap-safe. Remaining toward exact native parity:
   array-of-tuple deep release, closure-env capture release.
+- 2026-06-09: **wasm transitive reclamation — Stage F: array-of-tuple
+  deep-release (native __drop_arr_tuple_).** An array-of-tuple local
+  (`var ps = [(a, b), …]`) now deep-releases each element tuple's
+  pointer-bearing fields before freeing the element box + the buffer, instead
+  of the flat one-level `arr_dec` that leaked the inner strings / arrays /
+  structs. `collect_tuple_locals` additionally records array-of-tuple locals
+  (`ta_names` → element kind string `ta_kinds` + struct/enum svtype CSV
+  `ta_svtypes`, taken from the literal's first tuple element) parallel to the
+  tuple-local tracking. `arr_exit_sweep_excl` routes a `ta_names` local to an
+  inline loop: when the array is the last owner (`[a-8]==1`) it walks the
+  elements (`len@[a]`, element box `@[a+8+i*4]`), and for each tuple box —
+  itself rc==1-gated — releases its pointer-bearing elements via the new shared
+  `tuple_release_inner` (struct/enum svtype → `$__fern_release_<T>`; 's'/'a' →
+  flat `arr_dec`; 'A' → `arr_dec_ptr`; scalar 'i' skipped — the same classifier
+  the tuple-local sweep uses, now factored out), then frees the box; finally the
+  buffer is freed. Three reserved scratch locals (`$__tai`/`$__tan`/`$__te`)
+  back the loop. Coverage: `TestSelfHostRcDeepNestWasm` gains
+  arr-tuple-string-released, arr-tuple-string-churn (200k arrays-of-(i32,string)
+  reclaimed, no OOM), arr-tuple-arrelem-churn (200k tuples-holding-i32[]
+  reclaimed), and arr-tuple-struct-elem-churn (50k tuples-holding-a-struct-with-
+  an-array, deep-released via `$__fern_release_Inner`). Full RC + bootstrap
+  fixpoint + binary + component wasm suites green; bootstrap-safe. Remaining
+  toward exact native parity: closure-env capture release (`__fern_arr_closure`
+  + the per-closure drop thunk), and map struct/enum VALUES (deep
+  `__drop_map_via_`, beyond the string-value column).

@@ -95,6 +95,24 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// tuple-of-struct FIELD access `t.0.field` is a pre-existing,
 		// RC-orthogonal value bug.)
 		{"tuple-struct-element-churn", "struct Inner { xs: i32[], n: i32 } function mk(): i32 { var i = Inner { xs: [1, 2, 3, 4], n: 5 }; var t = (i, 9); return t.1; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 2},
+		// Stage F: an ARRAY-OF-TUPLE local deep-releases each element tuple's
+		// pointer-bearing fields (native __drop_arr_tuple_) before freeing the
+		// element box + the buffer — not the flat one-level dec that leaked the
+		// inner strings/arrays. Each element tuple is rc==1-gated, so a shared
+		// element only dec's. Here each (i32, string) element's string is freed.
+		{"arr-tuple-string-released", "function main(): i32 { var ps: (i32, string)[] = [(1, \"ab\" + \"cd\"), (2, \"ef\" + \"gh\")]; return ps[0].0 + ps[1].0 + ps[0].1.len() + 35 + __fern_rc_underflow_count(); }", 42},
+		// Stage F churn: 200k arrays-of-(i32,string)-tuples built + freed; every
+		// element tuple's string reclaims each cycle (no OOM), detector clean —
+		// 400k leaked strings + tuple boxes would exhaust memory.
+		{"arr-tuple-string-churn", "function mk(): i32 { var ps: (i32, string)[] = [(1, \"ab\" + \"cd\"), (2, \"ef\" + \"gh\")]; return ps[0].0 + ps[1].0 + ps[0].1.len() + ps[1].1.len(); } function main(): i32 { var k = 0; var s = 0; while (k < 200000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 4},
+		// Stage F: a tuple element that is itself an ARRAY (i32[]) is freed per
+		// element on the array's death — 200k cycles reclaim, no OOM, detector 0.
+		{"arr-tuple-arrelem-churn", "function mk(): i32 { var ps: (i32, i32[])[] = [(1, [10, 20]), (2, [30, 40])]; return ps[0].0 + ps[1].1[0]; } function main(): i32 { var k = 0; var s = 0; while (k < 200000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 3},
+		// Stage F: a STRUCT tuple element (svtype, kind 'i') deep-releases through
+		// $__fern_release_Inner — the struct's own array field reclaims too. 50k
+		// cycles, no OOM, detector clean. (Value via the i32 element; tuple-of-
+		// struct field access is a pre-existing RC-orthogonal bug, avoided here.)
+		{"arr-tuple-struct-elem-churn", "struct Inner { xs: i32[], n: i32 } function mk(): i32 { var ps: (Inner, i32)[] = [(Inner { xs: [1, 2, 3], n: 4 }, 7), (Inner { xs: [5, 6], n: 8 }, 9)]; return ps[0].1 + ps[1].1; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
