@@ -45,7 +45,7 @@ func TestLiterateTangleToDir(t *testing.T) {
 func TestLiterateTangleToFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	doc := "```fern\n<<*>>=\nimport \"core/no_prelude\";\nfunction main(): i32 { return 7; }\n```\n"
+	doc := "```fern\n<<*>>=\nfunction main(): i32 { return 7; }\n```\n"
 	src := filepath.Join(dir, "one.fern.md")
 	if err := os.WriteFile(src, []byte(doc), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)

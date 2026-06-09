@@ -842,11 +842,10 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// The auto-prelude is gone (docs/PRELUDE-TO-MODULES.md phase 5),
 	// so generated programs must declare the stdlib they lean on:
 	// `.to_string()` (std/i32 / core/int), string + Map `.len()` and
-	// Map literals (core/map), array helpers (std/array), plus the
-	// `core/no_prelude` opt-out. Imports must precede all decls.
-	// Resolving them needs the modload path — the fernsmith tests
-	// load generated source through modload, not bare parser.Parse.
-	b.WriteString("import \"core/no_prelude\";\n")
+	// Map literals (core/map), array helpers (std/array). Imports
+	// must precede all decls. Resolving them needs the modload path —
+	// the fernsmith tests load generated source through modload, not
+	// bare parser.Parse.
 	b.WriteString("import \"std/i32\";\n")
 	b.WriteString("import \"std/i64\";\n")
 	b.WriteString("import \"std/string\";\n")

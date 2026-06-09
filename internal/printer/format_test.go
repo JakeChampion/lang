@@ -551,17 +551,15 @@ return 0;
 
 // Imports round-trip through the formatter — previously
 // dropped silently because the Format loop only walked
-// structs / enums / unions / consts / funcs. As the
-// prelude-to-modules migration moves test programs and
-// examples to `import "core/no_prelude";`-style explicit
-// declarations, `fern -fmt -w` would have stripped every
-// import line and the fmt-check CI gate would fail.
+// structs / enums / unions / consts / funcs. Without this,
+// `fern -fmt -w` would have stripped every import line and
+// the fmt-check CI gate would fail.
 func TestFormatImportsRoundTrip(t *testing.T) {
-	got := formatSrc(t, `import "core/no_prelude";
+	got := formatSrc(t, `import "std/string";
 import "std/i32";
 function main(): i32 { return 0; }`)
 	for _, want := range []string{
-		`import "core/no_prelude";`,
+		`import "std/string";`,
 		`import "std/i32";`,
 	} {
 		if !strings.Contains(got, want) {

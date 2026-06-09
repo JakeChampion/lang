@@ -12,7 +12,6 @@
 //
 // Showcases: reading all input up front, accumulating into a
 // `string[]`, and walking an array backwards.
-import "core/no_prelude";
 import "std/string";
 import "std/io";
 

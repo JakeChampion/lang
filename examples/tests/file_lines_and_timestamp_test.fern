@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/file_lines_and_timestamp_test.fern — batch
 // 25 additions to std/test:

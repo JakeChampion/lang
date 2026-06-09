@@ -13,7 +13,6 @@
 //
 // Showcases: parsing a numeric range LIST, field vs character
 // selection, custom delimiters.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

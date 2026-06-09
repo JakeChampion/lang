@@ -12,7 +12,6 @@
 // arm64_native assembler tests (which feed real darwin text to
 // arm64_gas_program) get their input.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

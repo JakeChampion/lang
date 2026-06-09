@@ -11,7 +11,6 @@
 //   $ fern -target wasm -o wc.wasm wc.fern
 //   $ wasmtime --dir=. wc.wasm README.md docs/LANGUAGE-DIRECTION.md
 //   ...
-import "core/no_prelude";
 // (string).split / (string).is_empty inside count_chunk; the
 // f-string in format_counts dispatches (i32).to_string on
 // each Counts field.

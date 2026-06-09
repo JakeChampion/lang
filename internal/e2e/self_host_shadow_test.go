@@ -41,7 +41,7 @@ func TestSelfHostLocalShadowsImportedDecl(t *testing.T) {
 	}
 
 	prog := filepath.Join(t.TempDir(), "shadow_prog.fern")
-	src := "import \"core/no_prelude\";\n" +
+	src := "" +
 		"import \"std/math\";\n" +
 		"function main(): i32 { return math.random_int(0, 1); }\n"
 	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {

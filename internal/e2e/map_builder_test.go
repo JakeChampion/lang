@@ -17,7 +17,7 @@ var mapBuilderCases = []struct {
 		// insert in a while loop: {0:0,1:10,2:20,3:30,4:40}; get_or(3)=30,
 		// len=5 → 35.
 		name: "insert-while",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 import "core/map";
 function main(): i32 {
@@ -32,7 +32,7 @@ function main(): i32 {
 	{
 		// insert over a for-in loop, building {1:1,2:4,3:9}; get_or(3)=9 + len=3.
 		name: "insert-for-in",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 import "core/map";
 function main(): i32 {
@@ -47,7 +47,7 @@ function main(): i32 {
 	{
 		// b.len() read inside the builder: insert until len reaches 3.
 		name: "len-read",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 import "core/map";
 function main(): i32 {
@@ -65,7 +65,7 @@ function main(): i32 {
 	{
 		// String keys + an overwrite (insert replaces): {"a":1,"b":9}.
 		name: "string-keys-overwrite",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 import "core/map";
 import "std/string";
@@ -83,7 +83,7 @@ function main(): i32 {
 		// Churn: build a fresh map each iteration, 200x. Exercises the
 		// in-place fast path + per-iteration reclaim of the builder local.
 		name: "churn",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 import "core/map";
 function main(): i32 {

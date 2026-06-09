@@ -47,7 +47,7 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 	src := filepath.Join(dir, "prog.fern")
 	// Self-contained — no stdlib, so the only thing exercised is codegen
 	// + the native assembler/linker.
-	if err := os.WriteFile(src, []byte("import \"core/no_prelude\";\nfunction main(): i32 { return 42; }\n"), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
 

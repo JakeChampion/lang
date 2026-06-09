@@ -29,7 +29,6 @@
 // still gates per kind so a future IR addition falls back to wasm.fern rather
 // than emitting broken WAT, but in practice every current kind is covered.
 
-import "core/no_prelude";
 import "./ssa";
 import "./util";
 

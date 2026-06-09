@@ -109,11 +109,11 @@ func TestX86_64NativeStrings(t *testing.T) {
 		src  string
 		want string
 	}{
-		{`import "core/no_prelude";
+		{`
 function main(): i32 { print("Hello, world!"); return 0; }`, "Hello, world!\n"},
-		{`import "core/no_prelude";
+		{`
 function main(): i32 { print("one"); print("two"); return 0; }`, "one\ntwo\n"},
-		{`import "core/no_prelude";
+		{`
 import "std/string";
 function main(): i32 {
   var a: string = "foo";
@@ -156,7 +156,7 @@ function main(): i32 { return apply(dbl, 21); }`, 42},
 // Maps exercise heap allocation, hashing, base+index addressing, and
 // Option-returning get via match.
 func TestX86_64NativeMap(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
   var m: Map[i32, i32] = map_new(8);
@@ -183,22 +183,22 @@ func TestX86_64NativeFloat(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`import "core/no_prelude";
+		{`
 function main(): i32 {
   var a: f64 = 3.0; var b: f64 = 4.0;
   return ((a * a + b * b) as i32);
 }`, 25},
-		{`import "core/no_prelude";
+		{`
 function main(): i32 {
   var a: f64 = 10.0; var b: f64 = 4.0;
   return ((a - b) as i32);
 }`, 6},
-		{`import "core/no_prelude";
+		{`
 function main(): i32 {
   var a: f64 = 84.0; var b: f64 = 2.0;
   return ((a / b) as i32);
 }`, 42},
-		{`import "core/no_prelude";
+		{`
 function main(): i32 {
   var a: f64 = 1.5; var b: f64 = 2.5;
   if (a < b) { return 7; }

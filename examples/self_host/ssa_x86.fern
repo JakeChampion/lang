@@ -17,7 +17,6 @@
 // The framing mirrors asm.fern: functions are labelled `__fn_<name>`, and
 // `_start` calls `__fn_main` and exits with its return value (syscall 60).
 
-import "core/no_prelude";
 import "./ssa";
 import "./util";
 

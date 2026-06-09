@@ -1,9 +1,9 @@
-// std/test — pure-Lang unit-test runner.
+// std/test — pure-Fern unit-test runner.
 //
 // Designed to replace the Go-side `*_test.go` harness once the
 // compiler itself is self-hosted (see
 // docs/ROADMAP-AND-SELF-HOSTING.md). The runner takes no
-// compiler dependency: it's an ordinary Lang program that
+// compiler dependency: it's an ordinary Fern program that
 // uses the helpers exported here, threads a `TestRunner`
 // accumulator through each test case, and exits 0 on success
 // / 1 on any failure. Output is TAP-13
@@ -11,24 +11,23 @@
 // (`prove`, `tape`, jUnit converters) can consume it directly
 // while we transition off Go.
 //
-// std/test is part of the auto-prelude (see
-// `internal/prelude/prelude.fern`), so test programs reach for
-// the helpers by bare name — no `test.assert_eq_i32(...)`
-// qualification, no `import "std/test";` line needed. A user
-// program that opts out of the prelude with `import
-// "core/no_prelude";` would have to import this module
-// explicitly and qualify its names.
+// A test program imports this module and calls its free
+// functions qualified (`test.test_new`, `test.assert_eq`,
+// `test.fail`), with the runner type written `test.TestRunner`;
+// receiver methods (`.it`, `.finish`) stay bare:
+//
+//   import "std/test";
 //
 //   function test_addition(): Option[string] {
-//       return assert_eq_i32(2 + 2, 4);
+//       return test.assert_eq(2 + 2, 4);
 //   }
 //
 //   function test_strings(): Option[string] {
-//       return assert_eq_string("foo" + "bar", "foobar");
+//       return test.assert_eq("foo" + "bar", "foobar");
 //   }
 //
 //   function main(): i32 {
-//       var r: TestRunner = test_new("arithmetic");
+//       var r: test.TestRunner = test.test_new("arithmetic");
 //       r = r.it("addition", test_addition());
 //       r = r.it("strings", test_strings());
 //       return r.finish();
@@ -40,26 +39,22 @@
 //
 // The runner is value-semantic — `r.it(...)` returns a fresh
 // TestRunner with the result folded in. That matches the rest
-// of lang's stdlib (Array.push, struct receiver methods) and
+// of Fern's stdlib (Array.push, struct receiver methods) and
 // sidesteps the lack of interior mutability.
 //
 // (`case` would have been the obvious method name but it's a
 // reserved keyword for `switch` arms; `it` matches the BDD
 // `describe / it` convention from JS / Ruby test frameworks.)
 //
-// Discovery is intentionally explicit: lang has no reflection,
+// Discovery is intentionally explicit: Fern has no reflection,
 // so `main` lists the tests it runs. That's the same shape
 // Zig's `test` blocks compile down to and the same shape any
 // future macro / build-step driven discovery would lower to.
 
 // std/test reaches for (i32).to_string() in the f-string
 // failure messages and (string).contains / .starts_with /
-// .ends_with in the substring assertion helpers. The
-// auto-prelude pulls those in for the test program too, so
-// no extra `import` is needed here when std/test is included
-// in the auto-prelude — but stdlib modules can't lean on
-// the prelude's transitive imports, so they get declared
-// explicitly.
+// .ends_with in the substring assertion helpers, so it
+// declares the stdlib modules it leans on explicitly.
 import "std/i32";
 import "core/map";
 // Display / Eq / Ord traits + their primitive impls back the generic

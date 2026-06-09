@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/set_eq_test.fern — order-independent
 // (multiset) array assertions for cases where the

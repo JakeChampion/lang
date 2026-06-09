@@ -33,7 +33,6 @@
 // + indexing (need separate VArr handling in stack ops),
 // constfold integration.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./astwalk";

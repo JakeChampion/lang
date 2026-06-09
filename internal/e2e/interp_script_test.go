@@ -65,7 +65,7 @@ func TestInterpScriptFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte(`import "core/no_prelude";
+	if err := os.WriteFile(src, []byte(`
 import "std/i32";
 function fact(n: i32): i32 {
     if (n == 0) { return 1; }
@@ -125,7 +125,7 @@ func TestInterpScriptReadAllStdin(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte(`import "core/no_prelude";
+	if err := os.WriteFile(src, []byte(`
 import "std/io";
 function main(): i32 {
     var s: string = io.read_all_stdin();
@@ -223,7 +223,7 @@ function main(): i32 {
 func TestInterpScriptStringPrelude(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/string";
 function main(): i32 {
     var s: string = "Hello";
@@ -293,7 +293,7 @@ func TestInterpScriptInteropIntToStringViaMangling(t *testing.T) {
 	}{
 		{
 			name: "explicit core/int + method dispatch",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i32";
 import "core/int";
 
@@ -325,7 +325,7 @@ function main(): i32 {
 		},
 		{
 			name: "auto-prelude flat-load path (regression sanity)",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i32";
 function main(): i32 {
     var x: i32 = 42;
@@ -684,7 +684,7 @@ func TestInterpScriptTimeTypes(t *testing.T) {
 	}{
 		{
 			name: "Instant from unix seconds",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -727,7 +727,7 @@ function main(): i32 {
 		},
 		{
 			name: "Duration milliseconds splits sec + nsec",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -815,7 +815,7 @@ function main(): i32 {
 // mistakes without baking in a brittle exact value.
 func TestInterpScriptInstantNow(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 import "std/time";
 
@@ -1386,7 +1386,7 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.add_duration handles nsec carry",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -1404,7 +1404,7 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.add_duration with negative shifts backward",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -1417,7 +1417,7 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.duration_since computes signed delta with borrow",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -1754,7 +1754,7 @@ func TestInterpScriptMockPlatform(t *testing.T) {
 	}{
 		{
 			name: "record + call_count + indexed access",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i32";
 import "std/mock_platform";
 function main(): i32 {

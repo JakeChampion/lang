@@ -28,7 +28,6 @@ const factLiterate = "# Factorial\n" +
 	"\n" +
 	"```fern\n" +
 	"<<imports>>=\n" +
-	"import \"core/no_prelude\";\n" +
 	"import \"std/i32\";\n" +
 	"```\n" +
 	"\n" +

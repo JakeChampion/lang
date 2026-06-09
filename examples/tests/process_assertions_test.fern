@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/process_assertions_test.fern — end-to-end
 // spawn + assert flow using `exec`, `temp_dir`, and the

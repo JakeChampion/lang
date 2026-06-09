@@ -16,7 +16,6 @@
 //
 // Showcases: argv flag parsing, `io.read_input` (file-or-stdin),
 // per-line transformation, and building output incrementally.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

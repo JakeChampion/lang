@@ -232,8 +232,7 @@ Tasks:
       and the `internal/prelude` package are gone (#1561);
       programs declare their `std/` + `core/` imports
       explicitly. Foundation that landed first:
-      `import "core/no_prelude";` is the opt-out sentinel
-      (#498). `modload.LoadStdlibFlat` /
+      `import "core/no_prelude";` was the opt-out sentinel (#498, later retired). `modload.LoadStdlibFlat` /
       `LoadStdlibFlatSkipping` route the auto-prelude through
       modload's rewriter in flat-namespace mode — qualified
       imports inside stdlib bodies (`int.foo(...)`) rewrite

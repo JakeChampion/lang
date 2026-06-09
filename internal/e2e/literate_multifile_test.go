@@ -16,7 +16,6 @@ import (
 const multiFileDoc = "# Two modules\n" +
 	"\n" +
 	"```fern file=main.fern entry\n" +
-	"import \"core/no_prelude\";\n" +
 	"import \"./mathx\";\n" +
 	"function main(): i32 {\n" +
 	"    return mathx.square(6);\n" +
@@ -90,14 +89,13 @@ func TestLiterateMultiFileDiagnosticRemap(t *testing.T) {
 	doc := "# Buggy\n" + // 1
 		"\n" + // 2
 		"```fern file=main.fern entry\n" + // 3
-		"import \"core/no_prelude\";\n" + // 4
-		"import \"./mathx\";\n" + // 5
-		"function main(): i32 { return mathx.square(6); }\n" + // 6
-		"```\n" + // 7
-		"\n" + // 8
-		"```fern file=mathx.fern\n" + // 9
-		"pub function square(n: i32): i32 { return \"oops\"; }\n" + // 10  <- error here
-		"```\n" // 11
+		"import \"./mathx\";\n" + // 4
+		"function main(): i32 { return mathx.square(6); }\n" + // 5
+		"```\n" + // 6
+		"\n" + // 7
+		"```fern file=mathx.fern\n" + // 8
+		"pub function square(n: i32): i32 { return \"oops\"; }\n" + // 9  <- error here
+		"```\n" // 10
 	src := filepath.Join(dir, "buggy.fern.md")
 	if err := os.WriteFile(src, []byte(doc), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -111,9 +109,9 @@ func TestLiterateMultiFileDiagnosticRemap(t *testing.T) {
 	}
 	msg := errb.String()
 	// The error lives in mathx.fern's source, but must be reported
-	// against the document at line 10 (not mathx.fern:2).
-	if !strings.Contains(msg, "buggy.fern.md:10:") {
-		t.Errorf("diagnostic should point at buggy.fern.md line 10, got:\n%s", msg)
+	// against the document at line 9 (not mathx.fern:1).
+	if !strings.Contains(msg, "buggy.fern.md:9:") {
+		t.Errorf("diagnostic should point at buggy.fern.md line 9, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, `return "oops"`) {
 		t.Errorf("diagnostic should render the document source line, got:\n%s", msg)

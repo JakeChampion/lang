@@ -36,7 +36,7 @@ pub function make_a(): Tok { return TokA { x: 5 }; }
 pub function make_b(): Tok { return TokB { y: 17 }; }
 `
 
-const crossModuleVariantMain = `import "core/no_prelude";
+const crossModuleVariantMain = `
 import "./tokens";
 
 function main(): i32 {
@@ -159,7 +159,7 @@ func TestCrossModuleVariantPatternAliasQualifier(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "tokens.fern"), []byte(crossModuleVariantTokens), 0o644); err != nil {
 		t.Fatalf("write tokens.fern: %v", err)
 	}
-	src := `import "core/no_prelude";
+	src := `
 import "./tokens" as lexer;
 import "./tokens";
 

@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/runner_self_test.fern — meta-test of the
 // `std/test` runner itself. Verifies that:

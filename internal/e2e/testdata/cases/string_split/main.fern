@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/string";
 // split() on a separator yields a string array; count the parts.
 function main(): i32 {

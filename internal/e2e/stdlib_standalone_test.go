@@ -32,9 +32,8 @@ func TestStdlibModulesImportStandalone(t *testing.T) {
 		}
 		mod := strings.TrimSuffix(path, ".fern") // e.g. "std/array", "core/int"
 		base := filepath.Base(mod)
-		// no_prelude is the opt-out sentinel (empty); _test_empty is a
-		// fixture. Both are exercised elsewhere and have nothing to check.
-		if base == "no_prelude" || strings.HasPrefix(base, "_test") {
+		// _test_empty is a fixture with nothing to check.
+		if strings.HasPrefix(base, "_test") {
 			return nil
 		}
 		modules = append(modules, mod)
@@ -49,7 +48,7 @@ func TestStdlibModulesImportStandalone(t *testing.T) {
 
 	for _, mod := range modules {
 		t.Run(mod, func(t *testing.T) {
-			src := "import \"core/no_prelude\";\nimport \"" + mod + "\";\n" +
+			src := "import \"" + mod + "\";\n" +
 				"function main(): i32 { return 0; }\n"
 			dir := t.TempDir()
 			p := filepath.Join(dir, "main.fern")

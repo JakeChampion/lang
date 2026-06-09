@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/array";
 // sorted_asc() returns a fresh ascending copy; index the ends.
 function main(): i32 {

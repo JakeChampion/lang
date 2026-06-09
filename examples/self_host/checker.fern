@@ -36,7 +36,6 @@
 //   - Float types (the parser flags `is_float` but the checker
 //     just lumps both into a numeric kind for now)
 
-import "core/no_prelude";
 import "./util";
 import "./lexer";
 import "./parser";

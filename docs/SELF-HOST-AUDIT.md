@@ -7,7 +7,7 @@ finding has a stable ID (`SH-NNN`), a severity, the affected `file:line`, and a
 concrete remediation. Check items off as they land.
 
 > Scope note: the self-host tree is a deliberately constrained bootstrap subset
-> (every file imports only `core/no_prelude`, siblings, and `std/io`). That
+> (every file imports only siblings and `std/io`). That
 > constraint is real, but it does **not** explain most of the duplication below
 > — receiver methods, struct-update spread, and sibling imports are all already
 > used in this tree, so a shared sibling `util.fern` / `value.fern` /
@@ -139,8 +139,8 @@ findings. Ranked by leverage.
 ### T1 — No shared utility module (→ 156 redundant defs)
 - [~] **SH-020 — Create `examples/self_host/util.fern`** (sibling, import-friendly)
   and move the copy-pasted leaf helpers into it, then import everywhere.
-  _In progress (staged rollout):_ `util.fern` now exists (imports only
-  `core/no_prelude`) and is seeded with the canonical `i32_to_string`;
+  _In progress (staged rollout):_ `util.fern` now exists (imports nothing but
+  siblings) and is seeded with the canonical `i32_to_string`;
   all 9 `i32_to_string` copies are now retired (`disasm`, `vm`, `constfold`, `printer` (dead), `ssa_x86`/`ssa_arm64`/`ssa_wasm`, `wasm`, `asmcore` — the last also dropped the `pub` cross-module copy used by `asm.fern`/`asm_arm64.fern`).
   The `i32_to_string` strand is **done**. Remaining for SH-020: fold in the OTHER duplicated helpers and the
   rest of the helpers below, one file per PR — each conversion must add

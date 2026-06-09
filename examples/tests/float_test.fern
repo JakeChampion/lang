@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/float_test.fern — f32 / f64 assertion family.
 //

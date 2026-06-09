@@ -12,7 +12,6 @@
 // imports (core/…, std/…) are skipped — the entry must be
 // self-contained over local modules + builtins.
 
-import "core/no_prelude";
 import "./util";
 import "./lexer";
 import "./parser";
@@ -64,15 +63,13 @@ function join_path(dir: string, name: string): string {
 
 // should_load decides whether an import path names a module file to
 // load. Local (`./…`) imports always load (from the entry's dir).
-// `std/…` / `core/…` imports load only when a stdlib root is given;
-// `core/no_prelude` is a directive, not a module file, so it's never
-// loaded. With no root the std/core paths are skipped — identical to
+// `std/…` / `core/…` imports load only when a stdlib root is given.
+// With no root the std/core paths are skipped — identical to
 // the pre-stdlib-root behaviour.
 function should_load(import_path: string, root: string): boolean {
     if (import_path.len() == 0) { return false; }
     if (is_local(import_path)) { return true; }
     if (root.len() == 0) { return false; }
-    if (import_path == "core/no_prelude") { return false; }
     return true;
 }
 

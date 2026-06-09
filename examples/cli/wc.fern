@@ -19,7 +19,6 @@
 //
 // Showcases: a counts struct, UTF-8 code-point counting, selectable
 // output columns, multi-file totals.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

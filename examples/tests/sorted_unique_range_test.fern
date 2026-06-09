@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/sorted_unique_range_test.fern — exercises
 // the batch-19 additions to std/test:

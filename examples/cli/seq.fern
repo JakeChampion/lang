@@ -13,7 +13,6 @@
 //
 // Showcases: positional integer operands, descending sequences
 // (negative step), `-w` width computation.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 

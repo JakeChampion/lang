@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/rel_tol_and_ms_bench_test.fern — exercises
 // the two batch-18 additions to std/test:

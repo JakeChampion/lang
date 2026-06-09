@@ -12,7 +12,6 @@
 //
 // Showcases: the std/sort helpers (`sort_strings_asc`,
 // `sort_i32_asc`, `string_cmp`), and post-sort dedupe.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

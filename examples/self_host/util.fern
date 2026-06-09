@@ -1,4 +1,3 @@
-import "core/no_prelude";
 
 // util — shared leaf helpers for the self-hosted compiler.
 //
@@ -9,7 +8,7 @@ import "core/no_prelude";
 // those pure, dependency-free helpers; consumer modules
 // `import "./util"` and call them qualified (`util.i32_to_string`).
 //
-// It deliberately imports only `core/no_prelude` so any self-host
+// It imports nothing, so any self-host
 // module can depend on it without pulling in the lexer/parser. The
 // module grows one helper at a time as files are converted off
 // their local copies; keeping each conversion small bounds the

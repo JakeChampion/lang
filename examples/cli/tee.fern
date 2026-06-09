@@ -15,7 +15,6 @@
 // Showcases: reading all of stdin, fanning one buffer out to stdout
 // plus N files, `read_file` + `write_file`, and reporting per-file
 // errors without aborting the whole run.
-import "core/no_prelude";
 import "std/string";
 import "std/io";
 import "std/array";
