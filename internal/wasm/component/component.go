@@ -397,6 +397,17 @@ func InnerTypeBorrow(resourceTypeidx uint32) []byte {
 	return out
 }
 
+// InnerTypeOwn returns the defvaltype body bytes for an `own<typeidx>` handle
+// type (the owned counterpart of InnerTypeBorrow). Used by the P6 export lift
+// for a handle-typed export parameter (docs/WIT-BRING-YOUR-OWN.md).
+//
+// Encoding: 69 <typeidx> (own form 0x69 + uleb resource typeidx).
+func InnerTypeOwn(resourceTypeidx uint32) []byte {
+	out := []byte{0x69}
+	out = leb128.UlebU64(out, uint64(resourceTypeidx))
+	return out
+}
+
 // InnerTypeListU8 is the defvaltype body bytes for `list<u8>` —
 // the canonical-ABI byte-buffer shape used by wasi:io/streams's
 // `blocking-write-and-flush(contents: list<u8>)` and similar.
