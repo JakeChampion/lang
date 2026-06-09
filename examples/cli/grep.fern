@@ -22,20 +22,6 @@ import "std/io";
 
 struct Opts { ignore_case: boolean, invert: boolean, show_num: boolean, count_only: boolean }
 
-function slurp(path: string): Option[string] {
-  if (path == "-" || path == "") {
-    return Some(io.read_all_stdin());
-  }
-  match (read_file(path)) {
-    Ok(contents) => {
-      return Some(contents);
-    },
-    Err(_) => {
-      return None;
-    }
-  }
-}
-
 function matches(line: string, pat: string, ci: boolean): boolean {
   if (ci) {
     return line.contains_ci(pat);
@@ -96,8 +82,8 @@ function main(): i32 {
   var j: i32 = 0;
   while (j < inputs.len()) {
     var name: string = inputs[j];
-    match (slurp(name)) {
-      Some(text) => {
+    match (io.read_input(name)) {
+      Ok(text) => {
         var lines: string[] = text.lines();
         var hits: i32 = 0;
         var ln: i32 = 0;
@@ -130,7 +116,7 @@ function main(): i32 {
           }
         }
       },
-      None => {
+      Err(_) => {
         eprint("grep: " + name + ": No such file or directory");
         status = 2;
       }

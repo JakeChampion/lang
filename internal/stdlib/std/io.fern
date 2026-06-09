@@ -1,10 +1,9 @@
 // std/io — convenience wrappers around the built-in Reader /
 // Writer primitives.
 //
-// Currently just `read_all_stdin()` — pulling the whole of
-// stdin into a single string. Companion to a future
-// `read_file(path)` for the
-// `$ tool < input.txt` / `$ cat in | tool` CLI shape.
+// `read_all_stdin()` pulls the whole of stdin into a single
+// string; `read_input(path)` is the CLI-tool companion that picks
+// stdin or a file from a path operand.
 //
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
@@ -25,4 +24,23 @@ pub function read_all_stdin(): string {
         }
     }
     return out;
+}
+
+// `read_input(path)` — read a CLI-style input operand: the
+// conventional `-` (and the empty string) mean "read all of
+// stdin"; any other value is a file path read via the `read_file`
+// builtin. Returns `Result[string, IoError]` so callers can report
+// a per-file error and continue — the exact shape the cat / wc /
+// head / grep / … family wants instead of hand-rolling the
+// stdin-vs-file branch in every tool.
+//
+//   match (io.read_input(path)) {
+//     Ok(text) => { … },
+//     Err(_)   => { eprint("tool: " + path + ": cannot open"); },
+//   }
+pub function read_input(path: string): Result[string, IoError] {
+    if (path == "-" || path == "") {
+        return Ok(read_all_stdin());
+    }
+    return read_file(path);
 }

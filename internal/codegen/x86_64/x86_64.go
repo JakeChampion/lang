@@ -5850,9 +5850,17 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push r12")       // s data ptr
 	g.emit("push r13")       // remaining bytes
 	g.emit("push r14")       // bytes_written
+	g.emit("sub rsp, 16")    // 8-byte scratch for emitStrDataPtr SSO spill + 8 align
 	g.emit("mov ebx, [rdi]") // fd
-	g.emit("mov r12, rsi")
-	g.emitStrLen("r13d", "r12") // len
+	// Length comes from the ORIGINAL tagged value (rsi) — emitStrLen
+	// is SSO-aware. Only then convert to a real byte pointer: for an
+	// inline (SSO) string the bytes live in the register, so
+	// emitStrDataPtr spills them to the frame scratch slot and hands
+	// back a pointer into it. Treating the raw inline value as an
+	// address (the old `mov r12, rsi`) wrote from a garbage pointer
+	// and trapped EFAULT for every <=7-byte string.
+	g.emitStrLen("r13d", "rsi")                 // len (SSO-aware)
+	g.emitStrDataPtr("r12", "rsi", "[rbp - 40]") // r12 = data byte ptr
 	g.emit("xor r14, r14")
 	g.label(".Lww_loop")
 	g.emit("cmp r14, r13")
@@ -5883,6 +5891,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov dword ptr [rax], 0") // Some
 	g.emit("mov [rax + 8], r12")
 	g.label(".Lww_ret")
+	g.emit("add rsp, 16") // drop SSO scratch
 	g.emit("pop r14")
 	g.emit("pop r13")
 	g.emit("pop r12")

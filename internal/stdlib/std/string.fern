@@ -1906,6 +1906,18 @@ pub function (s: string) parse_int(): Option[i32] {
     return Some(acc as i32);
 }
 
+// `s.parse_int_or(fallback)` — parse a decimal integer, returning
+// `fallback` when `s` isn't a valid integer (the `parse_int` cases
+// that yield `None`). Saves the `match parse_int { Some => v, None
+// => default }` boilerplate at every CLI flag-operand site
+// (`head -n N`, `seq STEP`, `fold -w N`, …).
+pub function (s: string) parse_int_or(fallback: i32): i32 {
+    match (s.parse_int()) {
+        Some(v) => { return v; },
+        None => { return fallback; },
+    }
+}
+
 // `s.parse_hex_int()` / `s.parse_bin_int()` — sugar for
 // parse_int_radix(s, 16) / parse_int_radix(s, 2).
 pub function (s: string) parse_hex_int(): Option[i32] {

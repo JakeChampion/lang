@@ -14,7 +14,7 @@
 //   $ ./cat -n file.txt
 //   $ printf 'a\n\n\nb\n' | ./cat -s
 //
-// Showcases: argv flag parsing, `read_file` + stdin `Reader`,
+// Showcases: argv flag parsing, `io.read_input` (file-or-stdin),
 // per-line transformation, and building output incrementally.
 import "core/no_prelude";
 import "std/string";
@@ -26,20 +26,6 @@ struct Opts { number: boolean, number_nonblank: boolean, squeeze: boolean, show_
 // Read an input named by `path`: "-" (or empty) means stdin, anything
 // else is a file. Returns None when the file can't be opened (the
 // caller reports the error and keeps going).
-function slurp(path: string): Option[string] {
-  if (path == "-" || path == "") {
-    return Some(io.read_all_stdin());
-  }
-  match (read_file(path)) {
-    Ok(contents) => {
-      return Some(contents);
-    },
-    Err(_) => {
-      return None;
-    }
-  }
-}
-
 // Expand a single line under the active display flags (tabs → ^I,
 // trailing `$`). The line text never includes its own newline.
 function render_line(line: string, o: Opts): string {
@@ -124,13 +110,13 @@ function main(): i32 {
   var prev_blank: boolean = false;
   var j: i32 = 0;
   while (j < inputs.len()) {
-    match (slurp(inputs[j])) {
-      Some(text) => {
+    match (io.read_input(inputs[j])) {
+      Ok(text) => {
         var st: (i32, boolean) = emit(text, o, counter, prev_blank);
         counter = st.0;
         prev_blank = st.1;
       },
-      None => {
+      Err(_) => {
         eprint("cat: " + inputs[j] + ": No such file or directory");
         status = 1;
       }

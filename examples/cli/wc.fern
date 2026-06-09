@@ -28,20 +28,6 @@ struct Counts { lines: i32, words: i32, bytes: i32, chars: i32 }
 
 struct Show { lines: boolean, words: boolean, bytes: boolean, chars: boolean }
 
-function slurp(path: string): Option[string] {
-  if (path == "-" || path == "") {
-    return Some(io.read_all_stdin());
-  }
-  match (read_file(path)) {
-    Ok(contents) => {
-      return Some(contents);
-    },
-    Err(_) => {
-      return None;
-    }
-  }
-}
-
 function count(text: string): Counts {
   var bytes: i32 = text.len();
   // Lines = number of '\n' bytes (wc counts newlines, so a final
@@ -132,14 +118,14 @@ function main(): i32 {
     if (label == "-") {
       label = "";
     }
-    match (slurp(inputs[j])) {
-      Some(text) => {
+    match (io.read_input(inputs[j])) {
+      Ok(text) => {
         var c: Counts = count(text);
         print(format_row(c, sh, label));
         total = add(total, c);
         nfiles = nfiles + 1;
       },
-      None => {
+      Err(_) => {
         eprint("wc: " + inputs[j] + ": No such file or directory");
         status = 1;
       }

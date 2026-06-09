@@ -66,13 +66,19 @@ $ wasmtime --dir=. wc.wasm file.txt
 ## Conventions shared across the tools
 
 - **Input resolution.** A `-` operand (or no operands at all) means
-  stdin; everything else is a file path. Most tools wrap this in a
-  small `slurp(path)` helper returning `Option[string]` /
-  `Result`-style handling so a missing file reports an error and the
-  run continues.
-- **Stdin.** Whole-input tools use `std/io`'s `read_all_stdin()`;
-  line-oriented ones then `.lines()` the result. (`examples/wasm/wc.fern`
-  shows the alternative streaming `Reader.read_line()` loop.)
+  stdin; everything else is a file path. Tools call
+  `io.read_input(path): Result[string, IoError]` from `std/io`, which
+  picks stdin or a file and lets the caller `match` `Ok` / `Err` to
+  report a missing file and keep going. (`read_input` is itself a thin
+  wrapper over `read_all_stdin()` + the `read_file` builtin — added
+  alongside these examples to kill the per-tool boilerplate.)
+- **Stdin.** Whole-input tools read via `io.read_input("-")` (i.e.
+  `read_all_stdin()`); line-oriented ones then `.lines()` the result.
+  (`examples/wasm/wc.fern` shows the alternative streaming
+  `Reader.read_line()` loop.)
+- **Number flags.** Integer operands (`head -n N`, `seq STEP`,
+  `fold -w N`, …) parse with `s.parse_int_or(fallback)` from
+  `std/string` — `parse_int` with a default baked in.
 - **Output.** `print(s)` adds a newline; `write(s)` does not (used when
   a tool must control its own line endings, e.g. `cat`/`head -c`,
   `tr`). Diagnostics go to `eprint`.
