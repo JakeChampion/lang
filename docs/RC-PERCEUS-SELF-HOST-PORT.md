@@ -1383,3 +1383,40 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `tup_exit_sweep_excl` ($__fern_arr_dec already guards null; the inline read
   did not). Both fixes shipped with the slice + the borrowed-field-append and
   conditional-null shapes are covered by the new struct free tests.
+- 2026-06-09: **wasm array RC — ELEMENT recursive release (string[] /
+  struct-array locals).** Until now an array was freed FLAT — the buffer
+  returned to the freelist but its rc-boxed elements leaked. A `string[]` or
+  struct-array local now releases its ELEMENTS (one level) when it is the last
+  owner, via a new `$__fern_arr_dec_ptr(a)` runtime helper: guarded like
+  `$__fern_arr_dec` (null / low-bit / low-addr), and when `[a-8]==1` (about to
+  free) it loops `i in 0..len` dec'ing each element pointer at `[a+8 + i*4]`
+  with `$__fern_arr_dec` before freeing the buffer. The rc==1 guard means an
+  aliased array (rc>1) only decrements the buffer — its elements live on
+  through the other owner — so each element is released exactly once, at the
+  final free. `arr_exit_sweep_excl` now picks `$__fern_arr_dec_ptr` for a
+  local in `str_arrays` or `sa_names` (string / struct elements) and the flat
+  `$__fern_arr_dec` otherwise (i32/i64/f64 scalar arrays, and — for now —
+  array-of-array / array-of-tuple, which stay one-level-flat). This pairs with
+  the construction-incs already retaining borrowed elements on store
+  (`store_value_is_borrowed` at the array-literal + `.append()` sites), so the
+  element decs balance: a borrowed element (rc 2: source + array) drops to 1
+  at the array's release and to 0 at the source's; a fresh element (rc 1, sole
+  owned) frees at the array's release. Scope: array LOCALS only — an array
+  held in a struct/tuple FIELD is still released one-level-flat by
+  `emit_struct_release` / `tup_exit_sweep_excl` (its elements leak), the next
+  depth increment. Coverage: new `TestSelfHostRcArrElemWasm` —
+  str-array-elem-released, str-array-elem-aliased-clean (the no-over-release
+  guard), str-array-append-released, str-array-churn-clean (50k cycles, reclaim
+  implied by no growth), struct-array-elem-released,
+  struct-array-elem-aliased-clean, str-array-aliased-buffer-clean (element
+  release fires once at the last of two array owners). Full RC + component +
+  binary + shim + interp + cli wasm suites green; bootstrap-safe.
+  Gotcha worth recording: the helper's loop must use NAMED block/loop labels
+  (`(block $adp_done (loop $adp_lp … (br_if $adp_done …) … (br $adp_lp)))`),
+  NOT anonymous numeric branch depths (`(br 0)` / `(br_if 1 …)`). watbin (the
+  self-host WAT→binary assembler) only encodes named-label branches; the first
+  cut used numeric depths, which the WAT *interpreter* (wasmtime on `.wat`) ran
+  fine but watbin mis-encoded into wrong branch targets — an infinite loop in
+  the assembled binary (the `TestSelfHostWasmBinary` wordcount case spun at
+  100% CPU). All other emitted loops already use named labels; new runtime
+  helpers must too.
