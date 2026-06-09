@@ -927,31 +927,113 @@ function array_field_elem_is_ptr(ft: string, cx: Ctx): boolean {
 // (struct_field_kind_char). An enum local's variant payload isn't reached (its
 // static type has 0 struct fields) — a sound leak, like a nested struct's own
 // fields.
+// emit_struct_release routes a swept struct/enum local to its generated
+// per-type drop function ($__fern_release_<T>), which recursively releases the
+// value's rc-tracked fields (nested struct fields recurse via THEIR release
+// fns — transitive reclamation, matching the native __drop_struct_<N>) then
+// frees the box. An untyped fallback (sty not a known struct/enum) frees the
+// box flat. The release fns are generated once per module by
+// struct_enum_drop_helpers.
 function emit_struct_release(name: string, sty: string, cx: Ctx): string {
-    var o: string = "";
+    if (is_struct_type(cx.structs, sty) || is_enum_type_name(cx, sty)) {
+        return "    (drop (call $__fern_release_" + sty + " (local.get $" + name + ")))\n";
+    }
+    return "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
+}
+
+// struct_release_field_inner builds the rc==1-guarded field-release WAT for a
+// value at pointer-expr `pe` of struct type `sty` (the generated
+// $__fern_release_<T> body). A nested STRUCT or ENUM field recurses through
+// that type's release fn (deep / transitive); a tuple field, a string, and
+// arrays release one level (arrays via arr_dec_ptr when their element is a
+// pointer). A scalar field is skipped.
+function struct_release_field_inner(pe: string, sty: string, cx: Ctx): string {
     var inner: string = "";
     var nf: i32 = struct_field_count(cx.structs, sty);
     var fi: i32 = 0;
     while (fi < nf) {
         var ft: string = struct_field_type_at(cx.structs, sty, fi);
         var fk: string = struct_field_kind_char(ft, cx);
-        if (fk == "a" || fk == "s" || fk == "S") {
+        var off: string = util.i32_to_string(struct_field_off(fi));
+        var load: string = "(i32.load (i32.add " + pe + " (i32.const " + off + ")))";
+        if (fk == "S" && (is_struct_type(cx.structs, ft) || (is_enum_type_name(cx, ft) && ft != "Option" && ft != "Result"))) {
+            inner = inner + " (drop (call $__fern_release_" + ft + " " + load + "))";
+        } else if (fk == "a" || fk == "s" || fk == "S") {
             var dec: string = "$__fern_arr_dec";
             if (fk == "a" && array_field_elem_is_ptr(ft, cx)) { dec = "$__fern_arr_dec_ptr"; }
-            inner = inner + " (drop (call " + dec + " (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")))))";
+            inner = inner + " (drop (call " + dec + " " + load + "))";
         }
         fi = fi + 1;
     }
-    // A conditionally-unassigned struct local (declared in a not-taken branch
-    // or a loop body, swept on a path that skipped it) is 0; the `[s-8]`
-    // rc-read below would fault at address -8, so null-guard the whole
-    // release. ($__fern_arr_dec guards null on its own, but the inline rc-read
-    // does not.)
-    if (inner.len() > 0) {
-        o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then" + inner + "))))\n";
+    return inner;
+}
+
+// struct_enum_drop_helpers generates the per-type drop functions for every
+// struct + enum type: $__fern_release_<S> (recursive field release) and
+// $__fern_release_<E> (an enum value box — flat one level for now; variant
+// payload dispatch is a later stage). Mutual recursion (a struct field that is
+// itself a struct calls that type's fn) gives arbitrary-depth reclamation;
+// each fn rc==1-gates internally, so a shared child at rc>1 just decrements.
+function struct_enum_drop_helpers(mod: parser.Module, cx: Ctx): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        var sty: string = mod.structs[i].name;
+        var inner: string = struct_release_field_inner("(local.get $p)", sty, cx);
+        o = o + "  (func $__fern_release_" + sty + " (param $p i32) (result i32)\n";
+        o = o + "    (if (i32.eqz (local.get $p)) (then (return (local.get $p))))\n";
+        if (inner.len() > 0) {
+            o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $p) (i32.const 8))) (i32.const 1)) (then" + inner + "))\n";
+        }
+        o = o + "    (call $__fern_arr_dec (local.get $p)))\n";
+        i = i + 1;
     }
-    o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
+    var e: i32 = 0;
+    while (e < mod.enums.len()) {
+        var en: string = mod.enums[e].name;
+        // Option/Result locals use emit_option_release, not a $__fern_release_
+        // fn; an enum sharing a struct name (shouldn't happen) is skipped.
+        if (en != "Option" && en != "Result" && !is_struct_type(mod.structs, en)) {
+            o = o + "  (func $__fern_release_" + en + " (param $p i32) (result i32)\n";
+            o = o + "    (call $__fern_arr_dec (local.get $p)))\n";
+        }
+        e = e + 1;
+    }
     return o;
+}
+
+// release_module_ctx builds a minimal Ctx carrying only the type info the
+// drop-fn generator's classifiers need (structs + method-return types for enum
+// detection); every per-function field is empty.
+function release_module_ctx(structs: parser.StructDecl[], mr_types: string[], mod_funcs: parser.FuncDecl[]): Ctx {
+    return Ctx {
+        tab: new_str_table(), locals: [], funcs: [], str_arrays: [], str_arr_funcs: [],
+        structs: structs, sv_names: [], sv_types: [], sf_names: [], sf_types: [],
+        of_names: [], of_payloads: [], ol_names: [], ol_payloads: [], ol_err_payloads: [],
+        mr_types: mr_types, mr_names: [], mr_rets: [],
+        i64_names: [], i64_funcs: [],
+        ret_i64: false, mod_funcs: mod_funcs,
+        f64_names: [], f64_funcs: [],
+        ret_f64: false,
+        map_names: [], cell_names: [], map_str_names: [],
+        map_str_key_names: [],
+        tup_names: [], tup_kinds: [], tup_svtypes: [],
+        fn_names: [], lam_ctr: cell_new(0), lamdefs: cell_new(""),
+        all_locals: [], cap_names: [],
+        sa_names: [], sa_types: [],
+        i64_arr_names: [], f64_arr_names: [],
+        ret_arr_kind: "i32",
+        arr_swept: [], arr_src: [],
+        ret_void: false,
+        ret_is_array: false,
+        str_swept: [],
+        ret_is_string: false,
+        tup_swept: [],
+        ret_is_tuple: false,
+        struct_swept: [],
+        opt_swept: [],
+        map_swept: [],
+    };
 }
 
 // struct_exit_sweep_excl emits the struct/enum release sweep (FREE ON, with
@@ -9770,6 +9852,14 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // calls, and any heap program may carry array params to count.
     if (needs_heap) {
         out = out + rc_runtime_helpers(heap_base);
+    }
+    // Transitive reclamation (Stage A): the per-struct/enum-type drop functions
+    // ($__fern_release_<T>) that the struct exit-sweep + cow-dec call, so a
+    // nested struct field recurses through its own release fn (arbitrary depth)
+    // rather than a flat one-level dec. Emitted when the heap + any struct/enum
+    // type exists.
+    if (needs_heap && (mod.structs.len() > 0 || mod.enums.len() > 0)) {
+        out = out + struct_enum_drop_helpers(mod, release_module_ctx(mod.structs, mr_types, mod.funcs));
     }
     // component-io: the $fd_write shim over the preview2 stdout stream, so
     // every fd_write call site (print / write / print_int) works unchanged.
