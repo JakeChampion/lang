@@ -67,6 +67,25 @@ func TestSelfHostRcStructBoxWasm(t *testing.T) {
 		// A struct built each loop iteration: detector stays clean (layout +
 		// construction-incs only; free off, so this leaks soundly).
 		{"struct-loop-clean", "struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var p = P { x: k, y: 2 }; s = s + p.y; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
+		// COUNTING milestone (free off): an owned struct local is released
+		// (rc dec) at exit, value-correct + detector clean.
+		{"struct-swept-clean", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 7 }; return p.x + p.y + __fern_rc_underflow_count(); }", 12},
+		// Aliasing a struct: the alias is inc'd, both swept, balanced.
+		{"struct-alias-clean", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 3, y: 4 }; var u = p; return u.x + p.y + __fern_rc_underflow_count(); }", 7},
+		// Move-on-return: a builder hands its struct to the caller (excluded
+		// from the builder's sweep), the caller sweeps it — balanced, clean.
+		{"struct-move-return-clean", "struct P { x: i32, y: i32 } function mk(): P { return P { x: 8, y: 34 }; } function main(): i32 { var p = mk(); var q = mk(); return p.x + q.y + __fern_rc_underflow_count(); }", 42},
+		// Regression: a function returning a BORROWED struct field must
+		// return-retain it (struct counting on), or the caller's sweep of the
+		// result over-releases the field the outer struct still owns (the
+		// struct analogue of the node_head/watbin UAF). i is stored into o
+		// WITHOUT a struct construction-inc (struct fields aren't inc'd yet),
+		// so the retain is what keeps i's rc balanced across both decs.
+		{"struct-borrowed-field-return", "struct Inner { v: i32 } struct Outer { inner: Inner, n: i32 } function get_inner(o: Outer): Inner { return o.inner; } function main(): i32 { var i = Inner { v: 9 }; var o = Outer { inner: i, n: 5 }; var r = get_inner(o); return r.v + o.inner.v + __fern_rc_underflow_count(); }", 18},
+		// A struct re-bound (`a = step(a)`) each iteration with a base-copy
+		// (`{ ...a, n: … }`) churns: intermediates leak (free off), the final
+		// owned struct is swept once, detector stays clean across many cycles.
+		{"struct-base-copy-churn-clean", "struct Acc { xs: i32[], n: i32 } function step(a: Acc): Acc { return Acc { ...a, n: a.n + 1 }; } function main(): i32 { var a = Acc { xs: [1, 2, 3], n: 0 }; var k = 0; while (k < 1000) { a = step(a); k = k + 1; } return (a.n % 7) + a.xs[2] + __fern_rc_underflow_count(); }", 9},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
