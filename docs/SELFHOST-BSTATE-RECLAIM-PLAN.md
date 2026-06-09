@@ -159,3 +159,70 @@ in-place ops), so there is no replaced box to reclaim.
   #2533) for *array* accumulators; `BState` is a *struct that shares
   fields through a returning constructor*, which is the harder case this
   doc addresses.
+
+## Current measurement + diagnosis (post-#2519..#2575)
+
+Re-measured on today's main (the numbers above predate the merged
+allocator/RC reclamation arc). Method: build the SSA→asm driver
+(`examples/self_host/ssa_emit_run.fern`) with `cmd/fern -target x86-64`, feed it
+a real module on stdin, sample peak RSS (`/proc/<pid>/VmHWM`):
+
+| input | lines | peak RSS | exit |
+|-------|-------|----------|------|
+| `asm.fern` | 8263 | **44 MB** | ok |
+| `wasm.fern` | 8413 | **784 MB** | ok |
+| `parser`+`ssa`+`checker`+`wasm` (~23.6k) | — | **>1 GiB** | **137 (OOM at the 1 GiB heap)** |
+
+The blowup is real and current; recent RC work didn't tame it. The 18×
+spread between two similarly-sized modules (wasm 784 MB vs asm 44 MB) is a
+per-function-complexity churn, not flat overhead.
+
+### The churn is `mk_bs` reconstruction
+
+Every `BState` update routes through ONE constructor, `mk_bs(name, nparams, …,
+seed)` (14 fields). The 15 update methods each call it with **13 carried
+`s.field` args + 1-2 changed**, e.g.
+
+```
+function (s: BState) emit(inst: SInst): BState {
+    var nc = …;
+    return mk_bs(s.name, s.nparams, …, nc /*changed*/, s.var_names, …, s.seed);
+}
+```
+
+So `s = s.emit(inst)` (and `s = build_expr(.., s)`, recursively per expr node)
+allocates a fresh `BState` box and orphans the old one — millions of small
+(~14-word) boxes over a large module's SSA build. The carried array/string
+fields are shared with the new box (inc'd at `mk_bs`'s construction), so the
+orphan is dominated by the *boxes*, not their payloads.
+
+### Why the obvious reclaims don't apply
+
+- `tryStructReuseOverwrite` (Fern's FBIP struct-reuse) fires only for a
+  **literal at the assignment site** (`p = T{ f: v, … }`). The `BState` churn is
+  a **call** (`s = s.emit(inst)` / `s = build_expr(.., s)`) whose `BState{}`
+  literal lives inside `mk_bs`, behind the call — out of reach.
+- Lifting `typeSelfDropSafe` to deep-drop the orphan at the overwrite
+  **segfaulted** (#2538): `mk_bs`'s result shares fields the deep-drop
+  over-releases.
+- Affine local-tracking to move the threaded value into an `own` callee was
+  **fuzzer-fragile** (#2568): rc locals are non-linear; the affine checker
+  false-positives unboundedly across `fernsmith`/fuzz/differential.
+
+### The Perceus-aligned fix: reuse-token threading
+
+Koka/Lean reclaim exactly this shape with a **reuse token**: when a unique value
+is dropped and a same-size value constructed, the allocation is reused in place.
+For `BState`, the caller's unique old `s` flows as a reuse token into `mk_bs`,
+whose `BState{}` reuses it — an in-place field update of the box, no orphan.
+This is **inter-procedural** reuse-token passing (the token crosses the
+`s.emit(…) → mk_bs` call); Fern's reuse primitive (`__fern_alloc_reuse`)
+supports the leaf but the analysis does not yet thread tokens through calls.
+
+Baseline to beat: **wasm.fern SSA-emit 784 MB → flat box reuse**; the
+self-compile must clear the 1 GiB heap. Gate any attempt on
+`TestSelfHostStdTestE2E` + the fixpoint from the first commit (the #2538/#2568
+lesson). Larger alternatives — inlining `mk_bs` at all update sites to expose
+the literal to `tryStructReuseOverwrite`, or making `BState` mutable — are
+bigger self-host rewrites; the reuse-token route is the smallest IR-level change
+and matches how Koka/Lean do it.
