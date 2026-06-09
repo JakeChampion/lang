@@ -2806,6 +2806,29 @@ function export_has_string_param(params: parser.ParamDecl[]): boolean {
     return false;
 }
 
+// export_has_numeric_array_param reports whether any parameter is a numeric
+// array (`list<T>`, slot == canonical element size) — the shape whose export
+// wrapper rebuilds a self-host array from the canonical (ptr,len).
+function export_has_numeric_array_param(params: parser.ParamDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (extern_array_param_supported(params[i].type_name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// module_has_array_param_export reports whether any `@export` takes a numeric
+// array parameter — its wrapper needs the array runtime (__fern_arr_box).
+function module_has_array_param_export(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < mod.exports.len()) {
+        if (export_has_numeric_array_param(export_func_params(mod, mod.exports[i].func_name))) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // build_export_wrapper emits the core wrapper bridging the canonical ABI of a
 // composite-signature `@export` to the Fern function (P6 —
 // docs/WIT-BRING-YOUR-OWN.md). A string parameter arrives as canonical
@@ -2815,12 +2838,16 @@ function export_has_string_param(params: parser.ParamDecl[]): boolean {
 // through. Local indices: wrapper params 0..W-1, then one block local per
 // string param, then a loop counter, then (string result) $s + $ra.
 function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: string): string {
+    // Each string OR numeric-array param takes two canonical wrapper slots
+    // (ptr,len) and gets one scratch "block" local (the [len][bytes] string block
+    // / the rebuilt Fern array); scalars take one slot, no local.
     var w_slots: i32 = 0;
-    var nstr: i32 = 0;
+    var nblk: i32 = 0;
     var j: i32 = 0;
     while (j < params.len()) {
-        if (params[j].type_name == "string") { w_slots = w_slots + 2; nstr = nstr + 1; }
-        else { w_slots = w_slots + 1; }
+        if (params[j].type_name == "string" || extern_array_param_supported(params[j].type_name)) {
+            w_slots = w_slots + 2; nblk = nblk + 1;
+        } else { w_slots = w_slots + 1; }
         j = j + 1;
     }
     var str_result: boolean = ret == "string";
@@ -2828,21 +2855,21 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
     // the Fern array into the canonical (ptr,len) return area (P6 — see the
     // array-result branch below).
     var arr_result: boolean = extern_array_param_supported(ret);
-    var i_local: i32 = w_slots + nstr;
-    var s_local: i32 = w_slots + nstr + 1;
-    var ra_local: i32 = w_slots + nstr + 2;
+    var i_local: i32 = w_slots + nblk;
+    var s_local: i32 = w_slots + nblk + 1;
+    var ra_local: i32 = w_slots + nblk + 2;
     // Array-result locals (mutually exclusive with the string-result ones): the
     // call result (the array block base), its length, the 8-aligned element
     // buffer, and the return area. The copy counter reuses $i (i_local).
-    var arr_arr: i32 = w_slots + nstr + 1;
-    var arr_alen: i32 = w_slots + nstr + 2;
-    var arr_buf: i32 = w_slots + nstr + 3;
-    var arr_ra: i32 = w_slots + nstr + 4;
+    var arr_arr: i32 = w_slots + nblk + 1;
+    var arr_alen: i32 = w_slots + nblk + 2;
+    var arr_buf: i32 = w_slots + nblk + 3;
+    var arr_ra: i32 = w_slots + nblk + 4;
 
     var head: string = "  (func $__xwrap_" + fname;
     j = 0;
     while (j < params.len()) {
-        if (params[j].type_name == "string") { head = head + " (param i32) (param i32)"; }
+        if (params[j].type_name == "string" || extern_array_param_supported(params[j].type_name)) { head = head + " (param i32) (param i32)"; }
         else { head = head + " (param " + wat_extern_valtype(params[j].type_name) + ")"; }
         j = j + 1;
     }
@@ -2850,7 +2877,7 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
     else if (returns_value(ret)) { head = head + " (result " + wat_extern_valtype(ret) + ")"; }
     head = head + "\n";
 
-    var nlocals: i32 = nstr + 1;
+    var nlocals: i32 = nblk + 1;
     if (str_result) { nlocals = nlocals + 2; }
     if (arr_result) { nlocals = nlocals + 4; }
     var locals: string = "    ";
@@ -2880,6 +2907,29 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
             body = body + "      (local.set " + iS + " (i32.add (local.get " + iS + ") (i32.const 1)))\n";
             body = body + "      (br $c" + jS + ")))\n";
             callargs = callargs + " (local.get " + blkS + ")";
+            blk = blk + 1;
+            wp = wp + 2;
+        } else if (extern_array_param_supported(params[j].type_name)) {
+            // Numeric-array (`list<T>`) param: the canonical ABI passes (ptr,len)
+            // with the elements contiguous at their stride; rebuild the self-host
+            // array ([len@0], elements at +8 in native slots — see the import
+            // array-result wrapper) and pass its block base to the Fern func.
+            var akind: string = params[j].type_name[0:params[j].type_name.len() - 2];
+            var assz: string = util.i32_to_string(elem_slot_size(akind));
+            var ablkS: string = util.i32_to_string(blk);
+            var aiS: string = util.i32_to_string(i_local);
+            var alenS: string = util.i32_to_string(wp + 1);
+            var aptrS: string = util.i32_to_string(wp);
+            var ajS: string = util.i32_to_string(j);
+            body = body + "    (local.set " + ablkS + " (call $__fern_arr_box (i32.mul (local.get " + alenS + ") (i32.const " + assz + "))))\n";
+            body = body + "    (i32.store (local.get " + ablkS + ") (local.get " + alenS + "))\n";
+            body = body + "    (local.set " + aiS + " (i32.const 0))\n";
+            body = body + "    (block $pda" + ajS + " (loop $pca" + ajS + "\n";
+            body = body + "      (br_if $pda" + ajS + " (i32.ge_u (local.get " + aiS + ") (local.get " + alenS + ")))\n";
+            body = body + "      (" + elem_store_op(akind) + " (i32.add (i32.add (local.get " + ablkS + ") (i32.const 8)) (i32.mul (local.get " + aiS + ") (i32.const " + assz + "))) (" + elem_load_op(akind) + " (i32.add (local.get " + aptrS + ") (i32.mul (local.get " + aiS + ") (i32.const " + assz + ")))))\n";
+            body = body + "      (local.set " + aiS + " (i32.add (local.get " + aiS + ") (i32.const 1)))\n";
+            body = body + "      (br $pca" + ajS + ")))\n";
+            callargs = callargs + " (local.get " + ablkS + ")";
             blk = blk + 1;
             wp = wp + 2;
         } else {
@@ -2937,7 +2987,8 @@ function export_needs_heap(mod: parser.Module): boolean {
     var i: i32 = 0;
     while (i < mod.exports.len()) {
         var nm: string = mod.exports[i].func_name;
-        if (export_func_ret(mod, nm) == "string" || export_has_string_param(export_func_params(mod, nm)) || extern_array_param_supported(export_func_ret(mod, nm))) {
+        var params: parser.ParamDecl[] = export_func_params(mod, nm);
+        if (export_func_ret(mod, nm) == "string" || export_has_string_param(params) || extern_array_param_supported(export_func_ret(mod, nm)) || export_has_numeric_array_param(params)) {
             return true;
         }
         i = i + 1;
@@ -2945,13 +2996,14 @@ function export_needs_heap(mod: parser.Module): boolean {
     return false;
 }
 
-// export_needs_realloc reports whether any `@export` has a string parameter —
-// the canonical realloc lift materialises the incoming bytes via cabi_realloc,
-// so the core must emit + export it (P6).
+// export_needs_realloc reports whether any `@export` has a string or numeric-
+// array parameter — the canonical realloc lift materialises the incoming bytes
+// via cabi_realloc, so the core must emit + export it (P6).
 function export_needs_realloc(mod: parser.Module): boolean {
     var i: i32 = 0;
     while (i < mod.exports.len()) {
-        if (export_has_string_param(export_func_params(mod, mod.exports[i].func_name))) { return true; }
+        var params: parser.ParamDecl[] = export_func_params(mod, mod.exports[i].func_name);
+        if (export_has_string_param(params) || export_has_numeric_array_param(params)) { return true; }
         i = i + 1;
     }
     return false;
@@ -2964,7 +3016,7 @@ function extern_exports(mod: parser.Module): string {
         var x: parser.ExportBinding = mod.exports[i];
         var ret: string = export_func_ret(mod, x.func_name);
         var params: parser.ParamDecl[] = export_func_params(mod, x.func_name);
-        if (ret == "string" || export_has_string_param(params) || extern_array_param_supported(ret)) {
+        if (ret == "string" || export_has_string_param(params) || extern_array_param_supported(ret) || export_has_numeric_array_param(params)) {
             // Composite signature: surface a wrapper that bridges the canonical
             // ABI (string params materialised as [len][bytes] blocks, a string
             // result repacked into the [ptr,len] return area, a numeric-array
@@ -9323,7 +9375,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // arr_helpers (push) is also needed by string `split`, which builds
     // its result array via $__fern_arr_push — so emit it for strings too
     // (and for maps, which pull in the string runtime for key compare).
-    if (has_arrays || has_strings || has_env || has_args || has_readfile || has_writefile || has_maps || has_tostring) {
+    if (has_arrays || has_strings || has_env || has_args || has_readfile || has_writefile || has_maps || has_tostring || module_has_array_param_export(mod)) {
         out = out + arr_helpers();
     }
     if (has_sfb) {
