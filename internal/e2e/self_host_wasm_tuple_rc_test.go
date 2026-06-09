@@ -68,6 +68,17 @@ func TestSelfHostRcTupleBoxWasm(t *testing.T) {
 		// recursively released each time the tuple is freed): detector clean
 		// with free on across many cycles.
 		{"tuple-array-churn-clean", "function mk(): i32 { var a: i32[] = [1, 2, 3, 4, 5, 6, 7, 8]; var t = (a, 5); return t.0[7] + t.1; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 6},
+		// DEPTH: a tuple holding a string[] element ('A' kind) now deep-releases
+		// the array's string elements via arr_dec_ptr, not just the buffer —
+		// value-correct + detector clean.
+		{"tuple-strarray-elem-released", "function main(): i32 { var strs: string[] = [\"a\" + \"b\", \"c\" + \"d\"]; var t = (strs, 5); return t.0[0].len() + t.1 + __fern_rc_underflow_count(); }", 7},
+		// SAFETY: a tuple holding an i32[] element (values >= heap_base and even,
+		// which look like heap pointers) must stay FLAT ('a' kind) — the scalar
+		// elements must NOT be arr_dec'd as pointers (that would corrupt).
+		{"tuple-i32array-flat-safe", "function main(): i32 { var ns: i32[] = [262184, 262192, 262200]; var t = (ns, 4); return t.0.len() + t.1 + __fern_rc_underflow_count(); }", 7},
+		// A churn of tuples each holding a fresh string[]: deep element release
+		// reclaims the strings (no growth), detector clean across many cycles.
+		{"tuple-strarray-churn-clean", "function mk(): i32 { var t = ([\"x\" + \"y\", \"z\" + \"w\"], 3); return t.0[0].len() + t.1; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

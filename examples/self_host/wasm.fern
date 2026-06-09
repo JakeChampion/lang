@@ -771,8 +771,13 @@ function tup_exit_sweep_excl(cx: Ctx, excl: string): string {
             var inner: string = "";
             var e: i32 = 0;
             while (e < kinds.len()) {
+                // 's' string / 'a' scalar-array → flat $__fern_arr_dec; 'A'
+                // pointer-element array → $__fern_arr_dec_ptr (deep-releases
+                // the string/struct elements one level).
                 if (kinds[e] == 97 || kinds[e] == 115) {
                     inner = inner + " (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(e * 4) + ")))))";
+                } else if (kinds[e] == 65) {
+                    inner = inner + " (drop (call $__fern_arr_dec_ptr (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(e * 4) + ")))))";
                 }
                 e = e + 1;
             }
@@ -1476,6 +1481,25 @@ function is_tuple_elem_array(e: parser.Expr, cx: Ctx): boolean {
     return false;
 }
 
+// tuple_elem_array_is_ptr: is a tuple's array element a POINTER-element array
+// (string[] / struct[]) — so its elements get deep-released via
+// $__fern_arr_dec_ptr — rather than a scalar array (i32[]/i64[]/f64[], freed
+// flat)? Soundness-critical and asymmetric: a false positive would dec scalar
+// values as pointers (corruption), so this returns true ONLY when the element
+// type is provably a pointer; anything unsure (an ExprSlice, an empty literal,
+// a plain i32[] ident) stays flat (a missed deep-release only leaks).
+function tuple_elem_array_is_ptr(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return contains_str(cx.str_arrays, id.name) || contains_str(cx.sa_names, id.name); },
+        parser.ExprArray(arr) => {
+            if (arr.elements.len() == 0) { return false; }
+            return is_string_expr(arr.elements[0], cx) || struct_type_of(arr.elements[0], cx).len() > 0;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
 // tuple_kind_string records a per-element kind char: 's' string, 'a'
 // rc-boxed array, else 'i'. Drives `t.N` string typing (only 's' is read
 // there) AND the tuple free recursive field-release (which dec's 'a'/'s'
@@ -1485,7 +1509,13 @@ function tuple_kind_string(elements: parser.Expr[], cx: Ctx): string {
     var i: i32 = 0;
     while (i < elements.len()) {
         if (is_string_expr(elements[i], cx)) { out = out + "s"; }
-        else if (is_tuple_elem_array(elements[i], cx)) { out = out + "a"; }
+        else if (is_tuple_elem_array(elements[i], cx)) {
+            // 'A' = pointer-element array (deep-released via arr_dec_ptr),
+            // 'a' = scalar array (freed flat). Asymmetric — only the proven
+            // pointer case gets 'A' (a false 'A' on a scalar array corrupts).
+            if (tuple_elem_array_is_ptr(elements[i], cx)) { out = out + "A"; }
+            else { out = out + "a"; }
+        }
         else { out = out + "i"; }
         i = i + 1;
     }
