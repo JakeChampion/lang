@@ -78,6 +78,25 @@ func TestSelfHostRcMapGrowWasm(t *testing.T) {
 		// Churn: 50k maps with HEAP string keys built + freed; the keys reclaim
 		// each cycle (no OOM), detector clean — the wordcount-style leak closed.
 		{"map-heap-key-churn", "function mk(): i32 { var m = map_new(2); var a: string = \"k\" + \"1\"; var b: string = \"k\" + \"2\"; m = m.insert(a, 3); m = m.insert(b, 4); return m.get_or(a, -1) + m.get_or(b, -1); } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 100) + __fern_rc_underflow_count(); }", 7},
+		// String VALUE release: a heap string value (construction-inc'd on insert
+		// when vis==1) is freed on the map's death (map_release releases each
+		// occupied slot's value). i32 keys (kis 0), string values (vis 1).
+		// Value-correct + detector clean.
+		{"map-str-value-released", "function main(): i32 { var m = map_new_i32(8); var v: string = \"ab\" + \"cd\"; m = m.insert(1, v); return m.get_or(1, \"\").len() + 38 + __fern_rc_underflow_count(); }", 42},
+		// A string LITERAL value is immortal — the inc/dec guard no-ops, value
+		// still correct.
+		{"map-str-value-literal-clean", "function main(): i32 { var m = map_new_i32(8); m = m.insert(5, \"hello\"); return m.get_or(5, \"\").len() + 37 + __fern_rc_underflow_count(); }", 42},
+		// Overwrite: re-inserting the same key with a NEW string value releases
+		// the OLD value + construction-inc's the new (balanced, no leak / no
+		// over-release). Value reads the latest; detector clean.
+		{"map-str-value-overwrite", "function main(): i32 { var m = map_new_i32(8); var a: string = \"x\" + \"x\"; var b: string = \"yy\" + \"zz\"; m = m.insert(7, a); m = m.insert(7, b); return m.get_or(7, \"\").len() + 38 + __fern_rc_underflow_count(); }", 42},
+		// Both string KEY and string VALUE released (kis 1, vis 1) on the map's
+		// death — value-correct + detector clean.
+		{"map-str-key-and-value", "function main(): i32 { var m = map_new(8); var v: string = \"ab\" + \"cd\"; m = m.insert(\"key\", v); return m.get_or(\"key\", \"\").len() + 38 + __fern_rc_underflow_count(); }", 42},
+		// Churn: 50k maps with HEAP string values built + freed; the values
+		// reclaim each cycle (no OOM), detector clean — the string-value leak
+		// closed (50k leaked value strings would exhaust memory).
+		{"map-str-value-churn", "function mk(): i32 { var m = map_new_i32(2); var a: string = \"k\" + \"1\"; var b: string = \"k\" + \"2\"; m = m.insert(1, a); m = m.insert(2, b); return m.get_or(1, \"\").len() + m.get_or(2, \"\").len(); } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
