@@ -233,6 +233,16 @@ struct Ctx {
     // place (`m = m.insert(…)`) returns the SAME box, so it stays one owned
     // local; borrowed params are NOT swept.
     map_swept: string[],
+    // Perceus closure reference-counting. clos_swept: body closure locals
+    // bound directly to a lambda literal (`var f = function(…){…}`) — an
+    // OWNED, freshly rc-boxed env block. Freed (rc dec → box reclaim) at
+    // function exit, excluding a move-on-return slot. The env is now rc-boxed
+    // via $__fern_str_box (header at [box-8]; table_idx@0 + captures@4+i*4
+    // unchanged), so its box reclaims; per-capture release rides on this in a
+    // later slice (captures still leak one level here — sound). Only
+    // lambda-literal bindings are swept; closure-returning calls, aliases, and
+    // bare function-name values are NOT (leak, sound).
+    clos_swept: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -1113,6 +1123,7 @@ function release_module_ctx(structs: parser.StructDecl[], mr_types: string[], mo
         struct_swept: [],
         opt_swept: [],
         map_swept: [],
+        clos_swept: [],
     };
 }
 
@@ -1325,6 +1336,61 @@ function map_exit_sweep_excl(cx: Ctx, excl: string): string {
 
 function map_exit_sweep(cx: Ctx): string {
     return map_exit_sweep_excl(cx, "");
+}
+
+// clos_exit_sweep_excl frees each owned closure local's rc-boxed env block
+// at function exit (rc dec via the shared $__fern_arr_dec; reclaims the box
+// on the last reference), except `excl` — a move-on-return slot handed to the
+// caller. Captures still leak one level here (a later slice releases them);
+// the box reclaim is sound on its own (a borrowed closure at rc>1 just dec's).
+function clos_exit_sweep_excl(cx: Ctx, excl: string): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < cx.clos_swept.len()) {
+        if (cx.clos_swept[i] != excl) {
+            o = o + "    (drop (call $__fern_arr_dec (local.get $" + cx.clos_swept[i] + ")))\n";
+        }
+        i = i + 1;
+    }
+    return o;
+}
+
+function clos_exit_sweep(cx: Ctx): string {
+    return clos_exit_sweep_excl(cx, "");
+}
+
+// collect_clos_swept gathers body closure locals bound directly to a lambda
+// literal (`var f = function(…){…}`) — freshly rc-boxed, owned envs the exit
+// sweep frees. Aliases, closure-returning calls, and bare function-name
+// values are excluded (they leak one level — sound). Comma destructures
+// skipped. Recurses nested bodies.
+function collect_clos_swept(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    match (v.init) {
+                        parser.ExprLambda(_) => { acc = acc.append(v.name); },
+                        _ => {},
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_clos_swept(f.then_body, acc);
+                acc = collect_clos_swept(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_clos_swept(w.body, acc); },
+            parser.StmtFor(f) => { acc = collect_clos_swept(f.body, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_clos_swept(m.arms[k].body, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
 }
 
 // ret_map_is_borrowed: a returned map that borrows (a field / index read, or a
@@ -5283,7 +5349,11 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             cx.lamdefs.set(cx.lamdefs.get() + lamtext);
             var ap: string = "$__lit" + util.i32_to_string(depth);
             var s: string = "(block (result i32)";
-            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + caps.len() * 4) + ")))";
+            // rc-box the env via $__fern_str_box (8-byte rc+bsz header, returns
+            // base+8) so the closure carries an rc word at [box-8] and can be
+            // counted + freed; table_idx@0 + captures@4+i*4 are unchanged
+            // (str_box just adds a header below the returned pointer).
+            s = s + " (local.set " + ap + " (call $__fern_str_box (i32.const " + util.i32_to_string(4 + caps.len() * 4) + ")))";
             s = s + " (i32.store (local.get " + ap + ") (i32.const " + util.i32_to_string(idx) + "))";
             // Capture values: evaluated in the enclosing scope, stored at
             // box + 4 + i*4 (matching the lambda body's $__env loads).
@@ -7776,7 +7846,14 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.map_swept, id.name)) { map_mov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov) + opt_exit_sweep_excl(st.cx, opt_mov) + map_exit_sweep_excl(st.cx, map_mov);
+            // Closure move-on-return: a bare owned closure local returned is
+            // excluded from the closure sweep (handed over at its rc).
+            var clos_mov: string = "";
+            match (r.value) {
+                parser.ExprIdent(id) => { if (contains_str(st.cx.clos_swept, id.name)) { clos_mov = id.name; } },
+                _ => {},
+            }
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov) + opt_exit_sweep_excl(st.cx, opt_mov) + map_exit_sweep_excl(st.cx, map_mov) + clos_exit_sweep_excl(st.cx, clos_mov);
             // Perceus return-retain: when an array/string-returning function
             // hands back a BORROWED reference (a field / index read, or a
             // borrowed param — anything not a fresh literal/concat/slice/call
@@ -8568,6 +8645,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         struct_swept: [],
         opt_swept: [],
         map_swept: [],
+        clos_swept: [],
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -8631,7 +8709,9 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cx8: Ctx = Ctx { ...cx7, opt_swept: collect_opt_swept(f.body, cx7, []) };
     // Perceus map RC set — computed once map_names are known so map aliases
     // resolve.
-    return Ctx { ...cx8, map_swept: collect_map_swept(f.body, cx8, []) };
+    var cx9: Ctx = Ctx { ...cx8, map_swept: collect_map_swept(f.body, cx8, []) };
+    // Perceus closure RC set — lambda-literal-bound closure locals freed at exit.
+    return Ctx { ...cx9, clos_swept: collect_clos_swept(f.body, []) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning
@@ -8859,7 +8939,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     // Perceus exit sweep on the fall-through path (functions that end
     // without an explicit `return`). After a final `return` it is
     // unreachable-but-valid wasm, like the trailing fallthrough const.
-    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + opt_exit_sweep(cx) + map_exit_sweep(cx) + tail;
+    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + opt_exit_sweep(cx) + map_exit_sweep(cx) + clos_exit_sweep(cx) + tail;
 }
 
 // module_uses_divrem is true when any free function body or the
