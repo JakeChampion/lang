@@ -6824,6 +6824,12 @@ function map_helpers(): string {
     o = o + "      (if (i32.eqz (local.get $u)) (then\n";
     o = o + "        (local.set $slot (select (local.get $ff) (local.get $idx) (i32.ge_s (local.get $ff) (i32.const 0))))\n";
     o = o + "        (i32.store (i32.add (local.get $keys) (i32.mul (local.get $slot) (i32.const 4))) (local.get $k))\n";
+    // Perceus map key construction-inc: a NEW string-keyed entry retains its
+    // key (the map co-owns it alongside the source), so $__fern_map_release can
+    // release it on the map's death; the inc is a guard no-op for an immortal
+    // string literal. (A literal key is the common case; a heap key — e.g. a
+    // word read from input — now reclaims.) i32 keys (kis 0) carry no rc.
+    o = o + "        (if (local.get $kis) (then (drop (call $__fern_rc_inc (local.get $k)))))\n";
     o = o + "        (i32.store (i32.add (local.get $vals) (i32.mul (local.get $slot) (i32.const 4))) (local.get $v))\n";
     o = o + "        (i32.store (i32.add (local.get $used) (i32.mul (local.get $slot) (i32.const 4))) (i32.const 1))\n";
     o = o + "        (i32.store (local.get $box) (i32.add (i32.load (local.get $box)) (i32.const 1)))\n";
@@ -6926,8 +6932,22 @@ function map_helpers(): string {
     // like $__fern_arr_dec (null / low-bit / low-addr); an aliased map (rc>1)
     // just decrements the box, its arrays untouched.
     o = o + "  (func $__fern_map_release (param $box i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $cap i32) (local $keys i32) (local $used i32)\n";
     o = o + "    (if (i32.eqz (local.get $box)) (then (return (local.get $box))))\n";
     o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $box) (i32.const 8))) (i32.const 1)) (then\n";
+    // String-keyed map (kis@[box+20]==1): release each occupied slot's key
+    // (construction-inc'd on insert) before freeing the keys buffer.
+    o = o + "      (if (i32.load (i32.add (local.get $box) (i32.const 20))) (then\n";
+    o = o + "        (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
+    o = o + "        (local.set $keys (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
+    o = o + "        (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
+    o = o + "        (local.set $i (i32.const 0))\n";
+    o = o + "        (block $mkd (loop $mkl\n";
+    o = o + "          (br_if $mkd (i32.ge_u (local.get $i) (local.get $cap)))\n";
+    o = o + "          (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
+    o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $keys) (i32.mul (local.get $i) (i32.const 4))))))))\n";
+    o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "          (br $mkl))))) \n";
     o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 8)))))\n";
     o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 12)))))\n";
     o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 16)))))))\n";
