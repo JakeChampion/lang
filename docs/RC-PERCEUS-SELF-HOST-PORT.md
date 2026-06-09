@@ -1547,3 +1547,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   component + binary + shim + interp + cli wasm suites green; bootstrap-safe.
   Next: option FREE with the tag-guarded Some/Ok-payload recursive release +
   option construction-incs (so an option stored in a container survives).
+- 2026-06-09: **wasm Option/Result RC — FREE flipped ON, with tag-guarded
+  PAYLOAD release.** Options/Results are now reclaimed; freeing a Some/Ok first
+  releases its payload. `emit_option_release` emits, per swept option local
+  (Some/Ok payload type from ol_payloads), an inline guard chain: null-guard →
+  `[p-8]==1` (last owner) → `[p]==0` (tag 0 = the Some/Ok payload-carrying
+  variant) → release the payload at `[p+4]` by its kind (string / scalar-array
+  flat / pointer-array via `$__fern_arr_dec_ptr` / nested struct one level; a
+  scalar payload like `Option<i32>` is SKIPPED — `struct_field_kind_char`
+  returns 'i', so a heap-address-shaped i32 is never dec'd as a pointer), then
+  `$__fern_arr_dec`s the box; `opt_exit_sweep_excl` now calls it (replacing the
+  counting-stage rc_dec). Option construction-incs: `store_value_is_borrowed`
+  gains `init_is_option_alias`, so an option stored into a container is retained
+  — and the Some/Ok payload retain was already wired via `enum_box_retain`'s
+  retain flag (also `store_value_is_borrowed`). Move-on-return + the
+  borrowed-return-retain ride unchanged from counting. Known sound leaks: a
+  Result's Err payload (tag 1, untracked type) and an option's payload-of-a-
+  nested-container beyond one level — over-count, never over-release. Coverage:
+  `TestSelfHostRcOptionBoxWasm` gains option-string-payload-released,
+  option-i32-payload-flat-safe (the scalar-safety guard),
+  option-builder-escape-clean (the payload freed exactly once across mk's move +
+  the caller's release) and option-string-churn-clean (50k cycles). Full RC +
+  component + binary + shim + interp + cli wasm suites green with option free
+  ON; bootstrap-safe. **This completes the Option/Result reclamation pipeline**
+  (layout → counting → free) — every primary heap type (arrays, strings,
+  tuples, structs/enums, Option/Result) is now reference-counted and reclaimed
+  on the self-hosted wasm backend.
