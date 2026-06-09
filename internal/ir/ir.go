@@ -10674,7 +10674,7 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// outputs cascade through `$string_from_bytes`'s
 		// inline-output path. The callee's return type comes
 		// off `info.FuncSigs` (populated by the checker for
-		// every user fn + every prelude / builtin signature).
+		// every user fn + every stdlib / builtin signature).
 		if id, ok := x.Callee.(*ast.Ident); ok {
 			// Generic Map methods carry TypeArgs (K, V) on the
 			// Call. The FuncSigs entry stores the generic
@@ -12007,11 +12007,11 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `__method_Array_push(arr, v)` with the receiver's element
 	// type stamped on `n.TypeArgs[0]`. Lower inline here — emit
 	// alloc + memcpy + a width-correct tail store — instead of
-	// dispatching through one of N per-stride lang-prelude
+	// dispatching through one of N per-stride stdlib
 	// functions. The IR already knows the stride from
 	// `ast.ElemSizeBytes(elemType)` and the right store op from
 	// `payloadStoreOp(elemType)`; the previous shape compounded
-	// boilerplate (5 prelude bodies + 5 mangled FuncSigs +
+	// boilerplate (5 stdlib bodies + 5 mangled FuncSigs +
 	// 5 codegen aliases + 5 treeshake aliases) per array
 	// method. Inline lowering scales to one block of code per
 	// method.
@@ -12141,11 +12141,11 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `m.values()` on `Map[K, V]` where V is wide (i64 / u64 /
 	// f64). Narrow V falls through to the normal
 	// `__method_Map_values` call (codegen-aliased to the
-	// `__map_values_impl` lang prelude function). Wide V needs
+	// `__map_values_impl` stdlib function). Wide V needs
 	// to follow each entry's cell pointer and copy the 8
 	// payload bytes into a wide-stride result — emitted inline
 	// here for the same reason as emitArrayPush: a single
-	// codepath instead of a per-stride lang-prelude clone.
+	// codepath instead of a per-stride stdlib clone.
 	if id.Name == "__method_Map_values" && len(n.Args) == 1 {
 		recvType := b.exprType(n.Args[0])
 		if st, ok := recvType.(ast.StructType); ok && len(st.Args) >= 2 {
@@ -12156,7 +12156,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// `m.keys()` on `Map[K, V]` where K is wide (i64 / u64 /
-	// f64). The prelude's `__map_keys_impl` uses a 4-byte
+	// f64). The stdlib's `__map_keys_impl` uses a 4-byte
 	// destStride which works for i32-K but truncates wide-K
 	// values into the low 32 bits. We mirror emitWideMapValues
 	// here, walking entries and producing a real wide-stride
@@ -12715,7 +12715,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	argCount := int32(len(n.Args))
 	// `map_new(cap)` is a generic builtin: the runtime helper
-	// takes two extra runtime-tag args so the prelude can branch
+	// takes two extra runtime-tag args so the stdlib can branch
 	// without per-K/V monomorphisation. `keyKind` (i32-scalar vs
 	// string) picks i32.eq vs strcmp on lookup; `valKind`
 	// (i32-scalar vs pointer-shaped) sizes the .values()
@@ -16182,7 +16182,7 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	// Per-entry stride + V-slot offset come from __ptr_width()
 	// so the same IR works on wasm32 (4-byte ptr → stride 8,
 	// V-offset 4) and arm64 (8-byte ptr → stride 16, V-offset
-	// 8). Matches the prelude Map runtime's layout exactly.
+	// 8). Matches the stdlib Map runtime's layout exactly.
 	ptrWSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_ptrw_%d", ptrWSlot)] = ptrWSlot
 	b.emit(Op{Kind: OpCallDirect, Str: "__ptr_width", I32: 0})

@@ -463,9 +463,9 @@ func New() *Interp {
 	i.Builtins["__method_MapIter_key"] = &Builtin{Fn: builtinMapIterKey}
 	i.Builtins["__method_MapIter_value"] = &Builtin{Fn: builtinMapIterValue}
 	i.Builtins["__method_MapIter_advance"] = &Builtin{Fn: builtinMapIterAdvance}
-	// Low-level prelude primitives the codegen lowers to inline
+	// Low-level stdlib primitives the codegen lowers to inline
 	// alloc / memcpy / store-byte sequences. The interpreter
-	// implements them directly so prelude functions that lean
+	// implements them directly so stdlib functions that lean
 	// on them (`__string_case_fold` for `to_upper`/`to_lower`,
 	// `s.bytes()`, `string_from_bytes`, etc.) round-trip
 	// through the script-mode + playground path. Map runtime
@@ -477,7 +477,7 @@ func New() *Interp {
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
 	i.Builtins["string_from_bytes"] = &Builtin{Fn: builtinStringFromBytes}
 	// `s.bytes()` and `s.as_bytes()` round-trip bytes through
-	// raw memory in the prelude / wat-emitted helper (the
+	// raw memory in the stdlib / wat-emitted helper (the
 	// former does `__memcpy(out as i32, s.as_bytes() as i32, n)`,
 	// the latter aliases the string payload via a slice header).
 	// Both are unrepresentable in the interp's value-tree heap,
@@ -550,7 +550,7 @@ func New() *Interp {
 	// like `scratch as i32` that the interp can't model). Two
 	// keys cover both load paths:
 	//
-	//   - bare `int_to_string` — auto-prelude flat-load path, the
+	//   - bare `int_to_string` — the flat-load (LoadStdlibFlat) path, the
 	//     usual single-file case.
 	//   - mangled `int__int_to_string` — modload's name-mangling
 	//     prefix when the user (or a transitively-imported stdlib
@@ -1207,7 +1207,7 @@ func builtinMapIterAdvance(_ *Interp, args []Value) (Value, error) {
 
 // `__alloc_u8(n: i32): u8[]` — codegen lowers to `__fern_alloc(n)
 // + length-prefix poke`; the interp returns a fresh Array of n
-// Number(0) values. The prelude uses this as the staging buffer
+// Number(0) values. The stdlib uses this as the staging buffer
 // for `__string_case_fold`, `string_from_bytes`'s round-trip
 // counterpart, and any user code that wants a zero-initialised
 // byte slab.
@@ -1257,7 +1257,7 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 
 // `__method_string_bytes` / `__method_string_as_bytes` —
 // String → Array<Number> conversion, one Number per UTF-8
-// byte. Sidesteps the prelude's `__memcpy(out as i32,
+// byte. Sidesteps the stdlib's `__memcpy(out as i32,
 // s.as_bytes() as i32, n)` path which can't be modelled
 // without a flat byte address space.
 func builtinStringBytes(_ *Interp, args []Value) (Value, error) {

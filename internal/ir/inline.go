@@ -7,7 +7,7 @@
 // pipeline.
 //
 // Eligibility — deliberately conservative, but extended past the
-// strictly-leaf shape so prelude helpers with simple control flow
+// strictly-leaf shape so stdlib helpers with simple control flow
 // or sub-calls still inline:
 //
 //   - body length ≤ inlineSizeLimit (skip blow-up cases).
@@ -56,7 +56,7 @@ import (
 )
 
 // inlineSizeLimit caps how many ops a callee can have to remain
-// eligible. Tuned to allow the bulk of prelude helpers (e.g.
+// eligible. Tuned to allow the bulk of stdlib helpers (e.g.
 // __substr_eq, __map_hash, the small hex / b64 char-classifiers)
 // to inline through their internal control flow. Tweak as real
 // workloads emerge.
@@ -71,7 +71,7 @@ const inlineSizeLimit = 80
 // the OUTER callee (e.g. inlining `s.contains(...)` into main),
 // but the inlined body may itself contain calls to other eligible
 // callees (`__substr_eq` from inside `contains`). Without a
-// second pass, those inner calls survive — the prelude is full of
+// second pass, those inner calls survive — the stdlib is full of
 // "small helper calls another small helper" chains. Cap the
 // iteration count to bound code growth on the worst case.
 //
@@ -101,7 +101,7 @@ func Inline(prog *Program) {
 }
 
 // inlineMaxPasses caps the iteration depth. Three passes covers
-// the deepest call chain the migrated prelude builds today
+// the deepest call chain the migrated stdlib builds today
 // (`Map.set` → `__map_grow` / `__map_hash` → no further inlineable
 // callees). Bumping further has diminishing returns and risks
 // runaway code growth on pathological inputs.

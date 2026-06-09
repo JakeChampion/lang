@@ -701,7 +701,7 @@ func (g *generator) emitDataSections() {
 // persistent cursors are gone and there is nothing to select.
 //
 // The region is a lazy-mmap'd virtual reservation at hint
-// 0x10000000 (fits in 32 bits so the lang prelude's
+// 0x10000000 (fits in 32 bits so the stdlib's
 // __store_i32 / __load_i32 round-trip pointers without
 // truncation).
 //
@@ -2392,7 +2392,7 @@ func (g *generator) emitRawIntPokesRuntime() {
 	// from a heap cell. On arm64 a usize is already 8 bytes
 	// so the lang-level Map[i64, _] path stays on keyKind=0
 	// without these — the symbols still need linkable
-	// bodies because the prelude references them by name
+	// bodies because the stdlib references them by name
 	// regardless of target.
 	g.line("")
 	g.line(".global __load_i64")
@@ -5511,7 +5511,7 @@ type generator struct {
 	// `__port_from_env("PORT", 8080)` call.
 	usesEnv bool
 	// usesAllocU8 + usesStringFromBytes gate the string-
-	// handling prelude helpers that allocate length-prefixed
+	// handling stdlib helpers that allocate length-prefixed
 	// u8[] / string buffers.
 	usesAllocU8         bool
 	usesStringFromBytes bool
@@ -7742,7 +7742,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// AAPCS64: load args 0..n-1 from the operand stack into
 		// x0..x{n-1} (rightmost-on-top, so we pop in reverse
 		// order), then `bl target`. Result lands in x0; push it.
-		// Rewrite a small set of names where the lang prelude's
+		// Rewrite a small set of names where the stdlib's
 		// callable name differs from the emitted symbol (e.g.
 		// `__memcpy` → `__fern_memcpy`, `map_new` →
 		// `map_new_impl`).
@@ -7914,7 +7914,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_tcp_close"
 			g.usesTcp = true
 		// Map / MapIter — the lang Map runtime lives entirely
-		// in the lang prelude under `_impl`-suffixed names;
+		// in the stdlib under `_impl`-suffixed names;
 		// user-facing call sites use the unsuffixed mangled
 		// name and codegen rewrites here.
 		case "map_new":

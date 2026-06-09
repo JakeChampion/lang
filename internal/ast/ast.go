@@ -1700,7 +1700,7 @@ type FuncDecl struct {
 	// checker reads this to scope method dispatch to the call
 	// site's import closure (module-scoped methods per
 	// docs/PRELUDE-TO-MODULES.md). Single-file programs and
-	// prelude-injected decls leave this empty.
+	// checker-synthesised decls leave this empty.
 	SourceModule string
 }
 
@@ -1757,7 +1757,7 @@ type StructDecl struct {
 	// LSP can answer cross-module goto-definition queries (jump
 	// from `util.Point` use site to `Point`'s declaration in
 	// util.fern). Empty for parser-only single-file programs and
-	// prelude-injected decls.
+	// checker-synthesised decls.
 	SourceModule string
 }
 
@@ -1987,12 +1987,9 @@ type Program struct {
 	// LoadedStdlibPaths records every `std/…` / `core/…` canonical
 	// path modload pulled in (keyed by the `stdlib://…` path form
 	// modload uses internally — see `internal/modload/modload.go`).
-	// The checker's auto-prelude path consults this set so a
-	// prelude file declaring `import "std/foo";` doesn't re-inject
-	// `std/foo` when the user's entry program already imported the
-	// same module via modload. Transitional plumbing for the
-	// prelude-to-modules migration; goes away once auto-prelude
-	// injection does (Phase 5 in docs/PRELUDE-TO-MODULES.md).
+	// The checker consults this set to dedup stdlib loads — e.g. it
+	// won't re-register `core/map`'s helpers when modload already
+	// pulled the module in (directly or transitively).
 	LoadedStdlibPaths map[string]bool
 	// Comments lists every `//` line comment the lexer collected,
 	// in source order. Most consumers (checker, IR lowering,

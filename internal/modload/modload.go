@@ -144,7 +144,7 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 // flat bare calls (`foo()`, `find(s, ...)`) so the call resolves
 // against the bare-named decls in the same combined Program.
 //
-// Used by the checker's auto-prelude injection path: stdlib
+// Used by `LoadStdlibFlat`: stdlib
 // modules can now use qualified imports for cross-module calls
 // without each importer module having to be loaded through the
 // normal mangling path. Safe because every free-function /
@@ -168,13 +168,13 @@ func LoadStdlibFlat(paths []string) (*ast.Program, error) {
 // metadata stays consistent with the full graph), but the
 // combine step skips the modules whose path is in skipPaths.
 //
-// Used by the checker's auto-prelude injection path: the entry
+// Used by `LoadStdlibFlat`: the entry
 // program may have already loaded some stdlib modules through the
 // regular `modload.Load` mangling path, and re-loading them
 // flat-namespace here would surface duplicate decls — receiver
 // method `__method_<Type>_<Name>` names land bare under both
 // modes and the checker's redeclaration gate fires. skipPaths
-// lets the caller exclude those modules from the auto-prelude
+// lets the caller exclude those modules from the flat-load
 // contribution.
 func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Program, error) {
 	loaded := map[string]*module{}
@@ -208,8 +208,8 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	// Auto-prelude semantics: stdlib decls injected by the auto-
-	// prelude path are universally visible to every other module.
+	// Flat-load semantics: stdlib decls loaded flat are
+	// universally visible to every other module.
 	// `methodVisibleHere` reads that off an empty `SourceModule` on
 	// the FuncDecl, so we clear the stamp `loadRecursive` set.
 	// Without this, a stdlib body that calls into another stdlib
@@ -794,7 +794,7 @@ func (m *module) rewriteAll(selfPrefix string) []error {
 // true, cross-module references rewrite without the `<mod>__`
 // prefix (`int.foo()` → `foo()`) and the own-decl selfPrefix is
 // expected to be empty too. Used by `LoadStdlibFlat` so the
-// auto-prelude path can rewrite qualified imports inside stdlib
+// flat loader can rewrite qualified imports inside stdlib
 // bodies while keeping stdlib decl names bare.
 //
 // `skipPaths` is consulted only in flat-namespace mode: a cross-
@@ -977,7 +977,7 @@ type rewriter struct {
 	// flatNamespace, when true, drops the `<mod>__` prefix on
 	// cross-module references — `int.foo()` becomes `foo()`
 	// instead of `int__foo()`. Used by `LoadStdlibFlat` so the
-	// auto-prelude path can rewrite qualified imports inside
+	// flat loader can rewrite qualified imports inside
 	// stdlib bodies without mangling stdlib decls (decls stay
 	// at their bare names, which user code calls directly).
 	// Safe for stdlib because every free-function name there is
@@ -1057,7 +1057,7 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 		// In flat-namespace mode, references to OWN-pass modules
 		// rewrite to bare names (the decls land bare-named in the
 		// combined Program). References to skipped modules — i.e.
-		// modules the auto-prelude path is skipping because the
+		// modules the flat loader is skipping because the
 		// entry program already loaded them through modload's
 		// regular mangling path — need to use the same mangled
 		// prefix `Load`+`combine` would produce, since the

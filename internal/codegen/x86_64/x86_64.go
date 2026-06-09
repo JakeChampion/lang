@@ -1696,7 +1696,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// don't reach a bad index.
 			return g.emitInlineIdxHelper(target)
 		// Map / MapIter — the lang Map runtime lives entirely
-		// in the lang prelude under `_impl`-suffixed names;
+		// in the stdlib under `_impl`-suffixed names;
 		// user-facing call sites use the unsuffixed mangled
 		// name and codegen rewrites here. Mirrors arm64.
 		case "map_new":
@@ -5251,7 +5251,7 @@ func (g *generator) emitRawIntPokesRuntime() {
 	// from a heap cell. On x86-64 a usize is already 8 bytes
 	// so the lang-level Map[i64, _] path stays on keyKind=0
 	// without these — the symbols still need linkable
-	// bodies because the prelude references them by name
+	// bodies because the stdlib references them by name
 	// regardless of target.
 	g.line("")
 	g.line(".globl __load_i64")

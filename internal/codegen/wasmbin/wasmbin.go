@@ -757,12 +757,12 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
 		printed := false
 		if opts.PrintMainResult && len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32 {
-			// `int_to_string` resolves to the auto-prelude bare
-			// name; `int__int_to_string` covers an explicit
+			// `int_to_string` resolves to the bare name (flat-load);
+			// `int__int_to_string` covers an explicit
 			// `import "core/int"` whose mangling pass appends
 			// the module name. Pick whichever survived
 			// tree-shake + dead-function elimination. If
-			// neither is present (no-prelude program without
+			// neither is present (a program that doesn't import
 			// core/int) fall back to drop so the wrapper still
 			// links.
 			intToStrName := ""
@@ -2263,7 +2263,7 @@ var CallDirectAliases = map[string]string{
 	"udp_send":   "__fern_udp_send",
 
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
-	// support generic methods on a generic struct, so the prelude
+	// support generic methods on a generic struct, so the stdlib
 	// declares concrete `_impl` counterparts and call sites route
 	// through these aliases. Mirrors codegenAliasMap in the WAT
 	// path verbatim.

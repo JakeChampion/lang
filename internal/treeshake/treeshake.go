@@ -21,22 +21,22 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// watHelperDeps lists the prelude functions a still-in-wat
+// watHelperDeps lists the stdlib functions a still-in-wat
 // helper depends on, plus aliases the codegen layer
 // rewrites at emit-time. The AST walker doesn't see those
 // rewrites, so tree-shake needs this hint to know that
-// e.g. some still-in-wat helper calls a lang-prelude
+// e.g. some still-in-wat helper calls a stdlib
 // function and shouldn't drop the latter when only the
 // former is referenced.
 var watHelperDeps = map[string][]string{
 	// arr.push(v) lowers entirely in the IR (emitArrayPush) —
-	// no per-stride lang-prelude function to keep alive. The
+	// no per-stride stdlib function to keep alive. The
 	// wasm-side `__memcpy` shim is gated separately via the
 	// codegen-side wat-helper switch.
 	//
 	// Map runtime: AST-level calls go through the
 	// type-rich `__method_Map_*` / `map_new` /
-	// `__method_MapIter_*` names; the prelude bodies live
+	// `__method_MapIter_*` names; the stdlib bodies live
 	// under `_impl` suffixes that the codegen alias rewrites
 	// to. Pull each impl in when its alias is referenced.
 	// map_new also roots __map_drop_values: the IR injects a call
@@ -87,7 +87,7 @@ func Run(prog *ast.Program, extras ...string) {
 	// dependency map for, INCLUDING names that aren't in
 	// byName (still-in-wat helpers like `query_parse`). This
 	// ensures wat-helper-only references still pull in their
-	// declared lang-prelude dependencies.
+	// declared stdlib dependencies.
 	seen := map[string]bool{}
 	var queue []string
 	enqueue := func(name string) {
@@ -119,7 +119,7 @@ func Run(prog *ast.Program, extras ...string) {
 	}
 	// Entry points: standard CLI main + HTTP handler. If
 	// neither is present, fall back to keeping every user-
-	// declared (non-prelude) function — covers test programs
+	// declared (non-stdlib) function — covers test programs
 	// that compile a single helper like
 	// `function f(): i32 { return 1; }` without a main.
 	enqueue("main")
@@ -340,7 +340,7 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		// live — by the time treeshake runs, the checker has
 		// already rewritten those into direct calls keyed by
 		// the mangled method name (e.g. `__method_string_to_string`),
-		// which is what keeps the prelude's `(s: string)
+		// which is what keeps the stdlib's `(s: string)
 		// to_string()` body alive.
 		for _, p := range x.Parts {
 			if p.Expr != nil {
