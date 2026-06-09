@@ -1263,11 +1263,33 @@ world-driven composer (P2) wires it.
      both directions on both compilers; named-type results (enum / record /
      variant) await the exported-instance type-export foundation, and resources
      are Slice 6.
-   - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
+   - **Slice 6 — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`
      / `own<response-outparam>`) become a plain `@export`, unblocking retiring
      the built-in HTTP world.
+     - **Slice 6a — handle export PARAMS (composer, Go). ✅ Done.** The composer
+       lifts an `@export` whose parameter is a handle (`own<R>` / `borrow<R>`) to
+       an *imported* resource. A handle is an i32 at the canonical ABI, so the
+       Fern core function is unchanged (the P5 `resource`/`own`/`borrow`
+       vocabulary already erases to i32) — the work is composer-side: the decoder
+       now records each interface type slot's WIT name (`LocalTypeNames`) so
+       `WorldInterface.HandleResource` can recover a handle param's resource name;
+       `liftExport` surfaces that imported resource (a pre-pass `aliasType`, as
+       the `[resource-drop]` path does — sharing `g.surfaced`) and references it
+       from an `own`/`borrow` defined type (`InnerTypeOwn` / `InnerTypeBorrow`) in
+       the export functype (no-opts lift, no memory). `resourceInst` maps each
+       imported resource name → instance index. Gated by
+       `TestExportResourceHandleParamComposes` (a Fern reactor
+       `@export("local:test/handler", "handle") on_request(t: borrow Thing): u32`
+       over an `@import`ed `resource Thing` composes; `wasm-tools validate` + the
+       component WIT declares `borrow<thing>`). Running it needs a resource-
+       provider harness (the host/another component constructs the resource and
+       calls the export) — a later slice, exactly as the scalar export slice
+       first shipped validate-only. **Next**: the runnable handle-param path (a
+       resource-provider harness), then own/borrow handle *results*, then the
+       full `wasi:http` `incoming-handler#handle` (two `own<...>` params + the
+       handler body calling resource methods via `@import` externs).
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.

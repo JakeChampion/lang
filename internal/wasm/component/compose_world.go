@@ -361,13 +361,23 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 	}
 
 	emitted := 0
+	// resourceInst maps each imported resource name to its instance index, so a
+	// handle-typed export param can surface the right imported resource (P6).
+	resourceInst := map[string]uint32{}
+	for _, wi := range w.Interfaces() {
+		if idx, ok := g.inst[wi.Name]; ok {
+			for _, r := range wi.Resources {
+				resourceInst[r] = idx
+			}
+		}
+	}
 	for _, wi := range w.ExportedInterfaces() {
 		for _, f := range wi.FuncSigs {
 			coreName := wi.Name + "#" + f.Name
 			if !coreExports[coreName] {
 				continue
 			}
-			if err := g.liftExport(userInst, wi, f.Name, coreName, f.Sig, memIdx, reallocIdx); err != nil {
+			if err := g.liftExport(userInst, wi, f.Name, coreName, f.Sig, memIdx, reallocIdx, resourceInst); err != nil {
 				return nil, err
 			}
 			emitted++
@@ -447,7 +457,7 @@ func isStringOrList(wi componenttype.WorldInterface, v componenttype.Valtype) bo
 // (ptr,len) return area, which the lift reads from `memIdx`). A `list<T>` result
 // emits the `list<elem>` defined type first and references it from the functype.
 // String/list PARAMETERS beyond `string` are not handled yet.
-func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32) error {
+func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32, resourceInst map[string]uint32) error {
 	iface := wi.Name
 	if sig == nil {
 		return fmt.Errorf("component: export %s#%s has no resolved signature", iface, witName)
@@ -455,12 +465,43 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	c := g.c
 	coreF := c.aliasCoreFunc(userInst, coreName)
 
-	// Each defined type a param/result references (a `list<T>`) must be emitted
-	// before the functype so its index resolves. Collect the type sections to
-	// emit, then the per-slot valtype encodings (a primitive's single byte, or
-	// the sleb-encoded index of a list type). `nextIdx` mirrors c.nType as the
-	// list types are appended.
-	var defs [][]byte // list<elem> defined-type bodies, in emit order
+	// Surface any imported resource a handle param/result references *before*
+	// capturing `nextIdx`: aliasType emits an alias section immediately and bumps
+	// c.nType, so it must happen before the defined-type index mirror is taken.
+	// (A handle is an i32 at the canonical ABI; the own/borrow defined type just
+	// names the resource.) P6 — docs/WIT-BRING-YOUR-OWN.md.
+	surfaceHandle := func(v componenttype.Valtype) error {
+		rname, _, ok := wi.HandleResource(v)
+		if !ok {
+			return nil
+		}
+		if _, done := g.surfaced[rname]; done {
+			return nil
+		}
+		instIdx, found := resourceInst[rname]
+		if !found {
+			return fmt.Errorf("component: export %s#%s: resource %q for a handle parameter is not imported by the world", iface, witName, rname)
+		}
+		g.surfaced[rname] = g.c.aliasType(instIdx, rname)
+		return nil
+	}
+	for i := range sig.Params {
+		if err := surfaceHandle(sig.Params[i].Ty); err != nil {
+			return err
+		}
+	}
+	if !sig.NamedResults {
+		if err := surfaceHandle(sig.Result); err != nil {
+			return err
+		}
+	}
+
+	// Each defined type a param/result references (a `list<T>` or a handle's
+	// own/borrow) must be emitted before the functype so its index resolves.
+	// Collect the type sections to emit, then the per-slot valtype encodings (a
+	// primitive's single byte, or the sleb-encoded index of a list/handle type).
+	// `nextIdx` mirrors c.nType as those types are appended.
+	var defs [][]byte // defined-type bodies, in emit order
 	nextIdx := c.nType
 	// encodeSlot encodes one param/result valtype, emitting any referenced
 	// defined type into `defs`. The bool result reports whether the slot carries
@@ -477,6 +518,23 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 			nextIdx++
 			defs = append(defs, InnerTypeList(e))
 			return leb128SlebBytes(idx), true, nil
+		}
+		if rname, owned, ok := wi.HandleResource(v); ok {
+			// own<R> / borrow<R>: a handle is an i32 at the canonical ABI (no
+			// memory). The resource type was surfaced in the pre-pass; reference it
+			// from the own/borrow defined type.
+			rt, surfaced := g.surfaced[rname]
+			if !surfaced {
+				return nil, false, fmt.Errorf("component: export %s#%s: resource %q not surfaced", iface, witName, rname)
+			}
+			idx := nextIdx
+			nextIdx++
+			if owned {
+				defs = append(defs, InnerTypeOwn(rt))
+			} else {
+				defs = append(defs, InnerTypeBorrow(rt))
+			}
+			return leb128SlebBytes(idx), false, nil
 		}
 		if allowSum {
 			if elems, ok := wi.TupleElemPrims(v); ok {
