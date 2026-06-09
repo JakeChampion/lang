@@ -1493,13 +1493,26 @@ produces a response:
        feature (parser/checker + modload aliasing of exported resource types)
        would let a 5-line handler `import` an `http` lib. Until then the externs
        live in the handler module.
-    2. **Response bodies.** `outgoing-response.body() -> result<own<outgoing-
-       body>>`, `outgoing-body.write() -> result<own<output-stream>>`,
-       `output-stream.blocking-write-and-flush(list<u8>)` and
-       `[static]outgoing-body.finish(own<…>, option<own<…>>)` need new `@import`
-       extern marshalling for `result<own<R>>` *returns* + `option<own<R>>` params
-       (composite shapes carrying handles) — a distinct chunk; the embedded path
-       hand-codes them in `wasi_http.go`.
+    2. **Response bodies — `result<own<R>>` returns ✅ Done; the byte-write
+       still pending.** `outgoing-response.body() -> result<own<outgoing-body>>`
+       and `outgoing-body.write() -> result<own<output-stream>>` now lower: a
+       resource handle is a valid single-scalar `result` payload, so these
+       `@import` externs are declared `Result[own OutgoingBody, u32]` /
+       `Result[own OutputStream, u32]` and go through the existing extern enum/
+       result-return wrapper. The only change needed was teaching `valtypeFor` to
+       map `ast.HandleType` to i32 (it erases to a handle scalar like any other
+       pointer-shaped value). Gated by `TestExportWasiHttpHandlerBodyServes` (a
+       handler obtains the body + output-stream handles via the result-of-handle
+       returns and serves a 200). **Still pending:** actually writing bytes needs
+       `output-stream.blocking-write-and-flush(list<u8>) -> result<_,
+       stream-error>` and `[static]outgoing-body.finish(own<…>,
+       option<own<…>>) -> result<_, error-code>` — both **variant-err `result`
+       returns** (`stream-error` / `error-code` are variants, returned indirectly
+       through a retptr whose canonical area is wider than a single scalar). The
+       enum/result-return wrapper is gated to a single-scalar payload, so a
+       variant-err result needs canonical-size-aware return-area marshalling — a
+       distinct chunk (the embedded path hand-codes these in `wasi_http.go`).
+       `option<own<R>>` params (finish's trailers) are likewise still to do.
     3. **A composer Ok-wrap** (so even the raw `set` extern could take just the
        response handle) remains possible but is now lower-value, since the Fern
        helper already gives the clean call site.

@@ -74,6 +74,7 @@ func minimalHttpProxyWorld(t *testing.T, dir string) *componenttype.World {
 	world := `package local:handler@0.1.0;
 world handler {
   import wasi:http/types@0.2.0;
+  import wasi:io/streams@0.2.0;
   export wasi:http/incoming-handler@0.2.0;
 }
 `
