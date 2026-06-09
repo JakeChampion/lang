@@ -1,0 +1,53 @@
+import "std/i32";
+import "std/string";
+
+// Property-based audit for integer <-> string conversions.
+//
+// Deterministic LCG => identical inputs on every backend. For each n:
+//   parse_int(to_string(n))      == Some(n)   (decimal, incl. negatives)
+//   parse_hex_int(to_hex(m))     == Some(m)   (hex, m >= 0)
+// These exercise the core/int formatters + string building (the area the
+// arm64 two-word string_from_bytes bug lived in).
+
+function lcg_next(state: i32): i32 {
+    return ((state * 1103515245) + 12345) & 2147483647;
+}
+
+function check_dec(n: i32): boolean {
+    match (n.to_string().parse_int()) {
+        Some(v) => { return v == n; },
+        None => { return false; }
+    }
+}
+
+function check_hex(m: i32): boolean {
+    match (m.to_hex().parse_hex_int()) {
+        Some(v) => { return v == m; },
+        None => { return false; }
+    }
+}
+
+function main(): i32 {
+    var state: i32 = 1234567;
+    var trial: i32 = 0;
+    while (trial < 400) {
+        state = lcg_next(state);
+        var m: i32 = state;            // 0 .. 2^31-1
+        // signed value: negate on odd state
+        state = lcg_next(state);
+        var n: i32 = m;
+        if ((state & 1) == 1) { n = 0 - m; }
+
+        if (!check_dec(n)) {
+            print("decimal roundtrip FAILED for " + n.to_string());
+            return 1;
+        }
+        if (!check_hex(m)) {
+            print("hex roundtrip FAILED for " + m.to_string());
+            return 1;
+        }
+        trial = trial + 1;
+    }
+    print("OK");
+    return 0;
+}

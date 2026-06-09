@@ -173,17 +173,17 @@ per-function bugs in the audit log.
 
 | Module | I | X | A | W | Status | Notes |
 |--------|---|---|---|---|--------|-------|
-| `std/i32` (~80 methods) | | | | | ⬜ | |
+| `std/i32` (~80 methods) | 🔄 | 🔄 | 🔄 | 🔄 | 🔄 | `prop_int_roundtrip` covers `to_string`/`parse_int`/`to_hex`/`parse_hex_int` round-trips; rest pending |
 | `std/i64` | | | | | ⬜ | |
 | `std/u32` | | | | | ⬜ | |
 | `std/u64` | | | | | ⬜ | |
 | `std/float` | | | | | ⬜ | |
-| `std/string` (~120 methods) | 🔄 | 🔄 | 🔄 | 🔄 | 🔄 | `prop_string_involution` covers `reverse_bytes`/`to_lower`/`to_upper` laws; rest pending |
+| `std/string` (~120 methods) | 🔄 | ✅ | 🐛 | 🐛 | 🐛 | `prop_string_involution` (✅ all 4) covers reverse/case laws; `prop_split_join` exposes a **two-word `split` bug** on arm64+wasm — see audit log |
 | `std/array` | | | | | ⬜ | |
 | `std/math` | | | | | ⬜ | |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
 | `std/format` | | | | | ⬜ | |
-| `std/csv` | | | | | ⬜ | |
+| `std/csv` | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_csv_roundtrip` — escape/join/parse round-trip, quoting alphabet |
 | `std/log` | | | | | ⬜ | |
 | `std/io` | | | | | ⬜ | |
 | `std/io_buffered` | | | | | ⬜ | |
@@ -219,6 +219,53 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-09 — 🐛 OPEN: two-word `string[]` built by appending sliced strings in a loop corrupts earlier elements
+
+**Found by:** `prop_split_join` property fixture
+(`join(split(s, ",")) == s`). Fails on **arm64 AND wasm** (both two-word
+string backends); **interp + x86-64 pass** (single-word). Because it
+fails on wasm — which has no freelist — it is **independent of the
+`string_from_bytes` freelist fix above**: a separate, pre-existing
+two-word-string bug.
+
+**Symptom:** `s.split(",")` returns parts with the **correct lengths**
+but **corrupted bytes** — e.g. for `",ac,abc,bcacbbaabac,b"` arm64
+returns `["", "0p", "5bc", "       bac", "b"]` (later bytes of each part
+survive; the leading bytes are clobbered — `out[3]`'s 11-byte heap buffer
+has its first 8 bytes overwritten).
+
+**Narrowing (done) — minimal reproducer:** a function that builds and
+returns a `string[]` by appending `s[start:i]` **slices inside a loop**:
+```
+function mk(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0; var i: i32 = 0; var n: i32 = s.len();
+    while (i + 1 <= n) {
+        if (s[i] == 44) { out = out.append(s[start:i]); i = i + 1; start = i; }
+        else { i = i + 1; }
+    }
+    return out.append(s[start:n]);
+}
+```
+Bisection isolates the trigger to **loop + sliced (freshly-allocated)
+two-word string + array append**:
+- the same appends **unrolled** (no loop) → correct;
+- a loop appending a **string literal** (not a slice) → correct;
+- direct slices outside any array, and appends in `main` (not a returned
+  function result) → correct.
+So it is the combination of a loop body that slices the parameter and
+appends the result to a `string[]`. `__str_slice` itself is fine
+(direct slicing round-trips); the corruption is in the loop/append/array
+interaction for two-word strings.
+
+**Status / mitigation:** `prop_split_join` is restricted to
+`interp x86_64` (via its `backends` sidecar) so CI stays green and the
+single-word backends are guarded. `std/string.split` (and anything built
+on it — `splitn`, `fields`, `lines`, CSV/HTTP parsing that loops slices
+into arrays) is **unsafe on arm64 + wasm** for inputs that produce
+multiple parts. High-priority follow-up; reproducer above is
+self-contained.
 
 ### 2026-06-09 — 🔧 FIXED: arm64 two-word `string_from_bytes` allocated a headerless string
 
@@ -327,6 +374,18 @@ on arm64 (drop the `backends` sidecar to see the arm64 leg fail).
 
 **Status:** ✅ FIXED (see the FIXED entry above). `prop_url_roundtrip` runs
 on all four backends again; the `backends` sidecar was removed.
+
+### 2026-06-09 — second property-test batch (int, csv, split/join)
+
+Added three more `prop_*` fixtures:
+
+- `prop_int_roundtrip` — `parse_int∘to_string` (incl. negatives) and
+  `parse_hex_int∘to_hex`. ✅ all 4 backends.
+- `prop_csv_roundtrip` — `csv_parse_line∘csv_join` over field arrays
+  drawn from a quoting/escaping alphabet (`,` `"` letters spaces).
+  ✅ all 4 backends.
+- `prop_split_join` — `join∘split` for a single-byte separator. ✅
+  interp/x86-64; 🐛 arm64+wasm (the two-word `split` bug logged above).
 
 ### 2026-06-09 — first property-test batch (base64, hex, url, sort, string)
 

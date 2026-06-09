@@ -1,0 +1,76 @@
+import "std/csv";
+import "std/i32";
+import "std/array";
+
+// Property-based audit for std/csv (RFC 4180 escape/join + single-line
+// parse). Deterministic LCG => identical inputs on every backend.
+//
+// Property: csv_parse_line(csv_join(fields)) == fields, for randomly
+// generated field arrays. Fields are drawn from an alphabet that
+// includes the characters that force quoting/escaping (',' and '"')
+// plus plain letters and spaces, but NOT newlines (csv_parse_line is a
+// single-line parser by contract). This stresses the quote/escape path,
+// which is heavy on string building.
+
+function lcg_next(state: i32): i32 {
+    return ((state * 1103515245) + 12345) & 2147483647;
+}
+
+// alphabet: a b c space , "
+function pick_char(r: i32): i32 {
+    var k: i32 = r % 6;
+    if (k == 0) { return 97; }   // a
+    if (k == 1) { return 98; }   // b
+    if (k == 2) { return 99; }   // c
+    if (k == 3) { return 32; }   // space
+    if (k == 4) { return 44; }   // ,
+    return 34;                   // "
+}
+
+function gen_field(seed: i32, n: i32): string {
+    var buf: u8[] = __alloc_u8(n);
+    var state: i32 = seed;
+    var i: i32 = 0;
+    while (i < n) {
+        state = lcg_next(state);
+        buf = buf.with(i, pick_char(state / 7) as u8);
+        i = i + 1;
+    }
+    return string_from_bytes(buf);
+}
+
+function main(): i32 {
+    var state: i32 = 778899;
+    var trial: i32 = 0;
+    while (trial < 250) {
+        state = lcg_next(state);
+        var nfields: i32 = (state % 5) + 1;   // 1..5 fields
+        var fields: string[] = [];
+        var f: i32 = 0;
+        while (f < nfields) {
+            state = lcg_next(state);
+            var flen: i32 = state % 7;         // 0..6 chars
+            state = lcg_next(state);
+            fields = fields.append(gen_field(state, flen));
+            f = f + 1;
+        }
+
+        var parsed: string[] = csv.csv_parse_line(csv.csv_join(fields));
+        if (parsed.len() != fields.len()) {
+            print("csv field-count FAILED at trial " + trial.to_string()
+                + ": " + parsed.len().to_string() + " vs " + fields.len().to_string());
+            return 1;
+        }
+        var i: i32 = 0;
+        while (i < fields.len()) {
+            if (parsed[i] != fields[i]) {
+                print("csv field FAILED at trial " + trial.to_string() + " field " + i.to_string());
+                return 1;
+            }
+            i = i + 1;
+        }
+        trial = trial + 1;
+    }
+    print("OK");
+    return 0;
+}
