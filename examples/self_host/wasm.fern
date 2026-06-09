@@ -204,6 +204,14 @@ struct Ctx {
     // recursive field-release rides on this when free is flipped on. Borrowed
     // sources (params, field / index reads) are conservatively NOT swept.
     struct_swept: string[],
+    // Perceus Option/Result reference-counting (counting milestone, free OFF).
+    // opt_swept: body Option/Result-value locals (in ol_names) that are OWNED
+    // (a Some/Ok/Err / None construction, an option-returning call, or a
+    // bare-ident alias) — released (rc dec, no free yet) at function exit. A
+    // variant box is rc-boxed flat ([tag@0][payload@4]); the Some/Ok-payload
+    // recursive release rides on this when free is flipped on. Borrowed sources
+    // (params, field / index reads) are conservatively NOT swept.
+    opt_swept: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -954,6 +962,107 @@ function struct_exit_sweep_excl(cx: Ctx, excl: string): string {
 
 function struct_exit_sweep(cx: Ctx): string {
     return struct_exit_sweep_excl(cx, "");
+}
+
+// init_is_owned_option: the init produces a FRESH or MOVED Option/Result value
+// the local owns — a Some/Ok/Err constructor call, a bare `None`, or an
+// option-returning call (read_file / env / map.get / a user fn or method whose
+// return type is Option/Result, detected via scrutinee_payload). A borrowed
+// field / index read is NOT owned (handled by the return-retain path).
+function init_is_owned_option(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (variant_tag(id.name) >= 0) { return true; }
+                    return scrutinee_payload(e, cx).len() > 0;
+                },
+                _ => { return scrutinee_payload(e, cx).len() > 0; },
+            }
+        },
+        parser.ExprIdent(id) => { return id.name == "None"; },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// init_is_option_alias: a bare-ident reference to an Option/Result local/param
+// (a co-owner to retain), excluding the fresh `None` box.
+function init_is_option_alias(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (id.name == "None") { return false; }
+            return contains_str(cx.ol_names, id.name);
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// collect_opt_swept gathers body Option/Result-value locals to release at exit:
+// an owned option (init_is_owned_option) or a bare-ident alias
+// (init_is_option_alias). Comma destructures skipped. Uses cx (ol_names known).
+function collect_opt_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    if (init_is_owned_option(v.init, cx) || init_is_option_alias(v.init, cx)) {
+                        acc = acc.append(v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_opt_swept(f.then_body, cx, acc);
+                acc = collect_opt_swept(f.else_body, cx, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_opt_swept(w.body, cx, acc); },
+            parser.StmtFor(f) => { acc = collect_opt_swept(f.body, cx, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_opt_swept(m.arms[k].body, cx, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// opt_exit_sweep_excl emits the Option/Result release sweep (counting
+// milestone: rc DEC via $__fern_rc_dec — no free, no payload release yet) of
+// every owned option local, except `excl` (the move-on-return slot). The
+// tag-guarded Some/Ok-payload recursive release + the $__fern_arr_dec free ride
+// on this when option free is flipped on.
+function opt_exit_sweep_excl(cx: Ctx, excl: string): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < cx.opt_swept.len()) {
+        if (cx.opt_swept[i] != excl) {
+            o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.opt_swept[i] + ")))\n";
+        }
+        i = i + 1;
+    }
+    return o;
+}
+
+function opt_exit_sweep(cx: Ctx): string {
+    return opt_exit_sweep_excl(cx, "");
+}
+
+// ret_option_is_borrowed: a returned Option/Result that aliases/borrows (a
+// field / index read, or a borrowed-param ident — a returned swept local is a
+// move, filtered out by opt_mov) and so must be retained. A fresh
+// Some/Ok/Err / None / option-returning call is owned-and-moved, not retained.
+function ret_option_is_borrowed(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprFieldAccess(_) => { return true; },
+        parser.ExprIndex(_) => { return true; },
+        parser.ExprIdent(id) => { return id.name != "None"; },
+        _ => { return false; },
+    }
+    return false;
 }
 
 // ret_struct_is_borrowed: a returned struct/enum value that aliases/borrows
@@ -6945,6 +7054,16 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 }
                 return st;
             }
+            // Perceus option inc-on-alias: `var u = o` retains the variant box
+            // so the exit sweep's dec balances. A fresh Some/Ok/Err/None or an
+            // option-returning call is rc 1 already (no inc — that would leak).
+            if (contains_str(st.cx.opt_swept, v.name)) {
+                st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+                if (init_is_option_alias(v.init, st.cx)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+                }
+                return st;
+            }
             return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
         },
         parser.StmtAssign(a) => {
@@ -7052,7 +7171,14 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.struct_swept, id.name)) { struct_mov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov);
+            // Option/Result move-on-return: a bare owned option local returned
+            // is excluded from the option sweep (handed over at its rc).
+            var opt_mov: string = "";
+            match (r.value) {
+                parser.ExprIdent(id) => { if (contains_str(st.cx.opt_swept, id.name)) { opt_mov = id.name; } },
+                _ => {},
+            }
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov) + opt_exit_sweep_excl(st.cx, opt_mov);
             // Perceus return-retain: when an array/string-returning function
             // hands back a BORROWED reference (a field / index read, or a
             // borrowed param — anything not a fresh literal/concat/slice/call
@@ -7067,7 +7193,11 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             // caller owns a counted reference; a fresh literal / constructor
             // call / move-on-return local is not (would leak / double-own).
             var struct_borrowed: boolean = struct_type_of(r.value, st.cx).len() > 0 && ret_struct_is_borrowed(r.value, st.cx);
-            var retain: boolean = ((st.cx.ret_is_array || st.cx.ret_is_string || st.cx.ret_is_tuple) && ret_value_is_borrowed(r.value) || struct_borrowed) && mov.len() == 0 && smov.len() == 0 && tmov.len() == 0 && struct_mov.len() == 0;
+            // Option/Result return-retain: a borrowed option return (a field /
+            // index read, or a borrowed param) is retained so the caller owns a
+            // counted reference; a fresh Some/Ok/Err / None / option-call is not.
+            var opt_borrowed: boolean = scrutinee_payload(r.value, st.cx).len() > 0 && ret_option_is_borrowed(r.value, st.cx);
+            var retain: boolean = ((st.cx.ret_is_array || st.cx.ret_is_string || st.cx.ret_is_tuple) && ret_value_is_borrowed(r.value) || struct_borrowed || opt_borrowed) && mov.len() == 0 && smov.len() == 0 && tmov.len() == 0 && struct_mov.len() == 0 && opt_mov.len() == 0;
             if (st.cx.ret_void) {
                 st = st.w(sweep);
                 return st.w("    (return " + valstr + ")\n");
@@ -7828,6 +7958,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         tup_swept: [],
         ret_is_tuple: f.ret_type.len() > 0 && f.ret_type[0] == 40,
         struct_swept: [],
+        opt_swept: [],
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -7885,7 +8016,10 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cx6: Ctx = Ctx { ...cx5, tup_swept: collect_tup_swept(f.body, cx5, []) };
     // Perceus struct/enum RC set (counting milestone, free OFF) — computed
     // last, once all struct-valued locals are known so alias sources resolve.
-    return Ctx { ...cx6, struct_swept: collect_struct_swept(f.body, cx6, []) };
+    var cx7: Ctx = Ctx { ...cx6, struct_swept: collect_struct_swept(f.body, cx6, []) };
+    // Perceus Option/Result RC set — computed once ol_names are known so option
+    // aliases resolve.
+    return Ctx { ...cx7, opt_swept: collect_opt_swept(f.body, cx7, []) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning
@@ -8111,7 +8245,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     // Perceus exit sweep on the fall-through path (functions that end
     // without an explicit `return`). After a final `return` it is
     // unreachable-but-valid wasm, like the trailing fallthrough const.
-    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + tail;
+    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + opt_exit_sweep(cx) + tail;
 }
 
 // module_uses_divrem is true when any free function body or the

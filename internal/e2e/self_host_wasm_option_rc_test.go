@@ -53,6 +53,22 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// A Some holding a heap string: payload intact through the boxed layout
 		// (the payload release rides on later slices; here just value + detector).
 		{"some-string-payload-intact", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var o = Some(s); match (o) { Some(v) => { return v.len() + __fern_rc_underflow_count(); }, None => { return 0; } } }", 4},
+		// COUNTING milestone (free off): an owned option local is released (rc
+		// dec) at exit, value-correct + detector clean.
+		{"option-swept-clean", "function main(): i32 { var o = Some(40); match (o) { Some(x) => { return x + 2 + __fern_rc_underflow_count(); }, None => { return 0; } } }", 42},
+		// Aliasing an option: the alias is inc'd, both swept, balanced.
+		{"option-alias-clean", "function main(): i32 { var o = Some(20); var u = o; match (u) { Some(x) => { return x + 22 + __fern_rc_underflow_count(); }, None => { return 0; } } }", 42},
+		// A Some holding a heap string, swept (counting) — detector clean.
+		{"option-string-payload-swept", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var o = Some(s); match (o) { Some(v) => { return v.len() + 38 + __fern_rc_underflow_count(); }, None => { return 0; } } }", 42},
+		// Move-on-return: a builder hands its option to the caller (excluded
+		// from the builder's sweep), the caller sweeps it — balanced, clean.
+		{"option-move-return-clean", "function mk(b: i32): Option[i32] { if (b > 0) { return Some(33); } return None; } function main(): i32 { var o = mk(1); var p = mk(0); match (o) { Some(x) => { return x + 9 + __fern_rc_underflow_count(); }, None => { return 0; } } }", 42},
+		// An option re-bound each loop iteration: detector stays clean (counting;
+		// free off, so intermediates leak soundly).
+		{"option-loop-clean", "function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var o = Some(k); match (o) { Some(x) => { s = s + 2; }, None => {} } k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
+		// read_file Result: an owned option from a builtin is swept (counting) —
+		// the missing-file Err path is value-correct + detector clean.
+		{"option-readfile-result-swept", "function main(): i32 { var r = read_file(\"definitely_missing_xyz.txt\"); match (r) { Ok(s) => { return s.len(); }, Err(e) => { return 42 + __fern_rc_underflow_count(); } } }", 42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

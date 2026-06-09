@@ -1522,3 +1522,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   green; bootstrap-safe; free still OFF. Next: Option/Result counting (sweep
   option locals + inc-on-alias + move/retain) then free with the tag-guarded
   Some/Ok-payload recursive release.
+- 2026-06-09: **wasm Option/Result RC — COUNTING milestone (free OFF).** Owned
+  Option/Result-value locals are now reference-counted and released (rc DEC via
+  `$__fern_rc_dec` — no free, no payload release yet) at function exit,
+  mirroring the struct counting shape. New `Ctx.opt_swept` is the swept set,
+  built by `collect_opt_swept` (last in `build_ctx`, once `ol_names` is known so
+  aliases resolve) from `init_is_owned_option` (a Some/Ok/Err constructor, a
+  bare `None`, or an option-returning call — `read_file`/`env`/`map.get`/a
+  user fn or method whose return type is Option/Result, via `scrutinee_payload`)
+  OR `init_is_option_alias` (a bare-ident co-owner). StmtVar emits
+  `$__fern_rc_inc` after an option alias bind; `opt_exit_sweep_excl` runs at
+  StmtReturn (alongside the array/string/tuple/struct sweeps) and the
+  fall-through epilogue. Option move-on-return (`opt_mov`) excludes a returned
+  bare option local from the sweep; `ret_option_is_borrowed` (a field / index
+  read or a borrowed-param ident, NOT a fresh Some/Ok/Err / None / option-call)
+  adds a borrowed option return to the retain. Sound but leaky by design: the
+  Some/Ok payload isn't released yet (no payload recursion) and options stored
+  in containers aren't construction-inc'd yet — both over-count (leak), never
+  over-release, so the detector stays clean. Coverage:
+  `TestSelfHostRcOptionBoxWasm` gains option-swept-clean, option-alias-clean,
+  option-string-payload-swept, option-move-return-clean, option-loop-clean
+  (1000 iters), and option-readfile-result-swept (an owned Result from a
+  builtin is swept — the Err path value-correct + detector 0). Full RC +
+  component + binary + shim + interp + cli wasm suites green; bootstrap-safe.
+  Next: option FREE with the tag-guarded Some/Ok-payload recursive release +
+  option construction-incs (so an option stored in a container survives).
