@@ -2705,6 +2705,41 @@ func PutTypeSectionOneFunc(buf []byte, paramNames []string, paramValtypes []byte
 	return wrapSection(buf, SectionType, body)
 }
 
+// PutTypeSectionOneDefined emits a component-level type section containing one
+// defined value type whose body is `defBody` (e.g. InnerTypeList(CValtypeS32)
+// for `list<s32>`). The new type lands at the next component type index. Used by
+// the P6 export lift to declare a `list<T>` result/param type before the
+// functype that references it (docs/WIT-BRING-YOUR-OWN.md).
+func PutTypeSectionOneDefined(buf []byte, defBody []byte) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, defBody...)
+	return wrapSection(buf, SectionType, body)
+}
+
+// PutTypeSectionOneFuncResultIdx is PutTypeSectionOneFunc for a function whose
+// single anonymous result is a *defined* type referenced by index (e.g. a
+// `list<T>`), not a primitive. The result valtype is encoded as a signed LEB128
+// (`s33`) — a type index ≥ 64 needs more than one byte (its high payload bit
+// must stay clear so it isn't read as a negative primitive code), which the
+// single-byte append in PutTypeSectionOneFunc gets wrong. P6 composite exports.
+func PutTypeSectionOneFuncResultIdx(buf []byte, paramNames []string, paramValtypes []byte, resultIdx uint32) []byte {
+	if len(paramNames) != len(paramValtypes) {
+		panic("component: paramNames and paramValtypes must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, 0x40)      // functype form
+	body = leb128.UlebU64(body, uint64(len(paramNames)))
+	for i := range paramNames {
+		body = putName(body, paramNames[i])
+		body = append(body, paramValtypes[i])
+	}
+	body = append(body, 0x00)                     // resultlist: single anonymous
+	body = leb128.SlebI64(body, int64(resultIdx)) // valtype = typeidx (s33)
+	return wrapSection(buf, SectionType, body)
+}
+
 // PutCanonSectionLiftNoOpts emits a canon section with one
 // canon-lift entry (no opts). Mirrors
 // `put_canon_section_lift_no_opts`.

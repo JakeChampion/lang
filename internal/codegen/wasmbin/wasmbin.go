@@ -184,14 +184,21 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		helpers.add("__http_entry")
 	}
 	// P6: a string-result `@export` function's wrapper SSO-normalizes the Fern
-	// (data,len) pair into a heap return area, so pin emitStrNormalize's deps
-	// (docs/WIT-BRING-YOUR-OWN.md).
+	// (data,len) pair into a heap return area, so pin emitStrNormalize's deps; a
+	// numeric-array (`list<T>`) result's wrapper allocates the [ptr,len] return
+	// area, so it needs __fern_alloc (docs/WIT-BRING-YOUR-OWN.md).
 	for _, exp := range prog.Exports {
 		for _, fn := range prog.Funcs {
-			if fn.Name == exp.Name && isStringType(fn.ReturnType) {
+			if fn.Name != exp.Name {
+				continue
+			}
+			if isStringType(fn.ReturnType) {
 				helpers.add("__fern_alloc")
 				helpers.add("__fern_str_len")
 				helpers.add("__fern_str_byte")
+			}
+			if isScalarArrayParamType(fn.ReturnType) {
+				helpers.add("__fern_alloc")
 			}
 		}
 	}
@@ -809,6 +816,30 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			wrapFuncIdx := nextFuncIdx
 			nextFuncIdx++
 			body, locals := buildExportStringResultWrapper(funcIdx, idx, len(pvts))
+			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
+			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, wrapFuncIdx)
+			continue
+		}
+		// A numeric-array (`list<T>`) RESULT export: the Fern function returns a
+		// single i32 element pointer, but the composer's memory lift expects a
+		// core func returning a pointer to the [data,len] canonical return area.
+		// Surface a wrapper that writes it (no copy — the Fern array is already
+		// contiguous at the canonical stride). docs/WIT-BRING-YOUR-OWN.md.
+		if fn != nil && isScalarArrayParamType(fn.ReturnType) {
+			if _, ok := funcIdx["__fern_alloc"]; !ok {
+				return nil, fmt.Errorf("wasmbin: @export %q: list result needs __fern_alloc (not pinned)", exp.Name)
+			}
+			pvts, err := paramValtypes(fn.Params)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			wrapTIdx := addType(pvts, []byte{encode.ValtypeI32})
+			wrapFuncIdx := nextFuncIdx
+			nextFuncIdx++
+			body, locals := buildExportListResultWrapper(funcIdx, idx, len(pvts))
 			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
 			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
 			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)

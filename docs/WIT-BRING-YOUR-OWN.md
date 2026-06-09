@@ -1114,6 +1114,28 @@ world-driven composer (P2) wires it.
      Go composer lifts with realloc, consumer's `len_of("hello")==5` runs under
      wasmtime). **P6 string param+result exports are now complete in both
      compilers.**
+   - **Slice 5e — numeric-array (`list<T>`) result export from Fern (Go). ✅
+     Done.** The first composite EXPORT beyond strings: a Fern reactor
+     `@export iota(): i32[]` (or any `u8[]`/`i32[]`/`f32[]`/`i64[]`/`f64[]`/…
+     numeric element) lifts into a WIT `list<T>` result. The composer
+     (`liftExport`) resolves the list element through the world
+     (`WorldInterface.ListElemPrim`), emits the `list<elem>` defined type
+     (`PutTypeSectionOneDefined` + `InnerTypeList`) → `listIdx`, builds the
+     functype referencing it (`PutTypeSectionOneFuncResultIdx`, which
+     sleb-encodes the result type index so `listIdx ≥ 64` is correct — unlike
+     `PutTypeSectionOneFunc`'s single-byte append), and lifts with the same
+     memory lift the string result uses (`PutCanonSectionLiftWithMemory`; both
+     return indirectly via a `(ptr,len)` return area). The wasmbin wrapper
+     (`buildExportListResultWrapper`) is the simpler sibling of the
+     string-result one: a Fern numeric array is already contiguous at the
+     canonical element stride (the count lives at `ptr-4`), so it reads the
+     count and writes a 4-byte-aligned `[ptr,count]` return area with no
+     SSO-normalize / copy. Byte-pinned by `TestPutTypeSectionOneDefined_Bytes`
+     and `TestPutTypeSectionOneFuncResultIdx_Bytes` (the latter gates the
+     `≥ 64` two-byte s33 case), and run end-to-end by
+     `TestExportListResultRunsViaConsumer` (a Fern exporter returns
+     `[10,20,30,40]`, a Fern consumer `@import`s `iota() -> list<s32>` and reads
+     it back, linked + run under wasmtime). The self-host port follows next.
    - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`

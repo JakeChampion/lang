@@ -1055,3 +1055,54 @@ func buildExportStringResultWrapper(idxs map[string]uint32, userFuncIdx uint32, 
 	locals = inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
 	return body, locals
 }
+
+// buildExportListResultWrapper builds the core wrapper for a numeric-array
+// (`list<T>`) returning `@export` function (P6 — docs/WIT-BRING-YOUR-OWN.md).
+// The Fern function compiles to a core func returning a single i32 — the
+// element pointer of a length-prefixed array (count at `ptr-4`, elements packed
+// at native stride). The canonical ABI for a `func(...) -> list<T>` export
+// returns a single i32 pointer to a `[data_ptr, len]` return area (the memory
+// lift reads it). Because a Fern numeric array is already contiguous at the
+// canonical element stride, the wrapper needs no copy: it forwards the scalar
+// params, calls the user func, reads the count from `ptr-4`, and writes the
+// 4-byte-aligned `[ptr, count]` return area (the simpler sibling of the
+// string-result wrapper, which must SSO-normalize first).
+//
+// Locals after the params: 0:$arr (element ptr) 1:$ra (return area) 2:$count.
+func buildExportListResultWrapper(idxs map[string]uint32, userFuncIdx uint32, nparams int) (body []byte, locals []byte) {
+	arr := uint32(nparams)
+	ra := uint32(nparams + 1)
+	count := uint32(nparams + 2)
+	// Forward each scalar param, then call the user function -> arr (element ptr).
+	for i := 0; i < nparams; i++ {
+		body = inst.InstLocalGet(body, uint32(i))
+	}
+	body = inst.InstCall(body, userFuncIdx)
+	body = inst.InstLocalSet(body, arr)
+	// count = i32.load(arr - 4) — the element count in the array's length prefix.
+	body = inst.InstLocalGet(body, arr)
+	body = inst.InstI32Const(body, -4)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, count)
+	// ra = (__fern_alloc(8) + 3) & ~3 — the [ptr,len] return area must be 4-byte
+	// aligned (it holds two i32s), but the bump allocator doesn't align.
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, -4)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalSet(body, ra)
+	// ra[0] = arr (the element pointer, already contiguous); ra[4] = count.
+	body = inst.InstLocalGet(body, ra)
+	body = inst.InstLocalGet(body, arr)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, ra)
+	body = inst.InstLocalGet(body, count)
+	body = memory.InstI32Store(body, 2, 4)
+	// Return the return-area pointer.
+	body = inst.InstLocalGet(body, ra)
+	locals = inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return body, locals
+}
