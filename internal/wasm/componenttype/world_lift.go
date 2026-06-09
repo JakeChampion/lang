@@ -204,3 +204,17 @@ func (wi WorldInterface) ResolveDef(v Valtype) *DefinedType {
 	}
 	return td.Def // nil unless td is a defvaltype
 }
+
+// ListElemPrim reports, when `v` resolves to a `list<P>` whose element `P` is a
+// primitive, that primitive's CValtype byte (the single-byte code, which is
+// also the component-model valtype byte). Returns (0, false) otherwise. The P6
+// export lift (docs/WIT-BRING-YOUR-OWN.md) uses it to build the `list<T>`
+// component type for a numeric-array export result without exposing the
+// internal tag constants.
+func (wi WorldInterface) ListElemPrim(v Valtype) (byte, bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || d.Tag != tagList || !d.Elem.IsPrim {
+		return 0, false
+	}
+	return d.Elem.Prim, true
+}

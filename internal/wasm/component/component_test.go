@@ -127,6 +127,37 @@ func TestPutCanonSectionLiftWithMemory_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutTypeSectionOneDefined_Bytes pins a component type section carrying one
+// `list<s32>` defined type (P6 list export): section 7, body = vec(1) | 0x70
+// (list) | 0x7a (s32 cvaltype).
+func TestPutTypeSectionOneDefined_Bytes(t *testing.T) {
+	got := component.PutTypeSectionOneDefined(nil, component.InnerTypeList(component.CValtypeS32))
+	want := []byte{0x07, 0x03, 0x01, 0x70, 0x7a}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutTypeSectionOneDefined(list<s32>) = % x, want % x", got, want)
+	}
+}
+
+// TestPutTypeSectionOneFuncResultIdx_Bytes pins a functype whose single
+// anonymous result is a defined-type index. Two cases gate the s33 encoding: a
+// small index is one byte, but index 65 (≥ 64, payload bit 0x40 set) must
+// sleb-encode to two bytes (c1 00) so it isn't misread as a negative primitive.
+func TestPutTypeSectionOneFuncResultIdx_Bytes(t *testing.T) {
+	// func(n: u32) -> (type 0): section 7, body = vec(1) | 0x40 functype |
+	// vec(1) params | "n" u32 | 0x00 single-anon | sleb(0)=0x00.
+	got := component.PutTypeSectionOneFuncResultIdx(nil, []string{"n"}, []byte{component.CValtypeU32}, 0)
+	want := []byte{0x07, 0x08, 0x01, 0x40, 0x01, 0x01, 'n', 0x79, 0x00, 0x00}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutTypeSectionOneFuncResultIdx(n:u32 -> #0) = % x, want % x", got, want)
+	}
+	// func() -> (type 65): the result index sleb-encodes to two bytes (c1 00).
+	got = component.PutTypeSectionOneFuncResultIdx(nil, nil, nil, 65)
+	want = []byte{0x07, 0x06, 0x01, 0x40, 0x00, 0x00, 0xc1, 0x00}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutTypeSectionOneFuncResultIdx(() -> #65) = % x, want % x", got, want)
+	}
+}
+
 // TestPutCanonSectionLiftWithMemoryRealloc_Bytes pins the lift-with-memory+realloc
 // entry (string/list PARAM exports): opts vec(2) = memory + realloc, then typeidx.
 func TestPutCanonSectionLiftWithMemoryRealloc_Bytes(t *testing.T) {
