@@ -1696,15 +1696,17 @@ function index_of_i32(xs: i32[], n: i32): i32 {
 // assignment anywhere in `body` (recursing through nested if / while) —
 // these are the loop-carried variables that need a header phi.
 function collect_assigned(body: parser.Stmt[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < body.len()) {
-        out = collect_assigned_stmt(body[i], out);
-        i = i + 1;
-    }
-    return out;
+    // Thread the accumulator as an `own` parameter (collect_assigned_loop) so
+    // every grow + merge reclaims in place — the move-semantics threading shape
+    // (docs/RC-ARRAY-MOVE-SEMANTICS-PLAN.md). A fresh `[]` is the owned seed.
+    return collect_assigned_loop(body, [], 0);
 }
-function collect_assigned_stmt(st: parser.Stmt, out: string[]): string[] {
+function collect_assigned_loop(body: parser.Stmt[], own out: string[], i: i32): string[] {
+    if (i >= body.len()) { return out; }
+    out = collect_assigned_stmt(body[i], out);   // own-param move-and-rebind
+    return collect_assigned_loop(body, out, i + 1); // self-tail-call: O(1) stack via TCO
+}
+function collect_assigned_stmt(st: parser.Stmt, own out: string[]): string[] {
     match (st) {
         parser.StmtAssign(a) => {
             if (!contains_str(out, a.target)) { out = out.append(a.target); }
@@ -1737,7 +1739,7 @@ function collect_assigned_stmt(st: parser.Stmt, out: string[]): string[] {
         _ => { return out; }
     }
 }
-function merge_names(a: string[], b: string[]): string[] {
+function merge_names(own a: string[], b: string[]): string[] {
     var i: i32 = 0;
     while (i < b.len()) {
         if (!contains_str(a, b[i])) { a = a.append(b[i]); }

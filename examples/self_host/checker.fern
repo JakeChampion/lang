@@ -4206,6 +4206,21 @@ function ow_guard_call(c: parser.ExprCall, ctx: OwnCtx): Diag[] {
     return out;
 }
 
+// ow_call_arg_flags returns the callee's per-parameter `own` flags for a
+// plain (ident-callee) call, or an empty list when the callee is not an
+// own-func or not a plain ident (a method / closure callee borrows its args).
+// Drives the precise affine model: an argument is consumed only at an `own`
+// position.
+function ow_call_arg_flags(callee: parser.Expr, ctx: OwnCtx): boolean[] {
+    match (callee) {
+        parser.ExprIdent(id) => {
+            if (ow_is_own_func(ctx.ofuncs, id.name)) { return ow_func_flags(ctx.ofuncs, id.name); }
+            return [];
+        },
+        _ => { return []; }
+    }
+}
+
 // ru_borrow processes a borrow-position expression: a bare owned ident is
 // a borrow (no consume) but using it after a move is still E050; anything
 // else is processed as an ordinary (consume-position) expression.
@@ -4269,9 +4284,15 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
             var rc: OwnWalk = ru_borrow(c.callee, moved, ctx);
             var m: MovedEntry[] = rc.moved;
             var d: Diag[] = append_diags(d0, rc.diags);
+            // Precise affine model: an owned value is CONSUMED only when passed
+            // to an `own` parameter; an argument to a borrowed parameter is a
+            // read (borrow), not a move — so a borrowing helper can be passed an
+            // owned value and the value still used / consumed afterwards.
+            var flags: boolean[] = ow_call_arg_flags(c.callee, ctx);
             var i: i32 = 0;
             while (i < c.args.len()) {
-                var ra: OwnWalk = ru_expr(c.args[i], m, ctx);
+                var ra: OwnWalk = ru_borrow(c.args[i], m, ctx);
+                if (i < flags.len() && flags[i]) { ra = ru_expr(c.args[i], m, ctx); }
                 m = ra.moved;
                 d = append_diags(d, ra.diags);
                 i = i + 1;
