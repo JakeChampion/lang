@@ -716,6 +716,51 @@ func TestWASMEprintBuiltin(t *testing.T) {
 	}
 }
 
+// Regression for issue #2550: `(w: Writer).write(s)` to the stdout
+// Writer corrupted exactly one byte — the byte at the largest
+// multiple of 8 below len came out as its successor (buf[k] == buf[k+1]).
+//
+// Root cause was NOT in the write path: the stdout() Writer was built
+// with a bare alloc(4) and no rc-sentinel header, unlike the file
+// Writer (open_writer) which reserves 8 leading bytes for the static
+// 0x80000000 sentinel. Because the Writer is a refcounted heap value,
+// __fern_retain/__fern_drop mutate mem[ptr-8]; for the FIRST heap
+// object that ptr-8 underflows into the static data segment, so retain
+// incremented a byte of the string literal being written (the 'g'
+// at offset 16 of "0123…gh" became 'h'). Position-dependent because it
+// only bit the literal sitting immediately below the bump heap.
+//
+// The sweep covers the boundary lengths from the bug report (8, 16,
+// 17, 18, 24, 30) plus a couple extra; all must round-trip byte-exact.
+func TestWASMWriterWriteStdoutNoCorruption(t *testing.T) {
+	const src = `import "core/no_prelude";
+import "std/string";
+function emit(s: string): i32 {
+    var w: Writer = stdout();
+    match (w.write(s)) { Some(_) => { return 1; }, None => {}, }
+    return 0;
+}
+function main(): i32 {
+    if (emit("01234567\n") != 0) { return 1; }
+    if (emit("0123456789abcdef\n") != 0) { return 2; }
+    if (emit("0123456789abcdefg\n") != 0) { return 3; }
+    if (emit("0123456789abcdefgh\n") != 0) { return 4; }
+    if (emit("0123456789abcdefghijklmnop\n") != 0) { return 5; }
+    if (emit("0123456789abcdefghijklmnopqrst\n") != 0) { return 6; }
+    return 0;
+}`
+	stdout, _ := invokeWasmtime(t, src)
+	want := "01234567\n" +
+		"0123456789abcdef\n" +
+		"0123456789abcdefg\n" +
+		"0123456789abcdefgh\n" +
+		"0123456789abcdefghijklmnop\n" +
+		"0123456789abcdefghijklmnopqrst\n"
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout Writer.write corrupted output.\n got: %q\nwant it to contain: %q", stdout, want)
+	}
+}
+
 func runWasm(t *testing.T, src string) int {
 	t.Helper()
 	stdout, _ := invokeWasmtime(t, src)
