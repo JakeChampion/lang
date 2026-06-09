@@ -1462,3 +1462,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   retained `string[]` field — reclaim implied by no growth, detector clean).
   Full RC + component + binary + shim + interp + cli wasm suites green;
   bootstrap-safe.
+- 2026-06-09: **wasm tuple RC — DEPTH: pointer-array ELEMENTS deep-release.**
+  The tuple parallel of the struct-field deep-release: a tuple holding a
+  `string[]` or struct-array element now releases that array's ELEMENTS (one
+  level) via `$__fern_arr_dec_ptr`, not just the buffer. The tuple element-kind
+  string gains a fourth char: 'A' (pointer-element array → `arr_dec_ptr`)
+  alongside 's' string, 'a' scalar array (flat `arr_dec`), 'i' scalar. The
+  classification (`tuple_elem_array_is_ptr`) is asymmetric for soundness — a
+  bare-ident element in `str_arrays`/`sa_names`, or an array literal whose first
+  element is a string/struct, gets 'A'; anything unsure (a slice, an empty
+  literal, a plain `i32[]`) stays 'a' (a false 'A' would `arr_dec` scalar values
+  as pointers → corruption; a missed 'A' only leaks). 'A' is distinct from the
+  's'-checking `tuple_elem_is_string` reader, so no other tuple-typing path is
+  affected. Coverage: `TestSelfHostRcTupleBoxWasm` gains tuple-strarray-elem-released
+  (strings freed), tuple-i32array-flat-safe (the scalar-safety guard — `i32[]` of
+  heap-address-shaped values must NOT be pointer-released), tuple-strarray-churn-clean
+  (50k cycles). Full RC + component + binary + shim + interp + cli wasm suites
+  green; bootstrap-safe. (Tuples holding struct-array elements free each struct
+  box one level — the struct's own fields leak, the same depth bound as
+  everywhere; arbitrary-depth nested release would need per-type drop-glue
+  functions, deferred.)
