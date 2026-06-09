@@ -134,9 +134,21 @@ assume a single `i32` enum payload and 4-byte struct fields:
    self-compile / printer / checker oracles (the self-host source has no
    multi-payload variant, so the shared desugar is unchanged for it).
    **Unblocks the self-host multi-field extern ports (S5).**
-5. **S5 — multi-field self-host extern ports** (uniform, then the general
-   mixed/float join), mirroring the Go `appendVariantParamMultiField` /
-   `…ResultStoreMultiField`. *Gated by `TestSelfHostExternVariantMultiField…`.*
+5. **S5 — multi-field self-host extern ports. ✅ Done (uniform i32).** With S4
+   representing a `Click(i32, i32)` variant, the self-host `@import` extern
+   marshalling gained the multi-field shape, mirroring Go's
+   `appendVariantParamMultiField` / `…ResultStoreMultiField`. The gate accepts a
+   variant with `>=2` i32 fields (`extern_variant_is_multifield` /
+   `extern_variant_max_fields` = SlotCount); the import flattens to (disc,
+   SlotCount×i32). **Param**: a per-slot lazy if/else chain on the box struct_id
+   (`extern_variant_multifield_slot`) pushes the matched arm's field j or 0 to
+   pad a shorter arm (lazy, since a shorter arm's box has no slot j). **Result**:
+   the return area is sized for the widest arm, so the wrapper blind-copies all
+   SlotCount slots into the box fields (a match on a shorter arm reads only its
+   own — no per-arm result branch). Scoped to i32-class fields; mixed-width /
+   float multi-field arms (the fully general join) stay deferred, as on the Go
+   side. Gated by `TestSelfHostExternVariantMultiField{Param,Result}CustomProvider`
+   (the same `{ click(tuple<u32,u32>), key(u32), close }` shape as the Go tests).
 6. **S6+ — other backends** (ssa pipeline, asm/asm_arm64, interp/vm), each a
    slice with a target-specific run test, only as the language feature (not
    just BYOW) warrants it.
