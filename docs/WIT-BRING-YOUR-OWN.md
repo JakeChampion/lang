@@ -1246,8 +1246,23 @@ world-driven composer (P2) wires it.
      from the Fern tuple value (`V+field.Offset`) into the canonical return area
      (`field.CanonicalOffset`). Run end-to-end by
      `TestExportTupleResultRunsViaConsumer` (a Fern exporter returns `(a+1, b*2)`,
-     a Fern consumer reads `p.0`/`p.1`, linked + run under wasmtime). The
-     self-host port follows next.
+     a Fern consumer reads `p.0`/`p.1`, linked + run under wasmtime).
+   - **Slice 5h self-host — tuple (`(A, B, …)`) result export. ✅ Done.**
+     `wasm.fern`'s `build_export_wrapper` gained the tuple-result branch. A
+     self-host tuple value is a heap block of N consecutive 4-byte slots (element
+     i @ `i*4`, no header), and the canonical `tuple<s32,…>` returns indirectly
+     with element i at the same `i*4` offset (all i32), so the wrapper copies each
+     element into the 8-aligned return area. `extern_exports` / `export_needs_heap`
+     now fire for a tuple result (`extern_tuple_param_supported`, 2..16 i32/u32
+     elements); no `cabi_realloc` (memory lift only). Gated by
+     `TestSelfHostExportTupleResultRunsViaConsumer` (the self-host emits the
+     exporter core, the Go composer lifts it, a Fern consumer reads `p.0`/`p.1`
+     under wasmtime); the self-compile / printer / checker oracles stay green.
+     **P6 tuple result exports are now complete in both compilers** — with this
+     the structural composite-result set (list / option / result / tuple) is done
+     both directions on both compilers; named-type results (enum / record /
+     variant) await the exported-instance type-export foundation, and resources
+     are Slice 6.
    - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`
