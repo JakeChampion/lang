@@ -153,8 +153,10 @@ in-place ops), so there is no replaced box to reclaim.
 - **Strings** — fully rc-tracked already (`docs/RC-STRINGS-PLAN.md`); not
   the issue (#2538 proved lifting the string guard alone is unsound).
 - **The allocator** — #2501/#2510/#2519 (two-tier freelist + mantissa
-  classes) already reclaim freed large blocks; the problem is the orphans
-  are never *freed*, not that freeing is wasteful.
+  classes) already reclaim freed large blocks; freeing is not wasteful.
+  (See the CORRECTION below: the field-sharing orphans are in fact freed
+  by the normal overwrite path — the OOM is a *separate* missing-drop leak
+  for dead intermediate locals.)
 - **`own`-param threading** — works (#2524 + the precise-affine model
   #2533) for *array* accumulators; `BState` is a *struct that shares
   fields through a returning constructor*, which is the harder case this
@@ -170,59 +172,100 @@ a real module on stdin, sample peak RSS (`/proc/<pid>/VmHWM`):
 | input | lines | peak RSS | exit |
 |-------|-------|----------|------|
 | `asm.fern` | 8263 | **44 MB** | ok |
-| `wasm.fern` | 8413 | **784 MB** | ok |
+| `wasm.fern` (6000-line prefix) | 6000 | **136 MB** | ok |
+| `wasm.fern` (full) | 10187 | **935 MB** | ok |
 | `parser`+`ssa`+`checker`+`wasm` (~23.6k) | — | **>1 GiB** | **137 (OOM at the 1 GiB heap)** |
 
-The blowup is real and current; recent RC work didn't tame it. The 18×
-spread between two similarly-sized modules (wasm 784 MB vs asm 44 MB) is a
-per-function-complexity churn, not flat overhead.
+The blowup is real and current. It is **not** proportional to line count
+(all 8263 lines of `asm.fern` cost 44 MB; a 6000-line *prefix* of
+`wasm.fern` already costs 136 MB and the full file 935 MB) — it tracks
+**per-function complexity**: `wasm.fern`'s instruction-selection functions
+have huge bodies, and the cost concentrates in building them.
 
-### The churn is `mk_bs` reconstruction
+### CORRECTION (verified by microbenchmark): the dominant orphans ARE reclaimed
 
-Every `BState` update routes through ONE constructor, `mk_bs(name, nparams, …,
-seed)` (14 fields). The 15 update methods each call it with **13 carried
-`s.field` args + 1-2 changed**, e.g.
+Earlier revisions of this doc — and the #2538/#2568 framing — assumed the
+`mk_bs`-reconstruction orphans are *never freed* and concluded we need
+inter-procedural Perceus reuse-token threading. **That diagnosis is wrong.**
+A microbenchmark of the exact `BState` shape (a struct with a `string`
+field plus `i32[]` / `string[]` fields, updated through a returning
+constructor) disproves it:
 
-```
-function (s: BState) emit(inst: SInst): BState {
-    var nc = …;
-    return mk_bs(s.name, s.nparams, …, nc /*changed*/, s.var_names, …, s.seed);
+```fern
+struct St { name: string, a: i32, xs: i32[], ys: string[] }
+function mk(name: string, a: i32, xs: i32[], ys: string[]): St { return St { name: name, a: a, xs: xs, ys: ys }; }
+function (s: St) bump(): St { return mk(s.name, s.a + 1, s.xs, s.ys); }   // shares carried fields
+function main(): i32 {
+    var s: St = St { name: "hello", a: 0, xs: [1, 2, 3], ys: ["p", "q"] };
+    var i: i32 = 0;
+    while (i < 200000000) { s = s.bump(); i = i + 1; }   // 200M field-sharing replacements
+    return s.a;
 }
 ```
 
-So `s = s.emit(inst)` (and `s = build_expr(.., s)`, recursively per expr node)
-allocates a fresh `BState` box and orphans the old one — millions of small
-(~14-word) boxes over a large module's SSA build. The carried array/string
-fields are shared with the new box (inc'd at `mk_bs`'s construction), so the
-orphan is dominated by the *boxes*, not their payloads.
+`s = s.bump()` is exactly `s = s.emit(inst)` / `s = build_expr(.., s)`: a
+**field-sharing functional replacement**. At **200,000,000 iterations** this
+runs in ~13 s with **flat memory** (no growth, no OOM). If each replacement
+leaked even the ~5-word box, 200M of them would be gigabytes and OOM long
+before the 1 GiB ceiling. They don't — the **normal rc overwrite-drop**
+already reclaims the orphan box: the carried fields were inc'd when the new
+box was constructed, so dec'ing the old box nets to rc ≥ 1 on the shared
+buffers (no free) and frees only the box. This is "framing A" (rc-balanced
+deep-drop) and it is *already in the runtime* for the `x = f(x)` overwrite
+form. `#2538`'s segfault came from a *separate, more aggressive*
+`typeSelfDropSafe` lift that over-released shared buffers — the ordinary
+overwrite path was never the problem.
 
-### Why the obvious reclaims don't apply
+### The real leak: a missing drop for dead intermediate locals
 
-- `tryStructReuseOverwrite` (Fern's FBIP struct-reuse) fires only for a
-  **literal at the assignment site** (`p = T{ f: v, … }`). The `BState` churn is
-  a **call** (`s = s.emit(inst)` / `s = build_expr(.., s)`) whose `BState{}`
-  literal lives inside `mk_bs`, behind the call — out of reach.
-- Lifting `typeSelfDropSafe` to deep-drop the orphan at the overwrite
-  **segfaulted** (#2538): `mk_bs`'s result shares fields the deep-drop
-  over-releases.
-- Affine local-tracking to move the threaded value into an `own` callee was
-  **fuzzer-fragile** (#2568): rc locals are non-linear; the affine checker
-  false-positives unboundedly across `fernsmith`/fuzz/differential.
+The OOM is a different, narrower bug. A `var` local that holds a heap value,
+then **dies after being consumed by a borrowing call** (its value flowing
+into a *different* result), is **never freed**:
 
-### The Perceus-aligned fix: reuse-token threading
+```fern
+function f(s: St): St {
+    var t: St = s.bump();    // box1
+    var u: St = t.bump();    // box2 ; t (box1) is now dead — last use was a borrow
+    return u;                // box2 moves out ; box1 should be freed here, but is NOT
+}
+// loop: s = f(s)  — 20,000,000 iterations
+```
 
-Koka/Lean reclaim exactly this shape with a **reuse token**: when a unique value
-is dropped and a same-size value constructed, the allocation is reused in place.
-For `BState`, the caller's unique old `s` flows as a reuse token into `mk_bs`,
-whose `BState{}` reuses it — an in-place field update of the box, no orphan.
-This is **inter-procedural** reuse-token passing (the token crosses the
-`s.emit(…) → mk_bs` call); Fern's reuse primitive (`__fern_alloc_reuse`)
-supports the leaf but the analysis does not yet thread tokens through calls.
+This leaks ~one box per call: **915 MB over 20M iterations** (vs. the flat
+200M-iteration overwrite loop above). The difference is the *form of death*:
+an **overwrite** (`s = …`) fires the reclaim, but an intermediate `var` that
+simply **goes out of scope after a borrow** does not get its drop inserted.
+The reclaim here is conservative — when last-use can't be proved unique past
+a call, it leaks rather than risk a double-free (sound, but unbounded).
 
-Baseline to beat: **wasm.fern SSA-emit 784 MB → flat box reuse**; the
-self-compile must clear the 1 GiB heap. Gate any attempt on
-`TestSelfHostStdTestE2E` + the fixpoint from the first commit (the #2538/#2568
-lesson). Larger alternatives — inlining `mk_bs` at all update sites to expose
-the literal to `tryStructReuseOverwrite`, or making `BState` mutable — are
-bigger self-host rewrites; the reuse-token route is the smallest IR-level change
-and matches how Koka/Lean do it.
+This is the shape that dominates the self-compile. `build_expr` / `build_stmt`
+create many intermediate locals (`var t = walk(...)`, `var r: BResult = …`,
+nested `s = build_expr(child, s)` whose recursion holds transient state) — and
+in `wasm.fern`'s large functions there are thousands of them per build. The
+leak is proportional to **total intermediate locals across the build**, which
+is exactly the per-function-complexity scaling observed (asm 44 MB vs wasm
+935 MB).
+
+### The fix: insert the missing drop (NOT reuse-token threading)
+
+Because the orphan boxes are *already* reclaimable by the normal overwrite
+path, the residual leak only needs the **drop for a dead intermediate local**
+to be emitted at its last-use / scope-exit. That is far lighter than the
+inter-procedural reuse-token machinery the previous revision proposed — and
+reuse tokens would not even apply to the `f` case above (`t` and `u` are
+distinct locals; there is no in-place reuse opportunity, just a drop that is
+missing). Concretely, the work is in the IR's drop insertion
+(`computePreciseDrops` / `computeFreeEligible` / `computeMovedLocals`): a
+local consumed by a borrowing call and then dead must still receive its
+freeing drop, rather than being excluded as a possibly-aliased value.
+
+**Next step:** pin the exact exclusion in the IR that drops `box1` on the
+floor (likely a "passed to a call → treat as possibly-escaped → don't free"
+conservatism), add a leak-regression e2e test (peak-RSS-bounded or
+alloc/free-balance counted) for the `var t = f(x); g(t)` shape, fix the drop,
+and re-measure `wasm.fern` SSA-emit (baseline **935 MB → expect tens of MB**,
+matching `asm.fern`). Gate on `TestSelfHostStdTestE2E` + the fixpoint matrix
+from the first commit (the #2538/#2568 lesson: leaks pass the fixpoint; only
+StdTest + a memory assertion catch them). Framings A/B/C above remain on
+record but are now superseded for this workload — the dominant orphans need
+no new analysis, and the leak is a drop-insertion fix, not a reuse feature.
