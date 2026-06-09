@@ -190,7 +190,7 @@ per-function bugs in the audit log.
 | `std/path` | | | | | ⬜ | |
 | `std/base64` | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range |
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` |
-| `std/url` | ✅ | ✅ | 🐛 | ✅ | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption bug**, see audit log 2026-06-09 |
+| `std/url` | ✅ | ✅ | ✅ | ✅ | 🔧 | `prop_url_roundtrip`; arm64 heap-corruption bug **fixed** — see audit log 2026-06-09 |
 | `std/json` | | | | | ⬜ | |
 | `std/http` | | | | | ⬜ | |
 | `std/tcp` | | | | | ⬜ | |
@@ -220,7 +220,42 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
-### 2026-06-09 — 🐛 arm64 heap-corruption in the RcFree freelist drop/reuse path (OPEN, top priority)
+### 2026-06-09 — 🔧 FIXED: arm64 two-word `string_from_bytes` allocated a headerless string
+
+**The bug** (full investigation below): the arm64 two-word-string
+`string_from_bytes` helper allocated its heap buffer with **raw
+`__fern_alloc`** instead of `__fern_alloc_rc1`. Every sibling helper
+(`__fern_strcat` / `__str_slice` two-word, and the single-word
+`string_from_bytes`) uses `__fern_alloc_rc1`, which writes `rc = 1` at
+`data-8` and the payload length at `data-4`. A raw buffer has neither —
+so when such a string was later dropped via `__fern_str_dec`, the helper
+read a **garbage rc** at `data-8`; whenever that garbage happened to be
+`1`, it called `__fern_box_free` with a **garbage size** from `data-4`,
+pushing a bogus block onto the freelist. A subsequent allocation popped
+that block and its write **overwrote a still-live string** (the URL
+round-trip's encoded buffer), flipping one byte. arm64-only because:
+wasm is two-word but has no freelist (latent, harmless) and its
+`string_from_bytes` already used `alloc_rc1` + an inline path; x86-64 is
+single-word (different helper).
+
+**The fix** (`internal/codegen/arm64/arm64.go`,
+`emitStringFromBytesRuntime`, two-word path): `bl __fern_alloc` →
+`bl __fern_alloc_rc1`, so the result is a properly rc-headered owned
+heap string. One instruction. The `strcat2W` helper already carried the
+exact same fix with a comment about a past SIGSEGV from raw buffers being
+str_dec'd — `string_from_bytes` was simply missed.
+
+**Verification:** `prop_url_roundtrip` now passes on **all four
+backends** (arm64 re-enabled, `backends` sidecar removed). Regression:
+the RC + string e2e suites (`Rc*` / `*HeapBump*` / `*StringConcat*` /
+`*StringArray*` / `*StringReinit*`, all three backends) and the
+ir/codegen/checker unit tests all pass. (Follow-up perf nicety, not
+done: the arm64 two-word path still lacks the `len ≤ 7` inline-SSO
+fast path that the single-word and wasm versions have — short
+`string_from_bytes` results go to the heap instead of staying inline.
+Correct, just a missed allocation-elision opportunity.)
+
+### 2026-06-09 — 🐛→🔧 arm64 heap-corruption found via prop_url_roundtrip (investigation)
 
 **Found by:** `prop_url_roundtrip` property fixture — `url_decode(url_encode(s)) == s`
 over 300 deterministic random inputs (full 0..255 byte range, lengths 0..47).
@@ -268,13 +303,20 @@ different iterations (state-dependent), so it is **not** a logic error in
   `ast.UseTwoWordStrings` branch ~line 3614/3651 and 4855) drops one reference
   too early.
 
-**Conclusion / fix target:** a two-word-string reference is freed at a
-mis-computed last-use in the Perceus drop analysis. The fix belongs in the
-**target-independent IR** two-word-string drop emission (fixes arm64 *and*
-removes the latent wasm liability; x86-64 is untouched). It needs IR-level
-visibility into the emitted drops for the `out = out + piece` loop-accumulator
-pattern plus a full run of the RC regression suite (`rc_*` + `internal/e2e`),
-so it is a focused follow-up rather than a rushed patch.
+**Conclusion (this entry's hypothesis was partly wrong — see the FIXED
+entry above for the real cause).** The reasoning correctly reached
+"`__fern_str_dec` frees a still-live two-word string under freelist
+reuse," but guessed the *premature drop* came from a mis-computed last-use
+in the Perceus precise-drop analysis. The actual cause was simpler and
+lower-level: the dropped string was a `string_from_bytes` result that had
+been allocated **without an rc header** (raw `__fern_alloc`), so
+`__fern_str_dec` read a garbage rc and freed a garbage size. The drop was
+emitted in the right place; the *value* it dropped was malformed. Dumping
+the lowered IR for `dec` (a throwaway `ir.LowerWith` harness under
+`TwoWordOverride=true`) plus a before/after `hex_encode(e)` probe — showing
+`e` intact after `enc` and corrupted after `dec` — localised it to the
+`string_from_bytes` decode path, and reading `emitStringFromBytesRuntime`
+showed the raw-alloc.
 
 **Minimal reproducer** (self-contained single module; fails arm64, passes interp/x86-64):
 the mix of a string-slice branch (`out = out + s[i:i+1]`) and a
@@ -283,13 +325,8 @@ reads the result — driven cumulatively over several LCG-generated inputs.
 `internal/e2e/testdata/cases/prop_url_roundtrip/main.fern` reproduces it directly
 on arm64 (drop the `backends` sidecar to see the arm64 leg fail).
 
-**Status / mitigation:** `prop_url_roundtrip` is restricted to
-`interp x86_64 wasm` (via its `backends` sidecar) so CI stays green and the 3
-good backends are still guarded. **Next step:** trace the arm64 drop/reuse
-call-site for the slice + `string_from_bytes` + concat pattern and fix the
-recycled-while-live cell. Until fixed, `std/url` is unsafe on arm64 under heavy
-allocation churn — and the same class of bug may lurk in other modules, so it is
-the highest-priority follow-up.
+**Status:** ✅ FIXED (see the FIXED entry above). `prop_url_roundtrip` runs
+on all four backends again; the `backends` sidecar was removed.
 
 ### 2026-06-09 — first property-test batch (base64, hex, url, sort, string)
 

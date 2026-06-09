@@ -1,8 +1,0 @@
-# arm64 is intentionally excluded: this property test surfaced a real
-# arm64-only heap-corruption bug in the RcFree freelist drop/reuse path
-# (url_decode . url_encode in a cumulative-allocation loop overwrites a
-# live string's bytes). Confirmed arm64-only: interp / x86_64 / wasm all
-# pass, and flipping ast.RcFreeEnabled=false makes arm64 pass too.
-# Tracked as the top open item in docs/FEATURE-AUDIT.md. Re-add arm64
-# here once the codegen bug is fixed.
-interp x86_64 wasm

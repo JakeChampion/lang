@@ -2520,7 +2520,12 @@ func (g *generator) emitStringFromBytesRuntime() {
 		g.emit("b .Lsfb2w_ret")
 		g.label(".Lsfb2w_alloc")
 		g.emit("mov w0, w20")
-		g.emit("bl __fern_alloc")          // x0 = dst
+		// alloc_rc1 (NOT raw __fern_alloc): the result is an owned heap
+		// string with an rc header at data-8 + payload size at data-4, so a
+		// later __fern_str_dec reads a valid rc instead of freeing a garbage
+		// size into the freelist (whose reuse then overwrites a still-live
+		// string). Same fix strcat2W / slice2W already carry.
+		g.emit("bl __fern_alloc_rc1")      // x0 = data (= base+8)
 		g.emit("mov x2, x20")              // n
 		g.emit("mov x1, x19")              // src = bs
 		g.emit("stp x0, xzr, [sp, #-16]!") // save dst on stack
