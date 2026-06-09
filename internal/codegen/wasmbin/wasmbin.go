@@ -1061,6 +1061,9 @@ func valtypeFor(t ast.Type) (byte, error) {
 		return encode.ValtypeF32, nil
 	case ast.ArrayType, ast.SliceType, ast.TupleType, ast.StructType, ast.EnumType:
 		return encode.ValtypeI32, nil
+	case ast.HandleType:
+		// own/borrow R — a resource handle is an opaque i32 (P5).
+		return encode.ValtypeI32, nil
 	case *ast.FuncType:
 		return encode.ValtypeI32, nil
 	}
