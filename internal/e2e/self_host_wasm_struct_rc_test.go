@@ -125,6 +125,15 @@ func TestSelfHostRcStructBoxWasm(t *testing.T) {
 		// A churn of structs each holding a fresh string[]: deep element release
 		// reclaims the strings (no growth), detector clean across many cycles.
 		{"struct-field-strarray-churn-clean", "struct Bag { items: string[], n: i32 } function mk(): i32 { var bag = Bag { items: [\"x\" + \"y\", \"z\" + \"w\"], n: 4 }; return bag.items[0].len() + bag.n; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 6},
+		// RECLAIM: a struct local re-bound (`var p = …`) each loop iteration now
+		// releases the prior value (recursive, cow-guarded) instead of leaking
+		// it — 100k iterations stay reclaimed + detector clean.
+		{"struct-rebind-loop-reclaim", "struct P { x: i32, y: i32 } function main(): i32 { var n = 0; var k = 0; while (k < 100000) { var p = P { x: k, y: 2 }; n = n + p.y; k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 3},
+		// RECLAIM: the `cx = Ctx{...cx}`-style reassignment idiom — a struct
+		// holding a string[] field, reassigned via base-copy each iteration —
+		// reclaims each intermediate (old struct + its retained array fields)
+		// across 100k cycles, detector clean.
+		{"struct-reassign-base-copy-reclaim", "struct St { names: string[], n: i32 } function step(s: St): St { return St { ...s, n: s.n + 1 }; } function main(): i32 { var s = St { names: [\"a\" + \"b\"], n: 0 }; var k = 0; while (k < 100000) { s = step(s); k = k + 1; } return (s.n % 7) + s.names[0].len() + __fern_rc_underflow_count(); }", 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

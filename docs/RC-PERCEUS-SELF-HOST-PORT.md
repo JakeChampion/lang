@@ -1442,3 +1442,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (the scalar-safety guard — `i32[]` of heap-address-shaped values must NOT be
   pointer-released), struct-field-strarray-churn-clean (50k cycles). Full RC +
   component + binary + shim + interp + cli wasm suites green; bootstrap-safe.
+- 2026-06-09: **wasm struct RC — loop-rebound / reassigned struct RECLAIM
+  (cow-dec).** The struct analogue of the array/string `StmtVar`/`StmtAssign`
+  cow-dec-on-overwrite: a swept struct local re-bound (`var p = …` in a loop)
+  or reassigned (`cx = Ctx{...cx}`, `a = step(a)`) now RELEASES its prior value
+  (recursive, via `emit_struct_release`) before storing the new one, instead of
+  leaking it. Guarded two ways: an `i32.ne` cow-guard skips an in-place result
+  (same pointer — dec'ing would over-release), and the release is gated on
+  `struct_swept` membership, which includes only owned LOCALS — a borrowed
+  struct PARAM reassigned (`cx` inside `emit_expr`, whose first value is
+  caller-owned) is NOT in the set, so its borrowed value is never cow-freed
+  (that would double-release with the caller). This reclaims the pervasive
+  `cx = Ctx{...cx}` threading intermediates in the compiler's own `emit_func`
+  (each old `Ctx` + its retained `string[]` fields freed per update; the
+  base-copy's construction-inc of the array fields balances the cow-dec's
+  recursive release, transferring ownership to the new struct). Coverage:
+  `TestSelfHostRcStructBoxWasm` gains struct-rebind-loop-reclaim (100k `var p`
+  re-binds) and struct-reassign-base-copy-reclaim (100k `s = step(s)` with a
+  retained `string[]` field — reclaim implied by no growth, detector clean).
+  Full RC + component + binary + shim + interp + cli wasm suites green;
+  bootstrap-safe.
