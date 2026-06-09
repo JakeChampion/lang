@@ -15,7 +15,6 @@
 //
 // Showcases: substring search (`contains` / `contains_ci`), invert
 // + count modes, multi-file output prefixes.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

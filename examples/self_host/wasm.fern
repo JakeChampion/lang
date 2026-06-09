@@ -28,7 +28,6 @@
 //     correct while conditions are side-effect-free (no calls yet).
 //   - function calls, match, for, strings/memory: later slices.
 
-import "core/no_prelude";
 import "./parser";
 import "./util";
 
@@ -156,6 +155,15 @@ struct Ctx {
     // `for p in pts { p.field / p.method() }` and `pts[i].field` resolve.
     sa_names: string[],
     sa_types: string[],
+    // Tuple-array locals (ta_names): an array whose elements are tuples, with
+    // the per-element kind string (ta_kinds) + struct/enum svtype CSV
+    // (ta_svtypes) of the element tuple shape — parallel to tup_kinds /
+    // tup_svtypes but describing each array element. Drives the deep release
+    // of array-of-tuple at exit (native __drop_arr_tuple_): each element tuple
+    // box's pointer-bearing elements reclaim before the box + buffer are freed.
+    ta_names: string[],
+    ta_kinds: string[],
+    ta_svtypes: string[],
     // Arrays whose element type is 64-bit (i64[] / f64[]): they use an
     // 8-byte element slot + i64/f64 load/store, vs the 4-byte i32 default.
     // Tracked by local/param name so index / for / push / slice pick the
@@ -224,6 +232,16 @@ struct Ctx {
     // place (`m = m.insert(…)`) returns the SAME box, so it stays one owned
     // local; borrowed params are NOT swept.
     map_swept: string[],
+    // Perceus closure reference-counting. clos_swept: body closure locals
+    // bound directly to a lambda literal (`var f = function(…){…}`) — an
+    // OWNED, freshly rc-boxed env block. Freed (rc dec → box reclaim) at
+    // function exit, excluding a move-on-return slot. The env is now rc-boxed
+    // via $__fern_str_box (header at [box-8]; table_idx@0 + captures@4+i*4
+    // unchanged), so its box reclaims; per-capture release rides on this in a
+    // later slice (captures still leak one level here — sound). Only
+    // lambda-literal bindings are swept; closure-returning calls, aliases, and
+    // bare function-name values are NOT (leak, sound).
+    clos_swept: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -781,6 +799,31 @@ function collect_tup_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[
 // just decrements). A scalar ('i') element is skipped. Elements nested in
 // other containers are released only when freed at THIS sweep (a tuple
 // freed indirectly via arr_dec leaks its elements — sound, a known gap).
+// tuple_release_inner builds the WAT that releases the pointer-bearing
+// elements of a single tuple box rooted at `base` (a WAT expr yielding the
+// box pointer). Shared by the tuple-local sweep and the array-of-tuple deep
+// release. A struct/enum element (kind 'i' but carrying an svtype) recurses
+// through its $__fern_release_ fn; 's' string / 'a' scalar-array → flat
+// arr_dec; 'A' pointer-element array → arr_dec_ptr (one level). Scalar 'i'
+// elements are skipped.
+function tuple_release_inner(base: string, kinds: string, svcsv: string, cx: Ctx): string {
+    var inner: string = "";
+    var e: i32 = 0;
+    while (e < kinds.len()) {
+        var load: string = "(i32.load (i32.add " + base + " (i32.const " + util.i32_to_string(e * 4) + ")))";
+        var svt: string = nth_csv_elem(svcsv, e);
+        if (svt.len() > 0 && (is_struct_type(cx.structs, svt) || (is_enum_type_name(cx, svt) && svt != "Option" && svt != "Result"))) {
+            inner = inner + " (drop (call $__fern_release_" + svt + " " + load + "))";
+        } else if (kinds[e] == 97 || kinds[e] == 115) {
+            inner = inner + " (drop (call $__fern_arr_dec " + load + "))";
+        } else if (kinds[e] == 65) {
+            inner = inner + " (drop (call $__fern_arr_dec_ptr " + load + "))";
+        }
+        e = e + 1;
+    }
+    return inner;
+}
+
 function tup_exit_sweep_excl(cx: Ctx, excl: string): string {
     var o: string = "";
     var i: i32 = 0;
@@ -789,24 +832,7 @@ function tup_exit_sweep_excl(cx: Ctx, excl: string): string {
         if (name != excl) {
             var kinds: string = lookup_pair(cx.tup_names, cx.tup_kinds, name);
             var svcsv: string = lookup_pair(cx.tup_names, cx.tup_svtypes, name);
-            var inner: string = "";
-            var e: i32 = 0;
-            while (e < kinds.len()) {
-                var load: string = "(i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(e * 4) + ")))";
-                var svt: string = nth_csv_elem(svcsv, e);
-                // Stage E — a struct/enum tuple element (marked kind 'i' but
-                // carrying an svtype) deep-releases through its release fn;
-                // otherwise 's' string / 'a' scalar-array → flat arr_dec, 'A'
-                // pointer-element array → arr_dec_ptr (one level).
-                if (svt.len() > 0 && (is_struct_type(cx.structs, svt) || (is_enum_type_name(cx, svt) && svt != "Option" && svt != "Result"))) {
-                    inner = inner + " (drop (call $__fern_release_" + svt + " " + load + "))";
-                } else if (kinds[e] == 97 || kinds[e] == 115) {
-                    inner = inner + " (drop (call $__fern_arr_dec " + load + "))";
-                } else if (kinds[e] == 65) {
-                    inner = inner + " (drop (call $__fern_arr_dec_ptr " + load + "))";
-                }
-                e = e + 1;
-            }
+            var inner: string = tuple_release_inner("(local.get $" + name + ")", kinds, svcsv, cx);
             if (inner.len() > 0) {
                 // Null-guard: a conditionally-unassigned tuple local is 0; the
                 // inline `[t-8]` rc-read would fault at address -8.
@@ -1083,7 +1109,7 @@ function release_module_ctx(structs: parser.StructDecl[], mr_types: string[], mo
         tup_names: [], tup_kinds: [], tup_svtypes: [],
         fn_names: [], lam_ctr: cell_new(0), lamdefs: cell_new(""),
         all_locals: [], cap_names: [],
-        sa_names: [], sa_types: [],
+        sa_names: [], sa_types: [], ta_names: [], ta_kinds: [], ta_svtypes: [],
         i64_arr_names: [], f64_arr_names: [],
         ret_arr_kind: "i32",
         arr_swept: [], arr_src: [],
@@ -1096,6 +1122,7 @@ function release_module_ctx(structs: parser.StructDecl[], mr_types: string[], mo
         struct_swept: [],
         opt_swept: [],
         map_swept: [],
+        clos_swept: [],
     };
 }
 
@@ -1310,6 +1337,61 @@ function map_exit_sweep(cx: Ctx): string {
     return map_exit_sweep_excl(cx, "");
 }
 
+// clos_exit_sweep_excl frees each owned closure local's rc-boxed env block
+// at function exit (rc dec via the shared $__fern_arr_dec; reclaims the box
+// on the last reference), except `excl` — a move-on-return slot handed to the
+// caller. Captures still leak one level here (a later slice releases them);
+// the box reclaim is sound on its own (a borrowed closure at rc>1 just dec's).
+function clos_exit_sweep_excl(cx: Ctx, excl: string): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < cx.clos_swept.len()) {
+        if (cx.clos_swept[i] != excl) {
+            o = o + "    (drop (call $__fern_arr_dec (local.get $" + cx.clos_swept[i] + ")))\n";
+        }
+        i = i + 1;
+    }
+    return o;
+}
+
+function clos_exit_sweep(cx: Ctx): string {
+    return clos_exit_sweep_excl(cx, "");
+}
+
+// collect_clos_swept gathers body closure locals bound directly to a lambda
+// literal (`var f = function(…){…}`) — freshly rc-boxed, owned envs the exit
+// sweep frees. Aliases, closure-returning calls, and bare function-name
+// values are excluded (they leak one level — sound). Comma destructures
+// skipped. Recurses nested bodies.
+function collect_clos_swept(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    match (v.init) {
+                        parser.ExprLambda(_) => { acc = acc.append(v.name); },
+                        _ => {},
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_clos_swept(f.then_body, acc);
+                acc = collect_clos_swept(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_clos_swept(w.body, acc); },
+            parser.StmtFor(f) => { acc = collect_clos_swept(f.body, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_clos_swept(m.arms[k].body, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
 // ret_map_is_borrowed: a returned map that borrows (a field / index read, or a
 // borrowed-param ident — a returned swept local is a move, filtered by
 // map_mov) is retained. A fresh map_new-rooted construction is owned-and-moved.
@@ -1405,8 +1487,31 @@ function arr_exit_sweep_excl(cx: Ctx, excl: string): string {
             // its strings one level (arr_dec_ptr); a scalar array (or
             // array-of-array / array-of-tuple, still one-level-flat) frees flat.
             var sat: string = lookup_pair(cx.sa_names, cx.sa_types, name);
+            var tak: string = lookup_pair(cx.ta_names, cx.ta_kinds, name);
             if (sat.len() > 0 && (is_struct_type(cx.structs, sat) || (is_enum_type_name(cx, sat) && sat != "Option" && sat != "Result"))) {
                 o = o + "    (drop (call $__fern_arr_release_" + sat + " (local.get $" + name + ")))\n";
+            } else if (tak.len() > 0) {
+                // Array-of-tuple deep release (native __drop_arr_tuple_): when
+                // the array is the last owner ([a-8]==1) walk its elements; each
+                // element is a tuple box whose pointer-bearing fields reclaim
+                // (rc==1-gated per box) before the box is freed, then the buffer
+                // is freed. Mirrors $__fern_arr_release_<S> + the inline tuple
+                // sweep. The element box pointer is [a+8+i*4]; len is [a].
+                var tasv: string = lookup_pair(cx.ta_names, cx.ta_svtypes, name);
+                var einner: string = tuple_release_inner("(local.get $__te)", tak, tasv, cx);
+                o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then\n";
+                o = o + "      (local.set $__tan (i32.load (local.get $" + name + ")))\n";
+                o = o + "      (local.set $__tai (i32.const 0))\n";
+                o = o + "      (block $atd (loop $atl\n";
+                o = o + "        (br_if $atd (i32.ge_u (local.get $__tai) (local.get $__tan)))\n";
+                o = o + "        (local.set $__te (i32.load (i32.add (i32.add (local.get $" + name + ") (i32.const 8)) (i32.mul (local.get $__tai) (i32.const 4)))))\n";
+                if (einner.len() > 0) {
+                    o = o + "        (if (local.get $__te) (then (if (i32.eq (i32.load (i32.sub (local.get $__te) (i32.const 8))) (i32.const 1)) (then" + einner + "))))\n";
+                }
+                o = o + "        (drop (call $__fern_arr_dec (local.get $__te)))\n";
+                o = o + "        (local.set $__tai (i32.add (local.get $__tai) (i32.const 1)))\n";
+                o = o + "        (br $atl)))))))\n";
+                o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
             } else if (contains_str(cx.str_arrays, name) || contains_str(cx.sa_names, name)) {
                 o = o + "    (drop (call $__fern_arr_dec_ptr (local.get $" + name + ")))\n";
             } else {
@@ -1935,6 +2040,21 @@ function collect_tuple_locals(body: parser.Stmt[], cx: Ctx): Ctx {
                     parser.ExprTuple(t) => {
                         if (!contains_str(cx.tup_names, v.name)) {
                             cx = Ctx { ...cx, tup_names: cx.tup_names.append(v.name), tup_kinds: cx.tup_kinds.append(tuple_kind_string(t.elements, cx)), tup_svtypes: cx.tup_svtypes.append(tuple_svtypes_csv(t.elements, cx)) };
+                        }
+                    },
+                    // Array-of-tuple local: `var ps = [(a, b), …]`. Record the
+                    // element tuple's shape (kinds + svtypes from the first
+                    // literal element) so the exit sweep deep-releases each
+                    // element tuple's pointer-bearing fields (native
+                    // __drop_arr_tuple_), not just the array buffer flat.
+                    parser.ExprArray(a) => {
+                        if (a.elements.len() > 0 && !contains_str(cx.ta_names, v.name)) {
+                            match (a.elements[0]) {
+                                parser.ExprTuple(t0) => {
+                                    cx = Ctx { ...cx, ta_names: cx.ta_names.append(v.name), ta_kinds: cx.ta_kinds.append(tuple_kind_string(t0.elements, cx)), ta_svtypes: cx.ta_svtypes.append(tuple_svtypes_csv(t0.elements, cx)) };
+                                },
+                                _ => {},
+                            }
                         }
                     },
                     _ => {},
@@ -5228,7 +5348,11 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             cx.lamdefs.set(cx.lamdefs.get() + lamtext);
             var ap: string = "$__lit" + util.i32_to_string(depth);
             var s: string = "(block (result i32)";
-            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + caps.len() * 4) + ")))";
+            // rc-box the env via $__fern_str_box (8-byte rc+bsz header, returns
+            // base+8) so the closure carries an rc word at [box-8] and can be
+            // counted + freed; table_idx@0 + captures@4+i*4 are unchanged
+            // (str_box just adds a header below the returned pointer).
+            s = s + " (local.set " + ap + " (call $__fern_str_box (i32.const " + util.i32_to_string(4 + caps.len() * 4) + ")))";
             s = s + " (i32.store (local.get " + ap + ") (i32.const " + util.i32_to_string(idx) + "))";
             // Capture values: evaluated in the enclosing scope, stored at
             // box + 4 + i*4 (matching the lambda body's $__env loads).
@@ -5384,6 +5508,7 @@ function is_reserved_local(n: string): boolean {
     if (n == "__fa0" || n == "__fa1" || n == "__fa2" || n == "__fa3") { return true; }
     if (n == "__m0" || n == "__m1" || n == "__m2" || n == "__m3") { return true; }
     if (n == "__retv_i32" || n == "__retv_i64" || n == "__retv_f64") { return true; }
+    if (n == "__tai" || n == "__tan" || n == "__te") { return true; }
     return false;
 }
 
@@ -7720,7 +7845,14 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.map_swept, id.name)) { map_mov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov) + opt_exit_sweep_excl(st.cx, opt_mov) + map_exit_sweep_excl(st.cx, map_mov);
+            // Closure move-on-return: a bare owned closure local returned is
+            // excluded from the closure sweep (handed over at its rc).
+            var clos_mov: string = "";
+            match (r.value) {
+                parser.ExprIdent(id) => { if (contains_str(st.cx.clos_swept, id.name)) { clos_mov = id.name; } },
+                _ => {},
+            }
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov) + opt_exit_sweep_excl(st.cx, opt_mov) + map_exit_sweep_excl(st.cx, map_mov) + clos_exit_sweep_excl(st.cx, clos_mov);
             // Perceus return-retain: when an array/string-returning function
             // hands back a BORROWED reference (a field / index read, or a
             // borrowed param — anything not a fresh literal/concat/slice/call
@@ -8499,7 +8631,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         tup_names: [], tup_kinds: [], tup_svtypes: [],
         fn_names: fn_names, lam_ctr: lam_ctr, lamdefs: lamdefs,
         all_locals: all_locals, cap_names: cap_names,
-        sa_names: [], sa_types: [],
+        sa_names: [], sa_types: [], ta_names: [], ta_kinds: [], ta_svtypes: [],
         i64_arr_names: i64_arrs, f64_arr_names: f64_arrs,
         ret_arr_kind: arr_kind_of_spelling(f.ret_type),
         arr_swept: [], arr_src: [],
@@ -8512,6 +8644,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         struct_swept: [],
         opt_swept: [],
         map_swept: [],
+        clos_swept: [],
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -8575,7 +8708,9 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cx8: Ctx = Ctx { ...cx7, opt_swept: collect_opt_swept(f.body, cx7, []) };
     // Perceus map RC set — computed once map_names are known so map aliases
     // resolve.
-    return Ctx { ...cx8, map_swept: collect_map_swept(f.body, cx8, []) };
+    var cx9: Ctx = Ctx { ...cx8, map_swept: collect_map_swept(f.body, cx8, []) };
+    // Perceus closure RC set — lambda-literal-bound closure locals freed at exit.
+    return Ctx { ...cx9, clos_swept: collect_clos_swept(f.body, []) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning
@@ -8774,6 +8909,8 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     decls = decls + "    (local $__fa0 i32) (local $__fa1 i32) (local $__fa2 i32) (local $__fa3 i32)\n";
     // Perceus return temps: park the result across the exit release sweep.
     decls = decls + "    (local $__retv_i32 i32) (local $__retv_i64 i64) (local $__retv_f64 f64)\n";
+    // Array-of-tuple deep-release scratch: loop index / length / element box.
+    decls = decls + "    (local $__tai i32) (local $__tan i32) (local $__te i32)\n";
     var li: i32 = 0;
     while (li < locals.len()) {
         if (!contains_str(pnames, locals[li]) && !is_reserved_local(locals[li])) {
@@ -8801,7 +8938,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     // Perceus exit sweep on the fall-through path (functions that end
     // without an explicit `return`). After a final `return` it is
     // unreachable-but-valid wasm, like the trailing fallthrough const.
-    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + opt_exit_sweep(cx) + map_exit_sweep(cx) + tail;
+    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + opt_exit_sweep(cx) + map_exit_sweep(cx) + clos_exit_sweep(cx) + tail;
 }
 
 // module_uses_divrem is true when any free function body or the

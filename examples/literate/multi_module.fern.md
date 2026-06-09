@@ -18,7 +18,6 @@ or extract the modules with `fern -tangle …` (each is printed under a
 from. It depends on a small math module:
 
 ```fern file=main.fern entry
-import "core/no_prelude";
 import "./mathx";
 
 function main(): i32 {

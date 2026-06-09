@@ -158,7 +158,7 @@ func TestRunnerAsyncRuntimeExamplePasses(t *testing.T) {
 func TestRunnerFailingSuiteExitsOne(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/test";
 
 function test_passing(): Option[string] {
@@ -267,7 +267,7 @@ func TestRunnerFuzzExample(t *testing.T) {
 func TestRunnerFuzzFailureSurfacesInputReproducer(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/fuzz";
 import "std/test";
 
@@ -415,7 +415,7 @@ func TestRunnerFilesystemOpsExample(t *testing.T) {
 func TestRunnerDeferCleanupRunsAtFinish(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/test";
 
 function main(): i32 {
@@ -667,7 +667,7 @@ func TestRunnerFuzzShrinkExample(t *testing.T) {
 func TestRunnerFuzzShrinkSurfacesMinimisedInput(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/fuzz";
 import "std/test";
 
@@ -1997,7 +1997,7 @@ func TestRunnerQuietModeExample(t *testing.T) {
 func TestRunnerEmptySuiteIsValidTAP(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/test";
 
 function main(): i32 {

@@ -14,7 +14,6 @@
 //
 // Showcases: numeric flag parsing (split / glued / shorthand),
 // byte- vs line-oriented slicing, multi-file banners.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

@@ -17,7 +17,6 @@
 //
 // Showcases: multiple option arguments, right-aligned numeric
 // formatting via `pad_start`.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

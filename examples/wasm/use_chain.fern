@@ -25,7 +25,6 @@
 //   $ wasmtime use_chain.wasm
 //   triple-doubled then plus two: 10
 //   adder factory: 7 + 35 = 42
-import "core/no_prelude";
 // `.to_string()` on i32 inside main's match arm.
 import "std/i32";
 

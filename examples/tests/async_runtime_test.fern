@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 import "std/task";
 

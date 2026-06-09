@@ -145,14 +145,18 @@ func TestExportWasiHttpHandlerSetResponseComposes(t *testing.T) {
 // implements wasi:http/incoming-handler from a user-supplied WIT, no embedded
 // HTTP world. This is the payoff of P6 Slice 6.
 func TestExportWasiHttpHandlerServes(t *testing.T) {
-	wasmtime, err := exec.LookPath("wasmtime")
-	if err != nil {
-		t.Skip("wasmtime not on PATH")
+	if got := serveHttpHandlerStatus(t, httpHandlerSetResponseProg); got != http.StatusOK {
+		t.Fatalf("status = %d; want 200", got)
 	}
-	dir := t.TempDir()
+}
+
+// buildHttpHandlerComponent compiles a bring-your-own wasi:http handler program
+// and composes it against the minimal proxy world, returning the component path.
+func buildHttpHandlerComponent(t *testing.T, dir, prog string) string {
+	t.Helper()
 	w := minimalHttpProxyWorld(t, dir)
 	mainPath := filepath.Join(dir, "handler.fern")
-	if err := os.WriteFile(mainPath, []byte(httpHandlerSetResponseProg), 0o644); err != nil {
+	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
 	info, p := loadCheckMono(t, mainPath)
@@ -168,8 +172,21 @@ func TestExportWasiHttpHandlerServes(t *testing.T) {
 	if err := os.WriteFile(out, comp, 0o644); err != nil {
 		t.Fatalf("write component: %v", err)
 	}
+	return out
+}
 
-	// Pick a free port, serve the component, and make a real request.
+// serveHttpHandlerStatus builds + composes `prog`, serves the component under
+// `wasmtime serve` on a free port, makes a single `GET /`, and returns the
+// response status. Skips if wasmtime is absent.
+func serveHttpHandlerStatus(t *testing.T, prog string) int {
+	t.Helper()
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	out := buildHttpHandlerComponent(t, dir, prog)
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("pick port: %v", err)
@@ -204,7 +221,5 @@ func TestExportWasiHttpHandlerServes(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	_, _ = io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d; want 200\nserver log:\n%s", resp.StatusCode, slog.String())
-	}
+	return resp.StatusCode
 }

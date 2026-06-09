@@ -17,7 +17,6 @@
 //
 // Showcases: building a translation table over bytes, range
 // expansion, the delete / squeeze variants.
-import "core/no_prelude";
 import "std/string";
 import "std/io";
 

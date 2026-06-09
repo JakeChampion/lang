@@ -10,7 +10,6 @@
 // the process exit code matches the program's result. End-to-end proof
 // that wasm.fern emits runnable WebAssembly.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

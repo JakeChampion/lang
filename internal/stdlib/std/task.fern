@@ -36,7 +36,6 @@
 // (docs/SELF-HOST-AUDIT.md). The Go compiler already monomorphizes;
 // keeping the runtime concrete keeps it green on the self-hosted path.
 
-import "core/no_prelude";
 
 // The uniform task step.
 //

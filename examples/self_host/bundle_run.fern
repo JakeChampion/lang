@@ -21,7 +21,6 @@
 // can swap the marker splitter for real `import`-driven file loading
 // once the emitter grows read_file support for a self-compiled driver.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

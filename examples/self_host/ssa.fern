@@ -24,7 +24,6 @@
 // pipeline is optimise (copy-prop, const-fold, CSE, DCE, branch-simplify,
 // block-merge) → regalloc (linear scan) → emit (ssa_x86 / ssa_arm64).
 
-import "core/no_prelude";
 import "./parser";
 import "./astwalk";
 import "./util";

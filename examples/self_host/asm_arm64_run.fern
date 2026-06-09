@@ -7,7 +7,6 @@
 // the resulting binary under qemu-aarch64 — asserting the
 // exit code matches the expected value.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

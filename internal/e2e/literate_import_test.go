@@ -20,7 +20,7 @@ func TestLiterateImportedLibraryRuns(t *testing.T) {
 	}
 	main := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(main,
-		[]byte("import \"core/no_prelude\";\nimport \"./greet\";\nfunction main(): i32 { return greet.greeting(); }\n"), 0o644); err != nil {
+		[]byte("import \"./greet\";\nfunction main(): i32 { return greet.greeting(); }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "-interp", main)
@@ -50,7 +50,7 @@ func TestLiterateImportedLibraryDiagnosticRemap(t *testing.T) {
 	}
 	main := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(main,
-		[]byte("import \"core/no_prelude\";\nimport \"./greet\";\nfunction main(): i32 { return greet.greeting(); }\n"), 0o644); err != nil {
+		[]byte("import \"./greet\";\nfunction main(): i32 { return greet.greeting(); }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "-check", main)

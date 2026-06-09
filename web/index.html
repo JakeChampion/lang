@@ -667,7 +667,7 @@ const examples = {
     print("hello, world");
     return 0;
 }`,
-  fact: `import "core/no_prelude";
+  fact: `
 import "std/i32";
 function fact(n: i32): i32 {
     if (n == 0) { return 1; }
@@ -678,7 +678,7 @@ function main(): i32 {
     print("5! = " + f.to_string());
     return f;
 }`,
-  strings: `import "core/no_prelude";
+  strings: `
 import "std/string";
 import "std/i32";
 function main(): i32 {
@@ -695,7 +695,7 @@ function main(): i32 {
     print("replace:    " + "hello world".replace("world", "Fern"));
     return s.len();
 }`,
-  sort: `import "core/no_prelude";
+  sort: `
 import "std/sort";
 import "std/i32";
 import "std/array";
@@ -719,7 +719,7 @@ function main(): i32 {
     print("desc:   [" + join_i32s(desc) + "]");
     return asc.len();
 }`,
-  union: `import "core/no_prelude";
+  union: `
 import "std/i32";
 struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -741,7 +741,7 @@ function main(): i32 {
     print("(2+3) * 4 = " + v.to_string());
     return v;
 }`,
-  result: `import "core/no_prelude";
+  result: `
 import "std/i32";
 struct ParseError { message: string, pos: i32 }
 
@@ -769,7 +769,7 @@ function main(): i32 {
         Err(e) => { print("error at " + e.pos.to_string() + ": " + e.message); return 1; },
     }
 }`,
-  interp: `import "core/no_prelude";
+  interp: `
 import "std/i32";
 import "std/array";
 // Tiny arithmetic interpreter — lexer + parser + eval in Fern.
@@ -882,7 +882,7 @@ function main(): i32 {
     print(src + " = " + v.to_string());
     return v;
 }`,
-  format: `import "core/no_prelude";
+  format: `
 import "std/format";
 import "std/i32";
 // format(fmt, args) — runtime template substitution. Walks
@@ -925,7 +925,7 @@ function main(): i32 {
 
     return 0;
 }`,
-  http: `import "core/no_prelude";
+  http: `
 import "std/http";
 import "std/tcp";
 // An HTTP handler. Pick the "wasi:http/incoming-handler" world,

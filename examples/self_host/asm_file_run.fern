@@ -11,7 +11,6 @@
 // compiler. The companion of asm_run.fern for the "compile a
 // source FILE" CLI shape, a step toward import-driven file loading.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./asm";

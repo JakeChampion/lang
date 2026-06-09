@@ -20,7 +20,7 @@ import (
 // string[] case where a flat element-walking dec would be unsound. This is the
 // runtime half of move semantics for threaded array params
 // (docs/RC-ARRAY-MOVE-SEMANTICS-PLAN.md step 3).
-const ownSelfAppendSrc = `import "core/no_prelude";
+const ownSelfAppendSrc = `
 function build_i32(own p: i32[], n: i32): i32[] {
     var i: i32 = 0;
     while (i < n) { p = p.append(i * 2 + 1); i = i + 1; }

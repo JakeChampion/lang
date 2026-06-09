@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/strings_test.fern — exercise the string
 // receiver methods from std/string via the test runner.

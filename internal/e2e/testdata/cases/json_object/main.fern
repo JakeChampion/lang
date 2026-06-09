@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/json";
 // std/json from the prelude (bare names): parse an object and read
 // two integer fields. 40 + 2 = 42.

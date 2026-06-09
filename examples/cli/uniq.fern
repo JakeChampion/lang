@@ -14,7 +14,6 @@
 //
 // Showcases: run-length grouping over a line array, mutually
 // exclusive output modes.
-import "core/no_prelude";
 import "std/string";
 import "std/i32";
 import "std/io";

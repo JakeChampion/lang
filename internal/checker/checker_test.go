@@ -2493,7 +2493,7 @@ func TestCellElemTypeE057(t *testing.T) {
 	}
 	// Cell[string] — string is cycle-free (a buffer of bytes, references no
 	// other value) and its owning slot is rc-tracked, so it's allowed.
-	if err := checkSource(t, `import "core/no_prelude";
+	if err := checkSource(t, `
 import "std/string";
 function main(): i32 {
 	var c: Cell[string] = cell_new("x");
@@ -2503,7 +2503,7 @@ function main(): i32 {
 		t.Errorf("Cell[string] should check, got %v", err)
 	}
 	// Inferred Cell[string] from the cell_new arg — also allowed.
-	if err := checkSource(t, `import "core/no_prelude";
+	if err := checkSource(t, `
 import "std/string";
 function main(): i32 { var c = cell_new("x"); return c.get().len(); }`); err != nil {
 		t.Errorf("inferred Cell[string] should check, got %v", err)

@@ -31,7 +31,6 @@
 //       return fact(c);            // → 120
 //   }
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./constfold";

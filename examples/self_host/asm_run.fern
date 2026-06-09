@@ -12,7 +12,6 @@
 // binary → correct exit code. End-to-end proof that
 // asm.fern produces working executables.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

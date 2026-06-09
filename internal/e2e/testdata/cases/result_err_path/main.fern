@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/string";
 // Exercises the Err arm of a Result and string-equality on the
 // error payload.

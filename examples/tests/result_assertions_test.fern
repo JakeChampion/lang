@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/result_assertions_test.fern — batch 30
 // additions to std/test:

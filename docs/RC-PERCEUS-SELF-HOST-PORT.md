@@ -1828,3 +1828,51 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   detector 0). Full map + RC suites + bootstrap fixpoint + binary + component
   wasm suites green; bootstrap-safe. Remaining toward exact native parity:
   array-of-tuple deep release, closure-env capture release.
+- 2026-06-09: **wasm transitive reclamation — Stage F: array-of-tuple
+  deep-release (native __drop_arr_tuple_).** An array-of-tuple local
+  (`var ps = [(a, b), …]`) now deep-releases each element tuple's
+  pointer-bearing fields before freeing the element box + the buffer, instead
+  of the flat one-level `arr_dec` that leaked the inner strings / arrays /
+  structs. `collect_tuple_locals` additionally records array-of-tuple locals
+  (`ta_names` → element kind string `ta_kinds` + struct/enum svtype CSV
+  `ta_svtypes`, taken from the literal's first tuple element) parallel to the
+  tuple-local tracking. `arr_exit_sweep_excl` routes a `ta_names` local to an
+  inline loop: when the array is the last owner (`[a-8]==1`) it walks the
+  elements (`len@[a]`, element box `@[a+8+i*4]`), and for each tuple box —
+  itself rc==1-gated — releases its pointer-bearing elements via the new shared
+  `tuple_release_inner` (struct/enum svtype → `$__fern_release_<T>`; 's'/'a' →
+  flat `arr_dec`; 'A' → `arr_dec_ptr`; scalar 'i' skipped — the same classifier
+  the tuple-local sweep uses, now factored out), then frees the box; finally the
+  buffer is freed. Three reserved scratch locals (`$__tai`/`$__tan`/`$__te`)
+  back the loop. Coverage: `TestSelfHostRcDeepNestWasm` gains
+  arr-tuple-string-released, arr-tuple-string-churn (200k arrays-of-(i32,string)
+  reclaimed, no OOM), arr-tuple-arrelem-churn (200k tuples-holding-i32[]
+  reclaimed), and arr-tuple-struct-elem-churn (50k tuples-holding-a-struct-with-
+  an-array, deep-released via `$__fern_release_Inner`). Full RC + bootstrap
+  fixpoint + binary + component wasm suites green; bootstrap-safe. Remaining
+  toward exact native parity: closure-env capture release (`__fern_arr_closure`
+  + the per-closure drop thunk), and map struct/enum VALUES (deep
+  `__drop_map_via_`, beyond the string-value column).
+- 2026-06-09: **wasm closure-env reclamation — Slice 1: rc-box the env +
+  free the box.** The closure-RC subsystem the self-host lacked entirely
+  (closures were raw-`$__fern_alloc`'d and NEVER freed — full leak of box +
+  captures). This slice lays the counting/free foundation, mirroring how the
+  struct/option/map layouts were staged. The lambda env block is now allocated
+  via `$__fern_str_box` (8-byte rc+bsz header, returns base+8) instead of
+  `$__fern_alloc`, so it carries an rc word at `[box-8]` while `table_idx@0` +
+  `captures@4+i*4` (the call_indirect dispatch + the body's `$__env` loads) are
+  unchanged. `collect_clos_swept` records closure locals bound directly to a
+  lambda literal (`var f = function(…){…}`) — freshly rc-boxed, owned envs —
+  into `clos_swept` (aliases, closure-returning calls, and bare function-name
+  values are excluded: they leak one level, sound). `clos_exit_sweep_excl`
+  frees each via the shared `$__fern_arr_dec` at function exit (both the
+  return-path and fall-through sweeps), with a `clos_mov` move-on-return
+  exclusion so a returned closure is handed to the caller at its rc rather than
+  freed. Captures still leak one level (a string/array capture is stored
+  without a construction-inc, so the source local's own sweep frees it once and
+  the flat box free doesn't touch it — detector stays 0); per-capture release
+  is Slice 2. Coverage: `TestSelfHostRcClosureWasm` (clos-box-freed,
+  clos-multi, clos-string-cap, clos-scalar-churn — 200k scalar-capture closures
+  reclaimed, no OOM — and clos-return, the move-on-return no-double-free path).
+  Full RC + bootstrap fixpoint + binary + component + closures suites green;
+  bootstrap-safe (the compiler's own lambdas now rc-box + free).

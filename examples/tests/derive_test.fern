@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "core/cmp";
 import "std/test";
 // examples/tests/derive_test.fern — `@derive(Eq, Display, Ord)` on

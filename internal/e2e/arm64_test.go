@@ -320,7 +320,7 @@ function main(): i32 {
 // the offending name in the message, mirroring how the real
 // checker emits "unknown identifier x" diagnostics.
 func TestArm64ParserV4WithVars(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -587,7 +587,7 @@ function main(): i32 {
 // Successes still parse correctly under the new Result-shaped
 // control flow.
 func TestArm64ParserV3WithResult(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
@@ -829,7 +829,7 @@ function main(): i32 {
 //  6. Nested if/else inside a function — recursive function
 //     that branches.
 func TestArm64StmtInterpElse(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -1347,7 +1347,7 @@ function main(): i32 {
 //     function table is closed-over.
 //  7. Function compose at top-level — call from main flow.
 func TestArm64StmtInterpFunctions(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -1864,7 +1864,7 @@ function main(): i32 {
 // (Outside the 0..127 ASCII range so they don't collide with
 // existing single-char arith ops.)
 func TestArm64StmtInterpWhile(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -2264,7 +2264,7 @@ function main(): i32 {
 //  6. Forward dependencies — `var x = 10; var y = x + 5;
 //     return y;` → 15. Later declarations see earlier ones.
 func TestArm64StmtInterpInLang(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -2595,7 +2595,7 @@ function main(): i32 {
 //     the bytecode shorter. `compile(fold("1 + 2 * 3"))` is
 //     one op (PushConst 7) instead of five.
 func TestArm64StackVMInLang(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -2938,7 +2938,7 @@ function main(): i32 {
 //  5. Semantic preservation — eval(reduce(e)) == eval(e) for
 //     any e and any env that doesn't divide-by-zero.
 func TestArm64StrengthReduceInLang(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -3270,7 +3270,7 @@ function main(): i32 {
 // `print(fold(parse("1 + 2 * 3")))` should be "7" (the folded
 // Num spits out its value directly, no parens).
 func TestArm64PrinterInLang(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -3549,7 +3549,7 @@ function main(): i32 {
 // the node count is exactly 1; after the partial case it's
 // 1 BinOp + 1 Var + 1 Num.
 func TestArm64ConstfoldInLang(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -3856,7 +3856,7 @@ function main(): i32 {
 // Recursion still falls out from the closed-over fn table.
 // Mutual recursion works for the same reason.
 func TestArm64InterpV7MultiArg(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -4164,7 +4164,7 @@ function main(): i32 {
 // containers with the standard array runtime, no special
 // support needed.
 func TestArm64InterpV6Functions(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -4447,7 +4447,7 @@ function main(): i32 {
 // step but need named-callable storage, which is a bigger
 // jump.
 func TestArm64InterpV5LetIf(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -4659,7 +4659,7 @@ function main(): i32 {
 // branches — same workaround the prelude's `__map_hash`
 // already uses.
 func TestArm64InterpV4Comparisons(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
@@ -4850,7 +4850,7 @@ function main(): i32 {
 // of the self-host validation arc; the next stages (checker,
 // IR, codegen) are bigger but architecturally similar shape.
 func TestArm64InterpV2(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
@@ -5170,7 +5170,7 @@ function main(): i32 {
 // is digit` rule handles both — `0.x` falls through (`x` isn't
 // a digit) so the `.` becomes a punctuator and `x` an ident.
 func TestArm64LexerV7(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokFloat { text: string }
@@ -5366,7 +5366,7 @@ function main(): i32 {
 // literals, f-strings, and the Number/Float kind split. Float
 // literals will land in v7.
 func TestArm64LexerV6(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -5575,7 +5575,7 @@ function main(): i32 {
 // uses (see `__map_hash`'s "Single shared `h` declaration"
 // comment).
 func TestArm64LexerV5(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32, base: i32, suffix: string }
 struct TokIdent { name: string }
@@ -5725,7 +5725,7 @@ function main(): i32 {
 // `42i6` lexes as bare `42` followed by ident `i6`. Pattern
 // mirrors Rust's numeric-literal suffix recognition.
 func TestArm64LexerV4(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32, suffix: string }
 struct TokIdent { name: string }
@@ -5851,7 +5851,7 @@ function main(): i32 {
 // shape now matches enough that the bigger port can land
 // incrementally without re-deriving the tokenisation skeleton.
 func TestArm64LexerV3(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -6144,7 +6144,7 @@ function main(): i32 {
 // programs inline these today, this PR promotes them to
 // reusable prelude helpers.
 func TestArm64ByteClassifiers(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 function main(): i32 {
     if (!(48).is_digit()) { return 1; }      // '0'
@@ -6175,7 +6175,7 @@ function main(): i32 {
 // sort. Locks the prelude's first sort helper before the
 // generic `sort_by[T](arr, cmp)` infrastructure lands.
 func TestArm64SortI32(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/sort";
 function main(): i32 {
     var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5];
@@ -6306,7 +6306,7 @@ function main(): i32 {
 // AST-style code where the consumer code keeps constructing
 // `Add { l: 1, r: 2 }` and letting the type system route it.
 func TestArm64UnionImplicitWrap(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
 struct Lit { v: i32 }
@@ -6372,7 +6372,7 @@ function main(): i32 {
 // array, not-found returns -1 from index_of and false from
 // contains, separator edge cases for join).
 func TestArm64ArrayJoin(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 import "std/array";
 function main(): i32 {
@@ -6421,7 +6421,7 @@ function main(): i32 {
 }
 
 func TestArm64Format(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/format";
 import "std/i32";
 function main(): i32 {
@@ -6481,7 +6481,7 @@ function main(): i32 {
 // and last byte from {", `, '}); it doesn't validate
 // escaping or interior quote pairing.
 func TestArm64StdlibBundle31(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     match ("hello world foo".word_at(0)) {
@@ -6583,7 +6583,7 @@ function main(): i32 {
 // `shift_byte` is a Caesar-style byte rotation — useful for
 // puzzles / toy obfuscation, not security.
 func TestArm64StdlibBundle30(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     if ("aXbXc".replace_first("X", "_") != "a_bXc") { return 1; }
@@ -6672,7 +6672,7 @@ function main(): i32 {
 // is vacuously true on the empty string but false on a
 // non-empty string with an empty set.
 func TestArm64StdlibBundle29(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/array";
 function main(): i32 {
     match ([3, 1, 4, 1, 5, 9, 2, 6].min_max()) {
@@ -6752,7 +6752,7 @@ function main(): i32 {
 // truncate hard-truncates the source. Use ellipsis when you
 // want truncation always to be visually marked.
 func TestArm64StdlibBundle28(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/array";
 function main(): i32 {
     var xs: i32[] = [3, 1, 4, 1, 5];
@@ -6828,7 +6828,7 @@ function main(): i32 {
 // only upper-folds the first byte after each space; "FOX"
 // stays "FOX".
 func TestArm64StdlibBundle27(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/array";
 function main(): i32 {
     // median
@@ -6919,7 +6919,7 @@ function main(): i32 {
 // the way overload resolution would. Once we have generic
 // `Array.count[T]` they collapse to one helper.
 func TestArm64StdlibBundle26(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/math";
 function main(): i32 {
@@ -6988,7 +6988,7 @@ function main(): i32 {
 // the string ones — they sit as plain receiver-typed prelude
 // fns, like is_ipv4 / is_email_like).
 func TestArm64StdlibBundle25(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     // is_url_like
@@ -7056,7 +7056,7 @@ function main(): i32 {
 // backend (the string-header load folds incorrectly). The
 // workaround round-trips through a regular string local.
 func TestArm64StdlibBundle24(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 function main(): i32 {
     // is_ipv4
@@ -7115,7 +7115,7 @@ function main(): i32 {
 // after / between, i32 is_between, byte is_letter, string[]
 // all_non_empty. 7 helpers.
 func TestArm64StdlibBundle23(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     // remove_all
@@ -7171,7 +7171,7 @@ function main(): i32 {
 // is_in_range, matches_any, reverse_digits, is_palindrome,
 // to_array. 7 helpers.
 func TestArm64StdlibBundle22(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     // parse_hex_int / parse_bin_int
@@ -7220,7 +7220,7 @@ function main(): i32 {
 // wrap, string[] take / drop, pack_rgb, byte is_printable /
 // is_control. 8 helpers.
 func TestArm64StdlibBundle21(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/math";
 import "std/string";
 function main(): i32 {
@@ -7277,7 +7277,7 @@ function main(): i32 {
 // escape_shell / snake_case / kebab_case / is_valid_identifier,
 // is_valid_http_status. 6 helpers.
 func TestArm64StdlibBundle20(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 function main(): i32 {
     // divmod — (quotient, remainder)
@@ -7328,7 +7328,7 @@ function main(): i32 {
 // string count_byte, http_url_path_only,
 // http_user_agent_is_bot, i32 to_string_with_sep. 6 helpers.
 func TestArm64StdlibBundle19(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 function main(): i32 {
     // digit_value
@@ -7376,7 +7376,7 @@ function main(): i32 {
 // round_down_to, string remove_prefix / remove_suffix /
 // is_uuid, format_duration_ms. 7 helpers.
 func TestArm64StdlibBundle18(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/format";
 function main(): i32 {
     // ceil_div
@@ -7423,7 +7423,7 @@ function main(): i32 {
 // i32 log2_floor / sqrt_floor / to_rgb_hex, byte is_vowel,
 // string rstrip_newline. 7 helpers.
 func TestArm64StdlibBundle17(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/array";
 function main(): i32 {
     // max_by_len / sum_lens
@@ -7479,7 +7479,7 @@ function main(): i32 {
 // i32 rotate_left / rotate_right, csv_parse_line,
 // http_header_value. 6 helpers.
 func TestArm64StdlibBundle16(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/csv";
 import "std/http";
 function main(): i32 {
@@ -7537,7 +7537,7 @@ function main(): i32 {
 // to_ascii_string, string hash_djb2, http_path_segments.
 // 7 helpers.
 func TestArm64StdlibBundle15(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 function main(): i32 {
     // distinct / distinct_count
@@ -7587,7 +7587,7 @@ function main(): i32 {
 // Fourteenth stdlib bundle: trim_start_chars / trim_end_chars,
 // random_int, format_bytes, csv_escape / csv_join. 6 helpers.
 func TestArm64StdlibBundle14(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/csv";
 import "std/format";
 import "std/math";
@@ -7631,7 +7631,7 @@ function main(): i32 {
 // count_non_empty, string word_count / escape_html /
 // strip_quotes, i32 to_string_padded. 6 helpers.
 func TestArm64StdlibBundle13(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     // filter_non_empty / count_non_empty
@@ -7683,7 +7683,7 @@ function main(): i32 {
 // toggle), byte newline predicate, count_lines, HTTP
 // response builders, log_info/warn/error. 12 helpers.
 func TestArm64StdlibBundle12(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/log";
 function main(): i32 {
@@ -7742,7 +7742,7 @@ function main(): i32 {
 // drop / chunks on strings, case-insensitive sort, i32
 // to_binary / to_oct. 11 helpers.
 func TestArm64StdlibBundle11(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/sort";
 function main(): i32 {
     // splitn
@@ -7804,7 +7804,7 @@ function main(): i32 {
 // trim_end), trim_chars, case-insensitive prefix/suffix,
 // string sort, and string_cmp. 11 helpers.
 func TestArm64StdlibBundle10(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/math";
 import "std/sort";
 function main(): i32 {
@@ -7859,7 +7859,7 @@ function main(): i32 {
 // (pad_start_str / pad_end_str), truncate with ellipsis,
 // digit count, pluralize. 7 new methods.
 func TestArm64StdlibBundle9(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     // Case-insensitive search
@@ -7907,7 +7907,7 @@ function main(): i32 {
 // so the prelude sticks to pure-i32 ops), string parse_bool,
 // (i32).to_hex(), HTTP method classifiers. 9 helpers.
 func TestArm64StdlibBundle8(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 function main(): i32 {
     // Saturating add / sub — clamp at MAX / MIN
@@ -7958,7 +7958,7 @@ function main(): i32 {
 // trailing_count, hash_fnv32, escape_c, repeat_char,
 // http_status_text. 8 new helpers. Pure-prelude.
 func TestArm64StdlibBundle7(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/array";
 import "std/string";
 import "std/http";
@@ -8016,7 +8016,7 @@ function main(): i32 {
 // i32, range / range_step generators, repeat_with_sep. 11
 // new methods. Pure-prelude.
 func TestArm64StdlibBundle6(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 import "std/i64";
 import "std/math";
@@ -8073,7 +8073,7 @@ function main(): i32 {
 // i32 + i64, pow, gcd, lcm), string search (last_index_of),
 // string casing (capitalize). 11 new methods. Pure-prelude.
 func TestArm64StdlibBundle5(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 import "std/i64";
 function main(): i32 {
@@ -8134,7 +8134,7 @@ function main(): i32 {
 // methods. All pure-prelude, no IR / checker work — sidesteps
 // the generic-prelude-function monomorph regression.
 func TestArm64StdlibBundle4(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 function main(): i32 {
     // is_punct
@@ -8188,7 +8188,7 @@ function main(): i32 {
 // (abs only on i64; min/max/clamp on all three), plus three
 // string helpers (at / chars / reverse_bytes). 13 new methods.
 func TestArm64StdlibBundle3(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i64";
 import "std/u32";
 import "std/u64";
@@ -8241,7 +8241,7 @@ function main(): i32 {
 // whole-string ASCII predicates (is_ascii_only / is_numeric /
 // is_alpha_only / is_alnum_only). 12 new methods total.
 func TestArm64StdlibBundle2(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 function main(): i32 {
     // Byte-level case classifiers + flippers.
@@ -8287,7 +8287,7 @@ function main(): i32 {
 }
 
 func TestArm64StdlibBundle(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     // pad_start / pad_end
@@ -8348,7 +8348,7 @@ function main(): i32 {
 }
 
 func TestArm64Paths(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/path";
 function main(): i32 {
     // path_join — simple, leading/trailing slashes, empty parts.
@@ -8397,7 +8397,7 @@ function main(): i32 {
 }
 
 func TestArm64Radix(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/int";
 import "std/format";
 function main(): i32 {
@@ -8443,7 +8443,7 @@ function main(): i32 {
 }
 
 func TestArm64StringExtras(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function bstr(b: boolean): string { if (b) { return "true"; } return "false"; }
 
@@ -8492,7 +8492,7 @@ function main(): i32 {
 }
 
 func TestArm64StringLines(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     var lf: string[] = "a\nb\nc".lines();
@@ -8552,7 +8552,7 @@ func TestArm64EmptyU8Sentinel(t *testing.T) {
     var s: string = string_from_bytes(bs);
     return s.len();
 }`, 0},
-		{"to-lower-empty-string", `import "core/no_prelude";
+		{"to-lower-empty-string", `
 import "std/string";
 function main(): i32 {
     var s: string = "".to_lower();
@@ -8845,7 +8845,7 @@ func TestArm64Map(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`import "core/no_prelude";
+		{`
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -8853,7 +8853,7 @@ function main(): i32 {
     m = m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
-		{`import "core/no_prelude";
+		{`
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -8866,7 +8866,7 @@ function main(): i32 {
     if (m.get_or(7, -1) != 70) { return 2; }
     return 42;
 }`, 42},
-		{`import "core/no_prelude";
+		{`
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -8905,7 +8905,7 @@ func TestArm64MapGetMatch(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"some_branch", `import "core/no_prelude";
+		{"some_branch", `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -8916,7 +8916,7 @@ function main(): i32 {
     }
     return 1;
 }`, 42},
-		{"none_branch", `import "core/no_prelude";
+		{"none_branch", `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -8926,7 +8926,7 @@ function main(): i32 {
     }
     return 1;
 }`, 0},
-		{"string_key", `import "core/no_prelude";
+		{"string_key", `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -8957,7 +8957,7 @@ function main(): i32 {
 // the fix holds up in the realistic mix of slice keys (string
 // slicing from the tokenizer), Array.push, and Map iteration.
 func TestArm64MapGetMatchFullPipeline(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 import "std/array";
 function tokenize(s: string): string[] {
@@ -9027,7 +9027,7 @@ func TestArm64I64CmpDivWidth(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"to_string_round_trip", `import "core/no_prelude";
+		{"to_string_round_trip", `
 import "std/i64";
 function main(): i32 {
     var n: i64 = 1234567890123;
@@ -9035,7 +9035,7 @@ function main(): i32 {
     if (s == "1234567890123") { return 0; }
     return 1;
 }`, 0},
-		{"i64_max_to_string", `import "core/no_prelude";
+		{"i64_max_to_string", `
 import "std/i64";
 function main(): i32 {
     var n: i64 = 9223372036854775807;
@@ -9068,7 +9068,7 @@ function main(): i32 {
 // `op.Unsigned` from the start; this aligns arm64 with that
 // contract.
 func TestArm64UnsignedRightShift(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/u64";
 function main(): i32 {
     var n: u64 = 18446744073709551615 as u64;
@@ -9586,7 +9586,7 @@ func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
 //     node's KeyType / ValueType in place so the IR sees
 //     the post-settle widths.
 func TestArm64MapLitI64ValueSettle(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i64] = Map { "a": 1234567890123, "b": 9876543210 };
@@ -9749,7 +9749,7 @@ function main(): i32 {
 // Fix: recurse the Map-shaped StructType hint into IfExpr
 // Then/Else and MatchExpr arm bodies.
 func TestArm64SettleMapLitInCondArms(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var cond: boolean = true;
@@ -10097,7 +10097,7 @@ function main(): i32 {
 // the i32 single-pointer string ABI); the actual win is
 // on wasm via the e2e suite.
 func TestArm64MatchExprStringResult(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i64";
 function fmt(o: Option[i64]): string {
     return match (o) {
@@ -10221,7 +10221,7 @@ function main(): i32 {
 // local `Map[string, V]` literal — `mk[V](v) ->
 // Map[string, V]` round-trips a key/value via set + get.
 func TestArm64GenericLocalMapType(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function mk[V](v: V): Map[string, V] {
     var m: Map[string, V] = map_new(0);
@@ -10653,7 +10653,7 @@ func TestArm64TcpListen(t *testing.T) {
 // arm64 (Linux); Darwin gets caught by the pre-scan
 // "not-yet-ported" guard.
 func TestArm64InstantNow(t *testing.T) {
-	_, code := compileAndRunArm64(t, `import "core/no_prelude";
+	_, code := compileAndRunArm64(t, `
 import "std/time";
 function main(): i32 {
     var ts: Instant = time.instant_now();
@@ -10699,7 +10699,7 @@ func TestArm64HttpHandler(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -10910,9 +10910,8 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// bytes on arm64) so the buf pointer round-trips
 		// correctly even when macOS hands us heap addresses
 		// above 4 GiB.
-		{"map_i32", `import "core/no_prelude";
+		{"map_i32", `
 import "core/map";
-import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -10933,7 +10932,7 @@ function main(): i32 {
 		// (FNV-1a hash + byte-wise string compare) finds
 		// the entry even when the heap is above 4 GiB. The
 		// returned i32 value rides x0 untruncated.
-		{"map_str_key", `import "core/no_prelude";
+		{"map_str_key", `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -10946,7 +10945,7 @@ function main(): i32 {
 		// the i32-typed return rides x0 as a full 64-bit
 		// pointer, and len(s) reads s's length prefix at
 		// the correct (high-bit-preserved) address.
-		{"map_str_val", `import "core/no_prelude";
+		{"map_str_val", `
 import "core/map";
 import "std/i32";
 import "std/string";
@@ -10960,7 +10959,7 @@ function main(): i32 {
 		// pointer-width. End-to-end check that the entry
 		// stride doubled to 2*ptr_width on arm64 (16 bytes)
 		// without breaking the bucket arithmetic.
-		{"map_str_str", `import "core/no_prelude";
+		{"map_str_str", `
 import "core/map";
 import "std/string";
 function main(): i32 {
@@ -10975,7 +10974,7 @@ function main(): i32 {
 		// the pointer-width key load (even though we don't
 		// inspect keys here, the iterator's address math
 		// must use the same entryStride or it'd walk off).
-		{"map_str_iter", `import "core/no_prelude";
+		{"map_str_iter", `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -10995,7 +10994,7 @@ function main(): i32 {
 		// __store_ptr on the moved entry's K/V slots. After
 		// removing "b" and "c", get_or("a") still finds the
 		// remaining entry.
-		{"map_str_delete", `import "core/no_prelude";
+		{"map_str_delete", `
 import "core/map";
 import "std/string";
 function main(): i32 {
@@ -11067,7 +11066,7 @@ function main(): i32 {
 		// K), so iterating the keys() result and calling
 		// len() on each returns valid lengths instead of
 		// segfaulting on truncated pointers.
-		{"map_keys_str", `import "core/no_prelude";
+		{"map_keys_str", `
 import "core/map";
 import "std/string";
 function main(): i32 {
@@ -11088,7 +11087,7 @@ function main(): i32 {
 		// side. valKind is now tracked at buf+12 so
 		// __map_values_impl picks destStride correctly per-
 		// instance without per-V monomorphisation.
-		{"map_values_str", `import "core/no_prelude";
+		{"map_values_str", `
 import "core/map";
 import "std/string";
 function main(): i32 {
@@ -11118,7 +11117,7 @@ function main(): i32 {
 		// to `usize` so the full 8-byte address survives. The
 		// previous `t.Skip` on Darwin has been removed —
 		// macOS CI now exercises this case alongside Linux.
-		{"map_heap_value_probe", `import "core/no_prelude";
+		{"map_heap_value_probe", `
 import "core/map";
 import "std/string";
 function main(): i32 {
@@ -11563,7 +11562,7 @@ function main(): i32 {
 // the lambda) gets pruned. Link then fires "undefined
 // reference to __method_string_trim".
 func TestArm64LambdaCallsMethodOnCapturedString(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     var s: string = "  hi  ";
@@ -11702,7 +11701,7 @@ function main(): i32 {
 // recurses through FString.Desugared so captured-name idents
 // inside `f"…{cap}…"` get rewritten to CaptureRef nodes.
 func TestArm64ClosureFStringCapture(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function makeNamer(name: string): () => string {
     function build(): string { return f"hello, {name}!"; }
@@ -11915,14 +11914,14 @@ func TestArm64FStringInterpolation(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"interpolated i32", `import "core/no_prelude";
+		{"interpolated i32", `
 import "std/i32";
 function main(): i32 {
     var n: i32 = 42;
     var s: string = f"n is {n}";
     return s.len();
 }`, 7},
-		{"interpolated string", `import "core/no_prelude";
+		{"interpolated string", `
 import "std/i32";
 function main(): i32 {
     var who: string = "world";
@@ -12110,42 +12109,42 @@ func TestArm64WideScalarMap(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"Map[i64, i32]", `import "core/no_prelude";
+		{"Map[i64, i32]", `
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
-		{"Map[i32, f64]", `import "core/no_prelude";
+		{"Map[i32, f64]", `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
     m = m.insert(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
-		{"Map[i64, string]", `import "core/no_prelude";
+		{"Map[i64, string]", `
 import "core/map";
 function main(): i32 {
     var m: Map[i64, string] = map_new(4);
     m = m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
-		{"Map[string, i64]", `import "core/no_prelude";
+		{"Map[string, i64]", `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i64] = map_new(4);
     m = m.insert("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
-		{"Map[u64, i32]", `import "core/no_prelude";
+		{"Map[u64, i32]", `
 import "core/map";
 function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
     m = m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
-		{"distinct high-bit i64 keys", `import "core/no_prelude";
+		{"distinct high-bit i64 keys", `
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
@@ -12165,7 +12164,7 @@ function main(): i32 {
 		// result. Without it, every key gets its upper 32 bits
 		// dropped — distinct high-bit keys collide into the same
 		// snapshot value.
-		{"keys() preserves 8-byte values", `import "core/no_prelude";
+		{"keys() preserves 8-byte values", `
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
@@ -12738,7 +12737,7 @@ func TestArm64FeatureParity(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"defer_basic", `import "core/no_prelude";
+		{"defer_basic", `
 import "core/map";
 function inner(trace: Map[string, i32]): i32 {
     trace = trace.insert("body-start", 1);
@@ -12783,7 +12782,7 @@ function main(): i32 {
     if (sum == 8) { return 0; }
     return 1;
 }`},
-		{"fstring_interp", `import "core/no_prelude";
+		{"fstring_interp", `
 import "std/i32";
 function main(): i32 {
     var x: i32 = 42;
@@ -12831,9 +12830,8 @@ function main(): i32 {
 	}
 }
 
-// Programs that opt out of the auto-prelude via
-// `import "core/no_prelude";` must declare every stdlib module
-// they use. With the prelude-to-modules migration (PRs #505 → #513)
+// Programs must declare every stdlib module they use (there is no
+// auto-prelude). With the prelude-to-modules migration (PRs #505 → #513)
 // every stdlib module declares its own method-source imports —
 // std/i32 ↔ std/string ↔ std/array form cyclic dependencies that
 // modload's stdlib-cycle gate handles — so the user's explicit
@@ -12860,14 +12858,14 @@ func TestArm64NoPreludeStdlibImports(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"i32_string_cycle", `import "core/no_prelude";
+		{"i32_string_cycle", `
 import "std/i32";
 function main(): i32 {
     var s: string = (42).to_string_padded(6);
     if (s == "000042") { return 0; }
     return 1;
 }`},
-		{"array_method_chain", `import "core/no_prelude";
+		{"array_method_chain", `
 import "std/array";
 function main(): i32 {
     var xs: i32[] = [0 - 3, 4, 0 - 1];
@@ -12875,14 +12873,14 @@ function main(): i32 {
     if (ys[0] + ys[1] + ys[2] == 8) { return 0; }
     return 1;
 }`},
-		{"qualified_int_call", `import "core/no_prelude";
+		{"qualified_int_call", `
 import "core/int";
 function main(): i32 {
     var s: string = int.int_to_string_radix(255, 16);
     if (s == "ff") { return 0; }
     return 1;
 }`},
-		{"mixed_stdlib", `import "core/no_prelude";
+		{"mixed_stdlib", `
 import "std/i32";
 import "std/string";
 import "std/array";
@@ -12909,7 +12907,7 @@ function main(): i32 {
 // don't corrupt the rc word). The program returns 0 iff the
 // observed rc progression is exactly 1 → 2 → 1.
 func TestArm64RcBuiltins(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(10);
     var r1: i32 = __rc_get(arr);
@@ -12931,7 +12929,7 @@ function main(): i32 {
 // stay at 1, which is the bug Phase 2 will rely on NOT being
 // the case. Returns 0 iff the post-alias rc is exactly 2.
 func TestArm64RcAliasInc(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
     var alias: u8[] = arr;
@@ -12953,7 +12951,7 @@ func TestArm64RcAliasIncFieldAndIndex(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"field_access", `import "core/no_prelude";
+		{"field_access", `
 struct Holder { items: u8[] }
 function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
@@ -12965,7 +12963,7 @@ function main(): i32 {
     // h.items.len()-8 == 0, so the result is unchanged.
     return __rc_get(inner) - 3 + h.items.len() - 8;
 }`},
-		{"index_load", `import "core/no_prelude";
+		{"index_load", `
 function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var matrix: u8[][] = [inner];
@@ -13022,7 +13020,7 @@ func TestArm64HeapAddressFits32Bits(t *testing.T) {
 // rebinds with a fresh push result. Here we test the explicit
 // `y = x;` form directly.
 func TestArm64RcAliasIncReassign(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
     var other: u8[] = __alloc_u8(8);
@@ -13041,7 +13039,7 @@ function main(): i32 {
 // alias-shaped array capture. The resulting closure's env
 // co-owns the array reference.
 func TestArm64RcClosureCaptureInc(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
     function f(): u8[] { return arr; }
@@ -13064,7 +13062,7 @@ function main(): i32 {
 // Mid-function read of arr2 sees rc=1 (post-overwrite dec);
 // read of arr3 sees rc=2 (post-inc). Sum = 3 = 1 + 2.
 func TestArm64RcDecOnOverwrite(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr1: u8[] = __alloc_u8(8);
     var arr2: u8[] = __alloc_u8(8);
@@ -13085,7 +13083,7 @@ function main(): i32 {
 // of the old owned-parameter model. The rc is unchanged across
 // the call: mid == after == 1.
 func TestArm64RcDecAtExit(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function peek(arr: u8[]): i32 { return __rc_get(arr); }
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
@@ -13105,7 +13103,7 @@ function main(): i32 {
 // that also netted to 1; the observable result is unchanged, but
 // no rc traffic is emitted now.)
 func TestArm64RcAliasIncCallArg(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function f(arr: u8[]): i32 { return 0; }
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
@@ -13122,7 +13120,7 @@ function main(): i32 {
 // __fern_rc_underflow_count). Mirrors TestX86_64RcUnderflowDetector
 // — pins the mechanism and that map self-assign is drift-free.
 func TestArm64RcUnderflowDetector(t *testing.T) {
-	selfAssign := `import "core/no_prelude";
+	selfAssign := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -13503,7 +13501,7 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 // the existing `m.insert(k, v)` statement form still works
 // (return discarded).
 func TestArm64MapSetReturnsMap(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -13578,7 +13576,7 @@ func TestArm64ArraySetAliasedCopies(t *testing.T) {
 // Phase 2c: m.without(k) returns (Map[K,V], bool).
 // Tests tuple destructuring, bool-field access, and statement-position discard.
 func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -13603,7 +13601,7 @@ function main(): i32 {
 
 // Phase 2c: m.cleared() returns Map[K,V].
 func TestArm64MapClearReturnsMap(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -13628,7 +13626,7 @@ function main(): i32 {
 // TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
 // has rc=2, so m2.insert(...) copies and leaves m1 intact.
 func TestArm64MapSetAliasedCopies(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
@@ -13647,7 +13645,7 @@ function main(): i32 {
 // Phase 2d: Map.delete / Map.clear copy-on-write — arm64 sibling
 // of TestX86_64MapDeleteClearAliasedCopies.
 func TestArm64MapDeleteClearAliasedCopies(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
@@ -13749,7 +13747,7 @@ func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 // only walked entries (no-op for empty) and the surrounding
 // assignable check saw the pre-settle default.
 func TestArm64EmptyMapDestinationInference(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function take(m: Map[string, i32]): i32 { return m.len(); }
 function mkEmpty(): Map[i32, string] { return Map {}; }
@@ -13827,7 +13825,7 @@ function main(): i32 {
 // payloadStoreOpFor / payloadLoadOpFor, and `m.get` reboxes the
 // helper's Option[usize] into a consumer-shaped Option[V].
 func TestArm64MapPointerShapedValues(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 struct P { x: i32, y: i32 }
 function main(): i32 {

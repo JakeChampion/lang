@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/float";
 // std/float sqrt(16.0) = 4.0. sqrt lowers to a libm call that the
 // `-nostdlib` native backends can't link, so this fixture opts out

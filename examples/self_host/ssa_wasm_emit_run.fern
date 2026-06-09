@@ -7,7 +7,6 @@
 // WAT → execute preserves semantics. Mirrors ssa_emit_run.fern (the native
 // backends' driver); the only difference is the final emit call.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

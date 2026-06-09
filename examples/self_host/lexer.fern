@@ -239,7 +239,7 @@ pub function fstring_tok(parts: FStringPart[], line: i32, col: i32): Token {
 // is_blank_range — true if every byte of s is ASCII whitespace
 // (or s is empty). Stands in for `strings.TrimSpace(x) == ""` in
 // the f-string empty-interpolant check; written by hand so the
-// lexer keeps to built-ins and resolves under no_prelude (the
+// lexer keeps to built-ins and imports nothing (the
 // parser imports this module that way).
 function is_blank_range(s: string): boolean {
     var i: i32 = 0;

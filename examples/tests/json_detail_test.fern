@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/json_detail_test.fern — batch 33
 // additions to std/test:
