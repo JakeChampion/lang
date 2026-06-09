@@ -1333,6 +1333,24 @@ world-driven composer (P2) wires it.
        `[resource-drop]thing`), and the Go composer lifts it: surfaces the handle
        param's resource, wires the drop, and the component validates with
        `borrow<thing>` + a `resource.drop`.
+     - **Slice 6 capstone — the REAL `wasi:http/incoming-handler` exports +
+       composes. ✅ Done (compose-gated).** The headline bring-your-own-WIT
+       demonstration: a Fern reactor `@export("wasi:http/incoming-handler@0.2.0",
+       "handle") on_request(request: own IncomingRequest, response_out: own
+       ResponseOutparam): void` compiles, and the world-driven composer produces a
+       valid `wasi:http` component against the repo's actual `wasi:http` WIT (the
+       `cmd/fern/wit` `http` world, supplied as *input* via
+       `wasm-tools component embed -w http` — **not** the compiler's embedded HTTP
+       world, and with no HTTP-specific knowledge in `ComposeExportsFromWorld`).
+       The composer surfaces `incoming-request` + `response-outparam` from the
+       imported `wasi:http/types` instance and lifts the void two-`own`-handle
+       export across the full preview-2 + http world prefix. Gated by
+       `TestExportWasiHttpIncomingHandlerComposes` (`wasm-tools validate` + the
+       component WIT exports `wasi:http/incoming-handler@0.2.0`). This proves the
+       compile+compose path end-to-end; what remains for a *running* server is a
+       response-producing handler body (calling the request/response resource
+       methods via `@import` externs — the P5 import side already lowers them) and
+       a `wasmtime serve` run harness.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
