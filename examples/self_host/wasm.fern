@@ -6852,11 +6852,17 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 }
                 return st;
             }
-            // Perceus struct inc-on-alias: `var u = s` retains the struct box
-            // so the exit sweep's dec balances. A fresh struct/variant is rc 1
-            // already (no inc — that would leak).
+            // Perceus struct re-bind reclaim: release any prior struct in the
+            // slot (recursive, cow-guarded) before storing, so a loop-body
+            // `var p = …` re-run each iteration — or the `cx = Ctx{...cx}`
+            // threading idiom — frees the previous value instead of leaking it.
+            // The `i32.ne` guard skips an in-place result (same pointer). The
+            // slot is zero-init so the first binding releases null (a no-op).
+            // A bare-ident alias then retains the struct box.
             if (contains_str(st.cx.struct_swept, v.name)) {
-                st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+                st = st.w("    (local.set $__retv_i32 " + emit_expr(v.init, st.cx, 0) + ")\n");
+                st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + v.name + ")) (then\n" + emit_struct_release(v.name, lookup_pair(st.cx.sv_names, st.cx.sv_types, v.name), st.cx) + "    ))\n");
+                st = st.w("    (local.set $" + v.name + " (local.get $__retv_i32))\n");
                 if (init_is_struct_alias(v.init, st.cx)) {
                     st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
                 }
@@ -6895,6 +6901,21 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + a.target + ")) (then (drop (call $__fern_arr_dec (local.get $" + a.target + ")))))\n");
                 st = st.w("    (local.set $" + a.target + " (local.get $__retv_i32))\n");
                 if (init_is_string_alias(a.value, st.cx)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + a.target + ")))\n");
+                }
+                return st;
+            }
+            // Reassigning an owned struct local (`cx = Ctx{...cx}`, `a = step(a)`):
+            // release the old struct (recursive, cow-guarded) and retain a
+            // newly-aliased one, so the threading idiom reclaims each
+            // intermediate instead of leaking it. Only owned LOCALS are swept —
+            // a borrowed struct PARAM reassigned isn't in struct_swept, so its
+            // (caller-owned) first value is never cow-freed.
+            if (contains_str(st.cx.struct_swept, a.target)) {
+                st = st.w("    (local.set $__retv_i32 " + emit_expr(a.value, st.cx, 0) + ")\n");
+                st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + a.target + ")) (then\n" + emit_struct_release(a.target, lookup_pair(st.cx.sv_names, st.cx.sv_types, a.target), st.cx) + "    ))\n");
+                st = st.w("    (local.set $" + a.target + " (local.get $__retv_i32))\n");
+                if (init_is_struct_alias(a.value, st.cx)) {
                     st = st.w("    (drop (call $__fern_rc_inc (local.get $" + a.target + ")))\n");
                 }
                 return st;
