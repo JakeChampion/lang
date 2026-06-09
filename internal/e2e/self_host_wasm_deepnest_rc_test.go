@@ -77,6 +77,14 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// Churn: 50k enum-with-string-payload built + freed; the payload reclaims
 		// each cycle (no OOM), detector clean — proves the variant-dispatch free.
 		{"enum-payload-churn", "enum Shape { Circle(string), Square(i32) } function mk(): i32 { var s: Shape = Circle(\"x\" + \"y\"); match (s) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { var k = 0; var n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 2},
+		// Stage D: an array-of-enum deep-releases each element's variant payload
+		// (via the generated $__fern_arr_release_<Enum>, which calls the
+		// dispatching $__fern_release_<Enum> per element). Drives the AST's
+		// Stmt[] / Expr[]. Here each Circle's string payload is freed.
+		{"arr-of-enum-released", "enum Shape { Circle(string), Square(i32) } function main(): i32 { var shapes: Shape[] = [Circle(\"ab\" + \"cd\"), Square(7)]; match (shapes[0]) { Circle(name) => { return name.len() + 38 + __fern_rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
+		// Churn: 50k arrays-of-enums-with-string-payloads built + freed; every
+		// element payload reclaims each cycle (no OOM), detector clean.
+		{"arr-of-enum-churn", "enum Shape { Circle(string), Square(i32) } function mk(): i32 { var shapes: Shape[] = [Circle(\"x\" + \"y\"), Circle(\"z\" + \"w\"), Square(3)]; match (shapes[1]) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { var k = 0; var n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
