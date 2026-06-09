@@ -997,8 +997,17 @@ function arr_exit_sweep_excl(cx: Ctx, excl: string): string {
     var o: string = "";
     var i: i32 = 0;
     while (i < cx.arr_swept.len()) {
-        if (cx.arr_swept[i] != excl) {
-            o = o + "    (drop (call $__fern_arr_dec (local.get $" + cx.arr_swept[i] + ")))\n";
+        var name: string = cx.arr_swept[i];
+        if (name != excl) {
+            // A string-array or struct-array local releases its rc-boxed
+            // ELEMENTS (one level) before freeing the buffer; a scalar array
+            // (i32/i64/f64 — or an array-of-array / array-of-tuple, which
+            // stay one-level-flat for now) frees flat.
+            if (contains_str(cx.str_arrays, name) || contains_str(cx.sa_names, name)) {
+                o = o + "    (drop (call $__fern_arr_dec_ptr (local.get $" + name + ")))\n";
+            } else {
+                o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
+            }
         }
         i = i + 1;
     }
@@ -5267,6 +5276,32 @@ function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): string
     o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
     o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))))\n";
     o = o + "    (local.get $a))\n";
+    // $__fern_arr_dec_ptr(a) -> a: Perceus release of an array whose ELEMENTS
+    // are rc-boxed pointers (string[] / struct[] / array-of-array / tuple[]).
+    // When `a` is the LAST owner (rc word at [a-8] == 1, i.e. about to be
+    // freed) first release every element (a 4-byte i32 slot at [a+8 + i*4],
+    // for i in 0..len at [a]) via the shared $__fern_arr_dec, THEN free the
+    // buffer itself. The rc==1 guard ensures elements are released exactly
+    // once, on the final free (an aliased array at rc>1 just decrements the
+    // buffer, elements untouched — they live on through the other owner). One
+    // level: an element's OWN rc-tracked children leak (a sound known gap,
+    // matching the struct/tuple one-level release). Same null / low-bit /
+    // low-addr guards as $__fern_arr_dec so a non-heap or null array is a
+    // no-op.
+    o = o + "  (func $__fern_arr_dec_ptr (param $a i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $n i32)\n";
+    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
+    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
+    o = o + "      (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $adp_done (loop $adp_lp\n";
+    o = o + "        (br_if $adp_done (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (drop (call $__fern_arr_dec (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $adp_lp))))) \n";
+    o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
     return o;
 }
 
