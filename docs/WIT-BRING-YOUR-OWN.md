@@ -1215,7 +1215,23 @@ world-driven composer (P2) wires it.
      composer limitations deferred: a single exported interface can hold only one
      `@export` function, and a world can export only one interface — the existing
      tests never exercised either; the sum-type cases use one interface / one
-     function each.) The self-host port follows next.
+     function each.)
+   - **Slice 5g self-host — sum-type (`option` / `result`) result export. ✅ Done.**
+     `wasm.fern`'s `build_export_wrapper` gained the sum-result branch. The
+     self-host has no pair-form (an Option/Result function always returns a heap
+     enum box `[tag:i32@0][payload:i32@4]`), so the wrapper reads the box and
+     writes the canonical `(disc:u8@0, payload:i32@4)` return area — the disc
+     remapped `1-tag` for option (`extern_sum_param_is_option`), straight through
+     for result — over-allocating the 8-byte area by 7 and 8-aligning it (the
+     heap bump isn't aligned), exactly the inverse of the import sum-result
+     wrapper. `extern_exports` / `export_needs_heap` now fire for a sum-type
+     result (`extern_sum_param_supported`); no `cabi_realloc` (memory lift only).
+     Gated by `TestSelfHostExportOptionResultRunsViaConsumer` (remap) and
+     `TestSelfHostExportResultResultRunsViaConsumer` (no remap) — the self-host
+     emits the exporter core, the Go composer lifts it, and a Fern consumer
+     matches every arm under wasmtime; the self-compile / printer / checker
+     oracles stay green. **P6 sum-type result exports are now complete in both
+     compilers.**
    - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`
