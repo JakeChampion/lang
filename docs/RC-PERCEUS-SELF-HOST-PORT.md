@@ -1608,3 +1608,37 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   keys/values still leak at map death — the map box isn't rc-boxed and map
   locals aren't swept yet; that's the map counting + free slices, which reuse
   the boxed-array foundation laid here.)
+- 2026-06-09: **wasm map RC — box layout + COUNTING milestone (free OFF).** The
+  map box is now rc-headered via `$__fern_str_box` (returns base+8, so every
+  box-relative field `[box+N]` is unchanged) in `$__fern_map_new_k`, and owned
+  map locals are reference-counted + released (rc DEC via `$__fern_rc_dec` — no
+  free, no key/value release yet) at function exit, mirroring the option
+  counting shape. New `Ctx.map_swept` is the swept set, built by
+  `collect_map_swept` (last in `build_ctx`, once `map_names` is known) from
+  `init_is_owned_map` (a `map_new[_i32]`-rooted construction / `.insert` chain
+  via `expr_map_rooted`) OR `init_is_map_alias` (a bare-ident co-owner). A map
+  mutated in place (`m = m.insert(…)`) returns the SAME box, so it stays one
+  owned local (the StmtAssign falls through to a plain set, no spurious dec).
+  StmtVar emits `$__fern_rc_inc` after a map alias bind; `map_exit_sweep_excl`
+  runs at StmtReturn (alongside the array/string/tuple/struct/option sweeps) and
+  the epilogue. Map move-on-return (`map_mov`) + a map-param return-retain ride
+  the existing return machinery. Coverage: `TestSelfHostRcMapGrowWasm` gains
+  map-swept-clean, map-str-swept-clean, map-counting-churn-clean (5000 cycles —
+  detector 0). Full map + RC + component + binary wasm suites green;
+  bootstrap-safe. Next: map FREE — a `$__fern_map_release(box, vis)` helper that
+  releases the string keys (kis@[box+20]) / values (vis from map_str_names) of
+  the occupied slots, then the keys/vals/used arrays, then the box.
+- 2026-06-09: **wasm map RC — bugfix: zero the `used` array on alloc.** A
+  latent hang the map-counting work surfaced (pre-existing in the grow-leak-fix
+  slice, missed because the new map test matched no CI shard regex): the map's
+  open-addressing `used` array relied on being zero-initialised, which held only
+  while every array was a FRESH bump allocation. Once `$__fern_map_grow` started
+  freeing old arrays to the freelist, `$__fern_alloc` began RECYCLING blocks
+  WITHOUT zeroing them — so a reused `used` array carried stale occupancy flags
+  (1/2), and `$__fern_map_find`'s probe never found an empty slot → infinite
+  loop (a heavily-growing-map churn spun forever). Fixed by explicitly zeroing
+  the `used` array (a named-label loop — watbin-safe) after allocation in both
+  `$__fern_map_new_k` and `$__fern_map_grow`; keys/vals need no zeroing (only
+  occupied slots, gated by `used[]`, are read). Guarded by
+  `map-grow-churn`/`map-counting-churn-clean` (5000 growing-map cycles, no hang,
+  detector 0).

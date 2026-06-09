@@ -51,6 +51,15 @@ func TestSelfHostRcMapGrowWasm(t *testing.T) {
 		{"map-grow-churn", "function mk(): i32 { var m = map_new_i32(2); var k = 0; while (k < 30) { m = m.insert(k, k); k = k + 1; } return m.get_or(25, -1); } function main(): i32 { var n = 0; var k = 0; while (k < 5000) { n = mk(); k = k + 1; } return (n % 100) + __fern_rc_underflow_count(); }", 25},
 		// String values that survive the array reallocation on grow.
 		{"map-grow-str-vals", "function main(): i32 { var m = map_new(2); m = m.insert(\"x\", 1); m = m.insert(\"y\", 2); m = m.insert(\"z\", 3); m = m.insert(\"w\", 4); return m.get_or(\"x\", -1) + m.get_or(\"w\", -1) + m.len() + __fern_rc_underflow_count(); }", 9},
+		// COUNTING milestone (free off): an owned map local is released (rc dec)
+		// at exit, value-correct + detector clean.
+		{"map-swept-clean", "function main(): i32 { var m = map_new_i32(8); m = m.insert(3, 40); return m.get_or(3, -1) + 2 + __fern_rc_underflow_count(); }", 42},
+		// A string-keyed map swept at exit (the box dec'd; arrays + strings leak
+		// soundly while free is off) — value-correct + detector clean.
+		{"map-str-swept-clean", "function main(): i32 { var m = map_new(8); m = m.insert(\"k\", 40); return m.get_or(\"k\", -1) + 2 + __fern_rc_underflow_count(); }", 42},
+		// A map re-built each loop iteration: detector stays clean (counting;
+		// free off, so intermediates + the grow-freed arrays don't over-release).
+		{"map-counting-churn-clean", "function mk(): i32 { var m = map_new(2); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); m = m.insert(\"c\", 3); m = m.insert(\"d\", 4); return m.get_or(\"c\", -1); } function main(): i32 { var k = 0; var s = 0; while (k < 5000) { s = mk(); k = k + 1; } return (s % 100) + __fern_rc_underflow_count(); }", 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
