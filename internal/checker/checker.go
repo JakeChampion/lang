@@ -4436,20 +4436,30 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true // variant-constructor call → fresh enum value
 				}
-				// A user function with ONLY scalar (non-pointer) parameters and
-				// a pointer result must construct that result fresh — it has no
-				// borrowed pointer argument to return — so the result is owned.
-				// Conservative: a function with a pointer parameter could return
-				// it (`id(x) -> x`), so its result isn't provably owned here.
+				// A user function with a pointer result whose every pointer
+				// parameter it could return is provably not BORROWED returns a
+				// freshly-owned value. Two such cases:
+				//   - no pointer parameters at all: the result is constructed fresh
+				//     (it has no borrowed pointer argument to hand back);
+				//   - every pointer parameter is `own`: the callee consumed each one
+				//     (took ownership), so the result — whether freshly built or a
+				//     threaded-and-returned `own` param — is owned by the caller, not
+				//     a borrow of a caller-still-held value. (`build_stmt(own ops, s)
+				//     -> Op[]` returning the grown `ops` is the self-host shape.)
+				// Conservative: a BORROWED pointer parameter could be returned
+				// (`id(x) -> x`), so a function with one isn't provably owned here.
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
-					anyPtrParam := false
-					for _, pt := range sig.Params {
+					flags := c.ownFuncs[id.Name]
+					anyPtrParam, allPtrOwn := false, true
+					for i, pt := range sig.Params {
 						if pt != nil && ast.IsPointerType(pt) {
 							anyPtrParam = true
-							break
+							if i >= len(flags) || !flags[i] {
+								allPtrOwn = false
+							}
 						}
 					}
-					if !anyPtrParam {
+					if !anyPtrParam || allPtrOwn {
 						return true
 					}
 				}

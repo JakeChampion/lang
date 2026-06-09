@@ -15292,8 +15292,17 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 // __fern_arr_dec is buffer-only (never walks elements), so a shared string /
 // struct element is never over-released either.
 func (b *builder) isSelfArrayPushLocal(value ast.Expr, name string) bool {
+	// Locals qualify. A BORROWED param never does — its buffer belongs to the
+	// caller and is still live, so an in-place grow / orphan-free would UAF the
+	// caller's value. An `own` param, by contrast, is callee-owned: the caller
+	// transferred it (no entry-inc, freeEligible, uniquely owned at rc==1 when
+	// the E051 guard's owned arg was fresh / moved). Its self-append is therefore
+	// rc-gated exactly like an owned local — in-place at rc==1, orphan freed on
+	// grow — so it reclaims grow intermediates instead of orphaning one buffer
+	// per iteration. This is the runtime half of move semantics for threaded
+	// array params (docs/RC-ARRAY-MOVE-SEMANTICS-PLAN.md step 3).
 	for _, p := range b.fn.Params {
-		if p.Name == name {
+		if p.Name == name && !p.Own {
 			return false
 		}
 	}
