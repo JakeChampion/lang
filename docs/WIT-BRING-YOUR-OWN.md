@@ -1474,9 +1474,39 @@ produces a response:
   response handle, the rest zero). Gated by `TestExportWasiHttpHandlerServes`
   (`wasmtime serve` the composed component, `GET /` → 200) +
   `TestExportWasiHttpHandlerSetResponseComposes` (`wasm-tools validate`).
-  - **Known ergonomics gap (next):** the `set` extern is spelled with the 9
-    explicit flattened params (`out, disc, resp, a, b: i64, c, d, e, f`) — the
-    author writes the canonical flattening by hand. A future slice can add
-    `result<own<R>, E>`-param sugar (a composer Ok-wrap so the handler passes just
-    the response handle) and the body / header / status methods for richer
-    responses.
+- **Ergonomic helpers + a richer (status-setting) response. ✅ Done.** The
+  9-param `response-outparam.set` flattening is hidden behind a pure-Fern helper
+  `set_response_ok(out, resp)` (no compiler change — the Ok-wrap is just a
+  one-line wrapper over the raw extern), alongside a `new_response()` helper. A
+  handler then reads as: `var resp = new_response(); set_status(resp, 404);
+  set_response_ok(out, resp);`. `[method]outgoing-response.set-status-code`
+  (`status-code` = `u16` param + `result<_,_>` return, both flattening to i32) is
+  a plain scalar method extern — declared `set_status(resp: borrow
+  OutgoingResponse, status: i32): i32` (the i32 result is the result disc, which
+  the handler ignores). Gated by `TestExportWasiHttpHandlerStatusServes`
+  (`wasmtime serve`, `GET /` → **404**). The serve harness is now a shared helper
+  (`serveHttpHandlerStatus` / `buildHttpHandlerComponent`) across the serve tests.
+  - **Still open (genuine follow-ups, not blockers):**
+    1. **Reusable cross-module HTTP lib.** The externs + helpers can't yet live in
+       an imported module because **`pub resource` is unsupported** (`pub` rejects
+       `resource`; resource types are module-local). A `pub resource` language
+       feature (parser/checker + modload aliasing of exported resource types)
+       would let a 5-line handler `import` an `http` lib. Until then the externs
+       live in the handler module.
+    2. **Response bodies.** `outgoing-response.body() -> result<own<outgoing-
+       body>>`, `outgoing-body.write() -> result<own<output-stream>>`,
+       `output-stream.blocking-write-and-flush(list<u8>)` and
+       `[static]outgoing-body.finish(own<…>, option<own<…>>)` need new `@import`
+       extern marshalling for `result<own<R>>` *returns* + `option<own<R>>` params
+       (composite shapes carrying handles) — a distinct chunk; the embedded path
+       hand-codes them in `wasi_http.go`.
+    3. **A composer Ok-wrap** (so even the raw `set` extern could take just the
+       response handle) remains possible but is now lower-value, since the Fern
+       helper already gives the clean call site.
+
+> **Note on the embedded HTTP path:** `-target wasi-http`
+> (`emitIncomingHandlerExport` / `compose_http.go` / `wasi_http.go`) is still the
+> live CLI feature and is **not** dead code — the bring-your-own path above is
+> currently test-only. A future consolidation could migrate `-target wasi-http`
+> onto the generic world-driven composer once the body/header marshalling and a
+> `pub resource` HTTP lib exist; until then both coexist.
