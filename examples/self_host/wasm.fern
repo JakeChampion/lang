@@ -784,6 +784,23 @@ function init_is_owned_array(e: parser.Expr): boolean {
     return false;
 }
 
+// insert_val_is_array: does a map `.insert` value expr yield an rc-boxed array
+// (any element type)? Drives the map value rc-flag (vis) so an array value is
+// construction-inc'd + reclaimed one level (arr_dec frees the buffer — complete
+// for i32[]/i64[]/f64[]; a string[]/struct[] value's elements leak one level,
+// sound). A scalar / string value never matches here (handled separately), so
+// the flat arr_dec on death can't corrupt a non-pointer. Covers the common
+// insert forms: array literal, non-substring slice, an arr_src-tracked ident.
+function insert_val_is_array(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        parser.ExprSlice(sl) => { return !is_string_expr(e, cx); },
+        parser.ExprIdent(id) => { return contains_str(cx.arr_src, id.name); },
+        _ => { return false; },
+    }
+    return false;
+}
+
 // init_is_owned_string: the init produces a fresh, OWNED heap string (rc 1)
 // — a concatenation (`a + b`, a $__fern_str_box block) — or an immortal
 // string literal (data-section; the rc helpers' address guard no-ops it).
@@ -5593,12 +5610,15 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                             // death (mirrors kis for keys + native
                             // __drop_map_str_values). A map's value type is
                             // homogeneous, so the per-insert flag is stable.
-                            // A string OR struct/enum value is rc-boxed (str_box),
+                            // A string / struct/enum / array value is rc-boxed,
                             // so a generic rc_inc / arr_dec one-level-reclaims it;
                             // the struct/enum FIELD deep-release rides on the
-                            // per-type $__fern_map_release_via_<T> routing.
+                            // per-type $__fern_map_release_via_<T> routing (an
+                            // array value reclaims its buffer — complete for a
+                            // scalar-element array; ptr-element arrays leak their
+                            // elements one level, sound).
                             var visf: string = "(i32.const 0)";
-                            if (is_string_expr(c.args[1], cx) || struct_type_of(c.args[1], cx).len() > 0) { visf = "(i32.const 1)"; }
+                            if (is_string_expr(c.args[1], cx) || struct_type_of(c.args[1], cx).len() > 0 || insert_val_is_array(c.args[1], cx)) { visf = "(i32.const 1)"; }
                             return "(call $__fern_map_set " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + " " + emit_expr(c.args[1], cx, depth + 1) + " " + visf + ")";
                         }
                         if (fa.field == "get" && c.args.len() == 1) {
