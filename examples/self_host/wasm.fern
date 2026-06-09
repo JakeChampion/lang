@@ -212,6 +212,14 @@ struct Ctx {
     // recursive release rides on this when free is flipped on. Borrowed sources
     // (params, field / index reads) are conservatively NOT swept.
     opt_swept: string[],
+    // Perceus map reference-counting (counting milestone, free OFF). map_swept:
+    // body map locals that are OWNED (a `map_new[_i32]`-rooted construction /
+    // `.insert` chain, or a bare-ident alias) — released (rc dec, no free yet)
+    // at function exit. The map box is rc-boxed; the key/value-array + string
+    // key/value release rides on this when free is flipped on. A map mutated in
+    // place (`m = m.insert(…)`) returns the SAME box, so it stays one owned
+    // local; borrowed params are NOT swept.
+    map_swept: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -1072,6 +1080,89 @@ function opt_exit_sweep_excl(cx: Ctx, excl: string): string {
 
 function opt_exit_sweep(cx: Ctx): string {
     return opt_exit_sweep_excl(cx, "");
+}
+
+// init_is_owned_map: the init produces a FRESH map the local owns — a
+// `map_new[_i32]`-rooted construction or `.insert` chain (expr_map_rooted). A
+// map mutated in place (`m = m.insert(…)`) returns the same box, so the local
+// stays the single owner; an alias is handled by init_is_map_alias.
+function init_is_owned_map(e: parser.Expr, cx: Ctx): boolean {
+    return expr_map_rooted(e);
+}
+
+// init_is_map_alias: a bare-ident reference to a map local/param (a co-owner of
+// the same box, to retain).
+function init_is_map_alias(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return contains_str(cx.map_names, id.name); },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// collect_map_swept gathers body map locals to release at exit: an owned map
+// (init_is_owned_map) or a bare-ident alias (init_is_map_alias). Comma
+// destructures skipped.
+function collect_map_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
+                    if (init_is_owned_map(v.init, cx) || init_is_map_alias(v.init, cx)) {
+                        acc = acc.append(v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_map_swept(f.then_body, cx, acc);
+                acc = collect_map_swept(f.else_body, cx, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_map_swept(w.body, cx, acc); },
+            parser.StmtFor(f) => { acc = collect_map_swept(f.body, cx, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_map_swept(m.arms[k].body, cx, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// map_exit_sweep_excl emits the map release sweep (counting milestone: rc DEC
+// via $__fern_rc_dec — no free, no key/value release yet) of every owned map
+// local, except `excl` (the move-on-return slot). The key/value-array + string
+// key/value release + the $__fern_arr_dec free ride on this when map free is
+// flipped on.
+function map_exit_sweep_excl(cx: Ctx, excl: string): string {
+    var o: string = "";
+    var i: i32 = 0;
+    while (i < cx.map_swept.len()) {
+        if (cx.map_swept[i] != excl) {
+            o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.map_swept[i] + ")))\n";
+        }
+        i = i + 1;
+    }
+    return o;
+}
+
+function map_exit_sweep(cx: Ctx): string {
+    return map_exit_sweep_excl(cx, "");
+}
+
+// ret_map_is_borrowed: a returned map that borrows (a field / index read, or a
+// borrowed-param ident — a returned swept local is a move, filtered by
+// map_mov) is retained. A fresh map_new-rooted construction is owned-and-moved.
+function ret_map_is_borrowed(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprFieldAccess(_) => { return true; },
+        parser.ExprIndex(_) => { return true; },
+        parser.ExprIdent(_) => { return true; },
+        _ => { return false; },
+    }
+    return false;
 }
 
 // ret_option_is_borrowed: a returned Option/Result that aliases/borrows (a
@@ -6431,8 +6522,12 @@ function map_helpers(): string {
     // [kis@20][tombs@24]; `used[i]` is 0 = empty, 1 = occupied, 2 =
     // tombstone (a deleted slot the probe must skip past).
     o = o + "  (func $__fern_map_new_k (param $hint i32) (param $kis i32) (result i32)\n";
-    o = o + "    (local $box i32)\n";
-    o = o + "    (local.set $box (call $__fern_alloc (i32.const 28)))\n";
+    o = o + "    (local $box i32) (local $zi i32)\n";
+    // The map box is rc-headered via $__fern_str_box (returns base+8, so every
+    // box-relative field [box+N] is unchanged) so a map local can be counted
+    // and freed; the 28-byte payload holds [count@0][cap@4][keys@8][vals@12]
+    // [used@16][kis@20][tombs@24].
+    o = o + "    (local.set $box (call $__fern_str_box (i32.const 28)))\n";
     o = o + "    (i32.store (local.get $box) (i32.const 0))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (i32.const 8))\n";
     // keys/vals/used are rc-boxed via $__fern_str_box (flat: data ptr at
@@ -6442,6 +6537,16 @@ function map_helpers(): string {
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (call $__fern_str_box (i32.const 32)))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (call $__fern_str_box (i32.const 32)))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 16)) (call $__fern_str_box (i32.const 32)))\n";
+    // Zero the `used` array: a $__fern_str_box block recycled from the freelist
+    // (since map_grow now frees old arrays) carries STALE occupancy flags, and
+    // an unzeroed used[] makes $__fern_map_find probe forever. (keys/vals need
+    // no zeroing — only occupied slots, gated by used[], are ever read.)
+    o = o + "    (local.set $zi (i32.const 0))\n";
+    o = o + "    (block $zd (loop $zl\n";
+    o = o + "      (br_if $zd (i32.ge_u (local.get $zi) (i32.const 8)))\n";
+    o = o + "      (i32.store (i32.add (i32.load (i32.add (local.get $box) (i32.const 16))) (i32.mul (local.get $zi) (i32.const 4))) (i32.const 0))\n";
+    o = o + "      (local.set $zi (i32.add (local.get $zi) (i32.const 1)))\n";
+    o = o + "      (br $zl)))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 20)) (local.get $kis))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 24)) (i32.const 0))\n";
     o = o + "    (local.get $box))\n";
@@ -6449,7 +6554,7 @@ function map_helpers(): string {
     o = o + "  (func $__fern_map_grow (param $box i32)\n";
     o = o + "    (local $oc i32) (local $ok i32) (local $ov i32) (local $ou i32)\n";
     o = o + "    (local $nc i32) (local $nk i32) (local $nv i32) (local $nu i32)\n";
-    o = o + "    (local $i i32) (local $idx i32) (local $key i32) (local $kis i32)\n";
+    o = o + "    (local $i i32) (local $idx i32) (local $key i32) (local $kis i32) (local $zi i32)\n";
     o = o + "    (local.set $kis (i32.load (i32.add (local.get $box) (i32.const 20))))\n";
     o = o + "    (local.set $oc (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
     o = o + "    (local.set $ok (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
@@ -6459,6 +6564,15 @@ function map_helpers(): string {
     o = o + "    (local.set $nk (call $__fern_str_box (i32.mul (local.get $nc) (i32.const 4))))\n";
     o = o + "    (local.set $nv (call $__fern_str_box (i32.mul (local.get $nc) (i32.const 4))))\n";
     o = o + "    (local.set $nu (call $__fern_str_box (i32.mul (local.get $nc) (i32.const 4))))\n";
+    // Zero the new `used` array — a freelist-recycled block holds stale flags;
+    // the rehash below only sets the LIVE slots to 1, so unzeroed gaps would
+    // read as occupied and hang $__fern_map_find.
+    o = o + "    (local.set $zi (i32.const 0))\n";
+    o = o + "    (block $zd (loop $zl\n";
+    o = o + "      (br_if $zd (i32.ge_u (local.get $zi) (local.get $nc)))\n";
+    o = o + "      (i32.store (i32.add (local.get $nu) (i32.mul (local.get $zi) (i32.const 4))) (i32.const 0))\n";
+    o = o + "      (local.set $zi (i32.add (local.get $zi) (i32.const 1)))\n";
+    o = o + "      (br $zl)))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (local.get $nc))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (local.get $nk))\n";
     o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (local.get $nv))\n";
@@ -7180,6 +7294,16 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 }
                 return st;
             }
+            // Perceus map inc-on-alias: `var m2 = m` retains the map box so the
+            // exit sweep's dec balances. A fresh map_new-rooted construction is
+            // rc 1 already (no inc — that would leak).
+            if (contains_str(st.cx.map_swept, v.name)) {
+                st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+                if (init_is_map_alias(v.init, st.cx)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
+                }
+                return st;
+            }
             return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
         },
         parser.StmtAssign(a) => {
@@ -7307,7 +7431,14 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 parser.ExprIdent(id) => { if (contains_str(st.cx.opt_swept, id.name)) { opt_mov = id.name; } },
                 _ => {},
             }
-            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov) + opt_exit_sweep_excl(st.cx, opt_mov);
+            // Map move-on-return: a bare owned map local returned is excluded
+            // from the map sweep (handed over at its rc).
+            var map_mov: string = "";
+            match (r.value) {
+                parser.ExprIdent(id) => { if (contains_str(st.cx.map_swept, id.name)) { map_mov = id.name; } },
+                _ => {},
+            }
+            var sweep: string = arr_exit_sweep_excl(st.cx, mov) + str_exit_sweep_excl(st.cx, smov) + tup_exit_sweep_excl(st.cx, tmov) + struct_exit_sweep_excl(st.cx, struct_mov) + opt_exit_sweep_excl(st.cx, opt_mov) + map_exit_sweep_excl(st.cx, map_mov);
             // Perceus return-retain: when an array/string-returning function
             // hands back a BORROWED reference (a field / index read, or a
             // borrowed param — anything not a fresh literal/concat/slice/call
@@ -7326,7 +7457,15 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             // index read, or a borrowed param) is retained so the caller owns a
             // counted reference; a fresh Some/Ok/Err / None / option-call is not.
             var opt_borrowed: boolean = scrutinee_payload(r.value, st.cx).len() > 0 && ret_option_is_borrowed(r.value, st.cx);
-            var retain: boolean = ((st.cx.ret_is_array || st.cx.ret_is_string || st.cx.ret_is_tuple) && ret_value_is_borrowed(r.value) || struct_borrowed || opt_borrowed) && mov.len() == 0 && smov.len() == 0 && tmov.len() == 0 && struct_mov.len() == 0 && opt_mov.len() == 0;
+            // Map return-retain: a returned borrowed map (a map param, or a
+            // field / index read) is retained; a fresh map_new-rooted result is
+            // owned-and-moved (a returned swept local is excluded via map_mov).
+            var map_borrowed: boolean = false;
+            match (r.value) {
+                parser.ExprIdent(id) => { map_borrowed = contains_str(st.cx.map_names, id.name); },
+                _ => {},
+            }
+            var retain: boolean = ((st.cx.ret_is_array || st.cx.ret_is_string || st.cx.ret_is_tuple) && ret_value_is_borrowed(r.value) || struct_borrowed || opt_borrowed || map_borrowed) && mov.len() == 0 && smov.len() == 0 && tmov.len() == 0 && struct_mov.len() == 0 && opt_mov.len() == 0 && map_mov.len() == 0;
             if (st.cx.ret_void) {
                 st = st.w(sweep);
                 return st.w("    (return " + valstr + ")\n");
@@ -8088,6 +8227,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_is_tuple: f.ret_type.len() > 0 && f.ret_type[0] == 40,
         struct_swept: [],
         opt_swept: [],
+        map_swept: [],
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -8148,7 +8288,10 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cx7: Ctx = Ctx { ...cx6, struct_swept: collect_struct_swept(f.body, cx6, []) };
     // Perceus Option/Result RC set — computed once ol_names are known so option
     // aliases resolve.
-    return Ctx { ...cx7, opt_swept: collect_opt_swept(f.body, cx7, []) };
+    var cx8: Ctx = Ctx { ...cx7, opt_swept: collect_opt_swept(f.body, cx7, []) };
+    // Perceus map RC set — computed once map_names are known so map aliases
+    // resolve.
+    return Ctx { ...cx8, map_swept: collect_map_swept(f.body, cx8, []) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning
@@ -8374,7 +8517,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     // Perceus exit sweep on the fall-through path (functions that end
     // without an explicit `return`). After a final `return` it is
     // unreachable-but-valid wasm, like the trailing fallthrough const.
-    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + opt_exit_sweep(cx) + tail;
+    return head + decls + st.out + arr_exit_sweep(cx) + str_exit_sweep(cx) + tup_exit_sweep(cx) + struct_exit_sweep(cx) + opt_exit_sweep(cx) + map_exit_sweep(cx) + tail;
 }
 
 // module_uses_divrem is true when any free function body or the
