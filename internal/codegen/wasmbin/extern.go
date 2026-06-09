@@ -1202,6 +1202,45 @@ func buildExportSumTypeResultWrapper(idxs map[string]uint32, userFuncIdx uint32,
 	return body, locals
 }
 
+// buildExportTupleResultWrapper builds the core wrapper for an `@export`
+// function returning a tuple `(A, B, …)` — a WIT `tuple` (P6 —
+// docs/WIT-BRING-YOUR-OWN.md). The Fern function returns a tuple value pointer V
+// (elements packed at `V+field.Offset`), but a multi-element tuple flattens to
+// > 1 core value, so the canonical ABI returns it indirectly through a return
+// area (elements at `field.CanonicalOffset`). The wrapper forwards the scalar
+// params, calls the user func, and copies each element from the tuple value to
+// the area. Wrapper type: (scalar params…) -> i32.
+//
+// Locals after the params: 0:$v (tuple value pointer) 1:$rb (return area).
+func buildExportTupleResultWrapper(idxs map[string]uint32, userFuncIdx uint32, nparams int, rr *ir.ExternRecordResult) (body []byte, locals []byte) {
+	v := uint32(nparams)
+	rb := uint32(nparams + 1)
+	for i := 0; i < nparams; i++ {
+		body = inst.InstLocalGet(body, uint32(i))
+	}
+	body = inst.InstCall(body, userFuncIdx)
+	body = inst.InstLocalSet(body, v)
+	// rb = (__fern_alloc(CanonicalSize+7) + 7) & ~7 — 8-byte aligned return area.
+	body = inst.InstI32Const(body, rr.CanonicalSize+7)
+	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstI32Const(body, 7)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, -8)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalSet(body, rb)
+	// Copy each element: area[CanonicalOffset] = tuple[Offset].
+	for i := range rr.Fields {
+		f := rr.Fields[i]
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstLocalGet(body, v)
+		body = appendExternFieldLoad(body, f.Type, uint32(f.Offset))
+		body = appendExternFieldStore(body, f.Type, uint32(f.CanonicalOffset))
+	}
+	body = inst.InstLocalGet(body, rb)
+	locals = inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	return body, locals
+}
+
 // funcHasNumericArrayParam reports whether any of fn's parameters is a numeric
 // array (`list<T>`) — the shape that needs the export PARAM wrapper (the others,
 // scalars + strings, map onto the core signature directly).

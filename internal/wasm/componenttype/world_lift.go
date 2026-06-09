@@ -242,3 +242,22 @@ func (wi WorldInterface) ResultArmPrims(v Valtype) (ok byte, err byte, both bool
 	}
 	return d.Ok.Prim, d.Err.Prim, true
 }
+
+// TupleElemPrims reports, when `v` resolves to a `tuple<...>` whose elements are
+// all primitive, their CValtype bytes in order. Returns (nil, false) otherwise.
+// The P6 export lift uses it to emit the `tuple` component type for a tuple
+// export result without exposing the internal tag constants.
+func (wi WorldInterface) TupleElemPrims(v Valtype) ([]byte, bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || d.Tag != tagTuple || len(d.Elems) == 0 {
+		return nil, false
+	}
+	out := make([]byte, len(d.Elems))
+	for i, e := range d.Elems {
+		if !e.IsPrim {
+			return nil, false
+		}
+		out[i] = e.Prim
+	}
+	return out, true
+}
