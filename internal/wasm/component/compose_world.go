@@ -586,21 +586,34 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 		pnames = append(pnames, name)
 		pvals = append(pvals, enc)
 	}
-	if sig.NamedResults {
+	// A void function is encoded as a named-results list of length zero (the WIT
+	// `func(...)` shape — e.g. incoming-handler#handle). A non-empty named-results
+	// list (multi result) is still unsupported.
+	isVoid := sig.NamedResults && len(sig.Results) == 0
+	if sig.NamedResults && !isVoid {
 		return fmt.Errorf("component: export %s#%s: multi result (unsupported in this slice)", iface, witName)
 	}
-	rval, hasMemResult, err := encodeSlot(sig.Result, "result", true)
-	if err != nil {
-		return err
+	var rval []byte
+	hasMemResult := false
+	if !isVoid {
+		var err error
+		rval, hasMemResult, err = encodeSlot(sig.Result, "result", true)
+		if err != nil {
+			return err
+		}
 	}
 
-	// Emit the referenced list types (in index order), then the functype.
+	// Emit the referenced defined types (in index order), then the functype.
 	for _, d := range defs {
 		c.buf = PutTypeSectionOneDefined(c.buf, d)
 		c.nType++
 	}
 	funcType := c.nType
-	c.buf = PutTypeSectionOneFuncGeneral(c.buf, pnames, pvals, rval)
+	if isVoid {
+		c.buf = PutTypeSectionOneFuncGeneralVoid(c.buf, pnames, pvals)
+	} else {
+		c.buf = PutTypeSectionOneFuncGeneral(c.buf, pnames, pvals, rval)
+	}
 	c.nType++
 
 	switch {

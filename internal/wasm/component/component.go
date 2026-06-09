@@ -2780,6 +2780,27 @@ func PutTypeSectionOneFuncGeneral(buf []byte, paramNames []string, paramVals [][
 	return wrapSection(buf, SectionType, body)
 }
 
+// PutTypeSectionOneFuncGeneralVoid emits a functype with the given pre-encoded
+// params and NO result (the WIT `func(...)` shape — a named-results list of
+// length zero). The P6 export lift uses it for a void export such as
+// `wasi:http`'s `incoming-handler#handle` (docs/WIT-BRING-YOUR-OWN.md).
+func PutTypeSectionOneFuncGeneralVoid(buf []byte, paramNames []string, paramVals [][]byte) []byte {
+	if len(paramNames) != len(paramVals) {
+		panic("component: paramNames and paramVals must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, 0x40)      // functype form
+	body = leb128.UlebU64(body, uint64(len(paramNames)))
+	for i := range paramNames {
+		body = putName(body, paramNames[i])
+		body = append(body, paramVals[i]...)
+	}
+	body = append(body, 0x01)      // resultlist: named
+	body = leb128.UlebU64(body, 0) // vec(0) results
+	return wrapSection(buf, SectionType, body)
+}
+
 // PutCanonSectionLiftNoOpts emits a canon section with one
 // canon-lift entry (no opts). Mirrors
 // `put_canon_section_lift_no_opts`.
