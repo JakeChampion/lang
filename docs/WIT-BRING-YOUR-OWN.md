@@ -382,7 +382,11 @@ world-driven composer (P2) wires it.
      `TestExternBoolArrayResultCustomProvider` (both `ComposeFromWorldAuto` +
      custom provider, run under wasmtime), plus the wasmbin unit
      `TestEmitExternBoolArrayResult`. The self-host port of bool[] params is done
-     (see below); the self-host bool[]-result port is a follow-up.
+     (see below); the self-host **bool[]-result port is done** too — the self-host
+     stores u8 and boolean array elements identically (one per 4-byte slot), so a
+     `boolean[]` result reuses the u8[]-result byte-expansion wrapper verbatim
+     (only the `is_extern_composite_ret` gate + the wrapper's ret-type check
+     accept `"boolean[]"`). Gated by `TestSelfHostExternBoolArrayResultCustomProvider`.
    - **Record (struct) parameters — ✅ done (Go).** A Fern struct passed to an
      `@import` extern whose WIT signature takes a `record` flattens to its
      fields' core types (the canonical ABI passes a small record inline). The
