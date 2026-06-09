@@ -111,10 +111,7 @@ function cut_chars(line: string, ranges: (i32, i32)[]): string {
 }
 
 function slurp(path: string): string {
-  if (path == "-" || path == "") {
-    return io.read_all_stdin();
-  }
-  match (read_file(path)) {
+  match (io.read_input(path)) {
     Ok(contents) => {
       return contents;
     },

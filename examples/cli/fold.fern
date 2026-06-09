@@ -19,10 +19,7 @@ import "std/i32";
 import "std/io";
 
 function slurp(path: string): string {
-  if (path == "-" || path == "") {
-    return io.read_all_stdin();
-  }
-  match (read_file(path)) {
+  match (io.read_input(path)) {
     Ok(contents) => {
       return contents;
     },
@@ -64,20 +61,10 @@ function main(): i32 {
   while (i < argv.len()) {
     var a: string = argv[i];
     if (a == "-w" && i + 1 < argv.len()) {
-      match (argv[i + 1].parse_int()) {
-        Some(n) => {
-          width = n;
-        },
-        None => {}
-      }
+      width = argv[i + 1].parse_int_or(width);
       i = i + 1;
     } else if (a.starts_with("-w")) {
-      match (a.drop(2).parse_int()) {
-        Some(n) => {
-          width = n;
-        },
-        None => {}
-      }
+      width = a.drop(2).parse_int_or(width);
     } else if (a == "-s") {
       at_spaces = true;
     } else {

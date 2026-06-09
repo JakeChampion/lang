@@ -8699,7 +8699,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
-		b.breakStack = append(b.breakStack, matchEndD)
+		// NB: matchEndD is NOT pushed onto b.breakStack. A `match` is
+		// not a `break` target — a user `break` inside an arm must
+		// exit the enclosing loop (or switch), matching the
+		// interpreter and the checker (which rejects `break` whose
+		// only enclosing construct is a match). The arms reach the
+		// match end via the explicit `brTo(matchEndD, …)` calls below,
+		// not through the break stack; pushing it here would shadow
+		// the loop's break target and turn `break` into a no-op that
+		// only falls out of the match (an infinite loop for
+		// `while (true) { match … { … => break } }`).
 		for _, arm := range n.Arms {
 			if arm.IsWildcard {
 				// Guarded wildcard arm: the guard runs in the
@@ -8828,7 +8837,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.brTo(matchEndD, false) // jump past remaining arms
 			b.closeScope()           // end outer per-arm block
 		}
-		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.closeScope() // end of match
 		if reclaimScrut {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)

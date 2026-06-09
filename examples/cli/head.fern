@@ -21,32 +21,6 @@ import "std/io";
 
 struct Opts { count: i32, by_bytes: boolean }
 
-function slurp(path: string): Option[string] {
-  if (path == "-" || path == "") {
-    return Some(io.read_all_stdin());
-  }
-  match (read_file(path)) {
-    Ok(contents) => {
-      return Some(contents);
-    },
-    Err(_) => {
-      return None;
-    }
-  }
-}
-
-// Parse a count operand, defaulting to `fallback` if unparseable.
-function to_count(s: string, fallback: i32): i32 {
-  match (s.parse_int()) {
-    Some(n) => {
-      return n;
-    },
-    None => {
-      return fallback;
-    }
-  }
-}
-
 function emit(text: string, o: Opts): void {
   if (o.by_bytes) {
     write(text.take(o.count));
@@ -74,18 +48,18 @@ function main(): i32 {
   while (i < argv.len()) {
     var a: string = argv[i];
     if (a == "-n" && i + 1 < argv.len()) {
-      o = Opts { ...o, count: to_count(argv[i + 1], 10), by_bytes: false };
+      o = Opts { ...o, count: argv[i + 1].parse_int_or(10), by_bytes: false };
       i = i + 1;
     } else if (a == "-c" && i + 1 < argv.len()) {
-      o = Opts { ...o, count: to_count(argv[i + 1], 10), by_bytes: true };
+      o = Opts { ...o, count: argv[i + 1].parse_int_or(10), by_bytes: true };
       i = i + 1;
     } else if (a.starts_with("-n")) {
-      o = Opts { ...o, count: to_count(a.drop(2), 10), by_bytes: false };
+      o = Opts { ...o, count: a.drop(2).parse_int_or(10), by_bytes: false };
     } else if (a.starts_with("-c")) {
-      o = Opts { ...o, count: to_count(a.drop(2), 10), by_bytes: true };
+      o = Opts { ...o, count: a.drop(2).parse_int_or(10), by_bytes: true };
     } else if (a.len() > 1 && a[0] == 45 && a[1].is_digit()) {
       // `-5` shorthand for `-n 5`.
-      o = Opts { ...o, count: to_count(a.drop(1), 10), by_bytes: false };
+      o = Opts { ...o, count: a.drop(1).parse_int_or(10), by_bytes: false };
     } else {
       inputs = inputs.append(a);
     }
@@ -98,8 +72,8 @@ function main(): i32 {
   var multi: boolean = inputs.len() > 1;
   var j: i32 = 0;
   while (j < inputs.len()) {
-    match (slurp(inputs[j])) {
-      Some(text) => {
+    match (io.read_input(inputs[j])) {
+      Ok(text) => {
         if (multi) {
           if (j > 0) {
             print("");
@@ -108,7 +82,7 @@ function main(): i32 {
         }
         emit(text, o);
       },
-      None => {
+      Err(_) => {
         eprint("head: cannot open '" + inputs[j] + "' for reading");
         status = 1;
       }

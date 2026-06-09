@@ -17,10 +17,6 @@ import "core/no_prelude";
 import "std/string";
 import "std/i32";
 
-function to_int(s: string): Option[i32] {
-  return s.parse_int();
-}
-
 // Width (in characters, including a leading '-') of an i32 rendered
 // as decimal — used by -w to zero-pad every value to the widest.
 function width_of(n: i32): i32 {
@@ -42,7 +38,7 @@ function main(): i32 {
     } else if (a == "-w") {
       equal_width = true;
     } else {
-      match (to_int(a)) {
+      match (a.parse_int()) {
         Some(n) => {
           nums = nums.append(n);
         },

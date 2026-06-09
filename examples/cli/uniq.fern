@@ -22,10 +22,7 @@ import "std/io";
 struct Opts { count: boolean, only_dups: boolean, only_unique: boolean, ignore_case: boolean }
 
 function slurp(path: string): string {
-  if (path == "-" || path == "") {
-    return io.read_all_stdin();
-  }
-  match (read_file(path)) {
+  match (io.read_input(path)) {
     Ok(contents) => {
       return contents;
     },

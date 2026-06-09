@@ -27,26 +27,12 @@ import "std/io";
 struct Opts { body: string, width: i32, sep: string, start: i32, incr: i32 }
 
 function slurp(path: string): string {
-  if (path == "-" || path == "") {
-    return io.read_all_stdin();
-  }
-  match (read_file(path)) {
+  match (io.read_input(path)) {
     Ok(contents) => {
       return contents;
     },
     Err(_) => {
       return "";
-    }
-  }
-}
-
-function to_int(s: string, fallback: i32): i32 {
-  match (s.parse_int()) {
-    Some(n) => {
-      return n;
-    },
-    None => {
-      return fallback;
     }
   }
 }
@@ -63,16 +49,16 @@ function main(): i32 {
       o = Opts { ...o, body: argv[i + 1] };
       i = i + 1;
     } else if (a == "-w" && i + 1 < argv.len()) {
-      o = Opts { ...o, width: to_int(argv[i + 1], 6) };
+      o = Opts { ...o, width: argv[i + 1].parse_int_or(6) };
       i = i + 1;
     } else if (a == "-s" && i + 1 < argv.len()) {
       o = Opts { ...o, sep: argv[i + 1] };
       i = i + 1;
     } else if (a == "-v" && i + 1 < argv.len()) {
-      o = Opts { ...o, start: to_int(argv[i + 1], 1) };
+      o = Opts { ...o, start: argv[i + 1].parse_int_or(1) };
       i = i + 1;
     } else if (a == "-i" && i + 1 < argv.len()) {
-      o = Opts { ...o, incr: to_int(argv[i + 1], 1) };
+      o = Opts { ...o, incr: argv[i + 1].parse_int_or(1) };
       i = i + 1;
     } else {
       inputs = inputs.append(a);

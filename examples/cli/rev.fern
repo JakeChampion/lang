@@ -14,20 +14,6 @@ import "core/no_prelude";
 import "std/string";
 import "std/io";
 
-function slurp(path: string): Option[string] {
-  if (path == "-" || path == "") {
-    return Some(io.read_all_stdin());
-  }
-  match (read_file(path)) {
-    Ok(contents) => {
-      return Some(contents);
-    },
-    Err(_) => {
-      return None;
-    }
-  }
-}
-
 function reverse_bytes(s: string): string {
   var n: i32 = s.len();
   var out: string = "";
@@ -54,8 +40,8 @@ function main(): i32 {
 
   var j: i32 = 0;
   while (j < inputs.len()) {
-    match (slurp(inputs[j])) {
-      Some(text) => {
+    match (io.read_input(inputs[j])) {
+      Ok(text) => {
         var lines: string[] = text.lines();
         var k: i32 = 0;
         while (k < lines.len()) {
@@ -63,7 +49,7 @@ function main(): i32 {
           k = k + 1;
         }
       },
-      None => {
+      Err(_) => {
         eprint("rev: cannot open " + inputs[j]);
         status = 1;
       }
