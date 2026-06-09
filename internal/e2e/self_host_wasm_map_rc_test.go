@@ -60,6 +60,14 @@ func TestSelfHostRcMapGrowWasm(t *testing.T) {
 		// A map re-built each loop iteration: detector stays clean (counting;
 		// free off, so intermediates + the grow-freed arrays don't over-release).
 		{"map-counting-churn-clean", "function mk(): i32 { var m = map_new(2); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); m = m.insert(\"c\", 3); m = m.insert(\"d\", 4); return m.get_or(\"c\", -1); } function main(): i32 { var k = 0; var s = 0; while (k < 5000) { s = mk(); k = k + 1; } return (s % 100) + __fern_rc_underflow_count(); }", 3},
+		// FREE: a map freed at exit releases its keys/vals/used arrays + the box
+		// ($__fern_map_release). Value-correct + detector clean.
+		{"map-free-i32", "function main(): i32 { var m = map_new_i32(8); m = m.insert(3, 40); return m.get_or(3, -1) + 2 + __fern_rc_underflow_count(); }", 42},
+		{"map-free-str", "function main(): i32 { var m = map_new(\"x\"); m = m.insert(\"a\", 40); return m.get_or(\"a\", -1) + 2 + __fern_rc_underflow_count(); }", 42},
+		// FREE churn: 200k growing maps built + dropped. The box + 3 arrays are
+		// reclaimed each cycle (no OOM), detector clean — proves real free, not
+		// just counting (200k unreclaimed maps would exhaust memory).
+		{"map-free-churn-clean", "function mk(): i32 { var m = map_new_i32(2); var k = 0; while (k < 30) { m = m.insert(k, k); k = k + 1; } return m.get_or(25, -1); } function main(): i32 { var n = 0; var k = 0; while (k < 200000) { n = mk(); k = k + 1; } return (n % 100) + __fern_rc_underflow_count(); }", 25},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

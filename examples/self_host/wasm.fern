@@ -1131,17 +1131,17 @@ function collect_map_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[
     return acc;
 }
 
-// map_exit_sweep_excl emits the map release sweep (counting milestone: rc DEC
-// via $__fern_rc_dec — no free, no key/value release yet) of every owned map
-// local, except `excl` (the move-on-return slot). The key/value-array + string
-// key/value release + the $__fern_arr_dec free ride on this when map free is
-// flipped on.
+// map_exit_sweep_excl emits the map release sweep (FREE ON via
+// $__fern_map_release — frees the keys/vals/used arrays + the box when last
+// owner) of every owned map local, except `excl` (the move-on-return slot).
+// One level: the string keys/values held in the arrays leak (not
+// construction-inc'd into the map), a sound documented gap.
 function map_exit_sweep_excl(cx: Ctx, excl: string): string {
     var o: string = "";
     var i: i32 = 0;
     while (i < cx.map_swept.len()) {
         if (cx.map_swept[i] != excl) {
-            o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.map_swept[i] + ")))\n";
+            o = o + "    (drop (call $__fern_map_release (local.get $" + cx.map_swept[i] + ")))\n";
         }
         i = i + 1;
     }
@@ -1207,7 +1207,7 @@ function ret_struct_is_borrowed(e: parser.Expr, cx: Ctx): boolean {
 // sole ownership, no inc (that would leak). This subsumes the four
 // init_is_*_alias checks and extends them to borrowed field / index reads.
 function store_value_is_borrowed(v: parser.Expr, cx: Ctx): boolean {
-    if (init_is_arr_alias(v, cx.arr_src) || init_is_string_alias(v, cx) || init_is_tuple_alias(v, cx) || init_is_struct_alias(v, cx) || init_is_option_alias(v, cx)) { return true; }
+    if (init_is_arr_alias(v, cx.arr_src) || init_is_string_alias(v, cx) || init_is_tuple_alias(v, cx) || init_is_struct_alias(v, cx) || init_is_option_alias(v, cx) || init_is_map_alias(v, cx)) { return true; }
     match (v) {
         parser.ExprFieldAccess(fa) => {
             // A tuple index (t.N) is conservatively skipped here (tuple
@@ -6736,6 +6736,22 @@ function map_helpers(): string {
     o = o + "    (return (call $__fern_map_snapshot (local.get $box) (i32.const 8))))\n";
     o = o + "  (func $__fern_map_values (param $box i32) (result i32)\n";
     o = o + "    (return (call $__fern_map_snapshot (local.get $box) (i32.const 12))))\n";
+    // $__fern_map_release(box) -> box: Perceus map free. When `box` is the LAST
+    // owner ([box-8]==1, about to free) release its three structural arrays —
+    // keys ([box+8]), vals ([box+12]), used ([box+16]) — FLAT via the shared
+    // $__fern_arr_dec, then free the box itself. One level: the string KEYS /
+    // VALUES held in the keys/vals arrays are NOT released (a sound leak — they
+    // aren't construction-inc'd into the map, so dec'ing them would double-free
+    // the source locals; closing that needs map_set key/value retains). Guarded
+    // like $__fern_arr_dec (null / low-bit / low-addr); an aliased map (rc>1)
+    // just decrements the box, its arrays untouched.
+    o = o + "  (func $__fern_map_release (param $box i32) (result i32)\n";
+    o = o + "    (if (i32.eqz (local.get $box)) (then (return (local.get $box))))\n";
+    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $box) (i32.const 8))) (i32.const 1)) (then\n";
+    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 8)))))\n";
+    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 12)))))\n";
+    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 16)))))))\n";
+    o = o + "    (call $__fern_arr_dec (local.get $box)))\n";
     return o;
 }
 
