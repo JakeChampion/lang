@@ -14683,6 +14683,38 @@ func (b *builder) constructionMovesIdent(e ast.Expr, name string) bool {
 	return false
 }
 
+// callConsumesIdent reports whether `e` is a direct call to an `own`-parameter
+// function that passes `name` to one of its `own` positions — i.e. the call
+// CONSUMES `name`, moving it into the callee, which deep-drops it at its own
+// exit. A `name = f(.., name, ..)` self-reassign must then NOT also
+// overwrite-drop the old `name`: the callee already owns and frees it, so a
+// second deep-drop here frees the box twice (the own-struct-param
+// move-and-rebind double-free). The mirror of constructionMovesIdent for plain
+// function calls. (Method calls are conservatively excluded — receiver-consume
+// shape differs; revisit when an own-self method threads a struct.)
+func (b *builder) callConsumesIdent(e ast.Expr, name string) bool {
+	call, ok := e.(*ast.Call)
+	if !ok || call.Method != nil {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	flags, isOwn := b.info.OwnFuncs[id.Name]
+	if !isOwn {
+		return false
+	}
+	for i, a := range call.Args {
+		if i < len(flags) && flags[i] {
+			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (b *builder) assign(n *ast.Assign) error {
 	switch t := n.Target.(type) {
 	case *ast.Ident:
@@ -14806,6 +14838,14 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the overwrite dec is REQUIRED to balance that inc — this skip
 				// is disabled there and the normal enum-overwrite drop below
 				// fires.
+			} else if b.callConsumesIdent(n.Value, t.Name) {
+				// `s = f(.., s, ..)` where f takes s by `own`: s is MOVED into f,
+				// which deep-drops it at its own exit. Dropping it here too frees
+				// the box twice — the own-struct-param move-and-rebind double-free.
+				// No drop: the callee owns it. (Array targets took the rc-gated
+				// __fern_arr_dec branch above, which is double-free-safe; this
+				// guards the struct / enum case that the flat / deep drop below
+				// would over-release.)
 			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
