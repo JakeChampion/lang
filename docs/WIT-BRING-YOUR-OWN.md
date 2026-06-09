@@ -1322,6 +1322,17 @@ world-driven composer (P2) wires it.
        handler is a program that calls the request/response **resource methods**
        (`@import` externs — the P5 import side already lowers these) and a
        run-harness (the host drives `incoming-handler`).
+     - **Slice 6 self-host parity — ✅ Done (test-only).** The composer is Go-only
+       (the self-host composer was retired), so the self-host's role for 6a/6b/6c
+       is emitting a compatible `@export` *core*: handles erase to i32, void is a
+       normal void function, and an owned local handle's auto-drop emits the
+       `[resource-drop]` import (the P5 self-host drop port). No `wasm.fern` change
+       was needed — `TestSelfHostExportResourceHandleComposes` confirms the
+       self-hosted compiler emits a void handler core taking a `borrow Thing`
+       param that also constructs + drops a local `own Thing` (so the core carries
+       `[resource-drop]thing`), and the Go composer lifts it: surfaces the handle
+       param's resource, wires the drop, and the component validates with
+       `borrow<thing>` + a `resource.drop`.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
