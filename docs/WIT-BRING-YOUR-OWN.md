@@ -1173,8 +1173,24 @@ world-driven composer (P2) wires it.
      (a later slice). Byte-pinned by `TestPutTypeSectionOneFuncGeneral_Bytes`;
      run end-to-end by `TestExportListParamRunsViaConsumer` (a Fern exporter sums
      an `i32[]`, a Fern consumer `@import`s `sum(xs: list<s32>) -> s32` and gets
-     `100` from `[10,20,30,40]`, linked + run under wasmtime). The self-host port
-     follows next.
+     `100` from `[10,20,30,40]`, linked + run under wasmtime).
+   - **Slice 5f self-host — numeric-array (`list<T>`) parameter export. ✅ Done.**
+     `wasm.fern`'s `build_export_wrapper` gained the array-param case. The
+     canonical realloc lift passes `(ptr,len)` with the elements contiguous at
+     their stride; the wrapper rebuilds the self-host array (`__fern_arr_box`,
+     `[len@0]`, elements at +8 in native slots — mirroring the import array-result
+     wrapper) and passes its block base to the Fern func. The slot/local
+     accounting was generalised so a string *or* numeric-array param takes two
+     wrapper slots + one block local (`nblk`). `extern_exports` /
+     `export_needs_heap` / `export_needs_realloc` now fire for an array param, and
+     the `arr_helpers` (→ `__fern_arr_box`) emission is gated on
+     `module_has_array_param_export`. Gated by
+     `TestSelfHostExportListParamRunsViaConsumer` (the self-host emits the
+     `sum(xs: i32[])` exporter core, the Go composer lifts it with the realloc
+     lift, and a Fern consumer gets `100` from `[10,20,30,40]` under wasmtime);
+     the self-compile / printer / checker oracles stay green (the self-host source
+     has no array-param `@export`, so the shared paths are unchanged). **P6
+     numeric-array param exports are now complete in both compilers.**
    - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`
