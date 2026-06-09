@@ -153,3 +153,84 @@ use-after.
   the move + agree across all call sites): more powerful but needs
   whole-program agreement; the explicit `own` annotation is the tractable
   first cut.
+
+## Empirical findings (implementation session 2)
+
+Hands-on probing while landing the runtime/checker building blocks (#2524)
+sharpened — and in one place corrected — the plan above. Recorded here so the
+next attempt at step 1 starts from ground truth, not the original guesses.
+
+### Correction: there is NO own-param-transfer leak
+
+An earlier note (and #2524's description) claimed a *pre-existing* leak in
+plain `own`-param transfer — a fresh value passed to an `own` param that frees
+it at exit "growing the bump cursor in a loop". **That was a measurement
+artifact, not a leak.** It came from a single-process probe that called
+`run(500)` then `run(5000)` in the *same* process: the second loop reuses the
+first's freelist population, so its bump delta is ~0 while the first pays
+warm-up — the two deltas differ even when memory is bounded. The *known-bounded*
+in-place sort exhibits the identical false "leak" under that probe, which is
+what exposed the flaw. Measured correctly (two **separate** processes, each
+paying its own warm-up — the methodology `internal/e2e`'s bounded tests already
+use), plain `own`-param transfer is **bounded**. No leak to fix.
+
+### What already works (verified end-to-end, x86-64)
+
+- **`own`-param self-append** `p = p.append(x)` reclaims grow intermediates
+  (#2524), bounded, `__rc_underflow_count() == 0`.
+- **`own`-param move-and-rebind** `p = merge(p, ..)` where `p` is an `own`
+  parameter and `merge` takes `own` — bounded, no over-release. The existing
+  `movedLocals` / overwrite-drop machinery already handles the `own`-param case
+  (this is why the self-host's *builder* functions, whose accumulator is a
+  parameter, are reachable today once annotated).
+- **All-`own`-pointer-param call result** recognised as owned (#2524), so
+  `consume(build(own ops, x))` transfers.
+
+### Why step 1 (LOCAL move-and-rebind) is harder than "reuse `own`-param machinery"
+
+The plan said to reuse the `E050`/`movedLocals` path for locals. Two concrete
+walls make that unsound as-is:
+
+1. **The `own` affine model is deliberately STRICT: every whole-value call
+   argument is a move/consume — even to a BORROWED parameter.** (`sink(xs:
+   i32[])` borrows, yet `f(own xs){ sink(xs); sink(xs); }` is `E050` by design;
+   `TestOwnedUseAfterCallConsume` pins this.) `own`-param code respects that by
+   only ever *borrowing* via methods / index / field projections. **General
+   locals do not** — stdlib code freely does `f(buf); g(buf)` with a reused
+   local. So forcing every owned local through the strict affine walk raises
+   **false `E050`s** in existing code (observed: a `buf` local in string
+   stdlib). A precision fix — "an arg to a borrowed param is a borrow, not a
+   consume" — *does* clear the false positives, **but it contradicts the
+   intended strict `own` semantics and breaks the four `TestOwned*Consume*`
+   contracts.** Locals therefore need their *own* precise move-tracking
+   (consume only into `own` positions), kept **separate** from the `own`-param
+   strict-affine set — not a shared `owned` map.
+
+2. **The IR suppresses the moved-out drop for `own` *params* but not for
+   *locals*.** `out = f(.., out, ..)` on an owned **local** double-frees: `out`
+   is moved into `f`'s `own` param, then the reassignment's overwrite-drop frees
+   the old `out` again (observed `__rc_underflow_count() != 0`). The `own`-param
+   path (pattern above) is correct, so `computeMovedLocals` / the assignment
+   overwrite-drop must be extended to recognise *a local consumed by the RHS
+   call of its own reassignment* and skip that drop.
+
+3. **The all-`own`-pointer-param result rule is too conservative for the
+   self-host's real builders.** `collect_assigned_stmt(st: Stmt, out: string[])`
+   reads a *borrowed* `st` and threads an `own` `out`; its result is `out`, but
+   the borrowed `st` makes the rule say "could return a borrow" → not owned. To
+   thread its result onward needs a **return-ownership analysis** (the function
+   returns only fresh / `own`-param values, never a borrowed param) — the
+   checker-side analogue of the IR's `returnsNoParamEscape`.
+
+### Recommended sequencing for the next attempt
+
+- **Cheapest high-value path:** annotate the self-host's threading so the
+  accumulator is an **`own` parameter** wherever possible (pattern that already
+  works) and **restructure the few top-level `var out = []; out = f(.., out)`
+  local accumulators** (e.g. `collect_assigned`) into `own`-param threading —
+  sidestepping the LOCAL move-and-rebind design entirely. Measure the
+  self-compile working set after annotating the hot builders.
+- **If locals are unavoidable**, implement them as a *separate* precise
+  move-tracker (walls 1–2) plus the return-ownership analysis (wall 3); gate on
+  the soundness matrix above **plus** a no-false-`E050`-regression sweep over the
+  whole stdlib (the blast radius that bit this session).
