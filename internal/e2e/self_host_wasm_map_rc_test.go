@@ -97,6 +97,15 @@ func TestSelfHostRcMapGrowWasm(t *testing.T) {
 		// reclaim each cycle (no OOM), detector clean — the string-value leak
 		// closed (50k leaked value strings would exhaust memory).
 		{"map-str-value-churn", "function mk(): i32 { var m = map_new_i32(2); var a: string = \"k\" + \"1\"; var b: string = \"k\" + \"2\"; m = m.insert(1, a); m = m.insert(2, b); return m.get_or(1, \"\").len() + m.get_or(2, \"\").len(); } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 4},
+		// ARRAY value (i32[]): value-correct via index read + the array buffer is
+		// construction-inc'd on insert and reclaimed (arr_dec) on the map's death.
+		{"map-arrval-get", "function main(): i32 { var m = map_new_i32(8); m = m.insert(1, [40, 2]); var xs = m.get_or(1, [0, 0]); return xs[0] + xs[1] + __fern_rc_underflow_count(); }", 42},
+		// Churn: 200k i32[]-valued maps built + freed; the array buffers reclaim
+		// each cycle (no OOM), detector clean — complete for scalar-element arrays.
+		{"map-arrval-churn", "function mk(): i32 { var m = map_new_i32(2); m = m.insert(1, [1, 2, 3, 4]); m = m.insert(2, [5, 6, 7, 8]); var xs = m.get_or(1, [0]); return xs[3]; } function main(): i32 { var k = 0; var s = 0; while (k < 200000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 4},
+		// String key + i32[] value: the key AND the array buffer both reclaim each
+		// cycle across 200k, no OOM, detector clean.
+		{"map-strkey-arrval-churn", "function mk(): i32 { var m = map_new(2); var a: string = \"k\" + \"1\"; m = m.insert(a, [9, 8, 7]); var xs = m.get_or(a, [0]); return xs[0]; } function main(): i32 { var k = 0; var s = 0; while (k < 200000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

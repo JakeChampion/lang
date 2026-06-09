@@ -1958,3 +1958,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   remaining residual vs exact native parity: map ARRAY values aren't value-type-
   tracked (string + struct/enum are) + array-of-tuple closure captures route one
   level.
+- 2026-06-09: **wasm map ARRAY value reclaim (one level).** Closes the last
+  remaining map-value residual: an array-valued map (`Map[K, i32[]]` etc.) now
+  construction-incs its array value on insert and reclaims the buffer on the
+  map's death. The map value rc-flag (vis) is extended from "string OR
+  struct/enum" to also cover arrays via `insert_val_is_array` (array literal,
+  non-substring slice, or an arr_src-tracked ident — a scalar / string value
+  never matches, so the flat arr_dec on death can't corrupt a non-pointer). The
+  generic `$__fern_map_release` value loop's `arr_dec` then frees the buffer —
+  COMPLETE for a scalar-element array (i32[]/i64[]/f64[], the dominant case);
+  a string[]/struct[] value's elements leak one level (a sound residual — deep
+  per-element array-value release would need element-type routing). Array values
+  were already readable (index reads are type-agnostic, unlike struct field
+  access), so this is purely the RC gap. Coverage: `TestSelfHostRcMapGrowWasm`
+  gains map-arrval-get (value-correct), map-arrval-churn (200k i32[]-valued maps,
+  buffers reclaimed, no OOM), and map-strkey-arrval-churn (string key + array
+  value both reclaim across 200k). Full RC + bootstrap fixpoint + binary +
+  component wasm suites green; bootstrap-safe. With this, the only residuals vs
+  EXACT native parity are deep-element reclaim of pointer-element-array map
+  VALUES (string[]/struct[]) and array-of-tuple closure CAPTURES — both
+  one-level sound leaks of inner elements, the buffers/boxes themselves reclaim.
