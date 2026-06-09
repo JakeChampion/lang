@@ -69,6 +69,20 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// read_file Result: an owned option from a builtin is swept (counting) —
 		// the missing-file Err path is value-correct + detector clean.
 		{"option-readfile-result-swept", "function main(): i32 { var r = read_file(\"definitely_missing_xyz.txt\"); match (r) { Ok(s) => { return s.len(); }, Err(e) => { return 42 + __fern_rc_underflow_count(); } } }", 42},
+		// FREE + tag-guarded payload release: freeing a Some(heap string) at exit
+		// releases the string payload — value-correct + detector clean.
+		{"option-string-payload-released", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var o = Some(s); match (o) { Some(v) => { return v.len() + 38 + __fern_rc_underflow_count(); }, None => { return 0; } } }", 42},
+		// SAFETY: an Option<i32> scalar payload (a value >= heap_base, even, that
+		// looks like a heap pointer) must NOT be released — struct_field_kind_char
+		// returns 'i' for i32, so the payload is skipped (no corruption).
+		{"option-i32-payload-flat-safe", "function main(): i32 { var o = Some(262184); match (o) { Some(x) => { return 42 + __fern_rc_underflow_count(); }, None => { return 0; } } }", 42},
+		// Builder-escape: mk returns Some(string) (move-on-return); the caller's
+		// payload release frees the string exactly once (the enum_box_retain
+		// payload retain + the move balance it).
+		{"option-builder-escape-clean", "function mk(): Option[string] { var s: string = \"x\" + \"yz\"; return Some(s); } function main(): i32 { var o = mk(); var p = mk(); match (o) { Some(v) => { return v.len() + 39 + __fern_rc_underflow_count(); }, None => { return 0; } } }", 42},
+		// A churn of Some(heap string): payload release reclaims the strings (no
+		// growth), detector clean across many cycles.
+		{"option-string-churn-clean", "function mk(): i32 { var o = Some(\"a\" + \"b\"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

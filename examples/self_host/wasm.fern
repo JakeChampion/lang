@@ -1030,17 +1030,40 @@ function collect_opt_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[
     return acc;
 }
 
-// opt_exit_sweep_excl emits the Option/Result release sweep (counting
-// milestone: rc DEC via $__fern_rc_dec — no free, no payload release yet) of
-// every owned option local, except `excl` (the move-on-return slot). The
-// tag-guarded Some/Ok-payload recursive release + the $__fern_arr_dec free ride
-// on this when option free is flipped on.
+// emit_option_release frees one owned Option/Result local with the tag-guarded
+// payload recursive release: if it is the LAST owner ([p-8]==1, about to free)
+// AND the tag at [p] is 0 (Some/Ok — the payload-carrying variant), release the
+// payload at [p+4] according to its declared type (string / pointer-array via
+// $__fern_arr_dec_ptr / scalar-array / nested struct one level — a scalar
+// payload like Option<i32> is skipped), THEN free the box via $__fern_arr_dec.
+// `pt` is the Some/Ok payload type (from ol_payloads); the Err payload of a
+// Result (tag 1, untracked type) is a sound leak, like nested fields elsewhere.
+// Null-guarded (a conditionally-unassigned option local is 0). The
+// construction-incs (enum_box_retain's payload retain + the option-into-
+// container retains) pair with these decs so the payload balances.
+function emit_option_release(name: string, pt: string, cx: Ctx): string {
+    var o: string = "";
+    var pk: string = struct_field_kind_char(pt, cx);
+    if (pk == "a" || pk == "s" || pk == "S") {
+        var dec: string = "$__fern_arr_dec";
+        if (pk == "a" && array_field_elem_is_ptr(pt, cx)) { dec = "$__fern_arr_dec_ptr"; }
+        o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then (if (i32.eqz (i32.load (local.get $" + name + "))) (then (drop (call " + dec + " (i32.load (i32.add (local.get $" + name + ") (i32.const 4)))))))))))\n";
+    }
+    o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
+    return o;
+}
+
+// opt_exit_sweep_excl emits the Option/Result release sweep (FREE ON, with the
+// tag-guarded payload release via emit_option_release) of every owned option
+// local, except `excl` (the move-on-return slot). Each local's Some/Ok payload
+// type is recovered from ol_payloads.
 function opt_exit_sweep_excl(cx: Ctx, excl: string): string {
     var o: string = "";
     var i: i32 = 0;
     while (i < cx.opt_swept.len()) {
-        if (cx.opt_swept[i] != excl) {
-            o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.opt_swept[i] + ")))\n";
+        var name: string = cx.opt_swept[i];
+        if (name != excl) {
+            o = o + emit_option_release(name, lookup_pair(cx.ol_names, cx.ol_payloads, name), cx);
         }
         i = i + 1;
     }
@@ -1093,7 +1116,7 @@ function ret_struct_is_borrowed(e: parser.Expr, cx: Ctx): boolean {
 // sole ownership, no inc (that would leak). This subsumes the four
 // init_is_*_alias checks and extends them to borrowed field / index reads.
 function store_value_is_borrowed(v: parser.Expr, cx: Ctx): boolean {
-    if (init_is_arr_alias(v, cx.arr_src) || init_is_string_alias(v, cx) || init_is_tuple_alias(v, cx) || init_is_struct_alias(v, cx)) { return true; }
+    if (init_is_arr_alias(v, cx.arr_src) || init_is_string_alias(v, cx) || init_is_tuple_alias(v, cx) || init_is_struct_alias(v, cx) || init_is_option_alias(v, cx)) { return true; }
     match (v) {
         parser.ExprFieldAccess(fa) => {
             // A tuple index (t.N) is conservatively skipped here (tuple
