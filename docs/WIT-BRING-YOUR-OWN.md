@@ -1135,7 +1135,25 @@ world-driven composer (P2) wires it.
      `≥ 64` two-byte s33 case), and run end-to-end by
      `TestExportListResultRunsViaConsumer` (a Fern exporter returns
      `[10,20,30,40]`, a Fern consumer `@import`s `iota() -> list<s32>` and reads
-     it back, linked + run under wasmtime). The self-host port follows next.
+     it back, linked + run under wasmtime).
+   - **Slice 5e self-host — numeric-array (`list<T>`) result export. ✅ Done.**
+     `wasm.fern`'s `build_export_wrapper` now emits the array-result branch. A
+     self-host array value is the block base (`[len@0]`, elements at +8 in
+     native slots), and the self-host heap isn't aligned, so — like the import
+     array *param* wrapper, not the zero-copy Go side — the wrapper **copies**
+     the elements into a fresh 8-aligned buffer (`extern_array_param_supported`
+     element kinds: i32/u32/f32 slot 4, i64/u64/f64 slot 8) before writing the
+     4-byte-aligned `[buf,len]` canonical return area the Go composer's memory
+     lift reads. `extern_exports` surfaces the wrapper and `export_needs_heap`
+     pins `__fern_alloc` for an array-result export (no `cabi_realloc` — the
+     memory lift needs no realloc). u8/i16 arrays (slot ≠ canonical size) stay
+     deferred, as on the import side. Gated by
+     `TestSelfHostExportListResultRunsViaConsumer` (the self-host emits the
+     `iota(): i32[]` exporter core, the Go composer lifts it, and a Fern consumer
+     reads `[10,20,30,40]` back under wasmtime); the self-compile + printer +
+     checker oracles stay green (the self-host source has no array `@export`, so
+     the shared paths are unchanged). **P6 numeric-array result exports are now
+     complete in both compilers.**
    - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`
