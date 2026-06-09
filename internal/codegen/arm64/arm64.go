@@ -752,13 +752,32 @@ func (g *generator) emitAllocRuntime() {
 		g.emit("lsl x5, x5, #30") // x5 = 1 GiB
 		g.emit("cmp x0, x5")
 		g.emit("b.hi .Lalloc_bump")
-		g.emit("sub x1, x0, #1")
-		g.emit("clz x2, x1")      // x2 = leading zeros of (size-1)
-		g.emit("mov x3, #64")
-		g.emit("sub x3, x3, x2")  // x3 = 64-clz = bit position of next pow2
-		g.emit("mov x0, #1")
-		g.emit("lsl x0, x0, x3")  // x0 = rounded-up pow2 = bytes to bump
-		g.emit("add x1, x3, #128") // large class index (offset past 128 small)
+		// Round the request UP to 3 significant bits (1 leading + 2 mantissa)
+		// — ≤25% internal waste vs ≤2x. Grid spacing at 2^e is 2^(e-2);
+		// e = bsr(size) = 63 - clz(size). Bump the rounded capacity (x0) and
+		// derive the class from it so alloc and free agree.
+		g.emit("clz x2, x0")
+		g.emit("mov x3, #63")
+		g.emit("sub x3, x3, x2")   // x3 = e = bsr(size)
+		g.emit("sub x4, x3, #2")   // x4 = e-2 = grid-spacing exponent
+		g.emit("mov x6, #1")
+		g.emit("lsl x6, x6, x4")   // x6 = gran = 1<<(e-2)
+		g.emit("add x1, x0, x6")
+		g.emit("sub x1, x1, #1")   // x1 = size + gran - 1
+		g.emit("neg x7, x6")       // x7 = -gran
+		g.emit("and x0, x1, x7")   // x0 = cap = roundup(size, gran) = bytes to bump
+		// class = (e2-11)*4 + (mant-4) + 128 = 4*e2 + mant + 80, e2 = bsr(cap),
+		// mant = cap>>(e2-2) ∈ {4,5,6,7}. e2 recomputed so a carry into a new
+		// power of two bins right.
+		g.emit("clz x2, x0")
+		g.emit("mov x3, #63")
+		g.emit("sub x3, x3, x2")   // x3 = e2
+		g.emit("sub x4, x3, #2")   // x4 = e2-2
+		g.emit("lsr x1, x0, x4")   // x1 = mant = cap>>(e2-2)
+		g.emit("sub x3, x3, #11")
+		g.emit("lsl x3, x3, #2")   // x3 = (e2-11)*4
+		g.emit("add x1, x1, x3")
+		g.emit("add x1, x1, #124") // x1 = large class index
 		g.label(".Lalloc_fltry")
 		g.adrpAdd("x2", "__fern_freelist_heads")
 		g.emit("ldr x3, [x2, x1, lsl #3]") // head = heads[idx]
@@ -845,17 +864,32 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("sub x2, x2, #1") // small class index 0..127
 		g.emit("b .Lfree_push")
 		g.label(".Lfree_large")
-		// Mirror __fern_alloc's large tier: bin by next-power-of-two bit
-		// position + 128. >1 GiB is dropped (alloc never freelisted it).
+		// Mirror __fern_alloc's large tier exactly: round the logical size up
+		// to 3 significant bits and bin by the rounded capacity. >1 GiB is
+		// dropped (alloc never freelisted it).
 		g.emit("mov x5, #1")
 		g.emit("lsl x5, x5, #30")
 		g.emit("cmp x1, x5")
 		g.emit("b.hi .Lfree_ret")
-		g.emit("sub x2, x1, #1")
+		g.emit("clz x3, x1")
+		g.emit("mov x4, #63")
+		g.emit("sub x4, x4, x3")   // x4 = e
+		g.emit("sub x6, x4, #2")   // x6 = e-2
+		g.emit("mov x7, #1")
+		g.emit("lsl x7, x7, x6")   // x7 = gran
+		g.emit("add x2, x1, x7")
+		g.emit("sub x2, x2, #1")
+		g.emit("neg x7, x7")
+		g.emit("and x2, x2, x7")   // x2 = cap
 		g.emit("clz x3, x2")
-		g.emit("mov x4, #64")
-		g.emit("sub x4, x4, x3")
-		g.emit("add x2, x4, #128") // large class index
+		g.emit("mov x4, #63")
+		g.emit("sub x4, x4, x3")   // x4 = e2
+		g.emit("sub x6, x4, #2")   // x6 = e2-2
+		g.emit("lsr x3, x2, x6")   // x3 = mant
+		g.emit("sub x4, x4, #11")
+		g.emit("lsl x4, x4, #2")   // x4 = (e2-11)*4
+		g.emit("add x3, x3, x4")
+		g.emit("add x2, x3, #124") // x2 = large class index
 		g.label(".Lfree_push")
 		g.adrpAdd("x3", "__fern_freelist_heads")
 		g.emit("ldr x4, [x3, x2, lsl #3]") // old head

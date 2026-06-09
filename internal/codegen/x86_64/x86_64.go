@@ -3063,12 +3063,29 @@ func (g *generator) emitAllocRuntime() {
 		g.label(".Lalloc_large")
 		g.emit("cmp rdi, 0x40000000") // >1 GiB: bump-only, never freelisted
 		g.emit("ja .Lalloc_bump")
-		g.emit("lea rax, [rdi - 1]")
-		g.emit("bsr rcx, rax")          // rcx = floor(log2(rdi-1)) >= 11
-		g.emit("inc rcx")               // bit position of the next power of two
-		g.emit("mov rdi, 1")
-		g.emit("shl rdi, cl")           // rdi = rounded-up pow2 = bytes to bump
-		g.emit("lea rax, [rcx + 128]")  // large class index (offset past 128 small)
+		// Round the request UP to 3 significant bits (1 leading + 2 mantissa)
+		// instead of the next power of two — ≤25% internal waste vs ≤2x. The
+		// grid spacing at magnitude 2^e is 2^(e-2): round rdi up to a multiple
+		// of that, giving the bytes to bump (rdi), then derive the class from
+		// the rounded capacity so alloc and free agree.
+		g.emit("bsr rcx, rdi")      // rcx = e = floor(log2(size)) >= 11
+		g.emit("lea r8, [rcx - 2]") // r8 = e-2 = grid-spacing exponent
+		g.emit("mov r9, 1")
+		g.emit("mov rcx, r8")
+		g.emit("shl r9, cl")        // r9 = gran = 1<<(e-2)
+		g.emit("lea rax, [rdi + r9 - 1]")
+		g.emit("neg r9")
+		g.emit("and rax, r9")       // rax = cap = roundup(size, gran)
+		g.emit("mov rdi, rax")      // rdi = cap = bytes to bump
+		// class = (e2-11)*4 + (mant-4) + 128, where e2 = bsr(cap) (recomputed
+		// so a round-up that carried into a new power of two is binned right)
+		// and mant = cap>>(e2-2) ∈ {4,5,6,7}. Folds to 4*(e2-2) + mant + 88.
+		g.emit("bsr rcx, rax")      // rcx = e2 = floor(log2(cap))
+		g.emit("lea r8, [rcx - 2]") // r8 = e2-2
+		g.emit("mov rdx, rax")
+		g.emit("mov rcx, r8")
+		g.emit("shr rdx, cl")       // rdx = mant = cap>>(e2-2)
+		g.emit("lea rax, [rdx + r8*4 + 88]") // large class index
 		g.label(".Lalloc_fltry")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // head
@@ -3157,17 +3174,26 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("sub rax, 1") // small class index 0..127
 		g.emit("jmp .Lfree_push")
 		g.label(".Lfree_large")
-		// Mirror __fern_alloc's large tier: bin by next-power-of-two bit
-		// position + 128. The same logical size that was rounded up at
-		// alloc rounds up to the same class here, so the block returns to
-		// the class whose capacity it was bumped at. >1 GiB is dropped
-		// (alloc never freelisted it).
+		// Mirror __fern_alloc's large tier exactly: round the logical size up
+		// to 3 significant bits and bin by the rounded capacity, so a block
+		// returns to the class whose capacity it was bumped at. >1 GiB is
+		// dropped (alloc never freelisted it).
 		g.emit("cmp rsi, 0x40000000")
 		g.emit("ja .Lfree_ret")
-		g.emit("lea rax, [rsi - 1]")
+		g.emit("bsr rcx, rsi")
+		g.emit("lea r8, [rcx - 2]")
+		g.emit("mov r9, 1")
+		g.emit("mov rcx, r8")
+		g.emit("shl r9, cl")        // r9 = gran
+		g.emit("lea rax, [rsi + r9 - 1]")
+		g.emit("neg r9")
+		g.emit("and rax, r9")       // rax = cap
 		g.emit("bsr rcx, rax")
-		g.emit("inc rcx")
-		g.emit("lea rax, [rcx + 128]")
+		g.emit("lea r8, [rcx - 2]")
+		g.emit("mov rdx, rax")
+		g.emit("mov rcx, r8")
+		g.emit("shr rdx, cl")       // rdx = mant
+		g.emit("lea rax, [rdx + r8*4 + 88]") // class
 		g.label(".Lfree_push")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // old head
