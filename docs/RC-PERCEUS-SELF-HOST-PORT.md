@@ -1502,3 +1502,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   box the io/extern option builders + Option/Result COUNTING (sweep option
   locals with inc-on-alias) then FREE with payload recursive release (a
   tag-guarded dec of the Some/Ok payload when it's rc-tracked).
+- 2026-06-09: **wasm Option/Result RC — io + map option builders boxed
+  (layout completion).** Extends the Option/Result rc-box layout from the
+  user-construction path (`enum_box_retain`, prev slice) to the runtime option
+  SOURCES that built `[tag@0][payload@4]` boxes raw: the 15 `$tmp`
+  `$__fern_alloc(8)` sites across the env / read_file / write_file preview1+2
+  helpers, and the `$bx` box in `$__fern_map_get` (map `.get` → Option). All
+  now use `$__fern_str_box(8)` so every option/result a program can hold —
+  whether `Some(x)` / `Ok`/`Err`/`None` literals, a `read_file` Result, an
+  `env` Option, or a map lookup — carries an rc word at `[p-8]` with tag@[p],
+  payload@[p+4] unchanged. (The 3 extern `@import` option/struct/enum result
+  boxes — `$s`/`$d` — remain raw for now: rarer, and value-safe while option
+  free is off; they'll box or be sweep-excluded when counting lands.) This is
+  the last layout prerequisite for Option/Result COUNTING — a swept option
+  local from any common source now has a valid rc header. Validated by the
+  read_file/write_file/env component-io tests + the map suite (the option
+  boxes are p-relative, so boxing is transparent to every match/`?`/`.get`
+  reader); full RC + component + binary + shim + interp + cli wasm suites
+  green; bootstrap-safe; free still OFF. Next: Option/Result counting (sweep
+  option locals + inc-on-alias + move/retain) then free with the tag-guarded
+  Some/Ok-payload recursive release.
