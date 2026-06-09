@@ -15,7 +15,7 @@ import "std/test";
 // label so the diagnostic is grep-able.
 
 function test_path_is_set(): Option[string] {
-    // PATH is set on every POSIX-shaped OS lang targets. If a
+    // PATH is set on every POSIX-shaped OS Fern targets. If a
     // CI image somehow has it unset, this test will fail — but
     // that's the diagnostic we want.
     return test.assert_env_set("PATH");

@@ -274,7 +274,7 @@ decisions in step 1's emit rewrite.
   `Map[string, string]` plus `Map[i32, V]` somewhere, the
   i32-keyed clones would be additive dead code that the tree-
   shaker drops only if nothing reaches them. The dominant
-  Maps in lang's stated use case are `Map[string, string]`
+  Maps in Fern's stated use case are `Map[string, string]`
   (request headers, env vars, JSON object backing) so the
   worst case is two Map shapes per binary; binary-size impact
   should be small but worth measuring.

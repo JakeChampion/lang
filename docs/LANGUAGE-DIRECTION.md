@@ -359,7 +359,7 @@ Deferred to a follow-up:
   disambiguate from `arr[i]`. Inference covers the
   ergonomic baseline.
 - Generic constraints (`T: Eq`, `T: Hash`). Probably never —
-  the lang doesn't have a trait system; users pass functions
+  the Fern doesn't have a trait system; users pass functions
   explicitly when they need polymorphism beyond what's
   captured by the type variable alone (Gleam's posture).
 
@@ -465,17 +465,17 @@ Deferred to a follow-up:
     entries, follows each cell pointer, and `__memcpy`s the
     8 payload bytes into a real wide-stride `i64[]` / `f64[]`
     result; narrow V falls through to the existing
-    `__map_values_impl` lang-prelude function.
+    `__map_values_impl` Fern-prelude function.
     Trade-off: one extra alloc per insert + one extra
     indirection per read; acceptable under the bump
     allocator's per-arena reset and avoids a
     per-instantiation monomorph of the entire 1200-line
     map runtime. The longer-term direction is to migrate
-    the map runtime itself to the lang prelude (matching
+    the map runtime itself to the Fern prelude (matching
     the json / url / parse_int trajectory) so the IR's
     Width-aware Store / Load picks the right ops without
     boxing — that requires a few prelude primitives the
-    lang doesn't yet expose (raw byte-buffer alloc, manual
+    Fern doesn't yet expose (raw byte-buffer alloc, manual
     byte-stride pokes for the bucket / entries arrays),
     so the boxing shape ships first.
   - Wide K (i64 / u64 / f64 keys) is still deferred —
@@ -803,7 +803,7 @@ to smallest. Status pending unless marked.
   in `internal/ir/ir.go`) — one block of code emits the
   alloc + memcpy + width-correct tail store for every stride
   class (1 / 2 / 4 / 8 bytes; integer + float). Earlier
-  shape used 5 nearly-identical lang-prelude functions
+  shape used 5 nearly-identical Fern-prelude functions
   (`__array_append_string` / `_i64` / `_f64` / `_u8` /
   `_u16`), 5 mangled FuncSigs, 5 codegen aliases, 5
   treeshake aliases, and a per-stride dispatch switch in the
@@ -999,9 +999,9 @@ tests.
     embedded whitespace, and out-of-range values
     (overflow, `+`-prefixed). Internal accumulator is i64
     so the bound check against the signed-i32 range
-    (`-2^31..=2^31-1`) is exact. **Migrated to the lang
+    (`-2^31..=2^31-1`) is exact. **Migrated to the Fern
     prelude** in PR 174 — was ~190 lines of hand-written
-    wat, now ~25 lines of lang code in
+    wat, now ~25 lines of Fern code in
     `internal/prelude/prelude.fern`.
   - **`s.parse_float()` shipped.** `string` method returning
     `Option[f32]`. Grammar: `[-]<digits>[.<digits>]
@@ -1109,7 +1109,7 @@ Two flavours of stdlib helper coexist:
    call sites (`OpCallDirect "name"`); helper bodies bypass
    the IR entirely.
 
-2. **Lang prelude (IR-routed).** `internal/prelude/prelude.fern`
+2. **Fern prelude (IR-routed).** `internal/prelude/prelude.fern`
    — a small embedded source file parsed at checker startup
    and prepended to the user's program. Goes through the
    regular parser → checker → IR → codegen pipeline like any
@@ -1124,13 +1124,13 @@ Two flavours of stdlib helper coexist:
 Migration is incremental: each high-level helper moves from
 wat to prelude on its own; the runtime core stays in wat
 because the operations needed (memory.copy, memory.grow, raw
-loads/stores, hash mixing) aren't expressible at the lang
+loads/stores, hash mixing) aren't expressible at the Fern
 level today.
 
 **Performance comparison** (rough, based on the existing
 helpers):
 
-| Aspect                          | Hand-written wat   | IR-routed lang    |
+| Aspect                          | Hand-written wat   | IR-routed Fern    |
 |---------------------------------|--------------------|-------------------|
 | Tight loops (memcpy, scan, hash) | optimal           | within 10%, maybe |
 | Tiny helpers (`s.is_empty()`)    | direct one-op     | call overhead     |
@@ -1144,7 +1144,7 @@ portability**, not raw performance. For most helpers the
 generated code is comparable; for hot paths (the Map runtime,
 hash mixing, the bump allocator) hand-written wat is meaningfully
 faster because we control the exact ops without going through
-the lang's abstraction layers.
+the Fern's abstraction layers.
 
 **Migration path** (split into per-helper PRs):
 
@@ -1158,7 +1158,7 @@ the lang's abstraction layers.
    and `f32/f64` receivers — built-in scalar receivers go
    through the same hoisting + dispatch as struct / enum
    methods. First migration: `s.is_empty()` — was 11 lines
-   of hand-written wat, now 3 lines of lang.
+   of hand-written wat, now 3 lines of Fern.
 2. **Phase B: migrate higher-level stdlib.** `parse_int`,
    `parse_float`, `s.repeat`, `url_encode`, `url_decode`,
    `query_parse`, `url_parse`, `json_encode`, `json_parse`,
@@ -1182,10 +1182,10 @@ the lang's abstraction layers.
    tiny `__fern_alloc` + length-prefix sealer. Signatures
    registered in the checker so the prelude can call them
    like any builtin. Drives buffer-management code that
-   doesn't yet have a clean lang-level shape — the
+   doesn't yet have a clean Fern-level shape — the
    remaining wat string methods (`to_lower`, `to_upper`,
    `bytes`) migrated using these primitives, then the Map
-   runtime followed (~1184 wat lines → ~280 lang lines).
+   runtime followed (~1184 wat lines → ~280 Fern lines).
    The map's `__method_Map_*` calls keep their type-rich
    FuncSigs registrations (the language doesn't yet have
    generic methods on a generic struct), with a codegen
@@ -1203,11 +1203,11 @@ the lang's abstraction layers.
    no-op since an owned-array value already IS the data
    pointer (length lives at data-4). Together with the
    bulk-memory shims this is enough to express growable-
-   buffer scratch code in lang without dropping into wat.
+   buffer scratch code in Fern without dropping into wat.
 
 **Why not migrate everything at once:**
 
-- Lang is missing some primitives the prelude would want
+- Fern is missing some primitives the prelude would want
   for the most aggressive helpers: `i32 ↔ f32` bit-cast (for
   the float formatter's exponent bit pattern), `memory.copy`
   shim (for the json buffer). Add these incrementally.
@@ -1224,7 +1224,7 @@ the lang's abstraction layers.
   call overhead per use.
 - Each migration removes per-PR risk: the migrated helper is
   validated against the existing test suite (no behavior
-  change), so the wat → lang transition is observable only
+  change), so the wat → Fern transition is observable only
   in the wasm size + readability of the source, not in the
   user-visible behavior.
 
@@ -1296,7 +1296,7 @@ TigerStyle is a tight engineering culture — NASA Power of
 Ten, zero-tech-debt, statically-allocated, assertion-rich.
 Not all of it transplants to a tree-walking Go compiler, but
 the heart of it (proactive design, limits-on-everything,
-named-with-meaning) maps cleanly onto the lang's own
+named-with-meaning) maps cleanly onto the Fern's own
 runtime + the prelude. We're already accidentally Tiger-
 flavoured in several places — codifying the matches makes
 future contributors arrive at the same shape without
@@ -1326,7 +1326,7 @@ guessing.
 
 **Adopting:**
 
-- *Limits-on-everything pushed into user lang.* Add an
+- *Limits-on-everything pushed into user Fern.* Add an
   `assert(cond, "msg")` builtin that traps with a source-
   positioned message in debug builds (and elides under
   `-O`). Encourages handler authors to assert preconditions
@@ -1376,7 +1376,7 @@ guessing.
   with the per-request arena model — handler code allocates
   freely, the arena resets at request end. Cheaper and
   simpler than reserving fixed-size buffers up-front.
-- *No recursion.* Lang user code is fine with recursion
+- *No recursion.* Fern user code is fine with recursion
   (matches every modern language). The IR layer avoids
   recursion in code paths that need bounded execution (the
   tail-call optimiser exists for that), but the AST walk
@@ -1416,14 +1416,14 @@ pure function can't suspend."
 **What translates well:**
 
 - *Pending effects as a row.* Already overlap with what
-  Roc and Koka do. For lang, a return type like
+  Roc and Koka do. For Fern, a return type like
   `function handle(req): HttpResponse <io, throws[Bad
   Request]>` reads cleanly and the checker can verify
   call-site effect closure. We already track `void` vs
   result types; this is the same idea at finer
   granularity.
 - *Auto-widening pure → effectful.* No need for explicit
-  `pure(x)` wrapping. Already the lang's posture —
+  `pure(x)` wrapping. Already the Fern's posture —
   `i32` values flow through `Option`/`Result` without
   ceremony, and an effect row should follow the same
   rule: any `T` is `T <>` (empty row), widens up to any

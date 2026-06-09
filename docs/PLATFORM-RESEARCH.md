@@ -283,7 +283,7 @@ the user shouldn't pay latency for, this is the right shape.
   needs a *binding* concept. Sketch:
 
   ```toml
-  # lang.toml — per-deployment configuration
+  # fern.toml — per-deployment configuration
   [bindings.sessions]
   kind = "kv"
   namespace = "prod-sessions"
@@ -301,7 +301,7 @@ the user shouldn't pay latency for, this is the right shape.
   completion (response-ready vs cleanup-done) shows up in
   WASI Preview 2 as well — `wasi:io/poll` lets the
   application register pollables that the host keeps alive
-  after the response writes. The lang surface could expose
+  after the response writes. The Fern surface could expose
   this as `plat.background(task)` returning unit.
 
 - **Service bindings as the cross-handler-call shape.** If
@@ -436,9 +436,9 @@ Three things to note:
 HttpResponse` shape.** It's *not* aligned with the wasi-http
 canonical shape:
 
-- The lang handler returns a struct, the WIT expects
+- The Fern handler returns a struct, the WIT expects
   write-into-sink.
-- The lang handler has the full `HttpRequest` as a struct
+- The Fern handler has the full `HttpRequest` as a struct
   with `req.body: string` (eagerly read); the WIT exposes
   `incoming-request` as a resource with `consume → input-
   stream` (pull as needed).
@@ -486,7 +486,7 @@ won't work for streaming responses or for >1 MiB requests.
 
 **Considered, left:**
 
-- *Resource types as a first-class lang concept.* WIT
+- *Resource types as a first-class Fern concept.* WIT
   resources are owned-handles with a drop-on-scope-exit
   protocol. Our bump arena gives us this for free as long
   as the resource's drop is registered as an arena
@@ -819,7 +819,7 @@ target's `Platform` instance and threads it through.
 auto-promotes to ignore-the-platform during a grace period;
 flip after every example is updated.
 
-### 2. Define a `Platform` descriptor format (TOML or lang)
+### 2. Define a `Platform` descriptor format (TOML or Fern)
 
 **Cost: 1 week.** **Impact: high.**
 
@@ -838,10 +838,10 @@ Lives at `internal/platforms/<target>/platform.fern` (or
 `-target=...` resolution and generates the per-target
 `Platform` struct + glue.
 
-Format question: lang-defined or TOML-defined. Lang-defined
+Format question: Fern-defined or TOML-defined. Fern-defined
 gets us static-checking of the capability signatures
 against the target's WIT files; TOML-defined is simpler
-but pushes shape errors to runtime. Lean lang-defined for
+but pushes shape errors to runtime. Lean Fern-defined for
 the typed-capability win.
 
 ### 3. Add `init()` as a recognised entry point
@@ -923,7 +923,7 @@ defining only some handlers gets only those exports.
 ### 6. Mock platform for tests
 
 **Cost: 2 weeks.** **Impact: high for test ergonomics; the
-test runner is already pure-lang per
+test runner is already pure-Fern per
 `internal/stdlib/std/test.fern`.**
 
 `MockPlatform` is a `Platform` impl that records every
@@ -951,7 +951,7 @@ indirection layer needed.
 **Cost: 2 weeks (config parser + checker + codegen).**
 **Impact: high for multi-environment deploys.**
 
-A per-deployment `lang.toml` (or per-target
+A per-deployment `fern.toml` (or per-target
 `*.platform.toml`) declares:
 
 ```toml

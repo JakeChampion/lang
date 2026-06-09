@@ -29,7 +29,7 @@ function check_len_nonneg(input: string): Option[string] {
 }
 
 // Property: an idempotent transform — `to_upper(to_upper(s))`
-// equals `to_upper(s)`. Pure-Lang invariant, no external state.
+// equals `to_upper(s)`. Pure-Fern invariant, no external state.
 function check_to_upper_idempotent(input: string): Option[string] {
     var once: string = input.to_upper();
     var twice: string = once.to_upper();

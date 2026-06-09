@@ -19,7 +19,7 @@ it when deciding what to ship next.
 | I | `IDE-COMPILATION-RESEARCH.md` | rust-analyzer, Roslyn, gopls, OCaml merlin, tree-sitter, Carbon | Thread cancellation tokens through parser + checker |
 | D | `DIAGNOSTIC-UX-RESEARCH.md` | Elm, Rust, ReasonML, TypeScript, Hare, codespan-reporting, ariadne, Idris | Multi-label diagnostics + structured `Diagnostic` type |
 | S | `STDLIB-DESIGN-RESEARCH.md` | hyper, Bun, simdjson, serde, jiff, NodaTime, Temporal, Go time, Rust io, WASI Preview 2 | Three breaking changes now: `body: Stream[bytes]`, real `HeaderMap`, six-type date/time |
-| M | `MODULE-PACKAGES-RESEARCH.md` | Cargo, Deno/jsr, Go modules, npm, Hex, Nix flakes, Swift PM, Bazel, dune | `lang.toml` + `lang.lock` with Minimum Version Selection |
+| M | `MODULE-PACKAGES-RESEARCH.md` | Cargo, Deno/jsr, Go modules, npm, Hex, Nix flakes, Swift PM, Bazel, dune | `fern.toml` + `fern.lock` with Minimum Version Selection |
 | C | `CONCURRENCY-RESEARCH.md` | Go, Trio, Erlang, Rust async, Java Loom, Pony, Kotlin, Zig, OCaml 5, Verona | `concurrent { … }` block; no function coloring |
 
 ## Reading order
@@ -110,7 +110,7 @@ investments that downstream recs assume.
    `Diagnostic` type.** Gates D's other recs *and* the
    LSP-side `relatedInformation` / `CodeAction` wiring.
 8. **R Rec §2: `Platform` descriptor format.** TOML or
-   lang-defined per-target file. Enables Tier C's mock
+   Fern-defined per-target file. Enables Tier C's mock
    platforms and Tier D's bindings.
 
 ### Tier C — Composition-on-the-foundation
@@ -248,8 +248,8 @@ B-§1 (two-impls-forever)
      └─ B-§5 (snapshot regeneration)
  └─ B-§6 (differential oracle)
 
-M-§1 (lang.toml)
- └─ M-§2 (lang.lock)
+M-§1 (fern.toml)
+ └─ M-§2 (fern.lock)
      └─ M-§3 (MVS)
      └─ M-§4 (content-addressed cache)
      └─ M-§5 (workspaces)
@@ -283,7 +283,7 @@ If you only do *one thing per doc*, do these:
 5. **D**: Structured `Diagnostic` type (Rec §2).
 6. **C**: `concurrent { … }` block + no function coloring (Recs §1+§2 as a pair).
 7. **B**: Two-implementations-forever posture (Rec §1).
-8. **M**: `lang.toml` + `lang.lock` with MVS (Recs §1+§2+§3 as a triple).
+8. **M**: `fern.toml` + `fern.lock` with MVS (Recs §1+§2+§3 as a triple).
 
 The cheapest single high-impact change: **I Rec §1**
 (cancellation tokens — 1 week, removes a whole class of

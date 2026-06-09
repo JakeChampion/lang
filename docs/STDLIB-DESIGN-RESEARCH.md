@@ -349,7 +349,7 @@ config, etc. Worth adding as a small helper:
   immediate-need for handler-shape workloads. Body sizes
   are bounded (1 MiB).
 - *SIMD-accelerated parser.* See above.
-- *jq-shape query language inside lang.* Too much surface
+- *jq-shape query language inside Fern.* Too much surface
   for the value.
 
 ### Date/time — the part every language gets wrong
@@ -487,7 +487,7 @@ Go's mistakes are well-known; not repeating them is mostly
 a matter of *picking the jiff/NodaTime shape and sticking
 to it*.
 
-#### Recommended shape for this lang
+#### Recommended shape for this Fern
 
 Six types, lowercase ergonomic:
 
@@ -671,12 +671,12 @@ Multi-return + early-exit error operator`).
 - **Rust `io::Read` / `io::Write`**: interface shape +
   sync-at-language-level posture.
 - **Go `io.Reader` / `io.Writer`**: same shape, simpler;
-  no associated types. Matches lang's posture better.
+  no associated types. Matches Fern's posture better.
 - **Zig `std.io.GenericReader`**: vtable-shaped Reader
   (Reader is a function pointer + context pointer pair).
   Useful when interfaces aren't first-class.
 - **WASI Preview 2 streams**: the platform-glue
-  implementation under sync-shaped lang surface.
+  implementation under sync-shaped Fern surface.
 - **tokio**: don't take async-shape into the language
   surface. Reasonable for long-lived servers, hostile to
   cold-start.

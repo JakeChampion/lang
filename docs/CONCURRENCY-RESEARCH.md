@@ -209,7 +209,7 @@ exit.
 **What translates:**
 
 - **Adopt the nursery shape.** The closest fit for arena-
-  per-request: a *scope* in lang has nursery semantics
+  per-request: a *scope* in Fern has nursery semantics
   by default. Spawning a task means spawning within the
   current scope; scope-exit waits for all tasks; error
   in any cancels the rest.
@@ -416,11 +416,11 @@ Sources:
 **What virtual threads don't fit:**
 
 - **Requires a runtime that can re-schedule threads.**
-  The JVM does this; AOT-compiled lang would need to
+  The JVM does this; AOT-compiled Fern would need to
   build a fibres-on-top-of-WASI scheduler. Doable but
   non-trivial.
 - **Cold-start.** JVM startup is huge. Not a problem for
-  lang (we're AOT) — but the scheduler we'd build pays
+  Fern (we're AOT) — but the scheduler we'd build pays
   cold-start tax.
 
 **What translates:**
@@ -827,7 +827,7 @@ it. Bounded capacity provides backpressure.
 **Cost: 2-3 weeks.** **Impact: needed for §1 to actually
 run.**
 
-The lang runtime maintains a `Poller` that owns
+The Fern runtime maintains a `Poller` that owns
 pending pollables (one per task waiting on I/O). On
 each scheduler tick:
 

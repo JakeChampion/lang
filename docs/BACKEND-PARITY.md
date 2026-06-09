@@ -29,8 +29,8 @@ will silently misbehave on a native target.* Highest leverage.
 Landed: `map_new` / `__method_Map_*` / `__method_MapIter_*` dispatch
 table mirroring arm64, plus the supporting runtimes (`__store_i32` /
 `__load_i32` / `__store_ptr` / `__load_ptr` / `__ptr_width` /
-`__memset`). The lang Map runtime in `prelude.fern` compiles
-unchanged. `TestX86_64Map` covers set/get, grow-past-capacity,
+`__memset`). The Fern Map runtime in `internal/stdlib/core/map.fern`
+compiles unchanged. `TestX86_64Map` covers set/get, grow-past-capacity,
 string keys, and iter-after-delete.
 
 ### File I/O on both native backends — partial
@@ -251,7 +251,7 @@ var buf: i32 = __load_ptr(m);   // truncates a 64-bit heap pointer
 ```
 
 On wasm32 this is correct (pointers are 32-bit). On native (Linux +
-Darwin) the runtime stores 8 bytes via `__store_ptr`, but the lang
+Darwin) the runtime stores 8 bytes via `__store_ptr`, but the Fern
 variable's `i32` declaration sheds the high 32 bits. Linux's
 `__fern_alloc` hints `0x10000000` so heap pointers happen to fit in
 32 bits; macOS ignores the hint and returns high addresses, exposing
@@ -264,7 +264,7 @@ the test suite to keep CI green; re-add it as a regression test
 alongside the fix.
 
 **Fix plan (revised after looking at Nature lang's type
-system)**: introduce a target-aware **`usize` lang type** modelled
+system)**: introduce a target-aware **`usize` Fern type** modelled
 on Nature's `int` (native-width signed) / `uint` (native-width
 unsigned). Concretely:
 
@@ -374,7 +374,7 @@ Translating to our shape:
 
 **Shares scope with the arm64-darwin truncation item above.** With
 type-hash dispatch, the Map runtime stops carrying `var entryK: i64
-= __load_ptr(...)` locals at the lang level (the value flows as
+= __load_ptr(...)` locals at the Fern level (the value flows as
 `anyptr` + per-call width-tagged load). That side-steps the wasm32
 "cast i64 → string" blocker we hit in the spike — the Map runtime
 no longer needs an `i64 → string` cast at all because string-keyed
@@ -443,7 +443,7 @@ list.
 **Remaining:**
 
   - **Two-word ABI flip** (lifts cap from 3 → 7 bytes on wasm,
-    15 on natives). Repurpose the lang string's runtime
+    15 on natives). Repurpose the Fern string's runtime
     representation to `(data_ptr:usize, len:usize)` on the
     operand stack — top bit of `len` flags inline. Niko-style;
     Rust / Swift / Zig std all converged on this shape.
@@ -532,7 +532,7 @@ fix. Items 5 / 6 are smaller and optional.
 
 Suggested sequencing:
 
-1. **`usize` lang type** (parity Item 1) — building block.
+1. **`usize` Fern type** (parity Item 1) — building block.
 2. **Type-hash Map dispatch** (parity Item 2) — unlocks Items 4
    and 5.
 3. **8-byte operand-stack slots** (perf Item 3) — independent;

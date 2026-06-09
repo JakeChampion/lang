@@ -1,7 +1,7 @@
 import "core/no_prelude";
 import "std/test";
 // examples/tests/lang_binary_e2e_test.fern — end-to-end
-// migration pattern: a Lang test file that drives the `lang`
+// migration pattern: a Fern test file that drives the `fern`
 // binary itself, asserts on its (exit_code, stdout, stderr)
 // triple, and scrubs its tempdir at the end via
 // `defer_cleanup`.
@@ -9,7 +9,7 @@ import "std/test";
 // This is the shape the migrated Go-side e2e suite will land
 // in. The test reads the path to the binary under test from
 // `$LANG_BIN`; CI exports it after `go build`, dev laptops
-// can `LANG_BIN=$PWD/lang go test`-style. When the env var
+// can `LANG_BIN=$PWD/fern go test`-style. When the env var
 // isn't set the whole suite skips cleanly rather than
 // cascading false failures.
 
@@ -51,7 +51,7 @@ function test_check_rejects_type_error(lang_bin: string): Option[string] {
 }
 
 function test_interp_reads_a_file(lang_bin: string, dir: string): Option[string] {
-    // Write a fixture to the tempdir, then point lang at it
+    // Write a fixture to the tempdir, then point Fern at it
     // via `-interp <path>` rather than stdin. Verifies the
     // file-path entry point + working-directory handling.
     var src_path: string = dir + "/prog.fern";
@@ -68,7 +68,7 @@ function main(): i32 {
     var r: test.TestRunner = test.test_new("lang binary e2e");
 
     // Gate the suite on $LANG_BIN being set + pointing at an
-    // executable. A best-effort sanity probe spawns `lang
+    // executable. A best-effort sanity probe spawns `fern
     // -interp -` with an empty stdin and inspects the exit
     // code; spawn failure (binary missing, not executable)
     // surfaces as 127 per the subprocess builtin's

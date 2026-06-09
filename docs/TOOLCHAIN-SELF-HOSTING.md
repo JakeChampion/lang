@@ -38,9 +38,9 @@
 
 Goal: eliminate every external compiler / assembler / linker / wasm
 helper the driver currently shells out to, replacing each with a
-Lang-native implementation. After all phases land, building a Lang
+Fern-native implementation. After all phases land, building a Fern
 program with `fern -o out src.fern` requires **no binary on `$PATH`
-other than the Lang compiler itself**.
+other than the Fern compiler itself**.
 
 This is a deliberate alternative to the position taken in
 `ROADMAP-AND-SELF-HOSTING.md`, which argues for keeping a thin
@@ -71,7 +71,7 @@ ARM64 assembler, x86-64 assembler, ELF linker, Mach-O linker
 
 ### Go-side baseline (already shipped)
 
-Independent of this doc's Lang-stdlib plan, a Go-side wasm pipeline
+Independent of this doc's Fern-stdlib plan, a Go-side wasm pipeline
 landed inside the compiler that's already retired several
 `wasm-tools` calls:
 
@@ -79,23 +79,23 @@ landed inside the compiler that's already retired several
   binary bytes — no WAT text, no `wasm-tools parse` round-trip. The
   old WAT backend (`internal/codegen/wasm/`) was deleted.
 - `internal/wasm/componenttype.Embed` writes the `component-type`
-  custom section for the `lang` and `http` worlds, replacing
+  custom section for the `fern` and `http` worlds, replacing
   `wasm-tools component embed`.
 - Supporting Go packages: `internal/wasm/{leb128,inst,module,
   encode,imports,memory,numeric,convert,sections}`.
 
-This is parallel to the Lang-stdlib effort the rest of the doc
-tracks; it doesn't *satisfy* Phase 1's "Lang-native" goal but it
+This is parallel to the Fern-stdlib effort the rest of the doc
+tracks; it doesn't *satisfy* Phase 1's "Fern-native" goal but it
 does shrink the day-to-day external-tool dependency to a single
-remaining shell-out (the row above). When the Lang-stdlib Phase 1
+remaining shell-out (the row above). When the Fern-stdlib Phase 1
 lands, the Go-side path becomes the fallback / debugging tool.
 
 ## Order of attack (smallest → largest)
 
 | Phase | Deliverable                                    | Replaces                         | Rough size  |
 |-------|------------------------------------------------|----------------------------------|-------------|
-| 1     | WAT-to-binary encoder in Lang                  | `wasm-tools parse`               | Small       |
-| 2     | Component Model writer in Lang                 | `wasm-tools component embed` + `new` | Small-medium |
+| 1     | WAT-to-binary encoder in Fern                  | `wasm-tools parse`               | Small       |
+| 2     | Component Model writer in Fern                 | `wasm-tools component embed` + `new` | Small-medium |
 | 3     | ELF object writer + static linker for arm64-linux | `aarch64-linux-gnu-gcc`        | Medium      |
 | 3b    | Same for x86_64-linux (mostly a relocation table swap) | `x86_64-linux-gnu-gcc`   | Small (after 3) |
 | 4     | Mach-O object writer for arm64-darwin          | the assembler half of `clang`    | Medium      |
@@ -109,18 +109,18 @@ format, tiny test surface, no platform quirks.
 
 Before any phase can land:
 
-1. **Lang needs a bytes-writing story.** The driver currently relies
-   on Go's `os.WriteFile`. We need a Lang stdlib API equivalent —
+1. **Fern needs a bytes-writing story.** The driver currently relies
+   on Go's `os.WriteFile`. We need a Fern stdlib API equivalent —
    `fs.write(path, bytes)` plus a mutable byte-builder type. If
    that doesn't exist yet, build it first; without it none of the
    new emitters can produce their output file.
-2. **Lang needs `u8` / `u16` / `u32` / `u64` little-endian write
+2. **Fern needs `u8` / `u16` / `u32` / `u64` little-endian write
    helpers** (`bytes.put_u32_le`, etc.) on the byte-builder. ELF,
    Mach-O, and wasm all serialise as little-endian integer streams.
 3. **A LEB128 encoder** (signed and unsigned). Wasm uses LEB128
    everywhere; ELF and Mach-O do not.
 4. **A SHA-256 implementation** (only needed in Phase 5 for Mach-O
-   ad-hoc codesigning). Pure Lang, ~200 lines, well-specified.
+   ad-hoc codesigning). Pure Fern, ~200 lines, well-specified.
 
 Land 1–3 as part of Phase 1's preparatory work. Land 4 only when
 Phase 5 starts.
@@ -164,8 +164,8 @@ Replace the `wasm-tools parse prog.wat -o prog.wasm` call with a
 direct call to the new encoder. (As of the Go-side baseline, this
 shell-out is already gone — `internal/codegen/wasmbin` emits core
 binary bytes straight from IR, so there's no `wasm-tools parse`
-call left in the driver to delete. The Lang-stdlib encoder would
-become a second, pure-Lang path alongside it.) Keep WAT emission
+call left in the driver to delete. The Fern-stdlib encoder would
+become a second, pure-Fern path alongside it.) Keep WAT emission
 as an opt-in debug output behind `-emit-wat`.
 
 ### Exit criteria
@@ -181,7 +181,7 @@ as an opt-in debug output behind `-emit-wat`.
 ### Out of scope
 
 - WAT-as-input parsing. We're emitting from IR, not from WAT text.
-  If someone wants `lang wat2wasm` later, that's a separate tool.
+  If someone wants `fern wat2wasm` later, that's a separate tool.
 
 ### Progress
 
@@ -190,9 +190,9 @@ as an opt-in debug output behind `-emit-wat`.
   `uleb_size_u32` / `uleb_size_u64`. Vector-tested against the
   Wikipedia LEB128 reference examples and the wasm-spec edge cases
   (bit-6 transitions, multi-byte negatives, u32/u64/i64 widths) under
-  `internal/e2e/wasm_e2e_test.go` (TestWASMLeb128*). Pure Lang —
+  `internal/e2e/wasm_e2e_test.go` (TestWASMLeb128*). Pure Fern —
   takes a `u8[]` and appends; no I/O. Not wired into the driver
-  yet, per the "Lang code only, defer running it" decision.
+  yet, per the "Fern code only, defer running it" decision.
 - **Binary-container primitives shipped** in
   `internal/stdlib/std/wasm/encode.fern`: `put_module_header`
   (magic + version), `put_u32_le` (the one fixed-width integer the
@@ -298,13 +298,13 @@ as an opt-in debug output behind `-emit-wat`.
   section composer and several opcode encoders in one pass.
 - **End-to-end validation against wasm-tools shipped** in
   `internal/e2e/wasm_e2e_test.go::TestWASMModuleValidatesUnderWasmTools`.
-  A Lang program builds the minimal "function returning 42"
+  A Fern program builds the minimal "function returning 42"
   module via `module.build`, prints the 37 bytes as space-
   separated decimals; the Go test parses them back, writes them
   to disk, and pipes the file through `wasm-tools validate` (must
   pass) and `wasm-tools print` (output must contain `(type`,
   `i32.const 42`, and `main`). This is the strongest correctness
-  gate on the std/wasm stack: a Lang-produced byte sequence is
+  gate on the std/wasm stack: a Fern-produced byte sequence is
   now confirmed to parse as a valid wasm module under an
   independent reference tool, not just match a hand-computed byte
   vector.
@@ -312,8 +312,8 @@ as an opt-in debug output behind `-emit-wat`.
   a codegen IR program into a populated Module, and the driver-
   wiring step that routes through it. (The `wasm-tools parse`
   shell-out it was meant to replace is already gone — the Go-side
-  `wasmbin` path retired it; the Lang-stdlib encoder would be a
-  second, pure-Lang path.) The encoder now covers every construct
+  `wasmbin` path retired it; the Fern-stdlib encoder would be a
+  second, pure-Fern path.) The encoder now covers every construct
   the production backend emits, including the table + element
   sections and the `memory.copy` / `memory.fill` bulk-memory ops
   (`inst_memory_copy` / `inst_memory_fill` in memory.fern; tests
@@ -329,7 +329,7 @@ as an opt-in debug output behind `-emit-wat`.
 
 ### Progress (refreshed 2026-05-20)
 
-The Lang-stdlib component encoder (`internal/stdlib/std/wasm/component.fern`)
+The Fern-stdlib component encoder (`internal/stdlib/std/wasm/component.fern`)
 is now structurally complete for the WASI-style component wrapping
 the production driver needs. Every section the Component Model
 binary format defines has a composer, and the canonical
@@ -376,7 +376,7 @@ Supporting byte-constant exports: `section_*`, `core_sort_*` (7),
 #### Bridge encoder + first driver wiring (added 2026-05-20)
 
 `internal/wasm/component` now ships a Go-side port of the most-
-used Lang-stdlib composers — `PutComponentHeader`,
+used Fern-stdlib composers — `PutComponentHeader`,
 `PutCoreModuleSection`, the lift-export composers, the WASI-
 import composers, `BuildLiftedExportComponent`, and
 `WrapWasiImported`. The two implementations are pinned
@@ -434,7 +434,7 @@ End-to-end exit code 42 demo (covered by
     the binary parser; `InnerTypeResultEmpty` ships the
     `result<_, _>` defvaltype body. The `wasi:cli/exit` import
     in the driver registry uses this to match wasmtime's
-    canonical-ABI signature, so a Lang `exit(0)` component
+    canonical-ABI signature, so a Fern `exit(0)` component
     now LINKS AND RUNS under `wasmtime`. End-to-end test:
     `TestCmdLangComponentWrapWrapsExit` actually invokes
     `wasmtime run --invoke main()` and asserts a clean exit.
@@ -447,16 +447,16 @@ End-to-end exit code 42 demo (covered by
     packaged-instance form (component-instance section 0x01)
     rather than the sub-component form `wasm-tools` typically
     emits — simpler bytes, same semantics.
-  - **`-component-wrap-cli` driver flag** routes a Lang program
+  - **`-component-wrap-cli` driver flag** routes a Fern program
     through `BuildWasiCliRunComponent` (no imports) or the new
     `WrapWasiImportedAsCliRun` helper (preview-2 imports) so
     `wasmtime run prog.wasm` just works. Mutually exclusive with
     `-component-wrap`. End-to-end tests:
     `TestCmdLangComponentWrapCli` (no-imports, clean + non-zero
-    paths) and `TestCmdLangComponentWrapCliWithExit` (Lang
+    paths) and `TestCmdLangComponentWrapCliWithExit` (Fern
     `exit(0)` → wasi:cli/exit::exit + wasi:cli/run::run shapes
     in one component → wasmtime run + exit 0).
-  - **`random_get` migration.** Lang's `random_i32()` (newly
+  - **`random_get` migration.** Fern's `random_i32()` (newly
     surfaced as a checker built-in) now routes through
     `wasi:random/random@0.2.0::get-random-u64() -> u64` under
     `EmitOptions.Preview2WASI`. The preview-2 import returns a
@@ -472,7 +472,7 @@ End-to-end exit code 42 demo (covered by
     `PutTypeSectionInstanceWithInnerTypesAndOneFuncExport`
     handles both no-result and one-result functions. End-to-end
     test: `TestCmdLangComponentWrapCliWithRandom`.
-  - **`clock_time_get` (monotonic) migration.** Lang's
+  - **`clock_time_get` (monotonic) migration.** Fern's
     `monotonic_ns()` now routes through
     `wasi:clocks/monotonic-clock@0.2.0::now() -> u64` under
     `EmitOptions.Preview2WASI`. Cleanest migration yet — the
@@ -549,7 +549,7 @@ End-to-end exit code 42 demo (covered by
       `WrapWasiPrintAsCliRun` (#1248).
 
     **End-to-end test** `TestCmdLangComponentWrapCliWithPrint`:
-    Lang `print("hello world")` → `fern -target wasm-bin
+    Fern `print("hello world")` → `fern -target wasm-bin
     -component-wrap-cli` → `wasmtime run` → stdout `"hello
     world\n"`. No wasm-tools shell-out, no preview-1 adapter,
     no `--invoke` flag.
@@ -885,7 +885,7 @@ End-to-end exit code 42 demo (covered by
 
 
 Scope: replace `wasm-tools component embed` and `wasm-tools component
-new --adapt …` with a Lang implementation. As of 2026-05-20,
+new --adapt …` with a Fern implementation. As of 2026-05-20,
 `component embed` is *already* replaced on the Go side
 (`internal/wasm/componenttype.Embed`); the last remaining external
 call is `component new --adapt` at `cmd/fern/main.go:851` inside
@@ -923,7 +923,7 @@ Two options for dropping `component new --adapt`:
 **Chosen direction: option 2 (preview-2 native).** Bigger ABI work
 up front but the cleanest end state: every WASI call goes to
 preview-2 directly, no preview-1 indirection, no adapter blob to
-bundle. The Lang-stdlib component-section work already in flight
+bundle. The Fern-stdlib component-section work already in flight
 (see "Progress" above) feeds straight into 2's envelope writer.
 
 ### Spec
@@ -945,7 +945,7 @@ bundle. The Lang-stdlib component-section work already in flight
    and writes a custom section `component-type` into the module
    containing the encoded world type. This is the only thing it does
    to the module; the core wasm bytes are otherwise untouched.
-   (Already replaced Go-side; the Lang-stdlib version repeats the
+   (Already replaced Go-side; the Fern-stdlib version repeats the
    same trick.)
 2. **`component new --adapt`** wraps the embedded core module
    together with the adapter module into a Component Model envelope:
@@ -958,11 +958,11 @@ bundle. The Lang-stdlib component-section work already in flight
 
 ### Shortcut: skip WIT parsing
 
-The WIT files in `cmd/fern/wit/` are **fixed** — there's a `lang`
+The WIT files in `cmd/fern/wit/` are **fixed** — there's a `fern`
 world and an `http` world, both known at compile time. We do not
 need a general WIT parser. We can hand-write the encoded
 `component-type` payloads for each world as static byte arrays in
-Lang and inline them. If later we want users to bring their own WIT,
+Fern and inline them. If later we want users to bring their own WIT,
 revisit then.
 
 ### Files to create
@@ -990,7 +990,7 @@ fs.write(out_path, component);
 
 The adapter bytes (`wasi_snapshot_preview1.command.wasm`) can be
 embedded into the compiler binary via the same mechanism the WIT
-files use today (`//go:embed` equivalent — once Lang has a build-
+files use today (`//go:embed` equivalent — once Fern has a build-
 time `embed` we use that; until then keep them as an external file
 the driver loads).
 
@@ -1009,7 +1009,7 @@ the driver loads).
 ## Phase 3 — ELF object writer + static linker for arm64-linux
 
 Scope: replace `aarch64-linux-gnu-gcc -static -nostdlib -s prog.s -o
-out` with a Lang implementation that takes the **codegen IR** (not
+out` with a Fern implementation that takes the **codegen IR** (not
 the assembly text) and writes a static ELF executable directly.
 
 Like Phase 1, the simplest approach skips the text intermediate.
@@ -1218,7 +1218,7 @@ Spec is not officially published; the authoritative sources are:
 - `stdlib/macho/link.fern` — final-layout + load-command writer.
 - `stdlib/macho/codesign.fern` — SuperBlob + CodeDirectory
   writer. Depends on a SHA-256 implementation (`stdlib/crypto/sha256.fern`).
-- `stdlib/crypto/sha256.fern` — pure-Lang SHA-256. Reference impl:
+- `stdlib/crypto/sha256.fern` — pure-Fern SHA-256. Reference impl:
   RFC 6234 Appendix B. Test against the standard NIST vectors.
 
 ### Cross-compile caveat
@@ -1246,14 +1246,14 @@ runner, run it without re-signing.
 
 ## Risks / open questions
 
-- **Lang's `exec` story.** Today the compiler is in Go and uses
-  `os/exec`. The new emitters are pure Lang and don't need `exec` at
+- **Fern's `exec` story.** Today the compiler is in Go and uses
+  `os/exec`. The new emitters are pure Fern and don't need `exec` at
   all — that's a feature. But the broader self-hosting effort
-  (compiler-written-in-Lang) still needs `exec` to invoke things
+  (compiler-written-in-Fern) still needs `exec` to invoke things
   like `qemu-aarch64` from tests. That's a separate problem from
   this doc and not blocking.
 - **Embedding the adapter wasm.** Phase 2 needs the preview-1
-  adapter bytes baked into the compiler. Until Lang has a
+  adapter bytes baked into the compiler. Until Fern has a
   build-time `embed`, the driver has to read it from disk at
   startup. Acceptable interim.
 - **macOS version drift.** Apple has changed Mach-O load command
@@ -1270,16 +1270,16 @@ runner, run it without re-signing.
 
 ## What this plan deliberately doesn't cover
 
-- Replacing the Go-based compiler frontend with a Lang frontend.
+- Replacing the Go-based compiler frontend with a Fern frontend.
   That's the *compiler* self-hosting question, covered in
   `ROADMAP-AND-SELF-HOSTING.md`. This doc is only about the
   *toolchain* self-hosting question.
 - Supporting third-party object files / `.a` archives / dynamic
-  libraries. Lang programs are self-contained — we don't link
+  libraries. Fern programs are self-contained — we don't link
   against external `.o` files and have no plans to.
 - Replacing `wasmtime` (the runtime). wasmtime is only used in
   tests, not by the compiler. If we want to drop it, that's a
-  separate "Lang wasm interpreter" project.
+  separate "Fern wasm interpreter" project.
 - Replacing `qemu-aarch64` / `qemu-x86_64`. Same — test
   infrastructure only.
 

@@ -17,9 +17,9 @@
 // The output programs are valid standalone Linux ELF binaries
 // after `gcc -nostdlib -static <out>.s -o <out>`. A follow-up
 // Go-side test could exec them and assert the exit code matches
-// the lang-port's interp.fern on the same source — that would
-// be a real "lang emits running native code" demo. For now the
-// lang-side validation is substring assertions on the emitted
+// the Fern-port's interp.fern on the same source — that would
+// be a real "Fern emits running native code" demo. For now the
+// Fern-side validation is substring assertions on the emitted
 // text.
 //
 // Lowering shape — a textual stack machine. Each expr emits ops

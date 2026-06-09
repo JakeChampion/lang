@@ -1,7 +1,7 @@
 import "core/no_prelude";
 import "std/test";
 // examples/tests/unions_migrated_test.fern —
-// Lang port of `TestInterpScriptUnions` from
+// Fern port of `TestInterpScriptUnions` from
 // `internal/e2e/interp_script_test.go`.
 //
 // The original Go test pinned the union-desugar +

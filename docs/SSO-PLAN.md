@@ -106,7 +106,7 @@ review tractable.
 
 Walk `internal/prelude/prelude.fern`, update every string-
 typed return / arg / local to the new ABI. Most of the source
-is unaffected (lang-level code references `string` opaquely);
+is unaffected (Fern-level code references `string` opaquely);
 the prelude's hand-rolled `__str_*` helpers in `wasm.go` /
 `x86_64.go` / `arm64.go` are where the work is.
 
@@ -145,7 +145,7 @@ length-prefix code paths.
 - `Map[K, V]` runtime helpers (set / get / iter) for string
   keys/values change ABI.
 
-Programs only-using lang-level code remain source-compatible
+Programs only-using Fern-level code remain source-compatible
 (no syntax / semantic change to `string` itself).
 
 ## Estimated PR count
@@ -273,11 +273,11 @@ branches on `IsInlineWasm(len)`:
 - `$__fern_str_len` is removed entirely — replaced by the
   inline `len(s)` ⇒ `LengthWasm(len)` IR rewrite above.
 
-### Lang prelude
+### Fern prelude
 
 `internal/prelude/prelude.fern` is ~2k lines. Most prelude
 functions have string args / returns and don't change at
-the lang-source level — the compiler-side ABI flip means
+the Fern-source level — the compiler-side ABI flip means
 the lowered code calls the new wasm shapes automatically.
 Boundary conversion (e.g., when a string is stored into a
 generic `Map[K, V]` whose V is opaque) needs care.

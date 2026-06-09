@@ -4,14 +4,14 @@ import "std/test";
 import "std/headers";
 
 // examples/tests/header_map_migrated_test.fern —
-// Lang port of `TestInterpScriptHeaderMap` from
+// Fern port of `TestInterpScriptHeaderMap` from
 // `internal/e2e/interp_script_test.go`.
 //
 // The Go original was a 5-case table-driven test where
 // each subcase spawned a `fern -interp` subprocess, ran
 // a different inline program, and grep-asserted exit
 // code + stdout. The migrated form folds all 5 cases
-// into one Lang file: each `r.it(...)` exercises the
+// into one Fern file: each `r.it(...)` exercises the
 // same surface but asserts on the returned value
 // directly via `assert_eq` / `_i32` / the new
 // `assert_is_some_eq_string` (no subprocess, no

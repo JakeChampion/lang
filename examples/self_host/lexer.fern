@@ -1,5 +1,5 @@
 // examples/self_host/lexer.fern — a port of internal/lexer/lexer.go
-// into lang itself, exercising the language features that landed
+// into Fern itself, exercising the language features that landed
 // in the bug-hunt + feature-gap session:
 //
 //   - union types (Token = … | … | …)
@@ -45,7 +45,7 @@ pub struct TokString { value: string, line: i32, col: i32 }
 // TokError surfaces a lex failure (bad numeric suffix, unterminated
 // string, bare `0x`, unexpected character, …) as a first-class
 // token rather than masquerading as EOF. The Go lexer returns a
-// `*lexer.Error` through a side channel; lang has no exception /
+// `*lexer.Error` through a side channel; Fern has no exception /
 // multi-return-with-error idiom in this port, so the error rides
 // the token stream and `tokenize` stops at the first one. Parser
 // consumers already fall through these via their `_` match arms.
@@ -1033,7 +1033,7 @@ function test_fstring(): i32 {
 }
 
 // main runs every feature test in sequence and returns the first
-// non-zero code. Exit code 0 means the lang lexer port matches the
+// non-zero code. Exit code 0 means the Fern lexer port matches the
 // Go lexer across mixed tokens, hex / scientific literals, the
 // afterDot chained-tuple guard, suffix validation, and the error
 // paths.

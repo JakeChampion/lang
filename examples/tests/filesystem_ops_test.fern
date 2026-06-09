@@ -13,7 +13,7 @@ function test_temp_dir_returns_abs_path(): Option[string] {
         Ok(dir) => {
             // Best-effort absolute-path check: every supported
             // OS roots its temp dir under `/`. (Windows isn't
-            // a Lang target; on POSIX-likes the prefix holds.)
+            // a Fern target; on POSIX-likes the prefix holds.)
             var ok: boolean = dir.starts_with("/") || dir.starts_with("\\");
             // Don't leak: remove the directory we just made.
             match (remove_dir_all(dir)) { None => { }, Some(_) => { } }

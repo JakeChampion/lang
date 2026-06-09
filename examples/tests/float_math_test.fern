@@ -6,7 +6,7 @@ import "std/test";
 // IEEE-754 classification helpers (is_nan / is_finite /
 // is_inf) and min / max / clamp.
 //
-// Float literals default to f32 in lang, so the f64 cases
+// Float literals default to f32 in Fern, so the f64 cases
 // either declare the value with an explicit `var x: f64 = …`
 // or annotate with `as f64`. f32 receiver methods exist too;
 // each wraps the f64 primitive (promote, apply, demote).

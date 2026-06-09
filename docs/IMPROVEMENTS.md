@@ -92,7 +92,7 @@ function calls like `f(p: boolean[]): Option[i32]` →
 `Option[boolean[]]`.
 
 Current fix: heuristic `isVariantCall` — callee is an Ident
-starting with an uppercase letter. Matches Lang's naming
+starting with an uppercase letter. Matches Fern's naming
 convention but it's not a guarantee.
 
 **Fix**: Add `ast.Call.IsVariantCall bool` (mirror of
@@ -120,7 +120,7 @@ cases := []struct {
 }{ ... }
 ```
 
-Mirror Lang's existing `cmd/dump_wat` shape — one entry per AST
+Mirror Fern's existing `cmd/dump_wat` shape — one entry per AST
 variant. Adding a new node forces a corresponding case (or an
 explicit "not yet" skip with a TODO).
 

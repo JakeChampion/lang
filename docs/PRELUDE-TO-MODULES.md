@@ -39,7 +39,7 @@ Replace the magic prelude with two explicit module trees:
 
 Programs declare what they need:
 
-```lang
+```Fern
 import "std/string";
 import "std/array";
 
@@ -174,7 +174,7 @@ Tasks:
    "explicit imports". One PR per logical group of tests so
    review stays sane. Each test program prepends the imports
    it needs:
-   ```lang
+   ```Fern
    import "std/i32";
    import "std/array";
    ```

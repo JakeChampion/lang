@@ -239,9 +239,9 @@ errors.
   *construction* (an error opts into multi-label by adding
   a `Labels() []Label` method).
 
-- **Error codes + `lang explain CODE`.** Each error has a
+- **Error codes + `fern explain CODE`.** Each error has a
   stable identifier (e.g. `E001` for "undefined identifier",
-  `E002` for "type mismatch"). `lang explain E002` prints a
+  `E002` for "type mismatch"). `fern explain E002` prints a
   paragraph with worked examples. The catalogue lives in
   `internal/diag/codes/E002.md` (one Markdown file per
   code), auto-linked from rendered errors.
@@ -640,7 +640,7 @@ Other obvious cases:
 Each one is a few-line check at the error site; pays off
 the first time the LSP applies a fix.
 
-### 4. Error catalogue + `lang explain <code>`
+### 4. Error catalogue + `fern explain <code>`
 
 **Cost: 2 weeks (initial catalogue; ongoing thereafter).**
 **Impact: medium-high. Search anchors + teaching
@@ -650,7 +650,7 @@ Assign stable codes (e.g. `E001` for "undefined
 identifier", `E002` for "type mismatch", …). Each
 diagnostic carries its code.
 
-`lang explain E002` reads `internal/diag/codes/E002.md`
+`fern explain E002` reads `internal/diag/codes/E002.md`
 and prints it. Markdown files contain:
 
 - A paragraph explaining when the error occurs.

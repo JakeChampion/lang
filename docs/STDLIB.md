@@ -1,6 +1,6 @@
 # Standard library
 
-The lang stdlib lives in two namespaces:
+The Fern stdlib lives in two namespaces:
 
 - **`std/…`** — high-level helpers user code reaches for directly.
   Receiver methods (`(5).abs()`, `"hello".split(",")`, `arr.sum()`)
@@ -258,9 +258,81 @@ The raw socket primitives `tcp_listen` / `tcp_accept` / `tcp_recv`
 codegen from extern stubs at module boundary — not declared in
 this module.
 
+### `std/headers`
+
+HTTP `HeaderMap` with case-insensitive lookup, multi-valued
+entries, and insertion-ordered iteration. Backs the `headers`
+field slated for `HttpRequest` / `HttpResponse`.
+
+- `header_map_new()` — empty map.
+- `(h).set(name, value)` / `(h).append(name, value)` — replace vs.
+  add a value under a case-folded key.
+- `(h).get(name): Option[string]` (first value) /
+  `(h).get_all(name): string[]` (every value) / `(h).len()`.
+
+### `std/stream`
+
+Byte-stream value backing the eventual `HttpRequest.body: Stream`
+migration. Phase 1 is an in-memory buffer-backed `Stream`.
+
+- Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
+  `stream_empty()`.
+- Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_line()`,
+  `(s).read_all()`, `(s).read_all_string()`.
+- Introspection: `(s).len()`, `(s).remaining()`, `(s).is_empty()`.
+
+### `std/io_buffered`
+
+In-memory buffered `BytesWriter` — accumulate bytes / strings,
+then drain once.
+
+- `bytes_writer_new()`; `(w).write_string(s)`, `(w).write_bytes(bs)`,
+  `(w).write_byte(b)`.
+- `(w).into_bytes()` / `(w).into_string()` to drain; `(w).len()`,
+  `(w).is_empty()`, `(w).reset()`.
+
+### `std/time`
+
+Date/time module shaped after jiff / NodaTime, backing the
+built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
+`Duration`, and `TimeZone` types.
+
+- **Instants:** `instant_now()`, `instant_from_unix(sec)`,
+  `instant_parse_rfc3339(s)`, `instant_zoned_parse_rfc3339(s)`.
+- **Calendar:** `date_make(y, m, d)`, `time_make(h, m, s)`,
+  `datetime_make(date, time)`, `date_parse_iso(s)`,
+  `is_leap_year(y)`, `days_in_month(y, m)`.
+- **Zones:** `timezone_utc()`, `timezone_fixed_offset(secs)`.
+- **Spans / durations:** `span_seconds`/`_minutes`/`_hours`/`_days`/
+  `_weeks`/`_months`/`_years(n)`, `duration_seconds(s)`,
+  `duration_millis(ms)`.
+- Named constants: `NANOS_PER_SECOND`, `SECONDS_PER_DAY`,
+  `DAYS_PER_WEEK`, etc.
+
+### `std/task`
+
+Cooperative single-threaded task runtime — the backend-independent
+core of Fern's colorless structured-concurrency model (see
+`docs/ASYNC-IMPLEMENTATION-PLAN.md`).
+
+- `reactor_new()`; `(rx).register(...)`, `(rx).poll(...)`,
+  `(rx).pending()`.
+- `run(states, reactor)` drives every task to completion;
+  `select(states, reactor)` returns on the first to finish.
+- `Step` (enum) is the per-task state; `Reactor` owns the wait set.
+
+### `std/mock_platform`
+
+Test-ergonomics helpers for recording and asserting on platform
+capability calls (log / fetch / kv / now) once `Platform` grows
+beyond its placeholder shape.
+
+- `mock_platform_new()`; `(m).record(call)`, `(m).reset()`.
+- `(m).call_count()`, `(m).has_call(name)`, `(m).find_call(name)`.
+
 ### `std/test`
 
-Pure-Lang unit-test runner. Tests are functions returning
+Pure-Fern unit-test runner. Tests are functions returning
 `Option[string]` (None = pass, Some(msg) = fail). The shape
 the project plans to migrate to once the compiler is self-
 hosted and the Go-side `*_test.go` harness retires; see
@@ -269,16 +341,23 @@ existing test runners (`prove`, `tape`, jUnit converters)
 can consume it directly.
 
 ```
+import "std/test";
+
 function test_addition(): Option[string] {
-    return assert_eq_i32(2 + 2, 4);
+    return test.assert_eq(2 + 2, 4);
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("arithmetic");
+    var r: test.TestRunner = test.test_new("arithmetic");
     r = r.it("addition", test_addition());
     return r.finish();
 }
 ```
+
+Free functions are reached through the `test.` module prefix
+(`test.test_new`, `test.assert_eq`, `test.fail`); the runner type
+is `test.TestRunner`; receiver methods (`.it`, `.finish`, `.skip`)
+stay bare.
 
 - **Runner:** `TestRunner` (struct), `test_new(suite)`,
   `test_new_verbose(suite)`, `(r).it(name, result)`,
@@ -298,14 +377,12 @@ function main(): i32 {
   a real test failure.
 - **Outcome constructors:** `pass()`, `fail(msg)`
 - **Boolean assertions:** `assert_true(cond)`, `assert_false(cond)`
-- **i32 assertions:** `assert_eq_i32`, `assert_neq_i32`,
-  `assert_lt_i32`, `assert_le_i32`, `assert_gt_i32`,
-  `assert_ge_i32`
-- **Wider int assertions:** `assert_eq_i64`, `assert_neq_i64`,
-  `assert_eq_u32`, `assert_neq_u32`, `assert_eq_u64`,
-  `assert_neq_u64`
-- **Wider int relational:** `assert_lt_i64` / `_le_i64` /
-  `_gt_i64` / `_ge_i64` plus matching u32 / u64 variants
+- **Generic equality / ordering:** `assert_eq(actual, expected)`,
+  `assert_neq`, `assert_lt`, `assert_le`, `assert_gt`, `assert_ge`
+  — trait-bounded (`cmp.Eq + cmp.Display` for `assert_eq` / `assert_neq`,
+  `cmp.Ord + cmp.Display` for the relational four), so one helper each
+  covers every integer width, `boolean`, and `string`. Failure
+  messages quote both the actual and expected `Display` forms
 - **Float assertions:** `assert_eq_f64_near(actual, expected,
   epsilon)`, `assert_eq_f32_near`, `assert_eq_f64_exact`,
   `assert_is_nan_f32`, `assert_is_nan_f64` — `_near` is the
@@ -323,22 +400,21 @@ function main(): i32 {
   `assert_in_range_f64(v, lo, hi)`, `assert_in_range_f32` —
   inclusive bounds; the float variants fail on NaN inputs
   (NaN never satisfies an ordering compare)
-- **Order:** `assert_sorted_asc_i32(arr)`,
-  `assert_sorted_asc_string(arr)` — monotonically
-  non-decreasing; empty / single-element arrays vacuously
-  pass; failure embeds the inversion index.
-  `assert_sorted_desc_i32` / `_string` for descending
-  order (pair with `sort_*_desc` output).
-  `assert_strictly_sorted_asc_i32` / `_string` for the
-  "sorted AND unique" contract — equal adjacent pairs
-  are a violation here, unlike the non-strict variant
+- **Order:** `assert_sorted_asc(arr)` — generic
+  (`cmp.Ord + cmp.Display`), monotonically non-decreasing;
+  empty / single-element arrays vacuously pass; failure
+  embeds the inversion index. `assert_sorted_desc` for
+  descending order (pair with `sort_*_desc` output).
+  `assert_strictly_sorted_asc` for the "sorted AND unique"
+  contract — equal adjacent pairs are a violation here,
+  unlike the non-strict variant
 - **Float array:** `assert_eq_f64_array_near(actual,
   expected, epsilon)` / `assert_eq_f32_array_near` —
   element-wise compare with tolerance; NaN anywhere fails;
   mismatches name the index so long-vector diffs localise
-- **Uniqueness:** `assert_unique_i32(arr)`,
-  `assert_unique_string(arr)` — every element appears at
-  most once; sort-then-walk so input order doesn't matter
+- **Uniqueness:** `assert_unique(arr)` — generic
+  (`cmp.Eq + cmp.Display`); every element appears at most
+  once; walks the array so input order doesn't matter
 - **Multi-substring:** `assert_contains_all(haystack, needles[])`,
   `assert_contains_any`, `assert_contains_in_order` — the
   failure message names which needle(s) didn't match so the
@@ -415,11 +491,10 @@ function main(): i32 {
   `(r).bench_max_ms(name, iter, fn, budget_ms)` is the
   millisecond-budget companion (1 ms = 1000 us); use it
   when the budget reads naturally in ms ("frame under 16 ms").
-- **Set equality (order-independent):** `assert_set_eq_i32`,
-  `assert_set_eq_string`, `assert_subset_i32`,
-  `assert_subset_string` — multiset semantics so duplicate
-  counts must match; failure message names the first
-  unmatched element
+- **Set equality (order-independent):** `assert_set_eq`,
+  `assert_subset` — generic (`cmp.Eq + cmp.Display`); multiset
+  semantics so duplicate counts must match; failure message
+  names the first unmatched element
 - **Env-var:** `assert_env_set(name)`, `assert_env_unset(name)`,
   `assert_env_eq(name, expected)` — wrap the `env(name)`
   builtin's `Option[string]` return; failure messages
@@ -427,13 +502,13 @@ function main(): i32 {
 - **Unreachable branch:** `unreachable(label)` — sugar for
   `fail("unreachable: " + label)`. Use in match-default arms
   that the test logic claims can't fire
-- **Map assertions:** `assert_map_len_i32_i32` / `_string_string`,
-  `assert_map_has_i32_i32` / `_string_string`,
-  `assert_map_lacks_i32_i32` / `_string_string`,
-  `assert_eq_map_i32_i32(actual, expected)` /
-  `_string_string` — full map deep equality
-  (order-independent; walks `actual.keys()` so insertion-
-  order differences don't matter)
+- **Map assertions:** `assert_map_len(m, n)`,
+  `assert_map_has(m, key, value)`, `assert_map_lacks(m, key)`,
+  `assert_eq_map(actual, expected)` — generic over
+  `K, V: cmp.Eq + cmp.Display`, so one helper each covers
+  i32 / string keys and values. `assert_eq_map` is full deep
+  equality (order-independent; walks `actual.keys()` so
+  insertion-order differences don't matter)
 - **Array predicates:** `assert_all_i32(arr, pred)` /
   `assert_all_string` — ∀ predicate, vacuous pass on []
   (failure names index + value). `assert_any_i32` /
@@ -468,8 +543,9 @@ function main(): i32 {
 - **Tempdir convenience:** `must_temp_dir(r, prefix) ->
   (string, TestRunner)` — single-shot tempdir + cleanup
   registration with fallback to a recorded skip on failure
-- **bool / string assertions:** `assert_eq_bool`,
-  `assert_eq_string`, `assert_neq_string`, `assert_empty_string`,
+- **string assertions:** the generic `assert_eq` / `assert_neq`
+  cover `boolean` and `string` directly (both are `cmp.Eq +
+  cmp.Display`). String-specific sugar: `assert_empty_string`,
   `assert_non_empty_string`
 - **Substring:** `assert_contains`, `assert_not_contains`,
   `assert_starts_with`, `assert_ends_with`
@@ -496,22 +572,19 @@ function main(): i32 {
   held across every element; empty array vacuously passes
   (∀ over ∅); failure embeds the first violation's index
   and value
-- **Array assertions:** `assert_len_i32`, `assert_len_string`,
-  `assert_eq_i32_array`, `assert_eq_string_array`,
-  `assert_eq_i64_array` / `_u32_array` / `_u64_array` —
-  wider-int element-wise compares (lang has no numeric-
-  array covariance so each width gets its own helper).
-  Single-position spot check: `assert_at_i32(arr, idx,
-  expected)` / `_string` / `_i64` / `_u32` / `_u64` —
-  bounds-checked; failure distinguishes out-of-bounds
-  from value mismatch.
+- **Array assertions:** `assert_len_i32`, `assert_len_string`
+  (length only); `assert_eq_array(actual, expected)` —
+  generic (`cmp.Eq + cmp.Display`) element-wise compare over
+  any element type. Single-position spot check:
+  `assert_at(arr, idx, expected)` — generic, bounds-checked;
+  failure distinguishes out-of-bounds from value mismatch.
   Float variants: `assert_at_f64(arr, idx, expected,
   epsilon)` / `_f32` — mandatory tolerance; NaN inputs
   always fail; failure message embeds the diff and the
   epsilon bound
-- **Array membership:** `assert_array_contains_i32(arr,
-  needle)` / `_string`, `assert_array_not_contains_i32` /
-  `_string` — typed-array membership; failure embeds the
+- **Array membership:** `assert_array_contains(arr, needle)`,
+  `assert_array_not_contains(arr, needle)` — generic
+  (`cmp.Eq + cmp.Display`) membership; failure embeds the
   needle (positive) / index (negative). Empty arrays fail
   the positive form vacuously
 - **Array cardinality:** `assert_count_i32(arr, pred, n)` /
@@ -553,7 +626,7 @@ function main(): i32 {
   `assert_array_contains_subseq_i32(arr, needle)` /
   `_string` — `needle` appears as a contiguous
   sub-array of `arr` (order-sensitive complement to
-  `assert_subset_i32`)
+  `assert_subset`)
 - **Enumerated value:** `assert_one_of_i32(actual,
   allowed)` / `_string` — positive set membership
   (e.g., "exit code is one of [0, 1, 2]"). Empty allowed
@@ -623,7 +696,7 @@ function main(): i32 {
   per-target runs in CI
 
 Limitations: a target that crashes (out-of-bounds index,
-division by zero) aborts the whole run (lang has no panic
+division by zero) aborts the whole run (Fern has no panic
 recovery); the harness is uniform-random, not coverage-
 guided. The API is shaped so both can layer in later
 without breaking the surface.
@@ -644,16 +717,34 @@ User code should reach for the method-syntax surface
 - `parse_int_radix(s, base)` — bases 2..36
 - `int_to_string_radix(n, base)` — bases 2..36
 
+### `core/cmp`
+
+The comparison + display trait foundation. Three small traits
+underpin the generic assertion helpers in `std/test` (and any
+user code abstracting over "printable" / "comparable" values):
+
+- `trait Display` — a value with a `to_string()` rendering.
+- `trait Eq` — equality (`==` / `!=`).
+- `trait Ord` — total ordering (`<` / `<=` / `>` / `>=`).
+
+The built-in integer widths, `boolean`, and `string` all satisfy
+these, which is why `test.assert_eq[T: cmp.Eq + cmp.Display]` and
+friends work across every primitive with one generic helper.
+
 ### `core/no_prelude`
 
-Sentinel import — empty module. `import "core/no_prelude";`
-in a user program signals the checker to skip the auto-
-injected magic prelude, so the program needs explicit
-`import "std/…";` lines for every helper it uses. Phase 5
-of the migration (see `docs/PRELUDE-TO-MODULES.md`) makes
-the no-prelude path the default; until then this is the
-opt-out for programs that want to verify their imports are
-complete.
+Empty sentinel module. There is no longer an auto-injected
+prelude (Phase 5 of `docs/PRELUDE-TO-MODULES.md` is complete — a
+program sees only what it `import`s), so this module's body is
+empty and importing it is functionally a no-op.
+
+By convention, programs that depend on nothing but built-ins
+(`putchar`, `print`, `len`, array indexing, arithmetic) still
+write `import "core/no_prelude";` as a readability marker: it
+states up front that the import list *is* the program's complete
+dependency surface, rather than leaving the reader to wonder
+whether a prelude is being relied on. It is optional — such a
+program compiles identically without it.
 
 Free-function calls into stdlib are qualified —
 `int.int_to_string_radix(s, 16)` rather than a bare
