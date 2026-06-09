@@ -788,16 +788,22 @@ function tup_exit_sweep_excl(cx: Ctx, excl: string): string {
         var name: string = cx.tup_swept[i];
         if (name != excl) {
             var kinds: string = lookup_pair(cx.tup_names, cx.tup_kinds, name);
+            var svcsv: string = lookup_pair(cx.tup_names, cx.tup_svtypes, name);
             var inner: string = "";
             var e: i32 = 0;
             while (e < kinds.len()) {
-                // 's' string / 'a' scalar-array → flat $__fern_arr_dec; 'A'
-                // pointer-element array → $__fern_arr_dec_ptr (deep-releases
-                // the string/struct elements one level).
-                if (kinds[e] == 97 || kinds[e] == 115) {
-                    inner = inner + " (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(e * 4) + ")))))";
+                var load: string = "(i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(e * 4) + ")))";
+                var svt: string = nth_csv_elem(svcsv, e);
+                // Stage E — a struct/enum tuple element (marked kind 'i' but
+                // carrying an svtype) deep-releases through its release fn;
+                // otherwise 's' string / 'a' scalar-array → flat arr_dec, 'A'
+                // pointer-element array → arr_dec_ptr (one level).
+                if (svt.len() > 0 && (is_struct_type(cx.structs, svt) || (is_enum_type_name(cx, svt) && svt != "Option" && svt != "Result"))) {
+                    inner = inner + " (drop (call $__fern_release_" + svt + " " + load + "))";
+                } else if (kinds[e] == 97 || kinds[e] == 115) {
+                    inner = inner + " (drop (call $__fern_arr_dec " + load + "))";
                 } else if (kinds[e] == 65) {
-                    inner = inner + " (drop (call $__fern_arr_dec_ptr (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(e * 4) + ")))))";
+                    inner = inner + " (drop (call $__fern_arr_dec_ptr " + load + "))";
                 }
                 e = e + 1;
             }

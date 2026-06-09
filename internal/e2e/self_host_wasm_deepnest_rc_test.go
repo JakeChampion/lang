@@ -85,6 +85,16 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// Churn: 50k arrays-of-enums-with-string-payloads built + freed; every
 		// element payload reclaims each cycle (no OOM), detector clean.
 		{"arr-of-enum-churn", "enum Shape { Circle(string), Square(i32) } function mk(): i32 { var shapes: Shape[] = [Circle(\"x\" + \"y\"), Circle(\"z\" + \"w\"), Square(3)]; match (shapes[1]) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { var k = 0; var n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 2},
+		// Stage E: an ENUM tuple element (kind 'i' but carrying an svtype)
+		// deep-releases its variant payload through $__fern_release_<Enum>. Here
+		// the Circle string payload held in the tuple is freed; value via match.
+		{"tuple-enum-payload-released", "enum Shape { Circle(string), Square(i32) } function main(): i32 { var s: Shape = Circle(\"ab\" + \"cd\"); var t = (s, 38); match (t.0) { Circle(name) => { return name.len() + t.1 + __fern_rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
+		// Stage E soundness: 50k struct-in-tuple churn (the tuple deep-releases
+		// the Inner struct + its array via $__fern_release_Inner). The array
+		// reclaims each cycle (no OOM), detector clean. (Value uses t.1 only —
+		// tuple-of-struct FIELD access `t.0.field` is a pre-existing,
+		// RC-orthogonal value bug.)
+		{"tuple-struct-element-churn", "struct Inner { xs: i32[], n: i32 } function mk(): i32 { var i = Inner { xs: [1, 2, 3, 4], n: 5 }; var t = (i, 9); return t.1; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
