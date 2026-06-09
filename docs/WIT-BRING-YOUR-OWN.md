@@ -1290,6 +1290,22 @@ world-driven composer (P2) wires it.
        resource-provider harness), then own/borrow handle *results*, then the
        full `wasi:http` `incoming-handler#handle` (two `own<...>` params + the
        handler body calling resource methods via `@import` externs).
+     - **Slice 6b — void export taking MULTIPLE handle params (composer, Go). ✅
+       Done.** Extends 6a to the exact `incoming-handler#handle` shape:
+       `func(own<incoming-request>, own<response-outparam>)` — **no result**, two
+       handle params. A void function is encoded as a named-results list of
+       length zero, which `liftExport` previously rejected; it now lifts it via
+       the new `PutTypeSectionOneFuncGeneralVoid` (functype with `0x01` named +
+       `vec(0)` results), surfacing each handle param's imported resource as in
+       6a. Gated by `TestExportHandleVoidComposes` (a Fern reactor
+       `@export("local:test/handler","handle") on_request(r: borrow Req, o: borrow
+       Resp): void` over two `@import`ed resources composes; `wasm-tools validate`
+       + the WIT declares the void two-handle export). Uses `borrow` (never
+       auto-dropped); the `own`-consume path needs `[resource-drop]` wired in a
+       reactor export (`ComposeExportsFromWorld` currently rejects it) — the next
+       slice — together with the handler body calling resource methods via
+       `@import` externs (the P5 import side), which then composes the real
+       `wasi:http` handler.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
