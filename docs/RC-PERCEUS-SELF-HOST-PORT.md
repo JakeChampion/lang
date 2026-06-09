@@ -1482,3 +1482,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   box one level — the struct's own fields leak, the same depth bound as
   everywhere; arbitrary-depth nested release would need per-type drop-glue
   functions, deferred.)
+- 2026-06-09: **wasm Option/Result RC — rc-box LAYOUT foundation.** Begins
+  Option/Result reclamation (they previously leaked entirely — an option local
+  was never even swept). A variant box (`[tag@0][payload@4]`, where tag is
+  Some/Ok=0, None/Err=1) is now rc-headered via the generic `$__fern_str_box`
+  (8-byte rc+bsz header, returns base+8) in `enum_box_retain` — the single
+  Some/Ok/Err/None construction path — so it carries an rc word at `[p-8]`
+  while `tag@[p]` and `payload@[p+4]` (every p-relative access — `match`
+  dispatch, `?` unwrap) are unchanged. The io/extern option builders (read_file
+  / write_file / the preview1+2 helpers, which assemble `[tag][payload]` boxes
+  raw) are intentionally left raw in this slice — layout-only never sweeps
+  options, so a boxed-vs-raw mix is value-safe; they migrate when option
+  counting lands (a swept raw option's `[p-8]` read is garbage). Coverage: new
+  `TestSelfHostRcOptionBoxWasm` — some-fresh-unique (rc==1), some-match-intact,
+  none-match-intact, result-ok-intact / result-err-intact, question-unwrap-intact
+  (the `?` path), some-string-payload-intact (all value-correct + detector 0).
+  Full RC + component (incl. the read_file/option-heavy io tests) + binary +
+  shim + interp + cli wasm suites green; bootstrap-safe; free still OFF. Next:
+  box the io/extern option builders + Option/Result COUNTING (sweep option
+  locals with inc-on-alias) then FREE with payload recursive release (a
+  tag-guarded dec of the Some/Ok payload when it's rc-tracked).
