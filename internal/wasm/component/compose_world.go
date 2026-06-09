@@ -343,7 +343,7 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			if exportNeedsMemory(wi, f.Sig) {
 				needMem = true
 			}
-			if exportNeedsRealloc(f.Sig) {
+			if exportNeedsRealloc(wi, f.Sig) {
 				needMem = true
 				needRealloc = true
 			}
@@ -392,33 +392,40 @@ func exportNeedsMemory(wi componenttype.WorldInterface, sig *componenttype.FuncT
 		return false
 	}
 	for i := range sig.Params {
-		if sig.Params[i].Ty.IsPrim && sig.Params[i].Ty.Prim == cValtypeString {
+		if isStringOrList(wi, sig.Params[i].Ty) {
 			return true
 		}
 	}
 	if sig.NamedResults {
 		return false
 	}
-	if sig.Result.IsPrim {
-		return sig.Result.Prim == cValtypeString
-	}
-	_, isList := wi.ListElemPrim(sig.Result)
-	return isList
+	return isStringOrList(wi, sig.Result)
 }
 
 // exportNeedsRealloc reports whether lifting `sig` needs cabi_realloc — true
 // when any parameter is a string/list, which the canonical ABI materialises in
 // the core's memory before the call.
-func exportNeedsRealloc(sig *componenttype.FuncType) bool {
+func exportNeedsRealloc(wi componenttype.WorldInterface, sig *componenttype.FuncType) bool {
 	if sig == nil {
 		return false
 	}
 	for i := range sig.Params {
-		if sig.Params[i].Ty.IsPrim && sig.Params[i].Ty.Prim == cValtypeString {
+		if isStringOrList(wi, sig.Params[i].Ty) {
 			return true
 		}
 	}
 	return false
+}
+
+// isStringOrList reports whether `v` is a `string` or a `list<T>` — the value
+// types that carry linear-memory data across the canonical ABI (and so drive
+// the memory/realloc lift options for an export).
+func isStringOrList(wi componenttype.WorldInterface, v componenttype.Valtype) bool {
+	if v.IsPrim {
+		return v.Prim == cValtypeString
+	}
+	_, isList := wi.ListElemPrim(v)
+	return isList
 }
 
 // liftExport lifts one world export: alias the surfaced core func, build its
@@ -435,63 +442,73 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	}
 	c := g.c
 	coreF := c.aliasCoreFunc(userInst, coreName)
+
+	// Each defined type a param/result references (a `list<T>`) must be emitted
+	// before the functype so its index resolves. Collect the type sections to
+	// emit, then the per-slot valtype encodings (a primitive's single byte, or
+	// the sleb-encoded index of a list type). `nextIdx` mirrors c.nType as the
+	// list types are appended.
+	var defs [][]byte // list<elem> defined-type bodies, in emit order
+	nextIdx := c.nType
+	encodeSlot := func(v componenttype.Valtype, what string) ([]byte, bool, error) {
+		if v.IsPrim {
+			return []byte{v.Prim}, v.Prim == cValtypeString, nil
+		}
+		e, ok := wi.ListElemPrim(v)
+		if !ok {
+			return nil, false, fmt.Errorf("component: export %s#%s: non-scalar / unsupported %s", iface, witName, what)
+		}
+		idx := nextIdx
+		nextIdx++
+		defs = append(defs, InnerTypeList(e))
+		return leb128SlebBytes(idx), true, nil
+	}
+
 	var pnames []string
-	var pvals []byte
-	hasStringParam := false
+	var pvals [][]byte
+	hasMemParam := false
 	for i := range sig.Params {
 		p := sig.Params[i]
-		if !p.Ty.IsPrim {
-			return fmt.Errorf("component: export %s#%s: non-scalar parameter (unsupported in this slice)", iface, witName)
+		enc, isMem, err := encodeSlot(p.Ty, "parameter")
+		if err != nil {
+			return err
 		}
-		if p.Ty.Prim == cValtypeString {
-			hasStringParam = true
+		if isMem {
+			hasMemParam = true
 		}
 		name := p.Name
 		if name == "" {
 			name = fmt.Sprintf("p%d", i)
 		}
 		pnames = append(pnames, name)
-		pvals = append(pvals, p.Ty.Prim)
+		pvals = append(pvals, enc)
 	}
 	if sig.NamedResults {
 		return fmt.Errorf("component: export %s#%s: multi result (unsupported in this slice)", iface, witName)
 	}
-	hasStringResult := sig.Result.IsPrim && sig.Result.Prim == cValtypeString
-	listElem, hasListResult := byte(0), false
-	if !sig.Result.IsPrim {
-		if e, ok := wi.ListElemPrim(sig.Result); ok {
-			listElem, hasListResult = e, true
-		} else {
-			return fmt.Errorf("component: export %s#%s: non-scalar / unsupported result", iface, witName)
-		}
+	rval, hasMemResult, err := encodeSlot(sig.Result, "result")
+	if err != nil {
+		return err
 	}
 
-	// Build the functype. A list result first emits the `list<elem>` defined
-	// type, then a functype whose result references it by index (which may be
-	// ≥ 64, so it's sleb-encoded). Scalar / string results encode the result as
-	// a single primitive valtype byte.
-	var funcType uint32
-	if hasListResult {
-		c.buf = PutTypeSectionOneDefined(c.buf, InnerTypeList(listElem))
-		listIdx := c.nType
-		c.nType++
-		funcType = c.nType
-		c.buf = PutTypeSectionOneFuncResultIdx(c.buf, pnames, pvals, listIdx)
-		c.nType++
-	} else {
-		funcType = c.nType
-		c.buf = PutTypeSectionOneFunc(c.buf, pnames, pvals, sig.Result.Prim)
+	// Emit the referenced list types (in index order), then the functype.
+	for _, d := range defs {
+		c.buf = PutTypeSectionOneDefined(c.buf, d)
 		c.nType++
 	}
+	funcType := c.nType
+	c.buf = PutTypeSectionOneFuncGeneral(c.buf, pnames, pvals, rval)
+	c.nType++
 
 	switch {
-	case hasStringParam:
-		// A string parameter: the canonical ABI materialises the incoming bytes
-		// in the core's memory via cabi_realloc, then passes (ptr,len) to the
-		// core func. The realloc lift carries both memory + realloc (it also
-		// covers a string result, whose return-area read needs memory).
+	case hasMemParam:
+		// A string / list<T> parameter: the canonical ABI materialises the
+		// incoming bytes in the core's memory via cabi_realloc, then passes
+		// (ptr,len) to the core func. The realloc lift carries both memory +
+		// realloc (it also covers a string/list result, whose return-area read
+		// needs memory).
 		c.buf = PutCanonSectionLiftWithMemoryRealloc(c.buf, coreF, funcType, memIdx, reallocIdx)
-	case hasStringResult || hasListResult:
+	case hasMemResult:
 		// A string / list<T> result flattens to (ptr,len) — more than one core
 		// value, so the core func returns a pointer to the [ptr,len] return
 		// area, which the memory lift reads from the core's linear memory.

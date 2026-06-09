@@ -1106,3 +1106,112 @@ func buildExportListResultWrapper(idxs map[string]uint32, userFuncIdx uint32, np
 	locals = inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return body, locals
 }
+
+// funcHasNumericArrayParam reports whether any of fn's parameters is a numeric
+// array (`list<T>`) — the shape that needs the export PARAM wrapper (the others,
+// scalars + strings, map onto the core signature directly).
+func funcHasNumericArrayParam(fn *ir.Func) bool {
+	for _, p := range fn.Params {
+		if isScalarArrayParamType(p.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildExportListParamWrapper builds the core wrapper for an `@export` function
+// taking one or more numeric-array (`list<T>`) parameters (P6 —
+// docs/WIT-BRING-YOUR-OWN.md). The canonical ABI materialises each incoming list
+// in the core's memory (via cabi_realloc) and passes (ptr, len); a Fern array is
+// instead a single pointer to length-prefixed elements (count at ptr-4), so the
+// wrapper builds that array — alloc `4 + len*stride`, store the count, then
+// memory.copy the elements — and calls the user function with the element
+// pointer. A string parameter forwards its (ptr,len) directly (it already
+// matches the two-word string), scalars pass through, and the function's
+// scalar/void result is returned as-is. Wrapper type: (canonical-flattened
+// params…) -> result.
+//
+// Locals after the params: one i32 per array param, holding its Fern array base.
+func buildExportListParamWrapper(idxs map[string]uint32, userFuncIdx uint32, params []ast.Param) (body []byte, locals []byte) {
+	const kScalar, kString, kArray = 0, 1, 2
+	type pslot struct {
+		kind   int
+		start  uint32 // first wrapper-param slot
+		stride uint32 // element stride (array only)
+	}
+	var slots []pslot
+	var cur uint32
+	narr := 0
+	for _, p := range params {
+		switch {
+		case isScalarArrayParamType(p.Type):
+			slots = append(slots, pslot{kArray, cur, scalarArrayElemStride(p.Type)})
+			cur += 2
+			narr++
+		case isStringType(p.Type):
+			slots = append(slots, pslot{kString, cur, 0})
+			cur += 2
+		default:
+			slots = append(slots, pslot{kScalar, cur, 0})
+			cur++
+		}
+	}
+	baseLocal := cur // first array-base scratch local
+	alloc := idxs["__fern_alloc"]
+
+	pushByteLen := func(b []byte, lenL uint32, stride uint32) []byte {
+		b = inst.InstLocalGet(b, lenL)
+		if stride != 1 {
+			b = inst.InstI32Const(b, int32(stride))
+			b = numeric.InstI32Mul(b)
+		}
+		return b
+	}
+
+	// Materialize each array param into a length-prefixed Fern array.
+	ai := uint32(0)
+	for _, s := range slots {
+		if s.kind != kArray {
+			continue
+		}
+		base := baseLocal + ai
+		lenL := s.start + 1
+		// base = __fern_alloc(4 + len*stride)
+		body = inst.InstI32Const(body, 4)
+		body = pushByteLen(body, lenL, s.stride)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, base)
+		// count @ base+0
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstLocalGet(body, lenL)
+		body = memory.InstI32Store(body, 2, 0)
+		// memory.copy(base+4, ptr, len*stride)
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, s.start)
+		body = pushByteLen(body, lenL, s.stride)
+		body = memory.InstMemoryCopy(body)
+		ai++
+	}
+	// Push call args in declaration order, then call.
+	ai = 0
+	for _, s := range slots {
+		switch s.kind {
+		case kArray:
+			body = inst.InstLocalGet(body, baseLocal+ai)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Add(body) // element pointer (count at ptr-4)
+			ai++
+		case kString:
+			body = inst.InstLocalGet(body, s.start)
+			body = inst.InstLocalGet(body, s.start+1)
+		default:
+			body = inst.InstLocalGet(body, s.start)
+		}
+	}
+	body = inst.InstCall(body, userFuncIdx)
+	locals = inst.PutLocalsOneGroup(nil, uint32(narr), encode.ValtypeI32)
+	return body, locals
+}

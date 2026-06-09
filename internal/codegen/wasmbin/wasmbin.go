@@ -200,6 +200,11 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			if isScalarArrayParamType(fn.ReturnType) {
 				helpers.add("__fern_alloc")
 			}
+			if funcHasNumericArrayParam(fn) {
+				// The list-PARAM wrapper builds a length-prefixed Fern array from
+				// the canonical (ptr,len) via __fern_alloc + memory.copy.
+				helpers.add("__fern_alloc")
+			}
 		}
 	}
 	// cabi_realloc is the canonical-ABI allocator the host
@@ -798,13 +803,23 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			return nil, fmt.Errorf("wasmbin: @export %q: function not found", exp.Name)
 		}
 		fn := exportFuncByName[exp.Name]
+		// A numeric-array (`list<T>`) PARAMETER means the canonical ABI calls the
+		// export with (ptr,len) per array, which doesn't line up with the Fern
+		// function's single-pointer array param — so it needs a wrapper, and the
+		// scalar/composite-RESULT branches below (which forward params straight to
+		// the user func) would mis-call it. Reject the array-param + composite-result
+		// combination (a later slice) and route the array-param + scalar/void case
+		// to the dedicated param wrapper.
+		arrParam := fn != nil && funcHasNumericArrayParam(fn)
+		if arrParam && (isStringType(fn.ReturnType) || isScalarArrayParamType(fn.ReturnType)) {
+			return nil, fmt.Errorf("wasmbin: @export %q: a numeric-array parameter with a composite result is not supported yet", exp.Name)
+		}
 		// A string-RESULT export needs the canonical return-area shape: the Fern
 		// function returns a two-word (data,len) pair, but the world-driven
 		// composer's memory lift expects a core func returning a single i32
 		// pointer to [data,len]. Surface a wrapper that repacks it; scalar-result
-		// exports surface the function directly. (String/list PARAMS are P6's
-		// next sub-slice and are rejected by the composer for now.)
-		if fn != nil && isStringType(fn.ReturnType) {
+		// exports surface the function directly.
+		if fn != nil && !arrParam && isStringType(fn.ReturnType) {
 			if _, ok := funcIdx["__fern_alloc"]; !ok {
 				return nil, fmt.Errorf("wasmbin: @export %q: string result needs __fern_alloc (not pinned)", exp.Name)
 			}
@@ -840,6 +855,32 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			wrapFuncIdx := nextFuncIdx
 			nextFuncIdx++
 			body, locals := buildExportListResultWrapper(funcIdx, idx, len(pvts))
+			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
+			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, wrapFuncIdx)
+			continue
+		}
+		// A numeric-array (`list<T>`) PARAMETER export (scalar/void result): the
+		// canonical ABI hands the export (ptr,len) per array, so surface a wrapper
+		// that rebuilds the length-prefixed Fern array and calls the user func.
+		if arrParam {
+			if _, ok := funcIdx["__fern_alloc"]; !ok {
+				return nil, fmt.Errorf("wasmbin: @export %q: list param needs __fern_alloc (not pinned)", exp.Name)
+			}
+			pvts, err := canonicalExportParamVts(fn.Params)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			rvts, err := resultValtypes(fn.ReturnType)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			wrapTIdx := addType(pvts, rvts)
+			wrapFuncIdx := nextFuncIdx
+			nextFuncIdx++
+			body, locals := buildExportListParamWrapper(funcIdx, idx, fn.Params)
 			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
 			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
 			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
@@ -1013,6 +1054,28 @@ func paramValtypes(params []ast.Param) ([]byte, error) {
 			return nil, err
 		}
 		out = append(out, vts...)
+	}
+	return out, nil
+}
+
+// canonicalExportParamVts flattens an `@export` function's parameters to the
+// core valtypes the canonical ABI passes the lifted export (the wrapper-facing
+// shape, vs paramValtypes's Fern-side flattening): a string or numeric array is
+// `(ptr, len)` — two i32s — and a scalar keeps its slot. Used to type the
+// export PARAM wrapper that materialises arrays before calling the user func.
+func canonicalExportParamVts(params []ast.Param) ([]byte, error) {
+	var out []byte
+	for _, p := range params {
+		switch {
+		case isStringType(p.Type) || isScalarArrayParamType(p.Type):
+			out = append(out, encode.ValtypeI32, encode.ValtypeI32)
+		default:
+			vts, err := slotValtypes(p.Type)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, vts...)
+		}
 	}
 	return out, nil
 }
