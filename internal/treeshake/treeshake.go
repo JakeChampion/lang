@@ -1,12 +1,11 @@
 // Package treeshake removes unreferenced top-level functions
 // from a checked + monomorphised program before codegen.
 //
-// The lang prelude (internal/prelude) injects helpers into
-// every program, but most programs use only a small subset.
-// Without tree-shaking, codegen would emit every prelude
+// The stdlib modules a program imports (resolved through
+// modload) pull in helpers, but most programs use only a small
+// subset. Without tree-shaking, codegen would emit every loaded
 // helper, blowing up binary size for trivial programs.
-// Tree-shake makes the prelude effectively pay-for-what-you-
-// use.
+// Tree-shake makes the stdlib effectively pay-for-what-you-use.
 //
 // Algorithm: collect entry points (main + handle + anything
 // referenced as a function value or address-taken), then BFS

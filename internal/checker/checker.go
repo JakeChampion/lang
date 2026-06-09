@@ -1088,9 +1088,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
-	// `int_to_string(n)` migrated to the lang prelude
-	// (internal/prelude/prelude.fern); its signature is
-	// registered via the prelude's FuncDecl.
 	// TCP socket builtins. C-style API: each returns a raw
 	// fd or a negative errno. A Result-wrapped layer can sit
 	// on top in a follow-up.
@@ -1545,17 +1542,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		fullParams := append([]ast.Type{ast.StringType{}}, params...)
 		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
 	}
-	// `starts_with` / `ends_with` / `contains` / `index_of`
-	// / `trim` / `to_lower` / `to_upper` / `bytes` / `split`
-	// / `replace` migrated to the lang prelude
-	// (internal/prelude/prelude.fern); their signatures are
-	// registered via the prelude's FuncDecls.
-	// `s.is_empty()` lives in the lang prelude
-	// (internal/prelude/prelude.fern); the receiver-hoisting
-	// machinery + builtin-receivers extension wires it
-	// through automatically.
-	// `s.repeat(n)` lives in the lang prelude
-	// (internal/prelude/prelude.fern).
 	// `s.as_bytes()` — non-copying companion to `s.bytes()`. Returns
 	// a `[u8]` slice header whose data_ptr aliases the string's
 	// payload and whose len is `len(s)`. Sharing the parent's
@@ -1566,31 +1552,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `__method_string_len(s)` call and emits OpStrLen so a
 	// future SSO pass can change the encoding in one place.
 	registerStringMethod("len", nil, ast.NumberType{})
-	// `s.parse_int()` lives in the lang prelude
-	// (internal/prelude/prelude.fern). The receiver-hoisting
-	// + dispatch wires it through the same way as any
-	// `__method_string_*`.
-	// `s.parse_float()` lives in the lang prelude.
 
 	c.info.FuncSigs["string_from_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.StringType{},
 	}
-
-	// `base64_encode` / `base64_decode` migrated to the
-	// lang prelude (internal/prelude/prelude.fern); their
-	// signatures are registered via the prelude's FuncDecls.
-
-	// `hex_encode` / `hex_decode` migrated to the lang
-	// prelude (internal/prelude/prelude.fern); their
-	// signatures are registered via the prelude's FuncDecls.
-
-	// `url_parse(s)` lives in the lang prelude
-	// (internal/prelude/prelude.fern).
-
-	// `__array_append_string(arr, v)` migrated to the lang
-	// prelude (internal/prelude/prelude.fern); its
-	// signature is registered via the prelude's FuncDecl.
 
 	// `__memcpy(dst, src, n)` / `__memset(dst, b, n)` —
 	// thin lang-callable wrappers around wasm's bulk-memory
@@ -1735,29 +1701,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// next to `__store_i32` if a future lang-prelude helper
 	// needs them.
 
-	// `url_encode(s)` / `url_decode(s)` live in the lang
-	// prelude (internal/prelude/prelude.fern).
-
-	// `query_parse(s)` lives in the lang prelude.
-
-	// `json_encode(v)` lives in the lang prelude.
-	// `json_parse` migrated to the lang prelude
-	// (internal/prelude/prelude.fern); its signature is
-	// registered via the prelude's FuncDecl.
-
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
 	// `i32` / `u32` / `i64` / `u64` value types to the
 	// corresponding `__method_<typename>_<method>` mangled name.
-	// `i32.to_string()` / `u32.to_string()` /
-	// `i64.to_string()` / `u64.to_string()` migrated to the
-	// lang prelude (internal/prelude/prelude.fern) — its
-	// receiver-method declarations register the
-	// `string.*_to_string` mangled names automatically via
-	// the receiver-hoisting pass below.
-
-	// `f32.to_string()` / `f64.to_string()` migrated to the
-	// lang prelude (internal/prelude/prelude.fern).
 
 	// Register trait declarations so the conformance check (after the
 	// receiver-hoist loop below) and Phase 2 bound resolution can look
