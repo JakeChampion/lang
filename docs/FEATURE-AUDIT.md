@@ -240,12 +240,41 @@ different iterations (state-dependent), so it is **not** a logic error in
   `__fern_alloc_reuse`, `__fern_box_free`, `__fern_arr_dec`, `__fern_str_dec`)
   were compared against their x86-64 mirrors: the **size-class arithmetic
   matches** (small tier `(size>>4)-1`; large tier `mant + 4·e2 + 80`) and the
-  per-type free-size math matches. So the helpers themselves are not the
-  divergence.
-- Conclusion: the defect is in the **arm64 drop/reuse call-site emission** — a
-  still-live string cell is being recycled (an erroneous/early drop, or a wrong
-  pointer/size passed into a drop). x86-64 emits the same IR-level drops
-  correctly, so this is arm64 instruction-selection / liveness, not the IR.
+  per-type free-size math matches (and `__fern_alloc_rc1` does store the payload
+  length at `data-4`, so `box_free`'s size is correct). So the helpers
+  themselves are not the divergence.
+- **The representational divergence between backends:** x86-64 uses the
+  **single-word** string ABI; arm64 and wasm use the **two-word** ABI
+  (`ast.TwoWordOverride` is set during arm64 emit; wasm has `ptrW==4`).
+  Since wasm *also* uses two-word strings *and passes*, and the only thing wasm
+  lacks is the native freelist, the premature free lives in the **shared
+  two-word-string drop path** — latent on wasm (bump allocator never recycles),
+  **fatal on arm64** (freelist hands the cell back out), and absent on x86-64
+  (different single-word IR branch).
+- **Two diagnostic edits to the arm64 backend pinned the mechanism** (both
+  reverted — never shipped):
+  1. *poison-on-free* (fill freed blocks with `0xAA`): the corrupted byte is
+     **not** `0xAA`, so it is not read from a freed-then-poisoned cell.
+  2. *never pop the freelist in `__fern_alloc`* (keep all drops/frees, so
+     register pressure is unchanged): the program **passes**. This isolates the
+     cause to **heap freelist reuse**, not register allocation.
+- `__fern_alloc_reuse` is **not** called by the reproducer (confirmed via the
+  emitted `bl` targets), so it is plain freelist free→reuse, and `__fern_arr_dec`
+  is shared with x86-64 (which passes) — leaving **`__fern_str_dec` freeing a
+  still-live two-word string** as the culprit. The freed-while-live value is the
+  `strcat` accumulator (the growing `out`/`e` string), i.e. a string the
+  **Perceus free-eligibility / precise-drop analysis**
+  (`computeFreeEligible` / precise drops in `internal/ir/ir.go`, the
+  `ast.UseTwoWordStrings` branch ~line 3614/3651 and 4855) drops one reference
+  too early.
+
+**Conclusion / fix target:** a two-word-string reference is freed at a
+mis-computed last-use in the Perceus drop analysis. The fix belongs in the
+**target-independent IR** two-word-string drop emission (fixes arm64 *and*
+removes the latent wasm liability; x86-64 is untouched). It needs IR-level
+visibility into the emitted drops for the `out = out + piece` loop-accumulator
+pattern plus a full run of the RC regression suite (`rc_*` + `internal/e2e`),
+so it is a focused follow-up rather than a rushed patch.
 
 **Minimal reproducer** (self-contained single module; fails arm64, passes interp/x86-64):
 the mix of a string-slice branch (`out = out + s[i:i+1]`) and a
