@@ -140,10 +140,9 @@ func TestArm64WriterWriteSSO(t *testing.T) {
 	}
 }
 
-// NB: no WASM counterpart for the Writer.write SSO test. The wasm
-// backend has a SEPARATE, pre-existing bug in the `Writer.write`
-// METHOD path (buildWriterWriteBody) that corrupts a byte near the
-// end of a heap-string write — independent of the x86-64 SSO fix here
-// and tracked as its own follow-up. The wasm `write` / `print` /
-// `write_file` builtins (which the examples/cli/ tools actually use)
-// handle long strings correctly, so this gap doesn't affect them.
+// NB: the wasm `Writer.write` METHOD path used to corrupt a byte near
+// the end of a heap-string write to the stdout Writer (issue #2550).
+// That was a SEPARATE bug from the x86-64 SSO fix here: the stdout()
+// Writer was allocated without an rc-sentinel header, so __fern_retain
+// underflowed into the static data segment. It is now fixed and guarded
+// by TestWASMWriterWriteStdoutNoCorruption in wasm_e2e_test.go.

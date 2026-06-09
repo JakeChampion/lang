@@ -4218,9 +4218,20 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 func buildStdinBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	var body []byte
-	body = inst.InstI32Const(body, 4)
+	// 12-byte Reader struct: rc sentinel @ +0, {fd} @ +8 — matching the
+	// file Reader (buildOpenReaderBodyP2). The leading static rc sentinel
+	// keeps __fern_retain / __fern_drop (which mutate mem[ptr-8]) off the
+	// preceding static data segment — see issue #2550.
+	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 0)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 0) // data pointer = base + 8
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 0) // fd = 0 (stdin)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 0)
@@ -4236,9 +4247,20 @@ func buildStdinBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	getStdin := idxs["wasi_get_stdin_p2"]
 	var body []byte
-	body = inst.InstI32Const(body, 4)
+	// 12-byte Reader struct: rc sentinel @ +0, {handle} @ +8 — matching
+	// the file Reader (buildOpenReaderBodyP2). The leading static rc
+	// sentinel keeps __fern_retain / __fern_drop (which mutate mem[ptr-8])
+	// off the preceding static data segment — see issue #2550.
+	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 0)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 0) // data pointer = base + 8
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, getStdin) // handle = get-stdin()
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 0)
