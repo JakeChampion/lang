@@ -1191,6 +1191,31 @@ world-driven composer (P2) wires it.
      the self-compile / printer / checker oracles stay green (the self-host source
      has no array-param `@export`, so the shared paths are unchanged). **P6
      numeric-array param exports are now complete in both compilers.**
+   - **Slice 5g — sum-type (`option` / `result`) result export from Fern (Go). ✅
+     Done.** The first *structural* composite export beyond lists: a Fern reactor
+     `@export half(n): Option[i32]` / `@export checked_div(a,b): Result[i32,i32]`
+     returns a Fern enum box, lifted into a WIT `option` / `result`. The canonical
+     sum flattens to `(disc, payload)` > 1 core value, so it returns indirectly
+     (memory lift). The composer's `liftExport` `encodeSlot` gained an `allowSum`
+     path (results only — a sum-type *param* would need a param wrapper) that
+     emits `InnerTypeOption` / `InnerTypeResultOkErr` (prim arms, whose CValtype
+     byte < 128 makes the uleb arm-encoding equal the valtype byte) and the
+     `WorldInterface.OptionElemPrim` / `ResultArmPrims` accessors. The wasmbin
+     wrapper (`buildExportSumTypeResultWrapper`) writes the `(disc:u8@0,
+     payload@off)` return area — the discriminant remapped `1-tag` for option
+     (Fern Some=0/None=1 ↔ canonical none=0/some=1; result's Ok=0/Err=1 matches) —
+     handling **both** the **pair-form** `(tag, payload)` register return and the
+     heap-box value-pointer return (`ir.ExternExport.ResultEnum`, resolved during
+     lowering via `externEnumParamLayout`). Run end-to-end by
+     `TestExportOptionResultRunsViaConsumer` (the remap path) and
+     `TestExportResultResultRunsViaConsumer` (the no-remap path), each a Fern
+     exporter + a Fern consumer matching every arm, linked + run under wasmtime.
+     Scoped to single-scalar-payload Option/Result; the general-variant join and
+     sum-type *params* are later slices. (Two findings surfaced, both orthogonal
+     composer limitations deferred: a single exported interface can hold only one
+     `@export` function, and a world can export only one interface — the existing
+     tests never exercised either; the sum-type cases use one interface / one
+     function each.) The self-host port follows next.
    - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`

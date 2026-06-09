@@ -218,3 +218,27 @@ func (wi WorldInterface) ListElemPrim(v Valtype) (byte, bool) {
 	}
 	return d.Elem.Prim, true
 }
+
+// OptionElemPrim reports, when `v` resolves to an `option<P>` whose element is a
+// primitive, that primitive's CValtype byte. The P6 export lift uses it to emit
+// the `option` component type for an Option export result without exposing the
+// internal tag constants.
+func (wi WorldInterface) OptionElemPrim(v Valtype) (byte, bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || d.Tag != tagOption || !d.Elem.IsPrim {
+		return 0, false
+	}
+	return d.Elem.Prim, true
+}
+
+// ResultArmPrims reports, when `v` resolves to a `result<ok, err>` with both
+// arms present and primitive, the two arms' CValtype bytes. Returns (0,0,false)
+// otherwise. The P6 export lift uses it to emit the `result` component type for
+// a Result export result; Fern's Result[T,E] always carries both arms.
+func (wi WorldInterface) ResultArmPrims(v Valtype) (ok byte, err byte, both bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || d.Tag != tagResult || !d.HasOk || !d.HasErr || !d.Ok.IsPrim || !d.Err.IsPrim {
+		return 0, 0, false
+	}
+	return d.Ok.Prim, d.Err.Prim, true
+}
