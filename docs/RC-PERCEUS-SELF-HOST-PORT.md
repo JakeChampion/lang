@@ -1677,3 +1677,30 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Coverage: `TestSelfHostRcOptionBoxWasm` gains result-err-string-released,
   result-ok-string-released, result-err-string-churn-clean (50k cycles). Full RC
   + component + binary + shim + interp + cli wasm suites green; bootstrap-safe.
+- 2026-06-09: **wasm transitive reclamation — Stage A: per-type struct/enum
+  drop functions ($__fern_release_<T>).** Begins closing the deep-nesting parity
+  gap vs the native compiler (which generates recursive `__drop_struct_<N>` /
+  enum drops for ARBITRARY-DEPTH reclamation; the self-host had stopped at one
+  level). A swept struct/enum local now routes through a GENERATED per-type drop
+  function: `emit_struct_release` emits `(call $__fern_release_<sty> …)` and
+  `struct_enum_drop_helpers` generates, once per module, `$__fern_release_<S>`
+  for each struct (its rc==1-guarded field release, where a nested concrete
+  struct/enum field RECURSES through that field type's own release fn — deep)
+  and `$__fern_release_<E>` for each user enum (flat one level for now). Mutual
+  recursion gives arbitrary depth; each fn rc==1-gates internally so a shared
+  child at rc>1 just decrements (no over-release); Option/Result fields stay
+  flat (their locals use emit_option_release, no $__fern_release_ fn). A new
+  `release_module_ctx` builds the minimal type-only Ctx the generator's
+  classifiers need (additive — no change to the bootstrap-critical classifier
+  call sites). The generated fns are emitted after the rc runtime when the heap
+  + any struct/enum type exists. Coverage: new `TestSelfHostRcDeepNestWasm` —
+  deep-nested-2 / -3 (transitive free of inner arrays 2 + 3 levels down),
+  deep-nested-string (a deep string field freed), deep-nested-churn (50k deep
+  trees built + freed, inner arrays reclaimed transitively, no OOM, detector 0),
+  deep-builder-escape (the tree freed once across mk's move + the caller's
+  release). Full RC + component + binary + shim + interp + cli wasm suites green
+  — the compiler's own nested structs/AST route through the generated fns
+  safely. **Remaining stages toward full native parity:** arrays-of-structs
+  deep-release (`__drop_arr_struct_`), enum variant payload dispatch
+  (`__drop_enum_` / `genEnumDrops`), tuple drop fns, map string keys/values,
+  closure-env capture release.
