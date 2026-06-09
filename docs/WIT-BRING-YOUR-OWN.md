@@ -1457,14 +1457,26 @@ produces a response:
   `TestExportWasiHttpHandlerCallsConstructorsComposes` (`wasm-tools validate` +
   the component exports `wasi:http/incoming-handler`). No new marshalling — it's
   the P5 import + P6 export paths meeting.
-- **Next — `response-outparam.set`.** Producing a response calls
-  `[static]response-outparam.set(param: own<response-outparam>, response:
-  result<own<outgoing-response>, error-code>)`. The `result<own<…>, error-code>`
-  arg is a composite PARAM carrying a handle in its ok arm and the wide
-  `error-code` variant in its err arm — the embedded HTTP path hand-codes its
-  flattened core call (disc + 7 values; see `wasi_http.go`), so the
-  bring-your-own path needs the `@import` extern marshalling to flatten a
-  `result<own<R>, <variant>>` param generically (and `error-code` modelled on the
-  Fern side). That marshalling, plus the `fields.append` / `set-status-code` /
-  body-stream methods and a `wasmtime serve` run harness, is what remains for an
-  end-to-end running server.
+- **A `wasi:http` handler RUNS under `wasmtime serve`. ✅ Done — the running-server
+  capstone.** A bring-your-own Fern handler now answers a real HTTP request with
+  the 200 it sets, with NO embedded HTTP world. The handler calls the response
+  primitives — `[constructor]fields`, `[constructor]outgoing-response`,
+  `[static]response-outparam.set` — as `@import` externs, and is composed against
+  a minimal proxy world (`import wasi:http/types; export
+  wasi:http/incoming-handler`, which pulls in exactly the transitive io/clocks
+  proxy imports `wasmtime serve` links — not filesystem/sockets). **No compiler /
+  composer change was needed**: `response-outparam.set`'s `result<own<outgoing-
+  response>, error-code>` param flattens to 9 core values
+  `[i32 i32 i32 i32 i64 i32 i32 i32 i32]` (the i64 from error-code's `option<u64>`
+  arm, error-code carries heap → `Classify` = `KindMem`), and the existing `gMem`
+  trampoline lowers it straight off the core import's own params. The handler
+  declares `set` with those 9 flattened params and passes `Ok` (disc 0, the
+  response handle, the rest zero). Gated by `TestExportWasiHttpHandlerServes`
+  (`wasmtime serve` the composed component, `GET /` → 200) +
+  `TestExportWasiHttpHandlerSetResponseComposes` (`wasm-tools validate`).
+  - **Known ergonomics gap (next):** the `set` extern is spelled with the 9
+    explicit flattened params (`out, disc, resp, a, b: i64, c, d, e, f`) — the
+    author writes the canonical flattening by hand. A future slice can add
+    `result<own<R>, E>`-param sugar (a composer Ok-wrap so the handler passes just
+    the response handle) and the body / header / status methods for richer
+    responses.
