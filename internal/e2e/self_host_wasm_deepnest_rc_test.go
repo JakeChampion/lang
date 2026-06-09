@@ -67,6 +67,16 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// $__fern_arr_release_Node mutual recursion reclaims the WHOLE tree to
 		// arbitrary depth (the watbin-parser shape). Value-correct + detector 0.
 		{"node-tree-deep-released", "struct Node { kind: i32, items: Node[] } struct POne { node: Node, pos: i32 } function parse(xs: i32[], i: i32): POne { if (xs[i] == 0) { return POne { node: Node { kind: xs[i], items: [] }, pos: i + 1 }; } var children: Node[] = []; var j: i32 = i + 1; while (j < xs.len() && xs[j] != 9) { var r: POne = parse(xs, j); children = children.append(r.node); j = r.pos; } return POne { node: Node { kind: 7, items: children }, pos: j + 1 }; } function sum(n: Node): i32 { var s: i32 = n.kind; var i: i32 = 0; while (i < n.items.len()) { s = s + sum(n.items[i]); i = i + 1; } return s; } function main(): i32 { var xs: i32[] = [1, 0, 0, 1, 0, 9, 9]; var r: POne = parse(xs, 0); return sum(r.node) + __fern_rc_underflow_count(); }", 14},
+		// Stage C: a user enum's variant PAYLOAD is released on free, via the
+		// generated $__fern_release_<Enum> struct_id dispatch to the matching
+		// variant struct's release fn (native genEnumDrops). Here Circle's heap
+		// string payload is freed.
+		{"enum-string-payload-released", "enum Shape { Circle(string), Square(i32) } function main(): i32 { var s: Shape = Circle(\"ab\" + \"cd\"); match (s) { Circle(name) => { return name.len() + 38 + __fern_rc_underflow_count(); }, Square(w) => { return w; } } }", 42},
+		// An enum array-payload variant releases its array.
+		{"enum-array-payload-released", "enum Box { Has(i32[]), Empty } function main(): i32 { var b: Box = Has([10, 20, 30]); match (b) { Has(xs) => { return xs[1] + 22 + __fern_rc_underflow_count(); }, Empty => { return 0; } } }", 42},
+		// Churn: 50k enum-with-string-payload built + freed; the payload reclaims
+		// each cycle (no OOM), detector clean — proves the variant-dispatch free.
+		{"enum-payload-churn", "enum Shape { Circle(string), Square(i32) } function mk(): i32 { var s: Shape = Circle(\"x\" + \"y\"); match (s) { Circle(name) => { return name.len(); }, Square(w) => { return w; } } } function main(): i32 { var k = 0; var n = 0; while (k < 50000) { n = mk(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
