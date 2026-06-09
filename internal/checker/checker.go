@@ -4518,6 +4518,50 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if id, ok := x.Array.(*ast.Ident); ok {
 					borrow[id] = true
 				}
+				if id, ok := x.Idx.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.CastExpr:
+				// `x as T` READS x's value (e.g. pointer→usize for a runtime
+				// call) — a borrow, never a transfer.
+				if id, ok := x.Inner.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Binary:
+				// Operands of `+`, `==`, `&&`, string-concat, … are READS.
+				// (`sink(x) + sink(x)` keeps the x's as call-arg consumes — those
+				// operands are Calls, not bare idents, so they aren't marked here.)
+				if id, ok := x.Left.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.Right.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Unary:
+				if id, ok := x.Operand.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.SliceExpr:
+				// `s[lo:hi]` reads s (and the bounds) — a borrow.
+				if id, ok := x.Source.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.Low.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.High.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.StructLit:
+				// `S { ...base, f: v }`: the spread READS base's fields (the new
+				// struct co-owns its pointer fields via the construction
+				// alias-inc) — a borrow, not a transfer. The named field VALUES
+				// below are still consumes (moved into the new struct).
+				if x.Base != nil {
+					if id, ok := x.Base.(*ast.Ident); ok {
+						borrow[id] = true
+					}
+				}
 			case *ast.Call:
 				guardCallArgs(x)
 				// The callee position is a borrow (function ref / closure call).
