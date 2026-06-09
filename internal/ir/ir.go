@@ -1380,6 +1380,14 @@ type ExternExport struct {
 	Name    string
 	Iface   string
 	WITName string
+	// ResultEnum is the option/result layout when an `@export` returns an
+	// Option[T] / Result[T,E] (a WIT `option` / `result`), else nil. The
+	// canonical sum flattens to (disc, payload) > 1 core value, so the result is
+	// returned indirectly through a return area; the wasm backend surfaces a
+	// wrapper that reads the Fern enum box and writes (disc:u8@0, payload@off),
+	// with the option discriminant remapped (P6 — docs/WIT-BRING-YOUR-OWN.md).
+	// Resolved here during lowering, where checker.Info is in scope.
+	ResultEnum *ExternEnumParam
 }
 
 // Program is the lowered form of an entire ast.Program.
@@ -1674,7 +1682,14 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 		if fn.ExportIface != "" {
 			// `@export` function: lowered normally (it has a body), with the
 			// world-export binding recorded for the wasm backend / composer (P6).
-			out.Exports = append(out.Exports, ExternExport{Name: fn.Name, Iface: fn.ExportIface, WITName: fn.ExportWITName})
+			// An Option/Result result needs a wrapper (Fern enum box → canonical
+			// (disc, payload) return area), resolved here where checker.Info is in
+			// scope. Only the single-payload form (no general variant) is surfaced.
+			exp := ExternExport{Name: fn.Name, Iface: fn.ExportIface, WITName: fn.ExportWITName}
+			if re, ok := externEnumParamLayout(fn.ReturnType, info, ptrW); ok && re.Variants == nil && re.SlotCount == 0 {
+				exp.ResultEnum = re
+			}
+			out.Exports = append(out.Exports, exp)
 		}
 	}
 	// Closure reclamation Stage 3: emit a per-closure

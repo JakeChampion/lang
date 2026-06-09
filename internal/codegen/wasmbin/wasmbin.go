@@ -188,6 +188,11 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// numeric-array (`list<T>`) result's wrapper allocates the [ptr,len] return
 	// area, so it needs __fern_alloc (docs/WIT-BRING-YOUR-OWN.md).
 	for _, exp := range prog.Exports {
+		if exp.ResultEnum != nil {
+			// The Option/Result-RESULT wrapper allocates the (disc,payload)
+			// canonical return area via __fern_alloc.
+			helpers.add("__fern_alloc")
+		}
 		for _, fn := range prog.Funcs {
 			if fn.Name != exp.Name {
 				continue
@@ -811,7 +816,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// combination (a later slice) and route the array-param + scalar/void case
 		// to the dedicated param wrapper.
 		arrParam := fn != nil && funcHasNumericArrayParam(fn)
-		if arrParam && (isStringType(fn.ReturnType) || isScalarArrayParamType(fn.ReturnType)) {
+		if arrParam && (isStringType(fn.ReturnType) || isScalarArrayParamType(fn.ReturnType) || exp.ResultEnum != nil) {
 			return nil, fmt.Errorf("wasmbin: @export %q: a numeric-array parameter with a composite result is not supported yet", exp.Name)
 		}
 		// A string-RESULT export needs the canonical return-area shape: the Fern
@@ -855,6 +860,29 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			wrapFuncIdx := nextFuncIdx
 			nextFuncIdx++
 			body, locals := buildExportListResultWrapper(funcIdx, idx, len(pvts))
+			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
+			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, wrapFuncIdx)
+			continue
+		}
+		// An Option/Result (WIT `option` / `result`) RESULT export: the Fern
+		// function returns an enum box pointer, but the canonical sum returns
+		// indirectly through a (disc, payload) return area. Surface a wrapper that
+		// writes it (docs/WIT-BRING-YOUR-OWN.md).
+		if exp.ResultEnum != nil {
+			if _, ok := funcIdx["__fern_alloc"]; !ok {
+				return nil, fmt.Errorf("wasmbin: @export %q: sum-type result needs __fern_alloc (not pinned)", exp.Name)
+			}
+			pvts, err := paramValtypes(fn.Params)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			wrapTIdx := addType(pvts, []byte{encode.ValtypeI32})
+			wrapFuncIdx := nextFuncIdx
+			nextFuncIdx++
+			body, locals := buildExportSumTypeResultWrapper(funcIdx, idx, len(pvts), exp.ResultEnum, prog.PairForm[exp.Name])
 			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
 			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
 			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)

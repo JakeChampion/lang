@@ -1107,6 +1107,101 @@ func buildExportListResultWrapper(idxs map[string]uint32, userFuncIdx uint32, np
 	return body, locals
 }
 
+// buildExportSumTypeResultWrapper builds the core wrapper for an `@export`
+// function returning an Option[T] / Result[T,E] — a WIT `option` / `result`
+// (P6 — docs/WIT-BRING-YOUR-OWN.md). The Fern function returns an enum box value
+// pointer V (`[tag:i32@0][payload@off]`), but the canonical sum flattens to
+// (disc, payload) > 1 core value, so it returns indirectly through a return area
+// (`disc:u8@0`, `payload@off`) the memory lift reads. The wrapper forwards the
+// scalar params, calls the user func, and writes the area: the discriminant
+// remapped `1-tag` for option (canonical none=0/some=1 reverses Fern's
+// Some=0/None=1; result's Ok=0/Err=1 matches), the payload copied at the same
+// box offset. Wrapper type: (scalar params…) -> i32.
+//
+// `pairForm` selects how the user func's result arrives: a pair-form function
+// returns (tag:i32, payload:i32) directly on the stack; otherwise it returns a
+// single enum box value pointer.
+//
+// Locals after the params: pair-form 0:$tag 1:$pay 2:$rb; box-form 0:$v 1:$rb.
+func buildExportSumTypeResultWrapper(idxs map[string]uint32, userFuncIdx uint32, nparams int, ep *ir.ExternEnumParam, pairForm bool) (body []byte, locals []byte) {
+	poff := uint32(ep.PayloadOffset)
+	payVT := externRecordFieldValtype(ep.PayloadType)
+	psize := int32(4)
+	if payVT == encode.ValtypeI64 || payVT == encode.ValtypeF64 {
+		psize = 8
+	}
+	areaSize := int32(ep.PayloadOffset) + psize
+
+	allocRB := func(b []byte, rb uint32) []byte {
+		// rb = (__fern_alloc(areaSize+7) + 7) & ~7 — 8-byte aligned return area
+		// (the canonical variant load aligns to the widest field; the bump
+		// allocator doesn't align).
+		b = inst.InstI32Const(b, areaSize+7)
+		b = inst.InstCall(b, idxs["__fern_alloc"])
+		b = inst.InstI32Const(b, 7)
+		b = numeric.InstI32Add(b)
+		b = inst.InstI32Const(b, -8)
+		b = numeric.InstI32And(b)
+		return inst.InstLocalSet(b, rb)
+	}
+	// Forward each scalar param.
+	for i := 0; i < nparams; i++ {
+		body = inst.InstLocalGet(body, uint32(i))
+	}
+	body = inst.InstCall(body, userFuncIdx)
+
+	if pairForm {
+		tag := uint32(nparams)
+		pay := uint32(nparams + 1)
+		rb := uint32(nparams + 2)
+		body = inst.InstLocalSet(body, pay) // payload is on top
+		body = inst.InstLocalSet(body, tag)
+		body = allocRB(body, rb)
+		// disc:u8 @ rb+0 — the tag, remapped 1-tag for option.
+		body = inst.InstLocalGet(body, rb)
+		if ep.RemapDisc {
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalGet(body, tag)
+			body = numeric.InstI32Sub(body)
+		} else {
+			body = inst.InstLocalGet(body, tag)
+		}
+		body = memory.InstI32Store8(body, 0, 0)
+		// payload @ rb+off — the pair-form payload is a single i32.
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstLocalGet(body, pay)
+		body = memory.InstI32Store(body, 2, poff)
+		body = inst.InstLocalGet(body, rb)
+		locals = inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+		return body, locals
+	}
+
+	v := uint32(nparams)
+	rb := uint32(nparams + 1)
+	body = inst.InstLocalSet(body, v)
+	body = allocRB(body, rb)
+	// disc:u8 @ rb+0 — the box tag, remapped 1-tag for option.
+	body = inst.InstLocalGet(body, rb)
+	if ep.RemapDisc {
+		body = inst.InstI32Const(body, 1)
+		body = inst.InstLocalGet(body, v)
+		body = memory.InstI32Load(body, 2, 0)
+		body = numeric.InstI32Sub(body)
+	} else {
+		body = inst.InstLocalGet(body, v)
+		body = memory.InstI32Load(body, 2, 0)
+	}
+	body = memory.InstI32Store8(body, 0, 0)
+	// payload @ rb+off — copied from the box at the same offset.
+	body = inst.InstLocalGet(body, rb)
+	body = inst.InstLocalGet(body, v)
+	body = appendExternFieldLoad(body, ep.PayloadType, poff)
+	body = appendExternFieldStore(body, ep.PayloadType, poff)
+	body = inst.InstLocalGet(body, rb)
+	locals = inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	return body, locals
+}
+
 // funcHasNumericArrayParam reports whether any of fn's parameters is a numeric
 // array (`list<T>`) — the shape that needs the export PARAM wrapper (the others,
 // scalars + strings, map onto the core signature directly).

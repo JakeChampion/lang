@@ -399,7 +399,16 @@ func exportNeedsMemory(wi componenttype.WorldInterface, sig *componenttype.FuncT
 	if sig.NamedResults {
 		return false
 	}
-	return isStringOrList(wi, sig.Result)
+	if isStringOrList(wi, sig.Result) {
+		return true
+	}
+	// An option/result result flattens to (disc, payload) > 1 core value, so it
+	// returns indirectly through the core memory — the lift reads it.
+	if _, ok := wi.OptionElemPrim(sig.Result); ok {
+		return true
+	}
+	_, _, isResult := wi.ResultArmPrims(sig.Result)
+	return isResult
 }
 
 // exportNeedsRealloc reports whether lifting `sig` needs cabi_realloc — true
@@ -450,18 +459,42 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	// list types are appended.
 	var defs [][]byte // list<elem> defined-type bodies, in emit order
 	nextIdx := c.nType
-	encodeSlot := func(v componenttype.Valtype, what string) ([]byte, bool, error) {
+	// encodeSlot encodes one param/result valtype, emitting any referenced
+	// defined type into `defs`. The bool result reports whether the slot carries
+	// linear-memory data (string / list / sum-type), which drives the memory /
+	// realloc lift option. `allowSum` enables option/result encoding (results
+	// only this slice — a sum-type *param* would need a param wrapper the wasm
+	// backend doesn't build yet).
+	encodeSlot := func(v componenttype.Valtype, what string, allowSum bool) ([]byte, bool, error) {
 		if v.IsPrim {
 			return []byte{v.Prim}, v.Prim == cValtypeString, nil
 		}
-		e, ok := wi.ListElemPrim(v)
-		if !ok {
-			return nil, false, fmt.Errorf("component: export %s#%s: non-scalar / unsupported %s", iface, witName, what)
+		if e, ok := wi.ListElemPrim(v); ok {
+			idx := nextIdx
+			nextIdx++
+			defs = append(defs, InnerTypeList(e))
+			return leb128SlebBytes(idx), true, nil
 		}
-		idx := nextIdx
-		nextIdx++
-		defs = append(defs, InnerTypeList(e))
-		return leb128SlebBytes(idx), true, nil
+		if allowSum {
+			if e, ok := wi.OptionElemPrim(v); ok {
+				// option<prim> flattens to (disc, payload) > 1 → indirect result,
+				// memory lift. A prim's CValtype byte is < 64, so InnerTypeOption's
+				// single inner byte is correct.
+				idx := nextIdx
+				nextIdx++
+				defs = append(defs, InnerTypeOption(e))
+				return leb128SlebBytes(idx), true, nil
+			}
+			if okB, errB, ok := wi.ResultArmPrims(v); ok {
+				// result<okPrim, errPrim>: each arm's CValtype byte is < 128, so the
+				// uleb InnerTypeResultOkErr writes equals the prim valtype byte.
+				idx := nextIdx
+				nextIdx++
+				defs = append(defs, InnerTypeResultOkErr(uint32(okB), uint32(errB)))
+				return leb128SlebBytes(idx), true, nil
+			}
+		}
+		return nil, false, fmt.Errorf("component: export %s#%s: non-scalar / unsupported %s", iface, witName, what)
 	}
 
 	var pnames []string
@@ -469,7 +502,7 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	hasMemParam := false
 	for i := range sig.Params {
 		p := sig.Params[i]
-		enc, isMem, err := encodeSlot(p.Ty, "parameter")
+		enc, isMem, err := encodeSlot(p.Ty, "parameter", false)
 		if err != nil {
 			return err
 		}
@@ -486,7 +519,7 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	if sig.NamedResults {
 		return fmt.Errorf("component: export %s#%s: multi result (unsupported in this slice)", iface, witName)
 	}
-	rval, hasMemResult, err := encodeSlot(sig.Result, "result")
+	rval, hasMemResult, err := encodeSlot(sig.Result, "result", true)
 	if err != nil {
 		return err
 	}
