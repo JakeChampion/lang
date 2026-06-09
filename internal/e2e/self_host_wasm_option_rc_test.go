@@ -83,6 +83,13 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// A churn of Some(heap string): payload release reclaims the strings (no
 		// growth), detector clean across many cycles.
 		{"option-string-churn-clean", "function mk(): i32 { var o = Some(\"a\" + \"b\"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 2},
+		// RECLAIM: an option local re-bound (`var o = Some(…)`) each loop
+		// iteration now releases the prior value (payload-aware, cow-guarded)
+		// instead of leaking it — 100k iters stay reclaimed + detector clean.
+		{"option-rebind-loop-reclaim", "function main(): i32 { var n = 0; var k = 0; while (k < 100000) { var o = Some(\"a\" + \"b\"); match (o) { Some(v) => { n = n + v.len(); }, None => {} } k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 3},
+		// RECLAIM: a reassigned option (`o = Some(…)`) each iteration reclaims the
+		// old (box + its string payload) across 100k cycles, detector clean.
+		{"option-reassign-loop-reclaim", "function main(): i32 { var o = Some(\"xx\" + \"yy\"); var k = 0; while (k < 100000) { o = Some(\"z\" + \"w\"); k = k + 1; } match (o) { Some(v) => { return v.len() + __fern_rc_underflow_count(); }, None => { return 0; } } }", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -7129,11 +7129,16 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 }
                 return st;
             }
-            // Perceus option inc-on-alias: `var u = o` retains the variant box
-            // so the exit sweep's dec balances. A fresh Some/Ok/Err/None or an
-            // option-returning call is rc 1 already (no inc — that would leak).
+            // Perceus option re-bind reclaim: release any prior option in the
+            // slot (payload-aware, cow-guarded) before storing, so a loop-body
+            // `var o = Some(…)` re-run each iteration frees the previous value
+            // instead of leaking it. The `i32.ne` guard skips an in-place
+            // result; the slot is zero-init so the first binding releases null.
+            // A bare-ident alias then retains the variant box.
             if (contains_str(st.cx.opt_swept, v.name)) {
-                st = st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
+                st = st.w("    (local.set $__retv_i32 " + emit_expr(v.init, st.cx, 0) + ")\n");
+                st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + v.name + ")) (then\n" + emit_option_release(v.name, lookup_pair(st.cx.ol_names, st.cx.ol_payloads, v.name), st.cx) + "    ))\n");
+                st = st.w("    (local.set $" + v.name + " (local.get $__retv_i32))\n");
                 if (init_is_option_alias(v.init, st.cx)) {
                     st = st.w("    (drop (call $__fern_rc_inc (local.get $" + v.name + ")))\n");
                 }
@@ -7187,6 +7192,19 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + a.target + ")) (then\n" + emit_struct_release(a.target, lookup_pair(st.cx.sv_names, st.cx.sv_types, a.target), st.cx) + "    ))\n");
                 st = st.w("    (local.set $" + a.target + " (local.get $__retv_i32))\n");
                 if (init_is_struct_alias(a.value, st.cx)) {
+                    st = st.w("    (drop (call $__fern_rc_inc (local.get $" + a.target + ")))\n");
+                }
+                return st;
+            }
+            // Reassigning an owned option local: release the old option
+            // (payload-aware, cow-guarded) and retain a newly-aliased one. Only
+            // owned LOCALS are in opt_swept — a borrowed option PARAM reassigned
+            // isn't, so its (caller-owned) first value is never cow-freed.
+            if (contains_str(st.cx.opt_swept, a.target)) {
+                st = st.w("    (local.set $__retv_i32 " + emit_expr(a.value, st.cx, 0) + ")\n");
+                st = st.w("    (if (i32.ne (local.get $__retv_i32) (local.get $" + a.target + ")) (then\n" + emit_option_release(a.target, lookup_pair(st.cx.ol_names, st.cx.ol_payloads, a.target), st.cx) + "    ))\n");
+                st = st.w("    (local.set $" + a.target + " (local.get $__retv_i32))\n");
+                if (init_is_option_alias(a.value, st.cx)) {
                     st = st.w("    (drop (call $__fern_rc_inc (local.get $" + a.target + ")))\n");
                 }
                 return st;
