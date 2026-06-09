@@ -3081,6 +3081,9 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
     // An Option/Result result repacks the self-host enum box into the canonical
     // (disc:u8@0, payload:i32@4) return area (P6 — see the sum-result branch).
     var sum_result: boolean = extern_sum_param_supported(ret);
+    // A tuple result copies the self-host tuple's i32 elements into the canonical
+    // (element i @ i*4) return area (P6 — see the tuple-result branch).
+    var tup_result: boolean = extern_tuple_param_supported(ret);
     var i_local: i32 = w_slots + nblk;
     var s_local: i32 = w_slots + nblk + 1;
     var ra_local: i32 = w_slots + nblk + 2;
@@ -3091,10 +3094,12 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
     var arr_alen: i32 = w_slots + nblk + 2;
     var arr_buf: i32 = w_slots + nblk + 3;
     var arr_ra: i32 = w_slots + nblk + 4;
-    // Sum-result locals: the call result (the enum box pointer) and the return
-    // area.
+    // Sum-result / tuple-result locals: the call result (the box / tuple pointer)
+    // and the return area.
     var sum_v: i32 = w_slots + nblk + 1;
     var sum_rb: i32 = w_slots + nblk + 2;
+    var tup_v: i32 = w_slots + nblk + 1;
+    var tup_rb: i32 = w_slots + nblk + 2;
 
     var head: string = "  (func $__xwrap_" + fname;
     j = 0;
@@ -3103,7 +3108,7 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
         else { head = head + " (param " + wat_extern_valtype(params[j].type_name) + ")"; }
         j = j + 1;
     }
-    if (str_result || arr_result || sum_result) { head = head + " (result i32)"; }
+    if (str_result || arr_result || sum_result || tup_result) { head = head + " (result i32)"; }
     else if (returns_value(ret)) { head = head + " (result " + wat_extern_valtype(ret) + ")"; }
     head = head + "\n";
 
@@ -3111,6 +3116,7 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
     if (str_result) { nlocals = nlocals + 2; }
     if (arr_result) { nlocals = nlocals + 4; }
     if (sum_result) { nlocals = nlocals + 2; }
+    if (tup_result) { nlocals = nlocals + 2; }
     var locals: string = "    ";
     var k: i32 = 0;
     while (k < nlocals) { locals = locals + "(local i32) "; k = k + 1; }
@@ -3223,6 +3229,23 @@ function build_export_wrapper(fname: string, params: parser.ParamDecl[], ret: st
         }
         body = body + "    (i32.store offset=4 (local.get " + srbS + ") (i32.load offset=4 (local.get " + svS + ")))\n";
         body = body + "    (local.get " + srbS + "))\n";
+    } else if (tup_result) {
+        // Tuple result. The Fern func returns a tuple pointer (element i @ i*4,
+        // no header); the canonical tuple returns indirectly with element i at
+        // the same i*4 offset (all i32). Copy each element into the 8-aligned
+        // return area.
+        var tvS: string = util.i32_to_string(tup_v);
+        var trbS: string = util.i32_to_string(tup_rb);
+        var tn: i32 = tuple_type_elem_count(ret);
+        body = body + "    (local.set " + tvS + " (call $" + fname + callargs + "))\n";
+        body = body + "    (local.set " + trbS + " (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(tn * 4 + 7) + ")) (i32.const 7)) (i32.const -8)))\n";
+        var ti: i32 = 0;
+        while (ti < tn) {
+            var toff: string = util.i32_to_string(ti * 4);
+            body = body + "    (i32.store (i32.add (local.get " + trbS + ") (i32.const " + toff + ")) (i32.load (i32.add (local.get " + tvS + ") (i32.const " + toff + "))))\n";
+            ti = ti + 1;
+        }
+        body = body + "    (local.get " + trbS + "))\n";
     } else {
         body = body + "    (call $" + fname + callargs + "))\n";
     }
@@ -3237,7 +3260,7 @@ function export_needs_heap(mod: parser.Module): boolean {
     while (i < mod.exports.len()) {
         var nm: string = mod.exports[i].func_name;
         var params: parser.ParamDecl[] = export_func_params(mod, nm);
-        if (export_func_ret(mod, nm) == "string" || export_has_string_param(params) || extern_array_param_supported(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm))) {
+        if (export_func_ret(mod, nm) == "string" || export_has_string_param(params) || extern_array_param_supported(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm)) || extern_tuple_param_supported(export_func_ret(mod, nm))) {
             return true;
         }
         i = i + 1;
@@ -3265,7 +3288,7 @@ function extern_exports(mod: parser.Module): string {
         var x: parser.ExportBinding = mod.exports[i];
         var ret: string = export_func_ret(mod, x.func_name);
         var params: parser.ParamDecl[] = export_func_params(mod, x.func_name);
-        if (ret == "string" || export_has_string_param(params) || extern_array_param_supported(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret)) {
+        if (ret == "string" || export_has_string_param(params) || extern_array_param_supported(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret)) {
             // Composite signature: surface a wrapper that bridges the canonical
             // ABI (string params materialised as [len][bytes] blocks, a string
             // result repacked into the [ptr,len] return area, a numeric-array
