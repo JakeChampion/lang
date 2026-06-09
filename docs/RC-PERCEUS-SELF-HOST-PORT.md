@@ -1786,3 +1786,20 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   bug in tuple-element typing; the enum-in-tuple match path is unaffected and
   the deep-release is sound regardless.) Remaining toward exact native parity:
   array-of-tuple deep release, map string keys/values, closure-env captures.
+- 2026-06-09: **wasm map RC — string KEY release.** Closes the wordcount-style
+  leak: a string-keyed map's heap keys (e.g. words read from input) are now
+  reclaimed on the map's death. `$__fern_map_set` construction-incs the key on a
+  NEW insert when `kis@[box+20]==1` (a guard no-op for an immortal string
+  literal — the common case; a heap key now reclaims; i32 keys carry no rc), and
+  `$__fern_map_release` now, when the map is the last owner and kis==1, loops the
+  occupied slots (used[i]==1) releasing each key via `$__fern_arr_dec` before
+  freeing the keys buffer. Balances: a heap key local (rc 1, str_swept) inc'd on
+  insert (rc 2) is dec'd at its own exit (→1) and by map_release (→0). The grow
+  rehash copies key pointers (no re-inc) and frees the old keys buffer flat, so
+  key rc is stable across resize. (A key on a DELETED slot — tombstone, used==2
+  — isn't released: a sound leak, since delete doesn't dec the key; closing that
+  is a follow-up. String VALUES still leak — they need a box `vis` flag, the
+  next slice.) Coverage: `TestSelfHostRcMapGrowWasm` gains map-heap-key-released,
+  map-literal-key-clean, map-heap-key-churn (50k heap-keyed maps, keys reclaimed,
+  no OOM, detector 0). Full map + RC + component + binary + shim + interp + cli
+  wasm suites green; bootstrap-safe.

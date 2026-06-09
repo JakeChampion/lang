@@ -68,6 +68,16 @@ func TestSelfHostRcMapGrowWasm(t *testing.T) {
 		// reclaimed each cycle (no OOM), detector clean — proves real free, not
 		// just counting (200k unreclaimed maps would exhaust memory).
 		{"map-free-churn-clean", "function mk(): i32 { var m = map_new_i32(2); var k = 0; while (k < 30) { m = m.insert(k, k); k = k + 1; } return m.get_or(25, -1); } function main(): i32 { var n = 0; var k = 0; while (k < 200000) { n = mk(); k = k + 1; } return (n % 100) + __fern_rc_underflow_count(); }", 25},
+		// String KEY release: a heap string key (construction-inc'd on insert) is
+		// freed on the map's death (map_release releases occupied-slot keys when
+		// kis==1). Value-correct + detector clean.
+		{"map-heap-key-released", "function main(): i32 { var m = map_new(8); var k: string = \"ab\" + \"cd\"; m = m.insert(k, 5); return m.get_or(k, -1) + 37 + __fern_rc_underflow_count(); }", 42},
+		// A string LITERAL key is immortal — the inc/dec are guard no-ops, value
+		// still correct.
+		{"map-literal-key-clean", "function main(): i32 { var m = map_new(8); m = m.insert(\"x\", 40); return m.get_or(\"x\", -1) + 2 + __fern_rc_underflow_count(); }", 42},
+		// Churn: 50k maps with HEAP string keys built + freed; the keys reclaim
+		// each cycle (no OOM), detector clean — the wordcount-style leak closed.
+		{"map-heap-key-churn", "function mk(): i32 { var m = map_new(2); var a: string = \"k\" + \"1\"; var b: string = \"k\" + \"2\"; m = m.insert(a, 3); m = m.insert(b, 4); return m.get_or(a, -1) + m.get_or(b, -1); } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 100) + __fern_rc_underflow_count(); }", 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
