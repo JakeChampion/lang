@@ -1232,6 +1232,22 @@ world-driven composer (P2) wires it.
      matches every arm under wasmtime; the self-compile / printer / checker
      oracles stay green. **P6 sum-type result exports are now complete in both
      compilers.**
+   - **Slice 5h — tuple (`(A, B, …)`) result export from Fern (Go). ✅ Done.**
+     Another structural composite export: a Fern reactor
+     `@export make_pair(a, b): (i32, i32)` returns a tuple value, lifted into a
+     WIT `tuple`. A multi-element tuple flattens to > 1 core value, so it returns
+     indirectly (memory lift). The composer's `liftExport` `encodeSlot` gained a
+     tuple path (`InnerTypeTuple` + the `WorldInterface.TupleElemPrims` accessor,
+     all-primitive elements). `ir.ExternExport.ResultTuple` carries the layout —
+     reusing `externRecordResultLayout` (which already handles tuples), gated to
+     `ast.TupleType` and flat (`externFieldsAllFlat`) so named records (which need
+     the exported-instance type-export machinery) and nested tuples stay deferred.
+     The wasmbin wrapper (`buildExportTupleResultWrapper`) copies each element
+     from the Fern tuple value (`V+field.Offset`) into the canonical return area
+     (`field.CanonicalOffset`). Run end-to-end by
+     `TestExportTupleResultRunsViaConsumer` (a Fern exporter returns `(a+1, b*2)`,
+     a Fern consumer reads `p.0`/`p.1`, linked + run under wasmtime). The
+     self-host port follows next.
    - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`

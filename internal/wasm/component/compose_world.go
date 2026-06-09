@@ -402,13 +402,16 @@ func exportNeedsMemory(wi componenttype.WorldInterface, sig *componenttype.FuncT
 	if isStringOrList(wi, sig.Result) {
 		return true
 	}
-	// An option/result result flattens to (disc, payload) > 1 core value, so it
-	// returns indirectly through the core memory — the lift reads it.
+	// An option/result/tuple result flattens to > 1 core value, so it returns
+	// indirectly through the core memory — the lift reads it.
 	if _, ok := wi.OptionElemPrim(sig.Result); ok {
 		return true
 	}
-	_, _, isResult := wi.ResultArmPrims(sig.Result)
-	return isResult
+	if _, _, ok := wi.ResultArmPrims(sig.Result); ok {
+		return true
+	}
+	_, isTuple := wi.TupleElemPrims(sig.Result)
+	return isTuple
 }
 
 // exportNeedsRealloc reports whether lifting `sig` needs cabi_realloc — true
@@ -476,6 +479,15 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 			return leb128SlebBytes(idx), true, nil
 		}
 		if allowSum {
+			if elems, ok := wi.TupleElemPrims(v); ok {
+				// tuple<...> flattens to its elements (> 1 for a multi-element
+				// tuple) → indirect result, memory lift. Each prim's CValtype byte
+				// is < 64, so InnerTypeTuple's single-byte elements are correct.
+				idx := nextIdx
+				nextIdx++
+				defs = append(defs, InnerTypeTuple(elems))
+				return leb128SlebBytes(idx), true, nil
+			}
 			if e, ok := wi.OptionElemPrim(v); ok {
 				// option<prim> flattens to (disc, payload) > 1 → indirect result,
 				// memory lift. A prim's CValtype byte is < 64, so InnerTypeOption's

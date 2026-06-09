@@ -1241,6 +1241,17 @@ func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bo
 // `p.field` read finds it) and its CanonicalOffset (the canonical memory layout
 // of the return area, where sub-word fields pack tighter). For word-only records
 // the two coincide.
+// externFieldsAllFlat reports whether every field is a direct scalar (no nested
+// composite) — the shape the P6 tuple-result export wrapper handles.
+func externFieldsAllFlat(fields []ExternRecordField) bool {
+	for i := range fields {
+		if fields[i].Nested != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResult, bool) {
 	top, ok := compositeFieldTypes(t, info)
 	if !ok || len(top) < 1 || len(top) > maxFlatExternRecordFields {
@@ -1388,6 +1399,14 @@ type ExternExport struct {
 	// with the option discriminant remapped (P6 — docs/WIT-BRING-YOUR-OWN.md).
 	// Resolved here during lowering, where checker.Info is in scope.
 	ResultEnum *ExternEnumParam
+	// ResultTuple is the layout when an `@export` returns a tuple `(A, B, …)` (a
+	// WIT `tuple`), else nil. A multi-element tuple flattens to > 1 core value, so
+	// it returns indirectly through a return area; the wasm backend surfaces a
+	// wrapper that reads the Fern tuple's elements and writes them at the
+	// canonical offsets (P6). Records (named WIT types) are deferred — they need
+	// the exported-instance type-export machinery — so this is set only for
+	// tuples. Resolved here during lowering, where checker.Info is in scope.
+	ResultTuple *ExternRecordResult
 }
 
 // Program is the lowered form of an entire ast.Program.
@@ -1688,6 +1707,14 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			exp := ExternExport{Name: fn.Name, Iface: fn.ExportIface, WITName: fn.ExportWITName}
 			if re, ok := externEnumParamLayout(fn.ReturnType, info, ptrW); ok && re.Variants == nil && re.SlotCount == 0 {
 				exp.ResultEnum = re
+			} else if _, isTuple := fn.ReturnType.(ast.TupleType); isTuple {
+				// A tuple result returns indirectly; a record (named WIT type) needs
+				// the exported-instance type-export machinery, so only tuples here.
+				// Scoped to flat (no nested-tuple element) tuples, matching the
+				// composer's all-primitive element requirement.
+				if rr, ok := externRecordResultLayout(fn.ReturnType, info); ok && !rr.Direct && externFieldsAllFlat(rr.Fields) {
+					exp.ResultTuple = rr
+				}
 			}
 			out.Exports = append(out.Exports, exp)
 		}
