@@ -86,6 +86,32 @@ func TestSelfHostRcStructBoxWasm(t *testing.T) {
 		// (`{ ...a, n: … }`) churns: intermediates leak (free off), the final
 		// owned struct is swept once, detector stays clean across many cycles.
 		{"struct-base-copy-churn-clean", "struct Acc { xs: i32[], n: i32 } function step(a: Acc): Acc { return Acc { ...a, n: a.n + 1 }; } function main(): i32 { var a = Acc { xs: [1, 2, 3], n: 0 }; var k = 0; while (k < 1000) { a = step(a); k = k + 1; } return (a.n % 7) + a.xs[2] + __fern_rc_underflow_count(); }", 9},
+		// FREE + recursive field-release: freeing a struct at exit releases its
+		// rc-tracked array element (the source ys is dec'd to 0 by the struct's
+		// recursive release) — value-correct + detector clean.
+		{"struct-field-array-released", "struct B { xs: i32[], n: i32 } function main(): i32 { var ys: i32[] = [1, 2, 3]; var b = B { xs: ys, n: 9 }; return b.xs[2] + b.n + __fern_rc_underflow_count(); }", 12},
+		// Same for a string field.
+		{"struct-field-string-released", "struct N { name: string, n: i32 } function main(): i32 { var s: string = \"ab\" + \"cd\"; var v = N { name: s, n: 5 }; return v.name.len() + v.n + __fern_rc_underflow_count(); }", 9},
+		// A nested struct field: freeing the outer struct releases the inner
+		// struct box (construction-inc'd on store, recursively dec'd on free).
+		{"struct-nested-released", "struct Inner { v: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var i = Inner { v: 7 }; var o = Outer { inner: i, n: 5 }; return o.inner.v + o.n + __fern_rc_underflow_count(); }", 12},
+		// Builder-escape (the UAF guard): mk() builds an inner, stores it in an
+		// outer, and returns the outer (move-on-return). The inner survives
+		// mk's exit sweep ONLY because of the struct-value construction-inc;
+		// the caller's recursive release then frees it exactly once.
+		{"struct-builder-escape-clean", "struct Inner { v: i32 } struct Outer { inner: Inner, n: i32 } function mk(): Outer { var i = Inner { v: 9 }; return Outer { inner: i, n: 5 }; } function main(): i32 { var o = mk(); var p = mk(); return o.inner.v + p.n + __fern_rc_underflow_count(); }", 14},
+		// A build-struct-with-array-field churn (bare-ident array field →
+		// recursively released each time the struct is freed): detector clean
+		// with free on across many cycles.
+		{"struct-array-churn-clean", "struct B { xs: i32[], n: i32 } function mk(): i32 { var a: i32[] = [1, 2, 3, 4, 5, 6, 7, 8]; var b = B { xs: a, n: 5 }; return b.xs[7] + b.n; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 6},
+		// Recursive-parser shape (the watbin UAF regression): a borrowed struct
+		// FIELD read appended into an array (`children.append(r.node)`) must be
+		// retained, or releasing the source struct `r` frees the node out from
+		// under `children` (use-after-free when `sum` later walks the tree). AND
+		// the loop-body local `r` is null on the leaf early-return path, so the
+		// recursive release's `[s-8]` read must be null-guarded. Exercises both
+		// fixes; value-correct (nested kind-sum = 14) + detector clean.
+		{"struct-append-borrowed-field-clean", "struct Node { kind: i32, items: Node[] } struct POne { node: Node, pos: i32 } function parse(xs: i32[], i: i32): POne { if (xs[i] == 0) { return POne { node: Node { kind: xs[i], items: [] }, pos: i + 1 }; } var children: Node[] = []; var j: i32 = i + 1; while (j < xs.len() && xs[j] != 9) { var r: POne = parse(xs, j); children = children.append(r.node); j = r.pos; } return POne { node: Node { kind: 7, items: children }, pos: j + 1 }; } function sum(n: Node): i32 { var s: i32 = n.kind; var i: i32 = 0; while (i < n.items.len()) { s = s + sum(n.items[i]); i = i + 1; } return s; } function main(): i32 { var xs: i32[] = [1, 0, 0, 1, 0, 9, 9]; var r: POne = parse(xs, 0); return sum(r.node) + __fern_rc_underflow_count(); }", 14},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
