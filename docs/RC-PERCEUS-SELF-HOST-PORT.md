@@ -1330,3 +1330,56 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   guard dec'ing rc-tracked fields, then `$__fern_arr_dec`), struct-value
   construction-incs (so a struct stored in a container survives), AND boxing
   the extern result records (a swept extern struct must carry an rc header).
+- 2026-06-09: **wasm struct/enum RC — FREE flipped ON, with RECURSIVE FIELD-
+  RELEASE.** Structs/enums are now reclaimed; freeing a struct first releases
+  its rc-tracked fields. The three coordinated parts (which MUST land together
+  — any one alone is a UAF or over-release): (1) `struct_field_kind_char`
+  classifies each field TYPE 'a' array / 's' string / 'S' nested struct-enum-
+  tuple (freed one level) / 'i' scalar-or-unprovable (SKIPPED). The
+  classifier is asymmetric-by-design: a false pointer-mark on a scalar would
+  `$__fern_arr_dec` a raw integer (corruption for a large even value), so it
+  is EXACT for pointer types and defaults to 'i' (a missed pointer leaks,
+  never corrupts). (2) `emit_struct_release` emits, per swept struct local
+  (type recovered from `sv_types`), an inline `if [s-8]==1` last-owner guard
+  that dec's the 'a'/'s'/'S' fields BEFORE `$__fern_arr_dec`-ing the box —
+  `struct_exit_sweep_excl` now calls it (replacing the counting-stage
+  `rc_dec`). (3) struct-value construction-incs at all 7 container-store sites
+  (array elem, Some/Ok/Err, variant payload, tuple elem, struct field, AND
+  the struct base-copy, which now retains any non-scalar field) so a struct
+  stored in a container survives the source's release. The two
+  extern/canonical-ABI result records (`extern_emit_record_fill` inner + the
+  by-value `@import` result) are migrated to `$__fern_str_box` so a swept
+  extern struct carries an rc header (their `[s-8]` read is no longer garbage).
+  Move-on-return + the borrowed-return-retain ride unchanged from the counting
+  slice. Known sound leaks: an enum local's variant payload and a nested
+  struct/tuple's OWN fields aren't reached (one-level release), and a
+  loop-rebound `var`/reassigned struct isn't cow-freed — all over-count
+  (leak), never over-release. Coverage: `TestSelfHostRcStructBoxWasm` gains
+  struct-field-array-released + struct-field-string-released (the source is
+  dec'd to 0 by the struct's recursive release), struct-nested-released,
+  struct-builder-escape-clean (the UAF guard — the inner survives mk's exit
+  only via the construction-inc, then the caller frees it once) and
+  struct-array-churn-clean (50k cycles). Full RC suite + all component +
+  binary + shim wasm tests green with struct free ON; bootstrap-safe. **This
+  completes the struct/enum reclamation pipeline** (layout → counting → free),
+  matching arrays/strings/tuples — every primary heap container is now
+  reference-counted and reclaimed on the self-hosted wasm backend.
+  Two real bugs the free flip surfaced (and that the initial unit tests
+  missed — they only showed up in the struct-heavy watbin assembler, exactly
+  as the array/string flips each surfaced a mid-way UAF):
+  (a) **borrowed-value stores weren't retained.** The construction-incs only
+  covered bare-ident aliases; a borrowed *field read* stored into a container
+  (`children.append(r.node)` in the recursive WAT parser) wasn't retained, so
+  releasing the source struct freed the value out from under the array — a
+  use-after-free when the array was later walked. Fixed by `store_value_is_borrowed`,
+  which subsumes the four `init_is_*_alias` checks AND adds borrowed struct
+  field reads (rc-tracked field type) and struct-/string-array index reads;
+  it now gates the retain at ALL store sites including the previously-missed
+  `.append()` path. (b) **the recursive release lacked a null guard.** A
+  struct/tuple local declared in a loop body or not-taken branch is 0 on a
+  path that skips it (e.g. the parser's leaf early-return sweeping the
+  loop-body `r`); the inline `[s-8]` rc-read then faulted at address -8.
+  Fixed by null-guarding the rc-read in both `emit_struct_release` and
+  `tup_exit_sweep_excl` ($__fern_arr_dec already guards null; the inline read
+  did not). Both fixes shipped with the slice + the borrowed-field-append and
+  conditional-null shapes are covered by the new struct free tests.

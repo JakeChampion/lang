@@ -777,7 +777,9 @@ function tup_exit_sweep_excl(cx: Ctx, excl: string): string {
                 e = e + 1;
             }
             if (inner.len() > 0) {
-                o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then" + inner + "))\n";
+                // Null-guard: a conditionally-unassigned tuple local is 0; the
+                // inline `[t-8]` rc-read would fault at address -8.
+                o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then" + inner + "))))\n";
             }
             o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
         }
@@ -861,17 +863,69 @@ function collect_struct_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): stri
     return acc;
 }
 
-// struct_exit_sweep_excl emits the struct/enum release sweep (counting
-// milestone: rc DEC via $__fern_rc_dec — no free, no recursive field-release
-// yet) of every owned struct local, except `excl` (the move-on-return slot
-// handed to the caller at its rc). Recursive field-release + the $__fern_arr_dec
-// free ride on this when struct free is flipped on.
+// struct_field_kind_char classifies a struct field TYPE for recursive
+// release: 'a' array, 's' string, 'S' rc-boxed struct / enum / tuple (freed
+// one level — the nested value's OWN fields leak, a sound known gap), 'i'
+// scalar / unprovable (SKIPPED). Soundness is asymmetric and critical: a
+// false 'a'/'s'/'S' on a scalar field would $__fern_arr_dec a raw integer
+// (corruption for a large even value above heap_base), so the classifier is
+// EXACT for the pointer cases and defaults everything else to 'i' (a missed
+// pointer field just leaks, never corrupts).
+function struct_field_kind_char(ft: string, cx: Ctx): string {
+    if (ty_spelling_is_array(ft)) { return "a"; }
+    if (ft == "string") { return "s"; }
+    if (ft.len() > 0 && ft[0] == 40) { return "S"; }
+    if (is_struct_type(cx.structs, ft)) { return "S"; }
+    if (is_enum_type_name(cx, ft)) { return "S"; }
+    return "i";
+}
+
+// emit_struct_release frees one owned struct/enum local with RECURSIVE
+// field-release: if it is the LAST owner (rc word at [s-8] == 1, i.e. the box
+// is about to be freed) first release each rc-tracked field (array / string /
+// nested struct via $__fern_arr_dec — one level), then free the box via the
+// shared $__fern_arr_dec. The rc==1 guard ensures fields are released exactly
+// once, on the final free (an aliased struct at rc>1 just decrements). The
+// per-field construction-incs pair with these decs so a struct stored in a
+// container survives. A scalar field is skipped (struct_field_kind_char). An
+// enum local's variant payload isn't reached (its static type has 0 struct
+// fields) — a sound leak, like a nested struct's own fields.
+function emit_struct_release(name: string, sty: string, cx: Ctx): string {
+    var o: string = "";
+    var inner: string = "";
+    var nf: i32 = struct_field_count(cx.structs, sty);
+    var fi: i32 = 0;
+    while (fi < nf) {
+        var fk: string = struct_field_kind_char(struct_field_type_at(cx.structs, sty, fi), cx);
+        if (fk == "a" || fk == "s" || fk == "S") {
+            inner = inner + " (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")))))";
+        }
+        fi = fi + 1;
+    }
+    // A conditionally-unassigned struct local (declared in a not-taken branch
+    // or a loop body, swept on a path that skipped it) is 0; the `[s-8]`
+    // rc-read below would fault at address -8, so null-guard the whole
+    // release. ($__fern_arr_dec guards null on its own, but the inline rc-read
+    // does not.)
+    if (inner.len() > 0) {
+        o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then" + inner + "))))\n";
+    }
+    o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
+    return o;
+}
+
+// struct_exit_sweep_excl emits the struct/enum release sweep (FREE ON, with
+// recursive field-release via emit_struct_release) of every owned struct
+// local, except `excl` (the move-on-return slot handed to the caller at its
+// rc). Each local's type is recovered from sv_types so the per-field kinds
+// resolve; an untyped fallback ("" — not in sv_names) frees only the box.
 function struct_exit_sweep_excl(cx: Ctx, excl: string): string {
     var o: string = "";
     var i: i32 = 0;
     while (i < cx.struct_swept.len()) {
-        if (cx.struct_swept[i] != excl) {
-            o = o + "    (drop (call $__fern_rc_dec (local.get $" + cx.struct_swept[i] + ")))\n";
+        var name: string = cx.struct_swept[i];
+        if (name != excl) {
+            o = o + emit_struct_release(name, lookup_pair(cx.sv_names, cx.sv_types, name), cx);
         }
         i = i + 1;
     }
@@ -893,6 +947,40 @@ function ret_struct_is_borrowed(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprFieldAccess(fa) => { return struct_type_of(fa.obj, cx).len() > 0; },
         parser.ExprIndex(_) => { return true; },
         parser.ExprIdent(_) => { return true; },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// store_value_is_borrowed: the value being stored into a heap container (an
+// array element / push, a struct or tuple field, an enum payload) references
+// an rc-tracked object that ALREADY has another owner — a bare-ident alias,
+// OR a struct field read (`r.node`) whose field type is rc-tracked, OR an
+// index read of a struct- / string-array. Such a store must RETAIN (inc) the
+// value so the container co-owns it; otherwise releasing the source frees the
+// value out from under the container (the `children.append(r.node)` UAF in
+// the recursive WAT parser). A freshly-constructed unique value (literal /
+// constructor call / concat / slice) is NOT borrowed — the container takes
+// sole ownership, no inc (that would leak). This subsumes the four
+// init_is_*_alias checks and extends them to borrowed field / index reads.
+function store_value_is_borrowed(v: parser.Expr, cx: Ctx): boolean {
+    if (init_is_arr_alias(v, cx.arr_src) || init_is_string_alias(v, cx) || init_is_tuple_alias(v, cx) || init_is_struct_alias(v, cx)) { return true; }
+    match (v) {
+        parser.ExprFieldAccess(fa) => {
+            // A tuple index (t.N) is conservatively skipped here (tuple
+            // recursive-release drives its own retains); a real struct field
+            // read is borrowed when the field type is rc-tracked.
+            if (util.is_all_digits(fa.field)) { return false; }
+            var ot: string = struct_type_of(fa.obj, cx);
+            if (ot.len() == 0) { return false; }
+            return struct_field_kind_char(struct_field_type(cx.structs, ot, fa.field), cx) != "i";
+        },
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(id) => { return contains_str(cx.sa_names, id.name) || contains_str(cx.str_arrays, id.name); },
+                _ => { return false; },
+            }
+        },
         _ => { return false; },
     }
     return false;
@@ -2270,7 +2358,7 @@ function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string, ca
         } else {
             var inner_local: string = "$inner" + util.i32_to_string(depth);
             var inf: i32 = struct_field_count(mod.structs, rcft);
-            out = out + "    (local.set " + inner_local + " (call $__fern_alloc (i32.const " + util.i32_to_string(4 + inf * 4) + ")))\n";
+            out = out + "    (local.set " + inner_local + " (call $__fern_str_box (i32.const " + util.i32_to_string(4 + inf * 4) + ")))\n";
             out = out + "    (i32.store (local.get " + inner_local + ") (i32.const " + util.i32_to_string(struct_id(mod.structs, rcft)) + "))\n";
             out = out + extern_emit_record_fill(mod, inner_local, rcft, coff, depth + 1);
             out = out + "    (i32.store (i32.add (local.get " + dst + ") (i32.const " + util.i32_to_string(struct_field_off(rc)) + ")) (local.get " + inner_local + "))\n";
@@ -2887,7 +2975,7 @@ function extern_wrappers(mod: parser.Module): string {
             out = out + " (local.get $rb))\n";
             // Materialize the struct: type id at slot 0, then fill each field
             // (scalar or nested) recursively from the inlined canonical area.
-            out = out + "    (local.set $s (call $__fern_alloc (i32.const " + util.i32_to_string(4 + nf * 4) + ")))\n";
+            out = out + "    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(4 + nf * 4) + ")))\n";
             out = out + "    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n";
             out = out + extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0);
             out = out + "    (local.get $s))\n";
@@ -3876,7 +3964,7 @@ function emit_array_literal_kind(a: parser.ExprArray, kind: string, cx: Ctx, dep
         // is an existing array reference is retained (the outer array now
         // co-owns it alongside the source local). Only the i32-slot path
         // can hold a pointer element (i64/f64 elements are scalars).
-        if (kind == "i32" && (init_is_arr_alias(a.elements[i], cx.arr_src) || init_is_string_alias(a.elements[i], cx) || init_is_tuple_alias(a.elements[i], cx))) {
+        if (kind == "i32" && store_value_is_borrowed(a.elements[i], cx)) {
             s = s + " (drop (call $__fern_rc_inc " + emit_expr(a.elements[i], cx, depth + 1) + "))";
         }
         i = i + 1;
@@ -4039,10 +4127,10 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // Option/Result constructors → tag boxes [tag@0][payload@4]:
                     // Some/Ok = tag 0, Err = tag 1 (None is the bare-ident case).
                     if ((id.name == "Some" || id.name == "Ok") && c.args.len() == 1) {
-                        return enum_box_retain(0, emit_expr(c.args[0], cx, depth + 1), depth, init_is_arr_alias(c.args[0], cx.arr_src) || init_is_string_alias(c.args[0], cx) || init_is_tuple_alias(c.args[0], cx));
+                        return enum_box_retain(0, emit_expr(c.args[0], cx, depth + 1), depth, store_value_is_borrowed(c.args[0], cx));
                     }
                     if (id.name == "Err" && c.args.len() == 1) {
-                        return enum_box_retain(1, emit_expr(c.args[0], cx, depth + 1), depth, init_is_arr_alias(c.args[0], cx.arr_src) || init_is_string_alias(c.args[0], cx) || init_is_tuple_alias(c.args[0], cx));
+                        return enum_box_retain(1, emit_expr(c.args[0], cx, depth + 1), depth, store_value_is_borrowed(c.args[0], cx));
                     }
                     // env(name): Option[string] builtin → the wasi
                     // environ runtime helper.
@@ -4140,7 +4228,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                             // Perceus construction-store inc: a user enum
                             // variant payload that is an existing array
                             // reference is retained (the variant co-owns it).
-                            if (init_is_arr_alias(c.args[vi], cx.arr_src) || init_is_string_alias(c.args[vi], cx) || init_is_tuple_alias(c.args[vi], cx)) {
+                            if (store_value_is_borrowed(c.args[vi], cx)) {
                                 vs = vs + " (drop (call $__fern_rc_inc " + emit_expr(c.args[vi], cx, depth + 1) + "))";
                             }
                             vi = vi + 1;
@@ -4199,7 +4287,19 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         if (pk == "f64") {
                             return "(call $__fern_arr_push_f64 " + emit_expr(fa.obj, cx, depth) + " " + emit_f64(c.args[0], cx, depth) + ")";
                         }
-                        return "(call $__fern_arr_push " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + ")";
+                        // Perceus construction-store retain: appending a
+                        // BORROWED rc-tracked value (an alias, or a struct
+                        // field / struct-array index read like
+                        // `children.append(r.node)`) retains it so the array
+                        // co-owns it — else releasing the source frees it out
+                        // from under the array (the recursive-parser UAF). A
+                        // fresh value (literal / call / concat) is sole-owned,
+                        // no inc.
+                        var pushval: string = emit_expr(c.args[0], cx, depth);
+                        if (store_value_is_borrowed(c.args[0], cx)) {
+                            pushval = "(call $__fern_rc_inc " + pushval + ")";
+                        }
+                        return "(call $__fern_arr_push " + emit_expr(fa.obj, cx, depth) + " " + pushval + ")";
                     }
                     // `.with(i, v)` — value-returning element set (replacing
                     // `arr[i] = v`). i64[]/f64[] use the 8-byte-slot variants.
@@ -4376,7 +4476,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + util.i32_to_string(i * 4) + ")) " + emit_expr(t.elements[i], cx, depth + 1) + ")";
                 // Perceus construction-store inc: a tuple element that is an
                 // existing array reference is retained (the tuple co-owns it).
-                if (init_is_arr_alias(t.elements[i], cx.arr_src) || init_is_string_alias(t.elements[i], cx) || init_is_tuple_alias(t.elements[i], cx)) {
+                if (store_value_is_borrowed(t.elements[i], cx)) {
                     s = s + " (drop (call $__fern_rc_inc " + emit_expr(t.elements[i], cx, depth + 1) + "))";
                 }
                 i = i + 1;
@@ -4442,7 +4542,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         if (struct_field_index(cx.structs, sl.type_name, sl.field_names[ok]) == fi) { overridden = true; }
                         ok = ok + 1;
                     }
-                    if (!overridden && (ty_spelling_is_array(struct_field_type_at(cx.structs, sl.type_name, fi)) || struct_field_type_at(cx.structs, sl.type_name, fi) == "string")) {
+                    if (!overridden && struct_field_kind_char(struct_field_type_at(cx.structs, sl.type_name, fi), cx) != "i") {
                         s = s + " (drop (call $__fern_rc_inc (i32.load (i32.add " + bp + " (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")))))";
                     }
                     fi = fi + 1;
@@ -4456,7 +4556,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // Perceus construction-store inc: storing an existing
                     // array reference into a struct field retains the buffer
                     // (the struct now co-owns it alongside the source local).
-                    if (init_is_arr_alias(sl.field_values[i], cx.arr_src) || init_is_string_alias(sl.field_values[i], cx) || init_is_tuple_alias(sl.field_values[i], cx)) {
+                    if (store_value_is_borrowed(sl.field_values[i], cx)) {
                         s = s + " (drop (call $__fern_rc_inc " + emit_expr(sl.field_values[i], cx, depth + 1) + "))";
                     }
                 }
