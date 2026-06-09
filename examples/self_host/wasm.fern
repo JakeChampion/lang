@@ -958,10 +958,20 @@ function struct_release_field_inner(pe: string, sty: string, cx: Ctx): string {
         var load: string = "(i32.load (i32.add " + pe + " (i32.const " + off + ")))";
         if (fk == "S" && (is_struct_type(cx.structs, ft) || (is_enum_type_name(cx, ft) && ft != "Option" && ft != "Result"))) {
             inner = inner + " (drop (call $__fern_release_" + ft + " " + load + "))";
-        } else if (fk == "a" || fk == "s" || fk == "S") {
-            var dec: string = "$__fern_arr_dec";
-            if (fk == "a" && array_field_elem_is_ptr(ft, cx)) { dec = "$__fern_arr_dec_ptr"; }
-            inner = inner + " (drop (call " + dec + " " + load + "))";
+        } else if (fk == "a") {
+            // Array field: a STRUCT-element array deep-releases each element
+            // (Stage B, $__fern_arr_release_<Elem>); a string-element (or other
+            // pointer) array frees one level (arr_dec_ptr); a scalar array flat.
+            var elem: string = ft[0:ft.len() - 2];
+            if (is_struct_type(cx.structs, elem)) {
+                inner = inner + " (drop (call $__fern_arr_release_" + elem + " " + load + "))";
+            } else if (array_field_elem_is_ptr(ft, cx)) {
+                inner = inner + " (drop (call $__fern_arr_dec_ptr " + load + "))";
+            } else {
+                inner = inner + " (drop (call $__fern_arr_dec " + load + "))";
+            }
+        } else if (fk == "s" || fk == "S") {
+            inner = inner + " (drop (call $__fern_arr_dec " + load + "))";
         }
         fi = fi + 1;
     }
@@ -986,6 +996,25 @@ function struct_enum_drop_helpers(mod: parser.Module, cx: Ctx): string {
             o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $p) (i32.const 8))) (i32.const 1)) (then" + inner + "))\n";
         }
         o = o + "    (call $__fern_arr_dec (local.get $p)))\n";
+        // $__fern_arr_release_<S>(a): Stage B — an array whose elements are
+        // structs of type S. When `a` is the last owner ([a-8]==1) deep-release
+        // each element through $__fern_release_<S> (so the struct's OWN fields
+        // reclaim too, not just the box), then free the buffer. Mutual recursion
+        // with $__fern_release_<S> (whose S[] fields call this) gives
+        // arbitrary-depth tree reclamation (Node { items: Node[] }). `a` is
+        // always a heap array or null, so the null guard + rc==1 suffice.
+        o = o + "  (func $__fern_arr_release_" + sty + " (param $a i32) (result i32)\n";
+        o = o + "    (local $i i32) (local $n i32)\n";
+        o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
+        o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
+        o = o + "      (local.set $n (i32.load (local.get $a)))\n";
+        o = o + "      (local.set $i (i32.const 0))\n";
+        o = o + "      (block $ard (loop $arl\n";
+        o = o + "        (br_if $ard (i32.ge_u (local.get $i) (local.get $n)))\n";
+        o = o + "        (drop (call $__fern_release_" + sty + " (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
+        o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+        o = o + "        (br $arl)))))\n";
+        o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
         i = i + 1;
     }
     var e: i32 = 0;
@@ -1337,11 +1366,14 @@ function arr_exit_sweep_excl(cx: Ctx, excl: string): string {
     while (i < cx.arr_swept.len()) {
         var name: string = cx.arr_swept[i];
         if (name != excl) {
-            // A string-array or struct-array local releases its rc-boxed
-            // ELEMENTS (one level) before freeing the buffer; a scalar array
-            // (i32/i64/f64 — or an array-of-array / array-of-tuple, which
-            // stay one-level-flat for now) frees flat.
-            if (contains_str(cx.str_arrays, name) || contains_str(cx.sa_names, name)) {
+            // A struct-array local DEEP-releases each element through that
+            // struct's $__fern_arr_release_<S> (Stage B); a string-array frees
+            // its strings one level (arr_dec_ptr); a scalar array (or
+            // array-of-array / array-of-tuple, still one-level-flat) frees flat.
+            var sat: string = lookup_pair(cx.sa_names, cx.sa_types, name);
+            if (sat.len() > 0 && is_struct_type(cx.structs, sat)) {
+                o = o + "    (drop (call $__fern_arr_release_" + sat + " (local.get $" + name + ")))\n";
+            } else if (contains_str(cx.str_arrays, name) || contains_str(cx.sa_names, name)) {
                 o = o + "    (drop (call $__fern_arr_dec_ptr (local.get $" + name + ")))\n";
             } else {
                 o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";

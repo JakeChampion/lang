@@ -1704,3 +1704,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   deep-release (`__drop_arr_struct_`), enum variant payload dispatch
   (`__drop_enum_` / `genEnumDrops`), tuple drop fns, map string keys/values,
   closure-env capture release.
+- 2026-06-09: **wasm transitive reclamation — Stage B: arrays-of-structs
+  deep-release ($__fern_arr_release_<S>).** Continues closing the deep-nesting
+  parity gap (native's `__drop_arr_struct_<Elem>`). For each struct type S,
+  `struct_enum_drop_helpers` now also generates `$__fern_arr_release_<S>(a)`: when
+  the array is the last owner ([a-8]==1) it loops over the elements calling
+  `$__fern_release_<S>` per element (so each element's OWN fields reclaim, not
+  just the box), then frees the buffer. Routing: `struct_release_field_inner`
+  sends a STRUCT-element array field (`S[]`) to `$__fern_arr_release_<S>` (a
+  string-element array stays `arr_dec_ptr`, a scalar array flat), and
+  `arr_exit_sweep_excl` sends a struct-array LOCAL (sa_names → sa_types) there
+  too. Mutual recursion `$__fern_release_<S>` ↔ `$__fern_arr_release_<S>` (a
+  struct whose field is `S[]`, e.g. `Node { items: Node[] }`) reclaims the WHOLE
+  tree to arbitrary depth — the recursive WAT-parser shape (`children.append(
+  r.node)`) now fully frees. Coverage: `TestSelfHostRcDeepNestWasm` gains
+  arr-of-struct-released, arr-of-struct-churn (50k arrays-of-structs-holding-
+  arrays, transitive free, no OOM), node-tree-deep-released (the `Node[]`-field
+  tree fully reclaimed). Full RC + component + binary + shim + interp + cli wasm
+  suites green — the compiler's own AST (Stmt[] / Expr[] / … struct arrays) all
+  route through the deep release safely; bootstrap-safe. Remaining toward full
+  native parity: enum variant payload dispatch (`genEnumDrops`), tuple drop fns,
+  array-of-enum / array-of-tuple deep release, map string keys/values,
+  closure-env capture release.
