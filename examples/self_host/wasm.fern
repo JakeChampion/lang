@@ -4156,7 +4156,12 @@ function enum_box(tag: i32, payload: string, depth: i32): string {
 function enum_box_retain(tag: i32, payload: string, depth: i32, retain: boolean): string {
     var ap: string = "$__lit" + util.i32_to_string(depth);
     var s: string = "(block (result i32)";
-    s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const 8)))";
+    // Perceus Option/Result rc-box layout: the variant box ([tag@0][payload@4])
+    // is rc-headered via the generic $__fern_str_box (8-byte rc+bsz header,
+    // returns base+8), so it carries an rc word at [p-8] while tag@[p] and
+    // payload@[p+4] (every p-relative access) are unchanged. Counting + the
+    // payload recursive release ride on this foundation in later slices.
+    s = s + " (local.set " + ap + " (call $__fern_str_box (i32.const 8)))";
     s = s + " (i32.store (local.get " + ap + ") (i32.const " + util.i32_to_string(tag) + "))";
     s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const 4)) " + payload + ")";
     if (retain) {
