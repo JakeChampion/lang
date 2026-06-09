@@ -1663,3 +1663,17 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   fully-reclaimed set** — every container the language exposes (arrays, strings,
   tuples, structs/enums, Option/Result, maps) is now reference-counted and
   reclaimed on the self-hosted wasm backend.
+- 2026-06-09: **wasm Option/Result RC — Result Err-payload release.** Closes the
+  documented Err-payload gap: a freed `Result[T, E]` whose Err type E is
+  rc-tracked now releases the Err payload too (the tag-1 path). New
+  `parse_result_err_payload` extracts E (the part after the first top-level comma
+  of `Result[T, E]`); a parallel `Ctx.ol_err_payloads` (populated alongside
+  `ol_payloads` at the option-local + param sites) records it. `emit_option_release`
+  gains a tag==1 release of `[p+4]` gated on the Err kind (string / pointer-array
+  via arr_dec_ptr / nested struct one level; scalar Err like `Result[_, i32]`
+  skipped). An Option's `None` is tag 1 with no Err type (`ol_err_payloads` ""),
+  so it's naturally skipped. Balances against the existing construction-inc
+  (`enum_box_retain`'s retain flag already retains the Err payload of `Err(e)`).
+  Coverage: `TestSelfHostRcOptionBoxWasm` gains result-err-string-released,
+  result-ok-string-released, result-err-string-churn-clean (50k cycles). Full RC
+  + component + binary + shim + interp + cli wasm suites green; bootstrap-safe.

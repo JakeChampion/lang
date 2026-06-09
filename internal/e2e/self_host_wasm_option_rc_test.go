@@ -90,6 +90,15 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// RECLAIM: a reassigned option (`o = Some(…)`) each iteration reclaims the
 		// old (box + its string payload) across 100k cycles, detector clean.
 		{"option-reassign-loop-reclaim", "function main(): i32 { var o = Some(\"xx\" + \"yy\"); var k = 0; while (k < 100000) { o = Some(\"z\" + \"w\"); k = k + 1; } match (o) { Some(v) => { return v.len() + __fern_rc_underflow_count(); }, None => { return 0; } } }", 2},
+		// Result Err-payload release: freeing a Result whose Err type is a heap
+		// string releases the Err string (tag-1 path in emit_option_release,
+		// driven by ol_err_payloads). Value-correct + detector clean.
+		{"result-err-string-released", "function fail(): Result[i32, string] { return Err(\"e\" + \"rr\"); } function main(): i32 { var r: Result[i32, string] = fail(); match (r) { Ok(x) => { return x; }, Err(e) => { return e.len() + 39 + __fern_rc_underflow_count(); } } }", 42},
+		// The Ok side still releases (Ok string payload), Err type scalar.
+		{"result-ok-string-released", "function good(): Result[string, i32] { return Ok(\"o\" + \"k!\"); } function main(): i32 { var r: Result[string, i32] = good(); match (r) { Ok(s) => { return s.len() + 39 + __fern_rc_underflow_count(); }, Err(e) => { return e; } } }", 42},
+		// A churn building + freeing an Err(heap-string) 50k times: the Err
+		// string is reclaimed each cycle (no growth), detector clean.
+		{"result-err-string-churn-clean", "function fail(): Result[i32, string] { return Err(\"a\" + \"b\"); } function mk(): i32 { var r: Result[i32, string] = fail(); match (r) { Ok(x) => { return x; }, Err(e) => { return e.len(); } } } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
