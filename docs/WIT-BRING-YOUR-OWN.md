@@ -1439,3 +1439,32 @@ type-import sections from a decoded world.
 2. Defvaltype + func-type decoder (the value-type grammar above).
 3. Instance/component type + import/export/alias decoder; assemble the
    world model; round-trip `fern.bin` / `http.bin` byte-for-byte.
+
+### P6 — toward a *running* `wasi:http` handler (post-capstone)
+
+The capstone proved a do-nothing `incoming-handler#handle` compiles + composes
+against the real `wasi:http` WIT. The increments toward a handler that actually
+produces a response:
+
+- **Handler body calls `wasi:http` resource constructors. ✅ Done (compose-gated).**
+  The exported `incoming-handler#handle` body calls `[constructor]fields` and
+  `[constructor]outgoing-response` (`@import` externs returning / taking owned
+  handles) and lets the constructed response auto-drop — integrating the P5
+  import resource-method path INSIDE a P6 resource-handle export. The composer
+  wires the constructor imports (handle in/out, no memory) + the owned-handle
+  `[resource-drop]` and lifts the void two-handle export, composed against the
+  real `wasi:http` world. Gated by
+  `TestExportWasiHttpHandlerCallsConstructorsComposes` (`wasm-tools validate` +
+  the component exports `wasi:http/incoming-handler`). No new marshalling — it's
+  the P5 import + P6 export paths meeting.
+- **Next — `response-outparam.set`.** Producing a response calls
+  `[static]response-outparam.set(param: own<response-outparam>, response:
+  result<own<outgoing-response>, error-code>)`. The `result<own<…>, error-code>`
+  arg is a composite PARAM carrying a handle in its ok arm and the wide
+  `error-code` variant in its err arm — the embedded HTTP path hand-codes its
+  flattened core call (disc + 7 values; see `wasi_http.go`), so the
+  bring-your-own path needs the `@import` extern marshalling to flatten a
+  `result<own<R>, <variant>>` param generically (and `error-code` modelled on the
+  Fern side). That marshalling, plus the `fields.append` / `set-status-code` /
+  body-stream methods and a `wasmtime serve` run harness, is what remains for an
+  end-to-end running server.
