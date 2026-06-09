@@ -1573,3 +1573,19 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (layout → counting → free) — every primary heap type (arrays, strings,
   tuples, structs/enums, Option/Result) is now reference-counted and reclaimed
   on the self-hosted wasm backend.
+- 2026-06-09: **wasm Option/Result RC — loop-rebound / reassigned option
+  RECLAIM (cow-dec).** The option analogue of the struct cow-dec-on-overwrite:
+  a swept option local re-bound (`var o = Some(…)` in a loop) or reassigned
+  (`o = Some(…)`) now RELEASES its prior value (payload-aware, via
+  `emit_option_release`) before storing the new one, instead of leaking it.
+  Guarded by an `i32.ne` cow-guard (skips an in-place same-pointer result) and
+  gated on `opt_swept` membership (owned LOCALS only — a borrowed option PARAM
+  reassigned, whose first value is caller-owned, is never cow-freed). So a
+  loop-rebound `Some(heap-string)` reclaims both the box AND its string payload
+  each iteration. Coverage: `TestSelfHostRcOptionBoxWasm` gains
+  option-rebind-loop-reclaim and option-reassign-loop-reclaim (100k cycles each
+  — reclaim implied by no growth, detector clean). Full RC + component + binary
+  + shim + interp + cli wasm suites green; bootstrap-safe. With this, the
+  Option/Result pipeline matches arrays/strings/structs for reclaim-on-overwrite
+  too — every primary heap type is fully reference-counted, reclaimed at exit,
+  AND reclaimed on overwrite.
