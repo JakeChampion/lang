@@ -55,6 +55,18 @@ func TestSelfHostRcDeepNestWasm(t *testing.T) {
 		// returns the outer (move); the caller's transitive release frees the
 		// whole tree exactly once.
 		{"deep-builder-escape", "struct Inner { xs: i32[], n: i32 } struct Outer { inner: Inner, m: i32 } function mk(): Outer { var i = Inner { xs: [3, 4, 5], n: 6 }; return Outer { inner: i, m: 7 }; } function main(): i32 { var o = mk(); var p = mk(); return o.inner.xs[1] + o.inner.n + o.m + __fern_rc_underflow_count(); }", 17},
+		// Stage B: an array-of-structs LOCAL deep-releases each element's fields
+		// (here each Inner's xs array) via $__fern_arr_release_<Inner>, not just
+		// the element boxes — value-correct + detector clean.
+		{"arr-of-struct-released", "struct Inner { xs: i32[], n: i32 } function main(): i32 { var ps: Inner[] = [Inner { xs: [1, 2], n: 3 }, Inner { xs: [4, 5], n: 6 }]; return ps[0].xs[1] + ps[1].xs[0] + ps[1].n + __fern_rc_underflow_count(); }", 12},
+		// Stage B churn: 50k arrays-of-structs-holding-arrays built + freed. The
+		// inner arrays reclaim transitively each cycle (no OOM) — proves the
+		// deep array-element free, not a flat one-level dec.
+		{"arr-of-struct-churn", "struct Inner { xs: i32[], n: i32 } function mk(): i32 { var ps: Inner[] = [Inner { xs: [1, 2, 3, 4], n: 5 }, Inner { xs: [6, 7, 8, 9], n: 1 }]; return ps[0].xs[3] + ps[1].n; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
+		// The recursive Node tree (a Node[] field, deep): $__fern_release_Node ↔
+		// $__fern_arr_release_Node mutual recursion reclaims the WHOLE tree to
+		// arbitrary depth (the watbin-parser shape). Value-correct + detector 0.
+		{"node-tree-deep-released", "struct Node { kind: i32, items: Node[] } struct POne { node: Node, pos: i32 } function parse(xs: i32[], i: i32): POne { if (xs[i] == 0) { return POne { node: Node { kind: xs[i], items: [] }, pos: i + 1 }; } var children: Node[] = []; var j: i32 = i + 1; while (j < xs.len() && xs[j] != 9) { var r: POne = parse(xs, j); children = children.append(r.node); j = r.pos; } return POne { node: Node { kind: 7, items: children }, pos: j + 1 }; } function sum(n: Node): i32 { var s: i32 = n.kind; var i: i32 = 0; while (i < n.items.len()) { s = s + sum(n.items[i]); i = i + 1; } return s; } function main(): i32 { var xs: i32[] = [1, 0, 0, 1, 0, 9, 9]; var r: POne = parse(xs, 0); return sum(r.node) + __fern_rc_underflow_count(); }", 14},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
