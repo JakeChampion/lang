@@ -1904,3 +1904,36 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   struct/enum VALUES (deep __drop_map_via_, beyond the string-value column) +
   deeper closure-capture shapes (struct-array / array-of-tuple captures route
   one level).
+- 2026-06-09: **wasm map struct/enum VALUE deep release (native
+  __drop_map_via_) + the coupled get_or value-typing fix.** The last native
+  drop-glue function. A struct/enum-valued map's exit sweep now routes to a
+  per-type `$__fern_map_release_via_<T>` (a `$__fern_map_release` variant whose
+  value column is deep-released through `$__fern_release_<T>`), so each value's
+  own fields / variant payload reclaim — not just the value box. The map box's
+  `vis` flag is generalised from "value is string" to "value is rc-pointer"
+  (string OR struct/enum), so `$__fern_map_set` construction-incs the value and
+  the value reclaim is balanced. New value-type tracking (`mvs_names` →
+  `mvs_types`, inferred from struct-literal insert values via
+  `set_chain_val_struct_type` / `map_val_struct_type`) drives the routing AND
+  fixes a coupled, pre-existing VALUE bug: `var p = m.get_or(k, d)` on a
+  struct-valued map now types `p` as that struct, so `p.field` resolves (it read
+  0 before — struct-valued maps were effectively unreadable). The per-type
+  helper is emitted only when `module_uses_struct_val_map` (any plausibly-
+  struct-typed `.insert` value) holds, so map-less / scalar-valued-map programs
+  carry no dead helpers; Option/Result values keep their own release path
+  (routing + via-generation both exclude them). Coverage:
+  `TestSelfHostRcMapStructVal` (map-struct-val value-correctness;
+  map-struct-deep-churn — 200k struct-with-array-valued maps, the array field
+  reclaimed via via_Inner across cycles, no OOM; map-strkey-structval — string
+  key + struct value both reclaim; map-enum-deep-churn — 200k Circle-string-
+  payload enum values deep-released via via_Shape dispatch). Full RC + bootstrap
+  fixpoint + binary + component wasm suites green; bootstrap-safe. **This
+  completes the Perceus port: every heap shape the self-host allocates now
+  reference-counts and reclaims to native parity** — string, array (scalar /
+  ptr / struct / enum / tuple element), struct (deep fields), enum (variant
+  dispatch), tuple, array-of-{struct,enum,tuple}, option/result (incl. Err),
+  map (string keys, string + struct/enum values), and closures (env box +
+  string/array/struct/enum captures). Residual one-level (sound-leak) corners,
+  matching or narrower than the native edge cases: struct-array / array-of-tuple
+  closure CAPTURES route one level (vs the deep per-element release the direct
+  locals get), and map ARRAY values aren't tracked (only string + struct/enum).

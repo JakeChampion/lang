@@ -127,6 +127,15 @@ struct Ctx {
     // map_str_key_names: the subset whose keys are strings (built via
     // map_new, not map_new_i32), so `.keys()` is typed as string[].
     map_str_key_names: string[],
+    // mvs_names → mvs_types: map locals whose VALUE type is a struct/enum
+    // (inferred from an inserted value's struct_type_of). Drives two things:
+    // (1) `.get` / `.get_or` on such a map is typed as that struct so field
+    // access resolves (previously the result read 0 — a value bug); and
+    // (2) the map's exit sweep routes to the per-type deep release
+    // $__fern_map_release_via_<T> (native __drop_map_via_) so each value's
+    // fields reclaim, not just the value box.
+    mvs_names: string[],
+    mvs_types: string[],
     // Tuple locals (tup_names) with a per-element kind string (tup_kinds):
     // one char per element, 's' = string, else 'i'. Drives `t.N` typing.
     tup_names: string[],
@@ -514,6 +523,145 @@ function collect_str_val_map_names(body: parser.Stmt[], cx: Ctx, map_names: stri
             },
             _ => {},
         }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// map_val_struct_type: the struct/enum VALUE type of a map expression ("" if
+// not a tracked struct-valued map) — a tracked map local, or a `.insert` chain
+// whose set value is a struct (so a struct-valued map literal types too).
+function map_val_struct_type(e: parser.Expr, cx: Ctx): string {
+    match (e) {
+        parser.ExprIdent(id) => { return lookup_pair(cx.mvs_names, cx.mvs_types, id.name); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if ((fa.field == "insert") && c.args.len() == 2) {
+                        var st: string = struct_type_of(c.args[1], cx);
+                        if (st.len() > 0) { return st; }
+                        return map_val_struct_type(fa.obj, cx);
+                    }
+                    return "";
+                },
+                _ => { return ""; },
+            }
+        },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// set_chain_val_struct_type: the struct/enum type of a value stored in a
+// map-rooted `.insert` chain ("" if none / non-struct). Mirrors
+// set_chain_has_str but returns the value's struct_type_of so a struct-valued
+// map can be recognised + typed.
+function set_chain_val_struct_type(e: parser.Expr, cx: Ctx): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if ((fa.field == "insert") && c.args.len() == 2) {
+                        var st: string = struct_type_of(c.args[1], cx);
+                        if (st.len() > 0) { return st; }
+                        return set_chain_val_struct_type(fa.obj, cx);
+                    }
+                    return "";
+                },
+                _ => { return ""; },
+            }
+        },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// map_val_struct_type_for finds the `var name = <chain>` / `name = <chain>`
+// that builds map `name` and returns its struct/enum value type ("" if none).
+// Driven per mvs name so the names/types arrays stay parallel.
+function map_val_struct_type_for(body: parser.Stmt[], name: string, cx: Ctx): string {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    var t: string = set_chain_val_struct_type(v.init, cx);
+                    if (t.len() > 0) { return t; }
+                }
+            },
+            parser.StmtAssign(a) => {
+                if (a.target == name) {
+                    var t: string = set_chain_val_struct_type(a.value, cx);
+                    if (t.len() > 0) { return t; }
+                }
+            },
+            parser.StmtIf(f) => {
+                var t: string = map_val_struct_type_for(f.then_body, name, cx);
+                if (t.len() > 0) { return t; }
+                var e2: string = map_val_struct_type_for(f.else_body, name, cx);
+                if (e2.len() > 0) { return e2; }
+            },
+            parser.StmtWhile(w) => {
+                var t: string = map_val_struct_type_for(w.body, name, cx);
+                if (t.len() > 0) { return t; }
+            },
+            parser.StmtFor(f) => {
+                var t: string = map_val_struct_type_for(f.body, name, cx);
+                if (t.len() > 0) { return t; }
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    var t: string = map_val_struct_type_for(m.arms[k].body, name, cx);
+                    if (t.len() > 0) { return t; }
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// collect_struct_val_map_names: map locals whose set-chain stores a struct/enum
+// value. collect_struct_val_map_types maps each (parallel) to its value type.
+function collect_struct_val_map_names(body: parser.Stmt[], cx: Ctx, map_names: string[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (contains_str(map_names, v.name) && !contains_str(acc, v.name) && set_chain_val_struct_type(v.init, cx).len() > 0) {
+                    acc = acc.append(v.name);
+                }
+            },
+            parser.StmtAssign(a) => {
+                if (contains_str(map_names, a.target) && !contains_str(acc, a.target) && set_chain_val_struct_type(a.value, cx).len() > 0) {
+                    acc = acc.append(a.target);
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_struct_val_map_names(f.then_body, cx, map_names, acc);
+                acc = collect_struct_val_map_names(f.else_body, cx, map_names, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_struct_val_map_names(w.body, cx, map_names, acc); },
+            parser.StmtFor(f) => { acc = collect_struct_val_map_names(f.body, cx, map_names, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_struct_val_map_names(m.arms[k].body, cx, map_names, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function collect_struct_val_map_types(body: parser.Stmt[], names: string[], cx: Ctx): string[] {
+    var acc: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        acc = acc.append(map_val_struct_type_for(body, names[i], cx));
         i = i + 1;
     }
     return acc;
@@ -1093,6 +1241,69 @@ function struct_enum_drop_helpers(mod: parser.Module, cx: Ctx): string {
         }
         e = e + 1;
     }
+    // Per-type map deep-release (native __drop_map_via_): a struct/enum-valued
+    // map's exit sweep routes to $__fern_map_release_via_<T>, which is the
+    // generic map_release with the VALUE column deep-released through
+    // $__fern_release_<T> (the value's own fields reclaim, not just its box).
+    // Emitted only when the module actually builds a struct-valued map, so
+    // map-less / scalar-valued-map programs carry no dead helpers.
+    if (module_uses_struct_val_map(mod)) {
+        var si: i32 = 0;
+        while (si < mod.structs.len()) { o = o + map_release_via_fn(mod.structs[si].name); si = si + 1; }
+        var ei: i32 = 0;
+        while (ei < mod.enums.len()) {
+            var en2: string = mod.enums[ei].name;
+            if (en2 != "Option" && en2 != "Result" && !is_struct_type(mod.structs, en2)) {
+                o = o + map_release_via_fn(en2);
+            }
+            ei = ei + 1;
+        }
+    }
+    return o;
+}
+
+// map_release_via_fn(T) emits $__fern_map_release_via_<T>: a copy of
+// $__fern_map_release whose value loop deep-releases each occupied slot's value
+// via $__fern_release_<T> (instead of the generic flat arr_dec), so a
+// struct/enum-valued map reclaims its values' inner fields. String keys (kis)
+// are still released; the three arrays + box are freed. Standalone — the map
+// sweep calls THIS instead of the generic release for such a map, so values are
+// released exactly once.
+function map_release_via_fn(t: string): string {
+    var o: string = "";
+    o = o + "  (func $__fern_map_release_via_" + t + " (param $box i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $cap i32) (local $keys i32) (local $used i32) (local $vals i32)\n";
+    o = o + "    (if (i32.eqz (local.get $box)) (then (return (local.get $box))))\n";
+    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $box) (i32.const 8))) (i32.const 1)) (then\n";
+    // String keys: release each occupied slot's key (as in the generic release).
+    o = o + "      (if (i32.load (i32.add (local.get $box) (i32.const 20))) (then\n";
+    o = o + "        (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
+    o = o + "        (local.set $keys (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
+    o = o + "        (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
+    o = o + "        (local.set $i (i32.const 0))\n";
+    o = o + "        (block $mkd (loop $mkl\n";
+    o = o + "          (br_if $mkd (i32.ge_u (local.get $i) (local.get $cap)))\n";
+    o = o + "          (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
+    o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $keys) (i32.mul (local.get $i) (i32.const 4))))))))\n";
+    o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "          (br $mkl))))) \n";
+    // Values: deep-release each occupied slot via $__fern_release_<T> (rc==1-
+    // gated inside that fn, so a value shared via an outstanding get borrow only
+    // dec's). vis is irrelevant here — we know the values are struct/enum boxes.
+    o = o + "      (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
+    o = o + "      (local.set $vals (i32.load (i32.add (local.get $box) (i32.const 12))))\n";
+    o = o + "      (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $mvd (loop $mvl\n";
+    o = o + "        (br_if $mvd (i32.ge_u (local.get $i) (local.get $cap)))\n";
+    o = o + "        (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
+    o = o + "          (drop (call $__fern_release_" + t + " (i32.load (i32.add (local.get $vals) (i32.mul (local.get $i) (i32.const 4))))))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $mvl)))\n";
+    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 8)))))\n";
+    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 12)))))\n";
+    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 16)))))))\n";
+    o = o + "    (call $__fern_arr_dec (local.get $box)))\n";
     return o;
 }
 
@@ -1111,6 +1322,7 @@ function release_module_ctx(structs: parser.StructDecl[], mr_types: string[], mo
         ret_f64: false,
         map_names: [], cell_names: [], map_str_names: [],
         map_str_key_names: [],
+        mvs_names: [], mvs_types: [],
         tup_names: [], tup_kinds: [], tup_svtypes: [],
         fn_names: [], lam_ctr: cell_new(0), lamdefs: cell_new(""),
         all_locals: [], cap_names: [],
@@ -1332,7 +1544,15 @@ function map_exit_sweep_excl(cx: Ctx, excl: string): string {
     var i: i32 = 0;
     while (i < cx.map_swept.len()) {
         if (cx.map_swept[i] != excl) {
-            o = o + "    (drop (call $__fern_map_release (local.get $" + cx.map_swept[i] + ")))\n";
+            // A struct/enum-valued map deep-releases its values via the per-type
+            // $__fern_map_release_via_<T> (native __drop_map_via_); otherwise the
+            // generic release (which one-level-frees string K/V via arr_dec).
+            var mvt: string = lookup_pair(cx.mvs_names, cx.mvs_types, cx.map_swept[i]);
+            if (mvt.len() > 0 && mvt != "Option" && mvt != "Result") {
+                o = o + "    (drop (call $__fern_map_release_via_" + mvt + " (local.get $" + cx.map_swept[i] + ")))\n";
+            } else {
+                o = o + "    (drop (call $__fern_map_release (local.get $" + cx.map_swept[i] + ")))\n";
+            }
         }
         i = i + 1;
     }
@@ -4470,6 +4690,13 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
                     return "";
                 },
                 parser.ExprFieldAccess(fa) => {
+                    // A struct/enum-valued map's `.get_or` result is that struct
+                    // type (so `m.get_or(k, d).field` resolves). `.get` returns
+                    // an Option box, not the bare value, so it's excluded here.
+                    if (fa.field == "get_or" && is_map_expr(fa.obj, cx)) {
+                        var mvt: string = map_val_struct_type(fa.obj, cx);
+                        if (mvt.len() > 0) { return mvt; }
+                    }
                     // A receiver method returning a struct.
                     var rt: string = method_ret(cx, struct_type_of(fa.obj, cx), fa.field);
                     if (is_struct_type(cx.structs, rt)) { return rt; }
@@ -5349,15 +5576,19 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (is_map_expr(fa.obj, cx)) {
                         var mrecv: string = emit_expr(fa.obj, cx, depth);
                         if ((fa.field == "insert") && c.args.len() == 2) {
-                            // vis (value-is-string) is determined statically from
-                            // the value expr's type so $__fern_map_set can
-                            // construction-inc a string value on insert and
+                            // vis (value-is-rc-pointer) is determined statically
+                            // from the value expr's type so $__fern_map_set can
+                            // construction-inc an rc-tracked value on insert and
                             // $__fern_map_release can release it on the map's
                             // death (mirrors kis for keys + native
                             // __drop_map_str_values). A map's value type is
                             // homogeneous, so the per-insert flag is stable.
+                            // A string OR struct/enum value is rc-boxed (str_box),
+                            // so a generic rc_inc / arr_dec one-level-reclaims it;
+                            // the struct/enum FIELD deep-release rides on the
+                            // per-type $__fern_map_release_via_<T> routing.
                             var visf: string = "(i32.const 0)";
-                            if (is_string_expr(c.args[1], cx)) { visf = "(i32.const 1)"; }
+                            if (is_string_expr(c.args[1], cx) || struct_type_of(c.args[1], cx).len() > 0) { visf = "(i32.const 1)"; }
                             return "(call $__fern_map_set " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + " " + emit_expr(c.args[1], cx, depth + 1) + " " + visf + ")";
                         }
                         if (fa.field == "get" && c.args.len() == 1) {
@@ -8754,6 +8985,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_f64: is_float_type(f.ret_type),
         map_names: map_names, cell_names: cell_names, map_str_names: [],
         map_str_key_names: collect_str_key_map_names(f.body, map_names, []),
+        mvs_names: [], mvs_types: [],
         tup_names: [], tup_kinds: [], tup_svtypes: [],
         fn_names: fn_names, lam_ctr: lam_ctr, lamdefs: lamdefs,
         all_locals: all_locals, cap_names: cap_names,
@@ -8818,7 +9050,14 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // those even with no locals known), then run the string-locals pass,
     // then refine once more to catch string-local set values.
     var cx0: Ctx = Ctx { ...cx, map_str_names: collect_str_val_map_names(f.body, cx, map_names, []) };
-    var cx2: Ctx = collect_str_locals_stmts(f.body, cx0);
+    // Struct/enum-valued maps: tracked BEFORE the string-locals pass so a
+    // `var p = m.get_or(…)` binding types as that struct (field access then
+    // resolves instead of reading 0) and the map's deep release routes
+    // correctly. Inferred from struct-literal insert values (struct-local
+    // values need sv_names, not known yet — a sound miss).
+    var mvn0: string[] = collect_struct_val_map_names(f.body, cx0, map_names, []);
+    var cx0s: Ctx = Ctx { ...cx0, mvs_names: mvn0, mvs_types: collect_struct_val_map_types(f.body, mvn0, cx0) };
+    var cx2: Ctx = collect_str_locals_stmts(f.body, cx0s);
     var cx3: Ctx = Ctx { ...cx2, map_str_names: collect_str_val_map_names(f.body, cx2, map_names, []) };
     // Tuple-local element kinds (after string locals are known).
     var cx4: Ctx = collect_tuple_locals(f.body, cx3);
@@ -9079,6 +9318,86 @@ function module_uses_divrem(mod: parser.Module): boolean {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (stmts_use_divrem(mod.funcs[i].body)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// module_uses_struct_val_map gates the per-type $__fern_map_release_via_<T>
+// emission: true if any `.insert(k, v)` anywhere has a value `v` that could be
+// struct/enum-typed (a struct literal / call / ident / field / index read — the
+// shapes struct_type_of can resolve), so a struct-valued map's exit sweep
+// always finds its routed via_<T>. Conservative (over-emits dead helpers for a
+// scalar-valued map whose value happens to be a call/ident) but never under-
+// emits. Pure-scalar value forms (int / string / binary / bool) never match.
+function expr_insert_val_possibly_struct(v: parser.Expr): boolean {
+    match (v) {
+        parser.ExprStructLit(_) => { return true; },
+        parser.ExprCall(_) => { return true; },
+        parser.ExprIdent(_) => { return true; },
+        parser.ExprFieldAccess(_) => { return true; },
+        parser.ExprIndex(_) => { return true; },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function expr_has_struct_val_insert(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "insert" && c.args.len() == 2 && expr_insert_val_possibly_struct(c.args[1])) { return true; }
+                    if (expr_has_struct_val_insert(fa.obj)) { return true; }
+                },
+                parser.ExprIdent(_) => {},
+                _ => {},
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if (expr_has_struct_val_insert(c.args[ai])) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.ExprBinary(b) => { return expr_has_struct_val_insert(b.left) || expr_has_struct_val_insert(b.right); },
+        parser.ExprFieldAccess(fa) => { return expr_has_struct_val_insert(fa.obj); },
+        parser.ExprIndex(ix) => { return expr_has_struct_val_insert(ix.array) || expr_has_struct_val_insert(ix.index); },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function stmts_have_struct_val_insert(body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (expr_has_struct_val_insert(v.init)) { return true; } },
+            parser.StmtAssign(a) => { if (expr_has_struct_val_insert(a.value)) { return true; } },
+            parser.StmtReturn(r) => { if (expr_has_struct_val_insert(r.value)) { return true; } },
+            parser.StmtExpr(e) => { if (expr_has_struct_val_insert(e.value)) { return true; } },
+            parser.StmtIf(f) => {
+                if (stmts_have_struct_val_insert(f.then_body)) { return true; }
+                if (stmts_have_struct_val_insert(f.else_body)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (stmts_have_struct_val_insert(w.body)) { return true; } },
+            parser.StmtFor(f) => { if (stmts_have_struct_val_insert(f.body)) { return true; } },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { if (stmts_have_struct_val_insert(m.arms[k].body)) { return true; } k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function module_uses_struct_val_map(mod: parser.Module): boolean {
+    if (stmts_have_struct_val_insert(mod.top_stmts)) { return true; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (stmts_have_struct_val_insert(mod.funcs[i].body)) { return true; }
         i = i + 1;
     }
     return false;
