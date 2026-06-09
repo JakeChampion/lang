@@ -1306,6 +1306,22 @@ world-driven composer (P2) wires it.
        slice — together with the handler body calling resource methods via
        `@import` externs (the P5 import side), which then composes the real
        `wasi:http` handler.
+     - **Slice 6c — `[resource-drop]` in a reactor export (composer, Go). ✅
+       Done.** A handler that holds an owned handle (`var t: own Thing =
+       new_thing();`) auto-drops it at scope exit, so the reactor core imports
+       `[resource-drop]thing`. `ComposeExportsFromWorld` no longer rejects that —
+       it classifies it as a `gDrop` and surfaces the resource + threads its type
+       index into the canon `resource.drop`, the same additive surfacing
+       `ComposeFromWorld` does (shared with the export lifts via `g.surfaced`).
+       Gated by `TestExportOwnedHandleDropComposes` (a reactor `@export handle()`
+       creates a `thing` via an `@import`ed `[constructor]thing` and lets it drop;
+       the core imports `[resource-drop]thing`, the composed component validates
+       and prints a `resource.drop`). With 6a/6b/6c the composer handles the full
+       `incoming-handler#handle` surface — handle params (own/borrow), void
+       results, and owned-handle drops; what remains for the real `wasi:http`
+       handler is a program that calls the request/response **resource methods**
+       (`@import` externs — the P5 import side already lowers these) and a
+       run-harness (the host drives `incoming-handler`).
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.

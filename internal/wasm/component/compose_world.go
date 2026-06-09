@@ -285,7 +285,16 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			return nil, fmt.Errorf("component: core imports interface %q not declared by the world", imp.module)
 		}
 		if hasResourceDropPrefix(imp.name) {
-			return nil, fmt.Errorf("component: resource-drop in a reactor export is not supported yet (%q)", imp.name)
+			// `[resource-drop]<res>` — the handler consumed an owned handle and the
+			// auto-drop pass emitted the drop import. Wire it as a gDrop (the
+			// resource is surfaced + resourceT filled once `g` exists, below),
+			// mirroring ComposeFromWorldAuto.
+			res := imp.name[len("[resource-drop]"):]
+			if !ifaceHasResource(wi, res) {
+				return nil, fmt.Errorf("component: world interface %q has no resource %q to drop", imp.module, res)
+			}
+			imports = append(imports, gImport{iface: imp.module, name: imp.name, kind: gDrop})
+			continue
 		}
 		f, ok := worldFunc(wi, imp.name)
 		if !ok {
@@ -318,6 +327,26 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 		if idx := w.ImportInstanceIndex(iface.Name); idx >= 0 {
 			g.inst[iface.Name] = uint32(idx)
 		}
+	}
+	// Surface each dropped resource as a component-level type and thread its
+	// index into the gDrop lowering (the canon resource.drop needs it) — the same
+	// additive surfacing ComposeFromWorld does, shared with the export lifts via
+	// g.surfaced (P5/P6, docs/WIT-BRING-YOUR-OWN.md).
+	for i := range imports {
+		if imports[i].kind != gDrop {
+			continue
+		}
+		res := imports[i].name[len("[resource-drop]"):]
+		t, ok := g.surfaced[res]
+		if !ok {
+			instIdx, ok := g.inst[imports[i].iface]
+			if !ok {
+				return nil, fmt.Errorf("component: resource-drop import %q: interface %q not imported by the world", imports[i].name, imports[i].iface)
+			}
+			t = g.c.aliasType(instIdx, res)
+			g.surfaced[res] = t
+		}
+		imports[i].resourceT = t
 	}
 	g.add(imports...)
 	userInst := g.lower(core)
