@@ -1,0 +1,173 @@
+// examples/self_host/ir.fern — the stack-machine IR for the self-hosted
+// compiler, mirroring native's internal/ir (`ir.Op` / `[]Op`). This is the
+// layer the native PRODUCTION backends (arm64 / x86-64 / wasmbin) consume,
+// and the layer where Perceus reference counting lives (alias-inc, the
+// exit dec sweep, drop specialization, reuse tokens are all emitted here as
+// `call_direct` to `__fern_rc_*` helpers during AST -> IR lowering).
+//
+// The self-host previously had NO equivalent of this layer — it lowered
+// AST -> asm directly in each backend, so every RC emission had to be
+// hand-written three times. This module is slice 0 of the IR rebuild
+// (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md): once the backends emit from
+// `Op[]` instead of the AST, RC is lowered to IR ONCE and each backend just
+// instruction-selects an opcode. (The existing ssa.fern mirrors the
+// DOWNSTREAM optimiser `internal/ssa`, which native lifts FROM this IR; it
+// is a different, higher layer.)
+//
+// Representation (mirrors internal/ir/ir.go, but pointer-free — the
+// self-host's value-semantics style, matching ssa.fern: a function body is
+// an `Op[]` flat stack-machine stream; structured control flow is the
+// block/loop/if/end/br/brif scope discipline, exactly as native and wasm).
+// Kinds are string-tagged (like ssa.fern's SInst) rather than an int enum:
+// printable, diff-friendly, and the native `OpKind` names map 1:1 to these
+// tags ("const_i32", "add", "call_direct", ...).
+//
+import "./util";
+
+// SCOPE (slice 0): the `Op` value + its constructor helpers for a
+// representative spine of opcodes — constants, local load/store, integer
+// arithmetic / comparison, memory load/store, alloc, the call forms,
+// structured control flow, drop, and return. AST -> IR lowering
+// (mirroring the native `builder`), the AST-referencing fields
+// (Sig / ArgTypes / Pos), and the backend IR consumers land in later
+// slices. Nothing imports this yet, so it is additive and bootstrap-inert.
+
+// ---- Op ----------------------------------------------------------------
+
+// Op is one stack-machine instruction. Field meanings mirror native's
+// `ir.Op` (internal/ir/ir.go:515):
+//   kind     — the opcode tag (see the constructors below).
+//   i32      — the immediate for "const_i32"; the local index for
+//              load_local / store_local / tee_local; the block-type for
+//              block / loop / if; the relative depth for br / brif; the
+//              arg count for call_direct / call_indirect / call_closure;
+//              the table index for const_func.
+//   i64      — the immediate for "const_i64".
+//   f64      — the immediate for "const_f64" (f32 reuses this until the
+//              self-host grows a distinct f32 slot).
+//   width    — operand bit-width for ops that exist in multiple widths
+//              (add/sub/.../eq/.../load/store). 0 means 32; 64 selects i64;
+//              -1 is WidthPtr, the backend-resolved pointer width (4 on
+//              wasm32, 8 on arm64) — the same sentinel native uses so
+//              arm64's >4 GiB heap pointers round-trip.
+//   unsigned — selects the `_u` variant of div / rem / shr / comparisons.
+//   str      — "const_str"'s value and "call_direct"'s callee name.
+pub struct Op {
+    kind: string,
+    i32_imm: i32,
+    i64_imm: i64,
+    f64_imm: f64,
+    width: i32,
+    unsigned: boolean,
+    str: string,
+}
+
+// WidthPtr is the backend-resolved pointer-width sentinel (native's
+// ir.WidthPtr). Stored in Op.width for load / store of heap-pointer-typed
+// values; each backend resolves it (wasm32 -> 4, arm64 -> 8).
+pub function width_ptr(): i32 { return 0 - 1; }
+
+// ---- constructors ------------------------------------------------------
+//
+// One helper per opcode, mirroring the names native gives its OpKind
+// constants. Every field the opcode does not use is zeroed, so an Op is
+// always fully initialised (the value-semantics discipline ssa.fern uses).
+
+function op0(kind: string): Op {
+    return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// constants
+pub function op_const_i32(v: i32): Op {
+    return Op { kind: "const_i32", i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_const_i64(v: i64): Op {
+    return Op { kind: "const_i64", i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_const_f64(v: f64): Op {
+    return Op { kind: "const_f64", i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
+}
+pub function op_const_str(s: string): Op {
+    return Op { kind: "const_str", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
+}
+pub function op_const_func(table_idx: i32): Op {
+    return Op { kind: "const_func", i32_imm: table_idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// locals
+pub function op_load_local(idx: i32): Op {
+    return Op { kind: "load_local", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_store_local(idx: i32): Op {
+    return Op { kind: "store_local", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_tee_local(idx: i32): Op {
+    return Op { kind: "tee_local", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// integer arithmetic / comparison (width selects i32 vs i64)
+pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
+    return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
+}
+
+// memory: width carries 8/16/32/64 or width_ptr() for pointer-typed slots
+pub function op_load(width: i32): Op {
+    return Op { kind: "load", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+pub function op_store(width: i32): Op {
+    return Op { kind: "store", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+pub function op_alloc(): Op { return op0("alloc"); }
+
+// calls — i32_imm is the arg count; str is the callee for call_direct
+pub function op_call_direct(callee: string, argc: i32): Op {
+    return Op { kind: "call_direct", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
+}
+pub function op_call_indirect(argc: i32): Op {
+    return Op { kind: "call_indirect", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_call_closure(argc: i32): Op {
+    return Op { kind: "call_closure_direct", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// structured control flow — i32_imm is the block-type (block/loop/if) or
+// the relative branch depth (br/brif), mirroring native exactly.
+pub function op_block(blocktype: i32): Op {
+    return Op { kind: "block", i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_loop(blocktype: i32): Op {
+    return Op { kind: "loop", i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_if(blocktype: i32): Op {
+    return Op { kind: "if", i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_else(): Op { return op0("else"); }
+pub function op_end(): Op { return op0("end"); }
+pub function op_br(depth: i32): Op {
+    return Op { kind: "br", i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_brif(depth: i32): Op {
+    return Op { kind: "brif", i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+pub function op_drop(): Op { return op0("drop"); }
+pub function op_return(): Op { return op0("return"); }
+
+// ---- printing ----------------------------------------------------------
+//
+// render_op gives a stable one-line textual form (the basis for a future
+// IR golden / disassembly test, mirroring ssa.fern's printer). Only the
+// fields an opcode uses are shown.
+pub function render_op(o: Op): string {
+    if (o.kind == "const_i32") { return "const_i32 " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "const_str") { return "const_str " + o.str; }
+    if (o.kind == "load_local") { return "load_local " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "store_local") { return "store_local " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "tee_local") { return "tee_local " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "call_direct") { return "call_direct " + o.str + "/" + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "br") { return "br " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "brif") { return "brif " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "load") { return "load w" + util.i32_to_string(o.width); }
+    if (o.kind == "store") { return "store w" + util.i32_to_string(o.width); }
+    return o.kind;
+}
