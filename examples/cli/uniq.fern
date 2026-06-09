@@ -1,0 +1,93 @@
+// uniq.fern — filter adjacent duplicate lines, like `uniq(1)`.
+//
+// Like the real tool, uniq only collapses *adjacent* equal lines, so
+// input is usually sorted first (`sort | uniq`).
+//
+//   -c   prefix each line with its repeat count
+//   -d   only print lines that were duplicated
+//   -u   only print lines that were unique (never repeated)
+//   -i   compare case-insensitively
+//
+//   $ printf 'a\na\nb\n' | ./uniq -c
+//        2 a
+//        1 b
+//
+// Showcases: run-length grouping over a line array, mutually
+// exclusive output modes.
+import "core/no_prelude";
+import "std/string";
+import "std/i32";
+import "std/io";
+
+struct Opts { count: boolean, only_dups: boolean, only_unique: boolean, ignore_case: boolean }
+
+function slurp(path: string): string {
+  if (path == "-" || path == "") {
+    return io.read_all_stdin();
+  }
+  match (read_file(path)) {
+    Ok(contents) => {
+      return contents;
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+function same(a: string, b: string, ci: boolean): boolean {
+  if (ci) {
+    return a.eq_ignore_ascii_case(b);
+  }
+  return a == b;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var o: Opts = Opts { count: false, only_dups: false, only_unique: false, ignore_case: false };
+  var path: string = "-";
+
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "-c") {
+      o = Opts { ...o, count: true };
+    } else if (a == "-d") {
+      o = Opts { ...o, only_dups: true };
+    } else if (a == "-u") {
+      o = Opts { ...o, only_unique: true };
+    } else if (a == "-i") {
+      o = Opts { ...o, ignore_case: true };
+    } else {
+      path = a;
+    }
+    i = i + 1;
+  }
+
+  var lines: string[] = slurp(path).lines();
+  var n: i32 = lines.len();
+  var idx: i32 = 0;
+  while (idx < n) {
+    var rep: i32 = 1;
+    // Consume the run of lines equal to lines[idx].
+    while (idx + rep < n && same(lines[idx], lines[idx + rep], o.ignore_case)) {
+      rep = rep + 1;
+    }
+    var show: boolean = true;
+    if (o.only_dups && rep < 2) {
+      show = false;
+    }
+    if (o.only_unique && rep > 1) {
+      show = false;
+    }
+    if (show) {
+      if (o.count) {
+        print(rep.to_string().pad_start(7, " ") + " " + lines[idx]);
+      } else {
+        print(lines[idx]);
+      }
+    }
+    idx = idx + rep;
+  }
+  return 0;
+}

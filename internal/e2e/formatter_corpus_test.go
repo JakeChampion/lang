@@ -46,6 +46,7 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 	// nets a strictly larger surface (42 production files) for free.
 	for _, dir := range []string{
 		"../../examples",
+		"../../examples/cli",
 		"../../examples/tests",
 		"../../internal/stdlib/std",
 		"../../internal/stdlib/core",
