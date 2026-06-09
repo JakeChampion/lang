@@ -1420,3 +1420,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the assembled binary (the `TestSelfHostWasmBinary` wordcount case spun at
   100% CPU). All other emitted loops already use named labels; new runtime
   helpers must too.
+- 2026-06-09: **wasm struct RC — DEPTH: pointer-array FIELDS deep-release.**
+  Extends the array element release (prev slice) from array LOCALS to array
+  FIELDS of a struct. `emit_struct_release` now, for an 'a' (array) field,
+  picks `$__fern_arr_dec_ptr` when the field's ELEMENT type is a pointer
+  (string / struct / enum / tuple / nested array — via the new
+  `array_field_elem_is_ptr`, which strips the `[]` and classifies the element
+  with `struct_field_kind_char`) and the flat `$__fern_arr_dec` otherwise.
+  So a `struct Bag { items: string[] }` freed now releases the strings too,
+  not just the `items` buffer. Critically asymmetric for soundness: a scalar
+  array field (`i32[]` whose values may be large even integers that look like
+  heap pointers) stays FLAT — `array_field_elem_is_ptr` returns false, so the
+  scalar elements are never arr_dec'd (that would corrupt). Pairs with the
+  existing field construction-incs (`store_value_is_borrowed` retains a
+  borrowed array stored into a field; the array's own elements were retained
+  when added) so the decs balance. Still one-level for the array's elements
+  (a `Node[]` field deep-releases each `Node` box but not each Node's own
+  fields) and tuples' array elements stay flat (tuple kinds don't carry the
+  element-element type). Coverage: `TestSelfHostRcStructBoxWasm` gains
+  struct-field-strarray-released (strings freed), struct-field-i32array-flat-safe
+  (the scalar-safety guard — `i32[]` of heap-address-shaped values must NOT be
+  pointer-released), struct-field-strarray-churn-clean (50k cycles). Full RC +
+  component + binary + shim + interp + cli wasm suites green; bootstrap-safe.
