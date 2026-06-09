@@ -1589,3 +1589,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Option/Result pipeline matches arrays/strings/structs for reclaim-on-overwrite
   too — every primary heap type is fully reference-counted, reclaimed at exit,
   AND reclaimed on overwrite.
+- 2026-06-09: **wasm map RC — keys/vals/used arrays rc-boxed + grow-leak
+  fixed.** The first map-reclamation slice. A map's three internal arrays
+  (keys / vals / used, the open-addressing table) were raw `$__fern_alloc`
+  blocks that `$__fern_map_grow` ABANDONED on every resize (a map grown N times
+  leaked 3N arrays). They are now allocated via `$__fern_str_box` (flat rc box —
+  data ptr at base+8, so the table's `[arr + i*4]` slot addressing is
+  unchanged), in both `$__fern_map_new_k` and `$__fern_map_grow`, and
+  `$__fern_map_grow` now `$__fern_arr_dec`s the old keys/vals/used buffers after
+  rehashing — the string key/value POINTERS are copied into the new arrays
+  first, so they survive (flat free of the old buffer only). Transparent to
+  every map op (all access is via the stored array pointers). Coverage: new
+  `TestSelfHostRcMapGrowWasm` — map-grow-str-keys / map-grow-i32-keys (grow +
+  rehash, values intact + detector 0), map-grow-churn (5000 growing-map
+  build/drop cycles, reclaim implied by no growth), map-grow-str-vals (string
+  values survive the realloc). Full map + RC + component + binary wasm suites
+  green; bootstrap-safe. (The map box itself + its FINAL arrays + the string
+  keys/values still leak at map death — the map box isn't rc-boxed and map
+  locals aren't swept yet; that's the map counting + free slices, which reuse
+  the boxed-array foundation laid here.)
