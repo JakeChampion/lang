@@ -1,0 +1,95 @@
+import "std/sort";
+import "std/array";
+import "std/i32";
+
+// Property-based audit for std/sort.sort_i32_asc.
+//
+// Deterministic LCG => identical inputs on every backend. For each of
+// many generated arrays (length 0..31, values 0..99) we assert the
+// three sort laws:
+//   1. ordering    — output is non-decreasing
+//   2. permutation — output is a true permutation of the input
+//                    (per-value histogram is preserved)
+//   3. idempotence — sorting an already-sorted array is a no-op
+//
+// Properties 1+2 together are the full correctness spec for a sort.
+
+function lcg_next(state: i32): i32 {
+    return ((state * 1103515245) + 12345) & 2147483647;
+}
+
+// histogram over the 0..99 value domain
+function histo(arr: i32[]): i32[] {
+    var h: i32[] = [];
+    var k: i32 = 0;
+    while (k < 100) { h = h.append(0); k = k + 1; }
+    var i: i32 = 0;
+    while (i < arr.len()) {
+        var v: i32 = arr[i];
+        h = h.with(v, h[v] + 1);
+        i = i + 1;
+    }
+    return h;
+}
+
+function histos_equal(a: i32[], b: i32[]): boolean {
+    var i: i32 = 0;
+    while (i < 100) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function is_non_decreasing(arr: i32[]): boolean {
+    var i: i32 = 1;
+    while (i < arr.len()) {
+        if (arr[i - 1] > arr[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function arrays_equal(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function main(): i32 {
+    var state: i32 = 2018915346;
+    var trial: i32 = 0;
+    while (trial < 300) {
+        state = lcg_next(state);
+        var n: i32 = state % 32;
+        var arr: i32[] = [];
+        var i: i32 = 0;
+        while (i < n) {
+            state = lcg_next(state);
+            arr = arr.append((state / 7) % 100);
+            i = i + 1;
+        }
+
+        var sorted: i32[] = sort.sort_i32_asc(arr);
+
+        if (!is_non_decreasing(sorted)) {
+            print("sort ordering FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (!histos_equal(histo(arr), histo(sorted))) {
+            print("sort permutation FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (!arrays_equal(sort.sort_i32_asc(sorted), sorted)) {
+            print("sort idempotence FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        trial = trial + 1;
+    }
+    print("OK");
+    return 0;
+}

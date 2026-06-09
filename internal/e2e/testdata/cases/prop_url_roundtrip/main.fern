@@ -1,0 +1,43 @@
+import "std/url";
+import "std/i32";
+
+// Property-based round-trip audit for std/url percent-encoding.
+//
+// Deterministic LCG => identical inputs on every backend. Full byte
+// range (incl. embedded NUL / high bytes) and lengths 0..47.
+//
+// Property: url_decode(url_encode(s)) == s for every generated s.
+
+function lcg_next(state: i32): i32 {
+    return ((state * 1103515245) + 12345) & 2147483647;
+}
+
+function gen_bytes(seed: i32, n: i32): u8[] {
+    var buf: u8[] = __alloc_u8(n);
+    var state: i32 = seed;
+    var i: i32 = 0;
+    while (i < n) {
+        state = lcg_next(state);
+        buf = buf.with(i, ((state / 7) % 256) as u8);
+        i = i + 1;
+    }
+    return buf;
+}
+
+function main(): i32 {
+    var state: i32 = 305419896;
+    var trial: i32 = 0;
+    while (trial < 300) {
+        state = lcg_next(state);
+        var n: i32 = state % 48;
+        var s: string = string_from_bytes(gen_bytes(state, n));
+
+        if (url.url_decode(url.url_encode(s)) != s) {
+            print("url roundtrip FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        trial = trial + 1;
+    }
+    print("OK");
+    return 0;
+}
