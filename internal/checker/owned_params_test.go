@@ -141,6 +141,30 @@ function f(own xs: i32[]): i32 {
 }`)
 }
 
+// Read-form borrows: an `own` value READ through a slice, a comparison, a cast,
+// etc. is borrowed (not consumed), so it can still be consumed at the end. The
+// affine walk now classifies those read positions as borrows; without it each
+// was a false use-after-move E050 (the gap that blocked tracking owned locals,
+// which are read through casts / comparisons / slices pervasively).
+func TestOwnedReadFormsAreBorrows(t *testing.T) {
+	wantOK(t, "slice-and-compare-reads", ownPrelude+`
+function takesl(s: [i32]): i32 { return s.len(); }
+function f(own xs: i32[]): i32 {
+    var n: i32 = takesl(xs[0:1]);     // slice read (borrow)
+    var c: boolean = xs.len() == 3;   // method-then-compare (reads)
+    if (c) { return n; }
+    return n + sink(xs);              // consume at the end
+}`)
+	wantOK(t, "string-concat-read", ownPrelude+`
+function slen(s: string): i32 { return 0; }
+function f(own s: string): i32 {
+    var t: i32 = slen(s + "!");       // string-concat operand read (borrow)
+    var u: boolean = s == "x";        // comparison read (borrow)
+    if (u) { return t; }
+    return t + slen(s);
+}`)
+}
+
 // --- E051: call-site ownership guard -------------------------------------
 
 const ownConsumer = `enum Box { Wrap(i32[]) }
