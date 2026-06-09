@@ -27,8 +27,13 @@ func wantOK(t *testing.T, name, src string) {
 	}
 }
 
+// `sink` CONSUMES its argument (`own`), so passing an owned value to it is a
+// move — the consume tests below rely on that. `peek` BORROWS, so passing an
+// owned value to it is a read, not a move (the precise affine model: only an
+// `own` position consumes).
 const ownPrelude = `enum Lst { Cons(i32), Nil }
-function sink(xs: i32[]): i32 { return xs[0]; }
+function sink(own xs: i32[]): i32 { return xs[0]; }
+function peek(xs: i32[]): i32 { return xs[0]; }
 function lsink(l: Lst): i32 { return 0; }
 `
 
@@ -118,6 +123,21 @@ func TestOwnedMethodReceiverIsBorrowOK(t *testing.T) {
 function f(own xs: i32[]): i32 {
     var n: i32 = xs.len();   // receiver borrow
     return n + sink(xs);     // consume after borrow — fine
+}`)
+}
+
+// Precise affine model: passing an owned value to a BORROWED parameter is a
+// read, not a move — so it can be passed to a borrowing helper repeatedly and
+// still consumed at the end. (Strict-affine over-approximation would have
+// flagged the second `peek(xs)` as a use-after-move.) This is the idiom the
+// self-host's `own`-threaded builders rely on (`contains_str(out, x)` then
+// `out = out.append(x)`).
+func TestOwnedBorrowArgIsNotConsumeOK(t *testing.T) {
+	wantOK(t, "borrow-arg-not-consume", ownPrelude+`
+function f(own xs: i32[]): i32 {
+    var a: i32 = peek(xs);   // borrow (arg to a borrowed param)
+    var b: i32 = peek(xs);   // still a borrow — not use-after-move
+    return a + b + sink(xs); // consume at the end
 }`)
 }
 

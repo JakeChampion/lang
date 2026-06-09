@@ -4523,6 +4523,28 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				// The callee position is a borrow (function ref / closure call).
 				if id, ok := x.Callee.(*ast.Ident); ok {
 					borrow[id] = true
+					// An owned value is CONSUMED only when passed to an `own`
+					// parameter; an argument to a BORROWED parameter (or any param
+					// of a callee with no `own` flags) is a read — a borrow — not a
+					// move. (`contains_str(out, x)` borrows `out`, so a following
+					// `out = out.append(..)` is not a use-after-move.) Without this
+					// the affine walk over-approximates every whole-value argument
+					// as a consume, which both rejects natural `own`-threaded
+					// builder code and blocks tracking owned locals. The method
+					// receiver (Args[0] when Method is set) keeps its own
+					// consume/borrow classification below.
+					flags := c.ownFuncs[id.Name]
+					for ai, arg := range x.Args {
+						if x.Method != nil && ai == 0 {
+							continue
+						}
+						if ai < len(flags) && flags[ai] {
+							continue // `own` position: a genuine consume
+						}
+						if aid, ok := arg.(*ast.Ident); ok {
+							borrow[aid] = true
+						}
+					}
 				}
 				// A method call (`xs.len()`) is rewritten by the checker to a
 				// plain Call with the receiver as Args[0] and Method set; a
