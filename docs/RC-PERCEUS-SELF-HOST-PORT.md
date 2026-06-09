@@ -1642,3 +1642,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   occupied slots, gated by `used[]`, are read). Guarded by
   `map-grow-churn`/`map-counting-churn-clean` (5000 growing-map cycles, no hang,
   detector 0).
+- 2026-06-09: **wasm map RC — FREE flipped ON.** Maps are now reclaimed. A new
+  `$__fern_map_release(box)` helper: when `box` is the last owner ([box-8]==1)
+  it frees the three structural arrays (keys @[box+8], vals @[box+12], used
+  @[box+16]) FLAT via `$__fern_arr_dec`, then frees the box itself;
+  `map_exit_sweep_excl` now calls it (replacing the counting-stage rc_dec). Map
+  construction-inc: `store_value_is_borrowed` gains `init_is_map_alias`, so a map
+  stored into a container is retained. One level, by design: the string KEYS /
+  VALUES held in the keys/vals arrays are NOT released — they aren't
+  construction-inc'd into the map (map_set just stores the pointer), so dec'ing
+  them would double-free the source string locals; closing that needs map_set
+  key/value retains + overwrite-dec, a future refinement. So map free reclaims
+  the structural overhead (box + 3 arrays, O(1)+O(cap)); string keys/values
+  (often literals → immortal anyway) leak soundly. Coverage:
+  `TestSelfHostRcMapGrowWasm` gains map-free-i32, map-free-str, and
+  map-free-churn-clean (200k growing maps built + dropped — the box + arrays
+  reclaimed each cycle, no OOM, detector 0; 200k unreclaimed maps would exhaust
+  memory, so this proves real free). Full map + RC + component + binary + shim +
+  interp + cli wasm suites green; bootstrap-safe. **With this, maps join the
+  fully-reclaimed set** — every container the language exposes (arrays, strings,
+  tuples, structs/enums, Option/Result, maps) is now reference-counted and
+  reclaimed on the self-hosted wasm backend.
