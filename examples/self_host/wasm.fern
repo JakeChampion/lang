@@ -880,25 +880,40 @@ function struct_field_kind_char(ft: string, cx: Ctx): string {
     return "i";
 }
 
+// array_field_elem_is_ptr: for an array field type "T[]", is the ELEMENT T an
+// rc-boxed pointer (string / struct / enum / tuple / nested array)? Drives
+// whether a struct's array field is deep-released ($__fern_arr_dec_ptr, which
+// releases the elements) or freed flat ($__fern_arr_dec — for i32/i64/f64
+// scalar elements, which must NOT be dec'd as pointers).
+function array_field_elem_is_ptr(ft: string, cx: Ctx): boolean {
+    if (!ty_spelling_is_array(ft)) { return false; }
+    return struct_field_kind_char(ft[0:ft.len() - 2], cx) != "i";
+}
+
 // emit_struct_release frees one owned struct/enum local with RECURSIVE
 // field-release: if it is the LAST owner (rc word at [s-8] == 1, i.e. the box
-// is about to be freed) first release each rc-tracked field (array / string /
-// nested struct via $__fern_arr_dec — one level), then free the box via the
-// shared $__fern_arr_dec. The rc==1 guard ensures fields are released exactly
-// once, on the final free (an aliased struct at rc>1 just decrements). The
-// per-field construction-incs pair with these decs so a struct stored in a
-// container survives. A scalar field is skipped (struct_field_kind_char). An
-// enum local's variant payload isn't reached (its static type has 0 struct
-// fields) — a sound leak, like a nested struct's own fields.
+// is about to be freed) first release each rc-tracked field (a string or
+// nested struct via $__fern_arr_dec; a pointer-element array via
+// $__fern_arr_dec_ptr so ITS elements are released too; a scalar array flat),
+// then free the box via the shared $__fern_arr_dec. The rc==1 guard ensures
+// fields are released exactly once, on the final free (an aliased struct at
+// rc>1 just decrements). The per-field construction-incs pair with these decs
+// so a struct stored in a container survives. A scalar field is skipped
+// (struct_field_kind_char). An enum local's variant payload isn't reached (its
+// static type has 0 struct fields) — a sound leak, like a nested struct's own
+// fields.
 function emit_struct_release(name: string, sty: string, cx: Ctx): string {
     var o: string = "";
     var inner: string = "";
     var nf: i32 = struct_field_count(cx.structs, sty);
     var fi: i32 = 0;
     while (fi < nf) {
-        var fk: string = struct_field_kind_char(struct_field_type_at(cx.structs, sty, fi), cx);
+        var ft: string = struct_field_type_at(cx.structs, sty, fi);
+        var fk: string = struct_field_kind_char(ft, cx);
         if (fk == "a" || fk == "s" || fk == "S") {
-            inner = inner + " (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")))))";
+            var dec: string = "$__fern_arr_dec";
+            if (fk == "a" && array_field_elem_is_ptr(ft, cx)) { dec = "$__fern_arr_dec_ptr"; }
+            inner = inner + " (drop (call " + dec + " (i32.load (i32.add (local.get $" + name + ") (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")))))";
         }
         fi = fi + 1;
     }
