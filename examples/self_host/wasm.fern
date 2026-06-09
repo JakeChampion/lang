@@ -1303,6 +1303,15 @@ function collect_bound_stmts(body: parser.Stmt[], acc: string[]): string[] {
                             if (pv.binding.len() > 0 && pv.binding != "_" && !contains_str(acc, pv.binding)) {
                                 acc = acc.append(pv.binding);
                             }
+                            // Multi-payload variant `V(a, b, …)`: the extra
+                            // bindings are locals too (S4).
+                            var ebk: i32 = 0;
+                            while (ebk < pv.extra_bindings.len()) {
+                                if (pv.extra_bindings[ebk].len() > 0 && pv.extra_bindings[ebk] != "_" && !contains_str(acc, pv.extra_bindings[ebk])) {
+                                    acc = acc.append(pv.extra_bindings[ebk]);
+                                }
+                                ebk = ebk + 1;
+                            }
                         },
                         _ => {},
                     }
@@ -4554,6 +4563,15 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
                             if (pv.binding.len() > 0 && pv.binding != "_" && !contains_str(acc, pv.binding)) {
                                 acc = acc.append(pv.binding);
                             }
+                            // Multi-payload variant `V(a, b, …)`: the extra
+                            // bindings are locals too (S4).
+                            var ebk: i32 = 0;
+                            while (ebk < pv.extra_bindings.len()) {
+                                if (pv.extra_bindings[ebk].len() > 0 && pv.extra_bindings[ebk] != "_" && !contains_str(acc, pv.extra_bindings[ebk])) {
+                                    acc = acc.append(pv.extra_bindings[ebk]);
+                                }
+                                ebk = ebk + 1;
+                            }
                         },
                         _ => {},
                     }
@@ -6899,11 +6917,28 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                                 // (`type E = A | B`) binds the whole struct
                                 // value (accessed via its named fields).
                                 if (struct_field_index(st.cx.structs, pv.type_name, "__ev") >= 0) {
-                                    // Bind the payload at its field width: a wide
-                                    // i64/f64 `__ev` is read with i64/f64.load; an
-                                    // i32 payload is the unchanged i32.load. S1.
-                                    var pk: string = field_kind_of_type(struct_field_type(st.cx.structs, pv.type_name, "__ev"));
-                                    st = st.w("    (local.set $" + pv.binding + " (" + elem_load_op(pk) + " (i32.add (local.get " + mv + ") (i32.const 4))))\n");
+                                    if (pv.extra_bindings.len() == 0) {
+                                        // Single payload: bind at its field width — a
+                                        // wide i64/f64 `__ev` is read with i64/f64.load;
+                                        // an i32 payload is the unchanged i32.load. S1.
+                                        var pk: string = field_kind_of_type(struct_field_type(st.cx.structs, pv.type_name, "__ev"));
+                                        st = st.w("    (local.set $" + pv.binding + " (" + elem_load_op(pk) + " (i32.add (local.get " + mv + ") (i32.const 4))))\n");
+                                    } else {
+                                        // Multi-payload variant `V(a, b, …)`: bind each
+                                        // field (field j -> binding/extra_bindings[j-1])
+                                        // at struct_field_off(j). Scoped to i32 fields
+                                        // (4-byte stride); wide + multi is a later slice. S4.
+                                        if (pv.binding.len() > 0 && pv.binding != "_") {
+                                            st = st.w("    (local.set $" + pv.binding + " (i32.load (i32.add (local.get " + mv + ") (i32.const " + util.i32_to_string(struct_field_off(0)) + "))))\n");
+                                        }
+                                        var meb: i32 = 0;
+                                        while (meb < pv.extra_bindings.len()) {
+                                            if (pv.extra_bindings[meb].len() > 0 && pv.extra_bindings[meb] != "_") {
+                                                st = st.w("    (local.set $" + pv.extra_bindings[meb] + " (i32.load (i32.add (local.get " + mv + ") (i32.const " + util.i32_to_string(struct_field_off(meb + 1)) + "))))\n");
+                                            }
+                                            meb = meb + 1;
+                                        }
+                                    }
                                 } else {
                                     st = st.w("    (local.set $" + pv.binding + " (local.get " + mv + "))\n");
                                 }

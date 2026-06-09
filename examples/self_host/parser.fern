@@ -2720,11 +2720,18 @@ function parse_enum_decl(p: Par): EnumResult {
             p = p.advance();
             var tr: TypeNameResult = parse_type_name(p);
             p = tr.par;
+            // A multi-payload variant `V(A, B, …)` keeps every payload as a field
+            // `__ev`, `__ev1`, `__ev2`, … (the first stays `__ev` so the existing
+            // "is this a payloaded variant?" checks that look for `__ev` still
+            // fire). Codegen indexes them by position (struct_field_off).
             fields = fields.append(StructFieldDecl { name: "__ev", type_name: tr.name });
+            var pnum: i32 = 1;
             while (p.peek_punct() == ",") {
                 p = p.advance();
                 var tr2: TypeNameResult = parse_type_name(p);
                 p = tr2.par;
+                fields = fields.append(StructFieldDecl { name: "__ev" + dl_itoa(pnum), type_name: tr2.name });
+                pnum = pnum + 1;
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
         }

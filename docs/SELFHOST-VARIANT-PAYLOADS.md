@@ -119,11 +119,21 @@ assume a single `i32` enum payload and 4-byte struct fields:
 3. **S3 — mixed-width self-host extern port.** The i64 join slot + per-arm
    coerce, mirroring the Go `appendVariantParamPayloadI64` path. *Gated by
    `TestSelfHostExternVariantMixedWidth…`.*
-4. **S4 — multi-payload variants in `wasm.fern` + parser + checker.** Keep
-   all `__ev`s; width-aware per-struct field offsets; multi-binding match;
-   E015 count fix. *Gated by a `TestSelfHostWasm…` multi-payload run test +
-   the self-compile oracle.* **Unblocks the self-host multi-field extern
-   ports.**
+4. **S4 — multi-payload variants in `wasm.fern` + parser + checker. ✅ Done.**
+   The parser desugar keeps every payload as a field `__ev`, `__ev1`, … (no
+   longer dropping all but the first); `variant_payload_count` (checker) counts
+   the `__ev`-prefixed fields so E015 allows a matching multi-binding `V(a,
+   b)`; `wasm.fern` binds each payload field at `struct_field_off(j)` (a
+   multi-binding match) and collects the extra bindings as locals. The S1
+   constructor already stored every arg, so keeping the fields also sizes the
+   box correctly (closing the old multi-payload heap-overflow latent bug).
+   Scoped to **i32 payload fields** (the 4-byte `struct_field_off` stride);
+   single-payload stays byte-identical (S1 wide path untouched) and wide +
+   multi-payload together is a later refinement. Gated by the
+   `enum-multi-payload-{2,3,second-arm}` `TestSelfHostWasmRun` cases + the
+   self-compile / printer / checker oracles (the self-host source has no
+   multi-payload variant, so the shared desugar is unchanged for it).
+   **Unblocks the self-host multi-field extern ports (S5).**
 5. **S5 — multi-field self-host extern ports** (uniform, then the general
    mixed/float join), mirroring the Go `appendVariantParamMultiField` /
    `…ResultStoreMultiField`. *Gated by `TestSelfHostExternVariantMultiField…`.*
