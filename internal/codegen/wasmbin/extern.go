@@ -734,56 +734,13 @@ func appendVariantResultStore(body []byte, base, rb, disc, poff uint32, vs []ir.
 //
 // Locals after the params: 0:$rb (return area) 1:$base (box) 2:$disc.
 func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEnumParam) func(map[string]uint32) []byte {
-	const rcHeaderBytes = 8
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
 		imp := idxs[rawImport]
 		rb := uint32(nparams)
 		base := uint32(nparams + 1)
 		disc := uint32(nparams + 2)
-		poff := uint32(ep.PayloadOffset)
-		payVT := externRecordFieldValtype(ep.PayloadType)
-		psize := int32(4)
-		if payVT == encode.ValtypeI64 || payVT == encode.ValtypeF64 {
-			psize = 8
-		}
-		areaSize := ep.PayloadOffset + psize // canonical return area (disc + join slot)
-		// The Fern box holds the matched arm's payload at its own offset; for a
-		// mixed-width / multi-field variant that's per-arm, so size the box to the
-		// widest arm end (and the area to the join: SlotCount i32 slots when multi).
-		boxSize := areaSize
-		if ep.SlotCount > 0 {
-			// Multi-field: the canonical return-area is the variant memory layout
-			// (ir precomputed AreaSize); the Fern box holds the widest arm's fields
-			// at their box offsets (8 bytes for a 64-bit field, else 4).
-			areaSize = ep.AreaSize
-			boxSize = 0
-			for _, v := range ep.Variants {
-				for j, off := range v.Fields {
-					w := int32(4)
-					if externFieldIs64(v.FieldTypes[j]) {
-						w = 8
-					}
-					if end := off + w; end > boxSize {
-						boxSize = end
-					}
-				}
-			}
-		} else if ep.Variants != nil {
-			boxSize = 0
-			for _, v := range ep.Variants {
-				if v.Type == nil {
-					continue
-				}
-				w := int32(4)
-				if externEnumVariantIs64(v.Type) {
-					w = 8
-				}
-				if end := v.BoxOffset + w; end > boxSize {
-					boxSize = end
-				}
-			}
-		}
+		areaSize, _ := enumResultAreaBoxSize(ep)
 
 		var body []byte
 		// rb = __fern_alloc(areaSize) — 8-aligned canonical return area.
@@ -796,65 +753,127 @@ func buildExternEnumResultWrapper(nparams int, rawImport string, ep *ir.ExternEn
 		}
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
-		// disc = load8_u @ rb+0.
-		body = inst.InstLocalGet(body, rb)
-		body = memory.InstI32Load8U(body, 0, 0)
-		body = inst.InstLocalSet(body, disc)
-		// base = __fern_alloc(rcHeaderBytes + boxSize); rc = 1 at base+0.
-		body = inst.InstI32Const(body, rcHeaderBytes+boxSize)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalSet(body, base)
-		body = inst.InstLocalGet(body, base)
-		body = inst.InstI32Const(body, 1)
-		body = memory.InstI32Store(body, 2, 0)
-		// tag (i32) @ base+rcHeaderBytes: remap 1-disc for option, else disc.
-		body = inst.InstLocalGet(body, base)
-		if ep.RemapDisc {
-			body = inst.InstI32Const(body, 1)
-			body = inst.InstLocalGet(body, disc)
-			body = numeric.InstI32Sub(body)
-		} else {
-			body = inst.InstLocalGet(body, disc)
-		}
-		body = memory.InstI32Store(body, 2, rcHeaderBytes)
-		if ep.SlotCount > 0 {
-			// Multi-field: store each of the matched arm's fields from its i32 join
-			// slot into the box, branching on the disc.
-			body = appendVariantResultStoreMultiField(body, base, rb, disc, ep)
-		} else if ep.Variants != nil {
-			// Mixed-width: store the matched arm's payload (coerced from the i64
-			// join slot) at that arm's box offset, branching on the disc.
-			body = appendVariantResultStore(body, base, rb, disc, poff, ep.Variants)
-		} else {
-			// payload @ base+rcHeaderBytes+off = load(rb+off).
-			body = inst.InstLocalGet(body, base)
-			body = inst.InstLocalGet(body, rb)
-			switch payVT {
-			case encode.ValtypeI64:
-				body = memory.InstI64Load(body, 3, poff)
-				body = memory.InstI64Store(body, 3, uint32(rcHeaderBytes)+poff)
-			case encode.ValtypeF32:
-				body = memory.InstF32Load(body, 2, poff)
-				body = memory.InstF32Store(body, 2, uint32(rcHeaderBytes)+poff)
-			case encode.ValtypeF64:
-				body = memory.InstF64Load(body, 3, poff)
-				body = memory.InstF64Store(body, 3, uint32(rcHeaderBytes)+poff)
-			default:
-				body = memory.InstI32Load(body, 2, poff)
-				body = memory.InstI32Store(body, 2, uint32(rcHeaderBytes)+poff)
-			}
-		}
-		// return base + rcHeaderBytes (user-visible enum pointer).
-		body = inst.InstLocalGet(body, base)
-		body = inst.InstI32Const(body, rcHeaderBytes)
-		body = numeric.InstI32Add(body)
+		// Read the filled return area into a fresh Fern enum box.
+		body = appendEnumResultAreaToBox(body, idxs, rb, base, disc, ep)
 
 		locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // rb, base, disc
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
 
-func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[string]uint32) []byte {
+// enumResultAreaBoxSize returns the canonical return-area size (where the import
+// writes disc + payload) and the Fern enum-box payload size for an option/result
+// `@import` result layout. Shared by the plain and mem-param result wrappers.
+func enumResultAreaBoxSize(ep *ir.ExternEnumParam) (areaSize, boxSize int32) {
+	payVT := externRecordFieldValtype(ep.PayloadType)
+	psize := int32(4)
+	if payVT == encode.ValtypeI64 || payVT == encode.ValtypeF64 {
+		psize = 8
+	}
+	areaSize = ep.PayloadOffset + psize // canonical return area (disc + join slot)
+	boxSize = areaSize
+	if ep.SlotCount > 0 {
+		// Multi-field: the canonical return-area is the variant memory layout
+		// (ir precomputed AreaSize); the Fern box holds the widest arm's fields
+		// at their box offsets (8 bytes for a 64-bit field, else 4).
+		areaSize = ep.AreaSize
+		boxSize = 0
+		for _, v := range ep.Variants {
+			for j, off := range v.Fields {
+				w := int32(4)
+				if externFieldIs64(v.FieldTypes[j]) {
+					w = 8
+				}
+				if end := off + w; end > boxSize {
+					boxSize = end
+				}
+			}
+		}
+	} else if ep.Variants != nil {
+		boxSize = 0
+		for _, v := range ep.Variants {
+			if v.Type == nil {
+				continue
+			}
+			w := int32(4)
+			if externEnumVariantIs64(v.Type) {
+				w = 8
+			}
+			if end := v.BoxOffset + w; end > boxSize {
+				boxSize = end
+			}
+		}
+	}
+	return areaSize, boxSize
+}
+
+// appendEnumResultAreaToBox emits the code that, given a filled canonical return
+// area `rb` (disc:u8 @0, payload @off), materializes a fresh Fern enum box
+// `[rc][tag@0][payload@off]` and leaves its user-visible pointer on the stack.
+// `base` and `disc` are scratch i32 locals. Shared by the plain and mem-param
+// result wrappers.
+func appendEnumResultAreaToBox(body []byte, idxs map[string]uint32, rb, base, disc uint32, ep *ir.ExternEnumParam) []byte {
+	const rcHeaderBytes = 8
+	alloc := idxs["__fern_alloc"]
+	poff := uint32(ep.PayloadOffset)
+	payVT := externRecordFieldValtype(ep.PayloadType)
+	_, boxSize := enumResultAreaBoxSize(ep)
+	// disc = load8_u @ rb+0.
+	body = inst.InstLocalGet(body, rb)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstLocalSet(body, disc)
+	// base = __fern_alloc(rcHeaderBytes + boxSize); rc = 1 at base+0.
+	body = inst.InstI32Const(body, rcHeaderBytes+boxSize)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, base)
+	body = inst.InstLocalGet(body, base)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	// tag (i32) @ base+rcHeaderBytes: remap 1-disc for option, else disc.
+	body = inst.InstLocalGet(body, base)
+	if ep.RemapDisc {
+		body = inst.InstI32Const(body, 1)
+		body = inst.InstLocalGet(body, disc)
+		body = numeric.InstI32Sub(body)
+	} else {
+		body = inst.InstLocalGet(body, disc)
+	}
+	body = memory.InstI32Store(body, 2, rcHeaderBytes)
+	if ep.SlotCount > 0 {
+		// Multi-field: store each of the matched arm's fields from its i32 join
+		// slot into the box, branching on the disc.
+		body = appendVariantResultStoreMultiField(body, base, rb, disc, ep)
+	} else if ep.Variants != nil {
+		// Mixed-width: store the matched arm's payload (coerced from the i64
+		// join slot) at that arm's box offset, branching on the disc.
+		body = appendVariantResultStore(body, base, rb, disc, poff, ep.Variants)
+	} else {
+		// payload @ base+rcHeaderBytes+off = load(rb+off).
+		body = inst.InstLocalGet(body, base)
+		body = inst.InstLocalGet(body, rb)
+		switch payVT {
+		case encode.ValtypeI64:
+			body = memory.InstI64Load(body, 3, poff)
+			body = memory.InstI64Store(body, 3, uint32(rcHeaderBytes)+poff)
+		case encode.ValtypeF32:
+			body = memory.InstF32Load(body, 2, poff)
+			body = memory.InstF32Store(body, 2, uint32(rcHeaderBytes)+poff)
+		case encode.ValtypeF64:
+			body = memory.InstF64Load(body, 3, poff)
+			body = memory.InstF64Store(body, 3, uint32(rcHeaderBytes)+poff)
+		default:
+			body = memory.InstI32Load(body, 2, poff)
+			body = memory.InstI32Store(body, 2, uint32(rcHeaderBytes)+poff)
+		}
+	}
+	// leave base + rcHeaderBytes (user-visible enum pointer) on the stack.
+	body = inst.InstLocalGet(body, base)
+	body = inst.InstI32Const(body, rcHeaderBytes)
+	body = numeric.InstI32Add(body)
+	return body
+}
+
+func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string, resultEnum *ir.ExternEnumParam) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		imp := idxs[rawImport]
 		nSlots := uint32(0)
@@ -868,6 +887,15 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 		bufL, byteLenL, iL := nSlots, nSlots+1, nSlots+2
 
 		var body []byte
+		if resultEnum != nil {
+			// Composite (option/result) result alongside the memory param(s): alloc
+			// the canonical return area up front; the import gets it as a trailing
+			// retptr and returns void.
+			areaSize, _ := enumResultAreaBoxSize(resultEnum)
+			body = inst.InstI32Const(body, areaSize)
+			body = inst.InstCall(body, idxs["__fern_alloc"])
+			body = inst.InstLocalSet(body, nSlots+3) // rb
+		}
 		slot := uint32(0)
 		for i, p := range ex.Params {
 			switch {
@@ -995,6 +1023,17 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string) func(map[st
 				body = inst.InstLocalGet(body, slot)
 				slot++
 			}
+		}
+		if resultEnum != nil {
+			// Pass the return-area pointer as the trailing canonical retptr, call
+			// (void), then read the filled area into a Fern enum box.
+			rb, base, disc := nSlots+3, nSlots+4, nSlots+5
+			body = inst.InstLocalGet(body, rb)
+			body = inst.InstCall(body, imp)
+			body = appendEnumResultAreaToBox(body, idxs, rb, base, disc, resultEnum)
+			// buf, byteLen, i, rb, base, disc
+			locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+			return inst.PutFunctionBody(nil, locals, body)
 		}
 		body = inst.InstCall(body, imp)
 		// A scalar result from the call is the wrapper's result.

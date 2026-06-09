@@ -1493,26 +1493,28 @@ produces a response:
        feature (parser/checker + modload aliasing of exported resource types)
        would let a 5-line handler `import` an `http` lib. Until then the externs
        live in the handler module.
-    2. **Response bodies — `result<own<R>>` returns ✅ Done; the byte-write
-       still pending.** `outgoing-response.body() -> result<own<outgoing-body>>`
-       and `outgoing-body.write() -> result<own<output-stream>>` now lower: a
-       resource handle is a valid single-scalar `result` payload, so these
-       `@import` externs are declared `Result[own OutgoingBody, u32]` /
-       `Result[own OutputStream, u32]` and go through the existing extern enum/
-       result-return wrapper. The only change needed was teaching `valtypeFor` to
-       map `ast.HandleType` to i32 (it erases to a handle scalar like any other
-       pointer-shaped value). Gated by `TestExportWasiHttpHandlerBodyServes` (a
-       handler obtains the body + output-stream handles via the result-of-handle
-       returns and serves a 200). **Still pending:** actually writing bytes needs
-       `output-stream.blocking-write-and-flush(list<u8>) -> result<_,
-       stream-error>` and `[static]outgoing-body.finish(own<…>,
-       option<own<…>>) -> result<_, error-code>` — both **variant-err `result`
-       returns** (`stream-error` / `error-code` are variants, returned indirectly
-       through a retptr whose canonical area is wider than a single scalar). The
-       enum/result-return wrapper is gated to a single-scalar payload, so a
-       variant-err result needs canonical-size-aware return-area marshalling — a
-       distinct chunk (the embedded path hand-codes these in `wasi_http.go`).
-       `option<own<R>>` params (finish's trailers) are likewise still to do.
+    2. **Response bodies — a handler writes the body. ✅ Done.** `outgoing-
+       response.body() -> result<own<outgoing-body>>` and `outgoing-body.write()
+       -> result<own<output-stream>>` lower because a resource handle is a valid
+       single-scalar `result` payload (`valtypeFor` maps `ast.HandleType` to i32),
+       and `output-stream.blocking-write-and-flush(list<u8>) -> result<_,
+       stream-error>` now lowers too: a `u8[]` parameter **combined with** a
+       composite (option/result) result is handled by a merged wrapper —
+       `buildExternMemParamWrapper` gained an optional result layout, allocating
+       the canonical return area up front, passing it as the trailing retptr,
+       normalizing the mem param(s), then reading the area into a Fern enum box
+       (the area-read logic is now the shared `appendEnumResultAreaToBox`). The
+       variant `stream-error` is read **discriminant-only** by modeling the return
+       as `Result[i64, i64]`, whose 16-byte same-width-scalar area safely covers
+       the canonical `result<_, stream-error>` (~12 bytes) — no under-allocation.
+       Gated by `TestExportWasiHttpHandlerBodyWriteServes`: a handler writes "hi"
+       and `wasmtime serve` returns **200 + body "hi"** (the body flushes on drop
+       — no explicit `finish` needed). **Still to do:** `[static]outgoing-body.
+       finish(own<…>, option<own<…>>) -> result<_, error-code>` needs an
+       `option<own<R>>` param and the wider `error-code` return area; and reading
+       the *error details* of a `result<_, variant>` (vs. discriminant-only) needs
+       faithful variant modelling — both follow-ons, neither blocks a working
+       body.
     3. **A composer Ok-wrap** (so even the raw `set` extern could take just the
        response handle) remains possible but is now lower-value, since the Fern
        helper already gives the clean call site.
