@@ -706,3 +706,28 @@ is a `string[]` so `xs[i]` dispatches to `str_len` (not `arr_len`).
   move-out, and a loop summing element lengths) plus the three differentials
   (arm64 under qemu). The IR path is confirmed taken (`all_eligible` true);
   fixpoint holds; the broad self-host x86 + Rc sweep is green. No regressions.
+
+### Known issue: AST-wasm struct-field RC double-free (resolved by the IR migration)
+
+The legacy **AST** wasm backend (`wasm.fern`) has a use-after-free in its
+hand-written struct reference counting that surfaces on large struct-and-array-
+heavy programs — notably the arm64-darwin assembler driver run under wasm
+(`TestSelfHostArm64DarwinMachORealAsm`, `TestSelfHostArm64DarwinAssemblesRealRuntime`),
+which trap with an out-of-bounds memory access (freelist corruption). Root cause:
+`var p = p0` (aliasing a struct value) increments the **box** rc but not its
+fields, while a spread `p = SomeStruct { ...p, field: … }` threaded in a loop
+then drops the old box and **deep-releases a field the new box still
+co-references**. The array's own rc (1, one box-field slot) doesn't reflect the
+box-level sharing, so neither an rc-aware `arr_push` nor forcing copy-on-append
+fixes it — it is a structural limitation of the box-only alias model. The
+reference (Go) backend runs the same programs correctly, so this is purely an
+AST-wasm-RC defect, not a language/logic bug.
+
+It is deliberately **not** fixed in `wasm.fern`: that backend's per-construct RC
+is being retired in favour of the shared IR's self-hosted Perceus, which tracks
+ownership uniformly (the same machinery that already handles arrays/strings/
+structs in the IR path). Once struct construction / spread / field access route
+through the IR with Perceus, these programs get correct RC for free and the trap
+disappears at the source. Until then the affected self-host **wasm** tests are
+not gated in CI (they `t.Skip` without `wasmtime`, and the `^TestSelfHost` job
+does not install it), so the failure is latent rather than blocking.
