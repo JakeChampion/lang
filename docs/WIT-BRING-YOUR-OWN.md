@@ -1508,13 +1508,29 @@ produces a response:
        as `Result[i64, i64]`, whose 16-byte same-width-scalar area safely covers
        the canonical `result<_, stream-error>` (~12 bytes) — no under-allocation.
        Gated by `TestExportWasiHttpHandlerBodyWriteServes`: a handler writes "hi"
-       and `wasmtime serve` returns **200 + body "hi"** (the body flushes on drop
-       — no explicit `finish` needed). **Still to do:** `[static]outgoing-body.
-       finish(own<…>, option<own<…>>) -> result<_, error-code>` needs an
-       `option<own<R>>` param and the wider `error-code` return area; and reading
-       the *error details* of a `result<_, variant>` (vs. discriminant-only) needs
-       faithful variant modelling — both follow-ons, neither blocks a working
-       body.
+       and `wasmtime serve` returns **200 + body "hi"**.
+    2a. **`outgoing-body.finish` — the full response path. ✅ Done.** A handler now
+       writes the body AND calls `[static]outgoing-body.finish(own<outgoing-body>,
+       option<own<trailers>>) -> result<_, error-code>` to seal it. Two pieces:
+       (i) the `option<own<trailers>>` param lowers as-is (`Option[own Trailers]`,
+       passed `None`) — a handle is a single-scalar option payload; (ii) the wide
+       `error-code` result. `error-code` is a 39-case variant whose canonical
+       return area exceeds the 16 bytes a same-width-scalar `Result` models, so
+       the result-return wrapper now **floors the canonical return area at 64
+       bytes** — the canonical-ABI retptr bound the embedded path already relies
+       on (`wasi_http.go`: "Each canonical-ABI retptr fits in 64 bytes"). The box
+       is unchanged; only the scratch area grows, so the host can never overrun it
+       however wide the real variant is. The handler reads `finish`'s result
+       discriminant-only (`Result[i64, i64]`). wasi:http traps finishing a body
+       with a live child stream, so the handler drops the output-stream first via
+       a manual `[resource-drop]output-stream` `@import` (the P5 manual-drop path;
+       match-bound handles aren't auto-dropped — the move analysis can't tell a
+       handle owned by a parent resource, like a response's body, from a leaked
+       one, so auto-dropping them is unsound). Gated by
+       `TestExportWasiHttpHandlerFinishServes`: writes "hi", finishes the body,
+       serves **200 + body "hi"**. Reading a `result<_, variant>`'s *error
+       details* (vs. discriminant-only) still needs faithful variant modelling — a
+       follow-on, not a blocker.
     3. **A composer Ok-wrap** (so even the raw `set` extern could take just the
        response handle) remains possible but is now lower-value, since the Fern
        helper already gives the clean call site.

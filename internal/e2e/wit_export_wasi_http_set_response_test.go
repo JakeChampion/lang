@@ -176,10 +176,25 @@ func buildHttpHandlerComponent(t *testing.T, dir, prog string) string {
 	return out
 }
 
-// serveHttpHandlerStatus builds + composes `prog`, serves the component under
-// `wasmtime serve` on a free port, makes a single `GET /`, and returns the
-// response status. Skips if wasmtime is absent.
+// serveHttpHandlerStatus builds + composes `prog`, serves it under `wasmtime
+// serve`, makes a single `GET /`, and returns the response status.
 func serveHttpHandlerStatus(t *testing.T, prog string) int {
+	t.Helper()
+	status, _ := serveHttpHandler(t, prog)
+	return status
+}
+
+// serveHttpHandlerBody is serveHttpHandlerStatus but returns the response body.
+func serveHttpHandlerBody(t *testing.T, prog string) string {
+	t.Helper()
+	_, body := serveHttpHandler(t, prog)
+	return body
+}
+
+// serveHttpHandler builds + composes `prog`, serves the component under
+// `wasmtime serve` on a free port, makes a single `GET /`, and returns the
+// response status + body. Skips if wasmtime is absent.
+func serveHttpHandler(t *testing.T, prog string) (int, string) {
 	t.Helper()
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -221,6 +236,6 @@ func serveHttpHandlerStatus(t *testing.T, prog string) int {
 		t.Fatalf("GET %s never succeeded: %v\nserver log:\n%s", url, err, slog.String())
 	}
 	defer resp.Body.Close()
-	_, _ = io.ReadAll(resp.Body)
-	return resp.StatusCode
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
 }
