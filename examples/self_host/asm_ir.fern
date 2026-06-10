@@ -23,10 +23,10 @@ import "./ir";
 import "./irlower";
 
 // ir_eligible reports whether a function is in the IR path's current subset:
-// pure i32 — no params/receiver, and a lowering using only int arithmetic /
-// locals / structured control flow (no alloc/load/store/call_direct).
+// i32 functions with params + direct calls (slice 17), but no methods and no
+// heap (alloc/load/store) — arrays land once the IR path reuses asm.fern's
+// allocator + RC helpers.
 pub function ir_eligible(fd: parser.FuncDecl): boolean {
-    if (fd.params.len() > 0) { return false; }
     if (fd.receiver_name.len() > 0) { return false; }
     var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func(fd, noret);
@@ -34,7 +34,7 @@ pub function ir_eligible(fd: parser.FuncDecl): boolean {
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var k: string = r.ops[i].kind;
-        if (k == "alloc" || k == "load" || k == "store" || k == "call_direct") { return false; }
+        if (k == "alloc" || k == "load" || k == "store") { return false; }
         i = i + 1;
     }
     return true;
@@ -93,6 +93,16 @@ function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState): asmcor
     var frame: i32 = r.n_locals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
+
+    // Copy params from the caller stack into their local slots, exactly as
+    // emit_function does: param[i] sits at +(16 + i*8)(%rbp); the IR's
+    // load_local i reads -8*(i+1)(%rbp). (No receiver — methods are excluded.)
+    var pidx: i32 = 0;
+    while (pidx < fd.params.len()) {
+        s = s.write("    movq " + util.i32_to_string(16 + pidx * 8) + "(%rbp), %rax\n");
+        s = s.write("    movq %rax, " + util.i32_to_string(0 - 8 * (pidx + 1)) + "(%rbp)\n");
+        pidx = pidx + 1;
+    }
 
     // Structured control flow -> labels via a depth-indexed scope stack:
     // `br N` / `br_if N` -> the N-th-from-top scope's target (block/if -> its
@@ -153,6 +163,24 @@ function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState): asmcor
             s = s.write("    jmp " + s_brt[depth - 1 - o.i32_imm] + "\n");
         } else if (o.kind == "brif") {
             s = s.write("    popq %rax\n    testq %rax, %rax\n    jnz " + s_brt[depth - 1 - o.i32_imm] + "\n");
+        } else if (o.kind == "call_direct") {
+            // The IR pushes args left-to-right (arg0 deepest); asm.fern's stack
+            // ABI wants arg0 on TOP (param[i] at +16+i*8(%rbp)). Reverse the
+            // argc on-stack slots, call, pop the args, push the %rax result.
+            var argc: i32 = o.i32_imm;
+            var h: i32 = 0;
+            while (h < argc / 2) {
+                var lo: i32 = h * 8;
+                var hi: i32 = (argc - 1 - h) * 8;
+                s = s.write("    movq " + util.i32_to_string(lo) + "(%rsp), %rax\n");
+                s = s.write("    movq " + util.i32_to_string(hi) + "(%rsp), %rcx\n");
+                s = s.write("    movq %rax, " + util.i32_to_string(hi) + "(%rsp)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string(lo) + "(%rsp)\n");
+                h = h + 1;
+            }
+            s = s.write("    call __fn_" + asmcore.sanitize_label(o.str) + "\n");
+            if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
+            s = s.write("    pushq %rax\n");
         } else if (o.kind == "end") {
             var d2: i32 = depth - 1;
             var kind: string = s_kind[d2];
