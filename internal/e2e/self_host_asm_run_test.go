@@ -1939,6 +1939,11 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		// String-returning functions (str_ret_fns tracking; box leaks).
 		{"str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, "", ""},
 		{"str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, "", ""},
+		// String-typed struct/enum fields (leak-safe — strings never freed, no RC).
+		{"struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { var t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, "", ""},
+		{"struct-str-method", "struct N { s: string } function (n: N) sz(): i32 { return n.s.len(); } function main(): i32 { var x = N { s: \"abcd\" }; return x.sz(); }", 4, "", ""},
+		{"struct-str-mutate", "struct N { s: string } function main(): i32 { var n = N { s: \"a\" }; n.s = \"abcde\"; return n.s.len(); }", 5, "", ""},
+		{"enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, "", ""},
 		// Methods (receiver functions) via the IR path: receiver = arg 0, static
 		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
 		// methods on params, and method-to-method (self) dispatch.

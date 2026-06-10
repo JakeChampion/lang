@@ -179,6 +179,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, ""},
 		{"ir-str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, ""},
 		{"ir-str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, ""},
+		{"ir-struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { var t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, ""},
+		{"ir-enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, ""},
 		// Enums + match: scalar-payload + no-payload variant construction and
 		// match dispatch (variant_is on the type-id @0) with payload binding +
 		// wildcard. Non-scalar payloads (string) bail to AST.
