@@ -731,3 +731,76 @@ through the IR with Perceus, these programs get correct RC for free and the trap
 disappears at the source. Until then the affected self-host **wasm** tests are
 not gated in CI (they `t.Skip` without `wasmtime`, and the `^TestSelfHost` job
 does not install it), so the failure is latent rather than blocking.
+
+## Composite-struct Perceus RC on the IR — slice plan
+
+This is the "actual Perceus-parity work" for structs whose fields are themselves
+rc-tracked (arrays / strings / nested structs / enums). It mirrors native's
+model in `internal/ir/ir.go`, which is **box-only-alias + per-field
+retain-on-construction + recursive drop-on-unique**:
+
+- **Alias** a struct value → inc the **box header only** (`__fern_rc_inc`); the
+  fields are NOT re-incremented (`emitAliasInc` / `needsRcIncOnAlias`, ir.go
+  ~15730/15747).
+- **Construct / spread** → each pointer-shaped field value stored into the box
+  is retained iff it is alias-shaped (Ident/FieldAccess/Index) and not moved;
+  spread copies of un-overridden pointer fields are inc'd too
+  (`*ast.StructLit` lowering, ir.go ~10123/10201/10240).
+- **Drop on unique** → a generated `__drop_struct_<T>` checks
+  `__fern_rc_is_unique`; on rc==1 it recursively drops each rc-tracked field
+  then `__fern_box_free`s the box; on rc>1 it just `__fern_rc_dec`s
+  (`genStructDropFn`, ir.go ~6645; recursive dispatch `appendChildDrop` ~6492).
+- **Exit sweep / move-on-return** → owned struct locals are dropped at last use
+  / scope exit, except a struct that is moved on return
+  (`computeMovedLocals` ~4541, `emitRcDecLocalsAtExitExcept` ~4786).
+
+This is exactly the machinery whose ABSENCE makes the AST-wasm backend's
+box-only model double-free (see the "Known issue" note): native is safe because
+the drop only deep-releases fields when the box is uniquely owned (rc==1), and
+because construction/spread retains keep each co-owned field's count correct.
+
+### Prerequisite: rc-headered struct boxes on x86/arm64
+
+The self-host IR struct box differs per backend today:
+
+- **wasm** — already rc-headered (allocated via `__fern_str_box`, which carries
+  the 8-byte rc+bsz header); `[type_id@0, field@4+i*4]`. Drops are *possible*
+  here now.
+- **x86/arm64** — `[shape_ptr@0, f_i@(i+1)*8]` via **`__fern_alloc`** (no rc
+  header) — leak-only; cannot be `rc_dec`'d or `box_free`'d. (`asm_ir.fern`
+  `struct_make` ~562; arm64 mirror.)
+
+So composite-struct RC cannot begin on x86/arm64 until struct boxes carry an rc
+word. That is slice 1.
+
+### Slices
+
+1. **rc-header x86/arm64 IR struct boxes.** Allocate `struct_make` boxes via an
+   rc-boxing helper (mirroring `__fern_arr_box`: rc word at `[p-8]`, payload
+   pointer returned), keeping `struct_get`/`struct_set` field offsets unchanged
+   relative to the returned pointer. Behaviour stays leak-only (no drops yet) —
+   so the absolute oracles keep their exit codes and fixpoint holds; this is
+   pure foundation. Also add the `__fern_rc_is_unique` / `__fern_box_free`
+   helpers to the x86/arm64 IR runtimes if absent (wasm already has them).
+2. **Drop specialization + exit sweep for i32[]-field structs.** Generate a
+   per-type struct drop (inline at the sweep site, or a `__drop_struct_<T>` fn)
+   that, on `rc_is_unique`, releases each array field then frees the box; wire
+   it into the IR exit sweep (`emit_dec_sweep_except` gains a struct arm).
+   Construction retain for array fields. Remove the leak-only
+   `is_scalar_arr_field_access` bail (#2630) and the `decl_is_leaksafe` gate for
+   this case — aliasing/returning an array-field struct now refcounts correctly.
+   Validate with the existing RC oracles (`TestSelfHostRc*`) plus new
+   array-field-struct lifetime cases (alias, return-move, reassign).
+3. **string / string[] / nested-struct fields.** Extend the recursive field
+   drop + construction retain to string fields (leak-safe: inc/dec but never
+   freed — or skip per the leak model), string[] fields (array of leaking
+   strings), and nested struct fields (recurse through their drop).
+4. **enum payloads + spread/update.** Variant-payload drops (dispatch on tag),
+   and the `S { ...base, f: v }` copy-inc / override-retain rules end-to-end.
+5. **move-on-return + precise drops for structs.** Exclude a struct moved on
+   return from the sweep; place drops at last use where the analysis allows.
+
+Each slice ships on all three backends with absolute-oracle + differential +
+fixpoint coverage, same as the coverage slices. After slice 5 the AST-wasm
+struct-RC "Known issue" is moot: those programs route through the IR with
+correct Perceus and the double-free is gone at the source.
