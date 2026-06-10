@@ -804,6 +804,20 @@ func enumResultAreaBoxSize(ep *ir.ExternEnumParam) (areaSize, boxSize int32) {
 			}
 		}
 	}
+	// The Fern box (boxSize) holds only the modelled payload, but the canonical
+	// return area must accommodate whatever the host writes for the *real* WIT
+	// result — which can be a wider variant than the modelled arms (e.g.
+	// `result<_, error-code>`, whose `error-code` is a 39-case variant). A
+	// handler that reads such a result discriminant-only models it as a
+	// same-width-scalar `Result` (a small box) but the host still writes the full
+	// variant into the area. Floor the area at 64 bytes — the canonical-ABI retptr
+	// bound the embedded HTTP path relies on (wasi_http.go: "Each canonical-ABI
+	// retptr fits in 64 bytes") — so the import can never overrun the area. The
+	// box is unaffected; only the scratch area grows.
+	const canonRetptrFloor = 64
+	if areaSize < canonRetptrFloor {
+		areaSize = canonRetptrFloor
+	}
 	return areaSize, boxSize
 }
 

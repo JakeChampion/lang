@@ -1,14 +1,7 @@
 package e2e
 
 import (
-	"bytes"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"os/exec"
 	"testing"
-	"time"
 )
 
 // httpHandlerBodyWriteProg is a bring-your-own wasi:http handler that writes a
@@ -76,51 +69,7 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 // output-stream.blocking-write-and-flush (a result<_, stream-error> return) and
 // `wasmtime serve` delivers it (200 + body "hi").
 func TestExportWasiHttpHandlerBodyWriteServes(t *testing.T) {
-	wasmtime, err := exec.LookPath("wasmtime")
-	if err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	dir := t.TempDir()
-	out := buildHttpHandlerComponent(t, dir, httpHandlerBodyWriteProg)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("pick port: %v", err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
-
-	srv := exec.Command(wasmtime, "serve", "--addr", addr, out)
-	var slog bytes.Buffer
-	srv.Stdout = &slog
-	srv.Stderr = &slog
-	if err := srv.Start(); err != nil {
-		t.Fatalf("start wasmtime serve: %v", err)
-	}
-	defer func() {
-		_ = srv.Process.Kill()
-		_, _ = srv.Process.Wait()
-	}()
-
-	url := fmt.Sprintf("http://%s/", addr)
-	var resp *http.Response
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err = http.Get(url)
-		if err == nil {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("GET %s never succeeded: %v\nserver log:\n%s", url, err, slog.String())
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d; want 200\nserver log:\n%s", resp.StatusCode, slog.String())
-	}
-	if string(body) != "hi" {
-		t.Fatalf("body = %q; want %q\nserver log:\n%s", string(body), "hi", slog.String())
+	if got := serveHttpHandlerBody(t, httpHandlerBodyWriteProg); got != "hi" {
+		t.Fatalf("body = %q; want %q", got, "hi")
 	}
 }
