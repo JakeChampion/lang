@@ -165,6 +165,12 @@ func TestSelfHostIRDiff(t *testing.T) {
 		{"param-borrow-then-use", "function get0(a: i32[]): i32 { return a[0]; } function main(): i32 { var arr = [5, 6, 7]; var x = get0(arr); var y = arr[1]; return x + y; }"},
 		{"param-two-arrays", "function pick(a: i32[], b: i32[]): i32 { return a[0] + b[1]; } function main(): i32 { var p = [1, 2]; var q = [10, 20]; return pick(p, q); }"},
 		{"param-borrow-noreuse", "function len_of(a: i32[]): i32 { return a.len(); } function main(): i32 { var arr = [3, 4, 5]; var n = len_of(arr); var z = [9, 9, 9]; return arr[0] + arr[2] + n; }"},
+		// Array-slot reassignment Perceus (irlower StmtVar/StmtAssign retain-new
+		// + cow-guarded release-old). The AST and IR paths must agree.
+		{"reassign-alias", "function main(): i32 { var xs = [1, 2, 3]; var ys = [4, 5, 6]; ys = xs; return ys[0] + ys[2]; }"},
+		{"reassign-source-live", "function main(): i32 { var xs = [7, 8]; var ys = [0, 0]; ys = xs; return xs[1] + ys[1]; }"},
+		{"reassign-fresh", "function main(): i32 { var xs = [1, 2]; xs = [9, 9, 9]; return xs[2]; }"},
+		{"rebind-loop", "function main(): i32 { var s = 0; var i = 0; while (i < 4) { var r = [i, i * 2, i * 3]; s = s + r[2]; i = i + 1; } return s; }"},
 	}
 
 	for _, tc := range corpus {
