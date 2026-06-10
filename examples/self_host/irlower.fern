@@ -405,12 +405,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
     return s.fail();
 }
 
-// emit_dec_sweep_except releases (decs) every array local currently in
+// emit_dec_sweep_except releases (decs) every OWNED array local currently in
 // scope except `keep` (the move-on-return slot, or -1 for none), leaving the
-// operand stack unchanged. Used at each return.
+// operand stack unchanged. Array params (slots < n_params) are BORROWED — the
+// caller retains ownership, so the callee never decs them (the n_params borrow
+// boundary). Used at each return.
 pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
     var st: LowerState = s;
-    var i: i32 = 0;
+    var i: i32 = st.n_params;
     while (i < st.local_is_arr.len()) {
         if (i != keep && st.is_arr_slot(i)) {
             st = st.emit(ir.op_load_local(i));
@@ -448,10 +450,12 @@ pub struct LowerResult {
     arr_slots: i32[],
 }
 
-// arr_slots_of collects the slot indices marked array in s.
+// arr_slots_of collects the OWNED array slots (>= n_params) — the ones the
+// backend zeroes at entry. Array params hold the passed pointer and must NOT
+// be zeroed (and are borrowed, so never swept).
 function arr_slots_of(s: LowerState): i32[] {
     var out: i32[] = [];
-    var i: i32 = 0;
+    var i: i32 = s.n_params;
     while (i < s.local_is_arr.len()) {
         if (s.is_arr_slot(i)) { out = out.append(i); }
         i = i + 1;
@@ -475,7 +479,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[]): LowerResult
     var i: i32 = 0;
     while (i < fn.params.len()) {
         names = names.append(fn.params[i].name);
-        isarr = isarr.append(false);
+        // An array-typed param is array-tracked (so a[i] / a.len() / aliasing
+        // it work) but BORROWED — the dec-sweep skips slots < n_params.
+        isarr = isarr.append(is_array_type_name(fn.params[i].type_name));
         i = i + 1;
     }
     var empty: ir.Op[] = [];

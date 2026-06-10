@@ -160,6 +160,11 @@ func TestSelfHostIRDiff(t *testing.T) {
 		{"mov-uaf-guard", "function make(): i32[] { var a = [10, 20, 30]; return a; } function main(): i32 { var x = make(); var y = [1, 1, 1]; return x[0] + x[2]; }"},
 		{"mov-len", "function make(): i32[] { var a = [5, 6, 7, 8]; return a; } function main(): i32 { var x = make(); return x.len(); }"},
 		{"mov-then-mutate", "function make(): i32[] { var a = [1, 2, 3]; return a; } function main(): i32 { var x = make(); x[1] = 99; return x[0] + x[1] + x[2]; }"},
+		// Array params, borrowed (slice 14). The AST and IR backends must agree.
+		{"param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var arr = [10, 20, 30]; return sum(arr); }"},
+		{"param-borrow-then-use", "function get0(a: i32[]): i32 { return a[0]; } function main(): i32 { var arr = [5, 6, 7]; var x = get0(arr); var y = arr[1]; return x + y; }"},
+		{"param-two-arrays", "function pick(a: i32[], b: i32[]): i32 { return a[0] + b[1]; } function main(): i32 { var p = [1, 2]; var q = [10, 20]; return pick(p, q); }"},
+		{"param-borrow-noreuse", "function len_of(a: i32[]): i32 { return a.len(); } function main(): i32 { var arr = [3, 4, 5]; var n = len_of(arr); var z = [9, 9, 9]; return arr[0] + arr[2] + n; }"},
 	}
 
 	for _, tc := range corpus {

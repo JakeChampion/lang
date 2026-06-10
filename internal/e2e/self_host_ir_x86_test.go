@@ -157,6 +157,15 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"mov-uaf-guard", "function make(): i32[] { var a = [10, 20, 30]; return a; } function main(): i32 { var x = make(); var y = [1, 1, 1]; return x[0] + x[2]; }", 40},
 		{"mov-len", "function make(): i32[] { var a = [5, 6, 7, 8]; return a; } function main(): i32 { var x = make(); return x.len(); }", 4},
 		{"mov-then-mutate", "function make(): i32[] { var a = [1, 2, 3]; return a; } function main(): i32 { var x = make(); x[1] = 99; return x[0] + x[1] + x[2]; }", 103},
+		// Array params with borrow semantics (slice 14): a callee borrows an
+		// array param (slot < n_params) — never frees it; the caller retains
+		// ownership. borrow-noreuse is the discriminator: if the callee wrongly
+		// freed the borrowed array, the caller's later alloc would reuse it and
+		// corrupt arr (would read != 11).
+		{"param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var arr = [10, 20, 30]; return sum(arr); }", 60},
+		{"param-borrow-then-use", "function get0(a: i32[]): i32 { return a[0]; } function main(): i32 { var arr = [5, 6, 7]; var x = get0(arr); var y = arr[1]; return x + y; }", 11},
+		{"param-two-arrays", "function pick(a: i32[], b: i32[]): i32 { return a[0] + b[1]; } function main(): i32 { var p = [1, 2]; var q = [10, 20]; return pick(p, q); }", 21},
+		{"param-borrow-noreuse", "function len_of(a: i32[]): i32 { return a.len(); } function main(): i32 { var arr = [3, 4, 5]; var n = len_of(arr); var z = [9, 9, 9]; return arr[0] + arr[2] + n; }", 11},
 		// Still out of subset -> lower bails -> emit_module exits 200.
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}
