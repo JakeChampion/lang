@@ -170,6 +170,14 @@ pub function (s: LowerState) field_index_in(struct_name: string, field: string):
     return decl_field_index(s.structs, struct_name, field);
 }
 
+// is_builtin_pattern reports whether a match pattern names a built-in Option /
+// Result / bool variant — these discriminate on an i32 tag at offset 0 (not the
+// struct shape), so the IR path bails on them for now.
+pub function is_builtin_pattern(name: string): boolean {
+    return name == "Some" || name == "None" || name == "Ok" || name == "Err"
+        || name == "true" || name == "false";
+}
+
 pub function decl_field_count(structs: parser.StructDecl[], struct_name: string): i32 {
     var i: i32 = 0;
     while (i < structs.len()) {
@@ -305,8 +313,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
         },
         parser.ExprIdent(id) => {
             var slot: i32 = s.slot_of(id.name);
-            if (slot < 0) { return s.fail(); }
-            return s.emit(ir.op_load_local(slot));
+            if (slot >= 0) { return s.emit(ir.op_load_local(slot)); }
+            // A bare struct name that isn't a local is a no-payload enum variant
+            // value (e.g. `Red`, `Empty`): a 0-field variant box via struct_make.
+            if (decl_is_struct(s.structs, id.name) && decl_field_count(s.structs, id.name) == 0) {
+                return s.emit(ir.op_struct_make(id.name, 0));
+            }
+            return s.fail();
         },
         parser.ExprBinary(b) => {
             // String dispatch: on string operands, `+` is concat and `==`/`!=`
@@ -421,6 +434,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (cid.name == "__heap_used") {
                         if (c.args.len() != 0) { return s.fail(); }
                         return s.emit(ir.op_call_direct("__fern_heap_used", 0));
+                    }
+                    if (decl_is_struct(s.structs, cid.name)) {
+                        if (!decl_is_scalar(s.structs, cid.name)) { return s.fail(); }
+                        if (c.args.len() != decl_field_count(s.structs, cid.name)) { return s.fail(); }
+                        var vctor: LowerState = s;
+                        var vi: i32 = 0;
+                        while (vi < c.args.len()) {
+                            vctor = lower_expr(c.args[vi], vctor);
+                            if (!vctor.ok) { return vctor; }
+                            vi = vi + 1;
+                        }
+                        return vctor.emit(ir.op_struct_make(cid.name, c.args.len()));
                     }
                     if (c.args.len() > 6) { return s.fail(); }
                     var sc: LowerState = s;
@@ -638,6 +663,62 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var se: LowerState = lower_expr(es.value, s);
             if (!se.ok) { return se; }
             return se.emit(ir.op_drop());
+        },
+        parser.StmtMatch(m) => {
+            // Enum `match`: lower the scrutinee into a fresh slot, then a chain of
+            // arms inside an outer block. Each variant arm is its own block: it
+            // tests the scrutinee with variant_is and `br`s out of the arm block on
+            // mismatch (falling to the next arm); on a match it binds the single
+            // scalar payload (struct_get 0), runs the body, and `br`s out of the
+            // OUTER block (exiting the match). A wildcard arm runs unconditionally
+            // and exits. Only scalar-payload enum-variant arms + a trailing
+            // wildcard are lowered; guards, multi-bindings, Option/Result/bool
+            // patterns, and non-scalar payloads bail to the AST emitter.
+            var ms: LowerState = lower_expr(m.scrutinee, s);
+            if (!ms.ok) { return ms; }
+            var scrut: string = "$mscrut" + util.i32_to_string(ms.local_names.len());
+            ms = ms.add_local(scrut);
+            var scrut_slot: i32 = ms.slot_of(scrut);
+            ms = ms.emit(ir.op_store_local(scrut_slot));
+            ms = ms.emit(ir.op_block(0));     // outer block: arm bodies br out of it
+            var mi: i32 = 0;
+            while (mi < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[mi];
+                if (arm.has_guard) { return s.fail(); }
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        if (is_builtin_pattern(pv.type_name)) { return s.fail(); }
+                        if (pv.extra_bindings.len() > 0) { return s.fail(); }
+                        if (!decl_is_struct(ms.structs, pv.type_name)) { return s.fail(); }
+                        if (!decl_is_scalar(ms.structs, pv.type_name)) { return s.fail(); }
+                        var has_bind: boolean = pv.binding.len() > 0 && pv.binding != "_";
+                        if (has_bind && decl_field_count(ms.structs, pv.type_name) < 1) { return s.fail(); }
+                        ms = ms.emit(ir.op_block(0));   // arm block: br 0 = skip arm
+                        ms = ms.emit(ir.op_load_local(scrut_slot));
+                        ms = ms.emit(ir.op_variant_is(pv.type_name));
+                        ms = ms.emit(ir.op_bin("not", 0, false));   // 1 if NOT this variant
+                        ms = ms.emit(ir.op_brif(0));                // -> skip arm on mismatch
+                        if (has_bind) {
+                            ms = ms.add_local(pv.binding);
+                            var bslot: i32 = ms.slot_of(pv.binding);
+                            ms = ms.emit(ir.op_load_local(scrut_slot));
+                            ms = ms.emit(ir.op_struct_get(0));      // payload @ field 0
+                            ms = ms.emit(ir.op_store_local(bslot));
+                        }
+                        ms = lower_block(arm.body, ms);
+                        if (!ms.ok) { return ms; }
+                        ms = ms.emit(ir.op_br(1));      // matched -> exit the match
+                        ms = ms.emit(ir.op_end());      // end arm block
+                    },
+                    parser.PatWildcard(_) => {
+                        ms = lower_block(arm.body, ms);
+                        if (!ms.ok) { return ms; }
+                        ms = ms.emit(ir.op_br(0));      // exit the match
+                    }
+                }
+                mi = mi + 1;
+            }
+            return ms.emit(ir.op_end());   // end outer block
         },
         _ => { return s.fail(); }
     }

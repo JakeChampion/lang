@@ -168,6 +168,17 @@ pub function op_struct_get(field_index: i32): Op {
     return Op { kind: "struct_get", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+// variant_is pops an enum-variant box and pushes 1 if it is the variant named
+// `str`, else 0 — the discriminant test that drives `match` arm dispatch. A
+// variant box is built by struct_make (the variant struct's name is its shape /
+// type id, its payload is field 0), so the test reads the box's slot-0 tag and
+// compares it to the named variant's identity: the interned shape-name pointer
+// on x86/arm64, the struct type id on wasm. Layout-agnostic, like the other
+// high-level ops — each backend resolves the identity for its own layout.
+pub function op_variant_is(name: string): Op {
+    return Op { kind: "variant_is", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+}
+
 // calls — i32_imm is the arg count; str is the callee for call_direct
 pub function op_call_direct(callee: string, argc: i32): Op {
     return Op { kind: "call_direct", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
@@ -224,5 +235,6 @@ pub function render_op(o: Op): string {
     if (o.kind == "str_eq") { return "str_eq"; }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "variant_is") { return "variant_is " + o.str; }
     return o.kind;
 }

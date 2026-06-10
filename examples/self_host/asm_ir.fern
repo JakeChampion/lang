@@ -580,6 +580,15 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "struct_get") {
             // pop struct box; field at (index+1)*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");
+        } else if (o.kind == "variant_is") {
+            // pop variant box; shape ptr @0; compare to the interned variant name
+            // (same .S label struct_make stores, so pointer equality identifies
+            // the variant). Push 1 if equal, else 0.
+            var vlo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = vlo.state;
+            s = s.write("    popq %rax\n    movq (%rax), %rax\n");
+            s = s.write("    leaq .S" + util.i32_to_string(vlo.idx) + "(%rip), %rcx\n");
+            s = s.write("    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n    pushq %rax\n");
         } else if (o.kind == "drop") {
             s = s.write("    addq $8, %rsp\n");
         } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {

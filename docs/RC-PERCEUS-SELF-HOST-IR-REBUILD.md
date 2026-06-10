@@ -640,8 +640,40 @@ copy `r.n_params` slots (which now counts the receiver) instead of
   now route through the IR and stay green. Fixpoint holds; no regressions.
 
 With **structs + methods + scalar arithmetic + strings + arrays** all on the IR,
-the eligible subset now covers a large slice of ordinary Fern. Next coverage
-fronts toward the compiler itself: **enums + `match`** (the AST is built on them),
-then field **mutation** / struct **update**, then tuples / closures / maps /
+the eligible subset now covers a large slice of ordinary Fern.
+
+### Coverage slice 5: enums + `match` — DONE (all three backends)
+
+Enum-variant **construction** and `match`-statement **dispatch** through the
+shared `irlower` to all three backends, for scalar-payload (and no-payload)
+variants. This is the critical-path slice — the AST and every traversal are built
+on enums + `match` — and it turned out to reuse almost everything:
+
+- **Construction** is `struct_make`: a variant box is `[shape/type-id @ slot 0,
+  payload as field 0]`, exactly the struct layout. `Circle(5)` (an `ExprCall`
+  whose callee is a variant-struct name) → `struct_make("Circle", 1)`; a
+  no-payload variant used as a value (`Red`, an `ExprIdent` that resolves to a
+  0-field struct) → `struct_make(name, 0)`. **Payload read** is `struct_get(0)`.
+- The one **new op** is `variant_is(name)`: pop the box, read its slot-0 tag,
+  push 1 if it is the named variant. x86/arm64 compare the interned shape-name
+  pointer (the same `.S` label `struct_make` stores — pointer equality);
+  wasm compares the `struct_type_id`.
+- The **`match` statement** lowers to a `block`/`br` chain (the same structured-
+  control-flow ops as `while`): the scrutinee saved to a fresh slot, each variant
+  arm its own `block` that `variant_is`-tests + `brif`s out on mismatch, binds the
+  scalar payload (`struct_get 0`), runs its body, and `br`s out of the outer
+  block; a trailing wildcard runs unconditionally. Built-in `Option`/`Result`/
+  `bool` patterns (i32-tag discriminants), guards, multi-bindings, non-scalar
+  payloads, and union members bail to the AST emitter.
+- **Validated** by the existing `TestSelfHostEnumX86_64` / `BuiltinEnum` suites
+  (which now route through the IR and stay green, incl. the string-payload case
+  correctly bailing) plus new enum cases on both absolute oracles and the three
+  differentials. Crucially, the **desugared** forms — `if let`, `let … else`,
+  `switch` — all lower to `match` and now route through the IR too
+  (`TestSelfHostIfLet`/`LetElse`/`Switch` green). Fixpoint holds; the full broad
+  self-host x86 sweep (RC suites, pipeline/parser/SSA/VM/bundles, generics) is
+  green. No regressions.
+
+Next: field **mutation** / non-scalar payloads, then tuples / closures / maps /
 floats — after which the rc-tracked-composite + drop-specialization Perceus work
 lands on a much wider base.

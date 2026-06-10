@@ -229,6 +229,15 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "struct_get") {
             // pop struct box; field at (index+1)*8.
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string((o.i32_imm + 1) * 8) + "]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "variant_is") {
+            // pop variant box; shape ptr @0; compare to the interned variant name
+            // (pointer equality). Push 1 if equal, else 0.
+            var vlo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = vlo.state;
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n");
+            s = s.write("    adrp x1, .S" + util.i32_to_string(vlo.idx) + "\n");
+            s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(vlo.idx) + "\n");
+            s = s.write("    cmp x0, x1\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "drop") {
             s = s.write("    add sp, sp, #16\n");
         } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {
