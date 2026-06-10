@@ -653,6 +653,27 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 if (!ss.ok) { return ss; }
                                 return ss.emit(ir.op_arr_set());
                             }
+                            // Field mutation `p.x = v` desugars to
+                            // __set_field(obj, "x", v). Resolve x's index in obj's
+                            // tracked scalar-struct type, lower obj + val, struct_set.
+                            if (cid.name == "__set_field") {
+                                if (c.args.len() != 3) { return s.fail(); }
+                                var fname: string = "";
+                                match (c.args[1]) {
+                                    parser.ExprString(fs) => { fname = fs.value; },
+                                    _ => { return s.fail(); }
+                                }
+                                var fsty: string = expr_struct_type(c.args[0], s);
+                                if (fsty == "") { return s.fail(); }
+                                if (!decl_is_scalar(s.structs, fsty)) { return s.fail(); }
+                                var fidx: i32 = s.field_index_in(fsty, fname);
+                                if (fidx < 0) { return s.fail(); }
+                                var sf: LowerState = lower_expr(c.args[0], s);
+                                if (!sf.ok) { return sf; }
+                                sf = lower_expr(c.args[2], sf);
+                                if (!sf.ok) { return sf; }
+                                return sf.emit(ir.op_struct_set(fidx));
+                            }
                         },
                         _ => {}
                     }

@@ -1931,6 +1931,11 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"struct-update-3a", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, a: 50 }; return w.a + w.b + w.c; }", 55, "", ""},
 		{"struct-update-3c", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, c: 90 }; return w.a + w.b + w.c; }", 93, "", ""},
 		{"struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, "", ""},
+		// Field mutation `p.x = v` (in-place struct_set, scalar fields).
+		{"field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }", 42, "", ""},
+		{"field-mutate-both", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 0, y: 0 }; p.x = 30; p.y = 12; return p.x + p.y; }", 42, "", ""},
+		{"field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, "", ""},
+		{"field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, "", ""},
 		// Methods (receiver functions) via the IR path: receiver = arg 0, static
 		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
 		// methods on params, and method-to-method (self) dispatch.

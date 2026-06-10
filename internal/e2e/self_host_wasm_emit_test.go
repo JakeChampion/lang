@@ -173,6 +173,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Functional struct update `P { ...base, f: v }`.
 		{"ir-struct-update-one", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, ""},
 		{"ir-struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, ""},
+		// Field mutation `p.x = v`.
+		{"ir-field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }", 42, ""},
+		{"ir-field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, ""},
+		{"ir-field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, ""},
 		// Enums + match: scalar-payload + no-payload variant construction and
 		// match dispatch (variant_is on the type-id @0) with payload binding +
 		// wildcard. Non-scalar payloads (string) bail to AST.
