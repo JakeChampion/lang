@@ -54,7 +54,7 @@ function bin_mid(kind: string): string {
 // emit_op renders one IR op. Stack discipline: every value-producing op ends
 // with the value pushed; consumers pop. `return` pops the result into %eax
 // and jumps to the shared exit.
-function emit_op(o: ir.Op): string {
+function emit_op(o: ir.Op, exitlabel: string): string {
     if (o.kind == "const_i32") {
         return "    pushq $" + util.i32_to_string(o.i32_imm) + "\n";
     }
@@ -68,10 +68,33 @@ function emit_op(o: ir.Op): string {
         return "    popq %rax\n    testl %eax, %eax\n    sete %al\n    movzbl %al, %eax\n    pushq %rax\n";
     }
     if (o.kind == "return") {
-        return "    popq %rax\n    jmp .Lexit\n";
+        return "    popq %rax\n    jmp " + exitlabel + "\n";
     }
     // otherwise a binary op: pop r into %ecx, l into %eax, combine, push.
     return "    popq %rcx\n    popq %rax\n" + bin_mid(o.kind) + "    pushq %rax\n";
+}
+
+// arg_reg returns the 64-bit SysV integer argument register for arg index i
+// (0..5). Our emitted code uses only integer instructions, so the 16-byte
+// stack-alignment ABI contract is not required for correctness — a call is
+// just pop-args-to-registers + `call`.
+function arg_reg(i: i32): string {
+    if (i == 0) { return "%rdi"; }
+    if (i == 1) { return "%rsi"; }
+    if (i == 2) { return "%rdx"; }
+    if (i == 3) { return "%rcx"; }
+    if (i == 4) { return "%r8"; }
+    return "%r9";
+}
+
+// arg_reg32 is the 32-bit subregister, for storing an i32 param into its slot.
+function arg_reg32(i: i32): string {
+    if (i == 0) { return "%edi"; }
+    if (i == 1) { return "%esi"; }
+    if (i == 2) { return "%edx"; }
+    if (i == 3) { return "%ecx"; }
+    if (i == 4) { return "%r8d"; }
+    return "%r9d";
 }
 
 // EmitX86 threads the output plus a scope stack for structured control
@@ -121,14 +144,16 @@ function (e: EmitX86) with_out(s: string): EmitX86 {
     return EmitX86 { out: e.out + s, nlabel: e.nlabel, depth: e.depth, s_else: e.s_else, s_end: e.s_end, s_haselse: e.s_haselse, s_kind: e.s_kind, s_brtarget: e.s_brtarget };
 }
 
-function emit_body_x86(ops: ir.Op[]): string {
+function emit_body_x86(ops: ir.Op[], fname: string, exitlabel: string): string {
+    // Labels are function-prefixed so they stay unique across the module.
+    var lp: string = ".L" + fname + "_";
     var e: EmitX86 = EmitX86 { out: "", nlabel: 0, depth: 0, s_else: [], s_end: [], s_haselse: [], s_kind: [], s_brtarget: [] };
     var i: i32 = 0;
     while (i < ops.len()) {
         var o: ir.Op = ops[i];
         if (o.kind == "if") {
-            var le: string = ".Lelse_" + util.i32_to_string(e.nlabel);
-            var lend: string = ".Lend_" + util.i32_to_string(e.nlabel);
+            var le: string = lp + "else_" + util.i32_to_string(e.nlabel);
+            var lend: string = lp + "end_" + util.i32_to_string(e.nlabel);
             // pop cond, branch to the else/end label when false. A `br` to an
             // if targets its end label.
             var e1: EmitX86 = e.with_out("    popq %rax\n    testl %eax, %eax\n    jz " + le + "\n");
@@ -136,12 +161,12 @@ function emit_body_x86(ops: ir.Op[]): string {
         }
         else if (o.kind == "block") {
             // forward scope; `br` to it exits to its end label (emitted at end).
-            var lb: string = ".Lblk_" + util.i32_to_string(e.nlabel);
+            var lb: string = lp + "blk_" + util.i32_to_string(e.nlabel);
             e = e.push_scope("block", lb, lb, lb);
         }
         else if (o.kind == "loop") {
             // backward scope; `br` to it jumps to its header label, emitted here.
-            var ll: string = ".Lloop_" + util.i32_to_string(e.nlabel);
+            var ll: string = lp + "loop_" + util.i32_to_string(e.nlabel);
             var e2: EmitX86 = e.with_out(ll + ":\n");
             e = e2.push_scope("loop", ll, ll, ll);
         }
@@ -179,8 +204,19 @@ function emit_body_x86(ops: ir.Op[]): string {
             // a loop's label was emitted at its head -> nothing to close here.
             e = EmitX86 { out: e.out + tail, nlabel: e.nlabel, depth: d2, s_else: e.s_else, s_end: e.s_end, s_haselse: e.s_haselse, s_kind: e.s_kind, s_brtarget: e.s_brtarget };
         }
+        else if (o.kind == "call_direct") {
+            // args are on the operand stack (arg0..arg n-1, n-1 on top): pop
+            // each into its SysV register (highest index first), call, push
+            // the result. No stack alignment needed (integer-only callees).
+            var argc: i32 = o.i32_imm;
+            var seq: string = "";
+            var k: i32 = argc - 1;
+            while (k >= 0) { seq = seq + "    popq " + arg_reg(k) + "\n"; k = k - 1; }
+            seq = seq + "    call fn_" + o.str + "\n    pushq %rax\n";
+            e = e.with_out(seq);
+        }
         else {
-            e = e.with_out(emit_op(o));
+            e = e.with_out(emit_op(o, exitlabel));
         }
         i = i + 1;
     }
@@ -195,26 +231,42 @@ function emit_exit(code: i32): string {
     return out;
 }
 
-// emit_program renders the whole freestanding program for a lowered main.
-// An out-of-subset bail (ok=false) exits 200, matching the interpreter.
-pub function emit_program(r: irlower.LowerResult): string {
-    if (!r.ok) { return emit_exit(200); }
-
-    // frame for the locals, 16-byte aligned.
-    var frame: i32 = r.n_locals * 8;
+// emit_function renders one function: prologue, params copied from their
+// SysV registers into local slots, body, then a single exit label +
+// epilogue (the `return` op jumps to the exit with the value in %eax).
+function emit_function(fn: irlower.LoweredFn): string {
+    var frame: i32 = fn.n_locals * 8;
     if (frame - (frame / 16) * 16 != 0) { frame = frame + 8; }
+    var exitlabel: string = ".L" + fn.name + "_ret";
+
+    var out: string = "fn_" + fn.name + ":\n";
+    out = out + "    pushq %rbp\n    movq %rsp, %rbp\n";
+    if (frame > 0) { out = out + "    subq $" + util.i32_to_string(frame) + ", %rsp\n"; }
+    var p: i32 = 0;
+    while (p < fn.n_params) {
+        out = out + "    movl " + arg_reg32(p) + ", " + loc(p) + "\n";
+        p = p + 1;
+    }
+    out = out + emit_body_x86(fn.ops, fn.name, exitlabel);
+    out = out + exitlabel + ":\n";
+    out = out + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+    return out;
+}
+
+// emit_module renders the whole freestanding program: `_start` calls main
+// and exits with its result, followed by every (lowered) function. A main
+// that is out of subset (ok=false) exits 200, matching the interpreter.
+pub function emit_module(fns: irlower.LoweredFn[]): string {
+    var mi: i32 = irlower.find_fn(fns, "main");
+    if (mi < 0) { return emit_exit(201); }
+    if (!fns[mi].ok) { return emit_exit(200); }
 
     var out: string = ".text\n.globl _start\n_start:\n";
-    out = out + "    movq %rsp, %rbp\n";
-    if (frame > 0) {
-        out = out + "    subq $" + util.i32_to_string(frame) + ", %rsp\n";
+    out = out + "    call fn_main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n";
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        if (fns[i].ok) { out = out + emit_function(fns[i]); }
+        i = i + 1;
     }
-    out = out + emit_body_x86(r.ops);
-    // Shared exit: the return value is already in %eax (zero-extended in
-    // %rax by the i32 ops); move it to %rdi and exit. A subset main always
-    // ends in `return`, which jumps here with the value popped into %rax.
-    out = out + ".Lexit:\n";
-    out = out + "    movq %rax, %rdi\n";
-    out = out + "    movq $60, %rax\n    syscall\n";
     return out;
 }

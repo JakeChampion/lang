@@ -106,8 +106,18 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"sum-to-100", "function main(): i32 { var i = 0; var s = 0; while (i < 100) { i = i + 1; s = s + i; } return s % 256; }", 186},
 		{"if-in-loop", "function main(): i32 { var i = 0; var c = 0; while (i < 10) { if (i > 4) { c = c + 1; } i = i + 1; } return c; }", 5},
 		{"nested-loop", "function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
-		// Still out of subset -> lower_func bails -> emit_program exits 200.
-		{"call-bails", "function main(): i32 { return foo(); }", 200},
+		// Direct calls + multi-function programs + recursion (slice 6) -> real
+		// x86 call/ret with the SysV integer-register arg convention.
+		{"simple-call", "function helper(): i32 { return 5; } function main(): i32 { return helper(); }", 5},
+		{"call-args", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(4, 5); }", 9},
+		{"call-three-args", "function f(a: i32, b: i32, c: i32): i32 { return a * 100 + b * 10 + c; } function main(): i32 { return f(1, 2, 3) % 256; }", 123 % 256},
+		{"call-compute", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11},
+		{"factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
+		{"fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21},
+		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1},
+		{"loop-call", "function sq(x: i32): i32 { return x * x; } function main(): i32 { var i = 1; var s = 0; while (i <= 4) { s = s + sq(i); i = i + 1; } return s; }", 30},
+		// Still out of subset -> lower bails -> emit_module exits 200.
+		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}
 
 	for _, tc := range cases {

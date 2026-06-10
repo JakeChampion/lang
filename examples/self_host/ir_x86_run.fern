@@ -16,17 +16,7 @@ import "./ir_x86";
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (mod.funcs[i].name == "main") {
-            var r: irlower.LowerResult = irlower.lower_func(mod.funcs[i]);
-            print(ir_x86.emit_program(r));
-            return 0;
-        }
-        i = i + 1;
-    }
-    // no main -> emit a bail program (exit 201 would need a code path; reuse
-    // the out-of-subset bail by lowering an empty result).
-    print(ir_x86.emit_program(irlower.LowerResult { ok: false, ops: [], n_locals: 0, n_params: 0 }));
+    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs);
+    print(ir_x86.emit_module(fns));
     return 0;
 }
