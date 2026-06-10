@@ -599,16 +599,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return ts.emit(ir.op_tuple_make(tn));
         },
         parser.ExprIndex(ix) => {
-            // String indexing `s[i]` reads a byte, not an array element — not in
-            // the IR path yet, so bail to the AST emitter.
-            if (expr_is_str(ix.array, s)) { return s.fail(); }
             // arr[idx] → lower the array (base) then the index, then `arr_get`
-            // (the backend computes the element address for its layout).
-            var si: LowerState = lower_expr(ix.array, s);
-            if (!si.ok) { return si; }
-            si = lower_expr(ix.index, si);
-            if (!si.ok) { return si; }
-            return si.emit(ir.op_arr_get());
+            // (the backend computes the element address for its layout). String
+            // indexing `s[i]` reads a byte → `str_index` (an i32 byte value);
+            // it shares the lower-array-then-index shape, just a different op.
+            var sidx: LowerState = lower_expr(ix.array, s);
+            if (!sidx.ok) { return sidx; }
+            sidx = lower_expr(ix.index, sidx);
+            if (!sidx.ok) { return sidx; }
+            if (expr_is_str(ix.array, s)) { return sidx.emit(ir.op_str_index()); }
+            return sidx.emit(ir.op_arr_get());
         },
         parser.ExprCall(c) => {
             // Direct call (bare-name callee, up to 6 args), or the `.len()`
