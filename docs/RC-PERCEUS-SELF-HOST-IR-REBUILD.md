@@ -804,3 +804,72 @@ Each slice ships on all three backends with absolute-oracle + differential +
 fixpoint coverage, same as the coverage slices. After slice 5 the AST-wasm
 struct-RC "Known issue" is moot: those programs route through the IR with
 correct Perceus and the double-free is gone at the source.
+
+## Phase A: full IR (native parity), then Phase B: direct Perceus port
+
+Decision (refined): **complete the self-host IR to full feature parity with
+native's `internal/ir` FIRST — in leak-mode — then do a single direct port of
+native's Perceus**, rather than interleaving RC into a partial IR. Rationale:
+interleaving "widen coverage" with "get RC right" per-construct is what produced
+the bail-heavy heuristics and the RC bugs (the AST-wasm double-free; the struct
+field-release over-release). Separating them makes each clean: coverage is a
+values-only problem under the safe-leak invariant (a mis-lowering leaks, never
+UAFs, while free is OFF), and Perceus then ports once onto a stable, total IR —
+correct-by-construction and diffable against native (the Option A goal).
+
+**Definition of done for Phase A:** the self-host compiler compiles ITSELF
+end-to-end through the IR with zero AST fallback — i.e. `all_eligible` holds for
+every module in the compiler's own source, and the byte-identical self-bootstrap
+**fixpoint runs through the IR path**. The AST emitters (`asm.fern`/`asm_arm64`/
+`wasm.fern` `emit_module`) are then deletable.
+
+**Driver metric:** percentage of the self-host compiler's OWN functions that are
+`ir_eligible`. Attack the bails that block the most functions first. (A tiny
+harness that runs `irlower.lower_func` over every function in the self-host
+sources and counts `ok` makes this measurable per slice.)
+
+### Backlog (native parity checklist − current self-host coverage)
+
+Already covered: i32 arithmetic/compare/control-flow; arrays (i32 + string
+elements) with leak-mode RC; strings (literal/concat/eq/len); leak-only structs
+(scalar / scalar-array / string fields) + scalar-struct methods; enums + `match`
+(scalar payloads); tuples (scalar elements); `string[]`.
+
+Gaps, ordered by how much of the compiler's own source they unblock:
+
+1. **String indexing / slicing / ordering** (`s[i]`, `s[i:j]`, `s < t`). The
+   lexer and many parser/util functions index strings constantly — this is the
+   single biggest unblocker. (Native: `__str_idx` / `__str_slice` / `__str_cmp`,
+   ir.go ~9598/9761/11497.)
+2. **`Option` / `Result` + full `match`**: built-in `Some`/`None`/`Ok`/`Err`
+   patterns, guards, multi-binding, and the desugared `if let` / `let … else` /
+   `?`. Used pervasively across the compiler. (ir.go ~8043-8236, 9469-9597.)
+3. **Composite struct / enum fields**: struct/enum/tuple/array-of-struct fields,
+   struct-valued params + returns. The AST node types ARE composite structs/
+   enums, so the compiler can't self-compile without these. Leak-mode = store
+   the pointer, no drop. (ir.go ~10123, structFieldLayout.)
+4. **Tuples with non-scalar elements** + tuple returns (`(i32, string)` etc.).
+5. **Maps**: `map_new` + set/get/get_or/has/delete/keys/values/len/iter, i32/
+   string/wide K-V. Symbol tables / interners use these. (ir.go ~10005, 12247.)
+6. **i64** (and sub-i32 widths / unsigned where used): distinct wasm stack type —
+   needs the IR value-type tagging the backends already have a `WidthPtr`
+   precedent for. (ir.go width/extend/wrap ops.)
+7. **f64 / floats**: the `is_float` bail. Distinct wasm stack type like i64;
+   lower priority (the compiler uses few floats, but parity requires it).
+8. **Closures / function values**: lambdas, captures, indirect calls
+   (`OpMakeClosure`/`OpMakeEnv`/`OpCallIndirect`). Used where the compiler passes
+   callbacks. (ir.go ~10281, 11768.)
+9. **Builtins the compiler emits**: `print`/`write`/`eprint`, `*_to_string`,
+   `string_from_bytes`, `args`, file IO — lowered as direct calls to the
+   existing runtime symbols.
+10. **for-in** over arrays/maps (desugars to a 3-part loop; confirm the desugar
+    reaches the IR rather than bailing).
+11. **Optimizations (defer to after parity / Phase B)**: FBIP reuse, TRMC,
+    pair-form `Option[i32]` returns — correctness-neutral, so not on the Phase-A
+    critical path.
+
+Each gap ships as a slice across `irlower` + the three backends, gated by the
+absolute oracles + differentials + fixpoint, in **leak-mode** (no new frees).
+When the metric hits 100% and fixpoint runs on the IR, Phase A is done and
+Phase B (the direct Perceus port — analyses + emission + drop specialization,
+free turned on) begins on a complete, stable IR.
