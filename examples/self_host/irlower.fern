@@ -170,6 +170,15 @@ pub function (s: LowerState) field_index_in(struct_name: string, field: string):
     return decl_field_index(s.structs, struct_name, field);
 }
 
+pub function decl_field_count(structs: parser.StructDecl[], struct_name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) { return structs[i].fields.len(); }
+        i = i + 1;
+    }
+    return 0;
+}
+
 // expr_struct_type returns the struct type name an expression evaluates to, or
 // "" — a struct literal's type, or a struct-tracked local/param slot.
 pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
@@ -239,31 +248,48 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return s.emit(ir.op_const_str(sv.value));
         },
         parser.ExprStructLit(slit) => {
-            // Struct literal `P { a: .., b: .. }` → struct_make. Only scalar-field
-            // (i32/boolean) structs with no base are lowered (leak-only); others
-            // bail to the AST emitter. Field values are lowered in DECL order (so
-            // the literal's source order doesn't matter — the backend stores field
-            // i at its slot i), then struct_make allocates the box and fills them.
-            if (slit.has_base) { return s.fail(); }
+            // Struct literal `P { a: .., b: .. }` and functional update
+            // `P { ...base, b: v }` → struct_make. Only scalar-field (i32/boolean)
+            // structs are lowered (leak-only). Every DECL field is produced in
+            // decl order: an overridden field lowers its literal value; otherwise
+            // (update only) it is copied from the base via struct_get. The base
+            // must be a simple ident of the same struct type, so re-reading its
+            // fields is side-effect-free (a complex base bails to the AST path).
             if (!decl_is_struct(s.structs, slit.type_name)) { return s.fail(); }
             if (!decl_is_scalar(s.structs, slit.type_name)) { return s.fail(); }
-            var nf: i32 = slit.field_names.len();
+            if (slit.has_base) {
+                match (slit.base) {
+                    parser.ExprIdent(_) => {},
+                    _ => { return s.fail(); }
+                }
+                if (expr_struct_type(slit.base, s) != slit.type_name) { return s.fail(); }
+            }
+            var ndecl: i32 = decl_field_count(s.structs, slit.type_name);
             var sm: LowerState = s;
             var di: i32 = 0;
-            while (di < nf) {
-                // find the literal field whose decl index is di
+            while (di < ndecl) {
+                // find the literal field whose decl index is di (an override)
                 var jj: i32 = 0;
                 var found: i32 = 0 - 1;
-                while (jj < nf) {
+                while (jj < slit.field_names.len()) {
                     if (s.field_index_in(slit.type_name, slit.field_names[jj]) == di) { found = jj; }
                     jj = jj + 1;
                 }
-                if (found < 0) { return s.fail(); }
-                sm = lower_expr(slit.field_values[found], sm);
-                if (!sm.ok) { return sm; }
+                if (found >= 0) {
+                    sm = lower_expr(slit.field_values[found], sm);
+                    if (!sm.ok) { return sm; }
+                } else if (slit.has_base) {
+                    // copy decl field di from the base: base then struct_get(di)
+                    sm = lower_expr(slit.base, sm);
+                    if (!sm.ok) { return sm; }
+                    sm = sm.emit(ir.op_struct_get(di));
+                } else {
+                    // a non-update literal must set every field
+                    return s.fail();
+                }
                 di = di + 1;
             }
-            return sm.emit(ir.op_struct_make(slit.type_name, nf));
+            return sm.emit(ir.op_struct_make(slit.type_name, ndecl));
         },
         parser.ExprFieldAccess(fa) => {
             // Bare struct field read `p.x` → struct_get at x's decl index. (As a

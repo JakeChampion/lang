@@ -1918,9 +1918,19 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"struct-two-instances", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 10, y: 20 }; return a.x + b.y; }", 21, "", ""},
 		{"struct-in-loop", "struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }", 18, "", ""},
 		{"struct-field-from-expr", "struct P { x: i32, y: i32 } function main(): i32 { var n = 5; var p = P { x: n * 2, y: n + 1 }; return p.x + p.y; }", 16, "", ""},
-		// Struct update (has_base) and field mutation aren't in the IR path yet —
-		// these stay on the AST emitter and must still produce the right value.
-		{"struct-update-falls-back", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, "", ""},
+		// Functional struct update `P { ...base, f: v }` via the IR path
+		// (desugars to struct_make with struct_get copying non-overridden fields
+		// from the base). The base must be a simple ident; mutation still bails.
+		{"struct-update-one", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, "", ""},
+		{"struct-update-first", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, x: 40 }; return q.x + q.y; }", 42, "", ""},
+		// 3-field updates (exit codes are u8, so keep results < 256): the override
+		// can be the first / middle / last field — non-overridden fields copy from
+		// the base via struct_get (each lowered field pushes exactly one value).
+		{"struct-update-mid", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, b: 20 }; return w.a + w.b + w.c; }", 24, "", ""},
+		{"struct-update-none", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v }; return w.a + w.b + w.c; }", 6, "", ""},
+		{"struct-update-3a", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, a: 50 }; return w.a + w.b + w.c; }", 55, "", ""},
+		{"struct-update-3c", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, c: 90 }; return w.a + w.b + w.c; }", 93, "", ""},
+		{"struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, "", ""},
 		// Methods (receiver functions) via the IR path: receiver = arg 0, static
 		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
 		// methods on params, and method-to-method (self) dispatch.
