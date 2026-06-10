@@ -3102,6 +3102,20 @@ type builder struct {
 	// sweep skips the local's dec (a net-zero pair). Computed by
 	// computeMovedLocals.
 	movedLocals map[string]bool
+	// shallowArrDrop[name] is true for an owned array local whose elements
+	// were transferred to another value by a consuming `.append` / `.with`
+	// at the local's LAST use in a non-self-reassigning position (e.g.
+	// `return out.append(x)`, `var b = a.append(x)`). The grow/copy helper
+	// shallow-copies the element pointers into the result WITHOUT an inc, so
+	// the OLD buffer must be reclaimed with the buffer-only `__fern_arr_dec`,
+	// NOT the element-walking `__fern_drop_arr_str` / `__fern_drop_arr_ptr`
+	// the exit sweep would otherwise pick — which would double-drop the
+	// elements now owned by the result (a use-after-free on the freelist,
+	// surfacing as heap corruption on the two-word string backends). The
+	// self-reassign form `out = out.append(x)` already gets the shallow
+	// reinit-drop; this set carries the same treatment to the non-reassign
+	// forms. Computed by computeShallowArrDrops.
+	shallowArrDrop map[string]bool
 	// moveSites[stmt] is true for the specific *ast.Var / *ast.Assign
 	// alias statement that is a move (skips its transfer inc). Keyed
 	// per-site so only the local's LAST alias moves — earlier aliases
@@ -4538,6 +4552,84 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 // `var x` definition isn't an Ident node, so the count covers reads
 // plus assign-target writes — the alias being the last occurrence
 // therefore also rules out any later read OR reassignment of x.
+// computeShallowArrDrops finds owned array locals consumed by a
+// `.append` / `.with` at their last use in a NON-self-reassigning
+// statement (`return a.append(x)`, `var b = a.append(x)`,
+// `b = a.append(x)` with b != a). The push/grow helper shallow-copies
+// the element pointers into the result without an inc, so the old
+// receiver buffer must be reclaimed buffer-only (`__fern_arr_dec`) — the
+// element-walking exit-sweep drop would double-free the transferred
+// elements. The self-reassign form `a = a.append(x)` already reclaims
+// the old buffer shallowly via the reinit-drop path, so it is excluded
+// here (its receiver is not at its textual last use).
+func (b *builder) computeShallowArrDrops() map[string]bool {
+	shallow := map[string]bool{}
+	if b.fn.Body == nil {
+		return shallow
+	}
+	idx := 0
+	identIdx := map[*ast.Ident]int{}
+	maxIdx := map[string]int{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			idx++
+			identIdx[id] = idx
+			if idx > maxIdx[id.Name] {
+				maxIdx[id.Name] = idx
+			}
+		}
+		return true
+	})
+	// recv extracts the receiver Ident of a consuming array method call
+	// (`a.append(x)` / `a.with(i, v)` → `__method_Array_push(a, …)` /
+	// `__method_Array_set(a, …)`), or nil if `val` isn't one.
+	recvOf := func(val ast.Expr) *ast.Ident {
+		call, ok := val.(*ast.Call)
+		if !ok || len(call.Args) == 0 {
+			return nil
+		}
+		id, ok := call.Callee.(*ast.Ident)
+		if !ok || (id.Name != "__method_Array_push" && id.Name != "__method_Array_set") {
+			return nil
+		}
+		recv, _ := call.Args[0].(*ast.Ident)
+		return recv
+	}
+	mark := func(val ast.Expr, targetName string) {
+		recv := recvOf(val)
+		if recv == nil || recv.Name == targetName {
+			return
+		}
+		if !b.isOwnedRcLocal(recv.Name) {
+			return
+		}
+		if identIdx[recv] != maxIdx[recv.Name] {
+			return // not the receiver's last use
+		}
+		shallow[recv.Name] = true
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch s := n.(type) {
+		case *ast.Return:
+			if s.Value != nil {
+				mark(s.Value, "")
+			}
+		case *ast.Var:
+			mark(s.Init, s.Name)
+		case *ast.ExprStmt:
+			if a, ok := s.Expr.(*ast.Assign); ok {
+				tname := ""
+				if t, ok := a.Target.(*ast.Ident); ok {
+					tname = t.Name
+				}
+				mark(a.Value, tname)
+			}
+		}
+		return true
+	})
+	return shallow
+}
+
 func (b *builder) computeMovedLocals() map[string]bool {
 	moved := map[string]bool{}
 	if b.fn.Body == nil {
@@ -4791,6 +4883,17 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	dropStructField := b.dropStructField
 	_ = decValueOnStack
 	emitDec := func(slot int32, t ast.Type, eligible bool, name string) {
+		// Shallow-drop override: this array's elements were transferred to
+		// another value by a consuming `.append` / `.with` at its last use
+		// (computeShallowArrDrops), so reclaim the OLD buffer only — an
+		// element-walking drop here would double-free the moved elements.
+		if at, ok := t.(ast.ArrayType); ok && eligible && ast.RcFreeEnabled && b.shallowArrDrop[name] {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
 		// `eligible` is the borrow-aware verdict for THIS local: true
 		// only when it's a proven-OWNED array (computeFreeEligible).
 		// Arrays of pointer-shaped rc-tracked elements route through
@@ -6998,6 +7101,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	b.freeEligible = b.computeFreeEligible()
 	b.moveSites = map[ast.Node]bool{}
 	b.movedLocals = b.computeMovedLocals()
+	b.shallowArrDrop = b.computeShallowArrDrops()
 	b.reuseSources, b.reuseConsumed = b.computeReuseSources()
 	b.consumingMatchReuse = map[*ast.Call]bool{}
 	b.closureTarget = map[string]string{}

@@ -178,7 +178,7 @@ per-function bugs in the audit log.
 | `std/u32` | | | | | ⬜ | |
 | `std/u64` | | | | | ⬜ | |
 | `std/float` | | | | | ⬜ | |
-| `std/string` (~120 methods) | 🔄 | ✅ | 🐛 | 🐛 | 🐛 | `prop_string_involution` (✅ all 4) covers reverse/case laws; `prop_split_join` exposes a **two-word `split` bug** on arm64+wasm — see audit log |
+| `std/string` (~120 methods) | 🔄 | ✅ | 🔧 | 🔧 | 🔧 | `prop_string_involution` + `prop_split_join` (✅ all 4); the two-word `split`/`append` bug was found here and **fixed** — see audit log |
 | `std/array` | | | | | ⬜ | |
 | `std/math` | | | | | ⬜ | |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
@@ -220,7 +220,45 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
-### 2026-06-09 — 🐛 OPEN: two-word `string[]` built by appending sliced strings in a loop corrupts earlier elements
+### 2026-06-09 — 🔧 FIXED: consuming `.append`/`.with` in return/expression position double-dropped the receiver's elements
+
+**The bug** (investigation below): `return out.append(x)` (and
+`var b = a.append(x)` / `b = a.append(x)` with `b != a`) reclaimed the
+old receiver array with the **element-walking** drop
+(`__fern_drop_arr_str` two-word / `__fern_drop_arr_ptr` single-word) at
+the exit sweep. But the push/grow helper **shallow-copies** the element
+pointers into the result *without* an inc, so walking the old buffer and
+dec'ing each element **double-freed** the strings now owned by the result.
+On the two-word string backends (arm64 + wasm) this surfaced as
+single-byte heap corruption of `split`'s output (earlier parts clobbered,
+e.g. `"ac"`→`"0p"`); single-word x86-64 was latent. The self-reassign
+form `out = out.append(x)` was already correct — its reinit-drop uses the
+buffer-only `__fern_arr_dec`.
+
+**The fix** (`internal/ir/ir.go`): new `computeShallowArrDrops` analysis
+marks an owned array local consumed by a `.append`/`.with` at its **last
+use** in a non-self-reassigning statement; the exit-sweep `emitDec` then
+reclaims that buffer with `__fern_arr_dec` (buffer only) instead of the
+element-walking drop — mirroring the reassign path. The shared
+`__fern_arr_push_grow` rc dance (rc 2→1 in place, free old on copy) is
+preserved, so no leak and no double-free.
+
+**Investigation:** bisected the `prop_split_join` failure to a function
+returning a `string[]` built by appending sliced strings in a loop;
+`__str_slice`, the two-word element store/load, and `__fern_arr_push_grow`
+all checked out. Dumping the lowered IR (throwaway `ir.LowerWith` harness)
+showed the in-loop `out = out.append(...)` emitting shallow `arr_dec`
+while the final `return out.append(...)` emitted the element-walking
+`drop_arr_str` — the smoking gun. Confirmed single-word x86-64 emits the
+analogous `drop_arr_ptr` (same double-drop, latent because of timing).
+
+**Verification:** `prop_split_join` now passes on **all four backends**
+(arm64+wasm re-enabled). Regression: IR/codegen/checker unit tests; the
+RC / drop / move / consuming / reuse / string-concat / string-array e2e
+suites (all backends); the full `TestFernFixtures` + array/map-builder +
+combinator suites — all green.
+
+### 2026-06-09 — 🐛→🔧 two-word `string[]` built by appending sliced strings in a loop corrupts earlier elements (investigation)
 
 **Found by:** `prop_split_join` property fixture
 (`join(split(s, ",")) == s`). Fails on **arm64 AND wasm** (both two-word
@@ -259,13 +297,10 @@ appends the result to a `string[]`. `__str_slice` itself is fine
 (direct slicing round-trips); the corruption is in the loop/append/array
 interaction for two-word strings.
 
-**Status / mitigation:** `prop_split_join` is restricted to
-`interp x86_64` (via its `backends` sidecar) so CI stays green and the
-single-word backends are guarded. `std/string.split` (and anything built
-on it — `splitn`, `fields`, `lines`, CSV/HTTP parsing that loops slices
-into arrays) is **unsafe on arm64 + wasm** for inputs that produce
-multiple parts. High-priority follow-up; reproducer above is
-self-contained.
+**Status:** ✅ FIXED (see the FIXED entry above). `prop_split_join` runs
+on all four backends again; the `backends` sidecar was removed.
+`std/string.split` (and the `splitn` / `fields` / `lines` / CSV/HTTP
+parsers built on it) are correct on every backend.
 
 ### 2026-06-09 — 🔧 FIXED: arm64 two-word `string_from_bytes` allocated a headerless string
 
@@ -384,8 +419,9 @@ Added three more `prop_*` fixtures:
 - `prop_csv_roundtrip` — `csv_parse_line∘csv_join` over field arrays
   drawn from a quoting/escaping alphabet (`,` `"` letters spaces).
   ✅ all 4 backends.
-- `prop_split_join` — `join∘split` for a single-byte separator. ✅
-  interp/x86-64; 🐛 arm64+wasm (the two-word `split` bug logged above).
+- `prop_split_join` — `join∘split` for a single-byte separator. Found
+  the two-word `split`/`append` double-drop bug (logged above, now ✅
+  fixed); passes on all four backends.
 
 ### 2026-06-09 — first property-test batch (base64, hex, url, sort, string)
 
