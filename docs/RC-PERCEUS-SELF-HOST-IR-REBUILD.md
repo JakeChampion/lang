@@ -464,3 +464,72 @@ its test, no "coverage next PR"):
 Each opt: an IR-level analysis or `Op[]` pass in `irlower` / `iropt.fern`,
 gated behind a flag like native's, proven by a differential case
 (AsmIRPath / IRDiff) plus a focused unit case at the layer it touches.
+
+## Multi-backend IR + all-backends flip — DONE (slices 24–30)
+
+The §3 rollout, completed across all three backends. Each backend's IR emitter
+lowers the SAME irlower `Op[]` stream — proving the IR is genuinely
+target-agnostic — and is pure instruction selection: the eligibility, array
+layout choice, RC helper-name map, control-flow label/depth scheme, and ALL of
+Perceus (alias-inc, move-on-return, borrowed params, exit dec-sweep,
+reassignment retain/cow-release) live ONCE in the shared layer (irlower +
+asm_ir's pub analysis), so every coverage/opt slice from here lands on all
+three backends at once.
+
+- 2026-06-10: **arm64 IR emitter (asm_arm64_ir) (#2617).** Lowers the op stream
+  to arm64 in asm_arm64's dialect (x29 frame, 16-byte operand rt-stack,
+  identical 8-byte `__fern_arr_box` layout). Reuses asm_ir's pub analysis +
+  asm_arm64's emit_runtime (no cycle: asm_arm64_ir does not import asm_arm64 in
+  the isolated slice). qemu differential gate (AST≡IR exit codes).
+- 2026-06-10: **arm64 fold + flip (#2618).** asm_arm64.emit_module dispatches
+  on use_ir; asm_arm64_ir.emit_body emits function bodies, asm_arm64 appends
+  its own runtime (the cycle-free "caller owns the runtime" pattern). arm64
+  defaults to IR; byte-identical arm64 fixpoint holds (the compiler is not
+  all_eligible → AST).
+- 2026-06-10: **wasm IR emitter (wasm_ir) — pure-i32 (#2619), then arrays
+  (#2620).** wasm is the most natural target: the IR is a stack machine with
+  structured control flow and wasm IS that machine, so it transliterates to
+  FLAT WAT (const_i32→i32.const, structured ops keep their names, `br depth`
+  carries the SAME relative depth — no label generation; `call` needs no arg
+  reversal). Arrays use wasm's linear-memory `__fern_arr_box` layout + RC,
+  reused from wasm.fern. wasmtime differential gate.
+- 2026-06-10: **watbin flat-WAT support (#2621).** The self-host's own
+  WAT→binary encoder handled only the AST emitter's folded S-expressions; a
+  linear enc_flat_body (dispatched per-function by body shape) lets it assemble
+  the IR's flat WAT too — flat is the natural shape of the binary format
+  (numeric locals/br straight to LEB, no name resolution). Also handles the
+  abbreviated `(local type type …)` decl form. This unblocked the wasm flip.
+- 2026-06-10: **wasm fold + flip (#2622).** wasm.emit_module dispatches on
+  use_ir (preview1, non-component); wasm_ir.emit_functions emits bodies, the
+  caller appends the runtime. div/rem lower to the non-trapping
+  $__fern_idiv/$__fern_irem (matching wasm.fern's x/0=0 contract). The flip's
+  WAT now assembles through BOTH wasmtime and watbin.
+
+### 🎯 Milestone: all three backends emit via the IR by default
+
+x86-64, arm64, and wasm all default to the stack-IR path with Perceus array RC
+for the i32 + arrays subset. **The first half of the goal is met** ("the
+self-host is fully IR for all its backends" — for the covered subset). What
+remains is the second half ("a Perceus implementation as good as the native
+Go compiler's") plus widening the subset toward the whole language.
+
+## Remaining — toward full-language coverage + native-parity Perceus
+
+Both tracks ride the SHARED irlower, so each slice lands on all three backends:
+
+1. **Widen IR coverage** — strings (leak-only, pure coverage; the compiler uses
+   them everywhere), then structs / enums / tuples (rc-tracked composites),
+   then closures / maps / floats. As composite types land, the IR-eligibility
+   gate (`all_eligible`) admits more modules — eventually the compiler itself.
+2. **Port the remaining native Perceus opts as IR-level passes** (native does
+   them on `internal/ir`; see "Perceus opts port" above) as the types that
+   exercise them arrive:
+   - **structs/enums** unlock construction-store retains, **drop
+     specialization** (per-type `__drop_*` bodies vs. a generic helper), and
+     the **reuse / FBIP** passes (in-place reconstruction of a unique value);
+   - **owned-by-value params** make **borrow inference** (`inferParamEscapes`)
+     bite — an owned param proven non-escaping is kept borrowed;
+   - **tail-position construction** unlocks **TRMC**.
+   Each opt: an IR analysis or `Op[]`→`Op[]` pass in irlower / a sibling iropt
+   module, gated behind a flag like native's, proven by a differential case +
+   a focused unit case — NEVER a per-backend asm hack.
