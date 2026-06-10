@@ -166,6 +166,13 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"param-borrow-then-use", "function get0(a: i32[]): i32 { return a[0]; } function main(): i32 { var arr = [5, 6, 7]; var x = get0(arr); var y = arr[1]; return x + y; }", 11},
 		{"param-two-arrays", "function pick(a: i32[], b: i32[]): i32 { return a[0] + b[1]; } function main(): i32 { var p = [1, 2]; var q = [10, 20]; return pick(p, q); }", 21},
 		{"param-borrow-noreuse", "function len_of(a: i32[]): i32 { return a.len(); } function main(): i32 { var arr = [3, 4, 5]; var n = len_of(arr); var z = [9, 9, 9]; return arr[0] + arr[2] + n; }", 11},
+		// Reclamation bounds peak memory (the Perceus payoff): __heap_used()
+		// reports bytes bump-allocated; freelist reuse does not bump. Three
+		// arrays each freed before the next all reuse ONE 20-byte block (peak
+		// 20); three LIVE arrays bump three blocks (60).
+		{"heap-reuse-bounded", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; __rc_dec(b); var c = [7, 8, 9]; return __heap_used(); }", 20},
+		{"heap-live-grows", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var c = [7, 8, 9]; return __heap_used(); }", 60},
+		{"heap-one-array", "function main(): i32 { var a = [1, 2, 3]; return __heap_used(); }", 20},
 		// Still out of subset -> lower bails -> emit_module exits 200.
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}

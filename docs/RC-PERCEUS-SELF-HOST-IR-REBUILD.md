@@ -235,3 +235,53 @@ Same nets as the existing self-host work, plus IR-specific ones:
   multi-function recursion). Next: widen lowering past i32 (strings /
   structs / arrays), or stand up `emit_module_ir` as a selectable path in
   the real `asm.fern` backend ahead of flipping the default.
+- 2026-06-10: **Slice 8 — first heap type (i32 arrays) — DONE (#2597).**
+  `ExprArray` / `ExprIndex` lower to a bump-allocated buffer; `eval_ops`
+  gains a word-addressed heap; `ir_x86` emits `alloc`/`load`/`store` + a
+  `.bss` heap. Differential corpus gains array programs.
+- 2026-06-10: **Slice 9 — array `.len()` + index-assignment — DONE
+  (#2598).** Length header `[len, e0, …]`; `.len()` is a header load;
+  `arr[i] = v` (`__set_index`) stores in place; `drop` op added.
+- 2026-06-10: **Slice 10 — first RC op (alias-inc) — DONE (#2599).** rc
+  header `[rc, len, …]`; `var b = a` emits `call_direct __fern_rc_inc`;
+  `__rc()` observation hook; `LowerState.local_is_arr` tracking. RC now
+  lives in the IR, lowered once.
+- 2026-06-10: **Slice 11 — exit dec-sweep + underflow detector — DONE
+  (#2600).** `emit_dec_sweep` decs every array local at `return`
+  (`__fern_rc_dec`); over-release detector + `__rc_underflow()`;
+  `LowerResult.arr_slots` drives backend entry-zeroing. Completes Perceus
+  Phase 1 (counting, no free).
+- 2026-06-10: **Slice 12 — free path + block reuse (freelist) — DONE
+  (#2601).** `__fern_rc_dec` frees to a size-class freelist at rc==0;
+  `fn___fern_alloc` reuses an exact-size freed block before bumping.
+  Reclamation arrives.
+- 2026-06-10: **Slice 13 — move-on-return — DONE (#2602).** A returned
+  array local is excluded from the exit dec-sweep
+  (`emit_dec_sweep_except`) — moved to the caller, not freed. First
+  pair-cancellation optimization; closes the array-return UAF.
+  Cross-function arrays validated on x86 (shared heap) + the differential
+  gate (the interpreter models a per-call heap).
+- 2026-06-10: **Slice 14 — array params (borrow boundary) — DONE
+  (#2603).** Array-typed params are array-tracked but BORROWED — the
+  dec-sweep skips slots `< n_params`; the caller retains ownership. The
+  `n_params` borrow boundary.
+- 2026-06-10: **Slice 15 — peak-memory measurement — DONE.**
+  `__heap_used()` (bytes bump-allocated; freelist reuse does not bump)
+  makes the reclamation win measurable: three arrays each freed before the
+  next reuse ONE block (20 B) vs three live arrays (60 B). Doc log brought
+  current (slices 8–15).
+
+  **State of the IR backend after slice 15:** a complete i32 language
+  (params/locals, full arithmetic, if/else, while, multi-function
+  recursion) + i32 arrays (literal/index/write/len) with **Perceus RC**:
+  alias-inc, exit dec-sweep, free + freelist reuse, move-on-return,
+  borrowed array params — all lowered once in `irlower` and instruction-
+  selected by the backend, every step differentially matched against the
+  production AST backend. Remaining (diminishing returns in this toy
+  freestanding model; each unobservable until paired with the one below):
+  precise-drops (mid-function last-use frees — needs `__heap_used`-style
+  peak observation), borrow escape inference (only matters once
+  precise-drops free escaped params mid-function), strings / structs as
+  further heap types, and the eventual integration of `emit_module_ir`
+  into the real `asm.fern` backend (the original §3 rollout) to flip
+  x86-64's default and retire the AST emit path.

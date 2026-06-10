@@ -311,6 +311,9 @@ pub function emit_module(fns: irlower.LoweredFn[]): string {
     out = out + ".Ldec_skip:\n    movq %rdi, %rax\n    ret\n";
     // RC over-release counter reader (the `__rc_underflow()` hook).
     out = out + "fn___fern_rc_underflow_get:\n    movl __fern_rc_underflow, %eax\n    ret\n";
+    // Bytes bump-allocated so far = __heap_ptr - __heap (the `__heap_used()`
+    // hook; freelist reuse does not bump, so this measures peak growth).
+    out = out + "fn___fern_heap_used:\n    movl __heap_ptr, %eax\n    subl $__heap, %eax\n    ret\n";
     // Allocator: reuse a freed block of the exact requested size (a free node
     // stores [next@0, size@4]), else bump. edi = size -> rax = raw block.
     out = out + "fn___fern_alloc:\n";
