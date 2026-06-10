@@ -1,0 +1,38 @@
+// examples/self_host/asm_ir_run.fern — differential driver for the IR code
+// path's integration into the production backend. Like asm_run, but with a
+// `-ir` flag: when set AND the module is fully i32-eligible, it emits via the
+// IR path (asm_ir.emit_module_ir: AST -> stack IR -> asm); otherwise it uses
+// the unchanged AST backend (asm.emit_module). The companion Go test
+// (self_host_asm_ir_path_test.go) pipes each program through both ways and
+// asserts identical exit codes — proving the IR path is behaviour-equivalent
+// to the production AST path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3).
+//
+// This is a SEPARATE driver so neither asm.fern nor the widely-built asm_run
+// driver gains an `ir` dependency — the byte-identical self-bootstrap and the
+// ~50 asm_run-based harnesses stay untouched.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./asm";
+import "./asm_ir";
+
+function main(): i32 {
+    var av: string[] = args();
+    var use_ir: boolean = false;
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-ir") { use_ir = true; }
+        ai = ai + 1;
+    }
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var emitted: string = "";
+    if (use_ir && asm_ir.all_eligible(mod)) {
+        emitted = asm_ir.emit_module_ir(mod);
+    } else {
+        emitted = asm.emit_module(parser.module_with_builtins(mod));
+    }
+    print(emitted);
+    return 0;
+}

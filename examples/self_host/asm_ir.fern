@@ -1,0 +1,202 @@
+// examples/self_host/asm_ir.fern — the IR code path for the production
+// x86-64 backend, the first integration of the native-shaped stack IR
+// (ir.fern / irlower.fern) into asm.fern's world (docs/RC-PERCEUS-SELF-HOST-
+// IR-REBUILD.md §3). emit_module_ir lowers each function AST -> stack IR ->
+// asm and instruction-selects it into asm.fern's OWN dialect: same
+// `__fn_<name>:` label, same rbp frame + leave/ret, same machine-stack
+// operand discipline (every value `pushq`-ed, consumers `popq`), so an
+// IR-emitted function is ABI-identical to an AST-emitted one — and the two
+// must produce identical behaviour (the differential gate).
+//
+// SCOPE (slice 16): pure i32 functions — no params, no user calls, no arrays
+// — proving the seam end-to-end. asm.fern itself is UNCHANGED (this module is
+// imported only by asm_run via its `-ir` flag), so the byte-identical
+// self-bootstrap and every asm.fern-based harness are unaffected. emit_module_ir
+// only handles modules where EVERY function is eligible (all_eligible); the
+// driver falls back to asm.emit_module otherwise. As the eligible subset
+// widens, this folds back into asm.fern's emit_module behind a flag.
+
+import "./parser";
+import "./asmcore";
+import "./util";
+import "./ir";
+import "./irlower";
+
+// ir_eligible reports whether a function is in the IR path's current subset:
+// pure i32 — no params/receiver, and a lowering using only int arithmetic /
+// locals / structured control flow (no alloc/load/store/call_direct).
+pub function ir_eligible(fd: parser.FuncDecl): boolean {
+    if (fd.params.len() > 0) { return false; }
+    if (fd.receiver_name.len() > 0) { return false; }
+    var noret: string[] = [];
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    if (!r.ok) { return false; }
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        var k: string = r.ops[i].kind;
+        if (k == "alloc" || k == "load" || k == "store" || k == "call_direct") { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// all_eligible reports whether every function in the module is IR-eligible.
+pub function all_eligible(mod: parser.Module): boolean {
+    if (mod.funcs.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (!ir_eligible(mod.funcs[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ir_bin_asm renders the asm for one IR binary op (lhs in %rax, rhs in %rcx,
+// result in %rax) — mirroring asm.fern's own ExprBinary sequences (64-bit,
+// signed i32 div/cmp) so the two paths agree exactly.
+function ir_bin_asm(kind: string): string {
+    if (kind == "add") { return "    addq %rcx, %rax\n"; }
+    if (kind == "sub") { return "    subq %rcx, %rax\n"; }
+    if (kind == "mul") { return "    imulq %rcx, %rax\n"; }
+    if (kind == "div_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n"; }
+    if (kind == "rem_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
+    if (kind == "and") { return "    andq %rcx, %rax\n"; }
+    if (kind == "or") { return "    orq %rcx, %rax\n"; }
+    if (kind == "xor") { return "    xorq %rcx, %rax\n"; }
+    if (kind == "shl") { return "    shlq %cl, %rax\n"; }
+    if (kind == "shr_s") { return "    sarq %cl, %rax\n"; }
+    if (kind == "eq") { return "    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n"; }
+    if (kind == "ne") { return "    cmpq %rcx, %rax\n    setne %al\n    movzbq %al, %rax\n"; }
+    if (kind == "lt_s") { return "    cmpq %rcx, %rax\n    setl %al\n    movzbq %al, %rax\n"; }
+    if (kind == "le_s") { return "    cmpq %rcx, %rax\n    setle %al\n    movzbq %al, %rax\n"; }
+    if (kind == "gt_s") { return "    cmpq %rcx, %rax\n    setg %al\n    movzbq %al, %rax\n"; }
+    if (kind == "ge_s") { return "    cmpq %rcx, %rax\n    setge %al\n    movzbq %al, %rax\n"; }
+    return "    # ir: unsupported bin " + kind + "\n";
+}
+
+// ir_scope_push grows a depth-indexed scope array and sets index `depth`.
+function ir_scope_push(a: string[], depth: i32, v: string): string[] {
+    var r: string[] = a;
+    while (r.len() < depth + 1) { r = r.append(""); }
+    return r.with(depth, v);
+}
+
+// emit_function_via_ir emits one IR-eligible function via the stack IR,
+// writing through the global strbuf (same as asm.fern's emitters).
+function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitState {
+    var noret: string[] = [];
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+
+    s = s.write("__fn_" + asmcore.sanitize_label(fd.name) + ":\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    var frame: i32 = r.n_locals * 8;
+    if (frame % 16 != 0) { frame = frame + 8; }
+    if (frame > 0) { s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
+
+    // Structured control flow -> labels via a depth-indexed scope stack:
+    // `br N` / `br_if N` -> the N-th-from-top scope's target (block/if -> its
+    // end label; loop -> its header). Labels are function-prefixed.
+    var lp: string = ".Lir_" + asmcore.sanitize_label(fd.name) + "_";
+    var nlabel: i32 = 0;
+    var depth: i32 = 0;
+    var s_kind: string[] = [];
+    var s_else: string[] = [];
+    var s_end: string[] = [];
+    var s_brt: string[] = [];
+
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        var o: ir.Op = r.ops[i];
+        if (o.kind == "const_i32") {
+            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
+        } else if (o.kind == "load_local") {
+            s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
+        } else if (o.kind == "store_local") {
+            s = s.write("    popq %rax\n    movq %rax, " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
+        } else if (o.kind == "not") {
+            s = s.write("    popq %rax\n    testq %rax, %rax\n    setz %al\n    movzbq %al, %rax\n    pushq %rax\n");
+        } else if (o.kind == "return") {
+            s = s.write("    popq %rax\n    leave\n    ret\n");
+        } else if (o.kind == "if") {
+            var le: string = lp + "else_" + util.i32_to_string(nlabel);
+            var lend: string = lp + "end_" + util.i32_to_string(nlabel);
+            nlabel = nlabel + 1;
+            s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + le + "\n");
+            s_kind = ir_scope_push(s_kind, depth, "if");
+            s_else = ir_scope_push(s_else, depth, le);
+            s_end = ir_scope_push(s_end, depth, lend);
+            s_brt = ir_scope_push(s_brt, depth, lend);
+            depth = depth + 1;
+        } else if (o.kind == "else") {
+            var d: i32 = depth - 1;
+            s = s.write("    jmp " + s_end[d] + "\n" + s_else[d] + ":\n");
+            s_kind = s_kind.with(d, "if_else");
+        } else if (o.kind == "block") {
+            var lb: string = lp + "blk_" + util.i32_to_string(nlabel);
+            nlabel = nlabel + 1;
+            s_kind = ir_scope_push(s_kind, depth, "block");
+            s_else = ir_scope_push(s_else, depth, lb);
+            s_end = ir_scope_push(s_end, depth, lb);
+            s_brt = ir_scope_push(s_brt, depth, lb);
+            depth = depth + 1;
+        } else if (o.kind == "loop") {
+            var ll: string = lp + "loop_" + util.i32_to_string(nlabel);
+            nlabel = nlabel + 1;
+            s = s.write(ll + ":\n");
+            s_kind = ir_scope_push(s_kind, depth, "loop");
+            s_else = ir_scope_push(s_else, depth, ll);
+            s_end = ir_scope_push(s_end, depth, ll);
+            s_brt = ir_scope_push(s_brt, depth, ll);
+            depth = depth + 1;
+        } else if (o.kind == "br") {
+            s = s.write("    jmp " + s_brt[depth - 1 - o.i32_imm] + "\n");
+        } else if (o.kind == "brif") {
+            s = s.write("    popq %rax\n    testq %rax, %rax\n    jnz " + s_brt[depth - 1 - o.i32_imm] + "\n");
+        } else if (o.kind == "end") {
+            var d2: i32 = depth - 1;
+            var kind: string = s_kind[d2];
+            if (kind == "if") { s = s.write(s_else[d2] + ":\n"); }
+            else if (kind == "if_else") { s = s.write(s_end[d2] + ":\n"); }
+            else if (kind == "block") { s = s.write(s_brt[d2] + ":\n"); }
+            depth = d2;
+        } else {
+            // binary op: pop rhs (rcx), lhs (rax), combine, push.
+            s = s.write("    popq %rcx\n    popq %rax\n");
+            s = s.write(ir_bin_asm(o.kind));
+            s = s.write("    pushq %rax\n");
+        }
+        i = i + 1;
+    }
+
+    // Fallback (subset functions always end in `return`).
+    s = s.write("    movq $0, %rax\n");
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_module_ir emits a full all-i32-eligible module via the IR path. The
+// program is self-contained (pure i32 uses no runtime helpers): every
+// function via the IR, then a `_start` that calls __fn_main and exits with
+// its result. Caller must ensure all_eligible(mod).
+pub function emit_module_ir(mod: parser.Module): string {
+    strbuf_reset();
+    var s: asmcore.EmitState = asmcore.new_state();
+    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    s = s.write("    .globl _start\n");
+    s = s.write("    .text\n");
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        s = emit_function_via_ir(mod.funcs[fi], s);
+        fi = fi + 1;
+    }
+    s = s.write("_start:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    call __fn_main\n");
+    s = s.write("    movq %rax, %rdi\n");
+    s = s.write("    movq $60, %rax\n");
+    s = s.write("    syscall\n");
+    return strbuf_take();
+}
