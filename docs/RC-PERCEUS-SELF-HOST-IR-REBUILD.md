@@ -285,3 +285,71 @@ Same nets as the existing self-host work, plus IR-specific ones:
   further heap types, and the eventual integration of `emit_module_ir`
   into the real `asm.fern` backend (the original §3 rollout) to flip
   x86-64's default and retire the AST emit path.
+
+### Production integration phase (slices 16–19)
+
+The §3 rollout, started. **Key isolation discovery:** importing `irlower`
+into `asm.fern` directly ripples to the byte-identical bootstrap *and* the
+~18 curated test file-lists *and* the ~50 `asm_run`-built harnesses (each
+copies a fixed file set; a missing `ir.fern` is a hard error). So the IR
+path lives in **separate modules** — `asm_ir.fern` (the IR emitter +
+`emit_module_ir`) and `asm_ir_run.fern` (a `-ir` differential driver) —
+imported by nobody else. `asm.fern` and `asm_run.fern` stay **byte-for-byte
+unchanged**, so the fixpoint and every existing harness are untouched. The
+gate is `internal/e2e/self_host_asm_ir_path_test.go`
+(`TestSelfHostAsmIRPath`): each program compiled through asm.fern BOTH ways
+(AST `emit_module` vs IR `emit_module_ir`), asserting identical exit codes.
+
+- 2026-06-10: **Slice 16 — IR path into the production backend — DONE
+  (#2605).** `asm_ir.emit_module_ir` lowers each function AST → stack IR →
+  asm in asm.fern's OWN dialect (`__fn_<name>:`, rbp frame + `leave`/`ret`,
+  machine-stack operands), reusing asmcore's `EmitState` + the `strbuf`
+  builtins; the structured-CF → label bridge is the one new piece. Scope:
+  pure i32 functions. The seam proven end-to-end.
+- 2026-06-10: **Slice 17 — params + calls — DONE (#2606).** Param copy from
+  the caller stack (`+16+i*8(%rbp)` → local slots) + `call_direct` via
+  asm.fern's stack-arg ABI (args reversed since the IR pushes left-to-right
+  but the ABI wants arg0 on top). Recursion (fib/fact/mutual) through the
+  production IR path.
+- 2026-06-10: **Slice 18 — arrays — DONE (#2607).** `alloc`/`load`/`store`/
+  `drop` + a `call_direct` split: runtime helpers (`__fern_rc_*`,
+  `is_fern_helper`) use the SysV ABI + the freestanding `fn___fern_*` bodies
+  (ported verbatim from ir_x86), user calls keep the stack ABI. The
+  freelist allocator + RC runtime + 1 MiB heap are emitted only when the
+  module allocates. Within-function arrays.
+- 2026-06-10: **Slice 19 — cross-function arrays — DONE (#2608).** Borrowed
+  array params + array returns (move-on-return). Sound because the IR path
+  only fires when the WHOLE module is eligible (`all_eligible`), so caller
+  and callee share irlower's array layout — nothing crosses an IR/AST
+  boundary. `emit_module_ir` threads the module's array-returning function
+  names into `lower_func`.
+
+  **State after slice 19:** the production IR path is **feature-complete for
+  the i32 + arrays subset with full Perceus RC** — everything the standalone
+  `ir_x86` backend does, now inside the production toolchain, every step
+  differentially matched against asm.fern's AST emitter.
+
+### Remaining: fold + flip (the bootstrap-touching steps)
+
+To make the IR path the default, the isolation that protected the bootstrap
+must finally give way — these steps are deliberately deferred to a careful,
+dedicated pass (highest regression risk; the fixpoint is the master gate):
+
+1. **Fold `asm_ir` → `asm.fern`.** Move `emit_module_ir`/`emit_function_via_ir`
+   into `asm.fern` behind a `use_ir` flag (or `EmitState` field), so
+   `asm.fern` imports `irlower`/`ir`. This ripples: add `ir.fern` +
+   `irlower.fern` to every curated test file-list that copies `asm.fern`
+   (and to the fixpoint's source-bundle), then re-establish the
+   byte-identical fixpoint (stage1==stage2 with the new, deterministic
+   compiler source). Risk is bounded — the IR analyses are deterministic
+   (index-ordered, no map iteration) — but the file-list sweep is broad.
+2. **Widen eligibility to remove the `all_eligible` gate.** For mixed
+   modules (some functions IR, some AST), arrays must interoperate across
+   the boundary — so reconcile irlower's array layout with asm.fern's
+   (rc at `[data-8]`, its `__fern_arr_box`/`__fern_alloc`/`__fn___fern_rc_*`
+   helpers) instead of the freestanding one. Until then, per-function
+   fallback is only sound for heap-free functions.
+3. **Flip the default + retire the AST emit** for the covered subset, one
+   construct at a time, each gated by `TestSelfHostAsmIRPath`-style
+   differential parity, until `emit_module` is IR-only and `emit_function`
+   (AST) is deleted.
