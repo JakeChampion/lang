@@ -81,6 +81,10 @@ function emit_op(o: ir.Op, exitlabel: string): string {
     if (o.kind == "load") {
         return "    popq %rax\n    movl (%rax), %eax\n    pushq %rax\n";
     }
+    if (o.kind == "drop") {
+        // discard one operand-stack slot.
+        return "    addq $8, %rsp\n";
+    }
     // otherwise a binary op: pop r into %ecx, l into %eax, combine, push.
     return "    popq %rcx\n    popq %rax\n" + bin_mid(o.kind) + "    pushq %rax\n";
 }
