@@ -27,7 +27,28 @@ import "./util";
 import "./ir";
 import "./irlower";
 import "./asm_ir";
-import "./asm_arm64";
+
+// fr_ldr / fr_str load/store `reg` at the x29-relative frame offset `off`
+// (always <= 0 — locals live below the frame pointer). Inlined copies of
+// asm_arm64's frame_ldr/frame_str (this module can't import asm_arm64 without a
+// cycle): a scaled ldr/str can't encode a negative offset and ldur/stur only
+// reach -256, so for a frame with >32 slots materialise the address in x16
+// (AAPCS scratch, dead across a frame access here) via sub first.
+function fr_ldr(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState {
+    if (off >= 0 - 256) {
+        return s.write("    ldr " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
+    }
+    s = s.write("    sub x16, x29, #" + util.i32_to_string(0 - off) + "\n");
+    return s.write("    ldr " + reg + ", [x16]\n");
+}
+
+function fr_str(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState {
+    if (off >= 0 - 256) {
+        return s.write("    str " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
+    }
+    s = s.write("    sub x16, x29, #" + util.i32_to_string(0 - off) + "\n");
+    return s.write("    str " + reg + ", [x16]\n");
+}
 
 // ir_bin_asm renders the arm64 for one IR binary op: lhs in x0, rhs in x1,
 // result in x0 — mirroring asm_arm64's own ExprBinary sequences (64-bit ops,
@@ -91,7 +112,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     var pidx: i32 = 0;
     while (pidx < fd.params.len()) {
         s = s.write("    ldr x0, [x29, #" + util.i32_to_string(16 + pidx * 16) + "]\n");
-        s = s.frame_str("x0", 0 - 8 * (pidx + 1));
+        s = fr_str(s, "x0", 0 - 8 * (pidx + 1));
         pidx = pidx + 1;
     }
 
@@ -103,11 +124,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // ldr x0, =N uses a literal pool — any 64-bit value, like asm_arm64.
             s = s.write("    ldr x0, =" + util.i32_to_string(o.i32_imm) + "\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "load_local") {
-            s = s.frame_ldr("x0", 0 - 8 * (o.i32_imm + 1));
+            s = fr_ldr(s, "x0", 0 - 8 * (o.i32_imm + 1));
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind == "store_local") {
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.frame_str("x0", 0 - 8 * (o.i32_imm + 1));
+            s = fr_str(s, "x0", 0 - 8 * (o.i32_imm + 1));
         } else if (o.kind == "not") {
             s = s.write("    ldr x0, [sp], #16\n    cmp x0, #0\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "return") {
@@ -200,15 +221,16 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     return s;
 }
 
-// emit_module_ir emits a full all-i32-eligible module as arm64 via the IR path:
-// each function, then a `_start` that calls __fn_main and exits with its
-// result, then asm_arm64's heap/RC runtime (reused verbatim) when the module
-// allocates. Caller must ensure asm_ir.all_eligible(mod). `darwin` threads the
-// Mach-O / ELF distinction into the reused runtime.
-pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
-    strbuf_reset();
-    var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+// emit_body emits the arm64 program body for an all-i32-eligible module via
+// the IR path: the .text header, each function from the stack IR, and a
+// `_start` that calls __fn_main and exits with its result. It does NOT emit
+// the heap/RC runtime and does NOT reset/take the strbuf — the CALLER
+// (asm_arm64.emit_module, or the differential driver) appends asm_arm64's own
+// emit_runtime and materialises the output. Keeping the runtime on the caller
+// side is what lets asm_arm64 import this module (for the use_ir dispatch)
+// without a cycle: asm_arm64_ir never imports asm_arm64. Caller must ensure
+// asm_ir.all_eligible(mod) and have seeded `s` (struct_decls / funcs).
+pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
     var arf: string[] = asm_ir.array_ret_fns(mod);
@@ -223,8 +245,5 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     s = s.write("    bl __fn_main\n");
     s = s.write("    mov x8, #93\n");      // sys_exit (Linux arm64); x0 = main's result
     s = s.write("    svc #0\n");
-    // Heap + RC + alloc runtime: reuse asm_arm64's emit_runtime (emitted only
-    // for the needs the bodies above marked, e.g. mark_heap on alloc/RC sites).
-    s = asm_arm64.emit_runtime(s, darwin);
-    return strbuf_take();
+    return s;
 }

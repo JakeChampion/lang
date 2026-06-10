@@ -39,7 +39,7 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "util.fern", "wasm.fern", "asm_arm64_darwin_run.fern", "wasm_run.fern"} {
+	for _, name := range []string{"flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "util.fern", "wasm.fern", "asm_arm64_darwin_run.fern", "wasm_run.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
