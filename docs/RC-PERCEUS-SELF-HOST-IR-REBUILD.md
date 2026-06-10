@@ -407,3 +407,60 @@ modules — eventually the compiler itself — qualify; port the remaining nativ
 Perceus opts (precise drops, FBIP reuse tokens, escape/borrow inference, TRMC,
 drop specialization); build the arm64 + wasm IR emitters and flip their
 defaults; then retire the AST emit path.
+
+## Perceus opts port — native-shaped, on the IR (governing principle)
+
+**All Perceus lives on the IR — never in a backend.** This is how native is
+structured, and it is the rule for porting the remaining opts. Native does
+Perceus in two layers, both target-agnostic (`internal/ir`):
+
+1. **RC insertion during AST→IR lowering** (`ir.LowerWith`): alias-inc, the
+   exit dec-sweep, move-on-return / move-on-construction, and the drop calls
+   are emitted as `OpCallDirect __fern_rc_*` as the AST is lowered — driven by
+   analyses computed up front: `inferParamEscapes` (borrow inference,
+   `ast.BorrowInferEnabled`), `findReturnsNoParamEscape` (escape),
+   `findTrmcFuncs` (TRMC eligibility).
+2. **IR→IR optimisation passes over the lowered `[]Op`**: the reuse / FBIP
+   passes (`general_reuse`, `struct_reuse`, enum/tuple reuse — all over
+   `*ir.Func`, gated by `ast.RcReuseEnabled`), drop specialisation,
+   `insert_resource_drops`, `tco` / `trmc`. The backends only
+   instruction-select the resulting opcodes.
+
+The self-host mirror:
+
+- **`irlower.fern` is the `LowerWith` analogue.** Layer-1 RC already lives
+  there (alias-inc, exit dec-sweep, move-on-return, the reassignment
+  retain/cow-release). Because these are emitted as IR ops, every backend
+  inherited them for free — e.g. the reassignment Perceus (slice 23) needed
+  zero backend asm. New layer-1 analyses (escape, borrow inference, TRMC
+  eligibility) become functions over the AST / `Op[]` in `irlower`, computed
+  once and consulted during lowering — the `inferParamEscapes` /
+  `findTrmcFuncs` analogues.
+- **Layer-2 opts become `Op[]`→`Op[]` passes** in `irlower` (or a sibling
+  `iropt.fern`), exactly like native's post-lowering passes, so one
+  implementation serves x86-64 (today) and arm64 / wasm (once their IR
+  emitters land). **Never** a per-backend asm hack in `asm_ir` / `ir_x86` /
+  `asm_arm64`.
+
+**Ordering — opts ride with the coverage that exercises them.** On the current
+i32 + arrays subset the layer-1 Perceus is already at native parity (alias-inc,
+move-on-return, borrowed params, exit-sweep, reassignment retain/release). The
+remaining opts need richer types / ops to bite, so they land alongside the
+coverage that gives them a test (the engineering bar: every feature ships with
+its test, no "coverage next PR"):
+
+- **strings** (next slice): the next rc-tracked heap type, used everywhere in
+  the compiler — brings string alias-inc / move / dec-sweep, reusing the array
+  Perceus machinery. Critical path to "the compiler itself goes IR".
+- **structs / enums / tuples**: unlock the reuse / FBIP passes (in-place
+  reconstruction of a unique value) and drop specialisation (type-specific
+  drop bodies vs. the generic helper) — the bulk of native's layer-2.
+- **owned-by-value params**: make borrow inference (`inferParamEscapes`) bite —
+  an owned param the analysis proves non-escaping is kept borrowed (no retain
+  on use, no exit dec), matching native.
+- **tail-position construction**: TRMC (tail-recursion-modulo-cons) — the
+  Perceus-aware sibling of plain self-TCO, reusing the tail allocation.
+
+Each opt: an IR-level analysis or `Op[]` pass in `irlower` / `iropt.fern`,
+gated behind a flag like native's, proven by a differential case
+(AsmIRPath / IRDiff) plus a focused unit case at the layer it touches.
