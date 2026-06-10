@@ -353,3 +353,57 @@ dedicated pass (highest regression risk; the fixpoint is the master gate):
    construct at a time, each gated by `TestSelfHostAsmIRPath`-style
    differential parity, until `emit_module` is IR-only and `emit_function`
    (AST) is deleted.
+
+### Fold + flip — DONE (slices 20–24, x86-64)
+
+The deferred bootstrap-touching steps, landed:
+
+- **Slice 20 — fold `asm_ir` → `asm.fern` (default off) (#2610).** `asm.fern`
+  imports `irlower`/`ir`/`asm_ir`; `emit_module` opens with
+  `if (new_state().use_ir && asm_ir.all_eligible(mod)) return
+  emit_module_ir(mod);`. The file-list ripple (every curated test bundle that
+  copies `asm.fern` now also needs `ir.fern`/`irlower.fern`/`asm_ir.fern`) was
+  done via the central `writeSelfHostAsmProject` helper + the `///MODULE`
+  bundles. Fixpoint held (the compiler isn't `all_eligible`).
+- **Flip attempts #2611/#2612 — surfaced two real bugs.** Broad exposure
+  (every eligible program through the IR) caught what the curated differential
+  corpus couldn't: (a) `emit_function_via_ir`'s threaded grow-and-overwrite
+  `string[]` scope arrays mis-ran under the SELF-HOSTED compiler (undefined
+  `.Lir_*` labels) — fixed by deriving control-flow labels purely from
+  OP-STREAM INDICES (`lp<j>`); (b) `fn___fern_rc_inc` lacked the null/low-ptr
+  guard. Both fixed in #2612; flip re-deferred pending RC-path drop-in parity.
+- **Slice 21 — high-level array opcodes (#2613).** `arr_make` / `arr_get` /
+  `arr_set` / `arr_len` / `arr_rc` replace the byte-layout arithmetic irlower
+  baked into the op stream. The IR now carries array SEMANTICS, not a layout;
+  each backend instruction-selects them. Behaviour-preserving (every backend +
+  eval_ops kept their 4-byte layout) — the target-agnostic-IR discipline, and
+  the prerequisite for reconciling the production layout with asm.fern's.
+- **Slice 22 — IR array path uses asm.fern's 8-byte layout (#2614).** `asm_ir`
+  lowers `arr_*` to asm.fern's `__fern_arr_box` rc-header box (data = base+16;
+  cap@-16, rc@-8, element i @ data+(i+1)*8) and calls asm.fern's stack-ABI RC
+  helpers (`__fn___fern_rc_inc` / `__fn___fern_arr_dec`); `emit_ir_runtime`
+  emits asm.fern's exact array/RC/heap bodies; `emit_function_via_ir`
+  zero-inits body-local slots (`rep stosq`). A true drop-in — a local flip
+  took the RC suite from 8 failures to 1.
+- **Slice 23 — IR-path Perceus reassignment + the FLIP (this slice).** The
+  last gap: irlower's `StmtVar`/`StmtAssign` now emit the reassignment Perceus
+  — retain-new (alias-inc) + cow-guarded release-old (`if (old != new)
+  arr_dec(old)`) — via a shared `emit_arr_store` (pure existing-op
+  composition, so every backend inherits it). The differential corpora
+  (AsmIRPath + IRDiff) gained array-slot-reassignment cases (the gap that hid
+  the bug). **`use_ir` now defaults ON for x86-64:** the self-host x86-64
+  default emits from the stack IR with asm.fern's array layout + full Perceus
+  RC for the i32 + arrays subset; out-of-subset modules (strings, structs,
+  methods, maps, floats, closures) fall back to the AST emitter, so the
+  compiler itself still compiles via AST and the byte-identical fixpoint
+  holds. Only `asm.fern` reads `use_ir` — arm64 / wasm keep their AST paths
+  (their IR emitters are a later slice).
+
+**State after slice 23:** x86-64's self-host default is the IR path, with
+Perceus RC at asm.fern parity, for the i32 + arrays subset. Toward the goal
+(full IR for all backends + native-parity Perceus), what remains: widen IR
+language coverage (strings → structs/enums → closures/maps/floats) so more
+modules — eventually the compiler itself — qualify; port the remaining native
+Perceus opts (precise drops, FBIP reuse tokens, escape/borrow inference, TRMC,
+drop specialization); build the arm64 + wasm IR emitters and flip their
+defaults; then retire the AST emit path.

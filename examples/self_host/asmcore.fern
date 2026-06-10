@@ -98,11 +98,15 @@ pub struct EmitState {
     // BORROWED (the caller still owns them), so the callee must not
     // release them. Set per function after the params are bound.
     n_params: i32,
-    // use_ir: when set, emit_module routes a fully-IR-eligible module
+    // use_ir: when set, emit_module (x86-64) routes a fully-IR-eligible module
     // through the stack-IR code path (asm_ir.emit_module_ir) instead of the
-    // AST emitter. Default false — the IR rebuild's parallel-path migration
-    // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3); flipping the default is a
-    // separate slice.
+    // AST emitter — the IR rebuild's parallel-path migration
+    // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3). Now DEFAULT ON: the x86-64
+    // self-host default emits from the IR (with asm.fern's array layout + full
+    // Perceus RC) for the i32 + arrays subset; mixed / out-of-subset modules
+    // (strings, structs, methods, …) fall back to the AST emitter, so the
+    // compiler itself still compiles via AST and the byte-identical fixpoint
+    // holds. Only asm.fern reads this — arm64 / wasm keep their AST paths.
     use_ir: boolean
 }
 
@@ -127,15 +131,18 @@ pub function new_state(): EmitState {
         funcs: fns,
         local_types: lts,
         n_params: 0,
-        // Default OFF. The IR path's control flow is now index-based (the
-        // self-host scope-stack miscompile is fixed), but flipping the default
-        // on still routes ARRAY/RC programs through the IR RC path, which is
-        // not yet a drop-in for asm.fern's array-RC implementation — the
-        // self_host_rc_runtime tests assert AST-specific patterns
-        // (__fern_arr_dec / rep stosq) the IR path doesn't emit. The flip waits
-        // until the IR RC path reaches drop-in parity (or those tests pin the
-        // AST path explicitly). The IR path is exercised + proven via -ir.
-        use_ir: false
+        // Default ON (x86-64): a fully-IR-eligible module (i32 + arrays, full
+        // Perceus RC) compiles through asm_ir.emit_module_ir; everything else
+        // (strings/structs/methods/maps/floats/closures) falls back to the AST
+        // emitter. The IR path now uses asm.fern's OWN array layout + RC
+        // helpers (8-byte __fern_arr_box, __fn___fern_rc_inc/__fn___fern_arr_dec)
+        // and implements the full array Perceus lifecycle — alias-inc,
+        // move-on-return, borrowed params, the exit dec-sweep, and reassignment
+        // retain + cow-guarded release — so it is a drop-in for asm.fern's
+        // array RC (the self_host_rc_runtime asm patterns match). The compiler
+        // is not all_eligible (it is full of strings/structs), so it still
+        // compiles via AST and the byte-identical fixpoint holds.
+        use_ir: true
     };
 }
 

@@ -248,13 +248,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // local creates a second reference, which must retain (inc) the
             // buffer. Mark the new slot's array-ness either way.
             var is_arr: boolean = false;
+            var alias_inc: boolean = false;
             match (v.init) {
                 parser.ExprArray(_) => { is_arr = true; },
                 parser.ExprIdent(id) => {
-                    if (se.is_arr_slot(se.slot_of(id.name))) {
-                        is_arr = true;
-                        se = se.emit(ir.op_call_direct("__fern_rc_inc", 1));
-                    }
+                    // Binding a new name to an EXISTING array local creates a
+                    // second reference → retain (alias_inc).
+                    if (se.is_arr_slot(se.slot_of(id.name))) { is_arr = true; alias_inc = true; }
                 },
                 parser.ExprCall(cc) => {
                     // `var x = f()` where f returns an array: a MOVE — x takes
@@ -273,14 +273,29 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var sb: LowerState = se.add_local(v.name);
             var slot: i32 = sb.slot_of(v.name);
             sb = sb.mark_arr(slot, is_arr);
-            return sb.emit(ir.op_store_local(slot));
+            // Retain (alias) + cow-guarded dec-on-overwrite of the slot's prior
+            // value (the loop-rebind reclamation; null on the first binding, so
+            // a no-op there). An owned array slot drives the release.
+            return emit_arr_store(sb, slot, alias_inc, is_arr);
         },
         parser.StmtAssign(a) => {
             var slot: i32 = s.slot_of(a.target);
             if (slot < 0) { return s.fail(); }
+            // Perceus reassignment `y = x`: retain the new ref if it aliases an
+            // rc-tracked array, and release the OLD value the slot held
+            // (cow-guarded). A reassigned BORROWED array param (slot <
+            // n_params) must NOT release its old value — the caller owns it.
+            var reassign_inc: boolean = false;
+            match (a.value) {
+                parser.ExprIdent(id) => {
+                    if (s.is_arr_slot(s.slot_of(id.name))) { reassign_inc = true; }
+                },
+                _ => {}
+            }
+            var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.n_params;
             var se: LowerState = lower_expr(a.value, s);
             if (!se.ok) { return se; }
-            return se.emit(ir.op_store_local(slot));
+            return emit_arr_store(se, slot, reassign_inc, target_is_arr);
         },
         parser.StmtReturn(r) => {
             var se: LowerState = lower_expr(r.value, s);
@@ -376,6 +391,47 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
         _ => { return s.fail(); }
     }
     return s.fail();
+}
+
+// emit_arr_store stores the new value (on top of the operand stack) into
+// `slot` with Perceus accounting, mirroring asm.fern's StmtVar / StmtAssign:
+//   1. retain the new reference (rc_inc) when it ALIASES an rc-tracked array
+//      (alias_inc) — a fresh literal / move-from-call is already owned;
+//   2. when the slot is an OWNED array (do_dec), cow-guarded release of the
+//      OLD value the slot held — `if (old != new) arr_dec(old)` — skipping the
+//      release when an in-place mutator returned the SAME buffer (so the live
+//      value is not freed), and freeing the previous buffer otherwise (the
+//      loop-rebind reclamation);
+//   3. store the new value.
+// The new value is stashed in a scratch local because it is read up to three
+// times (retain arg, cow compare, final store). Composed of existing ops, so
+// every backend + eval_ops lower it for free.
+pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_dec: boolean): LowerState {
+    if (!alias_inc && !do_dec) {
+        // No RC bookkeeping: a bare store (the common non-array case).
+        return se.emit(ir.op_store_local(slot));
+    }
+    var scratch: string = "$rea" + util.i32_to_string(se.local_names.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    if (alias_inc) {
+        st = st.emit(ir.op_load_local(tmp));
+        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+        st = st.emit(ir.op_drop());
+    }
+    if (do_dec) {
+        st = st.emit(ir.op_load_local(slot));      // OLD value the slot holds
+        st = st.emit(ir.op_load_local(tmp));       // new value
+        st = st.emit(ir.op_bin("ne", 0, false));   // old != new (cow guard)
+        st = st.emit(ir.op_if(0));
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        st = st.emit(ir.op_drop());
+        st = st.emit(ir.op_end());
+    }
+    st = st.emit(ir.op_load_local(tmp));
+    return st.emit(ir.op_store_local(slot));
 }
 
 // emit_dec_sweep_except releases (decs) every OWNED array local currently in
