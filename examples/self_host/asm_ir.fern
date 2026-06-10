@@ -29,10 +29,11 @@ import "./irlower";
 // because the IR path only fires when the WHOLE module is eligible
 // (all_eligible), so every function — caller and callee — uses irlower's
 // array layout; nothing crosses an IR/AST boundary.
-pub function ir_eligible(fd: parser.FuncDecl): boolean {
-    if (fd.receiver_name.len() > 0) { return false; }
+pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    // Methods (receiver functions) are lowered too — lower_func binds the
+    // receiver as slot 0 and bails for non-scalar-struct receivers.
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs);
     if (!r.ok) { return false; }
     return true;
 }
@@ -88,12 +89,16 @@ function module_uses_heap(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             // arr_make (array literal) is the allocating op now; `alloc` is
-            // kept for any low-level allocation path.
+            // kept for any low-level allocation path. String literals and concat
+            // also allocate (the 16-byte box + concat buffer), and struct_make
+            // allocates the struct box — all pull in the heap/allocator runtime.
             if (r.ops[i].kind == "alloc" || r.ops[i].kind == "arr_make") { return true; }
+            if (r.ops[i].kind == "const_str" || r.ops[i].kind == "str_concat") { return true; }
+            if (r.ops[i].kind == "struct_make") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -239,6 +244,95 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
     s = s.write(".Larrdec_ret:\n");
     s = s.write("    ret\n");
+    // String helpers — register-arg ABI (%rdi = box A, %rsi = box B), transcribed
+    // verbatim from asm.fern's emit_runtime so the IR path's str_concat / str_eq
+    // call the identical bodies. Gated on the needs the op handlers marked.
+    if (s.has_need("str_concat")) {
+        // __fern_str_concat: alloc lenA+lenB bytes, copy A then B, wrap in a
+        // 16-byte box `[data@0, len@8]`. Returns box ptr in %rax.
+        s = s.write("__fern_str_concat:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    subq $8, %rsp\n");
+        s = s.write("    movq %rdi, %r12\n");
+        s = s.write("    movq %rsi, %r13\n");
+        s = s.write("    movq 8(%r12), %r14\n");
+        s = s.write("    movq 8(%r13), %r15\n");
+        s = s.write("    movq %r14, %rdi\n");
+        s = s.write("    addq %r15, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq (%r12), %rsi\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    movq %r14, %rcx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstrconcat_b\n");
+        s = s.write(".Lstrconcat_a_loop:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdi)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstrconcat_a_loop\n");
+        s = s.write(".Lstrconcat_b:\n");
+        s = s.write("    movq (%r13), %rsi\n");
+        s = s.write("    movq %r15, %rcx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstrconcat_box\n");
+        s = s.write(".Lstrconcat_b_loop:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdi)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstrconcat_b_loop\n");
+        s = s.write(".Lstrconcat_box:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rbx, (%rax)\n");
+        s = s.write("    movq %r14, %rcx\n");
+        s = s.write("    addq %r15, %rcx\n");
+        s = s.write("    movq %rcx, 8(%rax)\n");
+        s = s.write("    addq $8, %rsp\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
+    if (s.has_need("str_eq")) {
+        // __fern_str_eq: 1 in %rax if both boxes have equal length and bytes.
+        s = s.write("__fern_str_eq:\n");
+        s = s.write("    movq 8(%rdi), %rcx\n");
+        s = s.write("    cmpq 8(%rsi), %rcx\n");
+        s = s.write("    jne .Lstreq_no\n");
+        s = s.write("    movq (%rdi), %rdi\n");
+        s = s.write("    movq (%rsi), %rsi\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstreq_yes\n");
+        s = s.write(".Lstreq_loop:\n");
+        s = s.write("    movzbq (%rdi), %rax\n");
+        s = s.write("    movzbq (%rsi), %rdx\n");
+        s = s.write("    cmpq %rdx, %rax\n");
+        s = s.write("    jne .Lstreq_no\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstreq_loop\n");
+        s = s.write(".Lstreq_yes:\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lstreq_no:\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    ret\n");
+    }
     return s;
 }
 
@@ -253,7 +347,7 @@ pub function all_eligible(mod: parser.Module): boolean {
     if (mod.funcs.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!ir_eligible(mod.funcs[i])) { return false; }
+        if (!ir_eligible(mod.funcs[i], mod.structs)) { return false; }
         if (!calls_only_known(mod.funcs[i], mod)) { return false; }
         i = i + 1;
     }
@@ -265,6 +359,11 @@ function module_has_func(mod: parser.Module, name: string): boolean {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == name) { return true; }
+        // Method-call form "<Type>.<method>": a receiver function whose base
+        // receiver type + name compose to `name` (the irlower dispatch label).
+        if (mod.funcs[i].receiver_type.len() > 0) {
+            if (util.base_type_name(mod.funcs[i].receiver_type) + "." + mod.funcs[i].name == name) { return true; }
+        }
         i = i + 1;
     }
     return false;
@@ -274,7 +373,7 @@ function module_has_func(mod: parser.Module, name: string): boolean {
 // function or an IR runtime helper (not a builtin).
 function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -325,9 +424,13 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls);
 
-    s = s.write("__fn_" + asmcore.sanitize_label(fd.name) + ":\n");
+    // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
+    // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
+    var label_name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     var frame: i32 = r.n_locals * 8;
@@ -352,9 +455,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
 
     // Copy params from the caller stack into their local slots, exactly as
     // emit_function does: param[i] sits at +(16 + i*8)(%rbp); the IR's
-    // load_local i reads -8*(i+1)(%rbp). (No receiver — methods are excluded.)
+    // load_local i reads -8*(i+1)(%rbp). r.n_params counts the receiver (slot 0)
+    // for a method, so the receiver — which the caller passes as arg 0 at
+    // +16(%rbp) — copies into slot 0 uniformly with the rest of the params.
     var pidx: i32 = 0;
-    while (pidx < fd.params.len()) {
+    while (pidx < r.n_params) {
         s = s.write("    movq " + util.i32_to_string(16 + pidx * 8) + "(%rbp), %rax\n");
         s = s.write("    movq %rax, " + util.i32_to_string(0 - 8 * (pidx + 1)) + "(%rbp)\n");
         pidx = pidx + 1;
@@ -365,7 +470,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     // jumps to its matching `else` (or `end`); `else`/`loop`/`end` define the
     // label at their own index; `br`/`br_if` resolve via br_target. Branch
     // matching reuses irlower's nesting scanners.
-    var lp: string = ".Lir_" + asmcore.sanitize_label(fd.name) + "_";
+    var lp: string = ".Lir_" + asmcore.sanitize_label(label_name) + "_";
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -426,6 +531,64 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "arr_rc") {
             // pop base; 32-bit refcount field at data-8.
             s = s.write("    popq %rax\n    movl -8(%rax), %eax\n    pushq %rax\n");
+        } else if (o.kind == "const_str") {
+            // String literal: intern the bytes in .rodata, allocate a 16-byte
+            // box `[data_ptr@0, len@8]`, push the box ptr — byte-identical to
+            // asm.fern's ExprString so __fern_str_concat / _eq see the same
+            // layout. Strings are not RC'd (no header), so they leak (matching
+            // the AST path; fine for short-lived programs).
+            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = lo.state;
+            s = s.write("    movq $16, %rdi\n");
+            s = s.write("    call __fern_alloc\n");
+            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    movq %rcx, (%rax)\n");
+            s = s.write("    movq $" + util.i32_to_string(o.str.len()) + ", %rcx\n");
+            s = s.write("    movq %rcx, 8(%rax)\n");
+            s = s.write("    pushq %rax\n");
+        } else if (o.kind == "str_len") {
+            // pop string box; length is at box+8.
+            s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
+        } else if (o.kind == "str_concat") {
+            // operand stack: [box A, box B] (B on top). __fern_str_concat takes
+            // %rdi = A, %rsi = B and returns the fresh box in %rax.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_concat\n    pushq %rax\n");
+            s = s.mark_str_concat();
+        } else if (o.kind == "str_eq") {
+            // operand stack: [box A, box B]; __fern_str_eq(%rdi=A, %rsi=B) -> 0/1.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_eq\n    pushq %rax\n");
+            s = s.mark_str_eq();
+        } else if (o.kind == "struct_make") {
+            // nf field values on the operand stack (field nf-1 on top, decl
+            // order). Box = [shape_ptr@0, f0@8, f1@16, …], (nf+1)*8 bytes; shape
+            // = the interned struct-name string (asm.fern's layout). Pop fields
+            // top-down (field nf-1 → slot nf .. field 0 → slot 1); %rax (box)
+            // stays live across the pops (they touch only the operand stack).
+            var nf: i32 = o.i32_imm;
+            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = lo.state;
+            s = s.write("    movq $" + util.i32_to_string((nf + 1) * 8) + ", %rdi\n");
+            s = s.write("    call __fern_alloc\n");
+            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    movq %rcx, (%rax)\n");
+            var em: i32 = nf - 1;
+            while (em >= 0) {
+                s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string((em + 1) * 8) + "(%rax)\n");
+                em = em - 1;
+            }
+            s = s.write("    pushq %rax\n");
+        } else if (o.kind == "struct_get") {
+            // pop struct box; field at (index+1)*8.
+            s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");
+        } else if (o.kind == "variant_is") {
+            // pop variant box; shape ptr @0; compare to the interned variant name
+            // (same .S label struct_make stores, so pointer equality identifies
+            // the variant). Push 1 if equal, else 0.
+            var vlo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = vlo.state;
+            s = s.write("    popq %rax\n    movq (%rax), %rax\n");
+            s = s.write("    leaq .S" + util.i32_to_string(vlo.idx) + "(%rip), %rcx\n");
+            s = s.write("    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n    pushq %rax\n");
         } else if (o.kind == "drop") {
             s = s.write("    addq $8, %rsp\n");
         } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {
@@ -499,6 +662,17 @@ pub function emit_module_ir(mod: parser.Module): string {
     s = s.write("    movq %rax, %rdi\n");
     s = s.write("    movq $60, %rax\n");
     s = s.write("    syscall\n");
+    // .rodata: each interned string literal as a labelled `.ascii` directive
+    // (GAS interprets the escapes), matching asm.fern's emit_module so the box's
+    // .S<idx> data pointer resolves. string_lits was populated by const_str.
+    if (s.string_lits.len() > 0) {
+        s = s.write("    .section .rodata\n");
+        var li: i32 = 0;
+        while (li < s.string_lits.len()) {
+            s = s.write(".S" + util.i32_to_string(li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            li = li + 1;
+        }
+    }
     // The freestanding allocator + RC runtime, only when the program allocates.
     if (module_uses_heap(mod)) { s = emit_ir_runtime(s); }
     return strbuf_take();

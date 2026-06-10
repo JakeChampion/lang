@@ -12,6 +12,7 @@
 import "std/io";
 import "./lexer";
 import "./parser";
+import "./util";
 import "./wasm";
 import "./wasm_ir";
 
@@ -33,11 +34,25 @@ function main(): i32 {
         var o: string = "(module\n";
         o = o + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
         o = o + "  (memory (export \"memory\") 16)\n";
+        // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
+        // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
+        // distinct values + their offsets so the data + const_str ptrs agree.
+        var sv: string[] = wasm_ir.str_values(mod);
+        var di: i32 = 0;
+        while (di < sv.len()) {
+            o = o + "  (data (i32.const " + util.i32_to_string(wasm_ir.str_offset(sv, di)) + ") \""
+                + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
+            di = di + 1;
+        }
         if (wasm_ir.module_allocates(mod)) {
-            o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base(), wasm_ir.fl_base(), wasm_ir.fl_cells());
-            o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base());
+            o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
+            o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
         if (wasm_ir.module_uses_divrem(mod)) { o = o + wasm.divrem_helpers(); }
+        // $__fern_strcat + $__fern_streq (concat / equality); references
+        // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
+        // in for any string program.
+        if (wasm_ir.module_uses_strings(mod)) { o = o + wasm.strcat_streq_helpers(); }
         o = o + wasm_ir.emit_functions(mod);
         o = o + "  (func $_start (call $proc_exit (call $main)))\n";
         o = o + "  (export \"_start\" (func $_start)))\n";

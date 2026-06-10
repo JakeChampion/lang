@@ -24,7 +24,7 @@ function main(): i32 {
 
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs);
+    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
 
     var mi: i32 = irlower.find_fn(fns, "main");
     if (mi < 0) { return 201; }

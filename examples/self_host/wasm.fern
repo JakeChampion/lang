@@ -5111,7 +5111,7 @@ function hex_digit(d: i32): string {
 // wat_escape renders a string's bytes for a WAT `(data …)` payload:
 // printable ASCII passes through (except `"` and `\`), everything else
 // becomes a `\HH` hex escape — so embedded newlines / quotes survive.
-function wat_escape(s: string): string {
+pub function wat_escape(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < s.len()) {
@@ -5128,7 +5128,7 @@ function wat_escape(s: string): string {
 
 // le32_escape renders a non-negative i32 as four little-endian bytes in
 // WAT `\HH` escape form — the length prefix of a string block.
-function le32_escape(n: i32): string {
+pub function le32_escape(n: i32): string {
     var b0: i32 = n % 256;
     var b1: i32 = (n / 256) % 256;
     var b2: i32 = (n / 65536) % 256;
@@ -7600,9 +7600,12 @@ function string_from_bytes_helper(): string {
     return o;
 }
 
-// strcat_helpers emits the string runtime (concat / compare / predicate /
-// case+repeat). Depends on $__fern_alloc from heap_alloc_helpers.
-function strcat_helpers(): string {
+// strcat_streq_helpers emits ONLY $__fern_strcat + $__fern_streq — the two
+// string helpers the IR path's str_concat / str_eq need. The full
+// strcat_helpers bundle (below) also emits strcmp / split / predicate / case
+// helpers that pull in array helpers ($__fern_arr_push) the IR runtime does not
+// provide, so the IR path emits this narrow subset instead.
+pub function strcat_streq_helpers(): string {
     var o: string = "";
     o = o + "  (func $__fern_strcat (param $a i32) (param $b i32) (result i32)\n";
     o = o + "    (local $la i32) (local $lb i32) (local $p i32) (local $i i32)\n";
@@ -7635,6 +7638,15 @@ function strcat_helpers(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (i32.const 1))\n";
+    return o;
+}
+
+// strcat_helpers emits the full string runtime bundle: concat + equality (via
+// strcat_streq_helpers) then compare / split / predicate / case+repeat. Depends
+// on $__fern_alloc from heap_alloc_helpers; the split/predicate helpers also use
+// array helpers. Used by the AST wasm path.
+pub function strcat_helpers(): string {
+    var o: string = strcat_streq_helpers();
     // $__fern_strcmp(a, b): -1 / 0 / 1 lexicographic (unsigned bytes;
     // shorter prefix is less).
     o = o + "  (func $__fern_strcmp (param $a i32) (param $b i32) (result i32)\n";
@@ -10476,11 +10488,24 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         var ir_out: string = "(module\n";
         ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
+        // String literals -> data-section blocks `[len:i32 LE][bytes]`. wasm_ir
+        // supplies the distinct values + offsets; the byte encoding reuses this
+        // module's le32_escape / wat_escape so it matches the AST path.
+        var sv: string[] = wasm_ir.str_values(mod);
+        var di: i32 = 0;
+        while (di < sv.len()) {
+            ir_out = ir_out + "  (data (i32.const " + util.i32_to_string(wasm_ir.str_offset(sv, di)) + ") \""
+                + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n";
+            di = di + 1;
+        }
         if (wasm_ir.module_allocates(mod)) {
-            ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base(), wasm_ir.fl_base(), wasm_ir.fl_cells());
-            ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base());
+            ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
+            ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
         if (wasm_ir.module_uses_divrem(mod)) { ir_out = ir_out + divrem_helpers(); }
+        // $__fern_strcat + $__fern_streq; references $__fern_str_box from
+        // heap_alloc_helpers (module_allocates pulls it in for string programs).
+        if (wasm_ir.module_uses_strings(mod)) { ir_out = ir_out + strcat_streq_helpers(); }
         ir_out = ir_out + wasm_ir.emit_functions(mod);
         ir_out = ir_out + "  (func $_start (call $proc_exit (call $main)))\n";
         ir_out = ir_out + "  (export \"_start\" (func $_start)))\n";

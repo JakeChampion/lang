@@ -533,3 +533,147 @@ Both tracks ride the SHARED irlower, so each slice lands on all three backends:
    Each opt: an IR analysis or `Op[]`→`Op[]` pass in irlower / a sibling iropt
    module, gated behind a flag like native's, proven by a differential case +
    a focused unit case — NEVER a per-backend asm hack.
+
+### Coverage slice 1: strings — DONE (all three backends)
+
+The first full-language coverage slice: string **literals**, `.len()`, **concat**
+(`+`), and **equality** (`==` / `!=`), lowered through the shared `irlower` to all
+three backends. Strings are leak-only (not reference-counted — asm.fern's AST path
+doesn't sweep them either, fine for short-lived CLI / edge programs), so this slice
+is *pure coverage*: it adds no Perceus machinery, only the type dispatch needed to
+pick the string opcodes.
+
+- **IR (`ir.fern`)** — `str_len` / `str_concat` / `str_eq` (layout-agnostic, like
+  the array ops); `const_str` already existed.
+- **`irlower.fern`** — a `local_is_str` dimension parallel to `local_is_arr`
+  (string params/locals tracked for dispatch only) and `expr_is_str`, which routes
+  `+`/`==`/`!=` on string operands to the string opcodes and `.len()` to `str_len`.
+  Out-of-slice string forms **bail to the AST emitter** so they can't mis-dispatch:
+  string **ordering** (`<` `>` `<=` `>=`, needs strcmp), string **indexing**
+  (`s[i]`), string **arrays** (`string[]` literal / param / return), and
+  string-**returning** functions (the call-site tracking is a follow-up).
+- **Backends** — each selects its own string box: x86-64 / arm64 reuse asm.fern's
+  16-byte `[data@0, len@8]` heap box + the `__fern_str_concat` / `__fern_str_eq`
+  helpers (transcribed into asm_ir's IR runtime; emitted by asm_arm64's own
+  `emit_runtime`); wasm uses the data-section `[len@0, bytes@4]` block (which
+  shifts `fl_base` / `heap_base` off the empty-table defaults — `*_for(mod)`
+  recompute them) and wasm.fern's `$__fern_strcat` / `$__fern_streq`, factored out
+  of the larger `strcat_helpers` bundle into a narrow `strcat_streq_helpers` so the
+  IR path doesn't pull in the split/predicate helpers' array dependencies.
+- **Oracle note** — once strings are eligible, the wasm/x86/arm64 *differential*
+  tests stop being independent oracles for string programs (the "AST baseline",
+  `emit_module`, now also routes through the IR for an eligible module — both arms
+  agree while possibly both wrong). The authoritative gates are the
+  **absolute-value** suites: `TestSelfHostAsmRunX86_64` (x86) and
+  `TestSelfHostWasmRun` (wasm), which assert exact exit codes; arm64 follows by
+  mirror-symmetry with the absolutely-validated x86 path + CI's full matrix.
+  Coverage: ~16 string cases per differential test + the absolute suites.
+
+Next: **structs** (slice 2) — the first rc-tracked composite, which also brings
+per-struct **drop specialization** to x86/arm64 (wasm already emits it).
+
+### Coverage slice 2: structs (scalar-field, leak-only) — DONE (all three backends)
+
+Struct **literal construction** + **field read** through the shared `irlower` to
+all three backends, for **scalar-field (i32/boolean) structs**, leak-only. Two new
+layout-agnostic ops: `struct_make <type, nfields>` (irlower reorders the literal's
+fields into DECL order so the backend stores field i at its slot i) and
+`struct_get <field_index>` (static field offset — no runtime shape dispatch, since
+irlower tracks each local's struct type via `local_struct_type`).
+
+**Why leak-only is exit-code-correct.** The absolute oracles assert exit codes, and
+for a scalar-field struct the value is read before any free — so whether the box is
+reclaimed doesn't change the result. This is what lets a single leak-only IR lowering
+match all three backends' AST paths even though they diverge on struct RC (wasm emits
+per-struct `__fern_release_*`, x86/arm64 don't). rc-tracked fields (array/struct/
+string) + drop specialization — the actual Perceus-parity work — are the next slices.
+
+- **`irlower`** — threads `mod.structs` (read-only) + a `local_struct_type`
+  dimension (struct literals and struct params tracked for field-index lookup);
+  `ExprStructLit` → `struct_make` (decl-order field reorder), bare `ExprFieldAccess`
+  → `struct_get`. Bails to AST for anything outside the slice: `has_base` (struct
+  update), non-scalar-field structs, struct **params** of a non-scalar struct,
+  struct-**returning** functions, and field **mutation** (`p.x = v`, which desugars
+  to an unrecognized `__set_field` call). `lower_func` / `lower_module` gained a
+  `structs` parameter (threaded through all 11 call sites + the eligibility gates).
+- **Backends** — x86/arm64 reuse asm.fern's `[shape_ptr, f0, f1, …]` 8-byte box
+  (shape = the interned struct-name string; field i at `(i+1)*8`); wasm uses
+  `[type_id@0, f0@4, …]` via `$__fern_str_box` (rc-headered; field i at `4 + i*4`).
+  All three pull the box-allocating runtime in via the existing `module_uses_heap`
+  / `module_allocates` gates (extended to recognize `struct_make`).
+- **Validated** by the absolute oracles (`TestSelfHostAsmRunX86_64`,
+  `TestSelfHostWasmRun`, exact exit codes — ~11 / 7 struct cases) + the three
+  differentials; arm64 by mirror-symmetry + its differential under qemu. Fixpoint
+  holds. No regressions (the same 8 pre-existing container-local wasmtime failures).
+
+Next: **struct/enum fields that are themselves rc-tracked** (arrays / strings /
+nested structs) — which is where construction-store retains + **drop
+specialization** (per-type `__fern_release_*` on x86/arm64) finally bite.
+
+### Coverage slice 3: methods (scalar-struct receivers) — DONE (all three backends)
+
+Receiver methods (`function (p: P) area(): i32 { … }`) and their call sites
+(`p.area(args)`) through the shared `irlower` to all three backends, for
+scalar-field struct receivers. The receiver is simply **arg 0**: it sits at the
+first argument position (`+16(%rbp)` on x86, `[x29,#16]` on arm64, param 0 on
+wasm), exactly like a normal first parameter, so the backend change was minimal —
+copy `r.n_params` slots (which now counts the receiver) instead of
+`fd.params.len()`, plus a **receiver-type-qualified label** (`__fn_<Type>.<name>` /
+`$<Type>.<name>`).
+
+- **`irlower`** — `lower_func` binds the receiver as slot 0 (struct-type tracked,
+  `n_params` includes it); bails for non-scalar-struct / primitive / enum
+  receivers. The call site `p.method(args)` is **statically dispatched** on the
+  receiver's tracked struct type to `call_direct("<Type>.<method>", args+receiver)`
+  — no runtime shape compare (the AST path's mechanism), since irlower knows the
+  receiver type. (Methods that *return* a struct/string still bail via the
+  return-type checks.)
+- **Backends** — `emit_function_via_ir` / `emit_function_ir` emit the qualified
+  label + per-function branch-label prefix (so two `get` methods on different
+  types don't collide), and copy `r.n_params` arg slots. `ir_eligible` no longer
+  rejects receiver functions; `module_has_func` recognizes the `"<Type>.<method>"`
+  dispatch name so `calls_only_known` keeps method modules eligible.
+- **Validated** — ~8 / 4 method cases on the absolute oracles
+  (`TestSelfHostAsmRunX86_64`, `TestSelfHostWasmRun`) incl. args, methods on
+  params, method→method (self) dispatch, and same-named methods on two types;
+  plus the three differentials (arm64 under qemu). Existing self-host method tests
+  now route through the IR and stay green. Fixpoint holds; no regressions.
+
+With **structs + methods + scalar arithmetic + strings + arrays** all on the IR,
+the eligible subset now covers a large slice of ordinary Fern.
+
+### Coverage slice 5: enums + `match` — DONE (all three backends)
+
+Enum-variant **construction** and `match`-statement **dispatch** through the
+shared `irlower` to all three backends, for scalar-payload (and no-payload)
+variants. This is the critical-path slice — the AST and every traversal are built
+on enums + `match` — and it turned out to reuse almost everything:
+
+- **Construction** is `struct_make`: a variant box is `[shape/type-id @ slot 0,
+  payload as field 0]`, exactly the struct layout. `Circle(5)` (an `ExprCall`
+  whose callee is a variant-struct name) → `struct_make("Circle", 1)`; a
+  no-payload variant used as a value (`Red`, an `ExprIdent` that resolves to a
+  0-field struct) → `struct_make(name, 0)`. **Payload read** is `struct_get(0)`.
+- The one **new op** is `variant_is(name)`: pop the box, read its slot-0 tag,
+  push 1 if it is the named variant. x86/arm64 compare the interned shape-name
+  pointer (the same `.S` label `struct_make` stores — pointer equality);
+  wasm compares the `struct_type_id`.
+- The **`match` statement** lowers to a `block`/`br` chain (the same structured-
+  control-flow ops as `while`): the scrutinee saved to a fresh slot, each variant
+  arm its own `block` that `variant_is`-tests + `brif`s out on mismatch, binds the
+  scalar payload (`struct_get 0`), runs its body, and `br`s out of the outer
+  block; a trailing wildcard runs unconditionally. Built-in `Option`/`Result`/
+  `bool` patterns (i32-tag discriminants), guards, multi-bindings, non-scalar
+  payloads, and union members bail to the AST emitter.
+- **Validated** by the existing `TestSelfHostEnumX86_64` / `BuiltinEnum` suites
+  (which now route through the IR and stay green, incl. the string-payload case
+  correctly bailing) plus new enum cases on both absolute oracles and the three
+  differentials. Crucially, the **desugared** forms — `if let`, `let … else`,
+  `switch` — all lower to `match` and now route through the IR too
+  (`TestSelfHostIfLet`/`LetElse`/`Switch` green). Fixpoint holds; the full broad
+  self-host x86 sweep (RC suites, pipeline/parser/SSA/VM/bundles, generics) is
+  green. No regressions.
+
+Next: field **mutation** / non-scalar payloads, then tuples / closures / maps /
+floats — after which the rc-tracked-composite + drop-specialization Perceus work
+lands on a much wider base.

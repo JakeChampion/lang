@@ -1905,6 +1905,43 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		// Scalar-field structs via the IR path (struct_make / struct_get,
+		// leak-only): literal construction + field read, field-order independence,
+		// struct params, boolean fields. Exit codes must be exact.
+		{"struct-lit-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 3, y: 4 }; return p.x + p.y; }", 7, "", ""},
+		{"struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 40, x: 2 }; return p.x + p.y; }", 42, "", ""},
+		{"struct-one-field", "struct W { n: i32 } function main(): i32 { var w = W { n: 99 }; return w.n; }", 99, "", ""},
+		{"struct-three-fields", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }", 123, "", ""},
+		{"struct-field-in-expr", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; if (p.x < p.y) { return p.y - p.x; } return 0; }", 1, "", ""},
+		{"struct-param", "struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }", 42, "", ""},
+		{"struct-bool-field", "struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }", 7, "", ""},
+		{"struct-two-instances", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 10, y: 20 }; return a.x + b.y; }", 21, "", ""},
+		{"struct-in-loop", "struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }", 18, "", ""},
+		{"struct-field-from-expr", "struct P { x: i32, y: i32 } function main(): i32 { var n = 5; var p = P { x: n * 2, y: n + 1 }; return p.x + p.y; }", 16, "", ""},
+		// Functional struct update `P { ...base, f: v }` via the IR path
+		// (desugars to struct_make with struct_get copying non-overridden fields
+		// from the base). The base must be a simple ident; mutation still bails.
+		{"struct-update-one", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, "", ""},
+		{"struct-update-first", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, x: 40 }; return q.x + q.y; }", 42, "", ""},
+		// 3-field updates (exit codes are u8, so keep results < 256): the override
+		// can be the first / middle / last field — non-overridden fields copy from
+		// the base via struct_get (each lowered field pushes exactly one value).
+		{"struct-update-mid", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, b: 20 }; return w.a + w.b + w.c; }", 24, "", ""},
+		{"struct-update-none", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v }; return w.a + w.b + w.c; }", 6, "", ""},
+		{"struct-update-3a", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, a: 50 }; return w.a + w.b + w.c; }", 55, "", ""},
+		{"struct-update-3c", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; var w = V { ...v, c: 90 }; return w.a + w.b + w.c; }", 93, "", ""},
+		{"struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, "", ""},
+		// Methods (receiver functions) via the IR path: receiver = arg 0, static
+		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
+		// methods on params, and method-to-method (self) dispatch.
+		{"ir-method-field", "struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }", 42, "", ""},
+		{"ir-method-two-fields", "struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 3, y: 4 }; return p.sum(); }", 7, "", ""},
+		{"ir-method-with-arg", "struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }", 12, "", ""},
+		{"ir-method-two-args", "struct P { x: i32 } function (p: P) comb(a: i32, b: i32): i32 { return p.x + a * 10 + b; } function main(): i32 { var p = P { x: 5 }; return p.comb(2, 3); }", 28, "", ""},
+		{"ir-method-on-param", "struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function runp(q: P): i32 { return q.sum(); } function main(): i32 { var p = P { x: 30, y: 12 }; return runp(p); }", 42, "", ""},
+		{"ir-method-self-dispatch", "struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function (p: P) quad(): i32 { return p.dbl() * 2; } function main(): i32 { var p = P { x: 5 }; return p.quad(); }", 20, "", ""},
+		{"ir-method-in-loop", "struct P { x: i32 } function (p: P) v(): i32 { return p.x; } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i * 3 }; s = s + p.v(); i = i + 1; } return s; }", 18, "", ""},
+		{"ir-method-same-name-two-types", "struct A { n: i32 } struct B { n: i32 } function (a: A) get(): i32 { return a.n + 1; } function (b: B) get(): i32 { return b.n + 100; } function main(): i32 { var a = A { n: 5 }; var b = B { n: 5 }; return a.get() + b.get(); }", 111, "", ""},
 		{
 			"string-array-for-in",
 			"function main(): i32 { var arr = [\"one\", \"two\", \"three\"]; for s in arr { write(s); write(\"\\n\"); } return 0; }",

@@ -159,6 +159,32 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// String values: literals flow through locals / params / returns
 		// / reassignment as i32 pointers to [len][bytes] blocks.
 		{"string-local", "function main(): i32 { var s = \"hello\"; write(s); return 0; }", 0, "hello"},
+		// Scalar-field structs via the IR path (struct_make / struct_get, leak-
+		// only): construction + field read, field-order independence, params,
+		// boolean fields. wasm box is [type_id@0, f0@4, …] rc-headered; exit codes
+		// must match. (Update / mutation fall back to AST.)
+		{"ir-struct-lit-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 3, y: 4 }; return p.x + p.y; }", 7, ""},
+		{"ir-struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 40, x: 2 }; return p.x + p.y; }", 42, ""},
+		{"ir-struct-three-fields", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }", 123, ""},
+		{"ir-struct-param", "struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }", 42, ""},
+		{"ir-struct-bool-field", "struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }", 7, ""},
+		{"ir-struct-two-instances", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 10, y: 20 }; return a.x + b.y; }", 21, ""},
+		{"ir-struct-in-loop", "struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }", 18, ""},
+		// Functional struct update `P { ...base, f: v }`.
+		{"ir-struct-update-one", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, ""},
+		{"ir-struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, ""},
+		// Enums + match: scalar-payload + no-payload variant construction and
+		// match dispatch (variant_is on the type-id @0) with payload binding +
+		// wildcard. Non-scalar payloads (string) bail to AST.
+		{"ir-enum-payload", "enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(A(21)); }", 42, ""},
+		{"ir-enum-unit", "enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }", 9, ""},
+		{"ir-enum-three", "enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }", 22, ""},
+		{"ir-enum-wildcard", "enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }", 100, ""},
+		// Methods (receiver = arg 0, static dispatch to $<Type>.<name>).
+		{"ir-method-field", "struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }", 42, ""},
+		{"ir-method-with-arg", "struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }", 12, ""},
+		{"ir-method-self-dispatch", "struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function (p: P) quad(): i32 { return p.dbl() * 2; } function main(): i32 { var p = P { x: 5 }; return p.quad(); }", 20, ""},
+		{"ir-method-same-name-two-types", "struct A { n: i32 } struct B { n: i32 } function (a: A) get(): i32 { return a.n + 1; } function (b: B) get(): i32 { return b.n + 100; } function main(): i32 { var a = A { n: 5 }; var b = B { n: 5 }; return a.get() + b.get(); }", 111, ""},
 		{"string-local-print", "function main(): i32 { var s = \"hi\"; print(s); return 0; }", 0, "hi\n"},
 		{"string-reassign", "function main(): i32 { var s = \"a\"; s = \"b\"; write(s); return 0; }", 0, "b"},
 		{"string-two-locals", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; write(a); write(b); return 0; }", 0, "foobar"},
