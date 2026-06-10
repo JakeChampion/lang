@@ -198,6 +198,25 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// expr_is_nonscalar conservatively reports whether `e` evaluates to a non-scalar
+// (heap) value — a string, array, struct, tuple, variant box, or anything that
+// might (a call). Used to keep tuple elements (and other scalar-only contexts)
+// to i32/boolean: a tuple with a heap element bails to the AST path, since its
+// rc would need tracking.
+pub function expr_is_nonscalar(e: parser.Expr, s: LowerState): boolean {
+    if (expr_is_str(e, s)) { return true; }
+    if (expr_struct_type(e, s) != "") { return true; }
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        parser.ExprTuple(_) => { return true; },
+        parser.ExprStructLit(_) => { return true; },
+        parser.ExprCall(_) => { return true; },
+        parser.ExprIdent(id) => { return s.is_arr_slot(s.slot_of(id.name)); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // expr_is_str reports whether expression `e` evaluates to a string, by the
 // structural cues irlower can see without a full type checker: a string
 // literal, a string-marked local/param slot, or a `+` whose operands are
@@ -300,6 +319,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return sm.emit(ir.op_struct_make(slit.type_name, ndecl));
         },
         parser.ExprFieldAccess(fa) => {
+            // Numeric field `t.0` / `t.1` → tuple element access (no shape slot,
+            // element i at slot i). The receiver must be a tuple; a non-tuple
+            // numeric access can't type-check, so this is unambiguous.
+            if (util.is_all_digits(fa.field)) {
+                var so0: LowerState = lower_expr(fa.obj, s);
+                if (!so0.ok) { return so0; }
+                return so0.emit(ir.op_tuple_get(util.digits_to_i32(fa.field)));
+            }
             // Bare struct field read `p.x` → struct_get at x's decl index. (As a
             // call receiver — `p.len()` — field access is handled in ExprCall; a
             // bare field access reaching here is a value.)
@@ -388,6 +415,26 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 i = i + 1;
             }
             return sa.emit(ir.op_arr_make(n));
+        },
+        parser.ExprTuple(tup) => {
+            // Tuple literal `(a, b, …)` → tuple_make. Scalar elements only
+            // (leak-only); a heap element bails to the AST path. Elements lower
+            // in source order (element 0 deepest), then tuple_make boxes them.
+            var tn: i32 = tup.elements.len();
+            if (tn == 0) { return s.fail(); }
+            var tei: i32 = 0;
+            while (tei < tn) {
+                if (expr_is_nonscalar(tup.elements[tei], s)) { return s.fail(); }
+                tei = tei + 1;
+            }
+            var ts: LowerState = s;
+            var tj: i32 = 0;
+            while (tj < tn) {
+                ts = lower_expr(tup.elements[tj], ts);
+                if (!ts.ok) { return ts; }
+                tj = tj + 1;
+            }
+            return ts.emit(ir.op_tuple_make(tn));
         },
         parser.ExprIndex(ix) => {
             // String indexing `s[i]` reads a byte, not an array element — not in
@@ -502,6 +549,43 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     match (st) {
         parser.StmtVar(v) => {
+            // 2-element tuple destructure `var (a, b) = E` — the parser encodes
+            // the name as "a,b". Eval the tuple box into a fresh temp, then bind
+            // a = tuple_get(0), b = tuple_get(1). Scalar elements only; >2
+            // elements (another comma in the tail) or a non-tuple init bail.
+            var comma: i32 = 0 - 1;
+            var ci: i32 = 0;
+            while (ci < v.name.len()) {
+                if (v.name[ci] == 44 && comma < 0) { comma = ci; }
+                ci = ci + 1;
+            }
+            if (comma >= 0) {
+                var nameA: string = v.name[0 : comma];
+                var nameB: string = v.name[comma + 1 : v.name.len()];
+                // a further comma in the tail ⇒ >2 elements: bail.
+                var ci2: i32 = 0;
+                while (ci2 < nameB.len()) {
+                    if (nameB[ci2] == 44) { return s.fail(); }
+                    ci2 = ci2 + 1;
+                }
+                var dt: LowerState = lower_expr(v.init, s);
+                if (!dt.ok) { return dt; }
+                var tmp: string = "$tdst" + util.i32_to_string(dt.local_names.len());
+                dt = dt.add_local(tmp);
+                var tmp_slot: i32 = dt.slot_of(tmp);
+                dt = dt.emit(ir.op_store_local(tmp_slot));
+                dt = dt.add_local(nameA);
+                var aSlot: i32 = dt.slot_of(nameA);
+                dt = dt.emit(ir.op_load_local(tmp_slot));
+                dt = dt.emit(ir.op_tuple_get(0));
+                dt = dt.emit(ir.op_store_local(aSlot));
+                dt = dt.add_local(nameB);
+                var bSlot: i32 = dt.slot_of(nameB);
+                dt = dt.emit(ir.op_load_local(tmp_slot));
+                dt = dt.emit(ir.op_tuple_get(1));
+                dt = dt.emit(ir.op_store_local(bSlot));
+                return dt;
+            }
             var se: LowerState = lower_expr(v.init, s);
             if (!se.ok) { return se; }
             // Perceus alias-inc + array tracking: a fresh array literal is

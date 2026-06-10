@@ -99,6 +99,7 @@ function module_uses_heap(mod: parser.Module): boolean {
             if (r.ops[i].kind == "alloc" || r.ops[i].kind == "arr_make") { return true; }
             if (r.ops[i].kind == "const_str" || r.ops[i].kind == "str_concat") { return true; }
             if (r.ops[i].kind == "struct_make") { return true; }
+            if (r.ops[i].kind == "tuple_make") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -592,6 +593,21 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    popq %rax\n    movq (%rax), %rax\n");
             s = s.write("    leaq .S" + util.i32_to_string(vlo.idx) + "(%rip), %rcx\n");
             s = s.write("    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n    pushq %rax\n");
+        } else if (o.kind == "tuple_make") {
+            // n element values on the operand stack (element n-1 on top). Box =
+            // [e0@0, e1@8, …], n*8 bytes, NO shape slot (numeric `.i` access).
+            // Pop top-down; %rax (box) stays live across the pops.
+            var tn: i32 = o.i32_imm;
+            s = s.write("    movq $" + util.i32_to_string(tn * 8) + ", %rdi\n    call __fern_alloc\n");
+            var tem: i32 = tn - 1;
+            while (tem >= 0) {
+                s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string(tem * 8) + "(%rax)\n");
+                tem = tem - 1;
+            }
+            s = s.write("    pushq %rax\n");
+        } else if (o.kind == "tuple_get") {
+            // pop tuple box; element at index*8.
+            s = s.write("    popq %rax\n    movq " + util.i32_to_string(o.i32_imm * 8) + "(%rax), %rax\n    pushq %rax\n");
         } else if (o.kind == "drop") {
             s = s.write("    addq $8, %rsp\n");
         } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {

@@ -177,8 +177,9 @@ pub function module_allocates(mod: parser.Module): boolean {
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
             if (k == "arr_make" || k == "alloc") { return true; }
-            // struct_make allocates the struct box via $__fern_str_box.
+            // struct_make / tuple_make allocate a box via $__fern_str_box.
             if (k == "struct_make") { return true; }
+            if (k == "tuple_make") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -343,6 +344,21 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "variant_is") {
             // stack: variant box -> i32.load (type_id @0) == struct_type_id(name)
             out = out + "    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
+        } else if (o.kind == "tuple_make") {
+            // n elements on the stack (element n-1 on top). Box = [e0@0, e1@4, …]
+            // via $__fern_str_box (rc-headered), n*4 bytes, no type-id slot.
+            var tn: i32 = o.i32_imm;
+            out = out + "    i32.const " + util.i32_to_string(tn * 4) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            var tem: i32 = tn - 1;
+            while (tem >= 0) {
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                tem = tem - 1;
+            }
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "tuple_get") {
+            // stack: tuple box -> i32.load(box + index*4)
+            out = out + "    i32.const " + util.i32_to_string(o.i32_imm * 4) + "\n    i32.add\n    i32.load\n";
         } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {
             // Runtime RC helper: the arg is already on the wasm stack; the
             // helper takes it as a param and returns the ptr / count.
