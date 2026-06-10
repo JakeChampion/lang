@@ -170,6 +170,30 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"arr-reassign-source-live", "function main(): i32 { var xs = [7, 8]; var ys = [0, 0]; ys = xs; return xs[1] + ys[1]; }"},
 		{"arr-reassign-fresh", "function main(): i32 { var xs = [1, 2]; xs = [9, 9, 9]; return xs[2]; }"},
 		{"arr-rebind-loop", "function main(): i32 { var s = 0; var i = 0; while (i < 4) { var r = [i, i * 2, i * 3]; s = s + r[2]; i = i + 1; } return s; }"},
+		// Strings (within-function + string params): literal + .len(), concat
+		// (+), equality (==/!=). irlower tracks string-ness (local_is_str) to
+		// pick str_len / str_concat / str_eq over the array/i32 ops; the IR path
+		// reuses asm.fern's 16-byte `[data@0,len@8]` box + __fern_str_concat/_eq
+		// helpers, so exit codes must match the AST path exactly.
+		{"str-len", `function main(): i32 { var s = "hello"; return s.len(); }`},
+		{"str-literal-len", `function main(): i32 { return "world!".len(); }`},
+		{"str-empty-len", `function main(): i32 { var s = ""; return s.len(); }`},
+		{"str-concat-len", `function main(): i32 { var a = "ab"; var b = "cde"; var c = a + b; return c.len(); }`},
+		{"str-concat-direct", `function main(): i32 { return ("foo" + "bar").len(); }`},
+		{"str-concat-empty", `function main(): i32 { var a = ""; var b = "xyz"; var c = a + b; return c.len(); }`},
+		{"str-concat-chain", `function main(): i32 { var a = "a"; var b = "bb"; var c = "ccc"; return (a + b + c).len(); }`},
+		{"str-eq-true", `function main(): i32 { var a = "hi"; var b = "hi"; if (a == b) { return 7; } return 0; }`},
+		{"str-eq-false", `function main(): i32 { var a = "hi"; var b = "ho"; if (a == b) { return 7; } return 9; }`},
+		{"str-eq-difflen", `function main(): i32 { var a = "hi"; var b = "hii"; if (a == b) { return 1; } return 2; }`},
+		{"str-ne-true", `function main(): i32 { var a = "hi"; var b = "ho"; if (a != b) { return 3; } return 0; }`},
+		{"str-ne-false", `function main(): i32 { var a = "x"; var b = "x"; if (a != b) { return 3; } return 5; }`},
+		{"str-concat-eq", `function main(): i32 { var a = "foo"; var b = "foobar"; if (a + "bar" == b) { return 11; } return 0; }`},
+		{"str-param-len", `function slen(s: string): i32 { return s.len(); } function main(): i32 { var x = "abcd"; return slen(x); }`},
+		{"str-param-concat", `function jn(a: string, b: string): i32 { return (a + b).len(); } function main(): i32 { return jn("xx", "yyy"); }`},
+		{"str-param-eq", `function same(a: string, b: string): i32 { if (a == b) { return 1; } return 0; } function main(): i32 { return same("k", "k"); }`},
+		// A string-RETURNING function isn't IR-lowered yet (irlower bails), so the
+		// whole module falls back to AST under -ir; must still match.
+		{"str-returning-falls-back", `function greet(): string { return "hi"; } function main(): i32 { var s = greet(); return s.len(); }`},
 		// Out of the IR subset -> falls back to the AST emitter under -ir; must
 		// still match (proves the fallback path is intact).
 		{"method-falls-back", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},

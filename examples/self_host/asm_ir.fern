@@ -92,8 +92,11 @@ function module_uses_heap(mod: parser.Module): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             // arr_make (array literal) is the allocating op now; `alloc` is
-            // kept for any low-level allocation path.
+            // kept for any low-level allocation path. String literals and concat
+            // also allocate (the 16-byte box + concat buffer), so they pull in
+            // the heap/allocator runtime too.
             if (r.ops[i].kind == "alloc" || r.ops[i].kind == "arr_make") { return true; }
+            if (r.ops[i].kind == "const_str" || r.ops[i].kind == "str_concat") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -239,6 +242,95 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
     s = s.write(".Larrdec_ret:\n");
     s = s.write("    ret\n");
+    // String helpers — register-arg ABI (%rdi = box A, %rsi = box B), transcribed
+    // verbatim from asm.fern's emit_runtime so the IR path's str_concat / str_eq
+    // call the identical bodies. Gated on the needs the op handlers marked.
+    if (s.has_need("str_concat")) {
+        // __fern_str_concat: alloc lenA+lenB bytes, copy A then B, wrap in a
+        // 16-byte box `[data@0, len@8]`. Returns box ptr in %rax.
+        s = s.write("__fern_str_concat:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    subq $8, %rsp\n");
+        s = s.write("    movq %rdi, %r12\n");
+        s = s.write("    movq %rsi, %r13\n");
+        s = s.write("    movq 8(%r12), %r14\n");
+        s = s.write("    movq 8(%r13), %r15\n");
+        s = s.write("    movq %r14, %rdi\n");
+        s = s.write("    addq %r15, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq (%r12), %rsi\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    movq %r14, %rcx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstrconcat_b\n");
+        s = s.write(".Lstrconcat_a_loop:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdi)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstrconcat_a_loop\n");
+        s = s.write(".Lstrconcat_b:\n");
+        s = s.write("    movq (%r13), %rsi\n");
+        s = s.write("    movq %r15, %rcx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstrconcat_box\n");
+        s = s.write(".Lstrconcat_b_loop:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdi)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstrconcat_b_loop\n");
+        s = s.write(".Lstrconcat_box:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rbx, (%rax)\n");
+        s = s.write("    movq %r14, %rcx\n");
+        s = s.write("    addq %r15, %rcx\n");
+        s = s.write("    movq %rcx, 8(%rax)\n");
+        s = s.write("    addq $8, %rsp\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
+    if (s.has_need("str_eq")) {
+        // __fern_str_eq: 1 in %rax if both boxes have equal length and bytes.
+        s = s.write("__fern_str_eq:\n");
+        s = s.write("    movq 8(%rdi), %rcx\n");
+        s = s.write("    cmpq 8(%rsi), %rcx\n");
+        s = s.write("    jne .Lstreq_no\n");
+        s = s.write("    movq (%rdi), %rdi\n");
+        s = s.write("    movq (%rsi), %rsi\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lstreq_yes\n");
+        s = s.write(".Lstreq_loop:\n");
+        s = s.write("    movzbq (%rdi), %rax\n");
+        s = s.write("    movzbq (%rsi), %rdx\n");
+        s = s.write("    cmpq %rdx, %rax\n");
+        s = s.write("    jne .Lstreq_no\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lstreq_loop\n");
+        s = s.write(".Lstreq_yes:\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lstreq_no:\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    ret\n");
+    }
     return s;
 }
 
@@ -426,6 +518,33 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "arr_rc") {
             // pop base; 32-bit refcount field at data-8.
             s = s.write("    popq %rax\n    movl -8(%rax), %eax\n    pushq %rax\n");
+        } else if (o.kind == "const_str") {
+            // String literal: intern the bytes in .rodata, allocate a 16-byte
+            // box `[data_ptr@0, len@8]`, push the box ptr — byte-identical to
+            // asm.fern's ExprString so __fern_str_concat / _eq see the same
+            // layout. Strings are not RC'd (no header), so they leak (matching
+            // the AST path; fine for short-lived programs).
+            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = lo.state;
+            s = s.write("    movq $16, %rdi\n");
+            s = s.write("    call __fern_alloc\n");
+            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    movq %rcx, (%rax)\n");
+            s = s.write("    movq $" + util.i32_to_string(o.str.len()) + ", %rcx\n");
+            s = s.write("    movq %rcx, 8(%rax)\n");
+            s = s.write("    pushq %rax\n");
+        } else if (o.kind == "str_len") {
+            // pop string box; length is at box+8.
+            s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
+        } else if (o.kind == "str_concat") {
+            // operand stack: [box A, box B] (B on top). __fern_str_concat takes
+            // %rdi = A, %rsi = B and returns the fresh box in %rax.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_concat\n    pushq %rax\n");
+            s = s.mark_str_concat();
+        } else if (o.kind == "str_eq") {
+            // operand stack: [box A, box B]; __fern_str_eq(%rdi=A, %rsi=B) -> 0/1.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_eq\n    pushq %rax\n");
+            s = s.mark_str_eq();
         } else if (o.kind == "drop") {
             s = s.write("    addq $8, %rsp\n");
         } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {
@@ -499,6 +618,17 @@ pub function emit_module_ir(mod: parser.Module): string {
     s = s.write("    movq %rax, %rdi\n");
     s = s.write("    movq $60, %rax\n");
     s = s.write("    syscall\n");
+    // .rodata: each interned string literal as a labelled `.ascii` directive
+    // (GAS interprets the escapes), matching asm.fern's emit_module so the box's
+    // .S<idx> data pointer resolves. string_lits was populated by const_str.
+    if (s.string_lits.len() > 0) {
+        s = s.write("    .section .rodata\n");
+        var li: i32 = 0;
+        while (li < s.string_lits.len()) {
+            s = s.write(".S" + util.i32_to_string(li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            li = li + 1;
+        }
+    }
     // The freestanding allocator + RC runtime, only when the program allocates.
     if (module_uses_heap(mod)) { s = emit_ir_runtime(s); }
     return strbuf_take();

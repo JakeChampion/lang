@@ -138,6 +138,18 @@ pub function op_arr_set(): Op { return op0("arr_set"); }
 pub function op_arr_len(): Op { return op0("arr_len"); }
 pub function op_arr_rc(): Op { return op0("arr_rc"); }
 
+// high-level string ops — layout-agnostic, like the array ops. The IR carries
+// string SEMANTICS (length read, concat, equality); each backend selects its
+// own string box layout (asm.fern's 16-byte `[data@0, len@8]` heap box, wasm's
+// `[len@0, bytes@4]` data-section block). `const_str` (see op_const_str) pushes
+// a string value; `str_len` pops [str] → length; `str_concat` pops [a, b] → the
+// concatenated string (a fresh box); `str_eq` pops [a, b] → 1 if byte-equal
+// else 0. Strings are NOT reference-counted (they leak, matching asm.fern's AST
+// path — fine for short-lived CLI / edge programs), so no RC ops accompany them.
+pub function op_str_len(): Op { return op0("str_len"); }
+pub function op_str_concat(): Op { return op0("str_concat"); }
+pub function op_str_eq(): Op { return op0("str_eq"); }
+
 // calls — i32_imm is the arg count; str is the callee for call_direct
 pub function op_call_direct(callee: string, argc: i32): Op {
     return Op { kind: "call_direct", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
@@ -189,5 +201,8 @@ pub function render_op(o: Op): string {
     if (o.kind == "load") { return "load w" + util.i32_to_string(o.width); }
     if (o.kind == "store") { return "store w" + util.i32_to_string(o.width); }
     if (o.kind == "arr_make") { return "arr_make " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "str_len") { return "str_len"; }
+    if (o.kind == "str_concat") { return "str_concat"; }
+    if (o.kind == "str_eq") { return "str_eq"; }
     return o.kind;
 }

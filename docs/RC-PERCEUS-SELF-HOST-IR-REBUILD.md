@@ -533,3 +533,41 @@ Both tracks ride the SHARED irlower, so each slice lands on all three backends:
    Each opt: an IR analysis or `Op[]`→`Op[]` pass in irlower / a sibling iropt
    module, gated behind a flag like native's, proven by a differential case +
    a focused unit case — NEVER a per-backend asm hack.
+
+### Coverage slice 1: strings — DONE (all three backends)
+
+The first full-language coverage slice: string **literals**, `.len()`, **concat**
+(`+`), and **equality** (`==` / `!=`), lowered through the shared `irlower` to all
+three backends. Strings are leak-only (not reference-counted — asm.fern's AST path
+doesn't sweep them either, fine for short-lived CLI / edge programs), so this slice
+is *pure coverage*: it adds no Perceus machinery, only the type dispatch needed to
+pick the string opcodes.
+
+- **IR (`ir.fern`)** — `str_len` / `str_concat` / `str_eq` (layout-agnostic, like
+  the array ops); `const_str` already existed.
+- **`irlower.fern`** — a `local_is_str` dimension parallel to `local_is_arr`
+  (string params/locals tracked for dispatch only) and `expr_is_str`, which routes
+  `+`/`==`/`!=` on string operands to the string opcodes and `.len()` to `str_len`.
+  Out-of-slice string forms **bail to the AST emitter** so they can't mis-dispatch:
+  string **ordering** (`<` `>` `<=` `>=`, needs strcmp), string **indexing**
+  (`s[i]`), string **arrays** (`string[]` literal / param / return), and
+  string-**returning** functions (the call-site tracking is a follow-up).
+- **Backends** — each selects its own string box: x86-64 / arm64 reuse asm.fern's
+  16-byte `[data@0, len@8]` heap box + the `__fern_str_concat` / `__fern_str_eq`
+  helpers (transcribed into asm_ir's IR runtime; emitted by asm_arm64's own
+  `emit_runtime`); wasm uses the data-section `[len@0, bytes@4]` block (which
+  shifts `fl_base` / `heap_base` off the empty-table defaults — `*_for(mod)`
+  recompute them) and wasm.fern's `$__fern_strcat` / `$__fern_streq`, factored out
+  of the larger `strcat_helpers` bundle into a narrow `strcat_streq_helpers` so the
+  IR path doesn't pull in the split/predicate helpers' array dependencies.
+- **Oracle note** — once strings are eligible, the wasm/x86/arm64 *differential*
+  tests stop being independent oracles for string programs (the "AST baseline",
+  `emit_module`, now also routes through the IR for an eligible module — both arms
+  agree while possibly both wrong). The authoritative gates are the
+  **absolute-value** suites: `TestSelfHostAsmRunX86_64` (x86) and
+  `TestSelfHostWasmRun` (wasm), which assert exact exit codes; arm64 follows by
+  mirror-symmetry with the absolutely-validated x86 path + CI's full matrix.
+  Coverage: ~16 string cases per differential test + the absolute suites.
+
+Next: **structs** (slice 2) — the first rc-tracked composite, which also brings
+per-struct **drop specialization** to x86/arm64 (wasm already emits it).

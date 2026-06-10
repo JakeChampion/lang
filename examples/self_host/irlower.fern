@@ -31,6 +31,11 @@ pub struct LowerState {
     // local_is_arr[i] marks slot i as holding an array value (drives the
     // Perceus alias-inc: a new reference to an array must retain it).
     local_is_arr: boolean[],
+    // local_is_str[i] marks slot i as holding a string value — used for type
+    // dispatch only (str_len vs arr_len, str_concat vs add, str_eq vs eq).
+    // Strings are not reference-counted, so this drives no RC; it just keeps
+    // string slots out of the array machinery and selects the string opcodes.
+    local_is_str: boolean[],
     // arr_ret_fns: names of functions whose return type is an array, so a
     // `var x = f()` is a move (owned, no inc) and x is array-tracked.
     arr_ret_fns: string[],
@@ -39,11 +44,11 @@ pub struct LowerState {
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
-    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: false };
 }
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
@@ -69,7 +74,7 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_arr_slot / mark_arr query and set the array-ness of slot i.
@@ -80,7 +85,35 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+}
+
+// is_str_slot / mark_str query and set the string-ness of slot i.
+pub function (s: LowerState) is_str_slot(i: i32): boolean {
+    if (i < 0) { return false; }
+    if (i >= s.local_is_str.len()) { return false; }
+    return s.local_is_str[i];
+}
+
+pub function (s: LowerState) mark_str(i: i32, v: boolean): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+}
+
+// expr_is_str reports whether expression `e` evaluates to a string, by the
+// structural cues irlower can see without a full type checker: a string
+// literal, a string-marked local/param slot, or a `+` whose operands are
+// strings (nested concat). Drives string-op dispatch in ExprBinary / `.len()`.
+pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprString(_) => { return true; },
+        parser.ExprIdent(id) => { return s.is_str_slot(s.slot_of(id.name)); },
+        parser.ExprBinary(b) => {
+            if (b.op == "+") { return expr_is_str(b.left, s) || expr_is_str(b.right, s); }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // map_binop maps a source binary operator to its IR opcode kind (the i32 /
@@ -118,12 +151,34 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (b.value) { v = 1; }
             return s.emit(ir.op_const_i32(v));
         },
+        parser.ExprString(sv) => {
+            // String literal → const_str (the backend interns the bytes and
+            // builds its string box). Not reference-counted.
+            return s.emit(ir.op_const_str(sv.value));
+        },
         parser.ExprIdent(id) => {
             var slot: i32 = s.slot_of(id.name);
             if (slot < 0) { return s.fail(); }
             return s.emit(ir.op_load_local(slot));
         },
         parser.ExprBinary(b) => {
+            // String dispatch: on string operands, `+` is concat and `==`/`!=`
+            // are byte-equality (str_eq, then `not` for `!=`). Ordering compares
+            // (`<` `>` `<=` `>=`) need strcmp, which the IR path doesn't lower
+            // yet, so a string-operand ordering compare bails to the AST emitter.
+            if (expr_is_str(b.left, s) || expr_is_str(b.right, s)) {
+                if (b.op == "+" || b.op == "==" || b.op == "!=") {
+                    var sl: LowerState = lower_expr(b.left, s);
+                    if (!sl.ok) { return sl; }
+                    var sr: LowerState = lower_expr(b.right, sl);
+                    if (!sr.ok) { return sr; }
+                    if (b.op == "+") { return sr.emit(ir.op_str_concat()); }
+                    var se: LowerState = sr.emit(ir.op_str_eq());
+                    if (b.op == "!=") { return se.emit(ir.op_bin("not", 0, false)); }
+                    return se;
+                }
+                return s.fail();
+            }
             var kind: string = map_binop(b.op);
             if (kind == "") { return s.fail(); }
             var s1: LowerState = lower_expr(b.left, s);
@@ -157,6 +212,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // literal: owned at rc=1, no alias-inc.) Elements must be i32 or the
             // element lowering bails.
             var n: i32 = arr.elements.len();
+            // String arrays aren't in the IR path yet (element string-ness isn't
+            // tracked through arr_get, so `a[i].len()` would mis-dispatch). Bail
+            // if any element is a string so the module falls back to the AST path.
+            var ei: i32 = 0;
+            while (ei < n) {
+                if (expr_is_str(arr.elements[ei], s)) { return s.fail(); }
+                ei = ei + 1;
+            }
             var sa: LowerState = s;
             var i: i32 = 0;
             while (i < n) {
@@ -167,6 +230,9 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return sa.emit(ir.op_arr_make(n));
         },
         parser.ExprIndex(ix) => {
+            // String indexing `s[i]` reads a byte, not an array element — not in
+            // the IR path yet, so bail to the AST emitter.
+            if (expr_is_str(ix.array, s)) { return s.fail(); }
             // arr[idx] → lower the array (base) then the index, then `arr_get`
             // (the backend computes the element address for its layout).
             var si: LowerState = lower_expr(ix.array, s);
@@ -221,8 +287,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 },
                 parser.ExprFieldAccess(fa) => {
                     if (fa.field == "len" && c.args.len() == 0) {
+                        // String `.len()` reads the string box's length field;
+                        // array `.len()` reads the array header. Dispatch on the
+                        // receiver's tracked type.
+                        var str_recv: boolean = expr_is_str(fa.obj, s);
                         var sl: LowerState = lower_expr(fa.obj, s);
                         if (!sl.ok) { return sl; }
+                        if (str_recv) { return sl.emit(ir.op_str_len()); }
                         return sl.emit(ir.op_arr_len());
                     }
                     return s.fail();
@@ -269,10 +340,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 },
                 _ => {}
             }
+            // String tracking: a `var s = <string expr>` marks the slot as a
+            // string (for later `.len()` / concat / eq dispatch). Strings aren't
+            // RC'd, so this never sets alias_inc / is_arr — a plain store.
+            var is_str: boolean = expr_is_str(v.init, se);
             // bind AFTER lowering the init (the init can't see the new name)
             var sb: LowerState = se.add_local(v.name);
             var slot: i32 = sb.slot_of(v.name);
             sb = sb.mark_arr(slot, is_arr);
+            sb = sb.mark_str(slot, is_str);
             // Retain (alias) + cow-guarded dec-on-overwrite of the slot's prior
             // value (the loop-rebind reclamation; null on the first binding, so
             // a no-op there). An owned array slot drives the release.
@@ -503,19 +579,40 @@ function is_array_type_name(t: string): boolean {
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
 // arr_ret_fns is the set of array-returning function names (for move tracking).
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[]): LowerResult {
+    var empty: ir.Op[] = [];
+    var noslots: i32[] = [];
+    // A string-returning function isn't handled yet (the caller side would need
+    // to track the returned value as a string for a later `.len()` / concat).
+    // Bail so such functions — and any module containing one — fall back to the
+    // AST emitter rather than silently mis-dispatching. (Follow-up: str_ret_fns,
+    // mirroring arr_ret_fns.)
+    if (fn.ret_type == "string") {
+        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
+    }
+    // String arrays aren't in the IR path yet: a `string[]` param or return would
+    // let element string-ness leak untracked through arr_get. Bail the function
+    // (and thus the module) to the AST emitter.
+    if (fn.ret_type == "string[]") {
+        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
+    }
     var names: string[] = [];
     var isarr: boolean[] = [];
+    var isstr: boolean[] = [];
     var i: i32 = 0;
     while (i < fn.params.len()) {
+        if (fn.params[i].type_name == "string[]") {
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
+        }
         names = names.append(fn.params[i].name);
         // An array-typed param is array-tracked (so a[i] / a.len() / aliasing
         // it work) but BORROWED — the dec-sweep skips slots < n_params.
         isarr = isarr.append(is_array_type_name(fn.params[i].type_name));
+        // A string-typed param is string-tracked (for `.len()` / concat / eq
+        // dispatch); strings aren't RC'd, so there is no borrow bookkeeping.
+        isstr = isstr.append(fn.params[i].type_name == "string");
         i = i + 1;
     }
-    var empty: ir.Op[] = [];
-    var noslots: i32[] = [];
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, arr_ret_fns: arr_ret_fns, n_params: fn.params.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, arr_ret_fns: arr_ret_fns, n_params: fn.params.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);

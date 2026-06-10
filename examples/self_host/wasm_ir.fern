@@ -38,6 +38,96 @@ pub function fl_base(): i32 { return 40; }
 pub function fl_cells(): i32 { return 65536; }
 pub function heap_base(): i32 { return 40 + 65536 * 4; }
 
+// ---- string literals (data section) -----------------------------------------
+// In the IR subset, string literals live in the data section exactly as
+// wasm.fern's StrTable lays them out: one `[len:i32 LE][bytes]` block per
+// distinct literal, the first at offset 24, each `4 + len` bytes. A string
+// VALUE is a pointer to its block; `.len()` reads the i32 at offset 0. Literals
+// are static (no heap) — only str_concat allocates (via $__fern_str_box). The
+// blocks sit below the freelist/heap, so any literal shifts fl_base/heap_base
+// off the empty-table defaults: fl_base_for / heap_base_for recompute them (and
+// equal fl_base() / heap_base() when there are no literals). The data section
+// and the $__fern_strcat / $__fern_streq helpers are emitted CALLER-side (in
+// wasm.fern, which owns le32_escape / wat_escape / strcat_helpers) because
+// wasm_ir cannot import wasm without a cycle — same split as the heap runtime.
+
+// str_values collects the module's distinct string literals (first-seen order,
+// deduped) from the lowered IR. Both the caller's data-section emission and the
+// per-function const_str offset lookup walk this same list, so offsets agree.
+pub function str_values(mod: parser.Module): string[] {
+    var noret: string[] = [];
+    var vals: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "const_str") {
+                var v: string = r.ops[i].str;
+                var seen: boolean = false;
+                var k: i32 = 0;
+                while (k < vals.len()) {
+                    if (vals[k] == v) { seen = true; }
+                    k = k + 1;
+                }
+                if (!seen) { vals = vals.append(v); }
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return vals;
+}
+
+// str_offset returns the data-section offset of literal index `idx`: 24 + the
+// summed block sizes (4 + len) of all prior literals.
+pub function str_offset(vals: string[], idx: i32): i32 {
+    var off: i32 = 24;
+    var i: i32 = 0;
+    while (i < idx) {
+        off = off + 4 + vals[i].len();
+        i = i + 1;
+    }
+    return off;
+}
+
+// offset_of_value returns the data-section offset of literal value `v`.
+function offset_of_value(vals: string[], v: string): i32 {
+    var i: i32 = 0;
+    while (i < vals.len()) {
+        if (vals[i] == v) { return str_offset(vals, i); }
+        i = i + 1;
+    }
+    return 24;
+}
+
+// fl_base_for / heap_base_for recompute the freelist + heap bases including the
+// literal blocks (heap_extra = 0 in the IR subset — no i64 / print buffers).
+pub function fl_base_for(mod: parser.Module): i32 {
+    return (str_offset(str_values(mod), str_values(mod).len()) + 16 + 7) / 8 * 8;
+}
+pub function heap_base_for(mod: parser.Module): i32 {
+    return fl_base_for(mod) + fl_cells() * 4;
+}
+
+// module_uses_strings reports whether any function uses a string op (literal,
+// len, concat, eq) — gates the data section + strcat/streq helper emission.
+pub function module_uses_strings(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            var k: string = r.ops[i].kind;
+            if (k == "const_str" || k == "str_len" || k == "str_concat" || k == "str_eq") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 // wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
 // values never appear in the i32 subset, so every op is the i32.* form.
 function wasm_binop(kind: string): string {
@@ -91,7 +181,10 @@ pub function module_allocates(mod: parser.Module): boolean {
         }
         fi = fi + 1;
     }
-    return false;
+    // String programs need the heap too: $__fern_strcat allocates via
+    // $__fern_str_box, and strcat_helpers references it even for a str_eq-only
+    // program, so $__fern_str_box (in heap_alloc_helpers) must be present.
+    return module_uses_strings(mod);
 }
 
 // module_uses_divrem reports whether any function uses i32 div/rem (so the
@@ -128,7 +221,7 @@ pub function should_use_ir(mod: parser.Module): boolean {
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
-function emit_function_ir(fd: parser.FuncDecl): string {
+function emit_function_ir(fd: parser.FuncDecl, str_vals: string[]): string {
     var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func(fd, noret);
     var arrtmp: i32 = r.n_locals;
@@ -206,6 +299,19 @@ function emit_function_ir(fd: parser.FuncDecl): string {
         } else if (o.kind == "arr_rc") {
             // stack: base -> i32.load(base - 8)  (rc @ a-8)
             out = out + "    i32.const 8\n    i32.sub\n    i32.load\n";
+        } else if (o.kind == "const_str") {
+            // String literal -> the data-section block pointer (its interned
+            // offset). The block is `[len@0][bytes@4]`; static, no allocation.
+            out = out + "    i32.const " + util.i32_to_string(offset_of_value(str_vals, o.str)) + "\n";
+        } else if (o.kind == "str_len") {
+            // stack: block ptr -> i32.load(ptr)  (len @ +0)
+            out = out + "    i32.load\n";
+        } else if (o.kind == "str_concat") {
+            // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
+            out = out + "    call $__fern_strcat\n";
+        } else if (o.kind == "str_eq") {
+            // stack: a, b -> $__fern_streq(a, b) -> 0/1.
+            out = out + "    call $__fern_streq\n";
         } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {
             // Runtime RC helper: the arg is already on the wasm stack; the
             // helper takes it as a param and returns the ptr / count.
@@ -232,10 +338,11 @@ function emit_function_ir(fd: parser.FuncDecl): string {
 // caller side lets wasm.fern import this module for the use_ir dispatch without
 // a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
 pub function emit_functions(mod: parser.Module): string {
+    var str_vals: string[] = str_values(mod);
     var out: string = "";
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(mod.funcs[fi]);
+        out = out + emit_function_ir(mod.funcs[fi], str_vals);
         fi = fi + 1;
     }
     return out;
