@@ -1,0 +1,163 @@
+// examples/self_host/wasm_ir.fern — the WebAssembly instruction-selector for
+// the target-agnostic stack IR (irlower.fern's Op[]). The wasm sibling of
+// asm_ir / asm_arm64_ir: it lowers the SAME lowered op stream to textual WAT.
+//
+// wasm is the most natural target of the three: the IR is a stack machine with
+// structured control flow (block / loop / if / else / end / br / br_if) and
+// wasm IS that machine, so the lowering is a near-direct transliteration to
+// FLAT WAT instructions — const_i32 -> i32.const, load_local i -> local.get i,
+// add -> i32.add, the structured ops keep their names, and `br depth` /
+// `br_if depth` carry the SAME relative depth the IR already encodes (no label
+// generation). A user `call` needs no arg reversal either: the IR pushes args
+// arg0-deepest and wasm's `call` consumes them arg0-deepest.
+//
+// SCOPE (first wasm slice): the pure-i32 subset — no arrays yet (arrays need
+// wasm's linear-memory __fern_arr_box / RC runtime, a follow-up slice that
+// reuses wasm.fern's heap helpers). A program that allocates is rejected by
+// wasm_i32_eligible and falls back to the AST emitter. This file is therefore
+// self-contained: an all-i32 program needs no heap, no memory writes, no
+// runtime — just the functions + a `_start` that exits with main()'s result.
+//
+// Like asm_ir, this is a SEPARATE module imported only by its differential
+// driver (wasm_ir_run) — wasm.fern stays untouched until a later fold/flip.
+
+import "./parser";
+import "./util";
+import "./ir";
+import "./irlower";
+import "./asm_ir";
+
+// wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
+// values never appear in the i32 subset, so every op is the i32.* form. div/rem
+// use the native trapping i32.div_s / i32.rem_s — sound for the differential
+// corpus (non-zero divisors), where the exit code matches wasm.fern's
+// __fern_idiv / __fern_irem for the same operands.
+function wasm_binop(kind: string): string {
+    if (kind == "add") { return "i32.add"; }
+    if (kind == "sub") { return "i32.sub"; }
+    if (kind == "mul") { return "i32.mul"; }
+    if (kind == "div_s") { return "i32.div_s"; }
+    if (kind == "rem_s") { return "i32.rem_s"; }
+    if (kind == "and") { return "i32.and"; }
+    if (kind == "or") { return "i32.or"; }
+    if (kind == "xor") { return "i32.xor"; }
+    if (kind == "shl") { return "i32.shl"; }
+    if (kind == "shr_s") { return "i32.shr_s"; }
+    if (kind == "eq") { return "i32.eq"; }
+    if (kind == "ne") { return "i32.ne"; }
+    if (kind == "lt_s") { return "i32.lt_s"; }
+    if (kind == "le_s") { return "i32.le_s"; }
+    if (kind == "gt_s") { return "i32.gt_s"; }
+    if (kind == "ge_s") { return "i32.ge_s"; }
+    return ";; ir: unsupported bin " + kind + "\n";
+}
+
+// has_array_ops reports whether a lowered function uses any array opcode (so
+// the pure-i32 wasm slice must skip it — arrays are a follow-up).
+function has_array_ops(ops: ir.Op[]): boolean {
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var k: string = ops[i].kind;
+        if (k == "arr_make" || k == "arr_get" || k == "arr_set" || k == "arr_len" || k == "arr_rc" || k == "alloc") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// wasm_i32_eligible: the module is all-IR-eligible (asm_ir.all_eligible) AND no
+// function allocates — the pure-i32 subset this slice covers.
+pub function wasm_i32_eligible(mod: parser.Module): boolean {
+    if (!asm_ir.all_eligible(mod)) { return false; }
+    var noret: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[i], noret);
+        if (has_array_ops(r.ops)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
+// are numeric: slots 0..n_params-1 are the params, n_params..n_locals-1 the
+// body locals. The body is the flat-WAT transliteration of the op stream.
+function emit_function_ir(fd: parser.FuncDecl, s_unused: string): string {
+    var noret: string[] = [];
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    var out: string = "  (func $" + fd.name;
+    var p: i32 = 0;
+    while (p < r.n_params) {
+        out = out + " (param i32)";
+        p = p + 1;
+    }
+    out = out + " (result i32)\n";
+    var nbody: i32 = r.n_locals - r.n_params;
+    if (nbody > 0) {
+        out = out + "    (local";
+        var l: i32 = 0;
+        while (l < nbody) {
+            out = out + " i32";
+            l = l + 1;
+        }
+        out = out + ")\n";
+    }
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        var o: ir.Op = r.ops[i];
+        if (o.kind == "const_i32") {
+            out = out + "    i32.const " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "load_local") {
+            out = out + "    local.get " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "store_local") {
+            out = out + "    local.set " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "not") {
+            out = out + "    i32.eqz\n";
+        } else if (o.kind == "return") {
+            out = out + "    return\n";
+        } else if (o.kind == "if") {
+            out = out + "    if\n";
+        } else if (o.kind == "else") {
+            out = out + "    else\n";
+        } else if (o.kind == "block") {
+            out = out + "    block\n";
+        } else if (o.kind == "loop") {
+            out = out + "    loop\n";
+        } else if (o.kind == "end") {
+            out = out + "    end\n";
+        } else if (o.kind == "br") {
+            out = out + "    br " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "brif") {
+            out = out + "    br_if " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "drop") {
+            out = out + "    drop\n";
+        } else if (o.kind == "call_direct") {
+            out = out + "    call $" + o.str + "\n";
+        } else {
+            out = out + "    " + wasm_binop(o.kind) + "\n";
+        }
+        i = i + 1;
+    }
+    // Fallthrough result for the (result i32) signature. Subset functions end
+    // in `return`, so this lands in the unreachable continuation (wasm's
+    // stack-polymorphic typing accepts it) and never actually runs.
+    out = out + "    i32.const 0)\n";
+    return out;
+}
+
+// emit_module_ir renders a full all-i32-eligible module as a WAT command core:
+// every function, a `_start` that exits with main()'s result via proc_exit,
+// and the required memory + _start exports. Caller must ensure
+// wasm_i32_eligible(mod).
+pub function emit_module_ir(mod: parser.Module): string {
+    var out: string = "(module\n";
+    out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+    out = out + "  (memory (export \"memory\") 1)\n";
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        out = out + emit_function_ir(mod.funcs[fi], "");
+        fi = fi + 1;
+    }
+    out = out + "  (func $_start (call $proc_exit (call $main)))\n";
+    out = out + "  (export \"_start\" (func $_start)))\n";
+    return out;
+}

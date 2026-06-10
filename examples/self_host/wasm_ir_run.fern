@@ -1,0 +1,36 @@
+// examples/self_host/wasm_ir_run.fern — differential driver for the wasm IR
+// code path (the wasm sibling of asm_ir_run / asm_arm64_ir_run). With a `-ir`
+// flag: when set AND the module is in the pure-i32 IR subset, it emits via the
+// IR path (wasm_ir.emit_module_ir: AST -> stack IR -> WAT); otherwise it uses
+// the unchanged AST backend (wasm.emit_module). The companion Go test pipes
+// each program through both ways, runs the WAT under wasmtime, and asserts
+// identical exit codes — proving the wasm IR path is behaviour-equivalent to
+// the production AST path on the shared i32 subset.
+//
+// A SEPARATE driver so wasm.fern + the wasm_run bootstrap stay untouched.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./wasm";
+import "./wasm_ir";
+
+function main(): i32 {
+    var av: string[] = args();
+    var use_ir: boolean = false;
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-ir") { use_ir = true; }
+        ai = ai + 1;
+    }
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var emitted: string = "";
+    if (use_ir && wasm_ir.wasm_i32_eligible(mod)) {
+        emitted = wasm_ir.emit_module_ir(mod);
+    } else {
+        emitted = wasm.emit_module(parser.module_with_builtins(mod));
+    }
+    write(emitted);
+    return 0;
+}
