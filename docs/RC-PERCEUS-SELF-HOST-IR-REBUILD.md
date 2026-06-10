@@ -571,3 +571,41 @@ pick the string opcodes.
 
 Next: **structs** (slice 2) — the first rc-tracked composite, which also brings
 per-struct **drop specialization** to x86/arm64 (wasm already emits it).
+
+### Coverage slice 2: structs (scalar-field, leak-only) — DONE (all three backends)
+
+Struct **literal construction** + **field read** through the shared `irlower` to
+all three backends, for **scalar-field (i32/boolean) structs**, leak-only. Two new
+layout-agnostic ops: `struct_make <type, nfields>` (irlower reorders the literal's
+fields into DECL order so the backend stores field i at its slot i) and
+`struct_get <field_index>` (static field offset — no runtime shape dispatch, since
+irlower tracks each local's struct type via `local_struct_type`).
+
+**Why leak-only is exit-code-correct.** The absolute oracles assert exit codes, and
+for a scalar-field struct the value is read before any free — so whether the box is
+reclaimed doesn't change the result. This is what lets a single leak-only IR lowering
+match all three backends' AST paths even though they diverge on struct RC (wasm emits
+per-struct `__fern_release_*`, x86/arm64 don't). rc-tracked fields (array/struct/
+string) + drop specialization — the actual Perceus-parity work — are the next slices.
+
+- **`irlower`** — threads `mod.structs` (read-only) + a `local_struct_type`
+  dimension (struct literals and struct params tracked for field-index lookup);
+  `ExprStructLit` → `struct_make` (decl-order field reorder), bare `ExprFieldAccess`
+  → `struct_get`. Bails to AST for anything outside the slice: `has_base` (struct
+  update), non-scalar-field structs, struct **params** of a non-scalar struct,
+  struct-**returning** functions, and field **mutation** (`p.x = v`, which desugars
+  to an unrecognized `__set_field` call). `lower_func` / `lower_module` gained a
+  `structs` parameter (threaded through all 11 call sites + the eligibility gates).
+- **Backends** — x86/arm64 reuse asm.fern's `[shape_ptr, f0, f1, …]` 8-byte box
+  (shape = the interned struct-name string; field i at `(i+1)*8`); wasm uses
+  `[type_id@0, f0@4, …]` via `$__fern_str_box` (rc-headered; field i at `4 + i*4`).
+  All three pull the box-allocating runtime in via the existing `module_uses_heap`
+  / `module_allocates` gates (extended to recognize `struct_make`).
+- **Validated** by the absolute oracles (`TestSelfHostAsmRunX86_64`,
+  `TestSelfHostWasmRun`, exact exit codes — ~11 / 7 struct cases) + the three
+  differentials; arm64 by mirror-symmetry + its differential under qemu. Fixpoint
+  holds. No regressions (the same 8 pre-existing container-local wasmtime failures).
+
+Next: **struct/enum fields that are themselves rc-tracked** (arrays / strings /
+nested structs) — which is where construction-store retains + **drop
+specialization** (per-type `__fern_release_*` on x86/arm64) finally bite.

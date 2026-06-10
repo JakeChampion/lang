@@ -80,7 +80,7 @@ function ir_bin_asm(kind: string): string {
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls);
 
     s = s.write("__fn_" + asmcore.sanitize_label(fd.name) + ":\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -203,6 +203,28 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // operand stack [A, B]; __fern_str_eq(x0=A, x1=B) -> 0/1 in x0.
             s = s.mark_str_eq();
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_eq\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "struct_make") {
+            // nf field values on the operand stack (field nf-1 on top, decl
+            // order). Box = [shape_ptr@0, f0@8, …], (nf+1)*8 bytes; shape = the
+            // interned struct-name string (asm_arm64's layout). x0 (box) stays
+            // live across the pops; pop top-down (field nf-1 → slot nf .. 0 → 1).
+            s = s.mark_heap();
+            var nf: i32 = o.i32_imm;
+            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = lo.state;
+            s = s.write("    mov x0, #" + util.i32_to_string((nf + 1) * 8) + "\n    bl __fern_alloc\n");
+            s = s.write("    adrp x1, .S" + util.i32_to_string(lo.idx) + "\n");
+            s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(lo.idx) + "\n");
+            s = s.write("    str x1, [x0]\n");
+            var em: i32 = nf - 1;
+            while (em >= 0) {
+                s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string((em + 1) * 8) + "]\n");
+                em = em - 1;
+            }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "struct_get") {
+            // pop struct box; field at (index+1)*8.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string((o.i32_imm + 1) * 8) + "]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "drop") {
             s = s.write("    add sp, sp, #16\n");
         } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {

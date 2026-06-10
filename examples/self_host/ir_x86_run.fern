@@ -16,7 +16,7 @@ import "./ir_x86";
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs);
+    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
     print(ir_x86.emit_module(fns));
     return 0;
 }

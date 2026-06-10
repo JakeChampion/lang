@@ -59,7 +59,7 @@ pub function str_values(mod: parser.Module): string[] {
     var vals: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "const_str") {
@@ -116,7 +116,7 @@ pub function module_uses_strings(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
@@ -172,11 +172,13 @@ pub function module_allocates(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
             if (k == "arr_make" || k == "alloc") { return true; }
+            // struct_make allocates the struct box via $__fern_str_box.
+            if (k == "struct_make") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -193,7 +195,7 @@ pub function module_uses_divrem(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") { return true; }
@@ -221,9 +223,9 @@ pub function should_use_ir(mod: parser.Module): boolean {
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
-function emit_function_ir(fd: parser.FuncDecl, str_vals: string[]): string {
+function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[]): string {
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs);
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     var out: string = "  (func $" + fd.name;
@@ -312,6 +314,23 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[]): string {
         } else if (o.kind == "str_eq") {
             // stack: a, b -> $__fern_streq(a, b) -> 0/1.
             out = out + "    call $__fern_streq\n";
+        } else if (o.kind == "struct_make") {
+            // nf field values on the stack (field nf-1 on top, decl order).
+            // Box = [type_id@0, f0@4, f1@8, …] via $__fern_str_box (rc-headered),
+            // 4 + nf*4 bytes. $arrtmp holds the base across the field pops.
+            var nf: i32 = o.i32_imm;
+            out = out + "    i32.const " + util.i32_to_string(4 + nf * 4) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.store\n";
+            var em: i32 = nf - 1;
+            while (em >= 0) {
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(4 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                em = em - 1;
+            }
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "struct_get") {
+            // stack: struct ptr -> i32.load(ptr + 4 + index*4)
+            out = out + "    i32.const " + util.i32_to_string(4 + o.i32_imm * 4) + "\n    i32.add\n    i32.load\n";
         } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {
             // Runtime RC helper: the arg is already on the wasm stack; the
             // helper takes it as a param and returns the ptr / count.
@@ -342,8 +361,20 @@ pub function emit_functions(mod: parser.Module): string {
     var out: string = "";
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(mod.funcs[fi], str_vals);
+        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs);
         fi = fi + 1;
     }
     return out;
+}
+
+// struct_type_id returns a struct's runtime type id = its index in the module's
+// struct table. (For scalar-field structs with static field access it is never
+// read, but it occupies slot 0 so fields land at 4 + i*4.)
+function struct_type_id(structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0;
 }

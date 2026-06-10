@@ -1905,6 +1905,22 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		// Scalar-field structs via the IR path (struct_make / struct_get,
+		// leak-only): literal construction + field read, field-order independence,
+		// struct params, boolean fields. Exit codes must be exact.
+		{"struct-lit-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 3, y: 4 }; return p.x + p.y; }", 7, "", ""},
+		{"struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 40, x: 2 }; return p.x + p.y; }", 42, "", ""},
+		{"struct-one-field", "struct W { n: i32 } function main(): i32 { var w = W { n: 99 }; return w.n; }", 99, "", ""},
+		{"struct-three-fields", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }", 123, "", ""},
+		{"struct-field-in-expr", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; if (p.x < p.y) { return p.y - p.x; } return 0; }", 1, "", ""},
+		{"struct-param", "struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }", 42, "", ""},
+		{"struct-bool-field", "struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }", 7, "", ""},
+		{"struct-two-instances", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 10, y: 20 }; return a.x + b.y; }", 21, "", ""},
+		{"struct-in-loop", "struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }", 18, "", ""},
+		{"struct-field-from-expr", "struct P { x: i32, y: i32 } function main(): i32 { var n = 5; var p = P { x: n * 2, y: n + 1 }; return p.x + p.y; }", 16, "", ""},
+		// Struct update (has_base) and field mutation aren't in the IR path yet —
+		// these stay on the AST emitter and must still produce the right value.
+		{"struct-update-falls-back", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, "", ""},
 		{
 			"string-array-for-in",
 			"function main(): i32 { var arr = [\"one\", \"two\", \"three\"]; for s in arr { write(s); write(\"\\n\"); } return 0; }",

@@ -150,6 +150,24 @@ pub function op_str_len(): Op { return op0("str_len"); }
 pub function op_str_concat(): Op { return op0("str_concat"); }
 pub function op_str_eq(): Op { return op0("str_eq"); }
 
+// high-level struct ops — layout-agnostic, like the array/string ops. `str`
+// carries the struct's type name, `i32_imm` the field count (struct_make) or
+// the field index in DECL order (struct_get). `struct_make` pops `i32_imm`
+// field values (field 0 deepest, already reordered by irlower into decl order)
+// and pushes the new struct box; each backend selects its own layout
+// (x86/arm64: `[shape_ptr, f0, f1, …]` 8-byte slots, field i at (i+1)*8; wasm:
+// `[type_id, f0@4, f1@8, …]` 4-byte slots + an rc header). `struct_get` pops
+// [struct] and pushes field `i32_imm`. This first slice covers scalar-field
+// (i32/boolean) structs only and is leak-only (no RC / drop) — exit-code-
+// equivalent to every backend's AST path since the value is read before any
+// free; rc-tracked fields + drop specialization are later slices.
+pub function op_struct_make(type_name: string, nfields: i32): Op {
+    return Op { kind: "struct_make", i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+}
+pub function op_struct_get(field_index: i32): Op {
+    return Op { kind: "struct_get", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
 // calls — i32_imm is the arg count; str is the callee for call_direct
 pub function op_call_direct(callee: string, argc: i32): Op {
     return Op { kind: "call_direct", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
@@ -204,5 +222,7 @@ pub function render_op(o: Op): string {
     if (o.kind == "str_len") { return "str_len"; }
     if (o.kind == "str_concat") { return "str_concat"; }
     if (o.kind == "str_eq") { return "str_eq"; }
+    if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
     return o.kind;
 }

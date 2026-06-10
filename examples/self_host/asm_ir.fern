@@ -29,10 +29,10 @@ import "./irlower";
 // because the IR path only fires when the WHOLE module is eligible
 // (all_eligible), so every function — caller and callee — uses irlower's
 // array layout; nothing crosses an IR/AST boundary.
-pub function ir_eligible(fd: parser.FuncDecl): boolean {
+pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
     if (fd.receiver_name.len() > 0) { return false; }
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs);
     if (!r.ok) { return false; }
     return true;
 }
@@ -88,15 +88,16 @@ function module_uses_heap(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             // arr_make (array literal) is the allocating op now; `alloc` is
             // kept for any low-level allocation path. String literals and concat
-            // also allocate (the 16-byte box + concat buffer), so they pull in
-            // the heap/allocator runtime too.
+            // also allocate (the 16-byte box + concat buffer), and struct_make
+            // allocates the struct box — all pull in the heap/allocator runtime.
             if (r.ops[i].kind == "alloc" || r.ops[i].kind == "arr_make") { return true; }
             if (r.ops[i].kind == "const_str" || r.ops[i].kind == "str_concat") { return true; }
+            if (r.ops[i].kind == "struct_make") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -345,7 +346,7 @@ pub function all_eligible(mod: parser.Module): boolean {
     if (mod.funcs.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!ir_eligible(mod.funcs[i])) { return false; }
+        if (!ir_eligible(mod.funcs[i], mod.structs)) { return false; }
         if (!calls_only_known(mod.funcs[i], mod)) { return false; }
         i = i + 1;
     }
@@ -366,7 +367,7 @@ function module_has_func(mod: parser.Module, name: string): boolean {
 // function or an IR runtime helper (not a builtin).
 function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -417,7 +418,7 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls);
 
     s = s.write("__fn_" + asmcore.sanitize_label(fd.name) + ":\n");
     s = s.write("    pushq %rbp\n");
@@ -545,6 +546,28 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // operand stack: [box A, box B]; __fern_str_eq(%rdi=A, %rsi=B) -> 0/1.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_eq\n    pushq %rax\n");
             s = s.mark_str_eq();
+        } else if (o.kind == "struct_make") {
+            // nf field values on the operand stack (field nf-1 on top, decl
+            // order). Box = [shape_ptr@0, f0@8, f1@16, …], (nf+1)*8 bytes; shape
+            // = the interned struct-name string (asm.fern's layout). Pop fields
+            // top-down (field nf-1 → slot nf .. field 0 → slot 1); %rax (box)
+            // stays live across the pops (they touch only the operand stack).
+            var nf: i32 = o.i32_imm;
+            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = lo.state;
+            s = s.write("    movq $" + util.i32_to_string((nf + 1) * 8) + ", %rdi\n");
+            s = s.write("    call __fern_alloc\n");
+            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    movq %rcx, (%rax)\n");
+            var em: i32 = nf - 1;
+            while (em >= 0) {
+                s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string((em + 1) * 8) + "(%rax)\n");
+                em = em - 1;
+            }
+            s = s.write("    pushq %rax\n");
+        } else if (o.kind == "struct_get") {
+            // pop struct box; field at (index+1)*8.
+            s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");
         } else if (o.kind == "drop") {
             s = s.write("    addq $8, %rsp\n");
         } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {
