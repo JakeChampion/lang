@@ -1,0 +1,51 @@
+// examples/self_host/ir_run.fern — round-trip driver for the stack IR
+// (ir.fern). Builds a representative Op[] via the constructor helpers —
+// one per opcode family, including the Perceus-relevant
+// `call_direct __fern_rc_inc` — renders each with render_op, and prints
+// the stream one op per line. The companion Go test
+// (internal/e2e/self_host_ir_test.go) asserts the exact output, pinning
+// the IR's data shape + constructors + printer end-to-end through the
+// self-host -> native pipeline (proving ir.fern compiles, not just
+// type-checks). This is slice 1 of the IR rebuild
+// (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md).
+
+import "./ir";
+
+function main(): i32 {
+    var ops: ir.Op[] = [
+        ir.op_const_i32(42),
+        ir.op_const_str("hi"),
+        ir.op_load_local(3),
+        ir.op_store_local(3),
+        ir.op_tee_local(0),
+        ir.op_bin("add", 0, false),
+        ir.op_bin("div_s", 64, true),
+        ir.op_load(ir.width_ptr()),
+        ir.op_store(ir.width_ptr()),
+        ir.op_alloc(),
+        ir.op_call_direct("__fern_rc_inc", 1),
+        ir.op_call_indirect(2),
+        ir.op_call_closure(1),
+        ir.op_block(0),
+        ir.op_loop(0),
+        ir.op_if(0),
+        ir.op_else(),
+        ir.op_br(2),
+        ir.op_brif(1),
+        ir.op_end(),
+        ir.op_drop(),
+        ir.op_return()
+    ];
+
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (i > 0) { out = out + "\n"; }
+        out = out + ir.render_op(ops[i]);
+        i = i + 1;
+    }
+    // print appends the single trailing newline, so the stream is exactly
+    // one rendered op per line.
+    print(out);
+    return ops.len();
+}
