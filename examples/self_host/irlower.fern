@@ -31,16 +31,29 @@ pub struct LowerState {
     // local_is_arr[i] marks slot i as holding an array value (drives the
     // Perceus alias-inc: a new reference to an array must retain it).
     local_is_arr: boolean[],
+    // arr_ret_fns: names of functions whose return type is an array, so a
+    // `var x = f()` is a move (owned, no inc) and x is array-tracked.
+    arr_ret_fns: string[],
     n_params: i32,
     ok: boolean,
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
-    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: false };
+}
+
+// is_arr_ret_fn reports whether `name` is a function returning an array.
+pub function (s: LowerState) is_arr_ret_fn(name: string): boolean {
+    var i: i32 = 0;
+    while (i < s.arr_ret_fns.len()) {
+        if (s.arr_ret_fns[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // slot_of returns the local slot for `name`, or -1 if unbound.
@@ -56,7 +69,7 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_arr_slot / mark_arr query and set the array-ness of slot i.
@@ -67,7 +80,7 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // map_binop maps a source binary operator to its IR opcode kind (the i32 /
@@ -266,6 +279,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         se = se.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
                 },
+                parser.ExprCall(cc) => {
+                    // `var x = f()` where f returns an array: a MOVE — x takes
+                    // ownership of the callee's already-owned buffer (rc=1), so
+                    // no inc; just track x as an array.
+                    match (cc.callee) {
+                        parser.ExprIdent(fid) => {
+                            if (se.is_arr_ret_fn(fid.name)) { is_arr = true; }
+                        },
+                        _ => {}
+                    }
+                },
                 _ => {}
             }
             // bind AFTER lowering the init (the init can't see the new name)
@@ -284,12 +308,20 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
         parser.StmtReturn(r) => {
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }
-            // Perceus exit dec-sweep: release every array local live at this
-            // return. The sweep ops (load / __fern_rc_dec / drop) are net-zero
-            // on the operand stack, so the return value underneath is
-            // undisturbed. (No move-on-return yet — returning an array decs it
-            // too; safe under the leak-only heap.)
-            se = emit_dec_sweep(se);
+            // Perceus move-on-return: when the returned value is a bare array
+            // local, it is MOVED to the caller — exclude it from the exit
+            // dec-sweep so it isn't freed (the return-inc the caller would owe
+            // and this dec cancel; here there is no return-inc, so eliding the
+            // dec is the whole move). Everything else is released as usual.
+            var moved: i32 = 0 - 1;
+            match (r.value) {
+                parser.ExprIdent(rid) => {
+                    var rs: i32 = se.slot_of(rid.name);
+                    if (se.is_arr_slot(rs)) { moved = rs; }
+                },
+                _ => {}
+            }
+            se = emit_dec_sweep_except(se, moved);
             return se.emit(ir.op_return());
         },
         parser.StmtIf(iff) => {
@@ -373,13 +405,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
     return s.fail();
 }
 
-// emit_dec_sweep releases (decs) every array local currently in scope,
-// leaving the operand stack unchanged. Used at each return.
-pub function emit_dec_sweep(s: LowerState): LowerState {
+// emit_dec_sweep_except releases (decs) every array local currently in
+// scope except `keep` (the move-on-return slot, or -1 for none), leaving the
+// operand stack unchanged. Used at each return.
+pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < st.local_is_arr.len()) {
-        if (st.is_arr_slot(i)) {
+        if (i != keep && st.is_arr_slot(i)) {
             st = st.emit(ir.op_load_local(i));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
             st = st.emit(ir.op_drop());
@@ -426,8 +459,17 @@ function arr_slots_of(s: LowerState): i32[] {
     return out;
 }
 
+// is_array_type_name reports whether a type string denotes an array (ends
+// with "[]", e.g. "i32[]").
+function is_array_type_name(t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 2) { return false; }
+    return t[n - 2 : n] == "[]";
+}
+
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
-pub function lower_func(fn: parser.FuncDecl): LowerResult {
+// arr_ret_fns is the set of array-returning function names (for move tracking).
+pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[]): LowerResult {
     var names: string[] = [];
     var isarr: boolean[] = [];
     var i: i32 = 0;
@@ -438,7 +480,7 @@ pub function lower_func(fn: parser.FuncDecl): LowerResult {
     }
     var empty: ir.Op[] = [];
     var noslots: i32[] = [];
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, n_params: fn.params.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, arr_ret_fns: arr_ret_fns, n_params: fn.params.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
@@ -459,12 +501,19 @@ pub struct LoweredFn {
     arr_slots: i32[],
 }
 
-// lower_module lowers every function in a program.
+// lower_module lowers every function in a program. It first collects the
+// array-returning function names so move-on-return / move-from-call can fire.
 pub function lower_module(funcs: parser.FuncDecl[]): LoweredFn[] {
+    var arr_ret_fns: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (is_array_type_name(funcs[k].ret_type)) { arr_ret_fns = arr_ret_fns.append(funcs[k].name); }
+        k = k + 1;
+    }
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i]);
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns);
         out = out.append(LoweredFn { name: funcs[i].name, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots });
         i = i + 1;
     }
@@ -550,6 +599,12 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
     // Freelist head (0 = null; no real block lives at byte address 0, which
     // is the reserved underflow counter). A free node stores [next@+0,
     // size@+4] in the block's own first two words.
+    //
+    // NOTE: this heap is per-eval_ops-call, so the interpreter only models
+    // arrays that stay within their creating function. Arrays that cross a
+    // function boundary (move-on-return) need a shared heap — the x86 backend
+    // (global __heap / __freelist) handles them, and move-on-return is
+    // validated there + against the AST backend in the differential test.
     var freehead: i32 = 0;
 
     var pc: i32 = 0;

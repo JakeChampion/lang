@@ -148,6 +148,15 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"reuse-values-ok", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; return b[0] + b[1] + b[2]; }", 15},
 		{"no-reuse-when-live", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var d = a - b; if (d == 0) { return 1; } return 0; }", 0},
 		{"diff-size-no-reuse", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5]; var d = a - b; if (d == 0) { return 1; } return 0; }", 0},
+		// Move-on-return (slice 13): a returned array is moved to the caller —
+		// excluded from the callee's exit dec-sweep, so it survives (rc=1) and
+		// isn't freed. The uaf-guard case is the discriminator: without the
+		// move, the callee frees the buffer, the caller's same-size alloc
+		// reuses it, and x is corrupted (would read 2 instead of 40).
+		{"mov-basic", "function make(): i32[] { var a = [10, 20, 30]; return a; } function main(): i32 { var x = make(); return x[0] + x[2]; }", 40},
+		{"mov-uaf-guard", "function make(): i32[] { var a = [10, 20, 30]; return a; } function main(): i32 { var x = make(); var y = [1, 1, 1]; return x[0] + x[2]; }", 40},
+		{"mov-len", "function make(): i32[] { var a = [5, 6, 7, 8]; return a; } function main(): i32 { var x = make(); return x.len(); }", 4},
+		{"mov-then-mutate", "function make(): i32[] { var a = [1, 2, 3]; return a; } function main(): i32 { var x = make(); x[1] = 99; return x[0] + x[1] + x[2]; }", 103},
 		// Still out of subset -> lower bails -> emit_module exits 200.
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}
