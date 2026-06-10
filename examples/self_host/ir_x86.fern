@@ -86,6 +86,40 @@ function emit_op(o: ir.Op, exitlabel: string): string {
         // discard one operand-stack slot.
         return "    addq $8, %rsp\n";
     }
+    if (o.kind == "arr_make") {
+        // n element values are on the operand stack (element n-1 on top).
+        // 4-byte layout: alloc (n+2) words, base = rawptr+4 (points at len),
+        // rc=1 at base-4, len=n at base, element i at base+4+i*4. Pop the
+        // elements top-down (slot n-1 .. slot 0); base stays live in %rax
+        // (the pops only touch the operand stack), then push base.
+        var n: i32 = o.i32_imm;
+        var out: string = "    movq $" + util.i32_to_string((n + 2) * 4) + ", %rdi\n";
+        out = out + "    call fn___fern_alloc\n    addq $4, %rax\n";
+        out = out + "    movl $1, -4(%rax)\n";
+        out = out + "    movl $" + util.i32_to_string(n) + ", (%rax)\n";
+        var i: i32 = n - 1;
+        while (i >= 0) {
+            out = out + "    popq %rcx\n    movl %ecx, " + util.i32_to_string(4 + i * 4) + "(%rax)\n";
+            i = i - 1;
+        }
+        return out + "    pushq %rax\n";
+    }
+    if (o.kind == "arr_get") {
+        // pop idx (top) + base; load element at base+4+idx*4.
+        return "    popq %rcx\n    popq %rax\n    movl 4(%rax,%rcx,4), %eax\n    pushq %rax\n";
+    }
+    if (o.kind == "arr_set") {
+        // pop val (top), idx, base; store at base+4+idx*4.
+        return "    popq %rdx\n    popq %rcx\n    popq %rax\n    movl %edx, 4(%rax,%rcx,4)\n";
+    }
+    if (o.kind == "arr_len") {
+        // pop base; load the length header at base.
+        return "    popq %rax\n    movl (%rax), %eax\n    pushq %rax\n";
+    }
+    if (o.kind == "arr_rc") {
+        // pop base; load the refcount header at base-4.
+        return "    popq %rax\n    movl -4(%rax), %eax\n    pushq %rax\n";
+    }
     // otherwise a binary op: pop r into %ecx, l into %eax, combine, push.
     return "    popq %rcx\n    popq %rax\n" + bin_mid(o.kind) + "    pushq %rax\n";
 }
