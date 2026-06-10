@@ -35,6 +35,7 @@ import "./lexer";
 import "./parser";
 import "./asmcore";
 import "./util";
+import "./asm_ir";
 
 
 
@@ -8003,6 +8004,15 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 pub function emit_module(mod: parser.Module): string {
+    // IR code path (parallel-path migration, docs/RC-PERCEUS-SELF-HOST-IR-
+    // REBUILD.md §3): when use_ir is set AND the whole module is in the IR
+    // subset, lower it AST -> stack IR -> asm via asm_ir.emit_module_ir
+    // (proven behaviour-equivalent to the AST emit below). use_ir defaults
+    // false, so this is inert until a follow-up flips the default; the import
+    // already brings the IR path into asm.fern's world (and the bootstrap).
+    if (asmcore.new_state().use_ir && asm_ir.all_eligible(mod)) {
+        return asm_ir.emit_module_ir(mod);
+    }
     // Reset the global strbuf before any .write calls. Output is
     // accumulated there (amortised O(1) per append) and materialised
     // into a fresh string at the tail via strbuf_take().

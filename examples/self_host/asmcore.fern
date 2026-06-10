@@ -97,7 +97,13 @@ pub struct EmitState {
     // The Perceus function-exit dec sweep skips these — parameters are
     // BORROWED (the caller still owns them), so the callee must not
     // release them. Set per function after the params are bound.
-    n_params: i32
+    n_params: i32,
+    // use_ir: when set, emit_module routes a fully-IR-eligible module
+    // through the stack-IR code path (asm_ir.emit_module_ir) instead of the
+    // AST emitter. Default false — the IR rebuild's parallel-path migration
+    // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3); flipping the default is a
+    // separate slice.
+    use_ir: boolean
 }
 
 pub function new_state(): EmitState {
@@ -120,7 +126,8 @@ pub function new_state(): EmitState {
         loop_cont_labels: lcn,
         funcs: fns,
         local_types: lts,
-        n_params: 0
+        n_params: 0,
+        use_ir: false
     };
 }
 
