@@ -677,3 +677,32 @@ on enums + `match` — and it turned out to reuse almost everything:
 Next: field **mutation** / non-scalar payloads, then tuples / closures / maps /
 floats — after which the rc-tracked-composite + drop-specialization Perceus work
 lands on a much wider base.
+
+### Coverage slice: `string[]`-returning functions — DONE (all three backends)
+
+Functions whose return type is `string[]` (`function names(): string[] { … }`)
+now lower through the IR; previously `lower_func` bailed the whole module to the
+AST emitter on a `string[]` return. This composes the two pieces already in the
+IR — array RC (the returned array is an ordinary rc-tracked box: move-on-return
+like any array, via `arr_ret_fns`) and string-element leak-tracking (`string[]`
+locals/params from the typed-string-array slice) — so it needs no new RC
+machinery, only **call-site element typing**: a `var xs = names()` must know `xs`
+is a `string[]` so `xs[i]` dispatches to `str_len` (not `arr_len`).
+
+- **`irlower.fern`** — a `strarr_ret_fns` list (parallel to `str_ret_fns`),
+  collected by `strarr_ret_fns_of` and threaded through `LowerState` /
+  `lower_func`. `expr_is_strarr` gains an `ExprCall` arm: a call to a
+  `strarr_ret_fns` member is a `string[]`, so `var xs = f()` marks `xs` as
+  string-array and `f()[i]` / `xs[i]` element-type to a string. The array itself
+  is still RC'd through `arr_ret_fns` (a `string[]` *is* an array type), so
+  move-on-return and the borrow/move accounting are unchanged — the string
+  **elements** leak, matching the leak-safe string-array model.
+- **Backends** — none changed: `string[]` returns reuse the array box + RC
+  runtime each backend already emits; only the lowering's op selection differs
+  (`str_len` vs `arr_len` on the indexed element).
+- **Validated** — five `strarr-ret*` cases on both absolute oracles
+  (`TestSelfHostAsmRunX86_64`, `TestSelfHostWasmRun`: return-then-index,
+  direct-index of the call, `.len()` + element `.len()`, return-a-param
+  move-out, and a loop summing element lengths) plus the three differentials
+  (arm64 under qemu). The IR path is confirmed taken (`all_eligible` true);
+  fixpoint holds; the broad self-host x86 + Rc sweep is green. No regressions.

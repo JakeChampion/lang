@@ -187,6 +187,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-strarr-index", "function main(): i32 { var names = [\"foo\", \"bar\", \"hello\"]; return names[0].len() + names[2].len(); }", 8, ""},
 		{"ir-strarr-param", "function f(names: string[]): i32 { return names[0].len(); } function main(): i32 { return f([\"abcd\"]); }", 4, ""},
 		{"ir-strarr-loop", "function main(): i32 { var names = [\"a\", \"bb\", \"ccc\"]; var s = 0; var i = 0; while (i < 3) { s = s + names[i].len(); i = i + 1; } return s; }", 6, ""},
+		// string[]-returning functions (move-on-return; call-site element typing).
+		{"ir-strarr-ret", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { var xs = names(); return xs[1].len(); }", 2, ""},
+		{"ir-strarr-ret-direct-index", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { return names()[2].len(); }", 3, ""},
+		{"ir-strarr-ret-loop", "function names(): string[] { return [\"a\", \"bb\", \"ccc\", \"dddd\"]; } function main(): i32 { var xs = names(); var i = 0; var s = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }", 10, ""},
+		{"ir-strarr-ret-param", "function id(a: string[]): string[] { return a; } function main(): i32 { var xs = [\"q\", \"ww\", \"eee\"]; var ys = id(xs); return ys[1].len() + ys.len(); }", 5, ""},
 		// Enums + match: scalar-payload + no-payload variant construction and
 		// match dispatch (variant_is on the type-id @0) with payload binding +
 		// wildcard. Non-scalar payloads (string) bail to AST.

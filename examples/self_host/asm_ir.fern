@@ -33,7 +33,7 @@ pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[]): boo
     // Methods (receiver functions) are lowered too — lower_func binds the
     // receiver as slot 0 and bails for non-scalar-struct receivers.
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, noret);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, noret, noret);
     if (!r.ok) { return false; }
     return true;
 }
@@ -89,7 +89,7 @@ function module_uses_heap(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret);
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             // arr_make (array literal) is the allocating op now; `alloc` is
@@ -374,7 +374,7 @@ function module_has_func(mod: parser.Module, name: string): boolean {
 // function or an IR runtime helper (not a builtin).
 function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -425,7 +425,7 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs));
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs), irlower.strarr_ret_fns_of(s.funcs));
 
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
     // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
