@@ -154,6 +154,12 @@ func TestSelfHostIRDiff(t *testing.T) {
 		{"set-index", "function main(): i32 { var a = [10, 20, 30]; a[1] = 99; return a[0] + a[1] + a[2]; }"},
 		{"set-index-fill", "function main(): i32 { var a = [0, 0, 0, 0, 0]; var i = 0; while (i < 5) { a[i] = i * i; i = i + 1; } return a[0] + a[1] + a[2] + a[3] + a[4]; }"},
 		{"set-index-swap", "function main(): i32 { var a = [7, 3]; var t = a[0]; a[0] = a[1]; a[1] = t; return a[0] * 10 + a[1]; }"},
+		// Move-on-return (slice 13): array-returning functions. The AST and IR
+		// backends must agree (both implement the move).
+		{"mov-basic", "function make(): i32[] { var a = [10, 20, 30]; return a; } function main(): i32 { var x = make(); return x[0] + x[2]; }"},
+		{"mov-uaf-guard", "function make(): i32[] { var a = [10, 20, 30]; return a; } function main(): i32 { var x = make(); var y = [1, 1, 1]; return x[0] + x[2]; }"},
+		{"mov-len", "function make(): i32[] { var a = [5, 6, 7, 8]; return a; } function main(): i32 { var x = make(); return x.len(); }"},
+		{"mov-then-mutate", "function make(): i32[] { var a = [1, 2, 3]; return a; } function main(): i32 { var x = make(); x[1] = 99; return x[0] + x[1] + x[2]; }"},
 	}
 
 	for _, tc := range corpus {
