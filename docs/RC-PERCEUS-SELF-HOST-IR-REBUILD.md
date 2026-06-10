@@ -197,3 +197,41 @@ Same nets as the existing self-host work, plus IR-specific ones:
   examples/self_host/ir.fern`, exit 0); imported by nobody, so the
   byte-identical self-bootstrap is unaffected. Next: slice 1 (IR
   round-trip Go-side test), then `irlower.fern` skeleton.
+- 2026-06-10: **Slice 1 — `Op[]` round-trip test — DONE (#2590).**
+  `ir_run.fern` + `TestSelfHostIRRoundTrip`: builds a representative
+  `Op[]` (one per opcode family) and asserts the `render_op` golden
+  through the self-host → native pipeline — proves `ir.fern` compiles,
+  not just type-checks.
+- 2026-06-10: **Slice 2 — AST→IR lowering + interpreter — DONE (#2591).**
+  `irlower.fern`: `lower_func` (stack-machine emit for the straight-line
+  i32 subset) + `eval_ops` (a stack interpreter validating lowering
+  without a backend), `irlower_run.fern` driver,
+  `TestSelfHostIRLowerRoundTrip`.
+- 2026-06-10: **Slice 3 — first IR-consuming backend (x86-64) — DONE
+  (#2592).** `ir_x86.fern` emits a freestanding x86-64 program from
+  `Op[]` (operand stack on the machine stack, locals in an rbp frame).
+  The self-host emits machine code from the IR, not the AST, for the
+  first time. `TestSelfHostIRx86Run` runs real ELF binaries.
+- 2026-06-10: **Slice 4 — if/else — DONE (#2593).** Structured control
+  flow lowered to `if`/`else`/`end`; interpreter executes it
+  (`find_matching_*`); `ir_x86` translates to `jz`/labels via a scope
+  stack.
+- 2026-06-10: **Slice 5 — while loops — DONE (#2594).** Canonical wasm
+  `block`/`loop`/`br`/`br_if` shape; interpreter resolves branches via
+  `enclosing_opener`; `ir_x86` scope stack generalised (per-scope kind +
+  br-target label).
+- 2026-06-10: **Slice 6 — calls + multi-function — DONE (#2595).**
+  `call_direct` lowering; `lower_module` + `eval_call` (recursion-safe
+  interpreter); `ir_x86` emits per-function `call`/`ret` with the SysV
+  integer-register convention (no 16-byte alignment needed — integer-only
+  callees). Recursion (fib/fact/mutual) runs as real x86-64.
+- 2026-06-10: **Slice 7 — differential gate — DONE.** `TestSelfHostIRDiff`
+  compiles a 25-program i32 corpus through BOTH the AST backend
+  (`asm_run`) and the IR backend (`ir_x86_run`) and asserts identical
+  exit codes — the rollout prerequisite (§6 Differential) for flipping
+  x86-64's default. The IR backend is now proven behaviour-equivalent to
+  the production AST backend on the i32 subset (params/locals,
+  arithmetic, comparisons, bitwise/shift, unary, if/else, while,
+  multi-function recursion). Next: widen lowering past i32 (strings /
+  structs / arrays), or stand up `emit_module_ir` as a selectable path in
+  the real `asm.fern` backend ahead of flipping the default.
