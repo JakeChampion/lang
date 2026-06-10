@@ -128,8 +128,7 @@ pub function (s: LowerState) mark_struct_type(i: i32, t: string): LowerState {
 // The core lookups take the decl array directly (so lower_func can use them
 // while building its initial state); the LowerState methods delegate.
 // decl_field_index returns a field's position in DECL order (-1 if absent);
-// decl_is_scalar reports whether every field is an i32/boolean (the leak-only
-// subset this slice covers — non-scalar fields would need RC + drop).
+// decl_is_struct reports whether `name` is a declared struct.
 pub function decl_is_struct(structs: parser.StructDecl[], name: string): boolean {
     var i: i32 = 0;
     while (i < structs.len()) {
@@ -155,14 +154,20 @@ pub function decl_field_index(structs: parser.StructDecl[], struct_name: string,
     return 0 - 1;
 }
 
-pub function decl_is_scalar(structs: parser.StructDecl[], struct_name: string): boolean {
+// decl_is_leaksafe reports whether every field is an i32/boolean OR a string.
+// These are all leak-only types in the IR path — strings are never freed, so a
+// struct holding one keeps a valid reference for the program's life — so such a
+// struct needs NO reference counting (matching the AST path's exit codes; the
+// boxes leak). Array / nested-struct / tuple fields would be RC-tracked (freed),
+// so a struct holding one needs construction retains + drop release — deferred.
+pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == struct_name) {
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t != "i32" && t != "boolean") { return false; }
+                if (t != "i32" && t != "boolean" && t != "string") { return false; }
                 fi = fi + 1;
             }
             return true;
@@ -170,6 +175,24 @@ pub function decl_is_scalar(structs: parser.StructDecl[], struct_name: string): 
         i = i + 1;
     }
     return false;
+}
+
+// decl_field_type returns the declared type name of `field` in `struct_name`
+// ("" if absent) — used to track a string-typed field's reads as strings.
+pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, field: string): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (structs[i].fields[fi].name == field) { return structs[i].fields[fi].type_name; }
+                fi = fi + 1;
+            }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
 }
 
 pub function (s: LowerState) field_index_in(struct_name: string, field: string): i32 {
@@ -252,6 +275,12 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             }
             return false;
         },
+        parser.ExprFieldAccess(fa) => {
+            // A string-typed struct field read `p.name` is a string.
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return decl_field_type(s.structs, oty, fa.field) == "string";
+        },
         _ => { return false; }
     }
     return false;
@@ -306,7 +335,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // must be a simple ident of the same struct type, so re-reading its
             // fields is side-effect-free (a complex base bails to the AST path).
             if (!decl_is_struct(s.structs, slit.type_name)) { return s.fail(); }
-            if (!decl_is_scalar(s.structs, slit.type_name)) { return s.fail(); }
+            if (!decl_is_leaksafe(s.structs, slit.type_name)) { return s.fail(); }
             if (slit.has_base) {
                 match (slit.base) {
                     parser.ExprIdent(_) => {},
@@ -506,7 +535,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return s.emit(ir.op_call_direct("__fern_heap_used", 0));
                     }
                     if (decl_is_struct(s.structs, cid.name)) {
-                        if (!decl_is_scalar(s.structs, cid.name)) { return s.fail(); }
+                        if (!decl_is_leaksafe(s.structs, cid.name)) { return s.fail(); }
                         if (c.args.len() != decl_field_count(s.structs, cid.name)) { return s.fail(); }
                         var vctor: LowerState = s;
                         var vi: i32 = 0;
@@ -772,7 +801,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 }
                                 var fsty: string = expr_struct_type(c.args[0], s);
                                 if (fsty == "") { return s.fail(); }
-                                if (!decl_is_scalar(s.structs, fsty)) { return s.fail(); }
+                                if (!decl_is_leaksafe(s.structs, fsty)) { return s.fail(); }
                                 var fidx: i32 = s.field_index_in(fsty, fname);
                                 if (fidx < 0) { return s.fail(); }
                                 var sf: LowerState = lower_expr(c.args[0], s);
@@ -818,7 +847,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         if (is_builtin_pattern(pv.type_name)) { return s.fail(); }
                         if (pv.extra_bindings.len() > 0) { return s.fail(); }
                         if (!decl_is_struct(ms.structs, pv.type_name)) { return s.fail(); }
-                        if (!decl_is_scalar(ms.structs, pv.type_name)) { return s.fail(); }
+                        if (!decl_is_leaksafe(ms.structs, pv.type_name)) { return s.fail(); }
                         var has_bind: boolean = pv.binding.len() > 0 && pv.binding != "_";
                         if (has_bind && decl_field_count(ms.structs, pv.type_name) < 1) { return s.fail(); }
                         ms = ms.emit(ir.op_block(0));   // arm block: br 0 = skip arm
@@ -832,6 +861,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             ms = ms.emit(ir.op_load_local(scrut_slot));
                             ms = ms.emit(ir.op_struct_get(0));      // payload @ field 0
                             ms = ms.emit(ir.op_store_local(bslot));
+                            // A string payload (`Word(string)`) binds as a string.
+                            if (decl_field_type(ms.structs, pv.type_name, "__ev") == "string") {
+                                ms = ms.mark_str(bslot, true);
+                            }
                         }
                         ms = lower_block(arm.body, ms);
                         if (!ms.ok) { return ms; }
@@ -991,7 +1024,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // enum / non-scalar-struct receiver bails the whole module to the AST path.
     if (fn.receiver_name.len() > 0) {
         var rbase: string = util.base_type_name(fn.receiver_type);
-        if (!decl_is_struct(structs, rbase) || !decl_is_scalar(structs, rbase)) {
+        if (!decl_is_struct(structs, rbase) || !decl_is_leaksafe(structs, rbase)) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots };
         }
         names = names.append(fn.receiver_name);
@@ -1005,7 +1038,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
         }
         // A struct param must be a scalar-field struct; otherwise bail.
-        if (decl_is_struct(structs, fn.params[i].type_name) && !decl_is_scalar(structs, fn.params[i].type_name)) {
+        if (decl_is_struct(structs, fn.params[i].type_name) && !decl_is_leaksafe(structs, fn.params[i].type_name)) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
         }
         names = names.append(fn.params[i].name);
