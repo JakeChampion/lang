@@ -1957,6 +1957,14 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"strarr-param", "function f(names: string[]): i32 { return names[0].len(); } function main(): i32 { return f([\"abcd\"]); }", 4, "", ""},
 		{"strarr-loop", "function main(): i32 { var names = [\"a\", \"bb\", \"ccc\"]; var s = 0; var i = 0; while (i < 3) { s = s + names[i].len(); i = i + 1; } return s; }", 6, "", ""},
 		{"strarr-eq-elem", "function main(): i32 { var names = [\"hi\", \"ho\"]; if (names[0] == \"hi\") { return 7; } return 0; }", 7, "", ""},
+		// string[]-returning functions: the array is rc-tracked (move-on-return),
+		// the call site tracks the result as string[] (element typing via
+		// strarr_ret_fns) so `xs[i]` is a string. Elements leak.
+		{"strarr-ret", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { var xs = names(); return xs[1].len(); }", 2, "", ""},
+		{"strarr-ret-direct-index", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { return names()[2].len(); }", 3, "", ""},
+		{"strarr-ret-len", "function names(): string[] { var a = [\"x\", \"yy\"]; return a; } function main(): i32 { var xs = names(); return xs.len() + xs[1].len(); }", 4, "", ""},
+		{"strarr-ret-param", "function id(a: string[]): string[] { return a; } function main(): i32 { var xs = [\"q\", \"ww\", \"eee\"]; var ys = id(xs); return ys[1].len() + ys.len(); }", 5, "", ""},
+		{"strarr-ret-loop", "function names(): string[] { return [\"a\", \"bb\", \"ccc\", \"dddd\"]; } function main(): i32 { var xs = names(); var i = 0; var s = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }", 10, "", ""},
 		// Methods (receiver functions) via the IR path: receiver = arg 0, static
 		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
 		// methods on params, and method-to-method (self) dispatch.
