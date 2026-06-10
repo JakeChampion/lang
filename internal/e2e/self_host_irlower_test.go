@@ -116,6 +116,11 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"rc-clean-no-underflow", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc_underflow(); }", 0},
 		{"rc-balanced-manual-dec", "function main(): i32 { var a = [1, 2, 3]; var b = a; __rc_dec(a); __rc_dec(b); return __rc_underflow(); }", 0},
 		{"rc-detects-overrelease", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); __rc_dec(a); return __rc_underflow(); }", 1},
+		// Free path + reuse (slice 12): a freed block is reused by a same-size
+		// alloc (a - b == 0); values stay correct.
+		{"reuse-same-block", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; var d = a - b; if (d == 0) { return 1; } return 0; }", 1},
+		{"reuse-values-ok", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; return b[0] + b[1] + b[2]; }", 15},
+		{"no-reuse-when-live", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var d = a - b; if (d == 0) { return 1; } return 0; }", 0},
 		// Still out of subset -> lower bails (200): floats.
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}

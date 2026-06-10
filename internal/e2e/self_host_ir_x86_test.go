@@ -141,6 +141,13 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"rc-balanced-manual-dec", "function main(): i32 { var a = [1, 2, 3]; var b = a; __rc_dec(a); __rc_dec(b); return __rc_underflow(); }", 0},
 		{"rc-detects-overrelease", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); __rc_dec(a); return __rc_underflow(); }", 1},
 		{"rc-after-one-dec", "function main(): i32 { var a = [1, 2, 3]; var b = a; __rc_dec(a); return __rc(a); }", 1},
+		// Free path + reuse (slice 12): at rc==0 the block returns to a
+		// size-class freelist; a same-size alloc reuses it. (a - b == 0 means
+		// b reused a's freed block — the in-place-reuse / peak-memory win.)
+		{"reuse-same-block", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; var d = a - b; if (d == 0) { return 1; } return 0; }", 1},
+		{"reuse-values-ok", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; return b[0] + b[1] + b[2]; }", 15},
+		{"no-reuse-when-live", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var d = a - b; if (d == 0) { return 1; } return 0; }", 0},
+		{"diff-size-no-reuse", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5]; var d = a - b; if (d == 0) { return 1; } return 0; }", 0},
 		// Still out of subset -> lower bails -> emit_module exits 200.
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}
