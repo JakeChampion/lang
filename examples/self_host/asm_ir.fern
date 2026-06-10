@@ -106,7 +106,11 @@ function ir_arg_reg(i: i32): string {
 // (SysV ABI), distinct from user functions' __fn_* (asm.fern stack ABI).
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("fn___fern_rc_inc:\n");
-    s = s.write("    movl -4(%rdi), %eax\n    addl $1, %eax\n    movl %eax, -4(%rdi)\n    movq %rdi, %rax\n    ret\n");
+    // Guard low/null pointers (null, SSO/sentinel-tagged) the same way
+    // fn___fern_rc_dec does: never touch the rc word of a non-heap value.
+    s = s.write("    cmpq $8, %rdi\n    jb .Linc_skip\n");
+    s = s.write("    movl -4(%rdi), %eax\n    addl $1, %eax\n    movl %eax, -4(%rdi)\n");
+    s = s.write(".Linc_skip:\n    movq %rdi, %rax\n    ret\n");
     s = s.write("fn___fern_rc_dec:\n");
     s = s.write("    cmpq $8, %rdi\n    jb .Ldec_skip\n");
     s = s.write("    movl -4(%rdi), %eax\n    cmpl $0, %eax\n    jg .Ldec_do\n");
@@ -197,11 +201,16 @@ function ir_bin_asm(kind: string): string {
     return "    # ir: unsupported bin " + kind + "\n";
 }
 
-// ir_scope_push grows a depth-indexed scope array and sets index `depth`.
-function ir_scope_push(a: string[], depth: i32, v: string): string[] {
-    var r: string[] = a;
-    while (r.len() < depth + 1) { r = r.append(""); }
-    return r.with(depth, v);
+// br_target resolves a `br d` / `br_if d` at op index `i` to its label: a
+// loop scope -> its header label (the loop op's index); a block/if scope ->
+// the label at its matching `end`. Uses irlower's nesting scanners — no
+// threaded scope-stack state (a self-host-robust formulation; the earlier
+// grow-and-overwrite string[] scope arrays mis-ran under the self-hosted
+// compiler).
+function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
+    var op: i32 = irlower.enclosing_opener(ops, i, d);
+    if (ops[op].kind == "loop") { return lp + util.i32_to_string(op); }
+    return lp + util.i32_to_string(irlower.find_matching_end(ops, op + 1));
 }
 
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
@@ -227,17 +236,12 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         pidx = pidx + 1;
     }
 
-    // Structured control flow -> labels via a depth-indexed scope stack:
-    // `br N` / `br_if N` -> the N-th-from-top scope's target (block/if -> its
-    // end label; loop -> its header). Labels are function-prefixed.
+    // Structured control flow -> flat labels, derived from OP-STREAM INDICES
+    // (no threaded scope stack): the label at op index `j` is `lp<j>`. An `if`
+    // jumps to its matching `else` (or `end`); `else`/`loop`/`end` define the
+    // label at their own index; `br`/`br_if` resolve via br_target. Branch
+    // matching reuses irlower's nesting scanners.
     var lp: string = ".Lir_" + asmcore.sanitize_label(fd.name) + "_";
-    var nlabel: i32 = 0;
-    var depth: i32 = 0;
-    var s_kind: string[] = [];
-    var s_else: string[] = [];
-    var s_end: string[] = [];
-    var s_brt: string[] = [];
-
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -252,40 +256,25 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "return") {
             s = s.write("    popq %rax\n    leave\n    ret\n");
         } else if (o.kind == "if") {
-            var le: string = lp + "else_" + util.i32_to_string(nlabel);
-            var lend: string = lp + "end_" + util.i32_to_string(nlabel);
-            nlabel = nlabel + 1;
-            s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + le + "\n");
-            s_kind = ir_scope_push(s_kind, depth, "if");
-            s_else = ir_scope_push(s_else, depth, le);
-            s_end = ir_scope_push(s_end, depth, lend);
-            s_brt = ir_scope_push(s_brt, depth, lend);
-            depth = depth + 1;
+            // jump to the matching else (if any) or end when the cond is false.
+            var elseidx: i32 = irlower.find_matching_else(r.ops, i + 1);
+            var tgt: string = "";
+            if (elseidx >= 0) { tgt = lp + util.i32_to_string(elseidx); }
+            else { tgt = lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)); }
+            s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + tgt + "\n");
         } else if (o.kind == "else") {
-            var d: i32 = depth - 1;
-            s = s.write("    jmp " + s_end[d] + "\n" + s_else[d] + ":\n");
-            s_kind = s_kind.with(d, "if_else");
+            // end of the then-arm jumps past the else; land the false path here.
+            s = s.write("    jmp " + lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)) + "\n");
+            s = s.write(lp + util.i32_to_string(i) + ":\n");
         } else if (o.kind == "block") {
-            var lb: string = lp + "blk_" + util.i32_to_string(nlabel);
-            nlabel = nlabel + 1;
-            s_kind = ir_scope_push(s_kind, depth, "block");
-            s_else = ir_scope_push(s_else, depth, lb);
-            s_end = ir_scope_push(s_end, depth, lb);
-            s_brt = ir_scope_push(s_brt, depth, lb);
-            depth = depth + 1;
+            // forward scope: its exit label is defined at the matching `end`.
         } else if (o.kind == "loop") {
-            var ll: string = lp + "loop_" + util.i32_to_string(nlabel);
-            nlabel = nlabel + 1;
-            s = s.write(ll + ":\n");
-            s_kind = ir_scope_push(s_kind, depth, "loop");
-            s_else = ir_scope_push(s_else, depth, ll);
-            s_end = ir_scope_push(s_end, depth, ll);
-            s_brt = ir_scope_push(s_brt, depth, ll);
-            depth = depth + 1;
+            // backward scope: header label, branched to by `br`.
+            s = s.write(lp + util.i32_to_string(i) + ":\n");
         } else if (o.kind == "br") {
-            s = s.write("    jmp " + s_brt[depth - 1 - o.i32_imm] + "\n");
+            s = s.write("    jmp " + br_target(r.ops, lp, i, o.i32_imm) + "\n");
         } else if (o.kind == "brif") {
-            s = s.write("    popq %rax\n    testq %rax, %rax\n    jnz " + s_brt[depth - 1 - o.i32_imm] + "\n");
+            s = s.write("    popq %rax\n    testq %rax, %rax\n    jnz " + br_target(r.ops, lp, i, o.i32_imm) + "\n");
         } else if (o.kind == "alloc") {
             s = s.write("    popq %rdi\n    call fn___fern_alloc\n    pushq %rax\n");
         } else if (o.kind == "load") {
@@ -319,12 +308,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
         } else if (o.kind == "end") {
-            var d2: i32 = depth - 1;
-            var kind: string = s_kind[d2];
-            if (kind == "if") { s = s.write(s_else[d2] + ":\n"); }
-            else if (kind == "if_else") { s = s.write(s_end[d2] + ":\n"); }
-            else if (kind == "block") { s = s.write(s_brt[d2] + ":\n"); }
-            depth = d2;
+            // Define the label at this end's index — the target of the if/else
+            // that opened it (no-else if's jz, else's jmp) or a block's br.
+            // A loop's closing end is unused (harmless).
+            s = s.write(lp + util.i32_to_string(i) + ":\n");
         } else {
             // binary op: pop rhs (rcx), lhs (rax), combine, push.
             s = s.write("    popq %rcx\n    popq %rax\n");
