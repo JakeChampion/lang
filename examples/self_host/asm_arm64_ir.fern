@@ -241,6 +241,21 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    adrp x1, .S" + util.i32_to_string(vlo.idx) + "\n");
             s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(vlo.idx) + "\n");
             s = s.write("    cmp x0, x1\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "tuple_make") {
+            // n elements on the operand stack (element n-1 on top). Box =
+            // [e0@0, e1@8, …], n*8 bytes, no shape slot. x0 (box) stays live.
+            s = s.mark_heap();
+            var tn: i32 = o.i32_imm;
+            s = s.write("    mov x0, #" + util.i32_to_string(tn * 8) + "\n    bl __fern_alloc\n");
+            var tem: i32 = tn - 1;
+            while (tem >= 0) {
+                s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string(tem * 8) + "]\n");
+                tem = tem - 1;
+            }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "tuple_get") {
+            // pop tuple box; element at index*8.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string(o.i32_imm * 8) + "]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "drop") {
             s = s.write("    add sp, sp, #16\n");
         } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {

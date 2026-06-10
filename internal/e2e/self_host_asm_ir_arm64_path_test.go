@@ -143,6 +143,11 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"field-mutate", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }`},
 		{"field-mutate-loop", `struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }`},
 		{"field-mutate-alias", `struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }`},
+		// Tuples (tuple_make / tuple_get; no shape slot, numeric .N access) + 2-elem destructure.
+		{"tuple-access", `function main(): i32 { var t = (3, 4); return t.0 + t.1; }`},
+		{"tuple-three", `function main(): i32 { var t = (1, 2, 3); return t.0 * 100 + t.1 * 10 + t.2; }`},
+		{"tuple-destructure", `function main(): i32 { var (a, b) = (40, 2); return a + b; }`},
+		{"tuple-expr-elems", `function main(): i32 { var x = 5; var t = (x * 2, x + 1); return t.0 + t.1; }`},
 		// Methods (receiver = arg 0, static dispatch to __fn_<Type>.<name>).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }`},

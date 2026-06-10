@@ -176,6 +176,19 @@ pub function op_struct_set(field_index: i32): Op {
     return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+// high-level tuple ops — layout-agnostic, like the struct ops, but a tuple box
+// has NO shape/type-id slot (field access is the numeric `.0` / `.1` spelling,
+// resolved at the access site): element i sits at the box's slot i. `tuple_make`
+// pops `i32_imm` element values (element 0 deepest) and pushes the new box;
+// `tuple_get` pops [tuple] and pushes element `i32_imm`. Scalar elements only
+// (leak-only), so no RC.
+pub function op_tuple_make(n: i32): Op {
+    return Op { kind: "tuple_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_tuple_get(idx: i32): Op {
+    return Op { kind: "tuple_get", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
 // variant_is pops an enum-variant box and pushes 1 if it is the variant named
 // `str`, else 0 — the discriminant test that drives `match` arm dispatch. A
 // variant box is built by struct_make (the variant struct's name is its shape /
@@ -245,5 +258,7 @@ pub function render_op(o: Op): string {
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "variant_is") { return "variant_is " + o.str; }
+    if (o.kind == "tuple_make") { return "tuple_make " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "tuple_get") { return "tuple_get " + util.i32_to_string(o.i32_imm); }
     return o.kind;
 }
