@@ -30,7 +30,8 @@ import "./irlower";
 // (all_eligible), so every function — caller and callee — uses irlower's
 // array layout; nothing crosses an IR/AST boundary.
 pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
-    if (fd.receiver_name.len() > 0) { return false; }
+    // Methods (receiver functions) are lowered too — lower_func binds the
+    // receiver as slot 0 and bails for non-scalar-struct receivers.
     var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs);
     if (!r.ok) { return false; }
@@ -358,6 +359,11 @@ function module_has_func(mod: parser.Module, name: string): boolean {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == name) { return true; }
+        // Method-call form "<Type>.<method>": a receiver function whose base
+        // receiver type + name compose to `name` (the irlower dispatch label).
+        if (mod.funcs[i].receiver_type.len() > 0) {
+            if (util.base_type_name(mod.funcs[i].receiver_type) + "." + mod.funcs[i].name == name) { return true; }
+        }
         i = i + 1;
     }
     return false;
@@ -420,7 +426,11 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
     var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls);
 
-    s = s.write("__fn_" + asmcore.sanitize_label(fd.name) + ":\n");
+    // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
+    // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
+    var label_name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     var frame: i32 = r.n_locals * 8;
@@ -445,9 +455,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
 
     // Copy params from the caller stack into their local slots, exactly as
     // emit_function does: param[i] sits at +(16 + i*8)(%rbp); the IR's
-    // load_local i reads -8*(i+1)(%rbp). (No receiver — methods are excluded.)
+    // load_local i reads -8*(i+1)(%rbp). r.n_params counts the receiver (slot 0)
+    // for a method, so the receiver — which the caller passes as arg 0 at
+    // +16(%rbp) — copies into slot 0 uniformly with the rest of the params.
     var pidx: i32 = 0;
-    while (pidx < fd.params.len()) {
+    while (pidx < r.n_params) {
         s = s.write("    movq " + util.i32_to_string(16 + pidx * 8) + "(%rbp), %rax\n");
         s = s.write("    movq %rax, " + util.i32_to_string(0 - 8 * (pidx + 1)) + "(%rbp)\n");
         pidx = pidx + 1;
@@ -458,7 +470,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     // jumps to its matching `else` (or `end`); `else`/`loop`/`end` define the
     // label at their own index; `br`/`br_if` resolve via br_target. Branch
     // matching reuses irlower's nesting scanners.
-    var lp: string = ".Lir_" + asmcore.sanitize_label(fd.name) + "_";
+    var lp: string = ".Lir_" + asmcore.sanitize_label(label_name) + "_";
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];

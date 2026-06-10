@@ -228,7 +228,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs);
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
-    var out: string = "  (func $" + fd.name;
+    // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
+    // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
+    // allow `.`. r.n_params already counts the receiver as the first param.
+    var fn_name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    var out: string = "  (func $" + fn_name;
     var p: i32 = 0;
     while (p < r.n_params) {
         out = out + " (param i32)";

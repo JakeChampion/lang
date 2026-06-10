@@ -1921,6 +1921,17 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		// Struct update (has_base) and field mutation aren't in the IR path yet —
 		// these stay on the AST emitter and must still produce the right value.
 		{"struct-update-falls-back", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, "", ""},
+		// Methods (receiver functions) via the IR path: receiver = arg 0, static
+		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
+		// methods on params, and method-to-method (self) dispatch.
+		{"ir-method-field", "struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }", 42, "", ""},
+		{"ir-method-two-fields", "struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 3, y: 4 }; return p.sum(); }", 7, "", ""},
+		{"ir-method-with-arg", "struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }", 12, "", ""},
+		{"ir-method-two-args", "struct P { x: i32 } function (p: P) comb(a: i32, b: i32): i32 { return p.x + a * 10 + b; } function main(): i32 { var p = P { x: 5 }; return p.comb(2, 3); }", 28, "", ""},
+		{"ir-method-on-param", "struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function runp(q: P): i32 { return q.sum(); } function main(): i32 { var p = P { x: 30, y: 12 }; return runp(p); }", 42, "", ""},
+		{"ir-method-self-dispatch", "struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function (p: P) quad(): i32 { return p.dbl() * 2; } function main(): i32 { var p = P { x: 5 }; return p.quad(); }", 20, "", ""},
+		{"ir-method-in-loop", "struct P { x: i32 } function (p: P) v(): i32 { return p.x; } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i * 3 }; s = s + p.v(); i = i + 1; } return s; }", 18, "", ""},
+		{"ir-method-same-name-two-types", "struct A { n: i32 } struct B { n: i32 } function (a: A) get(): i32 { return a.n + 1; } function (b: B) get(): i32 { return b.n + 100; } function main(): i32 { var a = A { n: 5 }; var b = B { n: 5 }; return a.get() + b.get(); }", 111, "", ""},
 		{
 			"string-array-for-in",
 			"function main(): i32 { var arr = [\"one\", \"two\", \"three\"]; for s in arr { write(s); write(\"\\n\"); } return 0; }",

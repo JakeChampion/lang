@@ -82,7 +82,10 @@ function ir_bin_asm(kind: string): string {
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
     var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls);
 
-    s = s.write("__fn_" + asmcore.sanitize_label(fd.name) + ":\n");
+    // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
+    var label_name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     var frame: i32 = r.n_locals * 8;
@@ -107,16 +110,17 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
 
     // Copy params from the caller rt-stack into local slots: param[i] sits at
     // [x29, #16+i*16] (16-byte operand slots, arg0 closest to the saved fp);
-    // the IR's load_local i reads [x29, #-8*(i+1)]. (No receiver — methods are
-    // excluded from the IR subset.)
+    // the IR's load_local i reads [x29, #-8*(i+1)]. r.n_params counts the
+    // receiver (slot 0) for a method — the caller passes it as arg 0, so it
+    // copies in uniformly.
     var pidx: i32 = 0;
-    while (pidx < fd.params.len()) {
+    while (pidx < r.n_params) {
         s = s.write("    ldr x0, [x29, #" + util.i32_to_string(16 + pidx * 16) + "]\n");
         s = fr_str(s, "x0", 0 - 8 * (pidx + 1));
         pidx = pidx + 1;
     }
 
-    var lp: string = ".Lira_" + asmcore.sanitize_label(fd.name) + "_";
+    var lp: string = ".Lira_" + asmcore.sanitize_label(label_name) + "_";
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];

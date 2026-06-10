@@ -170,6 +170,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-struct-bool-field", "struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }", 7, ""},
 		{"ir-struct-two-instances", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 10, y: 20 }; return a.x + b.y; }", 21, ""},
 		{"ir-struct-in-loop", "struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }", 18, ""},
+		// Methods (receiver = arg 0, static dispatch to $<Type>.<name>).
+		{"ir-method-field", "struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }", 42, ""},
+		{"ir-method-with-arg", "struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }", 12, ""},
+		{"ir-method-self-dispatch", "struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function (p: P) quad(): i32 { return p.dbl() * 2; } function main(): i32 { var p = P { x: 5 }; return p.quad(); }", 20, ""},
+		{"ir-method-same-name-two-types", "struct A { n: i32 } struct B { n: i32 } function (a: A) get(): i32 { return a.n + 1; } function (b: B) get(): i32 { return b.n + 100; } function main(): i32 { var a = A { n: 5 }; var b = B { n: 5 }; return a.get() + b.get(); }", 111, ""},
 		{"string-local-print", "function main(): i32 { var s = \"hi\"; print(s); return 0; }", 0, "hi\n"},
 		{"string-reassign", "function main(): i32 { var s = \"a\"; s = \"b\"; write(s); return 0; }", 0, "b"},
 		{"string-two-locals", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; write(a); write(b); return 0; }", 0, "foobar"},

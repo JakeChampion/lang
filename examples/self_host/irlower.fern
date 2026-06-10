@@ -417,6 +417,24 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (str_recv) { return sl.emit(ir.op_str_len()); }
                         return sl.emit(ir.op_arr_len());
                     }
+                    // Struct method call `p.method(args)` — static dispatch on the
+                    // receiver's tracked struct type to `call_direct("<Type>.<m>")`
+                    // with the receiver as arg 0 (matching the method's
+                    // `__fn_<Type>.<m>` label). calls_only_known verifies the method
+                    // exists, else the module bails to AST.
+                    var rty: string = expr_struct_type(fa.obj, s);
+                    if (rty != "") {
+                        if (c.args.len() > 5) { return s.fail(); }
+                        var sm: LowerState = lower_expr(fa.obj, s);
+                        if (!sm.ok) { return sm; }
+                        var ai: i32 = 0;
+                        while (ai < c.args.len()) {
+                            sm = lower_expr(c.args[ai], sm);
+                            if (!sm.ok) { return sm; }
+                            ai = ai + 1;
+                        }
+                        return sm.emit(ir.op_call_direct(rty + "." + fa.field, 1 + c.args.len()));
+                    }
                     return s.fail();
                 },
                 _ => { return s.fail(); }
@@ -732,6 +750,19 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var isarr: boolean[] = [];
     var isstr: boolean[] = [];
     var structty: string[] = [];
+    // Method receiver → slot 0 (it sits at the first arg position, like param 0).
+    // Only scalar-field STRUCT receivers are supported this slice; a primitive /
+    // enum / non-scalar-struct receiver bails the whole module to the AST path.
+    if (fn.receiver_name.len() > 0) {
+        var rbase: string = util.base_type_name(fn.receiver_type);
+        if (!decl_is_struct(structs, rbase) || !decl_is_scalar(structs, rbase)) {
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots };
+        }
+        names = names.append(fn.receiver_name);
+        isarr = isarr.append(false);
+        isstr = isstr.append(false);
+        structty = structty.append(rbase);
+    }
     var i: i32 = 0;
     while (i < fn.params.len()) {
         if (fn.params[i].type_name == "string[]") {
@@ -754,7 +785,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         structty = structty.append(pty);
         i = i + 1;
     }
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_struct_type: structty, structs: structs, arr_ret_fns: arr_ret_fns, n_params: fn.params.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_struct_type: structty, structs: structs, arr_ret_fns: arr_ret_fns, n_params: names.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);

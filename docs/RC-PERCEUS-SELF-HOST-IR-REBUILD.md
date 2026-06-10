@@ -609,3 +609,39 @@ string) + drop specialization — the actual Perceus-parity work — are the nex
 Next: **struct/enum fields that are themselves rc-tracked** (arrays / strings /
 nested structs) — which is where construction-store retains + **drop
 specialization** (per-type `__fern_release_*` on x86/arm64) finally bite.
+
+### Coverage slice 3: methods (scalar-struct receivers) — DONE (all three backends)
+
+Receiver methods (`function (p: P) area(): i32 { … }`) and their call sites
+(`p.area(args)`) through the shared `irlower` to all three backends, for
+scalar-field struct receivers. The receiver is simply **arg 0**: it sits at the
+first argument position (`+16(%rbp)` on x86, `[x29,#16]` on arm64, param 0 on
+wasm), exactly like a normal first parameter, so the backend change was minimal —
+copy `r.n_params` slots (which now counts the receiver) instead of
+`fd.params.len()`, plus a **receiver-type-qualified label** (`__fn_<Type>.<name>` /
+`$<Type>.<name>`).
+
+- **`irlower`** — `lower_func` binds the receiver as slot 0 (struct-type tracked,
+  `n_params` includes it); bails for non-scalar-struct / primitive / enum
+  receivers. The call site `p.method(args)` is **statically dispatched** on the
+  receiver's tracked struct type to `call_direct("<Type>.<method>", args+receiver)`
+  — no runtime shape compare (the AST path's mechanism), since irlower knows the
+  receiver type. (Methods that *return* a struct/string still bail via the
+  return-type checks.)
+- **Backends** — `emit_function_via_ir` / `emit_function_ir` emit the qualified
+  label + per-function branch-label prefix (so two `get` methods on different
+  types don't collide), and copy `r.n_params` arg slots. `ir_eligible` no longer
+  rejects receiver functions; `module_has_func` recognizes the `"<Type>.<method>"`
+  dispatch name so `calls_only_known` keeps method modules eligible.
+- **Validated** — ~8 / 4 method cases on the absolute oracles
+  (`TestSelfHostAsmRunX86_64`, `TestSelfHostWasmRun`) incl. args, methods on
+  params, method→method (self) dispatch, and same-named methods on two types;
+  plus the three differentials (arm64 under qemu). Existing self-host method tests
+  now route through the IR and stay green. Fixpoint holds; no regressions.
+
+With **structs + methods + scalar arithmetic + strings + arrays** all on the IR,
+the eligible subset now covers a large slice of ordinary Fern. Next coverage
+fronts toward the compiler itself: **enums + `match`** (the AST is built on them),
+then field **mutation** / struct **update**, then tuples / closures / maps /
+floats — after which the rc-tracked-composite + drop-specialization Perceus work
+lands on a much wider base.
