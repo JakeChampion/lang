@@ -85,8 +85,14 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"no-early-return", "function main(): i32 { var x = 2; if (x > 3) { return 100; } return x; }", 2},
 		{"nested-if", "function main(): i32 { var x = 5; if (x > 0) { if (x > 3) { x = 100; } else { x = 50; } } return x; }", 100},
 		{"if-chain", "function main(): i32 { var n = 2; var r = 0; if (n == 1) { r = 10; } else { if (n == 2) { r = 20; } else { r = 30; } } return r; }", 20},
-		// Still out of subset -> lower_func bails (200): loops, calls, floats.
-		{"while-bails", "function main(): i32 { var i = 0; while (i < 3) { i = i + 1; } return i; }", 200},
+		// Loops (slice 5): while lowers to block/loop/br/br_if.
+		{"while-count", "function main(): i32 { var i = 0; while (i < 3) { i = i + 1; } return i; }", 3},
+		{"while-sum", "function main(): i32 { var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s; }", 15},
+		{"while-factorial", "function main(): i32 { var i = 1; var f = 1; while (i <= 5) { f = f * i; i = i + 1; } return f; }", 120},
+		{"while-zero-iters", "function main(): i32 { var i = 10; while (i < 5) { i = i + 100; } return i; }", 10},
+		{"if-in-loop", "function main(): i32 { var i = 0; var c = 0; while (i < 10) { if (i > 4) { c = c + 1; } i = i + 1; } return c; }", 5},
+		{"nested-loop", "function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
+		// Still out of subset -> lower_func bails (200): calls, floats.
 		{"call-bails", "function main(): i32 { return foo(); }", 200},
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}

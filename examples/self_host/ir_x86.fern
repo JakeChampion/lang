@@ -87,6 +87,8 @@ struct EmitX86 {
     s_else: string[],
     s_end: string[],
     s_haselse: i32[],
+    s_kind: string[],
+    s_brtarget: string[],
 }
 
 function ensure_str(a: string[], n: i32): string[] {
@@ -103,44 +105,82 @@ function ensure_i32(a: i32[], n: i32): i32[] {
 
 // emit_body_x86 lowers an op stream (including structured control flow) to
 // x86-64. Non-control-flow ops defer to emit_op; if/else/end manage labels.
+// push_scope grows the depth-indexed scope arrays and records one scope.
+function (e: EmitX86) push_scope(kind: string, le: string, lend: string, brtarget: string): EmitX86 {
+    var d: i32 = e.depth;
+    var se: string[] = ensure_str(e.s_else, d + 1).with(d, le);
+    var sn: string[] = ensure_str(e.s_end, d + 1).with(d, lend);
+    var sh: i32[] = ensure_i32(e.s_haselse, d + 1).with(d, 0);
+    var sk: string[] = ensure_str(e.s_kind, d + 1).with(d, kind);
+    var sb: string[] = ensure_str(e.s_brtarget, d + 1).with(d, brtarget);
+    return EmitX86 { out: e.out, nlabel: e.nlabel + 1, depth: d + 1, s_else: se, s_end: sn, s_haselse: sh, s_kind: sk, s_brtarget: sb };
+}
+
+// with_out returns e with text appended (the other fields unchanged).
+function (e: EmitX86) with_out(s: string): EmitX86 {
+    return EmitX86 { out: e.out + s, nlabel: e.nlabel, depth: e.depth, s_else: e.s_else, s_end: e.s_end, s_haselse: e.s_haselse, s_kind: e.s_kind, s_brtarget: e.s_brtarget };
+}
+
 function emit_body_x86(ops: ir.Op[]): string {
-    var e: EmitX86 = EmitX86 { out: "", nlabel: 0, depth: 0, s_else: [], s_end: [], s_haselse: [] };
+    var e: EmitX86 = EmitX86 { out: "", nlabel: 0, depth: 0, s_else: [], s_end: [], s_haselse: [], s_kind: [], s_brtarget: [] };
     var i: i32 = 0;
     while (i < ops.len()) {
         var o: ir.Op = ops[i];
         if (o.kind == "if") {
             var le: string = ".Lelse_" + util.i32_to_string(e.nlabel);
             var lend: string = ".Lend_" + util.i32_to_string(e.nlabel);
-            // pop cond, branch to the else/end label when false.
-            var nout: string = e.out + "    popq %rax\n    testl %eax, %eax\n    jz " + le + "\n";
-            var se: string[] = ensure_str(e.s_else, e.depth + 1);
-            var sn: string[] = ensure_str(e.s_end, e.depth + 1);
-            var sh: i32[] = ensure_i32(e.s_haselse, e.depth + 1);
-            se = se.with(e.depth, le);
-            sn = sn.with(e.depth, lend);
-            sh = sh.with(e.depth, 0);
-            e = EmitX86 { out: nout, nlabel: e.nlabel + 1, depth: e.depth + 1, s_else: se, s_end: sn, s_haselse: sh };
+            // pop cond, branch to the else/end label when false. A `br` to an
+            // if targets its end label.
+            var e1: EmitX86 = e.with_out("    popq %rax\n    testl %eax, %eax\n    jz " + le + "\n");
+            e = e1.push_scope("if", le, lend, lend);
+        }
+        else if (o.kind == "block") {
+            // forward scope; `br` to it exits to its end label (emitted at end).
+            var lb: string = ".Lblk_" + util.i32_to_string(e.nlabel);
+            e = e.push_scope("block", lb, lb, lb);
+        }
+        else if (o.kind == "loop") {
+            // backward scope; `br` to it jumps to its header label, emitted here.
+            var ll: string = ".Lloop_" + util.i32_to_string(e.nlabel);
+            var e2: EmitX86 = e.with_out(ll + ":\n");
+            e = e2.push_scope("loop", ll, ll, ll);
+        }
+        else if (o.kind == "br") {
+            var tgt: string = e.s_brtarget[e.depth - 1 - o.i32_imm];
+            e = e.with_out("    jmp " + tgt + "\n");
+        }
+        else if (o.kind == "brif") {
+            // pop cond, branch when nonzero.
+            var tgt2: string = e.s_brtarget[e.depth - 1 - o.i32_imm];
+            e = e.with_out("    popq %rax\n    testl %eax, %eax\n    jnz " + tgt2 + "\n");
         }
         else if (o.kind == "else") {
             var d: i32 = e.depth - 1;
             // end of the then-branch: jump past the else, then land the
             // false-path here.
-            var nout2: string = e.out + "    jmp " + e.s_end[d] + "\n" + e.s_else[d] + ":\n";
-            var sh2: i32[] = e.s_haselse.with(d, 1);
-            e = EmitX86 { out: nout2, nlabel: e.nlabel, depth: e.depth, s_else: e.s_else, s_end: e.s_end, s_haselse: sh2 };
+            var e3: EmitX86 = e.with_out("    jmp " + e.s_end[d] + "\n" + e.s_else[d] + ":\n");
+            e = EmitX86 { out: e3.out, nlabel: e3.nlabel, depth: e3.depth, s_else: e3.s_else, s_end: e3.s_end, s_haselse: e3.s_haselse.with(d, 1), s_kind: e3.s_kind, s_brtarget: e3.s_brtarget };
         }
         else if (o.kind == "end") {
             var d2: i32 = e.depth - 1;
+            var kind: string = e.s_kind[d2];
             var tail: string = "";
-            // with an else, the false path already landed at the else label,
-            // so close with the end label; without one, the if's jz target IS
-            // the end, so emit the else label here.
-            if (e.s_haselse[d2] == 1) { tail = e.s_end[d2] + ":\n"; }
-            else { tail = e.s_else[d2] + ":\n"; }
-            e = EmitX86 { out: e.out + tail, nlabel: e.nlabel, depth: d2, s_else: e.s_else, s_end: e.s_end, s_haselse: e.s_haselse };
+            if (kind == "if") {
+                // with an else, the false path already landed at the else
+                // label, so close with the end label; without one, the if's jz
+                // target IS the end, so emit the else label here.
+                if (e.s_haselse[d2] == 1) { tail = e.s_end[d2] + ":\n"; }
+                else { tail = e.s_else[d2] + ":\n"; }
+            }
+            else if (kind == "block") {
+                // the block's exit label (br/br_if jumped here).
+                tail = e.s_brtarget[d2] + ":\n";
+            }
+            // a loop's label was emitted at its head -> nothing to close here.
+            e = EmitX86 { out: e.out + tail, nlabel: e.nlabel, depth: d2, s_else: e.s_else, s_end: e.s_end, s_haselse: e.s_haselse, s_kind: e.s_kind, s_brtarget: e.s_brtarget };
         }
         else {
-            e = EmitX86 { out: e.out + emit_op(o), nlabel: e.nlabel, depth: e.depth, s_else: e.s_else, s_end: e.s_end, s_haselse: e.s_haselse };
+            e = e.with_out(emit_op(o));
         }
         i = i + 1;
     }

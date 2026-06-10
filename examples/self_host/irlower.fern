@@ -168,6 +168,28 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             }
             return s2.emit(ir.op_end());
         },
+        parser.StmtWhile(wh) => {
+            // Canonical wasm loop shape:
+            //   block              ; depth 1 = exit target
+            //     loop             ; depth 0 = continue (header)
+            //       <cond> not     ; !cond
+            //       br_if 1        ; exit the block when !cond
+            //       <body>
+            //       br 0           ; back to the loop header
+            //     end
+            //   end
+            var w1: LowerState = s.emit(ir.op_block(0));
+            var w2: LowerState = w1.emit(ir.op_loop(0));
+            var w3: LowerState = lower_expr(wh.cond, w2);
+            if (!w3.ok) { return w3; }
+            var w4: LowerState = w3.emit(ir.op_bin("not", 0, false));
+            var w5: LowerState = w4.emit(ir.op_brif(1));
+            var w6: LowerState = lower_block(wh.body, w5);
+            if (!w6.ok) { return w6; }
+            var w7: LowerState = w6.emit(ir.op_br(0));
+            var w8: LowerState = w7.emit(ir.op_end());
+            return w8.emit(ir.op_end());
+        },
         _ => { return s.fail(); }
     }
     return s.fail();
@@ -281,6 +303,14 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[]): i32 {
             pc = find_matching_end(ops, pc + 1);
         }
         else if (o.kind == "end") { pc = pc + 1; }
+        else if (o.kind == "block") { pc = pc + 1; }
+        else if (o.kind == "loop") { pc = pc + 1; }
+        else if (o.kind == "br") { pc = do_branch(ops, pc, o.i32_imm); }
+        else if (o.kind == "brif") {
+            sp = sp - 1;
+            var bc: i32 = stack[sp];
+            if (bc != 0) { pc = do_branch(ops, pc, o.i32_imm); } else { pc = pc + 1; }
+        }
         else {
             // a binary op: pop r, pop l, push apply
             sp = sp - 1;
@@ -302,15 +332,21 @@ function bool_not(x: i32): i32 {
     return 0;
 }
 
+// is_opener reports whether an op kind opens a structured scope (if / block
+// / loop) — used for the nesting counts below.
+function is_opener(k: string): boolean {
+    return k == "if" || k == "block" || k == "loop";
+}
+
 // find_matching_end returns the index of the `end` closing the structured
-// block whose body begins at `start` (one past the opener), honouring
-// nesting. `if` opens a scope, `end` closes one.
+// scope whose body begins at `start` (one past the opener), honouring
+// nesting across if / block / loop.
 pub function find_matching_end(ops: ir.Op[], start: i32): i32 {
     var depth: i32 = 0;
     var i: i32 = start;
     while (i < ops.len()) {
         var k: string = ops[i].kind;
-        if (k == "if") { depth = depth + 1; }
+        if (is_opener(k)) { depth = depth + 1; }
         else if (k == "end") {
             if (depth == 0) { return i; }
             depth = depth - 1;
@@ -327,7 +363,7 @@ pub function find_matching_else(ops: ir.Op[], start: i32): i32 {
     var i: i32 = start;
     while (i < ops.len()) {
         var k: string = ops[i].kind;
-        if (k == "if") { depth = depth + 1; }
+        if (is_opener(k)) { depth = depth + 1; }
         else if (k == "end") {
             if (depth == 0) { return 0 - 1; }
             depth = depth - 1;
@@ -338,4 +374,35 @@ pub function find_matching_else(ops: ir.Op[], start: i32): i32 {
         i = i + 1;
     }
     return 0 - 1;
+}
+
+// enclosing_opener returns the index of the d-th enclosing structured opener
+// from `pc` (d=0 is the innermost), scanning backward and skipping
+// already-closed inner scopes. The target of a `br d` / `br_if d`.
+pub function enclosing_opener(ops: ir.Op[], pc: i32, d: i32): i32 {
+    var need: i32 = d;
+    var skip: i32 = 0;
+    var i: i32 = pc - 1;
+    while (i >= 0) {
+        var k: string = ops[i].kind;
+        if (k == "end") { skip = skip + 1; }
+        else if (is_opener(k)) {
+            if (skip > 0) { skip = skip - 1; }
+            else {
+                if (need == 0) { return i; }
+                need = need - 1;
+            }
+        }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+// do_branch resolves a `br d` from `pc`: branching to a loop re-enters its
+// header (re-evaluating the condition); branching to a block/if jumps past
+// its matching end (forward exit).
+pub function do_branch(ops: ir.Op[], pc: i32, d: i32): i32 {
+    var op: i32 = enclosing_opener(ops, pc, d);
+    if (ops[op].kind == "loop") { return op + 1; }
+    return find_matching_end(ops, op + 1) + 1;
 }
