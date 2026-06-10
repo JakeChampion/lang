@@ -26,7 +26,7 @@ function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var emitted: string = "";
-    if (use_ir && wasm_ir.wasm_i32_eligible(mod)) {
+    if (use_ir && wasm_ir.wasm_eligible(mod)) {
         emitted = wasm_ir.emit_module_ir(mod);
     } else {
         emitted = wasm.emit_module(parser.module_with_builtins(mod));
