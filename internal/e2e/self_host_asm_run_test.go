@@ -1936,6 +1936,9 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"field-mutate-both", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 0, y: 0 }; p.x = 30; p.y = 12; return p.x + p.y; }", 42, "", ""},
 		{"field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, "", ""},
 		{"field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, "", ""},
+		// String-returning functions (str_ret_fns tracking; box leaks).
+		{"str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, "", ""},
+		{"str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, "", ""},
 		// Methods (receiver functions) via the IR path: receiver = arg 0, static
 		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
 		// methods on params, and method-to-method (self) dispatch.

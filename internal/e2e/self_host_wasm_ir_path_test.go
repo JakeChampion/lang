@@ -141,7 +141,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"str-param-len", `function slen(s: string): i32 { return s.len(); } function main(): i32 { var x = "abcd"; return slen(x); }`},
 		{"str-param-concat", `function jn(a: string, b: string): i32 { return (a + b).len(); } function main(): i32 { return jn("xx", "yyy"); }`},
 		// String-returning function isn't IR-lowered yet -> module falls back to AST.
-		{"str-returning-falls-back", `function greet(): string { return "hi"; } function main(): i32 { var s = greet(); return s.len(); }`},
+		// String-returning functions now route through the IR (str_ret_fns tracks the
+		// result as a string; the box just leaks). Param + concat + return too.
+		{"str-returning", `function greet(): string { return "hi"; } function main(): i32 { var s = greet(); return s.len(); }`},
+		{"str-returning-concat", `function shout(s: string): string { return s + "!"; } function main(): i32 { var g = shout("hey"); return g.len(); }`},
+		{"str-returning-inline", `function tag(): string { return "abcd"; } function main(): i32 { return tag().len(); }`},
 		// Scalar-field structs (struct_make / struct_get, leak-only): wasm box is
 		// [type_id@0, f0@4, …] rc-headered; static field offsets.
 		{"struct-lit-fields", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 3, y: 4 }; return p.x + p.y; }`},
