@@ -160,6 +160,34 @@ pub function decl_field_index(structs: parser.StructDecl[], struct_name: string,
 // struct needs NO reference counting (matching the AST path's exit codes; the
 // boxes leak). Array / nested-struct / tuple fields would be RC-tracked (freed),
 // so a struct holding one needs construction retains + drop release — deferred.
+// is_scalar_array_type reports whether `t` is a scalar-element array (i32[] /
+// boolean[]) — leak-only-safe as a struct field: indexing yields an i32, and the
+// array (a fresh literal at construction) leaks with the struct (never freed),
+// so no reference counting is needed. String / struct element arrays need
+// element tracking (their elements are heap values), so they stay deferred.
+pub function is_scalar_array_type(t: string): boolean {
+    return t == "i32[]" || t == "boolean[]";
+}
+
+// is_scalar_arr_field_access reports whether `e` reads a scalar-array struct
+// field (`v.items` where items: i32[]). Such an array lives inside the struct
+// (which leaks), so binding/returning/assigning it would create an alias the
+// IR path can't retain (leak-only) — but the AST path DOES retain. To avoid
+// regressing that RC behaviour, those alias-creating uses bail to the AST
+// emitter; only direct reads (`v.items[i]`, `v.items.len()`) stay in the IR
+// (neither path retains there).
+pub function is_scalar_arr_field_access(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return is_scalar_array_type(decl_field_type(s.structs, oty, fa.field));
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
     var i: i32 = 0;
     while (i < structs.len()) {
@@ -167,10 +195,27 @@ pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string)
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t != "i32" && t != "boolean" && t != "string") { return false; }
+                if (t != "i32" && t != "boolean" && t != "string" && !is_scalar_array_type(t)) { return false; }
                 fi = fi + 1;
             }
             return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// decl_has_scalar_array reports whether a struct has any scalar-array field.
+pub function decl_has_scalar_array(structs: parser.StructDecl[], struct_name: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                if (is_scalar_array_type(structs[i].fields[fi].type_name)) { return true; }
+                fi = fi + 1;
+            }
+            return false;
         }
         i = i + 1;
     }
@@ -355,6 +400,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     jj = jj + 1;
                 }
                 if (found >= 0) {
+                    // A scalar-array field must be set from a FRESH array literal:
+                    // it's then owned by the struct and never enters the local
+                    // exit-sweep, so it leaks with the struct (no dangling). An
+                    // aliased array (an ident / call) would be swept + freed while
+                    // the struct still references it → bail to the AST path.
+                    if (is_scalar_array_type(decl_field_type(s.structs, slit.type_name, slit.field_names[found]))) {
+                        match (slit.field_values[found]) {
+                            parser.ExprArray(_) => {},
+                            _ => { return s.fail(); }
+                        }
+                    }
                     sm = lower_expr(slit.field_values[found], sm);
                     if (!sm.ok) { return sm; }
                 } else if (slit.has_base) {
@@ -536,6 +592,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     }
                     if (decl_is_struct(s.structs, cid.name)) {
                         if (!decl_is_leaksafe(s.structs, cid.name)) { return s.fail(); }
+                        // Array-payload variant construction isn't in this slice
+                        // (the fresh-literal constraint is only wired for struct
+                        // literals) — defer to AST.
+                        if (decl_has_scalar_array(s.structs, cid.name)) { return s.fail(); }
                         if (c.args.len() != decl_field_count(s.structs, cid.name)) { return s.fail(); }
                         var vctor: LowerState = s;
                         var vi: i32 = 0;
@@ -601,6 +661,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     match (st) {
         parser.StmtVar(v) => {
+            // Binding a scalar-array struct field (`var y = h.items`) aliases the
+            // array — which the AST path retains but the leak-only IR path can't;
+            // bail to AST to preserve that RC behaviour.
+            if (is_scalar_arr_field_access(v.init, s)) { return s.fail(); }
             // 2-element tuple destructure `var (a, b) = E` — the parser encodes
             // the name as "a,b". Eval the tuple box into a fresh temp, then bind
             // a = tuple_get(0), b = tuple_get(1). Scalar elements only; >2
@@ -693,6 +757,8 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
         parser.StmtAssign(a) => {
             var slot: i32 = s.slot_of(a.target);
             if (slot < 0) { return s.fail(); }
+            // Assigning a scalar-array struct field aliases it — bail (see StmtVar).
+            if (is_scalar_arr_field_access(a.value, s)) { return s.fail(); }
             // Perceus reassignment `y = x`: retain the new ref if it aliases an
             // rc-tracked array, and release the OLD value the slot held
             // (cow-guarded). A reassigned BORROWED array param (slot <
@@ -710,6 +776,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             return emit_arr_store(se, slot, reassign_inc, target_is_arr);
         },
         parser.StmtReturn(r) => {
+            // Returning a scalar-array struct field aliases it out — the AST path
+            // retains; bail so that RC behaviour is preserved (see StmtVar).
+            if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }
             // Perceus move-on-return: when the returned value is a bare array
@@ -802,6 +871,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 var fsty: string = expr_struct_type(c.args[0], s);
                                 if (fsty == "") { return s.fail(); }
                                 if (!decl_is_leaksafe(s.structs, fsty)) { return s.fail(); }
+                                // Mutating an array field would orphan the old
+                                // array (leak) and need a retain on the new one —
+                                // deferred; bail to AST.
+                                if (is_scalar_array_type(decl_field_type(s.structs, fsty, fname))) { return s.fail(); }
                                 var fidx: i32 = s.field_index_in(fsty, fname);
                                 if (fidx < 0) { return s.fail(); }
                                 var sf: LowerState = lower_expr(c.args[0], s);

@@ -181,6 +181,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, ""},
 		{"ir-struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { var t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, ""},
 		{"ir-enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, ""},
+		{"ir-struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, ""},
+		{"ir-struct-arr-survives", "struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [10, 20, 30] }; var other = [99, 99, 99, 99, 99]; return b.data[0] + b.data[2]; }", 40, ""},
+		{"ir-struct-arr-param", "struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }", 30, ""},
 		// Enums + match: scalar-payload + no-payload variant construction and
 		// match dispatch (variant_is on the type-id @0) with payload binding +
 		// wildcard. Non-scalar payloads (string) bail to AST.
