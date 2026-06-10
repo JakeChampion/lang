@@ -1,0 +1,111 @@
+// examples/self_host/ir_x86.fern — the first IR-consuming backend (slice 3
+// of the IR rebuild, docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md): it emits a
+// complete, freestanding x86-64 (AT&T / GAS) program directly from a lowered
+// Op[] (irlower.LowerResult), rather than from the AST. This proves the
+// stack IR can drive real codegen on x86-64; later slices grow it toward
+// parity with asm.fern's AST emit path and then flip the default.
+//
+// The translation is the natural stack-machine -> machine-stack mapping:
+//   - the IR operand stack IS the x86 stack (pushq / popq);
+//   - locals live in an rbp frame at -8*(i+1)(%rbp), params in slots
+//     0..n_params-1 (the IR drives a `_start` with no args, so for now the
+//     i32 subset's `main()` takes none — params are framed for later call
+//     lowering);
+//   - i32 arithmetic uses the 32-bit subregisters (%eax/%ecx) for faithful
+//     i32 semantics, while the operand stack stays 64-bit wide.
+//
+// SCOPE (slice 3): the straight-line i32 subset irlower lowers — constants,
+// local load/store, the binary + unary operators, and `return`. A LowerResult
+// with ok=false (out of subset) emits a program that exits 200, matching the
+// driver/interpreter bail so the differential harness agrees.
+
+import "./ir";
+import "./irlower";
+import "./util";
+
+// loc renders the rbp-relative address of local slot i.
+function loc(i: i32): string {
+    return "-" + util.i32_to_string(8 * (i + 1)) + "(%rbp)";
+}
+
+// bin_mid renders the instruction(s) that combine %eax (l) and %ecx (r),
+// leaving the result in %eax. Returns "" for an unknown kind (caller treats
+// it as a no-op; lowering never emits one).
+function bin_mid(kind: string): string {
+    if (kind == "add") { return "    addl %ecx, %eax\n"; }
+    if (kind == "sub") { return "    subl %ecx, %eax\n"; }
+    if (kind == "mul") { return "    imull %ecx, %eax\n"; }
+    if (kind == "div_s") { return "    cltd\n    idivl %ecx\n"; }
+    if (kind == "rem_s") { return "    cltd\n    idivl %ecx\n    movl %edx, %eax\n"; }
+    if (kind == "and") { return "    andl %ecx, %eax\n"; }
+    if (kind == "or") { return "    orl %ecx, %eax\n"; }
+    if (kind == "xor") { return "    xorl %ecx, %eax\n"; }
+    if (kind == "shl") { return "    shll %cl, %eax\n"; }
+    if (kind == "shr_s") { return "    sarl %cl, %eax\n"; }
+    if (kind == "eq") { return "    cmpl %ecx, %eax\n    sete %al\n    movzbl %al, %eax\n"; }
+    if (kind == "ne") { return "    cmpl %ecx, %eax\n    setne %al\n    movzbl %al, %eax\n"; }
+    if (kind == "lt_s") { return "    cmpl %ecx, %eax\n    setl %al\n    movzbl %al, %eax\n"; }
+    if (kind == "le_s") { return "    cmpl %ecx, %eax\n    setle %al\n    movzbl %al, %eax\n"; }
+    if (kind == "gt_s") { return "    cmpl %ecx, %eax\n    setg %al\n    movzbl %al, %eax\n"; }
+    if (kind == "ge_s") { return "    cmpl %ecx, %eax\n    setge %al\n    movzbl %al, %eax\n"; }
+    return "";
+}
+
+// emit_op renders one IR op. Stack discipline: every value-producing op ends
+// with the value pushed; consumers pop. `return` pops the result into %eax
+// and jumps to the shared exit.
+function emit_op(o: ir.Op): string {
+    if (o.kind == "const_i32") {
+        return "    pushq $" + util.i32_to_string(o.i32_imm) + "\n";
+    }
+    if (o.kind == "load_local") {
+        return "    movl " + loc(o.i32_imm) + ", %eax\n    pushq %rax\n";
+    }
+    if (o.kind == "store_local") {
+        return "    popq %rax\n    movl %eax, " + loc(o.i32_imm) + "\n";
+    }
+    if (o.kind == "not") {
+        return "    popq %rax\n    testl %eax, %eax\n    sete %al\n    movzbl %al, %eax\n    pushq %rax\n";
+    }
+    if (o.kind == "return") {
+        return "    popq %rax\n    jmp .Lexit\n";
+    }
+    // otherwise a binary op: pop r into %ecx, l into %eax, combine, push.
+    return "    popq %rcx\n    popq %rax\n" + bin_mid(o.kind) + "    pushq %rax\n";
+}
+
+// emit_exit renders a minimal freestanding program that exits with `code`.
+function emit_exit(code: i32): string {
+    var out: string = ".text\n.globl _start\n_start:\n";
+    out = out + "    movq $" + util.i32_to_string(code) + ", %rdi\n";
+    out = out + "    movq $60, %rax\n    syscall\n";
+    return out;
+}
+
+// emit_program renders the whole freestanding program for a lowered main.
+// An out-of-subset bail (ok=false) exits 200, matching the interpreter.
+pub function emit_program(r: irlower.LowerResult): string {
+    if (!r.ok) { return emit_exit(200); }
+
+    // frame for the locals, 16-byte aligned.
+    var frame: i32 = r.n_locals * 8;
+    if (frame - (frame / 16) * 16 != 0) { frame = frame + 8; }
+
+    var out: string = ".text\n.globl _start\n_start:\n";
+    out = out + "    movq %rsp, %rbp\n";
+    if (frame > 0) {
+        out = out + "    subq $" + util.i32_to_string(frame) + ", %rsp\n";
+    }
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        out = out + emit_op(r.ops[i]);
+        i = i + 1;
+    }
+    // Shared exit: the return value is already in %eax (zero-extended in
+    // %rax by the i32 ops); move it to %rdi and exit. A subset main always
+    // ends in `return`, which jumps here with the value popped into %rax.
+    out = out + ".Lexit:\n";
+    out = out + "    movq %rax, %rdi\n";
+    out = out + "    movq $60, %rax\n    syscall\n";
+    return out;
+}
