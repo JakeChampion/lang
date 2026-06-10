@@ -23,20 +23,14 @@ import "./ir";
 import "./irlower";
 
 // ir_eligible reports whether a function is in the IR path's current subset:
-// i32 functions with params, direct calls, and within-function arrays (heap
-// alloc/index/write/len + Perceus RC) — but no methods. Cross-function array
-// passing (array params/returns) is excluded for now (the freestanding heap
-// is per-program but the eligibility keeps arrays inside their function so the
-// move/borrow paths aren't exercised across the IR/AST boundary).
+// i32 functions with params, direct calls, and arrays (heap alloc / index /
+// write / len + Perceus RC, including borrowed array params and array returns
+// via move-on-return) — but no methods. Cross-function arrays are sound here
+// because the IR path only fires when the WHOLE module is eligible
+// (all_eligible), so every function — caller and callee — uses irlower's
+// array layout; nothing crosses an IR/AST boundary.
 pub function ir_eligible(fd: parser.FuncDecl): boolean {
     if (fd.receiver_name.len() > 0) { return false; }
-    // No array params, and no array return type (within-function arrays only).
-    var pj: i32 = 0;
-    while (pj < fd.params.len()) {
-        if (is_array_type(fd.params[pj].type_name)) { return false; }
-        pj = pj + 1;
-    }
-    if (is_array_type(fd.ret_type)) { return false; }
     var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func(fd, noret);
     if (!r.ok) { return false; }
@@ -48,6 +42,18 @@ function is_array_type(t: string): boolean {
     var n: i32 = t.len();
     if (n < 2) { return false; }
     return t[n - 2 : n] == "[]";
+}
+
+// array_ret_fns collects the names of functions whose return type is an array,
+// so move-on-return / move-from-call fire (mirrors irlower.lower_module).
+function array_ret_fns(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (is_array_type(mod.funcs[i].ret_type)) { out = out.append(mod.funcs[i].name); }
+        i = i + 1;
+    }
+    return out;
 }
 
 // is_fern_helper reports whether a call_direct callee is a runtime helper
@@ -162,9 +168,9 @@ function ir_scope_push(a: string[], depth: i32, v: string): string[] {
 
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
 // writing through the global strbuf (same as asm.fern's emitters).
-function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitState {
-    var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+// arr_ret_fns drives move-on-return / move-from-call for array values.
+function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns);
 
     s = s.write("__fn_" + asmcore.sanitize_label(fd.name) + ":\n");
     s = s.write("    pushq %rbp\n");
@@ -307,9 +313,10 @@ pub function emit_module_ir(mod: parser.Module): string {
     s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
+    var arf: string[] = array_ret_fns(mod);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        s = emit_function_via_ir(mod.funcs[fi], s);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s);
         fi = fi + 1;
     }
     s = s.write("_start:\n");
