@@ -108,6 +108,10 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3},
 		{"set-index", "function main(): i32 { var a = [10, 20, 30]; a[1] = 99; return a[0] + a[1] + a[2]; }", 139},
 		{"set-index-swap", "function main(): i32 { var a = [7, 3]; var t = a[0]; a[0] = a[1]; a[1] = t; return a[0] * 10 + a[1]; }", 37},
+		// RC counting (slice 10): __rc reads the header; aliasing increments it.
+		{"rc-fresh", "function main(): i32 { var a = [10, 20, 30]; return __rc(a); }", 1},
+		{"rc-one-alias", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc(a); }", 2},
+		{"rc-two-aliases", "function main(): i32 { var a = [1, 2]; var b = a; var c = a; return __rc(a); }", 3},
 		// Still out of subset -> lower bails (200): floats.
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}

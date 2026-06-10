@@ -283,6 +283,10 @@ pub function emit_module(fns: irlower.LoweredFn[]): string {
         if (fns[i].ok) { out = out + emit_function(fns[i]); }
         i = i + 1;
     }
+    // RC retain helper (the `call_direct __fern_rc_inc` target): inc the
+    // refcount header at [ptr-4], return ptr. (Counting only — no free yet.)
+    out = out + "fn___fern_rc_inc:\n";
+    out = out + "    movl -4(%rdi), %eax\n    addl $1, %eax\n    movl %eax, -4(%rdi)\n    movq %rdi, %rax\n    ret\n";
     // Leak-only bump heap: a 1 MiB .bss region + a data-segment bump pointer
     // initialised to its base. (No free yet — the early-Perceus counting
     // phase precedes reclamation.)

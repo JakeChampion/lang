@@ -28,16 +28,19 @@ import "./util";
 pub struct LowerState {
     ops: ir.Op[],
     local_names: string[],
+    // local_is_arr[i] marks slot i as holding an array value (drives the
+    // Perceus alias-inc: a new reference to an array must retain it).
+    local_is_arr: boolean[],
     n_params: i32,
     ok: boolean,
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
-    return LowerState { ops: s.ops.append(op), local_names: s.local_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, n_params: s.n_params, ok: false };
 }
 
 // slot_of returns the local slot for `name`, or -1 if unbound.
@@ -50,9 +53,21 @@ pub function (s: LowerState) slot_of(name: string): i32 {
     return 0 - 1;
 }
 
-// add_local binds `name` to a fresh slot (its index = the old slot count).
+// add_local binds `name` to a fresh slot (its index = the old slot count),
+// not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names.append(name), n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), n_params: s.n_params, ok: s.ok };
+}
+
+// is_arr_slot / mark_arr query and set the array-ness of slot i.
+pub function (s: LowerState) is_arr_slot(i: i32): boolean {
+    if (i < 0) { return false; }
+    if (i >= s.local_is_arr.len()) { return false; }
+    return s.local_is_arr[i];
+}
+
+pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), n_params: s.n_params, ok: s.ok };
 }
 
 // map_binop maps a source binary operator to its IR opcode kind (the i32 /
@@ -126,13 +141,26 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // leave the base on the stack. (Leak-only bump heap — no free
             // yet, matching the early-Perceus "counting before free" phase.
             // Elements must be i32 or lowering bails.)
+            // Layout now carries an rc header below the length:
+            //   [rc, len, e0, e1, ...]  with base pointing at `len`
+            // so rc is at base-4, len at base, element i at base + 4 + i*4
+            // (index / len / set offsets unchanged from the headerless form).
+            // Alloc (n+2) words, base = rawptr + 4, rc = 1 (fresh, owned).
             var n: i32 = arr.elements.len();
-            var sa: LowerState = s.emit(ir.op_const_i32((n + 1) * 4));
+            var sa: LowerState = s.emit(ir.op_const_i32((n + 2) * 4));
             sa = sa.emit(ir.op_alloc());
+            sa = sa.emit(ir.op_const_i32(4));
+            sa = sa.emit(ir.op_bin("add", 0, false));
             var scratch: string = "$arr" + util.i32_to_string(sa.local_names.len());
             sa = sa.add_local(scratch);
             var slot: i32 = sa.slot_of(scratch);
             sa = sa.emit(ir.op_store_local(slot));
+            // rc = 1 at [base-4]
+            sa = sa.emit(ir.op_load_local(slot));
+            sa = sa.emit(ir.op_const_i32(4));
+            sa = sa.emit(ir.op_bin("sub", 0, false));
+            sa = sa.emit(ir.op_const_i32(1));
+            sa = sa.emit(ir.op_store(0));
             // length header at [base]
             sa = sa.emit(ir.op_load_local(slot));
             sa = sa.emit(ir.op_const_i32(n));
@@ -168,6 +196,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // length header at base.
             match (c.callee) {
                 parser.ExprIdent(cid) => {
+                    // __rc(arr): read the refcount header at base-4 (an RC
+                    // observation hook for tests; not a real callee).
+                    if (cid.name == "__rc") {
+                        if (c.args.len() != 1) { return s.fail(); }
+                        var sr: LowerState = lower_expr(c.args[0], s);
+                        if (!sr.ok) { return sr; }
+                        sr = sr.emit(ir.op_const_i32(4));
+                        sr = sr.emit(ir.op_bin("sub", 0, false));
+                        return sr.emit(ir.op_load(0));
+                    }
                     if (c.args.len() > 6) { return s.fail(); }
                     var sc: LowerState = s;
                     var ai: i32 = 0;
@@ -202,9 +240,25 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
         parser.StmtVar(v) => {
             var se: LowerState = lower_expr(v.init, s);
             if (!se.ok) { return se; }
+            // Perceus alias-inc + array tracking: a fresh array literal is
+            // owned at rc=1 (no inc); binding a new name to an EXISTING array
+            // local creates a second reference, which must retain (inc) the
+            // buffer. Mark the new slot's array-ness either way.
+            var is_arr: boolean = false;
+            match (v.init) {
+                parser.ExprArray(_) => { is_arr = true; },
+                parser.ExprIdent(id) => {
+                    if (se.is_arr_slot(se.slot_of(id.name))) {
+                        is_arr = true;
+                        se = se.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
+                },
+                _ => {}
+            }
             // bind AFTER lowering the init (the init can't see the new name)
             var sb: LowerState = se.add_local(v.name);
             var slot: i32 = sb.slot_of(v.name);
+            sb = sb.mark_arr(slot, is_arr);
             return sb.emit(ir.op_store_local(slot));
         },
         parser.StmtAssign(a) => {
@@ -325,13 +379,15 @@ pub struct LowerResult {
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
 pub function lower_func(fn: parser.FuncDecl): LowerResult {
     var names: string[] = [];
+    var isarr: boolean[] = [];
     var i: i32 = 0;
     while (i < fn.params.len()) {
         names = names.append(fn.params[i].name);
+        isarr = isarr.append(false);
         i = i + 1;
     }
     var empty: ir.Op[] = [];
-    var s: LowerState = LowerState { ops: empty, local_names: names, n_params: fn.params.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, n_params: fn.params.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
@@ -495,6 +551,16 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp - 1;
             var laddr: i32 = stack[sp];
             stack = stack.with(sp, heap[laddr / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "call_direct" && o.str == "__fern_rc_inc") {
+            // RC retain: inc the refcount header at base-4, return base.
+            sp = sp - 1;
+            var ib: i32 = stack[sp];
+            var ridx: i32 = (ib - 4) / 4;
+            heap = heap.with(ridx, heap[ridx] + 1);
+            stack = stack.with(sp, ib);
             sp = sp + 1;
             pc = pc + 1;
         }
