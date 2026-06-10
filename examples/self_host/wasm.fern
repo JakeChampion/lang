@@ -4426,6 +4426,13 @@ function emit_dyn_dispatch(obj: parser.Expr, field: string, args: parser.Expr[],
 // initializer) for its methods to dispatch.
 function is_enum_type_name(cx: Ctx, name: string): boolean {
     if (name.len() == 0) { return false; }
+    // A primitive scalar OR `string` receiver type (`impl Eq for i32`,
+    // `impl Show for string`, `function (n: i32) twice()`) lands in mr_types too,
+    // but is NEVER an enum — guard it, else a struct's i32/i64/f64/boolean field
+    // gets misclassified "S" (drop helper emits an undefined `$__fern_release_i32`)
+    // or a `string[]` field's element is taken for a struct (undefined
+    // `$__fern_arr_release_string`) — both are wasm validation errors.
+    if (is_primitive_type_name(name) || name == "string") { return false; }
     if (is_struct_type(cx.structs, name)) { return false; }
     var i: i32 = 0;
     while (i < cx.mr_types.len()) {
@@ -4433,6 +4440,12 @@ function is_enum_type_name(cx: Ctx, name: string): boolean {
         i = i + 1;
     }
     return false;
+}
+
+// is_primitive_type_name reports whether `name` spells a built-in scalar type
+// (never rc-tracked, never a struct/enum). Scalars are released as no-ops.
+function is_primitive_type_name(name: string): boolean {
+    return name == "i32" || name == "i64" || name == "f64" || name == "boolean";
 }
 
 // func_body_matches_variant reports whether `stmts` contains a top-level
