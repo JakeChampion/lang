@@ -1951,6 +1951,12 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"struct-arr-param", "struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }", 30, "", ""},
 		{"struct-arr-extract", "struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [7, 8, 9] }; var a = b.data; return a[0] + a[2]; }", 16, "", ""},
 		{"struct-arr-aliased-falls-back", "struct Buf { data: i32[] } function main(): i32 { var arr = [1, 2, 3]; var b = Buf { data: arr }; return b.data[1] + arr[0]; }", 3, "", ""},
+		// Typed string[] arrays: literals, indexing (element is a string), params,
+		// aliasing (array rc-tracked), string-op on elements. Elements leak.
+		{"strarr-index", "function main(): i32 { var names = [\"foo\", \"bar\", \"hello\"]; return names[0].len() + names[2].len(); }", 8, "", ""},
+		{"strarr-param", "function f(names: string[]): i32 { return names[0].len(); } function main(): i32 { return f([\"abcd\"]); }", 4, "", ""},
+		{"strarr-loop", "function main(): i32 { var names = [\"a\", \"bb\", \"ccc\"]; var s = 0; var i = 0; while (i < 3) { s = s + names[i].len(); i = i + 1; } return s; }", 6, "", ""},
+		{"strarr-eq-elem", "function main(): i32 { var names = [\"hi\", \"ho\"]; if (names[0] == \"hi\") { return 7; } return 0; }", 7, "", ""},
 		// Methods (receiver functions) via the IR path: receiver = arg 0, static
 		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
 		// methods on params, and method-to-method (self) dispatch.

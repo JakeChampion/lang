@@ -36,6 +36,11 @@ pub struct LowerState {
     // Strings are not reference-counted, so this drives no RC; it just keeps
     // string slots out of the array machinery and selects the string opcodes.
     local_is_str: boolean[],
+    // local_is_strarr[i] marks slot i as holding a string[] array (alongside
+    // local_is_arr, which still drives the array's RC). It only affects element
+    // typing: arr[i] on a string[] yields a string (str_len etc.), while the
+    // array itself is rc-tracked like any array and its string elements leak.
+    local_is_strarr: boolean[],
     // local_struct_type[i] holds the struct type name of slot i (""=not a
     // struct), so `p.x` resolves x's field index in p's decl. Like local_is_str,
     // dispatch-only — the scalar-field structs this slice covers are leak-only.
@@ -57,11 +62,11 @@ pub struct LowerState {
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
-    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: false };
 }
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
@@ -87,7 +92,7 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_struct_type: s.local_struct_type.append(""), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_arr_slot / mark_arr query and set the array-ness of slot i.
@@ -98,7 +103,7 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
@@ -109,7 +114,17 @@ pub function (s: LowerState) is_str_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_str(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+}
+
+pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
+    if (i < 0) { return false; }
+    if (i >= s.local_is_strarr.len()) { return false; }
+    return s.local_is_strarr[i];
+}
+
+pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_struct_slot / struct_type_of_slot / mark_struct_type query and set the
@@ -121,7 +136,7 @@ pub function (s: LowerState) struct_type_of_slot(i: i32): string {
 }
 
 pub function (s: LowerState) mark_struct_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_struct_type: s.local_struct_type.with(i, t), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // ---- struct decl helpers -----------------------------------------------
@@ -304,6 +319,21 @@ pub function (s: LowerState) is_str_ret_fn(name: string): boolean {
     return false;
 }
 
+// expr_is_strarr reports whether `e` evaluates to a string[] array — a string-
+// element array literal, or a string[]-marked local/param slot. Drives the
+// element typing of `arr[i]` (a string).
+pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprArray(arr) => {
+            if (arr.elements.len() == 0) { return false; }
+            return expr_is_str(arr.elements[0], s);
+        },
+        parser.ExprIdent(id) => { return s.is_strarr_slot(s.slot_of(id.name)); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
@@ -325,6 +355,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
             return decl_field_type(s.structs, oty, fa.field) == "string";
+        },
+        parser.ExprIndex(ix) => {
+            // Indexing a string[] array yields a string element.
+            return expr_is_strarr(ix.array, s);
         },
         _ => { return false; }
     }
@@ -507,14 +541,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // literal: owned at rc=1, no alias-inc.) Elements must be i32 or the
             // element lowering bails.
             var n: i32 = arr.elements.len();
-            // String arrays aren't in the IR path yet (element string-ness isn't
-            // tracked through arr_get, so `a[i].len()` would mis-dispatch). Bail
-            // if any element is a string so the module falls back to the AST path.
-            var ei: i32 = 0;
-            while (ei < n) {
-                if (expr_is_str(arr.elements[ei], s)) { return s.fail(); }
-                ei = ei + 1;
-            }
+            // i32[] and string[] literals are both supported: an i32 element
+            // lowers to its value, a string element to its box pointer (const_str
+            // etc.). The slot binding tracks string[]-ness (local_is_strarr) so
+            // a[i] types as a string; the array is rc-tracked like any array and
+            // its string elements leak.
             var sa: LowerState = s;
             var i: i32 = 0;
             while (i < n) {
@@ -743,11 +774,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // resolves the field index. Leak-only scalar structs — no RC.
             var struct_ty: string = expr_struct_type(v.init, se);
             if (struct_ty == "" && decl_is_struct(se.structs, v.type_name)) { struct_ty = v.type_name; }
+            // string[] tracking (element typing for a[i]); the annotation is
+            // authoritative too. The array itself is already is_arr (RC-tracked).
+            var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";
             // bind AFTER lowering the init (the init can't see the new name)
             var sb: LowerState = se.add_local(v.name);
             var slot: i32 = sb.slot_of(v.name);
             sb = sb.mark_arr(slot, is_arr);
             sb = sb.mark_str(slot, is_str);
+            sb = sb.mark_strarr(slot, is_strarr);
             sb = sb.mark_struct_type(slot, struct_ty);
             // Retain (alias) + cow-guarded dec-on-overwrite of the slot's prior
             // value (the loop-rebind reclamation; null on the first binding, so
@@ -1091,6 +1126,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var names: string[] = [];
     var isarr: boolean[] = [];
     var isstr: boolean[] = [];
+    var isstrarr: boolean[] = [];
     var structty: string[] = [];
     // Method receiver → slot 0 (it sits at the first arg position, like param 0).
     // Only scalar-field STRUCT receivers are supported this slice; a primitive /
@@ -1103,31 +1139,31 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         names = names.append(fn.receiver_name);
         isarr = isarr.append(false);
         isstr = isstr.append(false);
+        isstrarr = isstrarr.append(false);
         structty = structty.append(rbase);
     }
     var i: i32 = 0;
     while (i < fn.params.len()) {
-        if (fn.params[i].type_name == "string[]") {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
-        }
         // A struct param must be a scalar-field struct; otherwise bail.
         if (decl_is_struct(structs, fn.params[i].type_name) && !decl_is_leaksafe(structs, fn.params[i].type_name)) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
         }
         names = names.append(fn.params[i].name);
         // An array-typed param is array-tracked (so a[i] / a.len() / aliasing
-        // it work) but BORROWED — the dec-sweep skips slots < n_params.
+        // it work) but BORROWED — the dec-sweep skips slots < n_params. A
+        // string[] param is additionally element-tracked (a[i] is a string).
         isarr = isarr.append(is_array_type_name(fn.params[i].type_name));
         // A string-typed param is string-tracked (for `.len()` / concat / eq
         // dispatch); strings aren't RC'd, so there is no borrow bookkeeping.
         isstr = isstr.append(fn.params[i].type_name == "string");
+        isstrarr = isstrarr.append(fn.params[i].type_name == "string[]");
         // A struct-typed param carries its type name for field-access dispatch.
         var pty: string = "";
         if (decl_is_struct(structs, fn.params[i].type_name)) { pty = fn.params[i].type_name; }
         structty = structty.append(pty);
         i = i + 1;
     }
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_struct_type: structty, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, n_params: names.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
