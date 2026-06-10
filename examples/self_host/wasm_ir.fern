@@ -11,12 +11,14 @@
 // generation). A user `call` needs no arg reversal either: the IR pushes args
 // arg0-deepest and wasm's `call` consumes them arg0-deepest.
 //
-// SCOPE (first wasm slice): the pure-i32 subset — no arrays yet (arrays need
-// wasm's linear-memory __fern_arr_box / RC runtime, a follow-up slice that
-// reuses wasm.fern's heap helpers). A program that allocates is rejected by
-// wasm_i32_eligible and falls back to the AST emitter. This file is therefore
-// self-contained: an all-i32 program needs no heap, no memory writes, no
-// runtime — just the functions + a `_start` that exits with main()'s result.
+// Arrays use wasm's linear-memory layout (matching wasm.fern's __fern_arr_box:
+// a = base+8, so rc@[a-8], len@[a], cap@[a+4], element i @ [a+8+i*4], 4-byte
+// stride) and reuse wasm.fern's heap/RC runtime verbatim (heap_alloc_helpers +
+// rc_runtime_helpers — the size-class freelist allocator, __fern_arr_box,
+// __fern_arr_dec, and the rc inc/dec helpers). The Perceus array RC (alias-inc,
+// move-on-return, exit dec-sweep, reassignment retain/cow-release) all comes
+// from irlower's shared lowering, so wasm gets it for free — the helper calls
+// lower to `call $__fern_rc_inc` / `call $__fern_arr_dec`.
 //
 // Like asm_ir, this is a SEPARATE module imported only by its differential
 // driver (wasm_ir_run) — wasm.fern stays untouched until a later fold/flip.
@@ -26,12 +28,18 @@ import "./util";
 import "./ir";
 import "./irlower";
 import "./asm_ir";
+import "./wasm";
+
+// Linear-memory layout for the no-string array subset, computed exactly as
+// wasm.emit_module does for an empty string table (tab.next = 24, heap_extra =
+// 0): fl_base = roundup8(24 + 16) = 40, the 65536-class freelist, then the
+// bump heap at heap_base. heap_base is also the rc helpers' low-address guard.
+function fl_base(): i32 { return 40; }
+function fl_cells(): i32 { return 65536; }
+function heap_base(): i32 { return 40 + 65536 * 4; }
 
 // wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
-// values never appear in the i32 subset, so every op is the i32.* form. div/rem
-// use the native trapping i32.div_s / i32.rem_s — sound for the differential
-// corpus (non-zero divisors), where the exit code matches wasm.fern's
-// __fern_idiv / __fern_irem for the same operands.
+// values never appear in the i32 subset, so every op is the i32.* form.
 function wasm_binop(kind: string): string {
     if (kind == "add") { return "i32.add"; }
     if (kind == "sub") { return "i32.sub"; }
@@ -52,38 +60,51 @@ function wasm_binop(kind: string): string {
     return ";; ir: unsupported bin " + kind + "\n";
 }
 
-// has_array_ops reports whether a lowered function uses any array opcode (so
-// the pure-i32 wasm slice must skip it — arrays are a follow-up).
-function has_array_ops(ops: ir.Op[]): boolean {
-    var i: i32 = 0;
-    while (i < ops.len()) {
-        var k: string = ops[i].kind;
-        if (k == "arr_make" || k == "arr_get" || k == "arr_set" || k == "arr_len" || k == "arr_rc" || k == "alloc") { return true; }
-        i = i + 1;
+// wasm_helper_symbol maps an IR runtime-helper name to the wasm.fern symbol the
+// IR path calls. The exit-sweep / reassign release (__fern_rc_dec) maps to
+// $__fern_arr_dec (the array release that frees at rc==1 via the size-class
+// freelist), so the wasm IR path reclaims exactly as wasm.fern's AST path.
+function wasm_helper_symbol(name: string): string {
+    if (name == "__fern_rc_inc") { return "$__fern_rc_inc"; }
+    if (name == "__fern_rc_dec") { return "$__fern_arr_dec"; }
+    if (name == "__fern_rc_underflow_get") { return "$__fern_rc_underflow_count"; }
+    return "$" + name;
+}
+
+// module_allocates reports whether any function uses an array/alloc op (so the
+// heap + RC runtime needs emitting).
+function module_allocates(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            var k: string = r.ops[i].kind;
+            if (k == "arr_make" || k == "alloc") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
     }
     return false;
 }
 
-// wasm_i32_eligible: the module is all-IR-eligible (asm_ir.all_eligible) AND no
-// function allocates — the pure-i32 subset this slice covers.
-pub function wasm_i32_eligible(mod: parser.Module): boolean {
-    if (!asm_ir.all_eligible(mod)) { return false; }
-    var noret: string[] = [];
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[i], noret);
-        if (has_array_ops(r.ops)) { return false; }
-        i = i + 1;
-    }
-    return true;
+// wasm_eligible: the whole module is in the IR's i32 + arrays subset (the same
+// backend-independent gate the asm backends use — rejects non-lowerable
+// functions and builtin calls). wasm covers everything that gate admits.
+pub function wasm_eligible(mod: parser.Module): boolean {
+    return asm_ir.all_eligible(mod);
 }
 
 // emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
-// are numeric: slots 0..n_params-1 are the params, n_params..n_locals-1 the
-// body locals. The body is the flat-WAT transliteration of the op stream.
-function emit_function_ir(fd: parser.FuncDecl, s_unused: string): string {
+// are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
+// locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
+// use to hold a base pointer / popped element while reordering the wasm stack.
+function emit_function_ir(fd: parser.FuncDecl): string {
     var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    var arrtmp: i32 = r.n_locals;
+    var eltmp: i32 = r.n_locals + 1;
     var out: string = "  (func $" + fd.name;
     var p: i32 = 0;
     while (p < r.n_params) {
@@ -91,16 +112,15 @@ function emit_function_ir(fd: parser.FuncDecl, s_unused: string): string {
         p = p + 1;
     }
     out = out + " (result i32)\n";
-    var nbody: i32 = r.n_locals - r.n_params;
-    if (nbody > 0) {
-        out = out + "    (local";
-        var l: i32 = 0;
-        while (l < nbody) {
-            out = out + " i32";
-            l = l + 1;
-        }
-        out = out + ")\n";
+    // body locals + 2 array scratch locals
+    var nloc: i32 = (r.n_locals - r.n_params) + 2;
+    out = out + "    (local";
+    var l: i32 = 0;
+    while (l < nloc) {
+        out = out + " i32";
+        l = l + 1;
     }
+    out = out + ")\n";
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -130,6 +150,38 @@ function emit_function_ir(fd: parser.FuncDecl, s_unused: string): string {
             out = out + "    br_if " + util.i32_to_string(o.i32_imm) + "\n";
         } else if (o.kind == "drop") {
             out = out + "    drop\n";
+        } else if (o.kind == "arr_make") {
+            // n element values on the wasm stack (element n-1 on top).
+            // __fern_arr_box(n*4) -> a; store len@a, cap@a+4, then the
+            // elements at a+8+i*4 (top-down, popping each into $eltmp so the
+            // i32.store sees [addr, value]). $arrtmp holds a across the pops.
+            var n: i32 = o.i32_imm;
+            out = out + "    i32.const " + util.i32_to_string(n * 4) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n";
+            var em: i32 = n - 1;
+            while (em >= 0) {
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                em = em - 1;
+            }
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "arr_get") {
+            // stack: base, idx -> i32.load(base + 8 + idx*4)
+            out = out + "    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n";
+        } else if (o.kind == "arr_set") {
+            // stack: base, idx, val -> store val at base+8+idx*4
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+        } else if (o.kind == "arr_len") {
+            // stack: base -> i32.load(base)  (len @ a+0)
+            out = out + "    i32.load\n";
+        } else if (o.kind == "arr_rc") {
+            // stack: base -> i32.load(base - 8)  (rc @ a-8)
+            out = out + "    i32.const 8\n    i32.sub\n    i32.load\n";
+        } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {
+            // Runtime RC helper: the arg is already on the wasm stack; the
+            // helper takes it as a param and returns the ptr / count.
+            out = out + "    call " + wasm_helper_symbol(o.str) + "\n";
         } else if (o.kind == "call_direct") {
             out = out + "    call $" + o.str + "\n";
         } else {
@@ -137,24 +189,28 @@ function emit_function_ir(fd: parser.FuncDecl, s_unused: string): string {
         }
         i = i + 1;
     }
-    // Fallthrough result for the (result i32) signature. Subset functions end
-    // in `return`, so this lands in the unreachable continuation (wasm's
-    // stack-polymorphic typing accepts it) and never actually runs.
+    // Fallthrough result for (result i32). Subset functions end in `return`, so
+    // this lands in the unreachable continuation (accepted by wasm's
+    // stack-polymorphic typing) and never actually runs.
     out = out + "    i32.const 0)\n";
     return out;
 }
 
-// emit_module_ir renders a full all-i32-eligible module as a WAT command core:
-// every function, a `_start` that exits with main()'s result via proc_exit,
-// and the required memory + _start exports. Caller must ensure
-// wasm_i32_eligible(mod).
+// emit_module_ir renders a full all-eligible module as a WAT command core:
+// the heap/RC runtime (reused from wasm.fern when the module allocates), every
+// function, a `_start` that exits with main()'s result via proc_exit, and the
+// memory + _start exports. Caller must ensure wasm_eligible(mod).
 pub function emit_module_ir(mod: parser.Module): string {
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
-    out = out + "  (memory (export \"memory\") 1)\n";
+    out = out + "  (memory (export \"memory\") 16)\n";
+    if (module_allocates(mod)) {
+        out = out + wasm.heap_alloc_helpers(heap_base(), fl_base(), fl_cells());
+        out = out + wasm.rc_runtime_helpers(heap_base());
+    }
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(mod.funcs[fi], "");
+        out = out + emit_function_ir(mod.funcs[fi]);
         fi = fi + 1;
     }
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";

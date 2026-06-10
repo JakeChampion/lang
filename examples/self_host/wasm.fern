@@ -6352,7 +6352,7 @@ function exit_func(component_io: boolean): string {
 // heap_alloc_helpers emits the bump allocator: a `$heap` global starting
 // at `heap_base` (above all static data) and `$__fern_alloc` which bumps
 // it. Shared by string concat and array allocation.
-function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): string {
+pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): string {
     var hb: string = util.i32_to_string(heap_base);
     var flb: string = util.i32_to_string(fl_base);
     var flc: string = util.i32_to_string(fl_cells);
@@ -6493,7 +6493,7 @@ function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): string
 // This is the additive Phase-0c foundation for wasm RC — the array
 // layout migration + inc/dec call sites ride on it in later slices,
 // exactly as on the asm backends.
-function rc_runtime_helpers(heap_base: i32): string {
+pub function rc_runtime_helpers(heap_base: i32): string {
     var lo: string = util.i32_to_string(heap_base);
     var o: string = "";
     // ($__fern_rc_underflow is defined in heap_alloc_helpers, emitted first.)
