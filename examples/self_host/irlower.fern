@@ -507,12 +507,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             }
             // String tracking: a `var s = <string expr>` marks the slot as a
             // string (for later `.len()` / concat / eq dispatch). Strings aren't
-            // RC'd, so this never sets alias_inc / is_arr — a plain store.
-            var is_str: boolean = expr_is_str(v.init, se);
-            // Struct tracking: `var p = P { .. }` (or `= other_struct_local`)
-            // records the slot's struct type so `p.x` resolves the field index.
-            // Leak-only scalar structs — no RC, a plain store.
+            // RC'd, so this never sets alias_inc / is_arr — a plain store. The
+            // declared type annotation (`var s: string = …`) is authoritative too:
+            // it catches a string flowing through an erased generic call
+            // (`var s: string = id("hi")`), where the init expr isn't structurally
+            // a string but the checker has proven the slot's type.
+            var is_str: boolean = expr_is_str(v.init, se) || v.type_name == "string";
+            // Struct tracking: `var p = P { .. }` (or `= other_struct_local`, or a
+            // `var p: P = …` annotation) records the slot's struct type so `p.x`
+            // resolves the field index. Leak-only scalar structs — no RC.
             var struct_ty: string = expr_struct_type(v.init, se);
+            if (struct_ty == "" && decl_is_struct(se.structs, v.type_name)) { struct_ty = v.type_name; }
             // bind AFTER lowering the init (the init can't see the new name)
             var sb: LowerState = se.add_local(v.name);
             var slot: i32 = sb.slot_of(v.name);
