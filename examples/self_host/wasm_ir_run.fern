@@ -27,7 +27,21 @@ function main(): i32 {
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var emitted: string = "";
     if (use_ir && wasm_ir.wasm_eligible(mod)) {
-        emitted = wasm_ir.emit_module_ir(mod);
+        // Force the IR path: orchestrate the module wrapper + wasm's heap/RC
+        // runtime + wasm_ir.emit_functions (the same orchestration
+        // wasm.emit_module's use_ir dispatch does).
+        var o: string = "(module\n";
+        o = o + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+        o = o + "  (memory (export \"memory\") 16)\n";
+        if (wasm_ir.module_allocates(mod)) {
+            o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base(), wasm_ir.fl_base(), wasm_ir.fl_cells());
+            o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base());
+        }
+        if (wasm_ir.module_uses_divrem(mod)) { o = o + wasm.divrem_helpers(); }
+        o = o + wasm_ir.emit_functions(mod);
+        o = o + "  (func $_start (call $proc_exit (call $main)))\n";
+        o = o + "  (export \"_start\" (func $_start)))\n";
+        emitted = o;
     } else {
         emitted = wasm.emit_module(parser.module_with_builtins(mod));
     }

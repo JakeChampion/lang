@@ -30,6 +30,7 @@
 
 import "./parser";
 import "./util";
+import "./wasm_ir";
 
 // StrTable interns string-literal payloads as `[len:i32][bytes]` blocks
 // in linear memory (the data section); a string VALUE is the i32 pointer
@@ -6086,7 +6087,7 @@ function stmts_use_divrem(body: parser.Stmt[]): boolean {
 // right overflow quotient and `a % 1 = 0` the right overflow remainder.
 // A final `select` substitutes the divide-by-zero answer (0 for div, the
 // dividend for rem). Mirrors internal/codegen/wasmbin/runtime.go.
-function divrem_helpers(): string {
+pub function divrem_helpers(): string {
     var bad: string =
         "(i32.or (i32.eqz (local.get $b))"
         + " (i32.and (i32.eq (local.get $a) (i32.const -2147483648))"
@@ -10461,6 +10462,30 @@ pub function emit_module_run_io_fs(mod: parser.Module): string {
 }
 
 function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, fs: boolean): string {
+    // IR path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3): when use_ir is set
+    // (default on) AND the whole module is in the i32 + arrays subset, emit the
+    // preview1 command core from the target-agnostic stack IR
+    // (wasm_ir.emit_functions — the wasm mirror of asm_ir, with wasm's linear-
+    // memory layout + the SAME Perceus array RC). The IR emits FLAT WAT, which
+    // both wasmtime and the self-host watbin encoder now assemble. The heap/RC
+    // runtime is emitted from HERE (this module's heap_alloc_helpers /
+    // rc_runtime_helpers), so wasm_ir does NOT import wasm — no cycle. Component
+    // modes and out-of-subset modules (strings, structs, methods, …) fall
+    // through to the AST emitter below, so the bootstrap is unaffected.
+    if (!component && wasm_ir.should_use_ir(mod)) {
+        var ir_out: string = "(module\n";
+        ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+        ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
+        if (wasm_ir.module_allocates(mod)) {
+            ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base(), wasm_ir.fl_base(), wasm_ir.fl_cells());
+            ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base());
+        }
+        if (wasm_ir.module_uses_divrem(mod)) { ir_out = ir_out + divrem_helpers(); }
+        ir_out = ir_out + wasm_ir.emit_functions(mod);
+        ir_out = ir_out + "  (func $_start (call $proc_exit (call $main)))\n";
+        ir_out = ir_out + "  (export \"_start\" (func $_start)))\n";
+        return ir_out;
+    }
     // Intern every string literal in the module into the data section.
     var tab: StrTable = new_str_table();
     tab = collect_strings_stmts(mod.top_stmts, tab);

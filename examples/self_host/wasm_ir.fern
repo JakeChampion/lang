@@ -28,15 +28,15 @@ import "./util";
 import "./ir";
 import "./irlower";
 import "./asm_ir";
-import "./wasm";
+import "./asmcore";
 
 // Linear-memory layout for the no-string array subset, computed exactly as
 // wasm.emit_module does for an empty string table (tab.next = 24, heap_extra =
 // 0): fl_base = roundup8(24 + 16) = 40, the 65536-class freelist, then the
 // bump heap at heap_base. heap_base is also the rc helpers' low-address guard.
-function fl_base(): i32 { return 40; }
-function fl_cells(): i32 { return 65536; }
-function heap_base(): i32 { return 40 + 65536 * 4; }
+pub function fl_base(): i32 { return 40; }
+pub function fl_cells(): i32 { return 65536; }
+pub function heap_base(): i32 { return 40 + 65536 * 4; }
 
 // wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
 // values never appear in the i32 subset, so every op is the i32.* form.
@@ -44,8 +44,13 @@ function wasm_binop(kind: string): string {
     if (kind == "add") { return "i32.add"; }
     if (kind == "sub") { return "i32.sub"; }
     if (kind == "mul") { return "i32.mul"; }
-    if (kind == "div_s") { return "i32.div_s"; }
-    if (kind == "rem_s") { return "i32.rem_s"; }
+    // Non-trapping div/rem, matching wasm.fern's AST path: x/0 = 0, x%0 = x,
+    // INT_MIN/-1 = INT_MIN (wasm's native i32.div_s / i32.rem_s TRAP on those).
+    // The helpers ($__fern_idiv / $__fern_irem) are emitted when the module
+    // uses div/rem (module_uses_divrem). As a flat instruction the operands are
+    // prior on the stack, so `call` consumes them exactly like the op would.
+    if (kind == "div_s") { return "call $__fern_idiv"; }
+    if (kind == "rem_s") { return "call $__fern_irem"; }
     if (kind == "and") { return "i32.and"; }
     if (kind == "or") { return "i32.or"; }
     if (kind == "xor") { return "i32.xor"; }
@@ -73,7 +78,7 @@ function wasm_helper_symbol(name: string): string {
 
 // module_allocates reports whether any function uses an array/alloc op (so the
 // heap + RC runtime needs emitting).
-function module_allocates(mod: parser.Module): boolean {
+pub function module_allocates(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
@@ -89,11 +94,34 @@ function module_allocates(mod: parser.Module): boolean {
     return false;
 }
 
+// module_uses_divrem reports whether any function uses i32 div/rem (so the
+// non-trapping $__fern_idiv / $__fern_irem helpers need emitting).
+pub function module_uses_divrem(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 // wasm_eligible: the whole module is in the IR's i32 + arrays subset (the same
 // backend-independent gate the asm backends use — rejects non-lowerable
 // functions and builtin calls). wasm covers everything that gate admits.
 pub function wasm_eligible(mod: parser.Module): boolean {
     return asm_ir.all_eligible(mod);
+}
+
+// should_use_ir: the use_ir default is on AND the module is eligible — the
+// dispatch wasm.emit_module consults to route eligible modules through the IR.
+pub function should_use_ir(mod: parser.Module): boolean {
+    return asmcore.new_state().use_ir && asm_ir.all_eligible(mod);
 }
 
 // emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
@@ -196,24 +224,19 @@ function emit_function_ir(fd: parser.FuncDecl): string {
     return out;
 }
 
-// emit_module_ir renders a full all-eligible module as a WAT command core:
-// the heap/RC runtime (reused from wasm.fern when the module allocates), every
-// function, a `_start` that exits with main()'s result via proc_exit, and the
-// memory + _start exports. Caller must ensure wasm_eligible(mod).
-pub function emit_module_ir(mod: parser.Module): string {
-    var out: string = "(module\n";
-    out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
-    out = out + "  (memory (export \"memory\") 16)\n";
-    if (module_allocates(mod)) {
-        out = out + wasm.heap_alloc_helpers(heap_base(), fl_base(), fl_cells());
-        out = out + wasm.rc_runtime_helpers(heap_base());
-    }
+// emit_functions renders the user functions of an all-eligible module as WAT
+// (func ...) blocks — and ONLY the functions. The module wrapper (imports +
+// memory), the heap/RC runtime (heap_alloc_helpers + rc_runtime_helpers, which
+// live in wasm.fern), and the `_start` + exports are emitted by the CALLER
+// (wasm.emit_module, or the differential driver). Keeping the runtime on the
+// caller side lets wasm.fern import this module for the use_ir dispatch without
+// a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
+pub function emit_functions(mod: parser.Module): string {
+    var out: string = "";
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         out = out + emit_function_ir(mod.funcs[fi]);
         fi = fi + 1;
     }
-    out = out + "  (func $_start (call $proc_exit (call $main)))\n";
-    out = out + "  (export \"_start\" (func $_start)))\n";
     return out;
 }
