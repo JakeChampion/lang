@@ -56,13 +56,18 @@ function array_ret_fns(mod: parser.Module): string[] {
     return out;
 }
 
-// is_fern_helper reports whether a call_direct callee is a runtime helper
-// (__fern_rc_inc / __fern_rc_dec / __fern_rc_underflow_get / __fern_heap_used),
-// which use the SysV register ABI + the freestanding fn___fern_* bodies — as
-// opposed to a user function (asm.fern stack ABI, __fn_<name>).
+// is_fern_helper reports whether a call_direct callee is one of the IR
+// runtime helpers the emitter actually provides (emit_ir_runtime). These use
+// the SysV register ABI + the freestanding fn___fern_* bodies, vs user
+// functions (asm.fern stack ABI, __fn_<name>). The whitelist is exact: any
+// OTHER __fern_* / __rc_* call (e.g. a test's __fern_rc_underflow_count) is
+// NOT provided here, so calls_only_known disqualifies the module from the IR
+// path and it falls back to the AST emitter.
 function is_fern_helper(name: string): boolean {
-    if (name.len() < 7) { return false; }
-    return name[0 : 7] == "__fern_";
+    return name == "__fern_rc_inc"
+        || name == "__fern_rc_dec"
+        || name == "__fern_rc_underflow_get"
+        || name == "__fern_heap_used";
 }
 
 // module_uses_heap reports whether any function allocates (so the runtime +
@@ -125,12 +130,45 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// all_eligible reports whether every function in the module is IR-eligible.
+// all_eligible reports whether every function in the module is IR-eligible
+// AND every direct call targets a function defined in the module (or an IR
+// runtime helper). A call to a BUILTIN (read_int / print_int / chr /
+// i32_to_string / ...) lowers to call_direct but has no `__fn_<name>` body —
+// the IR path can't emit it, so such modules fall back to the AST emitter
+// (which handles builtins in emit_expr). The whole module goes one way or the
+// other, so a single builtin call disqualifies the IR path for the module.
 pub function all_eligible(mod: parser.Module): boolean {
     if (mod.funcs.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (!ir_eligible(mod.funcs[i])) { return false; }
+        if (!calls_only_known(mod.funcs[i], mod)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// module_has_func reports whether `name` is a function defined in the module.
+function module_has_func(mod: parser.Module, name: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// calls_only_known reports whether every direct call in fd targets a module
+// function or an IR runtime helper (not a builtin).
+function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret);
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        var o: ir.Op = r.ops[i];
+        if (o.kind == "call_direct") {
+            if (!is_fern_helper(o.str) && !module_has_func(mod, o.str)) { return false; }
+        }
         i = i + 1;
     }
     return true;
