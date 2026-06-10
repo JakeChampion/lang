@@ -336,6 +336,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "struct_get") {
             // stack: struct ptr -> i32.load(ptr + 4 + index*4)
             out = out + "    i32.const " + util.i32_to_string(4 + o.i32_imm * 4) + "\n    i32.add\n    i32.load\n";
+        } else if (o.kind == "struct_set") {
+            // stack: box, val -> store val at box + 4 + index*4. Stash val in
+            // $eltmp, recompute the address, then i32.store [addr, val].
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(4 + o.i32_imm * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
         } else if (o.kind == "variant_is") {
             // stack: variant box -> i32.load (type_id @0) == struct_type_id(name)
             out = out + "    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";

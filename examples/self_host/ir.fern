@@ -168,6 +168,14 @@ pub function op_struct_get(field_index: i32): Op {
     return Op { kind: "struct_get", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
+// struct_set pops [struct, value] and stores value into field `field_index`
+// (the in-place `p.x = v` mutation). Scalar fields only (leak-only structs);
+// the box is shared by reference, so aliases observe the write — matching the
+// AST path. Layout-agnostic: each backend writes at its own field offset.
+pub function op_struct_set(field_index: i32): Op {
+    return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
 // variant_is pops an enum-variant box and pushes 1 if it is the variant named
 // `str`, else 0 — the discriminant test that drives `match` arm dispatch. A
 // variant box is built by struct_make (the variant struct's name is its shape /
@@ -235,6 +243,7 @@ pub function render_op(o: Op): string {
     if (o.kind == "str_eq") { return "str_eq"; }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "variant_is") { return "variant_is " + o.str; }
     return o.kind;
 }
