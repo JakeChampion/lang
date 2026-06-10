@@ -112,6 +112,10 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"rc-fresh", "function main(): i32 { var a = [10, 20, 30]; return __rc(a); }", 1},
 		{"rc-one-alias", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc(a); }", 2},
 		{"rc-two-aliases", "function main(): i32 { var a = [1, 2]; var b = a; var c = a; return __rc(a); }", 3},
+		// Exit dec-sweep + underflow detector (slice 11).
+		{"rc-clean-no-underflow", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc_underflow(); }", 0},
+		{"rc-balanced-manual-dec", "function main(): i32 { var a = [1, 2, 3]; var b = a; __rc_dec(a); __rc_dec(b); return __rc_underflow(); }", 0},
+		{"rc-detects-overrelease", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); __rc_dec(a); return __rc_underflow(); }", 1},
 		// Still out of subset -> lower bails (200): floats.
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}

@@ -134,6 +134,13 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"rc-alias-same-buffer", "function main(): i32 { var a = [1, 2]; var b = a; return __rc(b); }", 2},
 		// rc header is transparent to ordinary array use (no free yet).
 		{"rc-transparent", "function main(): i32 { var a = [10, 20, 30]; var b = a; return b[0] + b[2] + a.len(); }", 43},
+		// Exit dec-sweep + underflow detector (slice 11). __rc_underflow reads
+		// the over-release counter. Clean / balanced programs report 0; a
+		// deliberate double-release is detected (1). No free yet.
+		{"rc-clean-no-underflow", "function main(): i32 { var a = [10, 20, 30]; var b = a; return __rc_underflow(); }", 0},
+		{"rc-balanced-manual-dec", "function main(): i32 { var a = [1, 2, 3]; var b = a; __rc_dec(a); __rc_dec(b); return __rc_underflow(); }", 0},
+		{"rc-detects-overrelease", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); __rc_dec(a); return __rc_underflow(); }", 1},
+		{"rc-after-one-dec", "function main(): i32 { var a = [1, 2, 3]; var b = a; __rc_dec(a); return __rc(a); }", 1},
 		// Still out of subset -> lower bails -> emit_module exits 200.
 		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
 	}
