@@ -14,6 +14,7 @@
 import "std/io";
 import "./lexer";
 import "./parser";
+import "./asmcore";
 import "./asm_arm64";
 import "./asm_arm64_ir";
 import "./asm_ir";
@@ -30,7 +31,14 @@ function main(): i32 {
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var emitted: string = "";
     if (use_ir && asm_ir.all_eligible(mod)) {
-        emitted = asm_arm64_ir.emit_module_ir(mod, false);
+        // Force the IR path: orchestrate emit_body + asm_arm64's own runtime
+        // (the same orchestration asm_arm64.emit_module's use_ir dispatch does).
+        strbuf_reset();
+        var s: asmcore.EmitState = asmcore.new_state();
+        s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+        s = asm_arm64_ir.emit_body(mod, s);
+        s = asm_arm64.emit_runtime(s, false);
+        emitted = strbuf_take();
     } else {
         emitted = asm_arm64.emit_module(parser.module_with_builtins(mod), false);
     }

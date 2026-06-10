@@ -32,6 +32,10 @@ import "./lexer";
 import "./parser";
 import "./asmcore";
 import "./util";
+import "./ir";
+import "./irlower";
+import "./asm_ir";
+import "./asm_arm64_ir";
 
 
 
@@ -8138,6 +8142,21 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         eprint(check_errs);
         exit(1);
         return "";
+    }
+    // IR path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3): when use_ir is set
+    // (default on) AND the whole module is in the IR's i32 + arrays subset,
+    // emit each function body from the target-agnostic stack IR
+    // (asm_arm64_ir.emit_body — the arm64 mirror of asm_ir, with asm_arm64's
+    // own array layout + RC, proven behaviour-equivalent via the differential
+    // gate) and append THIS module's runtime. Out-of-subset modules (strings,
+    // structs, methods, …) fall through to the AST emitter below, so the
+    // self-host compiler itself still compiles via AST and the bootstrap is
+    // unaffected. asm_arm64_ir does NOT import asm_arm64 (no cycle); the
+    // runtime is reused from here, not duplicated.
+    if (asmcore.new_state().use_ir && asm_ir.all_eligible(mod)) {
+        s = asm_arm64_ir.emit_body(mod, s);
+        s = emit_runtime(s, darwin);
+        return strbuf_take();
     }
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
