@@ -88,8 +88,18 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"unary-not", "function main(): i32 { return !(5 > 10); }", 1},
 		{"unary-minus-net-positive", "function main(): i32 { var x = 10; return -x + 13; }", 3},
 		{"chained", "function main(): i32 { var a = 1; var b = a + 1; var c = b + 1; var d = c + 1; return d * 10; }", 40},
-		// Out of subset -> lower_func bails -> emit_program exits 200.
-		{"if-bails", "function main(): i32 { if (true) { return 1; } return 2; }", 200},
+		// Structured control flow (slice 4): if / else lower to real x86
+		// conditional branches + labels.
+		{"if-taken", "function main(): i32 { var x = 1; if (5 < 10) { x = 7; } return x; }", 7},
+		{"if-not-taken", "function main(): i32 { var x = 1; if (10 < 5) { x = 7; } return x; }", 1},
+		{"if-else-then", "function main(): i32 { var x = 0; if (1 < 2) { x = 3; } else { x = 9; } return x; }", 3},
+		{"if-else-else", "function main(): i32 { var x = 0; if (2 < 1) { x = 3; } else { x = 9; } return x; }", 9},
+		{"early-return", "function main(): i32 { var x = 5; if (x > 3) { return 100; } return x; }", 100},
+		{"no-early-return", "function main(): i32 { var x = 2; if (x > 3) { return 100; } return x; }", 2},
+		{"nested-if", "function main(): i32 { var x = 5; if (x > 0) { if (x > 3) { x = 100; } else { x = 50; } } return x; }", 100},
+		{"if-chain", "function main(): i32 { var n = 2; var r = 0; if (n == 1) { r = 10; } else { if (n == 2) { r = 20; } else { r = 30; } } return r; }", 20},
+		// Still out of subset -> lower_func bails -> emit_program exits 200.
+		{"while-bails", "function main(): i32 { var i = 0; while (i < 3) { i = i + 1; } return i; }", 200},
 		{"call-bails", "function main(): i32 { return foo(); }", 200},
 	}
 

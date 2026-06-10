@@ -74,6 +74,79 @@ function emit_op(o: ir.Op): string {
     return "    popq %rcx\n    popq %rax\n" + bin_mid(o.kind) + "    pushq %rax\n";
 }
 
+// EmitX86 threads the output plus a scope stack for structured control
+// flow: each open `if` records its else / end labels and whether an `else`
+// was seen. The stack is depth-indexed and grown-then-overwritten (the
+// self-host has no pop-by-slice that preserves the array type), which is
+// sound because if/else/end are strictly nested and processed in order, so
+// index `depth` is always rewritten on push before being read.
+struct EmitX86 {
+    out: string,
+    nlabel: i32,
+    depth: i32,
+    s_else: string[],
+    s_end: string[],
+    s_haselse: i32[],
+}
+
+function ensure_str(a: string[], n: i32): string[] {
+    var r: string[] = a;
+    while (r.len() < n) { r = r.append(""); }
+    return r;
+}
+
+function ensure_i32(a: i32[], n: i32): i32[] {
+    var r: i32[] = a;
+    while (r.len() < n) { r = r.append(0); }
+    return r;
+}
+
+// emit_body_x86 lowers an op stream (including structured control flow) to
+// x86-64. Non-control-flow ops defer to emit_op; if/else/end manage labels.
+function emit_body_x86(ops: ir.Op[]): string {
+    var e: EmitX86 = EmitX86 { out: "", nlabel: 0, depth: 0, s_else: [], s_end: [], s_haselse: [] };
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var o: ir.Op = ops[i];
+        if (o.kind == "if") {
+            var le: string = ".Lelse_" + util.i32_to_string(e.nlabel);
+            var lend: string = ".Lend_" + util.i32_to_string(e.nlabel);
+            // pop cond, branch to the else/end label when false.
+            var nout: string = e.out + "    popq %rax\n    testl %eax, %eax\n    jz " + le + "\n";
+            var se: string[] = ensure_str(e.s_else, e.depth + 1);
+            var sn: string[] = ensure_str(e.s_end, e.depth + 1);
+            var sh: i32[] = ensure_i32(e.s_haselse, e.depth + 1);
+            se = se.with(e.depth, le);
+            sn = sn.with(e.depth, lend);
+            sh = sh.with(e.depth, 0);
+            e = EmitX86 { out: nout, nlabel: e.nlabel + 1, depth: e.depth + 1, s_else: se, s_end: sn, s_haselse: sh };
+        }
+        else if (o.kind == "else") {
+            var d: i32 = e.depth - 1;
+            // end of the then-branch: jump past the else, then land the
+            // false-path here.
+            var nout2: string = e.out + "    jmp " + e.s_end[d] + "\n" + e.s_else[d] + ":\n";
+            var sh2: i32[] = e.s_haselse.with(d, 1);
+            e = EmitX86 { out: nout2, nlabel: e.nlabel, depth: e.depth, s_else: e.s_else, s_end: e.s_end, s_haselse: sh2 };
+        }
+        else if (o.kind == "end") {
+            var d2: i32 = e.depth - 1;
+            var tail: string = "";
+            // with an else, the false path already landed at the else label,
+            // so close with the end label; without one, the if's jz target IS
+            // the end, so emit the else label here.
+            if (e.s_haselse[d2] == 1) { tail = e.s_end[d2] + ":\n"; }
+            else { tail = e.s_else[d2] + ":\n"; }
+            e = EmitX86 { out: e.out + tail, nlabel: e.nlabel, depth: d2, s_else: e.s_else, s_end: e.s_end, s_haselse: e.s_haselse };
+        }
+        else {
+            e = EmitX86 { out: e.out + emit_op(o), nlabel: e.nlabel, depth: e.depth, s_else: e.s_else, s_end: e.s_end, s_haselse: e.s_haselse };
+        }
+        i = i + 1;
+    }
+    return e.out;
+}
+
 // emit_exit renders a minimal freestanding program that exits with `code`.
 function emit_exit(code: i32): string {
     var out: string = ".text\n.globl _start\n_start:\n";
@@ -96,11 +169,7 @@ pub function emit_program(r: irlower.LowerResult): string {
     if (frame > 0) {
         out = out + "    subq $" + util.i32_to_string(frame) + ", %rsp\n";
     }
-    var i: i32 = 0;
-    while (i < r.ops.len()) {
-        out = out + emit_op(r.ops[i]);
-        i = i + 1;
-    }
+    out = out + emit_body_x86(r.ops);
     // Shared exit: the return value is already in %eax (zero-extended in
     // %rax by the i32 ops); move it to %rdi and exit. A subset main always
     // ends in `return`, which jumps here with the value popped into %rax.

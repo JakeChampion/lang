@@ -148,9 +148,42 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             if (!se.ok) { return se; }
             return se.emit(ir.op_return());
         },
+        parser.StmtIf(iff) => {
+            // Structured control flow, wasm-style: <cond> if <then> [else
+            // <else>] end. The operand stack is empty at block boundaries
+            // (statements balance it; `if` consumes the cond), so branches
+            // never carry operand-stack values — the backend lowering stays
+            // clean. NOTE: locals declared inside a branch keep their slots
+            // (no block-scoped reuse yet); a later slice can pop them.
+            var sc: LowerState = lower_expr(iff.cond, s);
+            if (!sc.ok) { return sc; }
+            var s1: LowerState = sc.emit(ir.op_if(0));
+            var s2: LowerState = lower_block(iff.then_body, s1);
+            if (!s2.ok) { return s2; }
+            if (iff.else_body.len() > 0) {
+                var s3: LowerState = s2.emit(ir.op_else());
+                var s4: LowerState = lower_block(iff.else_body, s3);
+                if (!s4.ok) { return s4; }
+                return s4.emit(ir.op_end());
+            }
+            return s2.emit(ir.op_end());
+        },
         _ => { return s.fail(); }
     }
     return s.fail();
+}
+
+// lower_block lowers a sequence of statements (a then/else body), bailing
+// on the first out-of-subset statement.
+pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
+    var st: LowerState = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        st = lower_stmt(stmts[i], st);
+        if (!st.ok) { return st; }
+        i = i + 1;
+    }
+    return st;
 }
 
 // LowerResult is lower_func's output: the lowered op stream, the local-slot
@@ -227,11 +260,27 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[]): i32 {
     var pc: i32 = 0;
     while (pc < ops.len()) {
         var o: ir.Op = ops[pc];
-        if (o.kind == "const_i32") { stack = stack.with(sp, o.i32_imm); sp = sp + 1; }
-        else if (o.kind == "load_local") { stack = stack.with(sp, locals[o.i32_imm]); sp = sp + 1; }
-        else if (o.kind == "store_local") { sp = sp - 1; locals = locals.with(o.i32_imm, stack[sp]); }
-        else if (o.kind == "not") { stack = stack.with(sp - 1, bool_not(stack[sp - 1])); }
+        if (o.kind == "const_i32") { stack = stack.with(sp, o.i32_imm); sp = sp + 1; pc = pc + 1; }
+        else if (o.kind == "load_local") { stack = stack.with(sp, locals[o.i32_imm]); sp = sp + 1; pc = pc + 1; }
+        else if (o.kind == "store_local") { sp = sp - 1; locals = locals.with(o.i32_imm, stack[sp]); pc = pc + 1; }
+        else if (o.kind == "not") { stack = stack.with(sp - 1, bool_not(stack[sp - 1])); pc = pc + 1; }
         else if (o.kind == "return") { sp = sp - 1; return stack[sp]; }
+        else if (o.kind == "if") {
+            // pop cond: nonzero -> fall into then; zero -> jump to the else
+            // body (if any) or past the matching end.
+            sp = sp - 1;
+            var c: i32 = stack[sp];
+            if (c != 0) { pc = pc + 1; }
+            else {
+                var el: i32 = find_matching_else(ops, pc + 1);
+                if (el >= 0) { pc = el + 1; } else { pc = find_matching_end(ops, pc + 1); }
+            }
+        }
+        else if (o.kind == "else") {
+            // reached only after executing a then-branch -> skip to end.
+            pc = find_matching_end(ops, pc + 1);
+        }
+        else if (o.kind == "end") { pc = pc + 1; }
         else {
             // a binary op: pop r, pop l, push apply
             sp = sp - 1;
@@ -240,8 +289,8 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[]): i32 {
             var l: i32 = stack[sp];
             stack = stack.with(sp, bin_apply(o.kind, l, r));
             sp = sp + 1;
+            pc = pc + 1;
         }
-        pc = pc + 1;
     }
     // fell off the end with no return — yield top-of-stack if present, else 0
     if (sp > 0) { return stack[sp - 1]; }
@@ -251,4 +300,42 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[]): i32 {
 function bool_not(x: i32): i32 {
     if (x == 0) { return 1; }
     return 0;
+}
+
+// find_matching_end returns the index of the `end` closing the structured
+// block whose body begins at `start` (one past the opener), honouring
+// nesting. `if` opens a scope, `end` closes one.
+pub function find_matching_end(ops: ir.Op[], start: i32): i32 {
+    var depth: i32 = 0;
+    var i: i32 = start;
+    while (i < ops.len()) {
+        var k: string = ops[i].kind;
+        if (k == "if") { depth = depth + 1; }
+        else if (k == "end") {
+            if (depth == 0) { return i; }
+            depth = depth - 1;
+        }
+        i = i + 1;
+    }
+    return ops.len();
+}
+
+// find_matching_else returns the index of the `else` for the if whose body
+// begins at `start`, or -1 if that if has no else (its scope closes at end).
+pub function find_matching_else(ops: ir.Op[], start: i32): i32 {
+    var depth: i32 = 0;
+    var i: i32 = start;
+    while (i < ops.len()) {
+        var k: string = ops[i].kind;
+        if (k == "if") { depth = depth + 1; }
+        else if (k == "end") {
+            if (depth == 0) { return 0 - 1; }
+            depth = depth - 1;
+        }
+        else if (k == "else") {
+            if (depth == 0) { return i; }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
