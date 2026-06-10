@@ -127,13 +127,14 @@ pub function new_state(): EmitState {
         funcs: fns,
         local_types: lts,
         n_params: 0,
-        // Default OFF: the IR path is folded in (slice 20) but not yet the
-        // default. Flipping it on (slice 21 attempt) surfaced self-host gaps
-        // — the self-hosted compiler mis-runs emit_function_via_ir's scope
-        // stack (undefined `.Lir_*` labels) and rejects some __fern_* builtin
-        // calls — that must be fixed before the flip is safe. Toggle via -ir
-        // (asm_ir_run) exercises the IR path through the Go-built compiler,
-        // where it is differentially proven.
+        // Default OFF. The IR path's control flow is now index-based (the
+        // self-host scope-stack miscompile is fixed), but flipping the default
+        // on still routes ARRAY/RC programs through the IR RC path, which is
+        // not yet a drop-in for asm.fern's array-RC implementation — the
+        // self_host_rc_runtime tests assert AST-specific patterns
+        // (__fern_arr_dec / rep stosq) the IR path doesn't emit. The flip waits
+        // until the IR RC path reaches drop-in parity (or those tests pin the
+        // AST path explicitly). The IR path is exercised + proven via -ir.
         use_ir: false
     };
 }
