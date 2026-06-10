@@ -262,6 +262,13 @@ function emit_function(fn: irlower.LoweredFn): string {
         out = out + "    movl " + arg_reg32(p) + ", " + loc(p) + "\n";
         p = p + 1;
     }
+    // Zero the array slots so the exit dec-sweep never decs an uninitialised
+    // (declared-in-an-untaken-branch) slot — __fern_rc_dec null-guards 0.
+    var z: i32 = 0;
+    while (z < fn.arr_slots.len()) {
+        out = out + "    movq $0, " + loc(fn.arr_slots[z]) + "\n";
+        z = z + 1;
+    }
     out = out + emit_body_x86(fn.ops, fn.name, exitlabel);
     out = out + exitlabel + ":\n";
     out = out + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
@@ -287,9 +294,19 @@ pub function emit_module(fns: irlower.LoweredFn[]): string {
     // refcount header at [ptr-4], return ptr. (Counting only — no free yet.)
     out = out + "fn___fern_rc_inc:\n";
     out = out + "    movl -4(%rdi), %eax\n    addl $1, %eax\n    movl %eax, -4(%rdi)\n    movq %rdi, %rax\n    ret\n";
+    // RC release helper: dec [ptr-4]; an over-release (rc already <= 0) bumps
+    // __fern_rc_underflow. Null / sub-heap pointers are skipped. No free yet.
+    out = out + "fn___fern_rc_dec:\n";
+    out = out + "    cmpq $8, %rdi\n    jb .Ldec_skip\n";
+    out = out + "    movl -4(%rdi), %eax\n    cmpl $0, %eax\n    jg .Ldec_do\n";
+    out = out + "    movl __fern_rc_underflow, %ecx\n    addl $1, %ecx\n    movl %ecx, __fern_rc_underflow\n    jmp .Ldec_skip\n";
+    out = out + ".Ldec_do:\n    subl $1, %eax\n    movl %eax, -4(%rdi)\n";
+    out = out + ".Ldec_skip:\n    movq %rdi, %rax\n    ret\n";
+    // RC over-release counter reader (the `__rc_underflow()` hook).
+    out = out + "fn___fern_rc_underflow_get:\n    movl __fern_rc_underflow, %eax\n    ret\n";
     // Leak-only bump heap: a 1 MiB .bss region + a data-segment bump pointer
     // initialised to its base. (No free yet — the early-Perceus counting
     // phase precedes reclamation.)
-    out = out + ".data\n__heap_ptr: .quad __heap\n.bss\n__heap: .skip 1048576\n";
+    out = out + ".data\n__heap_ptr: .quad __heap\n__fern_rc_underflow: .long 0\n.bss\n__heap: .skip 1048576\n";
     return out;
 }

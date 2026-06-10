@@ -206,6 +206,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         sr = sr.emit(ir.op_bin("sub", 0, false));
                         return sr.emit(ir.op_load(0));
                     }
+                    // __rc_dec(a): manual release (a test hook for exercising
+                    // the underflow detector); returns the pointer.
+                    if (cid.name == "__rc_dec") {
+                        if (c.args.len() != 1) { return s.fail(); }
+                        var sd: LowerState = lower_expr(c.args[0], s);
+                        if (!sd.ok) { return sd; }
+                        return sd.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    }
+                    // __rc_underflow(): read the over-release counter.
+                    if (cid.name == "__rc_underflow") {
+                        if (c.args.len() != 0) { return s.fail(); }
+                        return s.emit(ir.op_call_direct("__fern_rc_underflow_get", 0));
+                    }
                     if (c.args.len() > 6) { return s.fail(); }
                     var sc: LowerState = s;
                     var ai: i32 = 0;
@@ -271,6 +284,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
         parser.StmtReturn(r) => {
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }
+            // Perceus exit dec-sweep: release every array local live at this
+            // return. The sweep ops (load / __fern_rc_dec / drop) are net-zero
+            // on the operand stack, so the return value underneath is
+            // undisturbed. (No move-on-return yet — returning an array decs it
+            // too; safe under the leak-only heap.)
+            se = emit_dec_sweep(se);
             return se.emit(ir.op_return());
         },
         parser.StmtIf(iff) => {
@@ -354,6 +373,22 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
     return s.fail();
 }
 
+// emit_dec_sweep releases (decs) every array local currently in scope,
+// leaving the operand stack unchanged. Used at each return.
+pub function emit_dec_sweep(s: LowerState): LowerState {
+    var st: LowerState = s;
+    var i: i32 = 0;
+    while (i < st.local_is_arr.len()) {
+        if (st.is_arr_slot(i)) {
+            st = st.emit(ir.op_load_local(i));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+        }
+        i = i + 1;
+    }
+    return st;
+}
+
 // lower_block lowers a sequence of statements (a then/else body), bailing
 // on the first out-of-subset statement.
 pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
@@ -374,6 +409,21 @@ pub struct LowerResult {
     ops: ir.Op[],
     n_locals: i32,
     n_params: i32,
+    // arr_slots: the local slots holding arrays — the backend zeroes these at
+    // entry so the exit dec-sweep never decs an uninitialised (untaken-branch)
+    // slot.
+    arr_slots: i32[],
+}
+
+// arr_slots_of collects the slot indices marked array in s.
+function arr_slots_of(s: LowerState): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.local_is_arr.len()) {
+        if (s.is_arr_slot(i)) { out = out.append(i); }
+        i = i + 1;
+    }
+    return out;
 }
 
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
@@ -387,14 +437,15 @@ pub function lower_func(fn: parser.FuncDecl): LowerResult {
         i = i + 1;
     }
     var empty: ir.Op[] = [];
+    var noslots: i32[] = [];
     var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, n_params: fn.params.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
-        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params }; }
+        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, arr_slots: noslots }; }
         j = j + 1;
     }
-    return LowerResult { ok: true, ops: s.ops, n_locals: s.local_names.len(), n_params: s.n_params };
+    return LowerResult { ok: true, ops: s.ops, n_locals: s.local_names.len(), n_params: s.n_params, arr_slots: arr_slots_of(s) };
 }
 
 // LoweredFn is one function's lowered form, tagged with its name + arity so
@@ -405,6 +456,7 @@ pub struct LoweredFn {
     ops: ir.Op[],
     n_locals: i32,
     n_params: i32,
+    arr_slots: i32[],
 }
 
 // lower_module lowers every function in a program.
@@ -413,7 +465,7 @@ pub function lower_module(funcs: parser.FuncDecl[]): LoweredFn[] {
     var i: i32 = 0;
     while (i < funcs.len()) {
         var r: LowerResult = lower_func(funcs[i]);
-        out = out.append(LoweredFn { name: funcs[i].name, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params });
+        out = out.append(LoweredFn { name: funcs[i].name, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots });
         i = i + 1;
     }
     return out;
@@ -489,9 +541,12 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
     var sp: i32 = 0;
 
     // A simple word-addressed heap for the leak-only bump allocator: a byte
-    // address `a` maps to word index a/4. Local to this call (slice-8
-    // corpus keeps arrays within the function that creates them).
+    // address `a` maps to word index a/4. Local to this call (the corpus
+    // keeps arrays within the function that creates them). Word 0 (byte
+    // address 0) is reserved as the RC over-release (underflow) counter, so
+    // the first allocation starts at byte address 4 — no real array uses 0.
     var heap: i32[] = [];
+    heap = heap.append(0);
 
     var pc: i32 = 0;
     while (pc < ops.len()) {
@@ -561,6 +616,26 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             var ridx: i32 = (ib - 4) / 4;
             heap = heap.with(ridx, heap[ridx] + 1);
             stack = stack.with(sp, ib);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "call_direct" && o.str == "__fern_rc_dec") {
+            // RC release: dec the header at base-4 (no free). A dec of a value
+            // already at/below 0 is an over-release -> bump the counter at
+            // word 0. A null / sub-heap pointer is skipped (defensive).
+            sp = sp - 1;
+            var db: i32 = stack[sp];
+            if (db >= 8) {
+                var dridx: i32 = (db - 4) / 4;
+                if (heap[dridx] <= 0) { heap = heap.with(0, heap[0] + 1); }
+                else { heap = heap.with(dridx, heap[dridx] - 1); }
+            }
+            stack = stack.with(sp, db);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "call_direct" && o.str == "__fern_rc_underflow_get") {
+            stack = stack.with(sp, heap[0]);
             sp = sp + 1;
             pc = pc + 1;
         }
