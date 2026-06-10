@@ -1,0 +1,254 @@
+// examples/self_host/irlower.fern — AST -> stack-IR lowering for the
+// self-hosted compiler (slice 2 of the IR rebuild, see
+// docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md), plus a stack-machine
+// interpreter that evaluates the lowered Op[] so lowering is checkable
+// end-to-end WITHOUT a backend (mirrors how ssa.fern validates its builder
+// with an SSA interpreter).
+//
+// SCOPE (slice 2): the straight-line i32 subset — params, `var` / `=`
+// locals, integer / bool literals, the binary + unary operators, and
+// `return`. This is the IR analogue of ssa.fern's slice-1 subset. Anything
+// outside it (control flow, calls, strings, floats, composites) makes
+// lower_func return ok=false, so the driver can fall back / report a bail.
+// Control flow (block/loop/if/br) + calls land in later slices, mirroring
+// the native builder's expression/statement lowering.
+//
+// The lowering is a textbook stack-machine emit: an expression lowers to
+// ops that PUSH its value (operands first, then the operator), a `var`
+// binds the next local slot and stores into it, `return` lowers its value
+// then emits `return`. Params occupy slots 0..n_params-1.
+
+import "./ir";
+import "./parser";
+import "./util";
+
+// LowerState threads the accumulated Op[] and the local-slot table
+// (slot i -> name) immutably, in the self-host style. `n_params` records
+// the borrow boundary the later RC slices need; `ok` latches a bail.
+pub struct LowerState {
+    ops: ir.Op[],
+    local_names: string[],
+    n_params: i32,
+    ok: boolean,
+}
+
+pub function (s: LowerState) emit(op: ir.Op): LowerState {
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, n_params: s.n_params, ok: s.ok };
+}
+
+pub function (s: LowerState) fail(): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names, n_params: s.n_params, ok: false };
+}
+
+// slot_of returns the local slot for `name`, or -1 if unbound.
+pub function (s: LowerState) slot_of(name: string): i32 {
+    var i: i32 = 0;
+    while (i < s.local_names.len()) {
+        if (s.local_names[i] == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// add_local binds `name` to a fresh slot (its index = the old slot count).
+pub function (s: LowerState) add_local(name: string): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), n_params: s.n_params, ok: s.ok };
+}
+
+// map_binop maps a source binary operator to its IR opcode kind (the i32 /
+// signed subset). Unknown ops return "" -> caller bails.
+pub function map_binop(op: string): string {
+    if (op == "+") { return "add"; }
+    if (op == "-") { return "sub"; }
+    if (op == "*") { return "mul"; }
+    if (op == "/") { return "div_s"; }
+    if (op == "%") { return "rem_s"; }
+    if (op == "&") { return "and"; }
+    if (op == "|") { return "or"; }
+    if (op == "^") { return "xor"; }
+    if (op == "<<") { return "shl"; }
+    if (op == ">>") { return "shr_s"; }
+    if (op == "==") { return "eq"; }
+    if (op == "!=") { return "ne"; }
+    if (op == "<") { return "lt_s"; }
+    if (op == "<=") { return "le_s"; }
+    if (op == ">") { return "gt_s"; }
+    if (op == ">=") { return "ge_s"; }
+    return "";
+}
+
+// lower_expr emits ops that leave the value of `e` on the operand stack.
+pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
+    if (!s.ok) { return s; }
+    match (e) {
+        parser.ExprNumber(n) => {
+            if (n.is_float) { return s.fail(); }
+            return s.emit(ir.op_const_i32(util.digits_to_i32(n.text)));
+        },
+        parser.ExprBool(b) => {
+            var v: i32 = 0;
+            if (b.value) { v = 1; }
+            return s.emit(ir.op_const_i32(v));
+        },
+        parser.ExprIdent(id) => {
+            var slot: i32 = s.slot_of(id.name);
+            if (slot < 0) { return s.fail(); }
+            return s.emit(ir.op_load_local(slot));
+        },
+        parser.ExprBinary(b) => {
+            var kind: string = map_binop(b.op);
+            if (kind == "") { return s.fail(); }
+            var s1: LowerState = lower_expr(b.left, s);
+            if (!s1.ok) { return s1; }
+            var s2: LowerState = lower_expr(b.right, s1);
+            if (!s2.ok) { return s2; }
+            return s2.emit(ir.op_bin(kind, 0, false));
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") {
+                // -x  ==  0 - x  : push 0, push x, sub.
+                var sz: LowerState = s.emit(ir.op_const_i32(0));
+                var sx: LowerState = lower_expr(u.operand, sz);
+                if (!sx.ok) { return sx; }
+                return sx.emit(ir.op_bin("sub", 0, false));
+            }
+            if (u.op == "!") {
+                var so: LowerState = lower_expr(u.operand, s);
+                if (!so.ok) { return so; }
+                return so.emit(ir.op_bin("not", 0, false));
+            }
+            return s.fail();
+        },
+        _ => { return s.fail(); }
+    }
+    return s.fail();
+}
+
+// lower_stmt lowers one top-level statement of the i32 subset.
+pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
+    if (!s.ok) { return s; }
+    match (st) {
+        parser.StmtVar(v) => {
+            var se: LowerState = lower_expr(v.init, s);
+            if (!se.ok) { return se; }
+            // bind AFTER lowering the init (the init can't see the new name)
+            var sb: LowerState = se.add_local(v.name);
+            var slot: i32 = sb.slot_of(v.name);
+            return sb.emit(ir.op_store_local(slot));
+        },
+        parser.StmtAssign(a) => {
+            var slot: i32 = s.slot_of(a.target);
+            if (slot < 0) { return s.fail(); }
+            var se: LowerState = lower_expr(a.value, s);
+            if (!se.ok) { return se; }
+            return se.emit(ir.op_store_local(slot));
+        },
+        parser.StmtReturn(r) => {
+            var se: LowerState = lower_expr(r.value, s);
+            if (!se.ok) { return se; }
+            return se.emit(ir.op_return());
+        },
+        _ => { return s.fail(); }
+    }
+    return s.fail();
+}
+
+// LowerResult is lower_func's output: the lowered op stream, the local-slot
+// count (operand-frame size for the interpreter / a backend), and ok.
+pub struct LowerResult {
+    ok: boolean,
+    ops: ir.Op[],
+    n_locals: i32,
+    n_params: i32,
+}
+
+// lower_func lowers a whole function's body. Params take slots 0..n-1.
+pub function lower_func(fn: parser.FuncDecl): LowerResult {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        names = names.append(fn.params[i].name);
+        i = i + 1;
+    }
+    var empty: ir.Op[] = [];
+    var s: LowerState = LowerState { ops: empty, local_names: names, n_params: fn.params.len(), ok: true };
+    var j: i32 = 0;
+    while (j < fn.body.len()) {
+        s = lower_stmt(fn.body[j], s);
+        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params }; }
+        j = j + 1;
+    }
+    return LowerResult { ok: true, ops: s.ops, n_locals: s.local_names.len(), n_params: s.n_params };
+}
+
+// ---- stack-machine interpreter ----------------------------------------
+//
+// eval_ops runs the lowered op stream on an operand stack + a locals frame,
+// returning the value carried by the first `return`. `args` seed the param
+// slots. This validates lowering without a backend (the ssa.fern pattern).
+
+function bin_apply(kind: string, l: i32, r: i32): i32 {
+    if (kind == "add") { return l + r; }
+    if (kind == "sub") { return l - r; }
+    if (kind == "mul") { return l * r; }
+    if (kind == "div_s") { return l / r; }
+    if (kind == "rem_s") { return l - (l / r) * r; }
+    if (kind == "and") { return l & r; }
+    if (kind == "or") { return l | r; }
+    if (kind == "xor") { return l ^ r; }
+    if (kind == "shl") { return l << r; }
+    if (kind == "shr_s") { return l >> r; }
+    if (kind == "eq") { if (l == r) { return 1; } return 0; }
+    if (kind == "ne") { if (l != r) { return 1; } return 0; }
+    if (kind == "lt_s") { if (l < r) { return 1; } return 0; }
+    if (kind == "le_s") { if (l <= r) { return 1; } return 0; }
+    if (kind == "gt_s") { if (l > r) { return 1; } return 0; }
+    if (kind == "ge_s") { if (l >= r) { return 1; } return 0; }
+    return 0;
+}
+
+pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[]): i32 {
+    var nloc: i32 = n_locals;
+    if (nloc < 1) { nloc = 1; }
+    // The self-host source is fully immutable: build the frames by growing
+    // append-arrays to size, then write with `arr = arr.with(i, v)` (reads
+    // by subscript are fine; only assignment needs .with).
+    var locals: i32[] = [];
+    var li: i32 = 0;
+    while (li < nloc) { locals = locals.append(0); li = li + 1; }
+    var ai: i32 = 0;
+    while (ai < args.len()) { locals = locals.with(ai, args[ai]); ai = ai + 1; }
+
+    var stack: i32[] = [];
+    var si: i32 = 0;
+    while (si < 256) { stack = stack.append(0); si = si + 1; }
+    var sp: i32 = 0;
+
+    var pc: i32 = 0;
+    while (pc < ops.len()) {
+        var o: ir.Op = ops[pc];
+        if (o.kind == "const_i32") { stack = stack.with(sp, o.i32_imm); sp = sp + 1; }
+        else if (o.kind == "load_local") { stack = stack.with(sp, locals[o.i32_imm]); sp = sp + 1; }
+        else if (o.kind == "store_local") { sp = sp - 1; locals = locals.with(o.i32_imm, stack[sp]); }
+        else if (o.kind == "not") { stack = stack.with(sp - 1, bool_not(stack[sp - 1])); }
+        else if (o.kind == "return") { sp = sp - 1; return stack[sp]; }
+        else {
+            // a binary op: pop r, pop l, push apply
+            sp = sp - 1;
+            var r: i32 = stack[sp];
+            sp = sp - 1;
+            var l: i32 = stack[sp];
+            stack = stack.with(sp, bin_apply(o.kind, l, r));
+            sp = sp + 1;
+        }
+        pc = pc + 1;
+    }
+    // fell off the end with no return — yield top-of-stack if present, else 0
+    if (sp > 0) { return stack[sp - 1]; }
+    return 0;
+}
+
+function bool_not(x: i32): i32 {
+    if (x == 0) { return 1; }
+    return 0;
+}
