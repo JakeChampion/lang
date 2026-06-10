@@ -57,17 +57,29 @@ function array_ret_fns(mod: parser.Module): string[] {
 }
 
 // is_fern_helper reports whether a call_direct callee is one of the IR
-// runtime helpers the emitter actually provides (emit_ir_runtime). These use
-// the SysV register ABI + the freestanding fn___fern_* bodies, vs user
-// functions (asm.fern stack ABI, __fn_<name>). The whitelist is exact: any
-// OTHER __fern_* / __rc_* call (e.g. a test's __fern_rc_underflow_count) is
-// NOT provided here, so calls_only_known disqualifies the module from the IR
-// path and it falls back to the AST emitter.
+// runtime helpers the emitter actually provides (emit_ir_runtime). These now
+// use asm.fern's OWN stack-arg ABI + symbols (so the IR path is a drop-in for
+// asm.fern's array RC) — see ir_helper_symbol for the name map. The whitelist
+// is exact: any OTHER __fern_* / __rc_* call is NOT provided here, so
+// calls_only_known disqualifies the module from the IR path and it falls back
+// to the AST emitter. (__fern_heap_used has no asm.fern equivalent, so a
+// program using it now routes through the AST path.)
 function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
-        || name == "__fern_rc_underflow_get"
-        || name == "__fern_heap_used";
+        || name == "__fern_rc_underflow_get";
+}
+
+// ir_helper_symbol maps an IR runtime-helper name to the asm.fern symbol the
+// IR path calls (stack-arg ABI). The exit-sweep / reassign release
+// (__fern_rc_dec) maps to __fn___fern_arr_dec — the array release that frees
+// at rc==1 via the size-class freelist — so the IR path reclaims exactly as
+// asm.fern's AST path does.
+function ir_helper_symbol(name: string): string {
+    if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
+    if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
+    if (name == "__fern_rc_underflow_get") { return "__fn___fern_rc_underflow_count"; }
+    return "__fn_" + name;
 }
 
 // module_uses_heap reports whether any function allocates (so the runtime +
@@ -89,50 +101,144 @@ function module_uses_heap(mod: parser.Module): boolean {
     return false;
 }
 
-// ir_arg_reg gives the SysV integer argument register for index i (runtime
-// helper calls; rc inc/dec take one arg in %rdi).
-function ir_arg_reg(i: i32): string {
-    if (i == 0) { return "%rdi"; }
-    if (i == 1) { return "%rsi"; }
-    if (i == 2) { return "%rdx"; }
-    if (i == 3) { return "%rcx"; }
-    if (i == 4) { return "%r8"; }
-    return "%r9";
-}
-
-// emit_ir_runtime appends the freestanding allocator + RC helpers + heap
-// (ported verbatim from the proven ir_x86 runtime): a size-class freelist
-// allocator, rc inc/dec with an over-release detector and free-at-zero, and
-// the __rc_underflow / __heap_used hooks. Pointers are 32-bit values (static
-// -no-pie heap < 4 GiB) in 64-bit regs for addressing. Labelled fn___fern_*
-// (SysV ABI), distinct from user functions' __fn_* (asm.fern stack ABI).
+// emit_ir_runtime appends the array/RC/heap runtime the IR path needs, using
+// asm.fern's OWN array layout + helper bodies (transcribed verbatim from
+// asm.fern's emit_runtime) so the IR path is a byte-compatible DROP-IN: the
+// 8-byte rc-header box (base = [cap, rc, len, e0..]; data = base+16; cap at
+// data-16, rc at data-8, element i at data+(i+1)*8), the size-classed
+// __fern_freelist allocator, and the stack-ABI rc helpers
+// (__fn___fern_rc_inc / __fn___fern_arr_dec / …). asm.fern imports asm_ir
+// (not the reverse), so these bodies are duplicated here rather than shared;
+// the two emit paths are mutually exclusive per compile (emit_module vs
+// emit_module_ir), so there is no symbol clash. Keep in sync with asm.fern.
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("fn___fern_rc_inc:\n");
-    // Guard low/null pointers (null, SSO/sentinel-tagged) the same way
-    // fn___fern_rc_dec does: never touch the rc word of a non-heap value.
-    s = s.write("    cmpq $8, %rdi\n    jb .Linc_skip\n");
-    s = s.write("    movl -4(%rdi), %eax\n    addl $1, %eax\n    movl %eax, -4(%rdi)\n");
-    s = s.write(".Linc_skip:\n    movq %rdi, %rax\n    ret\n");
-    s = s.write("fn___fern_rc_dec:\n");
-    s = s.write("    cmpq $8, %rdi\n    jb .Ldec_skip\n");
-    s = s.write("    movl -4(%rdi), %eax\n    cmpl $0, %eax\n    jg .Ldec_do\n");
-    s = s.write("    movl __fern_rc_underflow, %ecx\n    addl $1, %ecx\n    movl %ecx, __fern_rc_underflow\n    jmp .Ldec_skip\n");
-    s = s.write(".Ldec_do:\n    subl $1, %eax\n    movl %eax, -4(%rdi)\n    testl %eax, %eax\n    jnz .Ldec_skip\n");
-    s = s.write("    leaq -4(%rdi), %rdx\n    movl (%rdi), %ecx\n    addl $2, %ecx\n    shll $2, %ecx\n");
-    s = s.write("    movl __freelist, %eax\n    movl %eax, (%rdx)\n    movl %ecx, 4(%rdx)\n    movl %edx, __freelist\n");
-    s = s.write(".Ldec_skip:\n    movq %rdi, %rax\n    ret\n");
-    s = s.write("fn___fern_rc_underflow_get:\n    movl __fern_rc_underflow, %eax\n    ret\n");
-    s = s.write("fn___fern_heap_used:\n    movl __heap_ptr, %eax\n    subl $__heap, %eax\n    ret\n");
-    s = s.write("fn___fern_alloc:\n");
-    s = s.write("    movl __freelist, %eax\n    xorl %edx, %edx\n");
-    s = s.write(".Lal_scan:\n    testl %eax, %eax\n    jz .Lal_bump\n");
-    s = s.write("    movl 4(%rax), %ecx\n    cmpl %edi, %ecx\n    je .Lal_found\n");
-    s = s.write("    movl %eax, %edx\n    movl (%rax), %eax\n    jmp .Lal_scan\n");
-    s = s.write(".Lal_found:\n    movl (%rax), %ecx\n    testl %edx, %edx\n    jz .Lal_head\n");
-    s = s.write("    movl %ecx, (%rdx)\n    ret\n");
-    s = s.write(".Lal_head:\n    movl %ecx, __freelist\n    ret\n");
-    s = s.write(".Lal_bump:\n    movl __heap_ptr, %eax\n    movl %eax, %ecx\n    addl %edi, %ecx\n    movl %ecx, __heap_ptr\n    ret\n");
-    s = s.write(".data\n__heap_ptr: .long __heap\n__freelist: .long 0\n__fern_rc_underflow: .long 0\n.bss\n__heap: .skip 1048576\n");
+    // .bss: heap bump pointer, the over-release detector, the size-classed
+    // freelist (65536 classes * 8 bytes), and a 1 GiB zero-page heap.
+    s = s.write("    .section .bss\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_heap_ptr: .quad 0\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_rc_underflow: .quad 0\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_freelist: .skip 524288\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_heap: .skip 1073741824\n");
+    s = s.write("    .section .text\n");
+    // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
+    // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
+    s = s.write("__fern_alloc:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    addq $7, %rdi\n");
+    s = s.write("    andq $-8, %rdi\n");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    pushq %rdx\n");
+    s = s.write("    movq %rdi, %rcx\n");
+    s = s.write("    shrq $3, %rcx\n");
+    s = s.write("    cmpq $65536, %rcx\n");
+    s = s.write("    jae .Lalloc_nofl\n");
+    s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
+    s = s.write("    movq (%rdx,%rcx,8), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lalloc_nofl\n");
+    s = s.write("    movq (%rax), %rdi\n");
+    s = s.write("    movq %rdi, (%rdx,%rcx,8)\n");
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lalloc_nofl:\n");
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jne .Lalloc_inited\n");
+    s = s.write("    leaq __fern_heap(%rip), %rax\n");
+    s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
+    s = s.write(".Lalloc_inited:\n");
+    s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
+    s = s.write("    addq %rax, %rdi\n");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    leaq __fern_heap(%rip), %rcx\n");
+    s = s.write("    addq $1073741824, %rcx\n");
+    s = s.write("    cmpq %rcx, %rdi\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    ja .Lalloc_oom\n");
+    s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lalloc_oom:\n");
+    s = s.write("    movq $60, %rax\n");
+    s = s.write("    movq $137, %rdi\n");
+    s = s.write("    syscall\n");
+    // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
+    // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
+    s = s.write("__fern_arr_box:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    addq $3, %rdi\n");
+    s = s.write("    shlq $3, %rdi\n");
+    s = s.write("    call __fern_alloc\n");
+    s = s.write("    movq -8(%rbp), %rdi\n");
+    s = s.write("    movq %rdi, (%rax)\n");
+    s = s.write("    movq $1, 8(%rax)\n");
+    s = s.write("    movq %rdi, 16(%rax)\n");
+    s = s.write("    addq $16, %rax\n");
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
+    // RC helpers — stack-arg ABI (arg at 8(%rsp)); rc is the 32-bit field at
+    // data-8. Guard chain: null / SSO inline tag / low-address / static
+    // sentinel. __fn___fern_arr_dec frees (size-class freelist) at rc==1.
+    s = s.write("__fn___fern_rc_inc:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lshrcinc_ret\n");
+    s = s.write("    testb $1, %al\n");
+    s = s.write("    jnz .Lshrcinc_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");
+    s = s.write("    jb .Lshrcinc_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Lshrcinc_ret\n");
+    s = s.write("    addl $1, %ecx\n");
+    s = s.write("    movl %ecx, -8(%rax)\n");
+    s = s.write(".Lshrcinc_ret:\n");
+    s = s.write("    ret\n");
+    s = s.write("__fn___fern_rc_underflow_count:\n");
+    s = s.write("    movl __fern_rc_underflow(%rip), %eax\n");
+    s = s.write("    ret\n");
+    s = s.write("__fn___fern_arr_dec:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Larrdec_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");
+    s = s.write("    jb .Larrdec_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Larrdec_ret\n");
+    s = s.write("    cmpl $1, %ecx\n");
+    s = s.write("    je .Larrdec_free\n");
+    s = s.write("    jg .Larrdec_dec\n");
+    s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write("    jmp .Larrdec_ret\n");
+    s = s.write(".Larrdec_dec:\n");
+    s = s.write("    subl $1, %ecx\n");
+    s = s.write("    movl %ecx, -8(%rax)\n");
+    s = s.write("    jmp .Larrdec_ret\n");
+    s = s.write(".Larrdec_free:\n");
+    s = s.write("    movl $0, -8(%rax)\n");
+    s = s.write("    movl -16(%rax), %ecx\n");
+    s = s.write("    addq $3, %rcx\n");
+    s = s.write("    cmpq $65536, %rcx\n");
+    s = s.write("    jae .Larrdec_ret\n");
+    s = s.write("    leaq -16(%rax), %rdx\n");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rcx,8), %rdi\n");
+    s = s.write("    movq %rdi, (%rdx)\n");
+    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
+    s = s.write(".Larrdec_ret:\n");
+    s = s.write("    ret\n");
     return s;
 }
 
@@ -228,6 +334,22 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
 
+    // Zero-init the body-local slots (Perceus exit-sweep safety, matching
+    // asm.fern): a `var` decl skipped on an untaken branch leaves its slot
+    // readable by the release sweep, which must see NULL (arr_dec no-ops)
+    // rather than stack garbage. Body locals are slots [n_params, n_locals);
+    // slot i is at -8*(i+1)(%rbp), so the range's lowest address is
+    // -8*n_locals(%rbp) and it holds (n_locals - n_params) quadwords. rep
+    // stosq clobbers rax/rcx/rdi, dead here (before the param copy).
+    var nbody: i32 = r.n_locals - r.n_params;
+    if (nbody > 0) {
+        s = s.write("    leaq " + util.i32_to_string(0 - r.n_locals * 8) + "(%rbp), %rdi\n");
+        s = s.write("    movq $" + util.i32_to_string(nbody) + ", %rcx\n");
+        s = s.write("    xorq %rax, %rax\n");
+        s = s.write("    cld\n");
+        s = s.write("    rep stosq\n");
+    }
+
     // Copy params from the caller stack into their local slots, exactly as
     // emit_function does: param[i] sits at +(16 + i*8)(%rbp); the IR's
     // load_local i reads -8*(i+1)(%rbp). (No receiver — methods are excluded.)
@@ -277,44 +399,44 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    jmp " + br_target(r.ops, lp, i, o.i32_imm) + "\n");
         } else if (o.kind == "brif") {
             s = s.write("    popq %rax\n    testq %rax, %rax\n    jnz " + br_target(r.ops, lp, i, o.i32_imm) + "\n");
-        } else if (o.kind == "alloc") {
-            s = s.write("    popq %rdi\n    call fn___fern_alloc\n    pushq %rax\n");
-        } else if (o.kind == "load") {
-            s = s.write("    popq %rax\n    movl (%rax), %eax\n    pushq %rax\n");
-        } else if (o.kind == "store") {
-            s = s.write("    popq %rcx\n    popq %rax\n    movl %ecx, (%rax)\n");
         } else if (o.kind == "arr_make") {
             // n element values on the operand stack (element n-1 on top).
-            // 4-byte layout: alloc (n+2) words, base = rawptr+4, rc=1 at
-            // base-4, len=n at base, element i at base+4+i*4. Pop top-down;
-            // base stays live in %rax across the pops, then push it.
+            // asm.fern 8-byte layout via __fern_arr_box: data = base+16, rc=1,
+            // len=n, element i at data+(i+1)*8. Pop top-down (element n-1 →
+            // slot n .. element 0 → slot 1); base stays live in %rax across the
+            // pops (they only touch the operand stack), then push it.
             var n: i32 = o.i32_imm;
-            s = s.write("    movq $" + util.i32_to_string((n + 2) * 4) + ", %rdi\n");
-            s = s.write("    call fn___fern_alloc\n    addq $4, %rax\n");
-            s = s.write("    movl $1, -4(%rax)\n");
-            s = s.write("    movl $" + util.i32_to_string(n) + ", (%rax)\n");
+            s = s.write("    movq $" + util.i32_to_string(n) + ", %rdi\n");
+            s = s.write("    call __fern_arr_box\n");
             var em: i32 = n - 1;
             while (em >= 0) {
-                s = s.write("    popq %rcx\n    movl %ecx, " + util.i32_to_string(4 + em * 4) + "(%rax)\n");
+                s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string((em + 1) * 8) + "(%rax)\n");
                 em = em - 1;
             }
             s = s.write("    pushq %rax\n");
         } else if (o.kind == "arr_get") {
-            s = s.write("    popq %rcx\n    popq %rax\n    movl 4(%rax,%rcx,4), %eax\n    pushq %rax\n");
+            // pop idx (top), base; element at data+(idx+1)*8.
+            s = s.write("    popq %rcx\n    popq %rax\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
         } else if (o.kind == "arr_set") {
-            s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    movl %edx, 4(%rax,%rcx,4)\n");
+            // pop val (top), idx, base; store at data+(idx+1)*8.
+            s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    incq %rcx\n    movq %rdx, (%rax,%rcx,8)\n");
         } else if (o.kind == "arr_len") {
-            s = s.write("    popq %rax\n    movl (%rax), %eax\n    pushq %rax\n");
+            // pop base; length header at data+0.
+            s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
         } else if (o.kind == "arr_rc") {
-            s = s.write("    popq %rax\n    movl -4(%rax), %eax\n    pushq %rax\n");
+            // pop base; 32-bit refcount field at data-8.
+            s = s.write("    popq %rax\n    movl -8(%rax), %eax\n    pushq %rax\n");
         } else if (o.kind == "drop") {
             s = s.write("    addq $8, %rsp\n");
         } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {
-            // Runtime helper (rc inc/dec, underflow, heap_used): SysV register
-            // ABI, freestanding fn___fern_* body, no caller cleanup.
-            var k: i32 = o.i32_imm - 1;
-            while (k >= 0) { s = s.write("    popq " + ir_arg_reg(k) + "\n"); k = k - 1; }
-            s = s.write("    call fn_" + o.str + "\n    pushq %rax\n");
+            // Runtime RC helper — asm.fern's stack-arg ABI + symbols (drop-in):
+            // the arg(s) are already on the operand stack (the helper reads
+            // 8(%rsp)); call, caller-clean the args, push the result. The
+            // helpers return the ptr (rc_inc / arr_dec) or the count
+            // (underflow_count) in %rax.
+            s = s.write("    call " + ir_helper_symbol(o.str) + "\n");
+            if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
+            s = s.write("    pushq %rax\n");
         } else if (o.kind == "call_direct") {
             // User call: the IR pushes args left-to-right (arg0 deepest);
             // asm.fern's stack ABI wants arg0 on TOP (param[i] at +16+i*8(%rbp)).
