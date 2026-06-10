@@ -148,60 +148,32 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return s.fail();
         },
         parser.ExprArray(arr) => {
-            // i32 array literal. Layout: [len, e0, e1, ...] — the length
-            // header at base, elements at base + 4 + i*4. Alloc, stash the
-            // base in a fresh scratch local, store len then each element,
-            // leave the base on the stack. (Leak-only bump heap — no free
-            // yet, matching the early-Perceus "counting before free" phase.
-            // Elements must be i32 or lowering bails.)
-            // Layout now carries an rc header below the length:
-            //   [rc, len, e0, e1, ...]  with base pointing at `len`
-            // so rc is at base-4, len at base, element i at base + 4 + i*4
-            // (index / len / set offsets unchanged from the headerless form).
-            // Alloc (n+2) words, base = rawptr + 4, rc = 1 (fresh, owned).
+            // i32 array literal → the high-level `arr_make n` op. Each element
+            // expr is lowered (pushing its i32 value, element 0 deepest), then
+            // `arr_make` allocates the array, initialises its rc/len header and
+            // fills the elements, and leaves the data pointer on the stack. The
+            // BYTE layout (slot width, header shape, rc offset) is the
+            // backend's choice — irlower commits only to the semantics. (Fresh
+            // literal: owned at rc=1, no alias-inc.) Elements must be i32 or the
+            // element lowering bails.
             var n: i32 = arr.elements.len();
-            var sa: LowerState = s.emit(ir.op_const_i32((n + 2) * 4));
-            sa = sa.emit(ir.op_alloc());
-            sa = sa.emit(ir.op_const_i32(4));
-            sa = sa.emit(ir.op_bin("add", 0, false));
-            var scratch: string = "$arr" + util.i32_to_string(sa.local_names.len());
-            sa = sa.add_local(scratch);
-            var slot: i32 = sa.slot_of(scratch);
-            sa = sa.emit(ir.op_store_local(slot));
-            // rc = 1 at [base-4]
-            sa = sa.emit(ir.op_load_local(slot));
-            sa = sa.emit(ir.op_const_i32(4));
-            sa = sa.emit(ir.op_bin("sub", 0, false));
-            sa = sa.emit(ir.op_const_i32(1));
-            sa = sa.emit(ir.op_store(0));
-            // length header at [base]
-            sa = sa.emit(ir.op_load_local(slot));
-            sa = sa.emit(ir.op_const_i32(n));
-            sa = sa.emit(ir.op_store(0));
+            var sa: LowerState = s;
             var i: i32 = 0;
             while (i < n) {
-                sa = sa.emit(ir.op_load_local(slot));
-                sa = sa.emit(ir.op_const_i32((i + 1) * 4));
-                sa = sa.emit(ir.op_bin("add", 0, false));
                 sa = lower_expr(arr.elements[i], sa);
                 if (!sa.ok) { return sa; }
-                sa = sa.emit(ir.op_store(0));
                 i = i + 1;
             }
-            return sa.emit(ir.op_load_local(slot));
+            return sa.emit(ir.op_arr_make(n));
         },
         parser.ExprIndex(ix) => {
-            // arr[idx] : load(base + 4 + idx*4) — skipping the length header.
+            // arr[idx] → lower the array (base) then the index, then `arr_get`
+            // (the backend computes the element address for its layout).
             var si: LowerState = lower_expr(ix.array, s);
             if (!si.ok) { return si; }
             si = lower_expr(ix.index, si);
             if (!si.ok) { return si; }
-            si = si.emit(ir.op_const_i32(4));
-            si = si.emit(ir.op_bin("mul", 0, false));
-            si = si.emit(ir.op_bin("add", 0, false));
-            si = si.emit(ir.op_const_i32(4));
-            si = si.emit(ir.op_bin("add", 0, false));
-            return si.emit(ir.op_load(0));
+            return si.emit(ir.op_arr_get());
         },
         parser.ExprCall(c) => {
             // Direct call (bare-name callee, up to 6 args), or the `.len()`
@@ -215,9 +187,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (c.args.len() != 1) { return s.fail(); }
                         var sr: LowerState = lower_expr(c.args[0], s);
                         if (!sr.ok) { return sr; }
-                        sr = sr.emit(ir.op_const_i32(4));
-                        sr = sr.emit(ir.op_bin("sub", 0, false));
-                        return sr.emit(ir.op_load(0));
+                        return sr.emit(ir.op_arr_rc());
                     }
                     // __rc_dec(a): manual release (a test hook for exercising
                     // the underflow detector); returns the pointer.
@@ -253,7 +223,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (fa.field == "len" && c.args.len() == 0) {
                         var sl: LowerState = lower_expr(fa.obj, s);
                         if (!sl.ok) { return sl; }
-                        return sl.emit(ir.op_load(0));
+                        return sl.emit(ir.op_arr_len());
                     }
                     return s.fail();
                 },
@@ -375,8 +345,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
         },
         parser.StmtExpr(es) => {
             // Index-assignment `arr[i] = v` desugars to
-            // __set_index(arr, idx, val): store val at base + 4 + idx*4,
-            // leaving nothing on the stack.
+            // __set_index(arr, idx, val) → lower base, index, value, then the
+            // high-level `arr_set` op (the backend stores at its layout's
+            // element address), leaving nothing on the stack.
             match (es.value) {
                 parser.ExprCall(c) => {
                     match (c.callee) {
@@ -387,14 +358,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 if (!ss.ok) { return ss; }
                                 ss = lower_expr(c.args[1], ss);
                                 if (!ss.ok) { return ss; }
-                                ss = ss.emit(ir.op_const_i32(4));
-                                ss = ss.emit(ir.op_bin("mul", 0, false));
-                                ss = ss.emit(ir.op_bin("add", 0, false));
-                                ss = ss.emit(ir.op_const_i32(4));
-                                ss = ss.emit(ir.op_bin("add", 0, false));
                                 ss = lower_expr(c.args[2], ss);
                                 if (!ss.ok) { return ss; }
-                                return ss.emit(ir.op_store(0));
+                                return ss.emit(ir.op_arr_set());
                             }
                         },
                         _ => {}
@@ -698,6 +664,87 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp - 1;
             var laddr: i32 = stack[sp];
             stack = stack.with(sp, heap[laddr / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "arr_make") {
+            // High-level array make: pop n element values (top = element n-1),
+            // allocate the [rc, len, e0..] block (this interpreter's 4-byte
+            // model — rc at base-4, len at base, element i at base+4+i*4),
+            // init rc=1 + len, fill elements, push the base. The alloc mirrors
+            // the `alloc` op: reuse an exact-size freed block or bump-grow.
+            var an: i32 = o.i32_imm;
+            var asize: i32 = (an + 2) * 4;
+            var areuse: i32 = 0;
+            var acur: i32 = freehead;
+            var aprev: i32 = 0;
+            while (acur != 0) {
+                if (heap[acur / 4 + 1] == asize) {
+                    var anxt: i32 = heap[acur / 4];
+                    if (aprev == 0) { freehead = anxt; } else { heap = heap.with(aprev / 4, anxt); }
+                    areuse = acur;
+                    acur = 0;
+                } else {
+                    aprev = acur;
+                    acur = heap[acur / 4];
+                }
+            }
+            var araw: i32 = 0;
+            if (areuse != 0) {
+                araw = areuse;
+            } else {
+                araw = heap.len() * 4;
+                var anw: i32 = asize / 4;
+                var aq: i32 = 0;
+                while (aq < anw) { heap = heap.append(0); aq = aq + 1; }
+            }
+            var abase: i32 = araw + 4;
+            heap = heap.with((abase - 4) / 4, 1);       // rc = 1
+            heap = heap.with(abase / 4, an);            // len = n
+            var ae: i32 = an - 1;
+            while (ae >= 0) {
+                sp = sp - 1;
+                heap = heap.with((abase + 4 + ae * 4) / 4, stack[sp]);
+                ae = ae - 1;
+            }
+            stack = stack.with(sp, abase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "arr_get") {
+            // pop idx (top), base; push element at base+4+idx*4.
+            sp = sp - 1;
+            var gidx: i32 = stack[sp];
+            sp = sp - 1;
+            var gbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[(gbase + 4 + gidx * 4) / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "arr_set") {
+            // pop val (top), idx, base; store val at base+4+idx*4.
+            sp = sp - 1;
+            var stval: i32 = stack[sp];
+            sp = sp - 1;
+            var stidx: i32 = stack[sp];
+            sp = sp - 1;
+            var stbase: i32 = stack[sp];
+            heap = heap.with((stbase + 4 + stidx * 4) / 4, stval);
+            pc = pc + 1;
+        }
+        else if (o.kind == "arr_len") {
+            // pop base; push len header at base.
+            sp = sp - 1;
+            var lbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[lbase / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "arr_rc") {
+            // pop base; push rc header at base-4.
+            sp = sp - 1;
+            var rbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[(rbase - 4) / 4]);
             sp = sp + 1;
             pc = pc + 1;
         }

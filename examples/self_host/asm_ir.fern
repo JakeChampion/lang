@@ -79,7 +79,9 @@ function module_uses_heap(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "alloc") { return true; }
+            // arr_make (array literal) is the allocating op now; `alloc` is
+            // kept for any low-level allocation path.
+            if (r.ops[i].kind == "alloc" || r.ops[i].kind == "arr_make") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -281,6 +283,30 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    popq %rax\n    movl (%rax), %eax\n    pushq %rax\n");
         } else if (o.kind == "store") {
             s = s.write("    popq %rcx\n    popq %rax\n    movl %ecx, (%rax)\n");
+        } else if (o.kind == "arr_make") {
+            // n element values on the operand stack (element n-1 on top).
+            // 4-byte layout: alloc (n+2) words, base = rawptr+4, rc=1 at
+            // base-4, len=n at base, element i at base+4+i*4. Pop top-down;
+            // base stays live in %rax across the pops, then push it.
+            var n: i32 = o.i32_imm;
+            s = s.write("    movq $" + util.i32_to_string((n + 2) * 4) + ", %rdi\n");
+            s = s.write("    call fn___fern_alloc\n    addq $4, %rax\n");
+            s = s.write("    movl $1, -4(%rax)\n");
+            s = s.write("    movl $" + util.i32_to_string(n) + ", (%rax)\n");
+            var em: i32 = n - 1;
+            while (em >= 0) {
+                s = s.write("    popq %rcx\n    movl %ecx, " + util.i32_to_string(4 + em * 4) + "(%rax)\n");
+                em = em - 1;
+            }
+            s = s.write("    pushq %rax\n");
+        } else if (o.kind == "arr_get") {
+            s = s.write("    popq %rcx\n    popq %rax\n    movl 4(%rax,%rcx,4), %eax\n    pushq %rax\n");
+        } else if (o.kind == "arr_set") {
+            s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    movl %edx, 4(%rax,%rcx,4)\n");
+        } else if (o.kind == "arr_len") {
+            s = s.write("    popq %rax\n    movl (%rax), %eax\n    pushq %rax\n");
+        } else if (o.kind == "arr_rc") {
+            s = s.write("    popq %rax\n    movl -4(%rax), %eax\n    pushq %rax\n");
         } else if (o.kind == "drop") {
             s = s.write("    addq $8, %rsp\n");
         } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {
