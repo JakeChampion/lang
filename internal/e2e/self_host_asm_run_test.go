@@ -1944,6 +1944,13 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"struct-str-method", "struct N { s: string } function (n: N) sz(): i32 { return n.s.len(); } function main(): i32 { var x = N { s: \"abcd\" }; return x.sz(); }", 4, "", ""},
 		{"struct-str-mutate", "struct N { s: string } function main(): i32 { var n = N { s: \"a\" }; n.s = \"abcde\"; return n.s.len(); }", 5, "", ""},
 		{"enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, "", ""},
+		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
+		// (the field array is owned by the struct + never swept, so no RC).
+		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},
+		{"struct-arr-survives-alloc", "struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [10, 20, 30] }; var other = [99, 99, 99, 99, 99]; return b.data[0] + b.data[2]; }", 40, "", ""},
+		{"struct-arr-param", "struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }", 30, "", ""},
+		{"struct-arr-extract", "struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [7, 8, 9] }; var a = b.data; return a[0] + a[2]; }", 16, "", ""},
+		{"struct-arr-aliased-falls-back", "struct Buf { data: i32[] } function main(): i32 { var arr = [1, 2, 3]; var b = Buf { data: arr }; return b.data[1] + arr[0]; }", 3, "", ""},
 		// Methods (receiver functions) via the IR path: receiver = arg 0, static
 		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
 		// methods on params, and method-to-method (self) dispatch.
