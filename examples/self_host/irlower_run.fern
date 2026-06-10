@@ -1,12 +1,11 @@
 // examples/self_host/irlower_run.fern — driver for the AST -> stack-IR
-// lowering (irlower.fern, slice 2). Reads a program on stdin, parses it,
-// lowers `main` to the stack IR, evaluates the Op[] with the IR
-// interpreter, and returns the result as the process exit code. The
-// companion Go test pipes a program in and asserts the exit code matches —
-// end-to-end proof that AST -> IR -> eval preserves the program's value
-// (the IR analogue of ssa_run). A `main` outside the slice-2 i32 subset
-// makes lower_func bail -> exit 200. With `-dump`, prints the lowered op
-// stream (render_op, one per line) instead of evaluating.
+// lowering (irlower.fern). Reads a program on stdin, lowers the whole module
+// to the stack IR (irlower.lower_module), evaluates `main` with the IR
+// interpreter (which dispatches direct calls across the module), and returns
+// the result as the process exit code — end-to-end proof that AST -> IR ->
+// eval preserves the program's value, now including multi-function programs
+// and recursion. With `-dump`, prints `main`'s lowered op stream instead.
+// A `main` outside the lowered subset makes lowering bail -> exit 200.
 
 import "std/io";
 import "./lexer";
@@ -25,26 +24,23 @@ function main(): i32 {
 
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (mod.funcs[i].name == "main") {
-            var r: irlower.LowerResult = irlower.lower_func(mod.funcs[i]);
-            if (!r.ok) { return 200; }
-            if (want_dump) {
-                var out: string = "";
-                var k: i32 = 0;
-                while (k < r.ops.len()) {
-                    if (k > 0) { out = out + "\n"; }
-                    out = out + ir.render_op(r.ops[k]);
-                    k = k + 1;
-                }
-                print(out);
-                return r.ops.len();
-            }
-            var noargs: i32[] = [];
-            return irlower.eval_ops(r.ops, r.n_locals, noargs);
+    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs);
+
+    var mi: i32 = irlower.find_fn(fns, "main");
+    if (mi < 0) { return 201; }
+    var mainfn: irlower.LoweredFn = fns[mi];
+    if (!mainfn.ok) { return 200; }
+
+    if (want_dump) {
+        var out: string = "";
+        var k: i32 = 0;
+        while (k < mainfn.ops.len()) {
+            if (k > 0) { out = out + "\n"; }
+            out = out + ir.render_op(mainfn.ops[k]);
+            k = k + 1;
         }
-        i = i + 1;
+        print(out);
+        return mainfn.ops.len();
     }
-    return 201;
+    return irlower.eval_program(fns);
 }
