@@ -193,7 +193,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"str-param-eq", `function same(a: string, b: string): i32 { if (a == b) { return 1; } return 0; } function main(): i32 { return same("k", "k"); }`},
 		// A string-RETURNING function isn't IR-lowered yet (irlower bails), so the
 		// whole module falls back to AST under -ir; must still match.
-		{"str-returning-falls-back", `function greet(): string { return "hi"; } function main(): i32 { var s = greet(); return s.len(); }`},
+		// String-returning functions now route through the IR (str_ret_fns tracks the
+		// result as a string; the box just leaks). Param + concat + return too.
+		{"str-returning", `function greet(): string { return "hi"; } function main(): i32 { var s = greet(); return s.len(); }`},
+		{"str-returning-concat", `function shout(s: string): string { return s + "!"; } function main(): i32 { var g = shout("hey"); return g.len(); }`},
+		{"str-returning-inline", `function tag(): string { return "abcd"; } function main(): i32 { return tag().len(); }`},
 		// Scalar-field structs (struct_make / struct_get, leak-only): literal +
 		// field read, field-order independence, params, boolean fields.
 		{"struct-lit-fields", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 3, y: 4 }; return p.x + p.y; }`},
