@@ -3605,7 +3605,7 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
 // orchestration (type-check, function bodies, _start) stays
 // readable; the relative emission order is unchanged.
 // darwin selects Mach-O vs ELF sections/syscalls in the bodies.
-function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // __fern_print_int helper: converts the i64 in x0 to
     // decimal text in a stack buffer and writes to stdout.
     if (s.has_need("print_int")) {

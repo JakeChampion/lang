@@ -46,7 +46,7 @@ function is_array_type(t: string): boolean {
 
 // array_ret_fns collects the names of functions whose return type is an array,
 // so move-on-return / move-from-call fire (mirrors irlower.lower_module).
-function array_ret_fns(mod: parser.Module): string[] {
+pub function array_ret_fns(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -64,7 +64,7 @@ function array_ret_fns(mod: parser.Module): string[] {
 // calls_only_known disqualifies the module from the IR path and it falls back
 // to the AST emitter. (__fern_heap_used has no asm.fern equivalent, so a
 // program using it now routes through the AST path.)
-function is_fern_helper(name: string): boolean {
+pub function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
         || name == "__fern_rc_underflow_get";
@@ -75,7 +75,7 @@ function is_fern_helper(name: string): boolean {
 // (__fern_rc_dec) maps to __fn___fern_arr_dec — the array release that frees
 // at rc==1 via the size-class freelist — so the IR path reclaims exactly as
 // asm.fern's AST path does.
-function ir_helper_symbol(name: string): string {
+pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
     if (name == "__fern_rc_underflow_get") { return "__fn___fern_rc_underflow_count"; }
@@ -315,7 +315,7 @@ function ir_bin_asm(kind: string): string {
 // threaded scope-stack state (a self-host-robust formulation; the earlier
 // grow-and-overwrite string[] scope arrays mis-ran under the self-hosted
 // compiler).
-function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
+pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
     var op: i32 = irlower.enclosing_opener(ops, i, d);
     if (ops[op].kind == "loop") { return lp + util.i32_to_string(op); }
     return lp + util.i32_to_string(irlower.find_matching_end(ops, op + 1));
