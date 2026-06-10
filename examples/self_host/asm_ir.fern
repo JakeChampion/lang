@@ -23,21 +23,100 @@ import "./ir";
 import "./irlower";
 
 // ir_eligible reports whether a function is in the IR path's current subset:
-// i32 functions with params + direct calls (slice 17), but no methods and no
-// heap (alloc/load/store) — arrays land once the IR path reuses asm.fern's
-// allocator + RC helpers.
+// i32 functions with params, direct calls, and within-function arrays (heap
+// alloc/index/write/len + Perceus RC) — but no methods. Cross-function array
+// passing (array params/returns) is excluded for now (the freestanding heap
+// is per-program but the eligibility keeps arrays inside their function so the
+// move/borrow paths aren't exercised across the IR/AST boundary).
 pub function ir_eligible(fd: parser.FuncDecl): boolean {
     if (fd.receiver_name.len() > 0) { return false; }
+    // No array params, and no array return type (within-function arrays only).
+    var pj: i32 = 0;
+    while (pj < fd.params.len()) {
+        if (is_array_type(fd.params[pj].type_name)) { return false; }
+        pj = pj + 1;
+    }
+    if (is_array_type(fd.ret_type)) { return false; }
     var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func(fd, noret);
     if (!r.ok) { return false; }
-    var i: i32 = 0;
-    while (i < r.ops.len()) {
-        var k: string = r.ops[i].kind;
-        if (k == "alloc" || k == "load" || k == "store") { return false; }
-        i = i + 1;
-    }
     return true;
+}
+
+// is_array_type reports whether a type string denotes an array (ends "[]").
+function is_array_type(t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 2) { return false; }
+    return t[n - 2 : n] == "[]";
+}
+
+// is_fern_helper reports whether a call_direct callee is a runtime helper
+// (__fern_rc_inc / __fern_rc_dec / __fern_rc_underflow_get / __fern_heap_used),
+// which use the SysV register ABI + the freestanding fn___fern_* bodies — as
+// opposed to a user function (asm.fern stack ABI, __fn_<name>).
+function is_fern_helper(name: string): boolean {
+    if (name.len() < 7) { return false; }
+    return name[0 : 7] == "__fern_";
+}
+
+// module_uses_heap reports whether any function allocates (so the runtime +
+// heap need emitting).
+function module_uses_heap(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "alloc") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// ir_arg_reg gives the SysV integer argument register for index i (runtime
+// helper calls; rc inc/dec take one arg in %rdi).
+function ir_arg_reg(i: i32): string {
+    if (i == 0) { return "%rdi"; }
+    if (i == 1) { return "%rsi"; }
+    if (i == 2) { return "%rdx"; }
+    if (i == 3) { return "%rcx"; }
+    if (i == 4) { return "%r8"; }
+    return "%r9";
+}
+
+// emit_ir_runtime appends the freestanding allocator + RC helpers + heap
+// (ported verbatim from the proven ir_x86 runtime): a size-class freelist
+// allocator, rc inc/dec with an over-release detector and free-at-zero, and
+// the __rc_underflow / __heap_used hooks. Pointers are 32-bit values (static
+// -no-pie heap < 4 GiB) in 64-bit regs for addressing. Labelled fn___fern_*
+// (SysV ABI), distinct from user functions' __fn_* (asm.fern stack ABI).
+function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("fn___fern_rc_inc:\n");
+    s = s.write("    movl -4(%rdi), %eax\n    addl $1, %eax\n    movl %eax, -4(%rdi)\n    movq %rdi, %rax\n    ret\n");
+    s = s.write("fn___fern_rc_dec:\n");
+    s = s.write("    cmpq $8, %rdi\n    jb .Ldec_skip\n");
+    s = s.write("    movl -4(%rdi), %eax\n    cmpl $0, %eax\n    jg .Ldec_do\n");
+    s = s.write("    movl __fern_rc_underflow, %ecx\n    addl $1, %ecx\n    movl %ecx, __fern_rc_underflow\n    jmp .Ldec_skip\n");
+    s = s.write(".Ldec_do:\n    subl $1, %eax\n    movl %eax, -4(%rdi)\n    testl %eax, %eax\n    jnz .Ldec_skip\n");
+    s = s.write("    leaq -4(%rdi), %rdx\n    movl (%rdi), %ecx\n    addl $2, %ecx\n    shll $2, %ecx\n");
+    s = s.write("    movl __freelist, %eax\n    movl %eax, (%rdx)\n    movl %ecx, 4(%rdx)\n    movl %edx, __freelist\n");
+    s = s.write(".Ldec_skip:\n    movq %rdi, %rax\n    ret\n");
+    s = s.write("fn___fern_rc_underflow_get:\n    movl __fern_rc_underflow, %eax\n    ret\n");
+    s = s.write("fn___fern_heap_used:\n    movl __heap_ptr, %eax\n    subl $__heap, %eax\n    ret\n");
+    s = s.write("fn___fern_alloc:\n");
+    s = s.write("    movl __freelist, %eax\n    xorl %edx, %edx\n");
+    s = s.write(".Lal_scan:\n    testl %eax, %eax\n    jz .Lal_bump\n");
+    s = s.write("    movl 4(%rax), %ecx\n    cmpl %edi, %ecx\n    je .Lal_found\n");
+    s = s.write("    movl %eax, %edx\n    movl (%rax), %eax\n    jmp .Lal_scan\n");
+    s = s.write(".Lal_found:\n    movl (%rax), %ecx\n    testl %edx, %edx\n    jz .Lal_head\n");
+    s = s.write("    movl %ecx, (%rdx)\n    ret\n");
+    s = s.write(".Lal_head:\n    movl %ecx, __freelist\n    ret\n");
+    s = s.write(".Lal_bump:\n    movl __heap_ptr, %eax\n    movl %eax, %ecx\n    addl %edi, %ecx\n    movl %ecx, __heap_ptr\n    ret\n");
+    s = s.write(".data\n__heap_ptr: .long __heap\n__freelist: .long 0\n__fern_rc_underflow: .long 0\n.bss\n__heap: .skip 1048576\n");
+    return s;
 }
 
 // all_eligible reports whether every function in the module is IR-eligible.
@@ -163,10 +242,24 @@ function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState): asmcor
             s = s.write("    jmp " + s_brt[depth - 1 - o.i32_imm] + "\n");
         } else if (o.kind == "brif") {
             s = s.write("    popq %rax\n    testq %rax, %rax\n    jnz " + s_brt[depth - 1 - o.i32_imm] + "\n");
+        } else if (o.kind == "alloc") {
+            s = s.write("    popq %rdi\n    call fn___fern_alloc\n    pushq %rax\n");
+        } else if (o.kind == "load") {
+            s = s.write("    popq %rax\n    movl (%rax), %eax\n    pushq %rax\n");
+        } else if (o.kind == "store") {
+            s = s.write("    popq %rcx\n    popq %rax\n    movl %ecx, (%rax)\n");
+        } else if (o.kind == "drop") {
+            s = s.write("    addq $8, %rsp\n");
+        } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {
+            // Runtime helper (rc inc/dec, underflow, heap_used): SysV register
+            // ABI, freestanding fn___fern_* body, no caller cleanup.
+            var k: i32 = o.i32_imm - 1;
+            while (k >= 0) { s = s.write("    popq " + ir_arg_reg(k) + "\n"); k = k - 1; }
+            s = s.write("    call fn_" + o.str + "\n    pushq %rax\n");
         } else if (o.kind == "call_direct") {
-            // The IR pushes args left-to-right (arg0 deepest); asm.fern's stack
-            // ABI wants arg0 on TOP (param[i] at +16+i*8(%rbp)). Reverse the
-            // argc on-stack slots, call, pop the args, push the %rax result.
+            // User call: the IR pushes args left-to-right (arg0 deepest);
+            // asm.fern's stack ABI wants arg0 on TOP (param[i] at +16+i*8(%rbp)).
+            // Reverse the argc on-stack slots, call, pop the args, push %rax.
             var argc: i32 = o.i32_imm;
             var h: i32 = 0;
             while (h < argc / 2) {
@@ -226,5 +319,7 @@ pub function emit_module_ir(mod: parser.Module): string {
     s = s.write("    movq %rax, %rdi\n");
     s = s.write("    movq $60, %rax\n");
     s = s.write("    syscall\n");
+    // The freestanding allocator + RC runtime, only when the program allocates.
+    if (module_uses_heap(mod)) { s = emit_ir_runtime(s); }
     return strbuf_take();
 }
