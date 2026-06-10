@@ -39,7 +39,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	// three side-by-side.)
 	for _, name := range []string{
 		"asmcore.fern", "lexer.fern", "parser.fern", "util.fern",
-		"interp.fern", "astwalk.fern", "vm.fern", "asm.fern",
+		"interp.fern", "astwalk.fern", "vm.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern",
 		"interp_run.fern", "vm_run.fern", "asm_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))

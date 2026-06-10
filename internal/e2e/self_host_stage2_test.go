@@ -34,7 +34,7 @@ import (
 func TestSelfHostStage2Bootstrap(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "bundle_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -77,6 +77,9 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
 	asmSrc, _ := os.ReadFile("../../examples/self_host/asm.fern")
+	irSrc, _ := os.ReadFile("../../examples/self_host/ir.fern")
+	irlowerSrc, _ := os.ReadFile("../../examples/self_host/irlower.fern")
+	asmIrSrc, _ := os.ReadFile("../../examples/self_host/asm_ir.fern")
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"import \"./asm\";\n" +
@@ -99,6 +102,12 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 	bundle.Write(lexerSrc)
 	bundle.WriteString("\n///MODULE parser\n")
 	bundle.Write(parserSrc)
+	bundle.WriteString("\n///MODULE ir\n")
+	bundle.Write(irSrc)
+	bundle.WriteString("\n///MODULE irlower\n")
+	bundle.Write(irlowerSrc)
+	bundle.WriteString("\n///MODULE asm_ir\n")
+	bundle.Write(asmIrSrc)
 	bundle.WriteString("\n///MODULE asm\n")
 	bundle.Write(asmSrc)
 	bundle.WriteString("\n///MODULE main\n")

@@ -34,7 +34,7 @@ import (
 func TestSelfHostFixpoint(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "asm.fern", "bundle_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "bundle_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -73,6 +73,9 @@ func TestSelfHostFixpoint(t *testing.T) {
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
 	asmSrc, _ := os.ReadFile("../../examples/self_host/asm.fern")
+	irSrc, _ := os.ReadFile("../../examples/self_host/ir.fern")
+	irlowerSrc, _ := os.ReadFile("../../examples/self_host/irlower.fern")
+	asmIrSrc, _ := os.ReadFile("../../examples/self_host/asm_ir.fern")
 	flattenSrc, _ := os.ReadFile("../../examples/self_host/flatten.fern")
 	ioSrc, _ := os.ReadFile("../../internal/stdlib/std/io.fern")
 	bundleRun, _ := os.ReadFile("../../examples/self_host/bundle_run.fern")
@@ -90,6 +93,12 @@ func TestSelfHostFixpoint(t *testing.T) {
 	srcBundle.Write(lexerSrc)
 	srcBundle.WriteString("\n///MODULE parser\n")
 	srcBundle.Write(parserSrc)
+	srcBundle.WriteString("\n///MODULE ir\n")
+	srcBundle.Write(irSrc)
+	srcBundle.WriteString("\n///MODULE irlower\n")
+	srcBundle.Write(irlowerSrc)
+	srcBundle.WriteString("\n///MODULE asm_ir\n")
+	srcBundle.Write(asmIrSrc)
 	srcBundle.WriteString("\n///MODULE asm\n")
 	srcBundle.Write(asmSrc)
 	srcBundle.WriteString("\n///MODULE flatten\n")

@@ -30,8 +30,8 @@ func TestSelfHostIRDiff(t *testing.T) {
 	// its own emit modules.
 	files := []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"asm.fern", "asm_run.fern",
-		"ir.fern", "irlower.fern", "ir_x86.fern", "ir_x86_run.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_run.fern",
+		"ir_x86.fern", "ir_x86_run.fern",
 	}
 	for _, name := range files {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
