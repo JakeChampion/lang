@@ -547,6 +547,10 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
     // the first allocation starts at byte address 4 — no real array uses 0.
     var heap: i32[] = [];
     heap = heap.append(0);
+    // Freelist head (0 = null; no real block lives at byte address 0, which
+    // is the reserved underflow counter). A free node stores [next@+0,
+    // size@+4] in the block's own first two words.
+    var freehead: i32 = 0;
 
     var pc: i32 = 0;
     while (pc < ops.len()) {
@@ -582,13 +586,33 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             if (bc != 0) { pc = do_branch(ops, pc, o.i32_imm); } else { pc = pc + 1; }
         }
         else if (o.kind == "alloc") {
-            // pop size (bytes), return the next free byte address, grow heap.
+            // pop size (bytes); reuse an exact-size freed block if one exists,
+            // else bump-allocate (growing the heap).
             sp = sp - 1;
             var size: i32 = stack[sp];
-            var ptr: i32 = heap.len() * 4;
-            var nw: i32 = size / 4;
-            var q: i32 = 0;
-            while (q < nw) { heap = heap.append(0); q = q + 1; }
+            var reuse: i32 = 0;
+            var cur: i32 = freehead;
+            var prev: i32 = 0;
+            while (cur != 0) {
+                if (heap[cur / 4 + 1] == size) {
+                    var nxt: i32 = heap[cur / 4];
+                    if (prev == 0) { freehead = nxt; } else { heap = heap.with(prev / 4, nxt); }
+                    reuse = cur;
+                    cur = 0;
+                } else {
+                    prev = cur;
+                    cur = heap[cur / 4];
+                }
+            }
+            var ptr: i32 = 0;
+            if (reuse != 0) {
+                ptr = reuse;
+            } else {
+                ptr = heap.len() * 4;
+                var nw: i32 = size / 4;
+                var q: i32 = 0;
+                while (q < nw) { heap = heap.append(0); q = q + 1; }
+            }
             stack = stack.with(sp, ptr);
             sp = sp + 1;
             pc = pc + 1;
@@ -627,8 +651,21 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             var db: i32 = stack[sp];
             if (db >= 8) {
                 var dridx: i32 = (db - 4) / 4;
-                if (heap[dridx] <= 0) { heap = heap.with(0, heap[0] + 1); }
-                else { heap = heap.with(dridx, heap[dridx] - 1); }
+                if (heap[dridx] <= 0) {
+                    heap = heap.with(0, heap[0] + 1);
+                } else {
+                    var newrc: i32 = heap[dridx] - 1;
+                    heap = heap.with(dridx, newrc);
+                    if (newrc == 0) {
+                        // free: push the raw block (db-4) onto the freelist;
+                        // size = (len+2)*4 from the length header at [base].
+                        var rawblk: i32 = db - 4;
+                        var size2: i32 = (heap[db / 4] + 2) * 4;
+                        heap = heap.with(rawblk / 4, freehead);
+                        heap = heap.with(rawblk / 4 + 1, size2);
+                        freehead = rawblk;
+                    }
+                }
             }
             stack = stack.with(sp, db);
             sp = sp + 1;

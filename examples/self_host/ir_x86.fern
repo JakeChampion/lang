@@ -71,8 +71,9 @@ function emit_op(o: ir.Op, exitlabel: string): string {
         return "    popq %rax\n    jmp " + exitlabel + "\n";
     }
     if (o.kind == "alloc") {
-        // pop size; bump __heap_ptr by it; push the old pointer.
-        return "    popq %rax\n    movq __heap_ptr, %rcx\n    movq %rcx, %rdx\n    addq %rax, %rdx\n    movq %rdx, __heap_ptr\n    pushq %rcx\n";
+        // pop size into the arg register; fn___fern_alloc reuses a same-size
+        // freed block or bump-allocates; push the pointer.
+        return "    popq %rdi\n    call fn___fern_alloc\n    pushq %rax\n";
     }
     if (o.kind == "store") {
         // pop val, pop addr; *addr = val (i32).
@@ -294,19 +295,35 @@ pub function emit_module(fns: irlower.LoweredFn[]): string {
     // refcount header at [ptr-4], return ptr. (Counting only — no free yet.)
     out = out + "fn___fern_rc_inc:\n";
     out = out + "    movl -4(%rdi), %eax\n    addl $1, %eax\n    movl %eax, -4(%rdi)\n    movq %rdi, %rax\n    ret\n";
-    // RC release helper: dec [ptr-4]; an over-release (rc already <= 0) bumps
-    // __fern_rc_underflow. Null / sub-heap pointers are skipped. No free yet.
+    // RC release helper: dec [ptr-4]. An over-release (rc already <= 0) bumps
+    // __fern_rc_underflow. At rc==0 the raw block (ptr-4) is returned to its
+    // size-class freelist (size = (len+2)*4 from the length header). Null /
+    // sub-heap pointers are skipped. Pointers are 32-bit values (static
+    // -no-pie heap < 4 GiB) held in 64-bit regs for addressing.
     out = out + "fn___fern_rc_dec:\n";
     out = out + "    cmpq $8, %rdi\n    jb .Ldec_skip\n";
     out = out + "    movl -4(%rdi), %eax\n    cmpl $0, %eax\n    jg .Ldec_do\n";
     out = out + "    movl __fern_rc_underflow, %ecx\n    addl $1, %ecx\n    movl %ecx, __fern_rc_underflow\n    jmp .Ldec_skip\n";
-    out = out + ".Ldec_do:\n    subl $1, %eax\n    movl %eax, -4(%rdi)\n";
+    out = out + ".Ldec_do:\n    subl $1, %eax\n    movl %eax, -4(%rdi)\n    testl %eax, %eax\n    jnz .Ldec_skip\n";
+    // rc hit 0 -> free: rawblock = rdi-4; size = (len+2)*4; push onto freelist.
+    out = out + "    leaq -4(%rdi), %rdx\n    movl (%rdi), %ecx\n    addl $2, %ecx\n    shll $2, %ecx\n";
+    out = out + "    movl __freelist, %eax\n    movl %eax, (%rdx)\n    movl %ecx, 4(%rdx)\n    movl %edx, __freelist\n";
     out = out + ".Ldec_skip:\n    movq %rdi, %rax\n    ret\n";
     // RC over-release counter reader (the `__rc_underflow()` hook).
     out = out + "fn___fern_rc_underflow_get:\n    movl __fern_rc_underflow, %eax\n    ret\n";
-    // Leak-only bump heap: a 1 MiB .bss region + a data-segment bump pointer
-    // initialised to its base. (No free yet — the early-Perceus counting
-    // phase precedes reclamation.)
-    out = out + ".data\n__heap_ptr: .quad __heap\n__fern_rc_underflow: .long 0\n.bss\n__heap: .skip 1048576\n";
+    // Allocator: reuse a freed block of the exact requested size (a free node
+    // stores [next@0, size@4]), else bump. edi = size -> rax = raw block.
+    out = out + "fn___fern_alloc:\n";
+    out = out + "    movl __freelist, %eax\n    xorl %edx, %edx\n";
+    out = out + ".Lal_scan:\n    testl %eax, %eax\n    jz .Lal_bump\n";
+    out = out + "    movl 4(%rax), %ecx\n    cmpl %edi, %ecx\n    je .Lal_found\n";
+    out = out + "    movl %eax, %edx\n    movl (%rax), %eax\n    jmp .Lal_scan\n";
+    out = out + ".Lal_found:\n    movl (%rax), %ecx\n    testl %edx, %edx\n    jz .Lal_head\n";
+    out = out + "    movl %ecx, (%rdx)\n    ret\n";
+    out = out + ".Lal_head:\n    movl %ecx, __freelist\n    ret\n";
+    out = out + ".Lal_bump:\n    movl __heap_ptr, %eax\n    movl %eax, %ecx\n    addl %edi, %ecx\n    movl %ecx, __heap_ptr\n    ret\n";
+    // Freelist allocator state: a 1 MiB .bss heap, a 32-bit bump pointer, the
+    // freelist head, and the RC over-release counter.
+    out = out + ".data\n__heap_ptr: .long __heap\n__freelist: .long 0\n__fern_rc_underflow: .long 0\n.bss\n__heap: .skip 1048576\n";
     return out;
 }
