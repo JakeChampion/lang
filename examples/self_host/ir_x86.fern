@@ -70,6 +70,17 @@ function emit_op(o: ir.Op, exitlabel: string): string {
     if (o.kind == "return") {
         return "    popq %rax\n    jmp " + exitlabel + "\n";
     }
+    if (o.kind == "alloc") {
+        // pop size; bump __heap_ptr by it; push the old pointer.
+        return "    popq %rax\n    movq __heap_ptr, %rcx\n    movq %rcx, %rdx\n    addq %rax, %rdx\n    movq %rdx, __heap_ptr\n    pushq %rcx\n";
+    }
+    if (o.kind == "store") {
+        // pop val, pop addr; *addr = val (i32).
+        return "    popq %rcx\n    popq %rax\n    movl %ecx, (%rax)\n";
+    }
+    if (o.kind == "load") {
+        return "    popq %rax\n    movl (%rax), %eax\n    pushq %rax\n";
+    }
     // otherwise a binary op: pop r into %ecx, l into %eax, combine, push.
     return "    popq %rcx\n    popq %rax\n" + bin_mid(o.kind) + "    pushq %rax\n";
 }
@@ -268,5 +279,9 @@ pub function emit_module(fns: irlower.LoweredFn[]): string {
         if (fns[i].ok) { out = out + emit_function(fns[i]); }
         i = i + 1;
     }
+    // Leak-only bump heap: a 1 MiB .bss region + a data-segment bump pointer
+    // initialised to its base. (No free yet — the early-Perceus counting
+    // phase precedes reclamation.)
+    out = out + ".data\n__heap_ptr: .quad __heap\n.bss\n__heap: .skip 1048576\n";
     return out;
 }

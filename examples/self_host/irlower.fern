@@ -119,6 +119,42 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             }
             return s.fail();
         },
+        parser.ExprArray(arr) => {
+            // i32 array literal: alloc n*4 bytes, stash the base in a fresh
+            // scratch local, store each element at base + i*4, leave the base
+            // on the stack. (No length header / no free yet — the leak-only
+            // bump heap, matching the early-Perceus "counting before free"
+            // phase. Elements must be i32 or lowering bails.)
+            var n: i32 = arr.elements.len();
+            var sa: LowerState = s.emit(ir.op_const_i32(n * 4));
+            sa = sa.emit(ir.op_alloc());
+            var scratch: string = "$arr" + util.i32_to_string(sa.local_names.len());
+            sa = sa.add_local(scratch);
+            var slot: i32 = sa.slot_of(scratch);
+            sa = sa.emit(ir.op_store_local(slot));
+            var i: i32 = 0;
+            while (i < n) {
+                sa = sa.emit(ir.op_load_local(slot));
+                sa = sa.emit(ir.op_const_i32(i * 4));
+                sa = sa.emit(ir.op_bin("add", 0, false));
+                sa = lower_expr(arr.elements[i], sa);
+                if (!sa.ok) { return sa; }
+                sa = sa.emit(ir.op_store(0));
+                i = i + 1;
+            }
+            return sa.emit(ir.op_load_local(slot));
+        },
+        parser.ExprIndex(ix) => {
+            // arr[idx] : load(base + idx*4).
+            var si: LowerState = lower_expr(ix.array, s);
+            if (!si.ok) { return si; }
+            si = lower_expr(ix.index, si);
+            if (!si.ok) { return si; }
+            si = si.emit(ir.op_const_i32(4));
+            si = si.emit(ir.op_bin("mul", 0, false));
+            si = si.emit(ir.op_bin("add", 0, false));
+            return si.emit(ir.op_load(0));
+        },
         parser.ExprCall(c) => {
             // Direct call only: callee is a bare name; up to 6 args (the SysV
             // integer-register count the backend targets). Args lower
@@ -348,6 +384,11 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
     while (si < 256) { stack = stack.append(0); si = si + 1; }
     var sp: i32 = 0;
 
+    // A simple word-addressed heap for the leak-only bump allocator: a byte
+    // address `a` maps to word index a/4. Local to this call (slice-8
+    // corpus keeps arrays within the function that creates them).
+    var heap: i32[] = [];
+
     var pc: i32 = 0;
     while (pc < ops.len()) {
         var o: ir.Op = ops[pc];
@@ -379,6 +420,34 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp - 1;
             var bc: i32 = stack[sp];
             if (bc != 0) { pc = do_branch(ops, pc, o.i32_imm); } else { pc = pc + 1; }
+        }
+        else if (o.kind == "alloc") {
+            // pop size (bytes), return the next free byte address, grow heap.
+            sp = sp - 1;
+            var size: i32 = stack[sp];
+            var ptr: i32 = heap.len() * 4;
+            var nw: i32 = size / 4;
+            var q: i32 = 0;
+            while (q < nw) { heap = heap.append(0); q = q + 1; }
+            stack = stack.with(sp, ptr);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "store") {
+            // pop val (top), pop addr; heap[addr/4] = val.
+            sp = sp - 1;
+            var sval: i32 = stack[sp];
+            sp = sp - 1;
+            var saddr: i32 = stack[sp];
+            heap = heap.with(saddr / 4, sval);
+            pc = pc + 1;
+        }
+        else if (o.kind == "load") {
+            sp = sp - 1;
+            var laddr: i32 = stack[sp];
+            stack = stack.with(sp, heap[laddr / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
         }
         else if (o.kind == "call_direct") {
             // pop argc args (arg0..arg n-1, n-1 on top) preserving order, call
