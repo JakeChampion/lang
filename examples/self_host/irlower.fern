@@ -743,6 +743,9 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") { return expr_is_f64(u.operand, s); }
+            // `x as f64` evaluates to f64 (a float→int cast yields i32, so only
+            // the to-float casts propagate float-ness).
+            if (u.op == "as_f64" || u.op == "as_f32" || u.op == "as_float") { return true; }
             return false;
         },
         parser.ExprCall(c) => {
@@ -1077,10 +1080,23 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (!so.ok) { return so; }
                 return so.emit(ir.op_bin("not", 0, false));
             }
-            // `big as i32` / `big as u32`: narrow an i64 operand to i32. The
-            // operand must be an i64 value (lowered via lower_i64); other casts
-            // (`as i8`, `as f64`, …) aren't handled here and bail to AST.
+            // `x as f64`: int -> float widen (cvtsi2sd). An already-f64 operand
+            // is a no-op. (f32/float spellings ride the same f64 path.)
+            if (u.op == "as_f64" || u.op == "as_f32" || u.op == "as_float") {
+                if (expr_is_f64(u.operand, s)) { return lower_expr(u.operand, s); }
+                var sf: LowerState = lower_expr(u.operand, s);
+                if (!sf.ok) { return sf; }
+                return sf.emit(ir.op_i32_to_f64());
+            }
+            // `x as i32` / `as u32`: an f64 operand truncates toward zero
+            // (cvttsd2si); an i64 operand narrows via int_wrap. Other source
+            // types / target widths (`as i8`, …) bail to the AST path.
             if (u.op == "as_i32" || u.op == "as_u32") {
+                if (expr_is_f64(u.operand, s)) {
+                    var fc: LowerState = lower_expr(u.operand, s);
+                    if (!fc.ok) { return fc; }
+                    return fc.emit(ir.op_f64_to_i32());
+                }
                 var sn: LowerState = lower_i64(u.operand, s);
                 if (!sn.ok) { return sn; }
                 return sn.emit(ir.op_int_wrap(u.op == "as_u32"));

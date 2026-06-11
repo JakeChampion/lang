@@ -174,9 +174,10 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"heap-live-grows", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var c = [7, 8, 9]; return __heap_used(); }", 60},
 		{"heap-one-array", "function main(): i32 { var a = [1, 2, 3]; return __heap_used(); }", 20},
 		// ir_x86 is an i32-only backend (64-bit values — i64 and f64 alike — are
-		// out of its subset). f64 LOCALS lower in irlower now, but a float→i32
-		// cast still bails main's lowering -> emit_module exits 200.
-		{"f64-cast-bails", "function main(): i32 { var x: f64 = 1.5; var y: i32 = x as i32; return y; }", 200},
+		// out of its subset). f64 locals / arithmetic / casts lower in irlower
+		// now, but f64 modulo has no float form and still bails main's lowering
+		// -> emit_module exits 200 (so no f64 op reaches this i32-only emitter).
+		{"f64-mod-bails", "function main(): i32 { var x: f64 = 5.5; var y: f64 = x % 2.0; if (y > 0.0) { return 1; } return 2; }", 200},
 	}
 
 	for _, tc := range cases {

@@ -132,6 +132,13 @@ pub function op_fbin(kind: string): Op {
     return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
+// f64 <-> i32 conversions. i32_to_f64 widens a signed i32 to f64 (cvtsi2sd /
+// scvtf / f64.convert_i32_s); f64_to_i32 truncates an f64 toward zero to a
+// signed i32 (cvttsd2si / fcvtzs / i32.trunc_f64_s). The value rides the stack
+// as bits on the register backends; wasm's typed stack flips i32<->f64 here.
+pub function op_i32_to_f64(): Op { return op0("i32_to_f64"); }
+pub function op_f64_to_i32(): Op { return op0("f64_to_i32"); }
+
 // op_const_f64_text carries the float literal's SOURCE TEXT (in `str`) so the
 // backends can hand it straight to the assembler (`.double TEXT` in .rodata /
 // `f64.const TEXT`) without a float parse+format round-trip — mirroring
