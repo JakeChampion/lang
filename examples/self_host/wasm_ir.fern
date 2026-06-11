@@ -355,6 +355,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // slots use the same local.get/local.set — the local's declared i64
             // type carries the stack type.
             out = out + "    i64.const " + o.str + "\n";
+        } else if (o.kind == "int_extend") {
+            // i32 -> i64: distinct wasm types, so an explicit widen.
+            if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }
+            else { out = out + "    i64.extend_i32_s\n"; }
+        } else if (o.kind == "int_wrap") {
+            // i64 -> i32: drop the high 32 bits.
+            out = out + "    i32.wrap_i64\n";
         } else if (o.kind == "load_local") {
             out = out + "    local.get " + util.i32_to_string(o.i32_imm) + "\n";
         } else if (o.kind == "store_local") {

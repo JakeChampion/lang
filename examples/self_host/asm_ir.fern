@@ -825,6 +825,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // i64 add/sub/mul/cmp/bitwise then reuse the existing 64-bit-register
             // bin ops unchanged — only the load differs from i32.
             s = s.write("    movabsq $" + o.str + ", %rax\n    pushq %rax\n");
+        } else if (o.kind == "int_extend" || o.kind == "int_wrap") {
+            // i32<->i64 in 64-bit slots: signed -> sign-extend low 32 (movslq),
+            // unsigned -> zero-extend low 32 (movl). Same sequence either way.
+            s = s.write("    popq %rax\n");
+            if (o.unsigned) { s = s.write("    movl %eax, %eax\n"); }
+            else { s = s.write("    movslq %eax, %rax\n"); }
+            s = s.write("    pushq %rax\n");
         } else if (o.kind == "load_local") {
             s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
         } else if (o.kind == "store_local") {

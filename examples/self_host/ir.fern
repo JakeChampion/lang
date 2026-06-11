@@ -84,6 +84,11 @@ pub function op_const_i32(v: i32): Op {
 pub function op_const_i64(v: i64): Op {
     return Op { kind: "const_i64", i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
+// int_extend widens an i32 to i64 (`as i64` / `as u64`); int_wrap narrows an
+// i64 to i32 (`as i32` / `as u32`). `unsigned` picks zero- vs sign-extension on
+// the register backends (wasm uses i64.extend_i32_s/u and i32.wrap_i64).
+pub function op_int_extend(unsigned: boolean): Op { return Op { kind: "int_extend", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" }; }
+pub function op_int_wrap(unsigned: boolean): Op { return Op { kind: "int_wrap", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" }; }
 // op_const_i64_text carries the literal's SOURCE TEXT (in `str`) rather than a
 // parsed i64, so the backends can splice it straight into a 64-bit immediate
 // (`movabsq $TEXT` / `ldr x0, =TEXT` / `i64.const TEXT`) without an i64
@@ -293,6 +298,8 @@ pub function op_return(): Op { return op0("return"); }
 pub function render_op(o: Op): string {
     if (o.kind == "const_i32") { return "const_i32 " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "const_i64") { return "const_i64 " + o.str; }
+    if (o.kind == "int_extend") { return "int_extend"; }
+    if (o.kind == "int_wrap") { return "int_wrap"; }
     if (o.kind == "const_str") { return "const_str " + o.str; }
     if (o.kind == "load_local") { return "load_local " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "store_local") { return "store_local " + util.i32_to_string(o.i32_imm); }
