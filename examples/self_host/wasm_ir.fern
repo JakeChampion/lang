@@ -459,26 +459,45 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    drop\n";
         } else if (o.kind == "arr_make") {
             // n element values on the wasm stack (element n-1 on top).
-            // __fern_arr_box(n*4) -> a; store len@a, cap@a+4, then the
-            // elements at a+8+i*4 (top-down, popping each into $eltmp so the
-            // i32.store sees [addr, value]). $arrtmp holds a across the pops.
+            // __fern_arr_box(n*esz) -> a; store len@a, cap@a+4, then the
+            // elements at a+8+i*esz (top-down, popping each into a scratch so the
+            // store sees [addr, value]). $arrtmp holds a across the pops. An
+            // f64-element array (width 64) uses an 8-byte stride and f64.store
+            // through $f64tmp; everything else is the 4-byte i32 path.
             var n: i32 = o.i32_imm;
-            out = out + "    i32.const " + util.i32_to_string(n * 4) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            var esz: i32 = 4;
+            if (o.width == 64) { esz = 8; }
+            out = out + "    i32.const " + util.i32_to_string(n * esz) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n";
             var em: i32 = n - 1;
             while (em >= 0) {
-                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                if (o.width == 64) {
+                    out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                } else {
+                    out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                }
                 em = em - 1;
             }
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind == "arr_get") {
-            // stack: base, idx -> i32.load(base + 8 + idx*4)
-            out = out + "    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n";
+            // stack: base, idx -> load(base + 8 + idx*esz). f64 elements (width
+            // 64) use an 8-byte stride + f64.load; i32 elements the 4-byte path.
+            if (o.width == 64) {
+                out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    f64.load\n";
+            } else {
+                out = out + "    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n";
+            }
         } else if (o.kind == "arr_set") {
-            // stack: base, idx, val -> store val at base+8+idx*4
-            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            // stack: base, idx, val -> store val at base+8+idx*esz. f64 elements
+            // (width 64) stash through $f64tmp and f64.store at 8-byte stride.
+            if (o.width == 64) {
+                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+            } else {
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            }
         } else if (o.kind == "arr_len") {
             // stack: base -> i32.load(base)  (len @ a+0)
             out = out + "    i32.load\n";
@@ -626,9 +645,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         i = i + 1;
     }
     // Fallthrough result. Subset functions end in `return`, so this lands in the
-    // unreachable continuation (accepted by wasm's stack-polymorphic typing) and
-    // never runs — but its TYPE must still match the declared result.
+    // unreachable continuation — but a concrete value pushed there must still
+    // type-match the declared result when the implicit end pops it (wasm's
+    // stack-polymorphic typing accepts an underflow, not a wrong-typed top), so
+    // the default's type tracks the result: i64 / f64 / i32.
     if (fd.ret_type == "i64") { out = out + "    i64.const 0)\n"; }
+    else if (fd.ret_type == "f64") { out = out + "    f64.const 0)\n"; }
     else { out = out + "    i32.const 0)\n"; }
     return out;
 }
