@@ -879,6 +879,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mhas.ok) { return mhas; }
                             return mhas.emit(ir.op_map_has(mkk2));
                         }
+                        if (fa.field == "get_or" && c.args.len() == 2) {
+                            var mgo: LowerState = lower_expr(fa.obj, s);
+                            if (!mgo.ok) { return mgo; }
+                            mgo = lower_expr(c.args[0], mgo);
+                            if (!mgo.ok) { return mgo; }
+                            mgo = lower_expr(c.args[1], mgo);
+                            if (!mgo.ok) { return mgo; }
+                            return mgo.emit(ir.op_map_get_or(mkk2));
+                        }
                         return s.fail();
                     }
                     if (fa.field == "len" && c.args.len() == 0) {
