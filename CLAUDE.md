@@ -122,6 +122,36 @@ When you open a PR, subscribe to its activity (`subscribe_pr_activity`)
 without being asked. The user prefers to be alerted via the subscription
 flow rather than driving manual CI checks after the fact.
 
+**The full loop is: branch → commit → push → PR → subscribe → watch CI
+→ auto-merge when green → move on to the next task.** Do NOT stop and
+wait after opening the PR, and do NOT ask whether to merge. Once CI is
+green on the PR, merge it automatically (squash) and immediately pick up
+the next slice of work. If CI fails, diagnose and push fixes on the same
+branch until it's green, then merge. Only pause for the user on a genuine
+fork (an ambiguous review comment, an architectural decision) — never for
+permission to open, merge, or continue.
+
+### Project goal / roadmap (what "the next task" means)
+
+The standing objective is, in order:
+
+1. **A full IR implementation for the *entire* language in the
+   self-hosted compiler.** Today only a subset lowers through the IR
+   path (`irlower.fern` → `asm_ir.fern`); anything outside the subset
+   falls back to the legacy AST→asm emitters (`asm.fern` /
+   `asm_arm64.fern` / `wasm.fern`). Each task should widen the IR
+   subset until the AST fallback is never taken, so the legacy AST
+   backends can eventually be retired. When a feature works in the
+   native compiler and the self-host IR path but not the legacy
+   AST→asm backend, that legacy gap does **not** need fixing.
+2. **Then port the native Perceus implementation to the self-hosted
+   compiler** (reference-counting / ownership: inc/dec insertion,
+   borrow inference, drop specialisation, reuse analysis), so the
+   self-hosted compiler matches the native one's memory management.
+
+When a PR merges and there's no more specific instruction, the default
+next task is the next increment toward goal 1 (then goal 2).
+
 ## Engineering bar (non-negotiable)
 
 - **Confirm passing tests before opening a PR.** Run the full relevant
