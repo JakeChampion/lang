@@ -83,6 +83,11 @@ func TestSelfHostI64ArrayIR(t *testing.T) {
 		{"slice", `function main(): i32 { var a: i64[] = [10000000000, 20000000000, 30000000000, 40000000000]; var b = a[1:3]; var s: i64 = b[0] + b[1]; if (s > 40000000000) { return 7; } return 0; }`, 7},
 		// i64[] slice length: a[1:3].len() = 2
 		{"slice-len", `function main(): i32 { var a: i64[] = [10000000000, 20000000000, 30000000000, 40000000000]; var b = a[1:3]; return b.len(); }`, 2},
+		// i64[]-returning function (move-on-return): caller element-types the
+		// result as i64[]. a[0]+a[2] = 1e10+3e10 = 4e10 > 3.5e10 -> 5
+		{"ret", `function mk(): i64[] { return [10000000000, 20000000000, 30000000000]; } function main(): i32 { var a: i64[] = mk(); var s: i64 = a[0] + a[2]; if (s > 35000000000) { return 5; } return 0; }`, 5},
+		// direct index of an i64[]-returning call: mk()[1] = 2e10; > 1.5e10 -> 4
+		{"ret-direct-index", `function mk(): i64[] { return [10000000000, 20000000000, 30000000000]; } function main(): i32 { if (mk()[1] > 15000000000) { return 4; } return 0; }`, 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
