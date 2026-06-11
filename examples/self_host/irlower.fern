@@ -557,6 +557,28 @@ pub function is_cmp_kind(kind: string): boolean {
     return kind == "eq" || kind == "ne" || kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s";
 }
 
+// is_eager_safe reports whether evaluating `e` is observably free of side
+// effects AND cannot trap, so eagerly evaluating it (as the RHS of a
+// short-circuit && / ||) is indistinguishable from skipping it. Excludes calls
+// (side effects), indexing / slicing (bounds traps), division / remainder
+// (the x86/arm div traps on /0), and — conservatively — every composite form.
+// Operands are checker-guaranteed boolean, so `&` / `|` of the two 0/1 values
+// equals `&&` / `||` once both are evaluated.
+pub function is_eager_safe(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprNumber(_) => { return true; },
+        parser.ExprBool(_) => { return true; },
+        parser.ExprString(_) => { return true; },
+        parser.ExprIdent(_) => { return true; },
+        parser.ExprUnary(u) => { return is_eager_safe(u.operand); },
+        parser.ExprBinary(b) => {
+            if (b.op == "/" || b.op == "%") { return false; }
+            return is_eager_safe(b.left) && is_eager_safe(b.right);
+        },
+        _ => { return false; }
+    }
+}
+
 // infer_expr_width returns 64 if `e` evaluates to an i64 value, else 32.
 // Comparisons / equality / logical-not yield an i32 bool regardless of operand
 // width; arithmetic widens to i64 if either operand is i64. Bare literals are
@@ -730,6 +752,23 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return s.fail();
         },
         parser.ExprBinary(b) => {
+            // Short-circuit `&&` / `||`. When the RIGHT operand is trap-free and
+            // side-effect-free, eagerly evaluating it is unobservable, so the
+            // logical op is just a bitwise `&` / `|` of the two boolean (0/1)
+            // values — no value-producing `if` needed. The left operand is always
+            // evaluated, so it may be anything lowerable. A right operand with a
+            // call / index / division (where skipping it matters) bails to the AST
+            // path, which does proper control-flow short-circuiting.
+            if (b.op == "&&" || b.op == "||") {
+                if (!is_eager_safe(b.right)) { return s.fail(); }
+                var lsc: LowerState = lower_expr(b.left, s);
+                if (!lsc.ok) { return lsc; }
+                var rsc: LowerState = lower_expr(b.right, lsc);
+                if (!rsc.ok) { return rsc; }
+                var scop: string = "and";
+                if (b.op == "||") { scop = "or"; }
+                return rsc.emit(ir.op_bin(scop, 0, false));
+            }
             // String dispatch: on string operands, `+` is concat and `==`/`!=`
             // are byte-equality (str_eq, then `not` for `!=`). Ordering compares
             // (`<` `>` `<=` `>=`) need strcmp, which the IR path doesn't lower
