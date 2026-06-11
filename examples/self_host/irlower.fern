@@ -993,7 +993,6 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var mi: i32 = 0;
             while (mi < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[mi];
-                if (arm.has_guard) { return s.fail(); }
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
                         if (is_builtin_pattern(pv.type_name)) { return s.fail(); }
@@ -1018,15 +1017,41 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 ms = ms.mark_str(bslot, true);
                             }
                         }
+                        // Guard: `Variant(x) if <cond> =>` runs the body only when
+                        // the guard is true; the binding is in scope, so the guard
+                        // may reference it. A false guard `br`s out of the arm (the
+                        // same target as a pattern mismatch), falling through to the
+                        // next arm — matching asm.fern's guard semantics.
+                        if (arm.has_guard) {
+                            ms = lower_expr(arm.guard, ms);
+                            if (!ms.ok) { return ms; }
+                            ms = ms.emit(ir.op_bin("not", 0, false));
+                            ms = ms.emit(ir.op_brif(0));            // guard false -> skip arm
+                        }
                         ms = lower_block(arm.body, ms);
                         if (!ms.ok) { return ms; }
                         ms = ms.emit(ir.op_br(1));      // matched -> exit the match
                         ms = ms.emit(ir.op_end());      // end arm block
                     },
                     parser.PatWildcard(_) => {
-                        ms = lower_block(arm.body, ms);
-                        if (!ms.ok) { return ms; }
-                        ms = ms.emit(ir.op_br(0));      // exit the match
+                        if (arm.has_guard) {
+                            // A guarded wildcard `_ if <cond> =>` falls through to
+                            // the next arm when the guard is false, so it needs its
+                            // own block (the bare wildcard below runs unconditionally).
+                            ms = ms.emit(ir.op_block(0));
+                            ms = lower_expr(arm.guard, ms);
+                            if (!ms.ok) { return ms; }
+                            ms = ms.emit(ir.op_bin("not", 0, false));
+                            ms = ms.emit(ir.op_brif(0));            // guard false -> fall through
+                            ms = lower_block(arm.body, ms);
+                            if (!ms.ok) { return ms; }
+                            ms = ms.emit(ir.op_br(1));              // matched -> exit the match
+                            ms = ms.emit(ir.op_end());
+                        } else {
+                            ms = lower_block(arm.body, ms);
+                            if (!ms.ok) { return ms; }
+                            ms = ms.emit(ir.op_br(0));      // exit the match
+                        }
                     }
                 }
                 mi = mi + 1;
