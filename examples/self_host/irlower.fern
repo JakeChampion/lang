@@ -1059,7 +1059,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!se.ok) { return se; }
                         return se.emit(ir.op_opt_make(1));
                     }
-                    if (c.args.len() > 6) { return s.fail(); }
+                    // No arity cap: the call ABI is fully stack-based on every
+                    // backend (x86-64/arm64 push the args on the runtime stack and
+                    // the callee reads param[i] from a fixed frame offset; wasm
+                    // passes them on the operand stack), and the function-entry
+                    // param copy is a count-agnostic loop. So a call of any arity
+                    // lowers exactly as asm.fern's AST path does.
                     var sc: LowerState = s;
                     var ai: i32 = 0;
                     while (ai < c.args.len()) {
@@ -1144,7 +1149,9 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // exists, else the module bails to AST.
                     var rty: string = expr_struct_type(fa.obj, s);
                     if (rty != "") {
-                        if (c.args.len() > 5) { return s.fail(); }
+                        // No arity cap (see the free-call note above): the
+                        // receiver lowers as arg 0 and the rest follow on the
+                        // stack, count-agnostic on every backend.
                         var sm: LowerState = lower_expr(fa.obj, s);
                         if (!sm.ok) { return sm; }
                         var ai: i32 = 0;
