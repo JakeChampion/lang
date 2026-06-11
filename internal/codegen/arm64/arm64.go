@@ -6809,6 +6809,31 @@ func (g *generator) condBranchFar(skipInsn, reg, target string) {
 	g.label(skip)
 }
 
+// loadImm32 / loadImm64 materialise an immediate into `reg` with movz/movk
+// instead of the `ldr reg, =N` literal-pool form. A literal pool is reached by
+// a pc-relative load with only ±1MB range; in a very large emitted function the
+// pool drifts out of range ("pc-relative load offset out of range"). movz/movk
+// have no pc-relative dependency, so they are range-safe at any function size.
+// Zero 16-bit chunks are skipped (movz first clears the register).
+func (g *generator) loadImm32(reg string, v uint32) {
+	g.emit("movz %s, #%d", reg, v&0xffff)
+	if (v>>16)&0xffff != 0 {
+		g.emit("movk %s, #%d, lsl #16", reg, (v>>16)&0xffff)
+	}
+}
+func (g *generator) loadImm64(reg string, v uint64) {
+	g.emit("movz %s, #%d", reg, v&0xffff)
+	if (v>>16)&0xffff != 0 {
+		g.emit("movk %s, #%d, lsl #16", reg, (v>>16)&0xffff)
+	}
+	if (v>>32)&0xffff != 0 {
+		g.emit("movk %s, #%d, lsl #32", reg, (v>>32)&0xffff)
+	}
+	if (v>>48)&0xffff != 0 {
+		g.emit("movk %s, #%d, lsl #48", reg, (v>>48)&0xffff)
+	}
+}
+
 // emitOp dispatches a single IR op to its arm64 lowering.
 // Each op consumes / produces operand-stack values via
 // push() / pop(). Unsupported ops surface explicit errors so
@@ -6830,7 +6855,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		if v >= 0 && v <= 0xffff {
 			g.emit("mov x0, #%d", v)
 		} else {
-			g.emit("ldr w0, =%d", v)
+			g.loadImm32("w0", uint32(v))
 		}
 		g.push()
 
@@ -6842,7 +6867,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// pool gets flushed by `.ltorg` (we already do this in
 		// the alloc + read-line runtimes) or at end-of-section,
 		// whichever comes first.
-		g.emit("ldr x0, =%d", op.I64)
+		g.loadImm64("x0", uint64(op.I64))
 		g.push()
 
 	case ir.OpConstStr:
@@ -6866,7 +6891,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		if n := len(op.Str); n <= 0xffff {
 			g.emit("mov w0, #%d", n)
 		} else {
-			g.emit("ldr w0, =%d", n)
+			g.loadImm32("w0", uint32(n))
 		}
 		g.push() // len
 
@@ -7369,11 +7394,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// the assembler. The literal-pool form has no width
 		// limit and matches OpConstF64's existing shape.
 		bits := math.Float32bits(op.F32)
-		g.emit("ldr x0, =%d", int64(bits))
+		g.loadImm64("x0", uint64(int64(bits)))
 		g.push()
 	case ir.OpConstF64:
 		bits := math.Float64bits(op.F64)
-		g.emit("ldr x0, =%d", int64(bits))
+		g.loadImm64("x0", uint64(int64(bits)))
 		g.push()
 
 	case ir.OpFAdd:
