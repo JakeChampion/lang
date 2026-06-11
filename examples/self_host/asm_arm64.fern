@@ -3187,28 +3187,35 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             return s;
         },
         parser.StmtVar(v) => {
-            // `var (a, b) = E` tuple destructuring (name "a,b"): eval the
-            // tuple box, bind a = box[0], b = box[8]. See asm.fern.
-            var tdc: i32 = 0 - 1;
+            // `var (a, b, …) = E` tuple destructuring (name "a,b,c"): eval
+            // the tuple box, bind name[i] = box[i*8] for any arity. The box
+            // pointer stays in x0 across the loop (frame_str scratches x16,
+            // not x0). See asm.fern.
+            var td_has_comma: boolean = false;
             var tdci: i32 = 0;
             while (tdci < v.name.len()) {
-                if (v.name[tdci] == 44 && tdc < 0) { tdc = tdci; }
+                if (v.name[tdci] == 44) { td_has_comma = true; }
                 tdci = tdci + 1;
             }
-            if (tdc >= 0) {
-                var tda: string = v.name[0 : tdc];
-                var tdb: string = v.name[tdc + 1 : v.name.len()];
-                var tdtags: asmcore.TwoTags = asmcore.tuple_destructure_tags(v.init, s);
+            if (td_has_comma) {
                 s = emit_expr(v.init, s);
                 s = s.write("    ldr x0, [sp], #16\n");   // tuple box
-                s = s.bind_local_typed(tda, tdtags.a);
-                var tda_off: i32 = s.lookup_local(tda);
-                s = s.write("    ldr x1, [x0]\n");         // box.0
-                s = s.frame_str("x1", tda_off);
-                s = s.bind_local_typed(tdb, tdtags.b);
-                var tdb_off: i32 = s.lookup_local(tdb);
-                s = s.write("    ldr x1, [x0, #8]\n");     // box.1
-                s = s.frame_str("x1", tdb_off);
+                var td_seg: i32 = 0;
+                var td_idx: i32 = 0;
+                var td_pos: i32 = 0;
+                while (td_pos <= v.name.len()) {
+                    if (td_pos == v.name.len() || v.name[td_pos] == 44) {
+                        var td_nm: string = v.name[td_seg : td_pos];
+                        var td_tag: asmcore.Ty = asmcore.tuple_destructure_tag_at(v.init, td_idx, s);
+                        s = s.bind_local_typed(td_nm, td_tag);
+                        var td_off: i32 = s.lookup_local(td_nm);
+                        s = s.write("    ldr x1, [x0, #" + util.i32_to_string(td_idx * 8) + "]\n");
+                        s = s.frame_str("x1", td_off);
+                        td_idx = td_idx + 1;
+                        td_seg = td_pos + 1;
+                    }
+                    td_pos = td_pos + 1;
+                }
                 return s;
             }
             // Infer init type for string-aware dispatch.

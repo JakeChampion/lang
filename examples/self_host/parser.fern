@@ -1997,22 +1997,27 @@ function parse_stmt(p: Par): StmtResult {
         var vline: i32 = p.peek_line();
         var vcol: i32 = p.peek_col();
         p = p.advance();
-        // `var (x, y) = E` / `let (x, y) = E` — tuple destructuring.
-        // The two names are encoded as "x,y"; the emitter splits them
-        // and binds from the tuple's element slots.
+        // `var (x, y, …) = E` / `let (x, y, …) = E` — tuple destructuring of
+        // ANY arity. The names are encoded comma-joined ("x,y,z"); the emitter
+        // splits them and binds from the tuple's element slots.
         if (p.peek_punct() == "(") {
             p = p.advance();
-            var tdx: string = p.peek_ident();
-            if (tdx.len() > 0) { p = p.advance(); }
-            if (p.peek_punct() == ",") { p = p.advance(); }
-            var tdy: string = p.peek_ident();
-            if (tdy.len() > 0) { p = p.advance(); }
+            var tdnames: string = "";
+            var tdfirst: boolean = true;
+            while (p.peek_punct() != ")" && !p.at_end()) {
+                var tdn: string = p.peek_ident();
+                if (tdn.len() > 0) { p = p.advance(); }
+                if (!tdfirst) { tdnames = tdnames + ","; }
+                tdnames = tdnames + tdn;
+                tdfirst = false;
+                if (p.peek_punct() == ",") { p = p.advance(); }
+            }
             if (p.peek_punct() == ")") { p = p.advance(); }
             if (p.peek_punct() == "=") { p = p.advance(); }
             var tdinit: ExprResult = parse_expr(p);
             p = tdinit.par;
             if (p.peek_punct() == ";") { p = p.advance(); }
-            return StmtResult { par: p, stmt: s_var_at(tdx + "," + tdy, "", tdinit.expr, vline, vcol) };
+            return StmtResult { par: p, stmt: s_var_at(tdnames, "", tdinit.expr, vline, vcol) };
         }
         var name: string = p.peek_ident();
         if (name.len() == 0) {

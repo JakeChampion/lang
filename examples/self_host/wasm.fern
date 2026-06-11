@@ -4615,6 +4615,22 @@ function after_comma(s: string): string {
     return s[c + 1 : s.len()];
 }
 
+// split_commas breaks a comma-joined name list ("a,b,c") into its parts.
+// Used by `var (a, b, …)` tuple destructuring, which supports any arity.
+function split_commas(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= s.len()) {
+        if (i == s.len() || s[i] == 44) {
+            out = out.append(s[start:i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // struct_field_index returns the 0-based field position of `field` in the
 // struct named `tn` (the heap offset is index*4), or -1 if not found.
 function struct_field_index(structs: parser.StructDecl[], tn: string, field: string): i32 {
@@ -5934,12 +5950,14 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                // `var (a, b) = …` destructure: declare both names.
+                // `var (a, b, …) = …` destructure: declare every name.
                 if (comma_index(v.name) >= 0) {
-                    var an: string = before_comma(v.name);
-                    var bn: string = after_comma(v.name);
-                    if (!contains_str(acc, an)) { acc = acc.append(an); }
-                    if (!contains_str(acc, bn)) { acc = acc.append(bn); }
+                    var dnames: string[] = split_commas(v.name);
+                    var di: i32 = 0;
+                    while (di < dnames.len()) {
+                        if (!contains_str(acc, dnames[di])) { acc = acc.append(dnames[di]); }
+                        di = di + 1;
+                    }
                 } else if (!contains_str(acc, v.name)) {
                     acc = acc.append(v.name);
                 }
@@ -8085,15 +8103,18 @@ function emit_stmts(body: parser.Stmt[], st: WState): WState {
 function emit_stmt(stmt: parser.Stmt, st: WState): WState {
     match (stmt) {
         parser.StmtVar(v) => {
-            // `var (a, b) = <tuple>` destructure: park the tuple pointer in
-            // $__lit0 (the init is emitted at depth 1 so it won't clash),
-            // then bind a = tuple.0, b = tuple.1.
+            // `var (a, b, …) = <tuple>` destructure: park the tuple pointer
+            // in $__lit0 (the init is emitted at depth 1 so it won't clash),
+            // then bind name[i] = tuple.i (element i lives at offset i*4).
             if (comma_index(v.name) >= 0) {
-                var an: string = before_comma(v.name);
-                var bn: string = after_comma(v.name);
+                var dnames: string[] = split_commas(v.name);
                 st = st.w("    (local.set $__lit0 " + emit_expr(v.init, st.cx, 1) + ")\n");
-                st = st.w("    (local.set $" + an + " (i32.load (local.get $__lit0)))\n");
-                return st.w("    (local.set $" + bn + " (i32.load (i32.add (local.get $__lit0) (i32.const 4))))\n");
+                var di: i32 = 0;
+                while (di < dnames.len()) {
+                    st = st.w("    (local.set $" + dnames[di] + " (i32.load (i32.add (local.get $__lit0) (i32.const " + util.i32_to_string(di * 4) + "))))\n");
+                    di = di + 1;
+                }
+                return st;
             }
             // `var xs: i64[] = […]` / `f64[]`: a bare integer / float
             // literal carries no width, so emit the literal with the
@@ -8846,18 +8867,17 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (comma_index(v.name) >= 0) {
-                    // `var (a, b) = <tuple>` destructure: type each element
+                    // `var (a, b, …) = <tuple>` destructure: type each element
                     // that is a struct so `a.field` resolves (without this
                     // the field read falls back to a bogus `(i32.const 0)`).
-                    var an: string = before_comma(v.name);
-                    var at: string = tuple_elem_struct_type(v.init, 0, cx);
-                    if (is_struct_type(cx.structs, at)) {
-                        cx = Ctx { ...cx, sv_names: cx.sv_names.append(an), sv_types: cx.sv_types.append(at) };
-                    }
-                    var bn: string = after_comma(v.name);
-                    var bt: string = tuple_elem_struct_type(v.init, 1, cx);
-                    if (is_struct_type(cx.structs, bt)) {
-                        cx = Ctx { ...cx, sv_names: cx.sv_names.append(bn), sv_types: cx.sv_types.append(bt) };
+                    var dnames: string[] = split_commas(v.name);
+                    var di: i32 = 0;
+                    while (di < dnames.len()) {
+                        var dt: string = tuple_elem_struct_type(v.init, di, cx);
+                        if (is_struct_type(cx.structs, dt)) {
+                            cx = Ctx { ...cx, sv_names: cx.sv_names.append(dnames[di]), sv_types: cx.sv_types.append(dt) };
+                        }
+                        di = di + 1;
                     }
                 } else {
                     // Record a tuple local's per-element kinds + struct types

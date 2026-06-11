@@ -1255,52 +1255,51 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 return ivb.emit(ir.op_store_local(islot));
             }
             if (comma >= 0) {
-                var nameA: string = v.name[0 : comma];
-                var nameB: string = v.name[comma + 1 : v.name.len()];
-                // a further comma in the tail ⇒ >2 elements: bail.
-                var ci2: i32 = 0;
-                while (ci2 < nameB.len()) {
-                    if (nameB[ci2] == 44) { return s.fail(); }
-                    ci2 = ci2 + 1;
+                // N-element destructure `var (a, b, c, …) = E`: the parser encodes
+                // the name as "a,b,c,…". Eval the tuple box into a fresh temp, then
+                // bind name[i] = tuple_get(i). Scalar / string / struct elements
+                // (the same set the tuple LITERAL admits — a heap element bails the
+                // init lowering, so it never reaches here).
+                var dnames: string[] = [];
+                var dstart: i32 = 0;
+                var dp: i32 = 0;
+                while (dp <= v.name.len()) {
+                    if (dp == v.name.len() || v.name[dp] == 44) {
+                        dnames = dnames.append(v.name[dstart : dp]);
+                        dstart = dp + 1;
+                    }
+                    dp = dp + 1;
                 }
+                var dn: i32 = dnames.len();
                 var dt: LowerState = lower_expr(v.init, s);
                 if (!dt.ok) { return dt; }
                 var tmp: string = "$tdst" + util.i32_to_string(dt.local_names.len());
                 dt = dt.add_local(tmp);
                 var tmp_slot: i32 = dt.slot_of(tmp);
                 dt = dt.emit(ir.op_store_local(tmp_slot));
-                dt = dt.add_local(nameA);
-                var aSlot: i32 = dt.slot_of(nameA);
-                dt = dt.emit(ir.op_load_local(tmp_slot));
-                dt = dt.emit(ir.op_tuple_get(0));
-                dt = dt.emit(ir.op_store_local(aSlot));
-                dt = dt.add_local(nameB);
-                var bSlot: i32 = dt.slot_of(nameB);
-                dt = dt.emit(ir.op_load_local(tmp_slot));
-                dt = dt.emit(ir.op_tuple_get(1));
-                dt = dt.emit(ir.op_store_local(bSlot));
-                // Type the two bindings from the source tuple's element tags:
-                // an inline `(e0, e1)` literal from the element exprs, a tuple
-                // local from its tracked tags.
-                var tagA: string = "";
-                var tagB: string = "";
-                match (v.init) {
-                    parser.ExprTuple(dl) => {
-                        if (dl.elements.len() == 2) {
-                            tagA = elem_type_tag(dl.elements[0], s);
-                            tagB = elem_type_tag(dl.elements[1], s);
-                        }
-                    },
-                    parser.ExprIdent(did) => {
-                        tagA = s.tuple_elem_tag(s.slot_of(did.name), 0);
-                        tagB = s.tuple_elem_tag(s.slot_of(did.name), 1);
-                    },
-                    _ => {}
+                var dk: i32 = 0;
+                while (dk < dn) {
+                    dt = dt.add_local(dnames[dk]);
+                    var dkslot: i32 = dt.slot_of(dnames[dk]);
+                    dt = dt.emit(ir.op_load_local(tmp_slot));
+                    dt = dt.emit(ir.op_tuple_get(dk));
+                    dt = dt.emit(ir.op_store_local(dkslot));
+                    // Type the binding from the source tuple's element tag: an
+                    // inline `(e0, e1, …)` literal from the element exprs, a tuple
+                    // local/param from its tracked tags. (Tags read from `s`, the
+                    // pre-destructure scope, where the source elements live.)
+                    var dtag: string = "";
+                    match (v.init) {
+                        parser.ExprTuple(dl) => {
+                            if (dl.elements.len() == dn) { dtag = elem_type_tag(dl.elements[dk], s); }
+                        },
+                        parser.ExprIdent(did) => { dtag = s.tuple_elem_tag(s.slot_of(did.name), dk); },
+                        _ => {}
+                    }
+                    if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
+                    else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
+                    dk = dk + 1;
                 }
-                if (tagA == "string") { dt = dt.mark_str(aSlot, true); }
-                else if (decl_is_struct(dt.structs, tagA)) { dt = dt.mark_struct_type(aSlot, tagA); }
-                if (tagB == "string") { dt = dt.mark_str(bSlot, true); }
-                else if (decl_is_struct(dt.structs, tagB)) { dt = dt.mark_struct_type(bSlot, tagB); }
                 return dt;
             }
             // Map construction `var m: Map[K, V] = map_new(n)`: the callee
