@@ -149,6 +149,11 @@ pub function op_arr_rc(): Op { return op0("arr_rc"); }
 pub function op_str_len(): Op { return op0("str_len"); }
 pub function op_str_concat(): Op { return op0("str_concat"); }
 pub function op_str_eq(): Op { return op0("str_eq"); }
+// `str_index` pops [str, i] → the i32 byte value at index i (`s[i]`). Each
+// backend reads the byte from its own string layout (x86/arm64 16-byte box
+// [data@0,len@8] → byte at [data+i]; wasm data-section [len@0,bytes@4] → byte at
+// [s+4+i]). No bounds check (matches the AST path).
+pub function op_str_index(): Op { return op0("str_index"); }
 
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
@@ -254,6 +259,7 @@ pub function render_op(o: Op): string {
     if (o.kind == "str_len") { return "str_len"; }
     if (o.kind == "str_concat") { return "str_concat"; }
     if (o.kind == "str_eq") { return "str_eq"; }
+    if (o.kind == "str_index") { return "str_index"; }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }

@@ -314,6 +314,9 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_len") {
             // stack: block ptr -> i32.load(ptr)  (len @ +0)
             out = out + "    i32.load\n";
+        } else if (o.kind == "str_index") {
+            // stack: block ptr, idx -> i32.load8_u(ptr + 4 + idx)  (bytes @ +4)
+            out = out + "    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n";
         } else if (o.kind == "str_concat") {
             // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
             out = out + "    call $__fern_strcat\n";

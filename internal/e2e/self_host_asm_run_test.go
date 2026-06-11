@@ -1765,6 +1765,12 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
+		// String indexing `s[i]` -> the i32 byte value (str_index op).
+		{"str-index-local", "function main(): i32 { var s = \"hello\"; return s[0]; }", 104, "", ""},
+		{"str-index-sum", "function main(): i32 { var s = \"hello\"; return s[1] + s[4]; }", 212, "", ""},
+		{"str-index-loop", "function main(): i32 { var s = \"abc\"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }", 94, "", ""},
+		{"str-index-param", "function first(s: string): i32 { return s[0]; } function main(): i32 { return first(\"Z\"); }", 90, "", ""},
+		{"str-index-literal", "function main(): i32 { return \"Q\"[0]; }", 81, "", ""},
 		{
 			"string-print-ident",
 			"function main(): i32 { var s = \"world\\n\"; write(s); return 0; }",

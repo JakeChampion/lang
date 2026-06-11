@@ -127,6 +127,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// layout shifts off the empty-table base); concat/eq lower to wasm.fern's
 		// $__fern_strcat / $__fern_streq. Exit codes must match the AST path.
 		{"str-len", `function main(): i32 { var s = "hello"; return s.len(); }`},
+		{"str-index-local", `function main(): i32 { var s = "hello"; return s[0]; }`},
+		{"str-index-loop", `function main(): i32 { var s = "abc"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }`},
+		{"str-index-param", `function first(s: string): i32 { return s[0]; } function main(): i32 { return first("Z"); }`},
 		{"str-literal-len", `function main(): i32 { return "world!".len(); }`},
 		{"str-empty-len", `function main(): i32 { var s = ""; return s.len(); }`},
 		{"str-concat-len", `function main(): i32 { var a = "ab"; var b = "cde"; var c = a + b; return c.len(); }`},
