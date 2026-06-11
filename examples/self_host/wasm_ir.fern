@@ -120,8 +120,26 @@ pub function module_uses_strings(mod: parser.Module): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
-            if (k == "const_str" || k == "str_len" || k == "str_concat" || k == "str_eq") { return true; }
+            if (k == "const_str" || k == "str_len" || k == "str_concat" || k == "str_eq" || k == "str_cmp") { return true; }
             if (k == "str_index" || k == "str_slice") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_str_cmp reports whether any function emits a str_cmp op (string
+// ordering < <= > >=). Such modules need the FULL string-helper bundle, which
+// includes $__fern_strcmp (the narrow strcat_streq bundle omits it).
+pub function module_uses_str_cmp(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "str_cmp") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -409,6 +427,9 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_eq") {
             // stack: a, b -> $__fern_streq(a, b) -> 0/1.
             out = out + "    call $__fern_streq\n";
+        } else if (o.kind == "str_cmp") {
+            // stack: a, b -> $__fern_strcmp(a, b) -> signed -/0/+.
+            out = out + "    call $__fern_strcmp\n";
         } else if (o.kind == "opt_make") {
             // Option/Result box [tag@0, payload@4], 8 bytes (wasm 4-byte slots).
             // Payload on the stack; stash it, alloc, store tag + payload.

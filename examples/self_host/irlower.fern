@@ -771,8 +771,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             }
             // String dispatch: on string operands, `+` is concat and `==`/`!=`
             // are byte-equality (str_eq, then `not` for `!=`). Ordering compares
-            // (`<` `>` `<=` `>=`) need strcmp, which the IR path doesn't lower
-            // yet, so a string-operand ordering compare bails to the AST emitter.
+            // (`<` `>` `<=` `>=`) lower to str_cmp (signed -/0/+) followed by the
+            // relational op against 0.
             if (expr_is_str(b.left, s) || expr_is_str(b.right, s)) {
                 if (b.op == "+" || b.op == "==" || b.op == "!=") {
                     var sl: LowerState = lower_expr(b.left, s);
@@ -783,6 +783,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     var se: LowerState = sr.emit(ir.op_str_eq());
                     if (b.op == "!=") { return se.emit(ir.op_bin("not", 0, false)); }
                     return se;
+                }
+                if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+                    var cl: LowerState = lower_expr(b.left, s);
+                    if (!cl.ok) { return cl; }
+                    var cr: LowerState = lower_expr(b.right, cl);
+                    if (!cr.ok) { return cr; }
+                    // str_cmp(a,b) <rel> 0
+                    var cc: LowerState = cr.emit(ir.op_str_cmp());
+                    cc = cc.emit(ir.op_const_i32(0));
+                    return cc.emit(ir.op_bin(map_binop(b.op), 0, false));
                 }
                 return s.fail();
             }

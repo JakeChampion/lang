@@ -355,6 +355,39 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $0, %rax\n");
         s = s.write("    ret\n");
     }
+    // __fern_str_cmp (transcribed verbatim from asm.fern): %rdi = box A, %rsi =
+    // box B → signed in %rax (<0 A<B, 0 equal, >0 A>B); lexicographic byte
+    // compare with length tiebreak. Drives string ordering (< <= > >=).
+    if (s.has_need("str_cmp")) {
+        s = s.write("__fern_str_cmp:\n");
+        s = s.write("    movq 8(%rdi), %rcx\n");    // lenA
+        s = s.write("    movq 8(%rsi), %rdx\n");    // lenB
+        s = s.write("    movq %rcx, %r8\n");
+        s = s.write("    cmpq %rdx, %r8\n");
+        s = s.write("    jle .Lstrcmp_min\n");
+        s = s.write("    movq %rdx, %r8\n");
+        s = s.write(".Lstrcmp_min:\n");
+        s = s.write("    movq (%rdi), %rdi\n");
+        s = s.write("    movq (%rsi), %rsi\n");
+        s = s.write("    cmpq $0, %r8\n");
+        s = s.write("    je .Lstrcmp_len\n");
+        s = s.write(".Lstrcmp_loop:\n");
+        s = s.write("    movzbq (%rdi), %rax\n");
+        s = s.write("    movzbq (%rsi), %r9\n");
+        s = s.write("    cmpq %r9, %rax\n");
+        s = s.write("    jne .Lstrcmp_byte_diff\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    decq %r8\n");
+        s = s.write("    jne .Lstrcmp_loop\n");
+        s = s.write(".Lstrcmp_len:\n");
+        s = s.write("    movq %rcx, %rax\n");
+        s = s.write("    subq %rdx, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lstrcmp_byte_diff:\n");
+        s = s.write("    subq %r9, %rax\n");
+        s = s.write("    ret\n");
+    }
     // Map runtime (transcribed from asm.fern) — only for map-using modules, so a
     // non-map heap program doesn't pull in map_set's __fern_str_eq dependency.
     if (s.has_need("maps")) {
@@ -890,6 +923,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // operand stack: [box A, box B]; __fern_str_eq(%rdi=A, %rsi=B) -> 0/1.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_eq\n    pushq %rax\n");
             s = s.mark_str_eq();
+        } else if (o.kind == "str_cmp") {
+            // operand stack: [box A, box B]; __fern_str_cmp(%rdi=A, %rsi=B) ->
+            // signed -/0/+ in %rax (lexicographic, length tiebreak).
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_cmp\n    pushq %rax\n");
+            s = s.mark_str_cmp();
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
             // order). Box = [shape_ptr@0, f0@8, f1@16, …], (nf+1)*8 bytes; shape
