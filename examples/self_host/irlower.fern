@@ -55,6 +55,7 @@ pub struct LowerState {
     // (e.g. "string,i32,Point"), "" if not a tuple. Lets `t.N` and a tuple
     // destructure recover each element's type for dispatch.
     local_tuple_elems: string[],
+    local_map_type: string[],
     // structs: the module's struct decls, for field-index / field-order lookup
     // (constant across the lowering; threaded read-only).
     structs: parser.StructDecl[],
@@ -82,11 +83,11 @@ pub struct LowerState {
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
-    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: false };
 }
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
@@ -122,7 +123,7 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), local_opt_type: s.local_opt_type.append(""), local_tuple_elems: s.local_tuple_elems.append(""), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), local_opt_type: s.local_opt_type.append(""), local_tuple_elems: s.local_tuple_elems.append(""), local_map_type: s.local_map_type.append(""), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_arr_slot / mark_arr query and set the array-ness of slot i.
@@ -133,7 +134,7 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
@@ -144,7 +145,7 @@ pub function (s: LowerState) is_str_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_str(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
@@ -154,7 +155,7 @@ pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_struct_slot / struct_type_of_slot / mark_struct_type query and set the
@@ -166,13 +167,13 @@ pub function (s: LowerState) struct_type_of_slot(i: i32): string {
 }
 
 pub function (s: LowerState) mark_struct_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // mark_opt_type records slot i's Option[T]/Result[T,E] type string, so a later
 // `match` on that local can recover the bound payload type.
 pub function (s: LowerState) mark_opt_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type.with(i, t), local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type.with(i, t), local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // opt_type_of_slot returns slot i's recorded Option/Result type, or "".
@@ -183,7 +184,7 @@ pub function (s: LowerState) opt_type_of_slot(i: i32): string {
 
 // mark_tuple_elems records slot i's comma-joined tuple element-type tags.
 pub function (s: LowerState) mark_tuple_elems(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems.with(i, t), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems.with(i, t), local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // tuple_elem_tag returns slot i's Nth tuple element-type tag, or "".
@@ -222,6 +223,14 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     var st: string = expr_struct_type(e, s);
     if (st != "") { return st; }
     return "i32";
+}
+
+pub function (s: LowerState) mark_map_type(i: i32, t: string): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type.with(i, t), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+}
+pub function (s: LowerState) map_type_of(i: i32): string {
+    if (i < 0 || i >= s.local_map_type.len()) { return ""; }
+    return s.local_map_type[i];
 }
 
 // ---- struct decl helpers -----------------------------------------------
@@ -801,6 +810,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         }
                         return vctor.emit(ir.op_struct_make(cid.name, c.args.len()));
                     }
+                    if ((cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1) {
+                        var mn: LowerState = lower_expr(c.args[0], s);
+                        if (!mn.ok) { return mn; }
+                        var mkk: i32 = 0;
+                        if (cid.name == "map_new_i32") { mkk = 1; }
+                        return mn.emit(ir.op_map_new(mkk));
+                    }
                     // Built-in Option / Result construction: Some(x)/Ok(x) wrap a
                     // payload with tag 0, Err(x) with tag 1 (None is a bare ident,
                     // handled in lower_expr's ExprIdent arm). The box is
@@ -827,6 +843,30 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     return sc.emit(ir.op_call_direct(cid.name, c.args.len()));
                 },
                 parser.ExprFieldAccess(fa) => {
+                    var mrslot: i32 = 0 - 1;
+                    match (fa.obj) {
+                        parser.ExprIdent(mrid) => { mrslot = s.slot_of(mrid.name); },
+                        _ => {}
+                    }
+                    if (mrslot >= 0 && s.map_type_of(mrslot) != "") {
+                        var mkk2: i32 = 0;
+                        if (s.map_type_of(mrslot) == "i32") { mkk2 = 1; }
+                        if (fa.field == "insert" && c.args.len() == 2) {
+                            var mset: LowerState = lower_expr(fa.obj, s);
+                            if (!mset.ok) { return mset; }
+                            mset = lower_expr(c.args[0], mset);
+                            if (!mset.ok) { return mset; }
+                            mset = lower_expr(c.args[1], mset);
+                            if (!mset.ok) { return mset; }
+                            return mset.emit(ir.op_map_set(mkk2));
+                        }
+                        if (fa.field == "len" && c.args.len() == 0) {
+                            var mlen: LowerState = lower_expr(fa.obj, s);
+                            if (!mlen.ok) { return mlen; }
+                            return mlen.emit(ir.op_map_len());
+                        }
+                        return s.fail();
+                    }
                     if (fa.field == "len" && c.args.len() == 0) {
                         // String `.len()` reads the string box's length field;
                         // array `.len()` reads the array header. Dispatch on the
@@ -934,6 +974,36 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 else if (decl_is_struct(dt.structs, tagB)) { dt = dt.mark_struct_type(bSlot, tagB); }
                 return dt;
             }
+            // Map construction `var m: Map[K, V] = map_new(n)`: the callee
+            // `map_new` is generic, so the KEY KIND comes from the annotation, not
+            // the callee name. Emit op_map_new with the annotated key kind here so
+            // the wasm backend selects the right constructor (i32 vs string keys).
+            match (v.init) {
+                parser.ExprCall(mnc) => {
+                    match (mnc.callee) {
+                        parser.ExprIdent(mnid) => {
+                            if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && v.type_name[0:4] == "Map[") {
+                                var inner2: string = v.type_name[4 : v.type_name.len()];
+                                var kkind: i32 = 0 - 1;
+                                var ktag: string = "";
+                                if (inner2.len() >= 4 && inner2[0:4] == "i32,") { kkind = 1; ktag = "i32"; }
+                                else if (inner2.len() >= 7 && inner2[0:7] == "string,") { kkind = 0; ktag = "string"; }
+                                if (kkind >= 0) {
+                                    var mns: LowerState = lower_expr(mnc.args[0], s);
+                                    if (!mns.ok) { return mns; }
+                                    mns = mns.emit(ir.op_map_new(kkind));
+                                    var mnsb: LowerState = mns.add_local(v.name);
+                                    var mnslot: i32 = mnsb.slot_of(v.name);
+                                    mnsb = mnsb.mark_map_type(mnslot, ktag);
+                                    return mnsb.emit(ir.op_store_local(mnslot));
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             var se: LowerState = lower_expr(v.init, s);
             if (!se.ok) { return se; }
             // Perceus alias-inc + array tracking: a fresh array literal is
@@ -1003,6 +1073,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // Record tuple element type tags for `var t = (e0, e1, ...)` so a
             // later `t.N` recovers each element's type.
             match (v.init) {
+                parser.ExprCall(mc) => {
+                    match (mc.callee) {
+                        parser.ExprIdent(mcid) => {
+                            if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && v.type_name[0:4] == "Map[") {
+                                var inner: string = v.type_name[4 : v.type_name.len()];
+                                if (inner.len() >= 4 && inner[0:4] == "i32,") { sb = sb.mark_map_type(slot, "i32"); }
+                                else if (inner.len() >= 7 && inner[0:7] == "string,") { sb = sb.mark_map_type(slot, "string"); }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
                 parser.ExprTuple(tlit) => {
                     var enc: string = "";
                     var ti: i32 = 0;
@@ -1512,6 +1594,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var structty: string[] = [];
     var optty: string[] = [];
     var tupty: string[] = [];
+    var mapty: string[] = [];
     // Method receiver → slot 0 (it sits at the first arg position, like param 0).
     // Only scalar-field STRUCT receivers are supported this slice; a primitive /
     // enum / non-scalar-struct receiver bails the whole module to the AST path.
@@ -1527,6 +1610,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         structty = structty.append(rbase);
         optty = optty.append("");
         tupty = tupty.append("");
+        mapty = mapty.append("");
     }
     var i: i32 = 0;
     while (i < fn.params.len()) {
@@ -1554,9 +1638,10 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         if (ptn.len() >= 8 && (ptn[0:7] == "Option[" || ptn[0:7] == "Result[")) { poty = ptn; }
         optty = optty.append(poty);
         tupty = tupty.append("");
+        mapty = mapty.append("");
         i = i + 1;
     }
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, n_params: names.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);

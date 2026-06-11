@@ -131,6 +131,22 @@ pub function module_uses_strings(mod: parser.Module): boolean {
 
 // module_uses_str_slice reports whether any function uses `s[start:end]` (the
 // str_slice op), gating emission of the $__fern_substr copy helper.
+pub function module_uses_maps(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            var k: string = r.ops[i].kind;
+            if (k == "map_new" || k == "map_set" || k == "map_len") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 pub function module_uses_str_slice(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
@@ -198,6 +214,7 @@ pub function module_allocates(mod: parser.Module): boolean {
             // struct_make / tuple_make allocate a box via $__fern_str_box.
             if (k == "struct_make") { return true; }
             if (k == "opt_make" || k == "opt_none") { return true; }
+            if (k == "map_new" || k == "map_set") { return true; }
             if (k == "tuple_make") { return true; }
             i = i + 1;
         }
@@ -366,6 +383,16 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "opt_payload") {
             // pop box; payload is at offset 4 (wasm 4-byte slots).
             out = out + "    i32.const 4\n    i32.add\n    i32.load\n";
+        } else if (o.kind == "map_new") {
+            // stack: hint -> fresh map. i32 keys vs string keys.
+            if (o.i32_imm == 1) { out = out + "    call $__fern_map_new\n"; }
+            else { out = out + "    call $__fern_map_new_str\n"; }
+        } else if (o.kind == "map_set") {
+            // stack: map, k, v -> push vis (0 = i32 value) -> map_set -> map.
+            out = out + "    i32.const 0\n    call $__fern_map_set\n";
+        } else if (o.kind == "map_len") {
+            // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
+            out = out + "    i32.load\n";
         } else if (o.kind == "struct_make") {
             // nf field values on the stack (field nf-1 on top, decl order).
             // Box = [type_id@0, f0@4, f1@8, …] via $__fern_str_box (rc-headered),

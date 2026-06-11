@@ -37,6 +37,7 @@ function main(): i32 {
         var s: asmcore.EmitState = asmcore.new_state();
         s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
         s = asm_arm64_ir.emit_body(mod, s);
+        s = s.close_needs();
         s = asm_arm64.emit_runtime(s, false);
         emitted = strbuf_take();
     } else {

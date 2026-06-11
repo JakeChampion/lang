@@ -1642,6 +1642,48 @@ pub function (s: EmitState) need(name: string): EmitState {
     return EmitState { ...s, needed: s.needed.append(name) };
 }
 
+// runtime_need_deps is the DECLARATIVE dependency table for runtime helpers: the
+// direct deps of `name` are the other needs whose helpers `name`'s helper calls
+// (links against). This is the single source of truth replacing the old, fragile
+// "remember to mark every transitively-needed helper by hand" — a backend marks
+// only the top-level need (e.g. "maps") and close_needs() pulls in the rest. Add
+// an edge here whenever a helper gains a `call __fern_*` to another helper.
+// (End goal: when the runtime moves into Fern — issue #2649 — this table and
+// close_needs disappear, replaced by the real call graph + the deadcode pass.)
+pub function runtime_need_deps(name: string): string[] {
+    if (name == "maps") {
+        // __fern_map_set calls __fern_str_eq (string-key path) and __fern_arr_push.
+        var d: string[] = ["str_eq", "arr_push", "heap"];
+        return d;
+    }
+    var none: string[] = [];
+    return none;
+}
+
+// close_needs expands `needed` to its transitive closure over runtime_need_deps,
+// so emitting the runtime after this is guaranteed to have every helper a marked
+// need links against. Iterates to a fixpoint (the dependency graph is small and
+// acyclic). Call it once, right before runtime emission.
+pub function (s: EmitState) close_needs(): EmitState {
+    var cur: EmitState = s;
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var snap: string[] = cur.needed;
+        var i: i32 = 0;
+        while (i < snap.len()) {
+            var deps: string[] = runtime_need_deps(snap[i]);
+            var j: i32 = 0;
+            while (j < deps.len()) {
+                if (!cur.has_need(deps[j])) { cur = cur.need(deps[j]); changed = true; }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return cur;
+}
+
 pub function (s: EmitState) has_need(name: string): boolean {
     var i: i32 = 0;
     while (i < s.needed.len()) {
