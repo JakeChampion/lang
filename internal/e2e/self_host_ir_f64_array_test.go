@@ -12,20 +12,19 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 )
 
-// TestSelfHostIRF64ArrayBails locks in that an f64 array LITERAL bails the IR
-// path (the program falls back to the AST backend). f64 *locals*, arithmetic,
-// casts and struct fields all lower (#2717–#2721), and that made `[1.5, 2.5]`
-// eligible — but the wasm array layout still uses a 4-byte element stride
-// (correct for i32 / wasm32 pointers, truncating for an 8-byte f64), so an f64
-// array would miscompile there. Until array elements widen to 8-byte slots on
-// wasm (a separate, stride-wide change), f64 array literals must stay
-// ineligible. This compiles a self-host probe that bit-packs per-case
-// all_eligible results into the exit code:
-//   (a) f64 array literal  → must be INELIGIBLE (0)
-//   (b) i32 array literal   → must stay ELIGIBLE (1)  [guards the guard]
-//   (c) f64 scalars (no arr)→ must stay ELIGIBLE (1)  [#2717 still lowers]
-// Expected: a*4 + b*2 + c == 0 + 2 + 1 == 3.
-func TestSelfHostIRF64ArrayBails(t *testing.T) {
+// TestSelfHostIRF64ArrayEligible locks in that f64 arrays now lower through the
+// IR. f64 array literals allocate an 8-byte-stride buffer (arr_make width 64);
+// a[i] reads/writes an 8-byte f64 (arr_get/arr_set width 64 → f64.load/store on
+// wasm; the register backends already used 8-byte slots). The slot binding
+// tracks f64-array-ness (local_is_f64arr) so a[i] types as f64. This compiles a
+// self-host probe that bit-packs all_eligible results into the exit code:
+//   (a) f64 array literal + indexed read  → ELIGIBLE (1)
+//   (b) f64 array indexed write a[i] = v  → ELIGIBLE (1)
+//   (c) f64[] param + indexed read        → ELIGIBLE (1)
+//   (d) f64[]-RETURNING function          → INELIGIBLE (0)  [call site can't
+//                                            recover element width — bailed]
+// Expected: a*8 + b*4 + c*2 + d == 8 + 4 + 2 + 0 == 14.
+func TestSelfHostIRF64ArrayEligible(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern"} {
@@ -49,9 +48,10 @@ function elig(src: string): i32 {
 
 function main(): i32 {
     var a: i32 = elig("function main(): i32 { var a: f64[] = [1.5, 2.5]; var x: f64 = a[0] + a[1]; if (x > 3.0) { return 7; } return 0; }");
-    var b: i32 = elig("function main(): i32 { var a: i32[] = [10, 20]; return a[0] + a[1]; }");
-    var c: i32 = elig("function main(): i32 { var x: f64 = 1.5 + 2.5; if (x > 3.0) { return 7; } return 0; }");
-    return a * 4 + b * 2 + c;
+    var b: i32 = elig("function main(): i32 { var a: f64[] = [1.0, 2.0]; a[1] = 5.5; var x: f64 = a[0] + a[1]; if (x > 6.0) { return 8; } return 0; }");
+    var c: i32 = elig("function sum(a: f64[]): f64 { return a[0] + a[1]; } function main(): i32 { var arr: f64[] = [2.5, 4.0]; var r: f64 = sum(arr); if (r > 6.0) { return 5; } return 0; }");
+    var d: i32 = elig("function mk(): f64[] { return [1.5, 2.5]; } function main(): i32 { var a: f64[] = mk(); if (a[0] > 1.0) { return 4; } return 0; }");
+    return a * 8 + b * 4 + c * 2 + d;
 }
 `
 	probePath := filepath.Join(dir, "zz_f64array_probe.fern")
@@ -91,7 +91,7 @@ function main(): i32 {
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("probe did not exit normally")
 	}
-	if got := cmd.ProcessState.ExitCode(); got != 3 {
-		t.Errorf("f64-array IR eligibility = %d, want 3 (f64 arr ineligible; i32 arr + f64 scalars eligible)", got)
+	if got := cmd.ProcessState.ExitCode(); got != 14 {
+		t.Errorf("f64-array IR eligibility = %d, want 14 (literal/write/param eligible; f64[] return ineligible)", got)
 	}
 }

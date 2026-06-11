@@ -167,11 +167,16 @@ pub function op_alloc(): Op { return op0("alloc"); }
 // element count; it pops that many i32 values (element 0 deepest) and pushes
 // the new array's data pointer. `arr_get` pops [base, idx] → element;
 // `arr_set` pops [base, idx, val]; `arr_len` / `arr_rc` pop [base] → len / rc.
-pub function op_arr_make(n: i32): Op {
-    return Op { kind: "arr_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+// `arr_make`'s `width` is the element slot width: 32 for i32 / wasm32-pointer
+// elements (4-byte wasm stride) or 64 for f64 elements (8-byte wasm stride,
+// f64.load/store). The register backends already use 8-byte slots regardless,
+// so width only steers the wasm backend; `arr_get` / `arr_set` carry the same
+// element width so they select the matching load/store on wasm.
+pub function op_arr_make(n: i32, width: i32): Op {
+    return Op { kind: "arr_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
-pub function op_arr_get(): Op { return op0("arr_get"); }
-pub function op_arr_set(): Op { return op0("arr_set"); }
+pub function op_arr_get(width: i32): Op { return Op { kind: "arr_get", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+pub function op_arr_set(width: i32): Op { return Op { kind: "arr_set", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 pub function op_arr_len(): Op { return op0("arr_len"); }
 pub function op_arr_rc(): Op { return op0("arr_rc"); }
 
