@@ -849,8 +849,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         _ => {}
                     }
                     if (mrslot >= 0 && s.map_type_of(mrslot) != "") {
-                        var mkk2: i32 = 0;
-                        if (s.map_type_of(mrslot) == "i32") { mkk2 = 1; }
+                        var mtype: string = s.map_type_of(mrslot);
+                        var mkk2: i32 = map_key_kind_of(mtype);
                         if (fa.field == "insert" && c.args.len() == 2) {
                             var mset: LowerState = lower_expr(fa.obj, s);
                             if (!mset.ok) { return mset; }
@@ -864,6 +864,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             var mlen: LowerState = lower_expr(fa.obj, s);
                             if (!mlen.ok) { return mlen; }
                             return mlen.emit(ir.op_map_len());
+                        }
+                        if (fa.field == "get" && c.args.len() == 1) {
+                            var mget: LowerState = lower_expr(fa.obj, s);
+                            if (!mget.ok) { return mget; }
+                            mget = lower_expr(c.args[0], mget);
+                            if (!mget.ok) { return mget; }
+                            return mget.emit(ir.op_map_get(mkk2));
+                        }
+                        if (fa.field == "has" && c.args.len() == 1) {
+                            var mhas: LowerState = lower_expr(fa.obj, s);
+                            if (!mhas.ok) { return mhas; }
+                            mhas = lower_expr(c.args[0], mhas);
+                            if (!mhas.ok) { return mhas; }
+                            return mhas.emit(ir.op_map_has(mkk2));
                         }
                         return s.fail();
                     }
@@ -994,7 +1008,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     mns = mns.emit(ir.op_map_new(kkind));
                                     var mnsb: LowerState = mns.add_local(v.name);
                                     var mnslot: i32 = mnsb.slot_of(v.name);
-                                    mnsb = mnsb.mark_map_type(mnslot, ktag);
+                                    mnsb = mnsb.mark_map_type(mnslot, v.type_name);
                                     return mnsb.emit(ir.op_store_local(mnslot));
                                 }
                             }
@@ -1335,6 +1349,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     parser.ExprCall(scl) => {
                                         match (scl.callee) {
                                             parser.ExprIdent(scid) => { srt = ms.opt_ret_type(scid.name); },
+                                            parser.ExprFieldAccess(scfa) => {
+                                                // `m.get(k)` evaluates to Option[V] (V = the map's value type).
+                                                if (scfa.field == "get") {
+                                                    match (scfa.obj) {
+                                                        parser.ExprIdent(mapid) => {
+                                                            var vt: string = map_value_of(ms.map_type_of(ms.slot_of(mapid.name)));
+                                                            if (vt != "") { srt = "Option[" + vt + "]"; }
+                                                        },
+                                                        _ => {}
+                                                    }
+                                                }
+                                            },
                                             _ => {}
                                         }
                                     },
@@ -1743,6 +1769,24 @@ pub function opt_payload_type(rettype: string, variant: string): string {
         return "";
     }
     return "";
+}
+
+// map_key_kind_of returns 1 for an i32-keyed Map type, 0 for string-keyed
+// ("Map[i32, V]" / "Map[string, V]").
+pub function map_key_kind_of(typestr: string): i32 {
+    if (typestr.len() >= 8 && typestr[0:8] == "Map[i32,") { return 1; }
+    return 0;
+}
+
+// map_value_of returns the value type V of a "Map[K, V]" type string (i32 /
+// string), or "" if not parseable.
+pub function map_value_of(typestr: string): string {
+    if (typestr.len() < 5 || typestr[0:4] != "Map[") { return ""; }
+    var inner: string = typestr[4 : typestr.len() - 1];   // K, V
+    var ci: i32 = 0;
+    while (ci < inner.len() && inner[ci] != 44) { ci = ci + 1; }   // first comma
+    if (ci >= inner.len()) { return ""; }
+    return trim_spaces(inner[ci + 1 : inner.len()]);
 }
 
 // trim_spaces drops leading/trailing ASCII spaces.

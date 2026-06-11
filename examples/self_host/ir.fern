@@ -175,6 +175,12 @@ pub function op_opt_payload(): Op { return op0("opt_payload"); }
 pub function op_map_new(keykind: i32): Op { return Op { kind: "map_new", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 pub function op_map_set(keykind: i32): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 pub function op_map_len(): Op { return op0("map_len"); }
+// `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
+// hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
+// built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
+// kind in i32_imm.
+pub function op_map_get(keykind: i32): Op { return Op { kind: "map_get", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_has(keykind: i32): Op { return Op { kind: "map_has", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
@@ -289,6 +295,8 @@ pub function render_op(o: Op): string {
     if (o.kind == "map_new") { return "map_new " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "map_set") { return "map_set " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "map_len") { return "map_len"; }
+    if (o.kind == "map_get") { return "map_get " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_has") { return "map_has " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }
