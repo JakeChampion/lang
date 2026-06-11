@@ -13,8 +13,9 @@ import (
 )
 
 // TestSelfHostIRF64Eligible locks in the IR-coverage widening for f64: programs
-// using f64 locals/arithmetic/comparison AND f64 in a FREE-function signature
-// (param/return) are eligible. It compiles a self-host probe that calls
+// using f64 locals/arithmetic/comparison, i32<->f64 casts, AND f64 in a
+// FREE-function signature (param/return) are eligible. It compiles a self-host
+// probe that calls
 // asm_ir.all_eligible and bit-packs the per-case results into the exit code.
 // Case (d) — an f64 METHOD signature — must still be INELIGIBLE (methods with
 // 64-bit signatures are deferred, mirroring i64 methods), pinning the boundary;
@@ -46,7 +47,7 @@ function elig(src: string): i32 {
 
 function main(): i32 {
     var a: i32 = elig("function main(): i32 { var x: f64 = 1.5; var y: f64 = 2.25; var z: f64 = x + y; if (z > 3.0) { return 7; } return 0; }");
-    var b: i32 = elig("function main(): i32 { var x: f64 = 3.0; var y: f64 = -x; if (y <= 0.0) { return 4; } return 0; }");
+    var b: i32 = elig("function main(): i32 { var n: i32 = 10; var x: f64 = n as f64; var y: f64 = x / 4.0; return y as i32; }");
     var c: i32 = elig("function scale(x: f64, k: f64): f64 { return x * k; } function main(): i32 { var r: f64 = scale(3.0, 2.5); if (r > 7.0) { return 7; } return 0; }");
     var d: i32 = elig("struct B { } function (b: B) half(): f64 { return 0.5; } function main(): i32 { return 0; }");
     return a * 8 + b * 4 + c * 2 + d;
