@@ -925,6 +925,14 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    popq %rsi\n    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    pushq %rax\n");
         } else if (o.kind == "map_has") {
             s = s.write("    popq %rsi\n    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_has\n    pushq %rax\n");
+        } else if (o.kind == "map_get_or") {
+            // [map, k, default] -> __fern_map_get, then Some payload or default.
+            var golbl: string = lp + "go" + util.i32_to_string(i);
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
+            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    popq %rdx\n");
+            s = s.write("    movq (%rax), %rcx\n    testq %rcx, %rcx\n    jnz " + golbl + "_d\n");
+            s = s.write("    movq 8(%rax), %rax\n    jmp " + golbl + "_e\n");
+            s = s.write(golbl + "_d:\n    movq %rdx, %rax\n" + golbl + "_e:\n    pushq %rax\n");
         } else if (o.kind == "struct_get") {
             // pop struct box; field at (index+1)*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");

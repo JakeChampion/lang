@@ -8155,6 +8155,13 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // runtime is reused from here, not duplicated.
     if (asmcore.new_state().use_ir && asm_ir.all_eligible(mod)) {
         s = asm_arm64_ir.emit_body(mod, s);
+        // Expand the declarative runtime-dependency closure (e.g. a map op
+        // marks need("maps"), which pulls in arr_push / str_eq / heap) before
+        // emit_runtime gates each helper on has_need — the standalone IR
+        // driver (asm_arm64_ir_run) does the same. Without this, map programs
+        // mark "maps" but never its transitive deps, so the map runtime is
+        // gated out and the program fails to link.
+        s = s.close_needs();
         s = emit_runtime(s, darwin);
         return strbuf_take();
     }

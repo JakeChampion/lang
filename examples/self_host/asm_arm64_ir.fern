@@ -264,6 +264,17 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "map_has") {
             s = s.need("maps");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_has\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_get_or") {
+            s = s.need("maps");
+            var golbl: string = lp + "go" + util.i32_to_string(i);
+            // [map, k, default] (default top) -> __fern_map_get, payload or default.
+            s = s.write("    ldr x3, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");   // default(x3), k(x1), map(x0)
+            s = s.write("    str x3, [sp, #-16]!\n");   // save default across the call (x3 is caller-saved)
+            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n");
+            s = s.write("    ldr x3, [sp], #16\n");      // restore default
+            s = s.write("    ldr x4, [x0]\n    cbnz x4, " + golbl + "_d\n");   // tag != 0 -> default
+            s = s.write("    ldr x0, [x0, #8]\n    b " + golbl + "_e\n");
+            s = s.write(golbl + "_d:\n    mov x0, x3\n" + golbl + "_e:\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
             // order). Box = [shape_ptr@0, f0@8, …], (nf+1)*8 bytes; shape = the

@@ -1997,6 +1997,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"map-get-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(999)) { Some(v) => { return v; }, None => { return 5; } } return 9; }", 5, "", ""},
 		{"map-has", "function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); var r = 0; if (m.has(1)) { r = r + 1; } if (m.has(2)) { r = r + 10; } return r; }", 1, "", ""},
 		{"map-get-strkey", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); match (m.get(\"hi\")) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 11, "", ""},
+		{"map-get-or-hit", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(7, 0); }", 42, "", ""},
+		{"map-get-or-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(999, 5); }", 5, "", ""},
+		{"map-get-or-strhit", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"hi\", 0); }", 11, "", ""},
+		{"map-get-or-strmiss", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"no\", 7); }", 7, "", ""},
 		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
 		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},

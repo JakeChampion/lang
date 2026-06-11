@@ -398,6 +398,9 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    call $__fern_map_get\n";
         } else if (o.kind == "map_has") {
             out = out + "    call $__fern_map_has\n";
+        } else if (o.kind == "map_get_or") {
+            // stack: map, k, default -> $__fern_map_get_or -> value.
+            out = out + "    call $__fern_map_get_or\n";
         } else if (o.kind == "struct_make") {
             // nf field values on the stack (field nf-1 on top, decl order).
             // Box = [type_id@0, f0@4, f1@8, …] via $__fern_str_box (rc-headered),
