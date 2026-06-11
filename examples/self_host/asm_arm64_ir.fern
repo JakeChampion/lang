@@ -132,6 +132,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // const_i32. i64 add/sub/mul/cmp/bitwise reuse the 64-bit x-register
             // bin ops unchanged.
             s = s.write("    ldr x0, =" + o.str + "\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "int_extend" || o.kind == "int_wrap") {
+            // i32<->i64: signed -> sxtw (sign-extend low word); unsigned -> mov
+            // w0,w0 (writing w0 zeroes x0's upper 32).
+            s = s.write("    ldr x0, [sp], #16\n");
+            if (o.unsigned) { s = s.write("    mov w0, w0\n"); }
+            else { s = s.write("    sxtw x0, w0\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind == "load_local") {
             s = fr_ldr(s, "x0", 0 - 8 * (o.i32_imm + 1));
             s = s.write("    str x0, [sp, #-16]!\n");

@@ -664,6 +664,7 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") { return infer_expr_width(u.operand, s); }
+            if (u.op == "as_i64" || u.op == "as_u64") { return 64; }
             return 32;
         },
         _ => { return 32; }
@@ -693,6 +694,12 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 var sx: LowerState = lower_i64(u.operand, sz);
                 if (!sx.ok) { return sx; }
                 return sx.emit(ir.op_bin("sub", 64, false));
+            }
+            // `n as i64` / `n as u64`: widen an i32 operand to i64.
+            if (u.op == "as_i64" || u.op == "as_u64") {
+                var sw: LowerState = lower_expr(u.operand, s);
+                if (!sw.ok) { return sw; }
+                return sw.emit(ir.op_int_extend(u.op == "as_u64"));
             }
             return s.fail();
         },
@@ -895,6 +902,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 var so: LowerState = lower_expr(u.operand, s);
                 if (!so.ok) { return so; }
                 return so.emit(ir.op_bin("not", 0, false));
+            }
+            // `big as i32` / `big as u32`: narrow an i64 operand to i32. The
+            // operand must be an i64 value (lowered via lower_i64); other casts
+            // (`as i8`, `as f64`, …) aren't handled here and bail to AST.
+            if (u.op == "as_i32" || u.op == "as_u32") {
+                var sn: LowerState = lower_i64(u.operand, s);
+                if (!sn.ok) { return sn; }
+                return sn.emit(ir.op_int_wrap(u.op == "as_u32"));
             }
             return s.fail();
         },

@@ -2027,6 +2027,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"while-continue", "function main(): i32 { var s = 0; var i = 0; while (i < 10) { i = i + 1; if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30, "", ""},
 		{"while-break-nested", "function main(): i32 { var t = 0; var i = 0; while (i < 3) { var j = 0; while (j < 5) { if (j == 2) { break; } t = t + j; j = j + 1; } i = i + 1; } return t; }", 3, "", ""},
 		{"while-break-deep-if", "function main(): i32 { var s = 0; var i = 0; while (i < 10) { if (i > 3) { if (i == 4) { break; } } s = s + i; i = i + 1; } return s; }", 6, "", ""},
+		{"cast-widen", "function main(): i32 { var n = 100000; var x: i64 = n as i64; var y: i64 = x * x; if (y > 4000000000) { return 5; } return 0; }", 5, "", ""},
+		{"cast-narrow", "function main(): i32 { var big: i64 = 5000000007; var lo = (big as i32); return lo % 100; }", 11, "", ""},
+		{"cast-mixed", "function main(): i32 { var base: i64 = 4000000000; var i = 5; var s: i64 = base + (i as i64); if (s > 4000000000) { return 7; } return 0; }", 7, "", ""},
+		{"cast-roundtrip", "function main(): i32 { var n = 42; var x: i64 = n as i64; return (x as i32); }", 42, "", ""},
 		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
 		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},
