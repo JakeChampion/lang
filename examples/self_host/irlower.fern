@@ -1936,11 +1936,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             }
             if (aslot < 0) { return s.fail(); }
             if (!s.is_arr_slot(aslot)) { return s.fail(); }
-            // `for x in <f64[]>` isn't lowered this slice (the element binding +
-            // arr_get would need 8-byte width threading through the loop); bail
-            // the module to AST. Indexed read/write of f64[] IS supported.
-            if (s.is_f64arr_slot(aslot)) { return s.fail(); }
             var elem_is_str: boolean = s.is_strarr_slot(aslot);
+            // `for x in <f64[]>`: the element binding x is an f64, loaded with an
+            // 8-byte arr_get (width 64 → f64.load on wasm). Marked f64 so the
+            // loop body's uses of x pick the float ops and x declares as a wasm
+            // (local f64). i32 / string[] elements use the 4-byte path.
+            var elem_is_f64: boolean = s.is_f64arr_slot(aslot);
+            var elem_w: i32 = 32;
+            if (elem_is_f64) { elem_w = 64; }
             // Fresh hidden index local + the user-visible element binding.
             var idxname: string = "$foridx" + util.i32_to_string(s.local_names.len());
             var ff: LowerState = s.add_local(idxname);
@@ -1950,6 +1953,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             ff = ff.add_local(fr.var_name);
             var xslot: i32 = ff.slot_of(fr.var_name);
             if (elem_is_str) { ff = ff.mark_str(xslot, true); }
+            if (elem_is_f64) { ff = ff.mark_f64(xslot, true); }
             ff = ff.emit(ir.op_block(0));   // depth 1 = exit
             ff = ff.emit(ir.op_loop(0));    // depth 0 = header
             // cond: idx < arr.len(); exit when NOT.
@@ -1959,10 +1963,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             ff = ff.emit(ir.op_bin("lt_s", 0, false));
             ff = ff.emit(ir.op_bin("not", 0, false));
             ff = ff.emit(ir.op_brif(1));
-            // x = arr[idx]  (i32 / string[] element; f64[] bailed above)
+            // x = arr[idx]  (8-byte f64 element or 4-byte i32 / string[] element)
             ff = ff.emit(ir.op_load_local(aslot));
             ff = ff.emit(ir.op_load_local(idxslot));
-            ff = ff.emit(ir.op_arr_get(32));
+            ff = ff.emit(ir.op_arr_get(elem_w));
             ff = ff.emit(ir.op_store_local(xslot));
             ff = lower_block(fr.body, ff);
             if (!ff.ok) { return ff; }
