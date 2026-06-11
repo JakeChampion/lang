@@ -80,7 +80,7 @@ function ir_bin_asm(kind: string): string {
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs), irlower.strarr_ret_fns_of(s.funcs));
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs), irlower.strarr_ret_fns_of(s.funcs), irlower.opt_ret_fns_of(s.funcs));
 
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
@@ -242,6 +242,9 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "opt_tag") {
             // pop box; tag is the i32 at offset 0.
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "opt_payload") {
+            // pop box; payload is at offset 8.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
             // order). Box = [shape_ptr@0, f0@8, …], (nf+1)*8 bytes; shape = the
