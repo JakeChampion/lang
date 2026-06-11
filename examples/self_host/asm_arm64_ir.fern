@@ -229,6 +229,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // operand stack [A, B]; __fern_str_eq(x0=A, x1=B) -> 0/1 in x0.
             s = s.mark_str_eq();
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_eq\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "str_cmp") {
+            // operand stack [A, B]; __fern_str_cmp(x0=A, x1=B) -> signed -/0/+ in
+            // x0. asm_arm64.emit_runtime emits the helper when str_cmp is needed.
+            s = s.mark_str_cmp();
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_cmp\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "opt_make") {
             // Option/Result box [tag@0, payload@8], 16 bytes. Payload is on the
             // operand stack; alloc first (it survives, like struct_make), then

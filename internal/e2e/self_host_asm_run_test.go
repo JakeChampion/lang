@@ -2018,6 +2018,11 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"and-or-nest", "function main(): i32 { var a = 1; var b = 0; var c = 5; if (a > 0 && b > 0 || c > 0) { return 9; } return 0; }", 9, "", ""},
 		{"and-not-operand", "function main(): i32 { var x = 5; if (!(x > 10) && x > 0) { return 4; } return 0; }", 4, "", ""},
 		{"and-bool-vars", "function main(): i32 { var f = 5 > 3; var g = 2 > 8; if (f && !g) { return 6; } return 0; }", 6, "", ""},
+		{"strcmp-lt", "function main(): i32 { var a = \"apple\"; var b = \"banana\"; if (a < b) { return 7; } return 0; }", 7, "", ""},
+		{"strcmp-gt", "function main(): i32 { var a = \"banana\"; var b = \"apple\"; if (a > b) { return 3; } return 0; }", 3, "", ""},
+		{"strcmp-le-eq", "function main(): i32 { var a = \"abc\"; var b = \"abc\"; if (a <= b) { return 5; } return 0; }", 5, "", ""},
+		{"strcmp-prefix", "function main(): i32 { var a = \"ab\"; var b = \"abc\"; if (a < b) { return 9; } return 0; }", 9, "", ""},
+		{"strcmp-ge-false", "function main(): i32 { var a = \"a\"; var b = \"b\"; if (a >= b) { return 11; } return 0; }", 0, "", ""},
 		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
 		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},

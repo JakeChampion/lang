@@ -7676,6 +7676,33 @@ pub function strcat_streq_helpers(): string {
     return o;
 }
 
+// strcmp_helper emits ONLY $__fern_strcmp (lexicographic -1/0/1). It is
+// self-contained — it reads the two string boxes and calls nothing — so the IR
+// path can pull in string ordering without the full strcat_helpers bundle
+// (whose split/predicate helpers reference $__fern_arr_push and friends).
+pub function strcmp_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_strcmp (param $a i32) (param $b i32) (result i32)\n";
+    o = o + "    (local $la i32) (local $lb i32) (local $n i32) (local $i i32) (local $ca i32) (local $cb i32)\n";
+    o = o + "    (local.set $la (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $lb (i32.load (local.get $b)))\n";
+    o = o + "    (local.set $n (local.get $la))\n";
+    o = o + "    (if (i32.lt_u (local.get $lb) (local.get $la)) (then (local.set $n (local.get $lb))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d2 (loop $c2\n";
+    o = o + "      (br_if $d2 (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $ca (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $cb (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (if (i32.lt_u (local.get $ca) (local.get $cb)) (then (return (i32.const -1))))\n";
+    o = o + "      (if (i32.gt_u (local.get $ca) (local.get $cb)) (then (return (i32.const 1))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c2)))\n";
+    o = o + "    (if (i32.lt_u (local.get $la) (local.get $lb)) (then (return (i32.const -1))))\n";
+    o = o + "    (if (i32.gt_u (local.get $la) (local.get $lb)) (then (return (i32.const 1))))\n";
+    o = o + "    (i32.const 0))\n";
+    return o;
+}
+
 // strcat_helpers emits the full string runtime bundle: concat + equality (via
 // strcat_streq_helpers) then compare / split / predicate / case+repeat. Depends
 // on $__fern_alloc from heap_alloc_helpers; the split/predicate helpers also use
@@ -10541,6 +10568,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // $__fern_strcat + $__fern_streq; references $__fern_str_box from
         // heap_alloc_helpers (module_allocates pulls it in for string programs).
         if (wasm_ir.module_uses_strings(mod) || wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + strcat_streq_helpers(); }
+        if (wasm_ir.module_uses_str_cmp(mod)) { ir_out = ir_out + strcmp_helper(); }
         if (wasm_ir.module_uses_str_slice(mod)) { ir_out = ir_out + substr_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + map_helpers(); }
         ir_out = ir_out + wasm_ir.emit_functions(mod);

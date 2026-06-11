@@ -156,6 +156,10 @@ pub function op_arr_rc(): Op { return op0("arr_rc"); }
 pub function op_str_len(): Op { return op0("str_len"); }
 pub function op_str_concat(): Op { return op0("str_concat"); }
 pub function op_str_eq(): Op { return op0("str_eq"); }
+// `str_cmp` pops [a, b] → a signed i32: <0 if a<b, 0 if equal, >0 if a>b
+// (lexicographic byte compare, length tiebreak). Ordering compares (< <= > >=)
+// lower to str_cmp followed by the relational op against 0.
+pub function op_str_cmp(): Op { return op0("str_cmp"); }
 // `str_index` pops [str, i] → the i32 byte value at index i (`s[i]`). Each
 // backend reads the byte from its own string layout (x86/arm64 16-byte box
 // [data@0,len@8] → byte at [data+i]; wasm data-section [len@0,bytes@4] → byte at
@@ -302,6 +306,7 @@ pub function render_op(o: Op): string {
     if (o.kind == "str_len") { return "str_len"; }
     if (o.kind == "str_concat") { return "str_concat"; }
     if (o.kind == "str_eq") { return "str_eq"; }
+    if (o.kind == "str_cmp") { return "str_cmp"; }
     if (o.kind == "str_index") { return "str_index"; }
     if (o.kind == "str_slice") { return "str_slice"; }
     if (o.kind == "opt_make") { return "opt_make " + util.i32_to_string(o.i32_imm); }
