@@ -718,9 +718,10 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
         parser.ExprBinary(b) => {
             var kind: string = map_binop(b.op);
             if (kind == "") { return s.fail(); }
-            // i64 division/remainder deferred (the x86/arm sign-extend differs
-            // from i32); comparisons aren't i64 values.
-            if (kind == "div_s" || kind == "rem_s") { return s.fail(); }
+            // Comparisons aren't i64 values (they yield an i32 bool). i64
+            // division/remainder ARE lowered (width 64): x86 drops the i32
+            // movslq truncation, arm64's sdiv is already 64-bit, wasm calls the
+            // $__fern_idiv64 / $__fern_irem64 non-trapping helpers.
             if (is_cmp_kind(kind)) { return s.fail(); }
             var l: LowerState = lower_i64(b.left, s);
             if (!l.ok) { return l; }
@@ -896,11 +897,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             var kind: string = map_binop(b.op);
             if (kind == "") { return s.fail(); }
             // i64 dispatch: if either operand is an i64 value, the operands are
-            // lowered as i64 and the op runs at 64-bit width. Arithmetic yields
-            // i64; a comparison yields an i32 bool (the backend knows from the
-            // kind). i64 division/remainder is deferred — bail to AST.
+            // lowered as i64 and the op runs at 64-bit width. Arithmetic
+            // (including div/rem) yields i64; a comparison yields an i32 bool (the
+            // backend knows from the kind).
             if (infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64) {
-                if (kind == "div_s" || kind == "rem_s") { return s.fail(); }
                 var li: LowerState = lower_i64(b.left, s);
                 if (!li.ok) { return li; }
                 var ri: LowerState = lower_i64(b.right, li);
