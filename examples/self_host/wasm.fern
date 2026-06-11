@@ -7140,6 +7140,29 @@ pub function arr_slice_helper(): string {
     return o;
 }
 
+// arr_slice8_helper emits ONLY $__fern_arr_slice8 (a fresh array holding
+// a[start:end), 8-byte f64/i64 elements — a raw i64 byte-move). Self-contained
+// apart from $__fern_arr_box, so the IR path can pull in f64[] slicing without
+// the rest of arr_helpers (the wide push variants etc.).
+pub function arr_slice8_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_slice8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
+    o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
+    o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
+    o = o + "    (i32.store (local.get $na) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (i64.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (i64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.add (local.get $start) (local.get $i)) (i32.const 8)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $na))\n";
+    return o;
+}
+
 function arr_helpers(): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_push (param $a i32) (param $v i32) (result i32)\n";
@@ -10615,6 +10638,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_uses_str_cmp(mod)) { ir_out = ir_out + strcmp_helper(); }
         if (wasm_ir.module_uses_str_slice(mod)) { ir_out = ir_out + substr_helper(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { ir_out = ir_out + arr_slice_helper(); }
+        if (wasm_ir.module_uses_arr_slice8(mod)) { ir_out = ir_out + arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + map_helpers(); }
         ir_out = ir_out + wasm_ir.emit_functions(mod);
         ir_out = ir_out + "  (func $_start (call $proc_exit (call $main)))\n";

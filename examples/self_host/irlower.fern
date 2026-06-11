@@ -649,6 +649,7 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
             }
             return false;
         },
+        parser.ExprSlice(sl) => { return expr_is_f64arr(sl.array, s); },
         _ => { return false; }
     }
     return false;
@@ -1285,10 +1286,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // locals collapse same-named locals of different types.)
             var slc_is_str: boolean = expr_is_str(slc.array, s);
             if (!slc_is_str && !expr_is_arr_src(slc.array, s)) { return s.fail(); }
-            // Slicing an f64[] bails: arr_slice (via __fern_arr_slice on wasm)
-            // copies 4-byte elements, truncating 8-byte f64s. Indexed read/write
-            // of f64[] IS supported; the slice op would need width threading.
-            if (expr_is_f64arr(slc.array, s)) { return s.fail(); }
+            // An f64[] slice copies 8-byte elements (arr_slice width 64 → the
+            // wasm $__fern_arr_slice8 helper); i32[] / string[] copy 4-byte
+            // elements. The result is a fresh f64[] (marked f64arr at the var
+            // binding via expr_is_f64arr's ExprSlice case).
+            var slc_w: i32 = 32;
+            if (expr_is_f64arr(slc.array, s)) { slc_w = 64; }
             var ssl: LowerState = lower_expr(slc.array, s);
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.start, ssl);
@@ -1296,7 +1299,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             ssl = lower_expr(slc.end, ssl);
             if (!ssl.ok) { return ssl; }
             if (slc_is_str) { return ssl.emit(ir.op_str_slice()); }
-            return ssl.emit(ir.op_arr_slice());
+            return ssl.emit(ir.op_arr_slice(slc_w));
         },
         parser.ExprCall(c) => {
             // Direct call (bare-name callee, up to 6 args), or the `.len()`

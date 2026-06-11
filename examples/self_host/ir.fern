@@ -208,7 +208,10 @@ pub function op_str_slice(): Op { return op0("str_slice"); }
 // `arr_slice` pops [arr, start, end] → a fresh array holding arr[start:end]
 // (end exclusive), COPYING the 8-byte (x86/arm64) / 4-byte (wasm) element
 // payloads via __fern_arr_slice. No bounds check (matches the AST path).
-pub function op_arr_slice(): Op { return op0("arr_slice"); }
+// `arr_slice`'s `width` is the element width (32 for i32 / wasm32-pointer
+// elements, 64 for f64): the wasm backend selects the 4-byte or 8-byte copy
+// helper. The register backends copy 8-byte slots regardless and ignore it.
+pub function op_arr_slice(width: i32): Op { return Op { kind: "arr_slice", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 
 // Built-in Option / Result ops. The value is a heap box [tag@0, payload@8]
 // (Some/Ok = tag 0, None/Err = tag 1) — distinct from user enums/structs, which
