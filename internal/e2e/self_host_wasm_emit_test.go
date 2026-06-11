@@ -217,6 +217,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-map-get-or-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(999, 5); }", 5, ""},
 		{"ir-map-get-or-strhit", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"hi\", 0); }", 11, ""},
 		{"ir-map-get-or-strmiss", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"no\", 7); }", 7, ""},
+		{"ir-map-keys-sum", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var ks: i32[] = m.keys(); var s = 0; var i = 0; while (i < ks.len()) { s = s + ks[i]; i = i + 1; } return s; }", 6, ""},
+		{"ir-map-values-sum", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var vs: i32[] = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s; }", 60, ""},
 		{"ir-struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, ""},
 		{"ir-struct-arr-survives", "struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [10, 20, 30] }; var other = [99, 99, 99, 99, 99]; return b.data[0] + b.data[2]; }", 40, ""},
 		{"ir-struct-arr-param", "struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }", 30, ""},

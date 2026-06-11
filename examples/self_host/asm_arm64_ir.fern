@@ -275,6 +275,12 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    ldr x4, [x0]\n    cbnz x4, " + golbl + "_d\n");   // tag != 0 -> default
             s = s.write("    ldr x0, [x0, #8]\n    b " + golbl + "_e\n");
             s = s.write(golbl + "_d:\n    mov x0, x3\n" + golbl + "_e:\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_keys") {
+            // parallel-array map: keys[] pointer at box+0.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_values") {
+            // parallel-array map: values[] pointer at box+8.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
             // order). Box = [shape_ptr@0, f0@8, …], (nf+1)*8 bytes; shape = the

@@ -888,6 +888,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mgo.ok) { return mgo; }
                             return mgo.emit(ir.op_map_get_or(mkk2));
                         }
+                        if (fa.field == "keys" && c.args.len() == 0) {
+                            var mks: LowerState = lower_expr(fa.obj, s);
+                            if (!mks.ok) { return mks; }
+                            return mks.emit(ir.op_map_keys());
+                        }
+                        if (fa.field == "values" && c.args.len() == 0) {
+                            var mvs: LowerState = lower_expr(fa.obj, s);
+                            if (!mvs.ok) { return mvs; }
+                            return mvs.emit(ir.op_map_values());
+                        }
                         return s.fail();
                     }
                     if (fa.field == "len" && c.args.len() == 0) {

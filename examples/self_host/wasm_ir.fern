@@ -401,6 +401,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "map_get_or") {
             // stack: map, k, default -> $__fern_map_get_or -> value.
             out = out + "    call $__fern_map_get_or\n";
+        } else if (o.kind == "map_keys") {
+            // hash map: snapshot the live keys into a fresh array (probe order).
+            out = out + "    call $__fern_map_keys\n";
+        } else if (o.kind == "map_values") {
+            // hash map: snapshot the live values into a fresh array (probe order).
+            out = out + "    call $__fern_map_values\n";
         } else if (o.kind == "struct_make") {
             // nf field values on the stack (field nf-1 on top, decl order).
             // Box = [type_id@0, f0@4, f1@8, …] via $__fern_str_box (rc-headered),
