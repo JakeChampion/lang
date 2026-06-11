@@ -648,6 +648,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 // other, so a single builtin call disqualifies the IR path for the module.
 pub function all_eligible(mod: parser.Module): boolean {
     if (mod.funcs.len() == 0) { return false; }
+    // emit_module_ir is a WHOLE-PROGRAM emitter: it writes a `_start` that
+    // calls `__fn_main` and exits with its return. A module with no `main`
+    // (a library compiled standalone, e.g. util.fern under the bootstrap
+    // self-compile) has no `__fn_main`, so routing it through the IR path
+    // would emit a dangling reference. Such modules stay on the AST emitter,
+    // which handles the no-main case (top-level stmts + fallback exit).
+    if (!asmcore.has_main(mod)) { return false; }
     var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
