@@ -258,6 +258,12 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "map_len") {
             // pop map; len = keys-array length ([[map]]).
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_get") {
+            s = s.need("maps");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_has") {
+            s = s.need("maps");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_has\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
             // order). Box = [shape_ptr@0, f0@8, …], (nf+1)*8 bytes; shape = the
