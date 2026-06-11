@@ -84,6 +84,13 @@ pub function op_const_i32(v: i32): Op {
 pub function op_const_i64(v: i64): Op {
     return Op { kind: "const_i64", i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
+// op_const_i64_text carries the literal's SOURCE TEXT (in `str`) rather than a
+// parsed i64, so the backends can splice it straight into a 64-bit immediate
+// (`movabsq $TEXT` / `ldr x0, =TEXT` / `i64.const TEXT`) without an i64
+// parse+format round-trip. width=64 marks it an i64 value.
+pub function op_const_i64_text(t: string): Op {
+    return Op { kind: "const_i64", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+}
 pub function op_const_f64(v: f64): Op {
     return Op { kind: "const_f64", i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
 }
@@ -281,6 +288,7 @@ pub function op_return(): Op { return op0("return"); }
 // fields an opcode uses are shown.
 pub function render_op(o: Op): string {
     if (o.kind == "const_i32") { return "const_i32 " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "const_i64") { return "const_i64 " + o.str; }
     if (o.kind == "const_str") { return "const_str " + o.str; }
     if (o.kind == "load_local") { return "load_local " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "store_local") { return "store_local " + util.i32_to_string(o.i32_imm); }

@@ -780,6 +780,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         var o: ir.Op = r.ops[i];
         if (o.kind == "const_i32") {
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
+        } else if (o.kind == "const_i64") {
+            // 64-bit immediate (source text): movabsq handles the full range.
+            // i64 add/sub/mul/cmp/bitwise then reuse the existing 64-bit-register
+            // bin ops unchanged — only the load differs from i32.
+            s = s.write("    movabsq $" + o.str + ", %rax\n    pushq %rax\n");
         } else if (o.kind == "load_local") {
             s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
         } else if (o.kind == "store_local") {

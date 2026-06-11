@@ -56,6 +56,9 @@ pub struct LowerState {
     // destructure recover each element's type for dispatch.
     local_tuple_elems: string[],
     local_map_type: string[],
+    // local_is_i64[i] marks slot i as holding an i64 value (drives i64
+    // instruction selection + wasm i64 local typing). i32 stays the default.
+    local_is_i64: boolean[],
     // structs: the module's struct decls, for field-index / field-order lookup
     // (constant across the lowering; threaded read-only).
     structs: parser.StructDecl[],
@@ -83,11 +86,11 @@ pub struct LowerState {
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
-    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: false };
 }
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
@@ -123,7 +126,7 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), local_opt_type: s.local_opt_type.append(""), local_tuple_elems: s.local_tuple_elems.append(""), local_map_type: s.local_map_type.append(""), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), local_opt_type: s.local_opt_type.append(""), local_tuple_elems: s.local_tuple_elems.append(""), local_map_type: s.local_map_type.append(""), local_is_i64: s.local_is_i64.append(false), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_arr_slot / mark_arr query and set the array-ness of slot i.
@@ -134,7 +137,7 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
@@ -145,7 +148,7 @@ pub function (s: LowerState) is_str_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_str(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
@@ -155,7 +158,7 @@ pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_struct_slot / struct_type_of_slot / mark_struct_type query and set the
@@ -167,13 +170,13 @@ pub function (s: LowerState) struct_type_of_slot(i: i32): string {
 }
 
 pub function (s: LowerState) mark_struct_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // mark_opt_type records slot i's Option[T]/Result[T,E] type string, so a later
 // `match` on that local can recover the bound payload type.
 pub function (s: LowerState) mark_opt_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type.with(i, t), local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type.with(i, t), local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // opt_type_of_slot returns slot i's recorded Option/Result type, or "".
@@ -184,7 +187,7 @@ pub function (s: LowerState) opt_type_of_slot(i: i32): string {
 
 // mark_tuple_elems records slot i's comma-joined tuple element-type tags.
 pub function (s: LowerState) mark_tuple_elems(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems.with(i, t), local_map_type: s.local_map_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems.with(i, t), local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // tuple_elem_tag returns slot i's Nth tuple element-type tag, or "".
@@ -226,11 +229,19 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
 }
 
 pub function (s: LowerState) mark_map_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type.with(i, t), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type.with(i, t), local_is_i64: s.local_is_i64, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) map_type_of(i: i32): string {
     if (i < 0 || i >= s.local_map_type.len()) { return ""; }
     return s.local_map_type[i];
+}
+
+pub function (s: LowerState) mark_i64(i: i32, v: boolean): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64.with(i, v), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+}
+pub function (s: LowerState) is_i64_slot(i: i32): boolean {
+    if (i < 0 || i >= s.local_is_i64.len()) { return false; }
+    return s.local_is_i64[i];
 }
 
 // ---- struct decl helpers -----------------------------------------------
@@ -540,6 +551,79 @@ pub function map_binop(op: string): string {
     return "";
 }
 
+// is_cmp_kind reports whether an IR bin-op kind produces an i32 boolean (a
+// comparison / equality) rather than a value of the operand width.
+pub function is_cmp_kind(kind: string): boolean {
+    return kind == "eq" || kind == "ne" || kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s";
+}
+
+// infer_expr_width returns 64 if `e` evaluates to an i64 value, else 32.
+// Comparisons / equality / logical-not yield an i32 bool regardless of operand
+// width; arithmetic widens to i64 if either operand is i64. Bare literals are
+// i32 here — they only become i64 from an i64 context (see lower_i64), which is
+// what makes `var x: i64 = 5000000000` work without value-based parsing.
+pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (s.is_i64_slot(s.slot_of(id.name))) { return 64; }
+            return 32;
+        },
+        parser.ExprBinary(b) => {
+            if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return 32; }
+            if (infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64) { return 64; }
+            return 32;
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") { return infer_expr_width(u.operand, s); }
+            return 32;
+        },
+        _ => { return 32; }
+    }
+}
+
+// lower_i64 lowers `e` as an i64 VALUE (pushing an i64). Integer literals become
+// const_i64 (carrying source text), i64 locals load directly, and unary `-` /
+// the non-comparison arithmetic + bitwise ops recurse on i64 operands. Anything
+// that isn't a pure-i64 value here — an i32 variable (mixed width), a call, a
+// comparison, i64 division/remainder — fails, bailing the module to the AST path
+// where full i64 already works.
+pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
+    match (e) {
+        parser.ExprNumber(n) => {
+            if (n.is_float) { return s.fail(); }
+            return s.emit(ir.op_const_i64_text(n.text));
+        },
+        parser.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (sl >= 0 && s.is_i64_slot(sl)) { return s.emit(ir.op_load_local(sl)); }
+            return s.fail();
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") {
+                var sz: LowerState = s.emit(ir.op_const_i64_text("0"));
+                var sx: LowerState = lower_i64(u.operand, sz);
+                if (!sx.ok) { return sx; }
+                return sx.emit(ir.op_bin("sub", 64, false));
+            }
+            return s.fail();
+        },
+        parser.ExprBinary(b) => {
+            var kind: string = map_binop(b.op);
+            if (kind == "") { return s.fail(); }
+            // i64 division/remainder deferred (the x86/arm sign-extend differs
+            // from i32); comparisons aren't i64 values.
+            if (kind == "div_s" || kind == "rem_s") { return s.fail(); }
+            if (is_cmp_kind(kind)) { return s.fail(); }
+            var l: LowerState = lower_i64(b.left, s);
+            if (!l.ok) { return l; }
+            var r: LowerState = lower_i64(b.right, l);
+            if (!r.ok) { return r; }
+            return r.emit(ir.op_bin(kind, 64, false));
+        },
+        _ => { return s.fail(); }
+    }
+}
+
 // lower_expr emits ops that leave the value of `e` on the operand stack.
 pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
     if (!s.ok) { return s; }
@@ -665,6 +749,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             }
             var kind: string = map_binop(b.op);
             if (kind == "") { return s.fail(); }
+            // i64 dispatch: if either operand is an i64 value, the operands are
+            // lowered as i64 and the op runs at 64-bit width. Arithmetic yields
+            // i64; a comparison yields an i32 bool (the backend knows from the
+            // kind). i64 division/remainder is deferred — bail to AST.
+            if (infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64) {
+                if (kind == "div_s" || kind == "rem_s") { return s.fail(); }
+                var li: LowerState = lower_i64(b.left, s);
+                if (!li.ok) { return li; }
+                var ri: LowerState = lower_i64(b.right, li);
+                if (!ri.ok) { return ri; }
+                return ri.emit(ir.op_bin(kind, 64, false));
+            }
             var s1: LowerState = lower_expr(b.left, s);
             if (!s1.ok) { return s1; }
             var s2: LowerState = lower_expr(b.right, s1);
@@ -958,6 +1054,19 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 if (v.name[ci] == 44 && comma < 0) { comma = ci; }
                 ci = ci + 1;
             }
+            // i64 binding: `var x: i64 = E`, or an init that infers to i64
+            // (`var z = a + 1` with a:i64, `var y = a`). Mark the slot i64, lower
+            // the init as an i64 value, store. Scalar locals only — i64 arrays /
+            // params / returns are deferred to the AST path (lower_func bails on
+            // an i64 param/return; lower_i64 bails on anything non-i64-value).
+            if (comma < 0 && (v.type_name == "i64" || infer_expr_width(v.init, s) == 64)) {
+                var iv: LowerState = lower_i64(v.init, s);
+                if (!iv.ok) { return iv; }
+                var ivb: LowerState = iv.add_local(v.name);
+                var islot: i32 = ivb.slot_of(v.name);
+                ivb = ivb.mark_i64(islot, true);
+                return ivb.emit(ir.op_store_local(islot));
+            }
             if (comma >= 0) {
                 var nameA: string = v.name[0 : comma];
                 var nameB: string = v.name[comma + 1 : v.name.len()];
@@ -1138,6 +1247,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
         parser.StmtAssign(a) => {
             var slot: i32 = s.slot_of(a.target);
             if (slot < 0) { return s.fail(); }
+            // i64 reassignment: lower the value as an i64 and store. (i64 locals
+            // aren't rc-tracked, so no alias-inc / old-value release.) Storing an
+            // i64 value into a non-i64 slot would be a width mismatch — bail.
+            if (s.is_i64_slot(slot)) {
+                var iva: LowerState = lower_i64(a.value, s);
+                if (!iva.ok) { return iva; }
+                return iva.emit(ir.op_store_local(slot));
+            }
+            if (infer_expr_width(a.value, s) == 64) { return s.fail(); }
             // Assigning a scalar-array struct field aliases it — bail (see StmtVar).
             if (is_scalar_arr_field_access(a.value, s)) { return s.fail(); }
             // Perceus reassignment `y = x`: retain the new ref if it aliases an
@@ -1157,6 +1275,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             return emit_arr_store(se, slot, reassign_inc, target_is_arr);
         },
         parser.StmtReturn(r) => {
+            // Returning an i64 value is deferred (the i64 return ABI isn't lowered
+            // yet — lower_func also bails on an i64 ret_type). Bail to AST.
+            if (infer_expr_width(r.value, s) == 64) { return s.fail(); }
             // Returning a scalar-array struct field aliases it out — the AST path
             // retains; bail so that RC behaviour is preserved (see StmtVar).
             if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
@@ -1185,6 +1306,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // never carry operand-stack values — the backend lowering stays
             // clean. NOTE: locals declared inside a branch keep their slots
             // (no block-scoped reuse yet); a later slice can pop them.
+            // An i64 condition (truthiness on an i64) isn't lowered — bail. A
+            // comparison of i64 operands infers i32, so `if (a < b)` is fine.
+            if (infer_expr_width(iff.cond, s) == 64) { return s.fail(); }
             var sc: LowerState = lower_expr(iff.cond, s);
             if (!sc.ok) { return sc; }
             var s1: LowerState = sc.emit(ir.op_if(0));
@@ -1208,6 +1332,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             //       br 0           ; back to the loop header
             //     end
             //   end
+            if (infer_expr_width(wh.cond, s) == 64) { return s.fail(); }
             var w1: LowerState = s.emit(ir.op_block(0));
             var w2: LowerState = w1.emit(ir.op_loop(0));
             var w3: LowerState = lower_expr(wh.cond, w2);
@@ -1665,6 +1790,10 @@ pub struct LowerResult {
     // entry so the exit dec-sweep never decs an uninitialised (untaken-branch)
     // slot.
     arr_slots: i32[],
+    // i64_slots: the local slots holding i64 values — the wasm backend declares
+    // these (local i64); the register backends ignore it (i64 shares the 64-bit
+    // slot with i32).
+    i64_slots: i32[],
 }
 
 // arr_slots_of collects the OWNED array slots (>= n_params) — the ones the
@@ -1675,6 +1804,18 @@ function arr_slots_of(s: LowerState): i32[] {
     var i: i32 = s.n_params;
     while (i < s.local_is_arr.len()) {
         if (s.is_arr_slot(i)) { out = out.append(i); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// i64_slots_of lists the i64-holding local slots (params included — though
+// eligible functions have no i64 params, lower_func bails on those).
+function i64_slots_of(s: LowerState): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.local_is_i64.len()) {
+        if (s.is_i64_slot(i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -1706,12 +1847,26 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // non-scalar struct param (its fields would need RC). Scalar struct params are
     // fine: tracked for field access, leak-only.
     if (decl_is_struct(structs, fn.ret_type)) {
-        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
+        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots };
     }
     // A tuple-returning function isn't lowered (a caller's destructure would need
     // the element types threaded) — bail so non-scalar tuples stay local-only.
     if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40) {   // 40 = '('
-        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
+        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots };
+    }
+    // i64 in a param or return position isn't lowered yet (the call/return ABI
+    // would need i64-typed wasm signatures). This slice supports i64 LOCALS
+    // only; a function with an i64 param/return bails the module to the AST
+    // path, where full i64 already works.
+    if (fn.ret_type == "i64") {
+        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots };
+    }
+    var pii: i32 = 0;
+    while (pii < fn.params.len()) {
+        if (fn.params[pii].type_name == "i64") {
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots };
+        }
+        pii = pii + 1;
     }
     var names: string[] = [];
     var isarr: boolean[] = [];
@@ -1721,13 +1876,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var optty: string[] = [];
     var tupty: string[] = [];
     var mapty: string[] = [];
+    var isi64: boolean[] = [];
     // Method receiver → slot 0 (it sits at the first arg position, like param 0).
     // Only scalar-field STRUCT receivers are supported this slice; a primitive /
     // enum / non-scalar-struct receiver bails the whole module to the AST path.
     if (fn.receiver_name.len() > 0) {
         var rbase: string = util.base_type_name(fn.receiver_type);
         if (!decl_is_struct(structs, rbase) || !decl_is_leaksafe(structs, rbase)) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots };
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots };
         }
         names = names.append(fn.receiver_name);
         isarr = isarr.append(false);
@@ -1737,12 +1893,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         optty = optty.append("");
         tupty = tupty.append("");
         mapty = mapty.append("");
+        isi64 = isi64.append(false);
     }
     var i: i32 = 0;
     while (i < fn.params.len()) {
         // A struct param must be a scalar-field struct; otherwise bail.
         if (decl_is_struct(structs, fn.params[i].type_name) && !decl_is_leaksafe(structs, fn.params[i].type_name)) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
+            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots };
         }
         names = names.append(fn.params[i].name);
         // An array-typed param is array-tracked (so a[i] / a.len() / aliasing
@@ -1765,16 +1922,17 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         optty = optty.append(poty);
         tupty = tupty.append("");
         mapty = mapty.append("");
+        isi64 = isi64.append(false);
         i = i + 1;
     }
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, n_params: names.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
-        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, arr_slots: noslots }; }
+        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, arr_slots: noslots, i64_slots: noslots }; }
         j = j + 1;
     }
-    return LowerResult { ok: true, ops: s.ops, n_locals: s.local_names.len(), n_params: s.n_params, arr_slots: arr_slots_of(s) };
+    return LowerResult { ok: true, ops: s.ops, n_locals: s.local_names.len(), n_params: s.n_params, arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s) };
 }
 
 // LoweredFn is one function's lowered form, tagged with its name + arity so

@@ -189,6 +189,39 @@ function wasm_binop(kind: string): string {
     return ";; ir: unsupported bin " + kind + "\n";
 }
 
+// wasm_binop_w selects the i64 instruction variant when the operand width is 64
+// (i64 div/rem is bailed in irlower, so no i64 div/rem helper is needed). A
+// comparison still pushes an i32 result — only the operands are i64.
+function wasm_binop_w(kind: string, width: i32): string {
+    if (width != 64) { return wasm_binop(kind); }
+    if (kind == "add") { return "i64.add"; }
+    if (kind == "sub") { return "i64.sub"; }
+    if (kind == "mul") { return "i64.mul"; }
+    if (kind == "and") { return "i64.and"; }
+    if (kind == "or") { return "i64.or"; }
+    if (kind == "xor") { return "i64.xor"; }
+    if (kind == "shl") { return "i64.shl"; }
+    if (kind == "shr_s") { return "i64.shr_s"; }
+    if (kind == "eq") { return "i64.eq"; }
+    if (kind == "ne") { return "i64.ne"; }
+    if (kind == "lt_s") { return "i64.lt_s"; }
+    if (kind == "le_s") { return "i64.le_s"; }
+    if (kind == "gt_s") { return "i64.gt_s"; }
+    if (kind == "ge_s") { return "i64.ge_s"; }
+    return ";; ir: unsupported i64 bin " + kind + "\n";
+}
+
+// slot_in_list reports membership of slot x in an i32 list (the LowerResult's
+// i64_slots / arr_slots are sorted-but-membership is all we need).
+function slot_in_list(list: i32[], x: i32): boolean {
+    var i: i32 = 0;
+    while (i < list.len()) {
+        if (list[i] == x) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // wasm_helper_symbol maps an IR runtime-helper name to the wasm.fern symbol the
 // IR path calls. The exit-sweep / reassign release (__fern_rc_dec) maps to
 // $__fern_arr_dec (the array release that frees at rc==1 via the size-class
@@ -277,12 +310,20 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         p = p + 1;
     }
     out = out + " (result i32)\n";
-    // body locals + 2 array scratch locals
-    var nloc: i32 = (r.n_locals - r.n_params) + 2;
+    // body locals + 2 array scratch locals. A body local in r.i64_slots is
+    // declared (local i64); the 2 trailing array scratch locals are always i32.
+    // (Params stay i32 — lower_func bails on any i64 param, so eligible funcs
+    // have none.)
+    var nbody: i32 = r.n_locals - r.n_params;
+    var nloc: i32 = nbody + 2;
     out = out + "    (local";
     var l: i32 = 0;
     while (l < nloc) {
-        out = out + " i32";
+        if (l < nbody && slot_in_list(r.i64_slots, r.n_params + l)) {
+            out = out + " i64";
+        } else {
+            out = out + " i32";
+        }
         l = l + 1;
     }
     out = out + ")\n";
@@ -291,6 +332,11 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         var o: ir.Op = r.ops[i];
         if (o.kind == "const_i32") {
             out = out + "    i32.const " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "const_i64") {
+            // 64-bit immediate (source text). load_local / store_local on i64
+            // slots use the same local.get/local.set — the local's declared i64
+            // type carries the stack type.
+            out = out + "    i64.const " + o.str + "\n";
         } else if (o.kind == "load_local") {
             out = out + "    local.get " + util.i32_to_string(o.i32_imm) + "\n";
         } else if (o.kind == "store_local") {
@@ -453,7 +499,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "call_direct") {
             out = out + "    call $" + o.str + "\n";
         } else {
-            out = out + "    " + wasm_binop(o.kind) + "\n";
+            out = out + "    " + wasm_binop_w(o.kind, o.width) + "\n";
         }
         i = i + 1;
     }
