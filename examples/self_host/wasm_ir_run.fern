@@ -57,6 +57,7 @@ function main(): i32 {
         if (wasm_ir.module_uses_str_cmp(mod)) { o = o + wasm.strcmp_helper(); }
         if (wasm_ir.module_uses_str_slice(mod)) { o = o + wasm.substr_helper(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }
+        if (wasm_ir.module_uses_arr_slice8(mod)) { o = o + wasm.arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
         o = o + wasm_ir.emit_functions(mod);
         o = o + "  (func $_start (call $proc_exit (call $main)))\n";

@@ -312,8 +312,8 @@ pub function module_uses_divrem(mod: parser.Module): boolean {
 
 // module_uses_i64_divrem reports whether any div/rem op runs at 64-bit width, so
 // the $__fern_idiv64 / $__fern_irem64 helpers (divrem64_helpers) need emitting.
-// module_uses_arr_slice reports whether any function emits an arr_slice op, so
-// the $__fern_arr_slice helper (arr_slice_helper) needs emitting.
+// module_uses_arr_slice reports whether any function emits a 4-byte-element
+// arr_slice op (width 32), so the $__fern_arr_slice helper needs emitting.
 pub function module_uses_arr_slice(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
@@ -321,7 +321,25 @@ pub function module_uses_arr_slice(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind == "arr_slice") { return true; }
+            if (r.ops[i].kind == "arr_slice" && r.ops[i].width != 64) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+// module_uses_arr_slice8 reports whether any function emits an 8-byte-element
+// arr_slice op (width 64, f64[]), so the $__fern_arr_slice8 helper needs
+// emitting. Distinct from module_uses_arr_slice so a program slicing only one
+// element width pulls in only the helper it calls.
+pub function module_uses_arr_slice8(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "arr_slice" && r.ops[i].width == 64) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -519,10 +537,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // bytes into a fresh block (wasm strings are inline, so no view).
             out = out + "    call $__fern_substr\n";
         } else if (o.kind == "arr_slice") {
-            // stack: arr, start, end -> $__fern_arr_slice -> fresh array block
-            // (copies the i32 elements). The helper is in rc_runtime_helpers,
-            // always emitted for an allocating (array) module.
-            out = out + "    call $__fern_arr_slice\n";
+            // stack: arr, start, end -> fresh array block. An f64[] slice (width
+            // 64) copies 8-byte elements via $__fern_arr_slice8; i32[] / string[]
+            // copy 4-byte elements via $__fern_arr_slice. The chosen helper is
+            // emitted conditionally (module_uses_arr_slice / _arr_slice8).
+            if (o.width == 64) { out = out + "    call $__fern_arr_slice8\n"; }
+            else { out = out + "    call $__fern_arr_slice\n"; }
         } else if (o.kind == "str_concat") {
             // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
             out = out + "    call $__fern_strcat\n";

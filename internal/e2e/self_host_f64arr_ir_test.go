@@ -97,6 +97,16 @@ func TestSelfHostF64ArrayWasmIR(t *testing.T) {
 		{"ret", `function mk(): f64[] { return [1.5, 2.5, 3.5]; } function main(): i32 { var a: f64[] = mk(); var s: f64 = a[0] + a[2]; return s as i32; }`, 5},
 		// direct index of an f64[]-returning call: mk()[1] = 2.5 -> 2
 		{"ret-direct-index", `function mk(): f64[] { return [1.5, 2.5, 3.5]; } function main(): i32 { return mk()[1] as i32; }`, 2},
+		// f64[] slice (8-byte element copy): b = a[1:3] = [2.5, 3.5]; sum = 6.0 -> 6.
+		// (b is left unannotated: `a[i:j]` yields a non-owning slice view `[f64]`,
+		// which the native checker intentionally won't assign to an *owning* `f64[]`
+		// — a redundant `: f64[]` annotation would be a view->owning mismatch. The
+		// self-host slice copies into a fresh owning array regardless.)
+		{"slice", `function main(): i32 { var a: f64[] = [1.5, 2.5, 3.5, 4.5]; var b = a[1:3]; var s: f64 = b[0] + b[1]; return s as i32; }`, 6},
+		// f64[] slice length: a[1:3].len() = 2
+		{"slice-len", `function main(): i32 { var a: f64[] = [1.5, 2.5, 3.5, 4.5]; var b = a[1:3]; return b.len(); }`, 2},
+		// direct index of an f64[] slice: a[1:4][1] = 3.5 -> 3
+		{"slice-direct-index", `function main(): i32 { var a: f64[] = [1.5, 2.5, 3.5, 4.5]; return a[1:4][1] as i32; }`, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
