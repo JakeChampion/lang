@@ -98,6 +98,7 @@ function module_uses_heap(mod: parser.Module): boolean {
             // allocates the struct box — all pull in the heap/allocator runtime.
             if (r.ops[i].kind == "alloc" || r.ops[i].kind == "arr_make") { return true; }
             if (r.ops[i].kind == "const_str" || r.ops[i].kind == "str_concat") { return true; }
+            if (r.ops[i].kind == "str_slice") { return true; }
             if (r.ops[i].kind == "struct_make") { return true; }
             if (r.ops[i].kind == "tuple_make") { return true; }
             i = i + 1;
@@ -554,6 +555,18 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // pop index (top), string box; box = [data@0, len@8], so the byte is
             // at [data + i]; zero-extend to an i32.
             s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n");
+        } else if (o.kind == "str_slice") {
+            // operand stack [src box, start, end] (end on top). Zero-copy view:
+            // a fresh 16-byte box [data = src.data + start, len = end - start]
+            // sharing the source bytes. r12/r13/r14 (callee-saved) hold end/start/
+            // src across __fern_alloc (transcribed from asm.fern's ExprSlice).
+            s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n");
+            s = s.write("    pushq %r12\n    pushq %r13\n    pushq %r14\n");
+            s = s.write("    movq %r8, %r12\n    movq %rcx, %r13\n    movq %rdx, %r14\n");
+            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            s = s.write("    movq (%r14), %rcx\n    addq %r13, %rcx\n    movq %rcx, (%rax)\n");
+            s = s.write("    movq %r12, %rcx\n    subq %r13, %rcx\n    movq %rcx, 8(%rax)\n");
+            s = s.write("    popq %r14\n    popq %r13\n    popq %r12\n    pushq %rax\n");
         } else if (o.kind == "str_concat") {
             // operand stack: [box A, box B] (B on top). __fern_str_concat takes
             // %rdi = A, %rsi = B and returns the fresh box in %rax.

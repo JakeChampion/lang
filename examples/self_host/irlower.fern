@@ -383,6 +383,12 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             // Indexing a string[] array yields a string element.
             return expr_is_strarr(ix.array, s);
         },
+        parser.ExprSlice(slc) => {
+            // Slicing a string yields a string (`s[a:b]`). Without this, a
+            // slice-result var isn't a str slot, so `.len()` would mis-dispatch
+            // to arr_len (offset 0) instead of str_len (offset 8).
+            return expr_is_str(slc.array, s);
+        },
         _ => { return false; }
     }
     return false;
@@ -609,6 +615,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (!sidx.ok) { return sidx; }
             if (expr_is_str(ix.array, s)) { return sidx.emit(ir.op_str_index()); }
             return sidx.emit(ir.op_arr_get());
+        },
+        parser.ExprSlice(slc) => {
+            // `s[start:end]` on a string → lower [src, start, end] then
+            // `str_slice` (a fresh string). Only string slicing is in the IR path
+            // yet; array slicing bails to the AST emitter. (The binding is `slc`,
+            // not `sl`: other arms bind `var sl: LowerState`, and the compiler's
+            // scope-blind locals collapse same-named locals of different types.)
+            if (!expr_is_str(slc.array, s)) { return s.fail(); }
+            var ssl: LowerState = lower_expr(slc.array, s);
+            if (!ssl.ok) { return ssl; }
+            ssl = lower_expr(slc.start, ssl);
+            if (!ssl.ok) { return ssl; }
+            ssl = lower_expr(slc.end, ssl);
+            if (!ssl.ok) { return ssl; }
+            return ssl.emit(ir.op_str_slice());
         },
         parser.ExprCall(c) => {
             // Direct call (bare-name callee, up to 6 args), or the `.len()`

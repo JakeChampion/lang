@@ -121,6 +121,24 @@ pub function module_uses_strings(mod: parser.Module): boolean {
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
             if (k == "const_str" || k == "str_len" || k == "str_concat" || k == "str_eq") { return true; }
+            if (k == "str_index" || k == "str_slice") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_str_slice reports whether any function uses `s[start:end]` (the
+// str_slice op), gating emission of the $__fern_substr copy helper.
+pub function module_uses_str_slice(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "str_slice") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -317,6 +335,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_index") {
             // stack: block ptr, idx -> i32.load8_u(ptr + 4 + idx)  (bytes @ +4)
             out = out + "    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n";
+        } else if (o.kind == "str_slice") {
+            // stack: src, start, end -> $__fern_substr(src, start, end) copies the
+            // bytes into a fresh block (wasm strings are inline, so no view).
+            out = out + "    call $__fern_substr\n";
         } else if (o.kind == "str_concat") {
             // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
             out = out + "    call $__fern_strcat\n";
