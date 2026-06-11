@@ -51,6 +51,10 @@ pub struct LowerState {
     // local recover the bound payload type, the same way a direct-call scrutinee
     // uses opt_ret_fns.
     local_opt_type: string[],
+    // local_tuple_elems[i] holds slot i's tuple element-type tags, comma-joined
+    // (e.g. "string,i32,Point"), "" if not a tuple. Lets `t.N` and a tuple
+    // destructure recover each element's type for dispatch.
+    local_tuple_elems: string[],
     // structs: the module's struct decls, for field-index / field-order lookup
     // (constant across the lowering; threaded read-only).
     structs: parser.StructDecl[],
@@ -78,11 +82,11 @@ pub struct LowerState {
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
-    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: false };
 }
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
@@ -118,7 +122,7 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), local_opt_type: s.local_opt_type.append(""), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), local_opt_type: s.local_opt_type.append(""), local_tuple_elems: s.local_tuple_elems.append(""), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_arr_slot / mark_arr query and set the array-ness of slot i.
@@ -129,7 +133,7 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
@@ -140,7 +144,7 @@ pub function (s: LowerState) is_str_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_str(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
@@ -150,7 +154,7 @@ pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // is_struct_slot / struct_type_of_slot / mark_struct_type query and set the
@@ -162,19 +166,62 @@ pub function (s: LowerState) struct_type_of_slot(i: i32): string {
 }
 
 pub function (s: LowerState) mark_struct_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), local_opt_type: s.local_opt_type, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // mark_opt_type records slot i's Option[T]/Result[T,E] type string, so a later
 // `match` on that local can recover the bound payload type.
 pub function (s: LowerState) mark_opt_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type.with(i, t), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type.with(i, t), local_tuple_elems: s.local_tuple_elems, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
 }
 
 // opt_type_of_slot returns slot i's recorded Option/Result type, or "".
 pub function (s: LowerState) opt_type_of_slot(i: i32): string {
     if (i < 0 || i >= s.local_opt_type.len()) { return ""; }
     return s.local_opt_type[i];
+}
+
+// mark_tuple_elems records slot i's comma-joined tuple element-type tags.
+pub function (s: LowerState) mark_tuple_elems(i: i32, t: string): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems.with(i, t), structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, n_params: s.n_params, ok: s.ok };
+}
+
+// tuple_elem_tag returns slot i's Nth tuple element-type tag, or "".
+pub function (s: LowerState) tuple_elem_tag(i: i32, n: i32): string {
+    if (i < 0 || i >= s.local_tuple_elems.len()) { return ""; }
+    var enc: string = s.local_tuple_elems[i];
+    if (enc.len() == 0) { return ""; }
+    var idx: i32 = 0;
+    var start: i32 = 0;
+    var k: i32 = 0;
+    while (k <= enc.len()) {
+        if (k == enc.len() || enc[k] == 44) {   // 44 = ','
+            if (idx == n) { return enc[start : k]; }
+            idx = idx + 1;
+            start = k + 1;
+        }
+        k = k + 1;
+    }
+    return "";
+}
+
+// expr_tuple_elem_tag returns the type tag of element N of a tuple expression
+// (`t` an ident with tracked element types), or "".
+pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string {
+    match (e) {
+        parser.ExprIdent(id) => { return s.tuple_elem_tag(s.slot_of(id.name), n); },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// elem_type_tag computes the type tag of an expression for tuple-element typing:
+// "string" for a string, a struct type name for a struct, else "i32" (scalar).
+pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
+    if (expr_is_str(e, s)) { return "string"; }
+    var st: string = expr_struct_type(e, s);
+    if (st != "") { return st; }
+    return "i32";
 }
 
 // ---- struct decl helpers -----------------------------------------------
@@ -340,6 +387,12 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
         parser.ExprStructLit(sl) => { return sl.type_name; },
         parser.ExprIdent(id) => { return s.struct_type_of_slot(s.slot_of(id.name)); },
         parser.ExprFieldAccess(fa) => {
+            // A struct-typed tuple element `t.N` evaluates to that struct type.
+            if (util.is_all_digits(fa.field)) {
+                var tt: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                if (decl_is_struct(s.structs, tt)) { return tt; }
+                return "";
+            }
             // A struct-typed field read `obj.f` evaluates to the field's struct
             // type (enables nested access `b.p.x`). Returns "" if obj isn't a
             // struct or f isn't a struct-typed field.
@@ -432,6 +485,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprFieldAccess(fa) => {
+            // A string tuple element `t.N` is a string.
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "string";
+            }
             // A string-typed struct field read `p.name` is a string.
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
@@ -650,9 +707,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // in source order (element 0 deepest), then tuple_make boxes them.
             var tn: i32 = tup.elements.len();
             if (tn == 0) { return s.fail(); }
+            // Scalar, string, and struct elements are allowed (leak mode: each
+            // is one slot, stored pointer-safely). Array / nested-tuple / other
+            // heap elements still bail (their downstream typing isn't tracked).
             var tei: i32 = 0;
             while (tei < tn) {
-                if (expr_is_nonscalar(tup.elements[tei], s)) { return s.fail(); }
+                var el: parser.Expr = tup.elements[tei];
+                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "") { return s.fail(); }
                 tei = tei + 1;
             }
             var ts: LowerState = s;
@@ -849,6 +910,28 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 dt = dt.emit(ir.op_load_local(tmp_slot));
                 dt = dt.emit(ir.op_tuple_get(1));
                 dt = dt.emit(ir.op_store_local(bSlot));
+                // Type the two bindings from the source tuple's element tags:
+                // an inline `(e0, e1)` literal from the element exprs, a tuple
+                // local from its tracked tags.
+                var tagA: string = "";
+                var tagB: string = "";
+                match (v.init) {
+                    parser.ExprTuple(dl) => {
+                        if (dl.elements.len() == 2) {
+                            tagA = elem_type_tag(dl.elements[0], s);
+                            tagB = elem_type_tag(dl.elements[1], s);
+                        }
+                    },
+                    parser.ExprIdent(did) => {
+                        tagA = s.tuple_elem_tag(s.slot_of(did.name), 0);
+                        tagB = s.tuple_elem_tag(s.slot_of(did.name), 1);
+                    },
+                    _ => {}
+                }
+                if (tagA == "string") { dt = dt.mark_str(aSlot, true); }
+                else if (decl_is_struct(dt.structs, tagA)) { dt = dt.mark_struct_type(aSlot, tagA); }
+                if (tagB == "string") { dt = dt.mark_str(bSlot, true); }
+                else if (decl_is_struct(dt.structs, tagB)) { dt = dt.mark_struct_type(bSlot, tagB); }
                 return dt;
             }
             var se: LowerState = lower_expr(v.init, s);
@@ -917,6 +1000,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             sb = sb.mark_strarr(slot, is_strarr);
             sb = sb.mark_struct_type(slot, struct_ty);
             sb = sb.mark_opt_type(slot, opt_ty);
+            // Record tuple element type tags for `var t = (e0, e1, ...)` so a
+            // later `t.N` recovers each element's type.
+            match (v.init) {
+                parser.ExprTuple(tlit) => {
+                    var enc: string = "";
+                    var ti: i32 = 0;
+                    while (ti < tlit.elements.len()) {
+                        if (ti > 0) { enc = enc + ","; }
+                        enc = enc + elem_type_tag(tlit.elements[ti], se);
+                        ti = ti + 1;
+                    }
+                    sb = sb.mark_tuple_elems(slot, enc);
+                },
+                _ => {}
+            }
             // Retain (alias) + cow-guarded dec-on-overwrite of the slot's prior
             // value (the loop-rebind reclamation; null on the first binding, so
             // a no-op there). An owned array slot drives the release.
@@ -1402,12 +1500,18 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     if (decl_is_struct(structs, fn.ret_type)) {
         return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
     }
+    // A tuple-returning function isn't lowered (a caller's destructure would need
+    // the element types threaded) — bail so non-scalar tuples stay local-only.
+    if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40) {   // 40 = '('
+        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots };
+    }
     var names: string[] = [];
     var isarr: boolean[] = [];
     var isstr: boolean[] = [];
     var isstrarr: boolean[] = [];
     var structty: string[] = [];
     var optty: string[] = [];
+    var tupty: string[] = [];
     // Method receiver → slot 0 (it sits at the first arg position, like param 0).
     // Only scalar-field STRUCT receivers are supported this slice; a primitive /
     // enum / non-scalar-struct receiver bails the whole module to the AST path.
@@ -1422,6 +1526,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         isstrarr = isstrarr.append(false);
         structty = structty.append(rbase);
         optty = optty.append("");
+        tupty = tupty.append("");
     }
     var i: i32 = 0;
     while (i < fn.params.len()) {
@@ -1448,9 +1553,10 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         var ptn: string = fn.params[i].type_name;
         if (ptn.len() >= 8 && (ptn[0:7] == "Option[" || ptn[0:7] == "Result[")) { poty = ptn; }
         optty = optty.append(poty);
+        tupty = tupty.append("");
         i = i + 1;
     }
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, n_params: names.len(), ok: true };
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
