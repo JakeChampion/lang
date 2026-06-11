@@ -6794,6 +6794,21 @@ func (g *generator) freshLabel(prefix string) string {
 	return fmt.Sprintf(".L%s_%d", prefix, g.labelN)
 }
 
+// condBranchFar emits a conditional branch to `target` that stays in range even
+// in very large functions. aarch64's cbz/cbnz/b.cond reach only ±1MB and GAS
+// does not relax them, so a single huge emitted function (e.g. the self-host
+// compiler's giant dispatch routines) can overflow with "conditional branch out
+// of range". We instead take the INVERTED test over a short forward branch and
+// reach the real target with an unconditional `b` (±128MB range). `skipInsn` is
+// the instruction that skips the jump — the inverse of the intended branch
+// (e.g. "cbnz" to realise a "cbz" target, "cbz" for "cbnz").
+func (g *generator) condBranchFar(skipInsn, reg, target string) {
+	skip := g.freshLabel("brFar")
+	g.emit("%s %s, %s", skipInsn, reg, skip)
+	g.emit("b %s", target)
+	g.label(skip)
+}
+
 // emitOp dispatches a single IR op to its arm64 lowering.
 // Each op consumes / produces operand-stack values via
 // push() / pop(). Unsupported ops surface explicit errors so
@@ -7168,7 +7183,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.pop()
 		elseL := g.freshLabel("ifElse")
 		endL := g.freshLabel("ifEnd")
-		g.emit("cbz w0, %s", elseL)
+		// Range-safe `cbz w0, elseL` (see condBranchFar): skip the far jump
+		// when w0 != 0 (cbnz), else fall into the unconditional `b elseL`.
+		g.condBranchFar("cbnz", "w0", elseL)
 		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
 	case ir.OpElse:
 		top := &(*scope)[len(*scope)-1]
@@ -7192,8 +7209,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.pop()
 		target := (*scope)[len(*scope)-1-int(op.I32)].brTarget
 		// w0 form for the same reason as OpIf — only test the
-		// low 32 bits since i32 truthiness is i32-shaped.
-		g.emit("cbnz w0, %s", target)
+		// low 32 bits since i32 truthiness is i32-shaped. Range-safe
+		// `cbnz w0, target` (see condBranchFar): skip when w0 == 0.
+		g.condBranchFar("cbz", "w0", target)
 
 	// -------- memory load / store --------
 
