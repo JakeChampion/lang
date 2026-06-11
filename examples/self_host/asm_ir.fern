@@ -1112,6 +1112,35 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    call __fn_" + asmcore.sanitize_label(o.str) + "\n");
             if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
+        } else if (o.kind == "const_f64") {
+            // Float literal: GAS assembles the source text to an IEEE double in
+            // .rodata; load its bits and push them (floats flow on the rt-stack
+            // as their 8-byte bit pattern, like i64). Mirrors asm.fern.
+            var flb: asmcore.LabelOut = asmcore.fresh_label(s);
+            s = flb.state;
+            s = s.write("    .section .rodata\n" + flb.name + ": .double " + o.str + "\n    .text\n");
+            s = s.write("    movsd " + flb.name + "(%rip), %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
+        } else if (o.kind == "fadd" || o.kind == "fsub" || o.kind == "fmul" || o.kind == "fdiv") {
+            // f64 arithmetic: pop rhs/lhs bits into xmm1/xmm0, op, push result.
+            s = s.write("    popq %rax\n    movq %rax, %xmm1\n    popq %rax\n    movq %rax, %xmm0\n");
+            if (o.kind == "fadd") { s = s.write("    addsd %xmm1, %xmm0\n"); }
+            else if (o.kind == "fsub") { s = s.write("    subsd %xmm1, %xmm0\n"); }
+            else if (o.kind == "fmul") { s = s.write("    mulsd %xmm1, %xmm0\n"); }
+            else { s = s.write("    divsd %xmm1, %xmm0\n"); }
+            s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
+        } else if (o.kind == "flt" || o.kind == "fle" || o.kind == "fgt" || o.kind == "fge" || o.kind == "feq" || o.kind == "fne") {
+            // f64 compare → i32 0/1, NaN-correct (mirrors asm.fern): ucomisd sets
+            // CF=ZF=PF=1 when unordered, so `<`/`<=`/`==` mask with setnp and
+            // `!=` accepts unordered via setp; `>`/`>=` use seta/setae (CF=0).
+            s = s.write("    popq %rax\n    movq %rax, %xmm1\n    popq %rax\n    movq %rax, %xmm0\n");
+            s = s.write("    ucomisd %xmm1, %xmm0\n    movq $0, %rax\n");
+            if (o.kind == "flt") { s = s.write("    setb %al\n    setnp %dl\n    andb %dl, %al\n"); }
+            else if (o.kind == "fle") { s = s.write("    setbe %al\n    setnp %dl\n    andb %dl, %al\n"); }
+            else if (o.kind == "fgt") { s = s.write("    seta %al\n"); }
+            else if (o.kind == "fge") { s = s.write("    setae %al\n"); }
+            else if (o.kind == "feq") { s = s.write("    sete %al\n    setnp %dl\n    andb %dl, %al\n"); }
+            else { s = s.write("    setne %al\n    setp %dl\n    orb %dl, %al\n"); }
+            s = s.write("    movzbq %al, %rax\n    pushq %rax\n");
         } else if (o.kind == "end") {
             // Define the label at this end's index — the target of the if/else
             // that opened it (no-else if's jz, else's jmp) or a block's br.

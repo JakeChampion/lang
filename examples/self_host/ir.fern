@@ -122,6 +122,24 @@ pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
     return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
 }
 
+// f64 arithmetic / comparison. `kind` is the float opcode ("fadd"/"fsub"/
+// "fmul"/"fdiv" or a float compare "flt"/"fgt"/"fle"/"fge"/"feq"/"fne"); the
+// operands flow on the rt-stack as their 8-byte IEEE bit pattern (like i64), so
+// only the op differs from the integer path — the backend pops into float
+// registers (xmm / d-regs / wasm f64). Arithmetic yields an f64; a compare
+// yields an i32 0/1.
+pub function op_fbin(kind: string): Op {
+    return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+}
+
+// op_const_f64_text carries the float literal's SOURCE TEXT (in `str`) so the
+// backends can hand it straight to the assembler (`.double TEXT` in .rodata /
+// `f64.const TEXT`) without a float parse+format round-trip — mirroring
+// op_const_i64_text. width=64 marks it a 64-bit (float) value.
+pub function op_const_f64_text(t: string): Op {
+    return Op { kind: "const_f64", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+}
+
 // memory: width carries 8/16/32/64 or width_ptr() for pointer-typed slots
 pub function op_load(width: i32): Op {
     return Op { kind: "load", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };

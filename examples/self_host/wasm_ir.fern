@@ -230,6 +230,18 @@ function wasm_binop_w(kind: string, width: i32): string {
     if (kind == "le_s") { return "i64.le_s"; }
     if (kind == "gt_s") { return "i64.gt_s"; }
     if (kind == "ge_s") { return "i64.ge_s"; }
+    // f64 arithmetic / comparison (op_fbin carries width 64). wasm's f64
+    // compares are natively NaN-correct (return 0 for unordered) and yield i32.
+    if (kind == "fadd") { return "f64.add"; }
+    if (kind == "fsub") { return "f64.sub"; }
+    if (kind == "fmul") { return "f64.mul"; }
+    if (kind == "fdiv") { return "f64.div"; }
+    if (kind == "feq") { return "f64.eq"; }
+    if (kind == "fne") { return "f64.ne"; }
+    if (kind == "flt") { return "f64.lt"; }
+    if (kind == "fle") { return "f64.le"; }
+    if (kind == "fgt") { return "f64.gt"; }
+    if (kind == "fge") { return "f64.ge"; }
     return ";; ir: unsupported i64 bin " + kind + "\n";
 }
 
@@ -371,7 +383,8 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     if (fd.ret_type == "i64") { out = out + " (result i64)\n"; }
     else { out = out + " (result i32)\n"; }
     // body locals + 2 array scratch locals. A body local in r.i64_slots is
-    // declared (local i64); the 2 trailing array scratch locals are always i32.
+    // declared (local i64), one in r.f64_slots (local f64); the 2 trailing array
+    // scratch locals are always i32.
     var nbody: i32 = r.n_locals - r.n_params;
     var nloc: i32 = nbody + 2;
     out = out + "    (local";
@@ -379,6 +392,8 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     while (l < nloc) {
         if (l < nbody && slot_in_list(r.i64_slots, r.n_params + l)) {
             out = out + " i64";
+        } else if (l < nbody && slot_in_list(r.f64_slots, r.n_params + l)) {
+            out = out + " f64";
         } else {
             out = out + " i32";
         }
@@ -395,6 +410,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // slots use the same local.get/local.set — the local's declared i64
             // type carries the stack type.
             out = out + "    i64.const " + o.str + "\n";
+        } else if (o.kind == "const_f64") {
+            // Float literal: wasm assembles the source text directly. f64 locals
+            // are declared (local f64), so local.get/set carry the stack type.
+            out = out + "    f64.const " + o.str + "\n";
         } else if (o.kind == "int_extend") {
             // i32 -> i64: distinct wasm types, so an explicit widen.
             if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }
