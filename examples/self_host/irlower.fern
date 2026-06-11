@@ -407,7 +407,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || is_scalar_array_type(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || is_scalar_array_type(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -458,6 +458,28 @@ pub function decl_field_type(structs: parser.StructDecl[], struct_name: string, 
         i = i + 1;
     }
     return "";
+}
+
+// decl_field_type_at returns the type of field `index` (decl order) in struct
+// `struct_name`, or "".
+pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: string, index: i32): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            if (index >= 0 && index < structs[i].fields.len()) { return structs[i].fields[index].type_name; }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// struct_field_width returns the field's load/store width for op_struct_get /
+// op_struct_set: 64 if the field is f64, else 0 (i32-shaped). Drives wasm's
+// f64.load/store vs i32.load/store selection (register backends ignore it).
+pub function struct_field_width(structs: parser.StructDecl[], struct_name: string, index: i32): i32 {
+    if (decl_field_type_at(structs, struct_name, index) == "f64") { return 64; }
+    return 0;
 }
 
 pub function (s: LowerState) field_index_in(struct_name: string, field: string): i32 {
@@ -755,6 +777,15 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                 _ => { return false; }
             }
         },
+        parser.ExprFieldAccess(fa) => {
+            // An f64-typed struct field read `p.x`, or an f64 tuple element.
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f64";
+            }
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return decl_field_type(s.structs, oty, fa.field) == "f64";
+        },
         _ => { return false; }
     }
     return false;
@@ -942,7 +973,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // copy decl field di from the base: base then struct_get(di)
                     sm = lower_expr(slit.base, sm);
                     if (!sm.ok) { return sm; }
-                    sm = sm.emit(ir.op_struct_get(di));
+                    sm = sm.emit(ir.op_struct_get(di, struct_field_width(s.structs, slit.type_name, di)));
                 } else {
                     // a non-update literal must set every field
                     return s.fail();
@@ -969,7 +1000,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (idx < 0) { return s.fail(); }
             var so: LowerState = lower_expr(fa.obj, s);
             if (!so.ok) { return so; }
-            return so.emit(ir.op_struct_get(idx));
+            return so.emit(ir.op_struct_get(idx, struct_field_width(s.structs, sty, idx)));
         },
         parser.ExprIdent(id) => {
             var slot: i32 = s.slot_of(id.name);
@@ -1912,7 +1943,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 if (!sf.ok) { return sf; }
                                 sf = lower_expr(c.args[2], sf);
                                 if (!sf.ok) { return sf; }
-                                return sf.emit(ir.op_struct_set(fidx));
+                                return sf.emit(ir.op_struct_set(fidx, struct_field_width(s.structs, fsty, fidx)));
                             }
                         },
                         _ => {}
@@ -2037,7 +2068,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             ms = ms.add_local(pv.binding);
                             var bslot: i32 = ms.slot_of(pv.binding);
                             ms = ms.emit(ir.op_load_local(scrut_slot));
-                            ms = ms.emit(ir.op_struct_get(0));      // payload @ field 0
+                            ms = ms.emit(ir.op_struct_get(0, 0));   // payload @ field 0 (i32-shaped)
                             ms = ms.emit(ir.op_store_local(bslot));
                             // Type the bound payload for downstream dispatch: a
                             // string payload (`Word(string)`) as a string; a

@@ -366,6 +366,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, str_ret, strarr_ret, opt_ret, i64_ret, tuple_ret, struct_ret, f64_ret);
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
+    // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
+    // values (struct_make / struct_set) through the typed wasm stack — the i32
+    // eltmp can't hold an f64.
+    var f64tmp: i32 = r.n_locals + 2;
     // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
     // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
     // allow `.`. r.n_params already counts the receiver as the first param.
@@ -384,15 +388,17 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     if (fd.ret_type == "i64") { out = out + " (result i64)\n"; }
     else if (fd.ret_type == "f64") { out = out + " (result f64)\n"; }
     else { out = out + " (result i32)\n"; }
-    // body locals + 2 array scratch locals. A body local in r.i64_slots is
-    // declared (local i64), one in r.f64_slots (local f64); the 2 trailing array
-    // scratch locals are always i32.
+    // body locals + 3 scratch locals. A body local in r.i64_slots is declared
+    // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
+    // are two i32 (arrtmp/eltmp) then one f64 (f64tmp).
     var nbody: i32 = r.n_locals - r.n_params;
-    var nloc: i32 = nbody + 2;
+    var nloc: i32 = nbody + 3;
     out = out + "    (local";
     var l: i32 = 0;
     while (l < nloc) {
-        if (l < nbody && slot_in_list(r.i64_slots, r.n_params + l)) {
+        if (l == nbody + 2) {
+            out = out + " f64";
+        } else if (l < nbody && slot_in_list(r.i64_slots, r.n_params + l)) {
             out = out + " i64";
         } else if (l < nbody && slot_in_list(r.f64_slots, r.n_params + l)) {
             out = out + " f64";
@@ -552,26 +558,44 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // hash map: snapshot the live values into a fresh array (probe order).
             out = out + "    call $__fern_map_values\n";
         } else if (o.kind == "struct_make") {
-            // nf field values on the stack (field nf-1 on top, decl order).
-            // Box = [type_id@0, f0@4, f1@8, …] via $__fern_str_box (rc-headered),
-            // 4 + nf*4 bytes. $arrtmp holds the base across the field pops.
+            // nf field values on the stack (field nf-1 on top, decl order). Box =
+            // [type_id@0, f0@8, f1@16, …] via $__fern_str_box (rc-headered), an
+            // 8-byte stride so an f64 field fits — header 8 + nf*8 bytes, field i
+            // at 8+i*8 (matching the register backends). An f64 field stores via
+            // f64.store through the f64 scratch; others via i32.store. $arrtmp
+            // holds the base across the field pops.
             var nf: i32 = o.i32_imm;
-            out = out + "    i32.const " + util.i32_to_string(4 + nf * 4) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    i32.const " + util.i32_to_string(8 + nf * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.store\n";
             var em: i32 = nf - 1;
             while (em >= 0) {
-                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(4 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                var emoff: i32 = 8 + em * 8;
+                if (irlower.decl_field_type_at(structs, o.str, em) == "f64") {
+                    out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                } else {
+                    out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                }
                 em = em - 1;
             }
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind == "struct_get") {
-            // stack: struct ptr -> i32.load(ptr + 4 + index*4)
-            out = out + "    i32.const " + util.i32_to_string(4 + o.i32_imm * 4) + "\n    i32.add\n    i32.load\n";
+            // stack: struct ptr -> load(ptr + 8 + index*8). An f64 field
+            // (o.width == 64) reads via f64.load.
+            out = out + "    i32.const " + util.i32_to_string(8 + o.i32_imm * 8) + "\n    i32.add\n";
+            if (o.width == 64) { out = out + "    f64.load\n"; }
+            else { out = out + "    i32.load\n"; }
         } else if (o.kind == "struct_set") {
-            // stack: box, val -> store val at box + 4 + index*4. Stash val in
-            // $eltmp, recompute the address, then i32.store [addr, val].
-            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(4 + o.i32_imm * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            // stack: box, val -> store val at box + 8 + index*8. Stash val in the
+            // matching scratch (f64tmp for an f64 field, else eltmp), recompute
+            // the address, then store.
+            var soff: i32 = 8 + o.i32_imm * 8;
+            if (o.width == 64) {
+                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+            } else {
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            }
         } else if (o.kind == "variant_is") {
             // stack: variant box -> i32.load (type_id @0) == struct_type_id(name)
             out = out + "    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
@@ -636,7 +660,7 @@ pub function emit_functions(mod: parser.Module): string {
 
 // struct_type_id returns a struct's runtime type id = its index in the module's
 // struct table. (For scalar-field structs with static field access it is never
-// read, but it occupies slot 0 so fields land at 4 + i*4.)
+// read, but it occupies the 8-byte header slot so fields land at 8 + i*8.)
 function struct_type_id(structs: parser.StructDecl[], name: string): i32 {
     var i: i32 = 0;
     while (i < structs.len()) {
