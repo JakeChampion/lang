@@ -197,6 +197,7 @@ pub function module_allocates(mod: parser.Module): boolean {
             if (k == "arr_make" || k == "alloc") { return true; }
             // struct_make / tuple_make allocate a box via $__fern_str_box.
             if (k == "struct_make") { return true; }
+            if (k == "opt_make" || k == "opt_none") { return true; }
             if (k == "tuple_make") { return true; }
             i = i + 1;
         }
@@ -345,6 +346,23 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_eq") {
             // stack: a, b -> $__fern_streq(a, b) -> 0/1.
             out = out + "    call $__fern_streq\n";
+        } else if (o.kind == "opt_make") {
+            // Option/Result box [tag@0, payload@4], 8 bytes (wasm 4-byte slots).
+            // Payload on the stack; stash it, alloc, store tag + payload.
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "opt_none") {
+            // Payloadless box with tag 1 (None).
+            out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "opt_tag") {
+            // pop box; tag is the i32 at offset 0.
+            out = out + "    i32.load\n";
         } else if (o.kind == "struct_make") {
             // nf field values on the stack (field nf-1 on top, decl order).
             // Box = [type_id@0, f0@4, f1@8, …] via $__fern_str_box (rc-headered),

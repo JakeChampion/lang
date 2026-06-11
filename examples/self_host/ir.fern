@@ -160,6 +160,16 @@ pub function op_str_index(): Op { return op0("str_index"); }
 // (no separate data pointer), so it COPIES via $__fern_substr. No bounds check.
 pub function op_str_slice(): Op { return op0("str_slice"); }
 
+// Built-in Option / Result ops. The value is a heap box [tag@0, payload@8]
+// (Some/Ok = tag 0, None/Err = tag 1) — distinct from user enums/structs, which
+// carry a shape pointer at offset 0. `opt_make` pops [payload] and builds the
+// box with `i32_imm` as the tag (Some/Ok=0, Err=1); `opt_none` builds a
+// payloadless box with tag 1; `opt_tag` pops [box] → the i32 tag at offset 0
+// (drives Some/None/Ok/Err discrimination in match).
+pub function op_opt_make(tag: i32): Op { return Op { kind: "opt_make", i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_opt_none(): Op { return op0("opt_none"); }
+pub function op_opt_tag(): Op { return op0("opt_tag"); }
+
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
 // the field index in DECL order (struct_get). `struct_make` pops `i32_imm`
@@ -266,6 +276,9 @@ pub function render_op(o: Op): string {
     if (o.kind == "str_eq") { return "str_eq"; }
     if (o.kind == "str_index") { return "str_index"; }
     if (o.kind == "str_slice") { return "str_slice"; }
+    if (o.kind == "opt_make") { return "opt_make " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "opt_none") { return "opt_none"; }
+    if (o.kind == "opt_tag") { return "opt_tag"; }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }
