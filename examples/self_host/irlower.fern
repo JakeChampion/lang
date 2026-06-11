@@ -1221,6 +1221,87 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             return w8.emit(ir.op_end());
         },
         parser.StmtFor(fr) => {
+            // `for k, v in m` over a map LOCAL → snapshot keys()/values() into
+            // two hidden locals, then a counted loop binding k = keys[i],
+            // v = values[i]. The two snapshots share iteration order on every
+            // backend (the live parallel arrays on x86-64/arm64; the
+            // probe-order snapshot on wasm, where map_keys/map_values walk the
+            // same slots), so keys[i] pairs with values[i]. The snapshot
+            // locals are deliberately NOT array-marked: on x86-64/arm64 they
+            // alias the map's internal arrays (a borrow, no inc), so the
+            // exit-sweep must not dec them; arr_len/arr_get are emitted
+            // explicitly so they don't need the mark.
+            var mslot: i32 = 0 - 1;
+            match (fr.iter) {
+                parser.ExprIdent(mid0) => { mslot = s.slot_of(mid0.name); },
+                _ => {}
+            }
+            var kvcomma: i32 = 0 - 1;
+            var kvci: i32 = 0;
+            while (kvci < fr.var_name.len()) {
+                if (fr.var_name[kvci] == 44 && kvcomma < 0) { kvcomma = kvci; }
+                kvci = kvci + 1;
+            }
+            if (mslot >= 0 && s.map_type_of(mslot) != "" && kvcomma >= 0) {
+                var mty: string = s.map_type_of(mslot);
+                var kkind: i32 = map_key_kind_of(mty);   // 1 = i32 keys, 0 = string
+                var vty: string = map_value_of(mty);
+                var kname: string = trim_spaces(fr.var_name[0 : kvcomma]);
+                var vname: string = trim_spaces(fr.var_name[kvcomma + 1 : fr.var_name.len()]);
+                // keys snapshot -> hidden local
+                var ksn: string = "$forks" + util.i32_to_string(s.local_names.len());
+                var fm: LowerState = s.add_local(ksn);
+                var ksslot: i32 = fm.slot_of(ksn);
+                fm = fm.emit(ir.op_load_local(mslot));
+                fm = fm.emit(ir.op_map_keys());
+                fm = fm.emit(ir.op_store_local(ksslot));
+                // values snapshot -> hidden local
+                var vsn: string = "$forvs" + util.i32_to_string(fm.local_names.len());
+                fm = fm.add_local(vsn);
+                var vsslot: i32 = fm.slot_of(vsn);
+                fm = fm.emit(ir.op_load_local(mslot));
+                fm = fm.emit(ir.op_map_values());
+                fm = fm.emit(ir.op_store_local(vsslot));
+                // hidden index
+                var idxn: string = "$foridx" + util.i32_to_string(fm.local_names.len());
+                fm = fm.add_local(idxn);
+                var idxslot2: i32 = fm.slot_of(idxn);
+                fm = fm.emit(ir.op_const_i32(0));
+                fm = fm.emit(ir.op_store_local(idxslot2));
+                // k, v bindings (carry string-ness for downstream dispatch)
+                fm = fm.add_local(kname);
+                var kslot: i32 = fm.slot_of(kname);
+                if (kkind == 0) { fm = fm.mark_str(kslot, true); }
+                fm = fm.add_local(vname);
+                var vslot: i32 = fm.slot_of(vname);
+                if (vty == "string") { fm = fm.mark_str(vslot, true); }
+                // loop: idx < keys.len() ; bind k/v ; body ; idx++ ; back-edge.
+                fm = fm.emit(ir.op_block(0));
+                fm = fm.emit(ir.op_loop(0));
+                fm = fm.emit(ir.op_load_local(idxslot2));
+                fm = fm.emit(ir.op_load_local(ksslot));
+                fm = fm.emit(ir.op_arr_len());
+                fm = fm.emit(ir.op_bin("lt_s", 0, false));
+                fm = fm.emit(ir.op_bin("not", 0, false));
+                fm = fm.emit(ir.op_brif(1));
+                fm = fm.emit(ir.op_load_local(ksslot));
+                fm = fm.emit(ir.op_load_local(idxslot2));
+                fm = fm.emit(ir.op_arr_get());
+                fm = fm.emit(ir.op_store_local(kslot));
+                fm = fm.emit(ir.op_load_local(vsslot));
+                fm = fm.emit(ir.op_load_local(idxslot2));
+                fm = fm.emit(ir.op_arr_get());
+                fm = fm.emit(ir.op_store_local(vslot));
+                fm = lower_block(fr.body, fm);
+                if (!fm.ok) { return fm; }
+                fm = fm.emit(ir.op_load_local(idxslot2));
+                fm = fm.emit(ir.op_const_i32(1));
+                fm = fm.emit(ir.op_bin("add", 0, false));
+                fm = fm.emit(ir.op_store_local(idxslot2));
+                fm = fm.emit(ir.op_br(0));
+                fm = fm.emit(ir.op_end());
+                return fm.emit(ir.op_end());
+            }
             // `for x in <arr>` over an array LOCAL/PARAM (i32[] or string[]) →
             // a counted loop using existing ops. Other iter forms (calls,
             // literals, maps) bail to AST; bodies with break/continue bail
