@@ -1207,9 +1207,16 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             ms = ms.emit(ir.op_load_local(scrut_slot));
                             ms = ms.emit(ir.op_struct_get(0));      // payload @ field 0
                             ms = ms.emit(ir.op_store_local(bslot));
-                            // A string payload (`Word(string)`) binds as a string.
-                            if (decl_field_type(ms.structs, pv.type_name, "__ev") == "string") {
+                            // Type the bound payload for downstream dispatch: a
+                            // string payload (`Word(string)`) as a string; a
+                            // struct payload (`Binary(BinExpr)`) with its struct
+                            // type so `p.field` resolves (the compiler's own AST
+                            // shape — enums of structs).
+                            var ev_ty: string = decl_field_type(ms.structs, pv.type_name, "__ev");
+                            if (ev_ty == "string") {
                                 ms = ms.mark_str(bslot, true);
+                            } else if (decl_is_struct(ms.structs, ev_ty)) {
+                                ms = ms.mark_struct_type(bslot, ev_ty);
                             }
                         }
                         // Guard: `Variant(x) if <cond> =>` runs the body only when
