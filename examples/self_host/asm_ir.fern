@@ -85,6 +85,24 @@ pub function ir_helper_symbol(name: string): string {
 
 // module_uses_heap reports whether any function allocates (so the runtime +
 // heap need emitting).
+// module_uses_maps reports whether any function uses a map op (so the map
+// runtime + its __fern_str_eq / __fern_arr_push deps need emitting).
+function module_uses_maps(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            var k: string = r.ops[i].kind;
+            if (k == "map_new" || k == "map_set" || k == "map_len") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 function module_uses_heap(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
@@ -101,6 +119,7 @@ function module_uses_heap(mod: parser.Module): boolean {
             if (r.ops[i].kind == "str_slice") { return true; }
             if (r.ops[i].kind == "struct_make") { return true; }
             if (r.ops[i].kind == "opt_make" || r.ops[i].kind == "opt_none") { return true; }
+            if (r.ops[i].kind == "map_new" || r.ops[i].kind == "map_set") { return true; }
             if (r.ops[i].kind == "tuple_make") { return true; }
             i = i + 1;
         }
@@ -336,6 +355,173 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $0, %rax\n");
         s = s.write("    ret\n");
     }
+    // Map runtime (transcribed from asm.fern) — only for map-using modules, so a
+    // non-map heap program doesn't pull in map_set's __fern_str_eq dependency.
+    if (s.has_need("maps")) {
+    // __fern_alloc_u8 (transcribed from asm.fern for the IR map path).
+    s = s.write(".globl __fern_alloc_u8\n");
+    s = s.write(".type __fern_alloc_u8, @function\n");
+    s = s.write("__fern_alloc_u8:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    movq %rdi, %r12\n");        // n
+    s = s.write("    movq %r12, %rdi\n");        // cap = n
+    s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len written)
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_alloc_u8, .-__fern_alloc_u8\n");
+
+    // __fern_arr_push (transcribed from asm.fern for the IR map path).
+    s = s.write("__fern_arr_push:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    pushq %r14\n");
+    s = s.write("    pushq %r15\n");
+    s = s.write("    movq %rdi, %r12\n");        // arr ptr
+    s = s.write("    movq %rsi, %r13\n");        // value
+    s = s.write("    movq (%r12), %r14\n");      // len
+    s = s.write("    movq -16(%r12), %r15\n");   // cap (hidden at -16; rc at -8)
+    s = s.write("    cmpq %r15, %r14\n");
+    s = s.write("    jge .Larr_push_grow\n");    // len >= cap → grow
+    s = s.write("    movq %r14, %rcx\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    movq %r13, (%r12,%rcx,8)\n");
+    s = s.write("    incq %r14\n");
+    s = s.write("    movq %r14, (%r12)\n");
+    s = s.write("    movq %r12, %rax\n");
+    s = s.write("    jmp .Larr_push_ret\n");
+    s = s.write(".Larr_push_grow:\n");
+    s = s.write("    movq %r15, %rcx\n");
+    s = s.write("    cmpq $0, %rcx\n");
+    s = s.write("    jne .Larr_push_dbl\n");
+    s = s.write("    movq $4, %rcx\n");
+    s = s.write("    jmp .Larr_push_cap\n");
+    s = s.write(".Larr_push_dbl:\n");
+    s = s.write("    shlq $1, %rcx\n");
+    s = s.write(".Larr_push_cap:\n");
+    s = s.write("    movq %rcx, %r15\n");        // r15 = newcap
+    s = s.write("    movq %r15, %rdi\n");        // cap = newcap
+    s = s.write("    call __fern_arr_box\n");    // -> data ptr in %rax (cap + len=cap written)
+    s = s.write("    movq %r14, %rcx\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    movq %rcx, (%rax)\n");      // new len = old+1 (overwrite helper's len)
+    s = s.write("    movq $1, %rcx\n");
+    s = s.write(".Larr_push_copy:\n");
+    s = s.write("    cmpq %r14, %rcx\n");
+    s = s.write("    jg .Larr_push_copy_done\n");
+    s = s.write("    movq (%r12,%rcx,8), %rdx\n");
+    s = s.write("    movq %rdx, (%rax,%rcx,8)\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    jmp .Larr_push_copy\n");
+    s = s.write(".Larr_push_copy_done:\n");
+    s = s.write("    movq %r14, %rcx\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    movq %r13, (%rax,%rcx,8)\n");
+    s = s.write(".Larr_push_ret:\n");
+    s = s.write("    popq %r15\n");
+    s = s.write("    popq %r14\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
+
+    // __fern_map_new (transcribed from asm.fern for the IR map path).
+    s = s.write(".globl __fern_map_new\n");
+    s = s.write(".type __fern_map_new, @function\n");
+    s = s.write("__fern_map_new:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    subq $8, %rsp\n");
+    s = s.write("    movq $16, %rdi\n");
+    s = s.write("    call __fern_alloc\n");        // mapbox
+    s = s.write("    movq %rax, %rbx\n");
+    s = s.write("    movq $0, %rdi\n");
+    s = s.write("    call __fern_alloc_u8\n");      // empty keys
+    s = s.write("    movq %rax, (%rbx)\n");
+    s = s.write("    movq $0, %rdi\n");
+    s = s.write("    call __fern_alloc_u8\n");      // empty values
+    s = s.write("    movq %rax, 8(%rbx)\n");
+    s = s.write("    movq %rbx, %rax\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_map_new, .-__fern_map_new\n");
+
+    // __fern_map_set (transcribed from asm.fern for the IR map path).
+    s = s.write(".globl __fern_map_set\n");
+    s = s.write(".type __fern_map_set, @function\n");
+    s = s.write("__fern_map_set:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    pushq %r14\n");
+    s = s.write("    pushq %r15\n");
+    s = s.write("    movq %rdi, %r12\n");          // mapbox
+    s = s.write("    movq %rsi, %r13\n");          // key
+    s = s.write("    movq %rdx, %r14\n");          // val
+    s = s.write("    movq (%r12), %r15\n");        // keys arr
+    s = s.write("    movq $0, %rbx\n");            // i
+    s = s.write("    testq %rcx, %rcx\n");          // keykind (1 = i32)
+    s = s.write("    jnz .Lms_loop_i32\n");
+    s = s.write(".Lms_loop:\n");                    // string-key loop
+    s = s.write("    movq (%r15), %rax\n");        // keys.len
+    s = s.write("    cmpq %rax, %rbx\n");
+    s = s.write("    jge .Lms_append\n");
+    s = s.write("    movq %rbx, %rax\n");
+    s = s.write("    incq %rax\n");
+    s = s.write("    movq (%r15,%rax,8), %rdi\n");  // keys[i+1]
+    s = s.write("    movq %r13, %rsi\n");
+    s = s.write("    call __fern_str_eq\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jnz .Lms_found\n");
+    s = s.write("    incq %rbx\n");
+    s = s.write("    jmp .Lms_loop\n");
+    s = s.write(".Lms_loop_i32:\n");                // i32-key loop
+    s = s.write("    movq (%r15), %rax\n");
+    s = s.write("    cmpq %rax, %rbx\n");
+    s = s.write("    jge .Lms_append\n");
+    s = s.write("    movq %rbx, %rax\n");
+    s = s.write("    incq %rax\n");
+    s = s.write("    movq (%r15,%rax,8), %rax\n");   // keys[i+1]
+    s = s.write("    cmpq %r13, %rax\n");
+    s = s.write("    je .Lms_found\n");
+    s = s.write("    incq %rbx\n");
+    s = s.write("    jmp .Lms_loop_i32\n");
+    s = s.write(".Lms_found:\n");
+    s = s.write("    movq 8(%r12), %rax\n");        // values arr
+    s = s.write("    movq %rbx, %rdx\n");
+    s = s.write("    incq %rdx\n");
+    s = s.write("    movq %r14, (%rax,%rdx,8)\n");  // values[i+1] = val
+    s = s.write("    jmp .Lms_ret\n");
+    s = s.write(".Lms_append:\n");
+    s = s.write("    movq (%r12), %rdi\n");
+    s = s.write("    movq %r13, %rsi\n");
+    s = s.write("    call __fern_arr_push\n");      // keys.append(key)
+    s = s.write("    movq %rax, (%r12)\n");
+    s = s.write("    movq 8(%r12), %rdi\n");
+    s = s.write("    movq %r14, %rsi\n");
+    s = s.write("    call __fern_arr_push\n");      // values.append(val)
+    s = s.write("    movq %rax, 8(%r12)\n");
+    s = s.write(".Lms_ret:\n");
+    s = s.write("    movq %r12, %rax\n");
+    s = s.write("    popq %r15\n");
+    s = s.write("    popq %r14\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_map_set, .-__fern_map_set\n");
+    }
+
     return s;
 }
 
@@ -614,6 +800,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "opt_payload") {
             // pop box; payload is at offset 8.
             s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
+        } else if (o.kind == "map_new") {
+            s = s.write("    popq %rdi\n    call __fern_map_new\n    pushq %rax\n");
+        } else if (o.kind == "map_set") {
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
+            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
+        } else if (o.kind == "map_len") {
+            s = s.write("    popq %rax\n    movq (%rax), %rax\n    movq (%rax), %rax\n    pushq %rax\n");
         } else if (o.kind == "struct_get") {
             // pop struct box; field at (index+1)*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");
@@ -728,6 +921,10 @@ pub function emit_module_ir(mod: parser.Module): string {
             li = li + 1;
         }
     }
+    // A map-using module marks the top-level "maps" need; close_needs() pulls in
+    // its declared deps (str_eq, arr_push) so the runtime links — no hand-marking.
+    if (module_uses_maps(mod)) { s = s.need("maps"); }
+    s = s.close_needs();
     // The freestanding allocator + RC runtime, only when the program allocates.
     if (module_uses_heap(mod)) { s = emit_ir_runtime(s); }
     return strbuf_take();

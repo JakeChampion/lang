@@ -52,8 +52,9 @@ function main(): i32 {
         // $__fern_strcat + $__fern_streq (concat / equality); references
         // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
         // in for any string program.
-        if (wasm_ir.module_uses_strings(mod)) { o = o + wasm.strcat_streq_helpers(); }
+        if (wasm_ir.module_uses_strings(mod) || wasm_ir.module_uses_maps(mod)) { o = o + wasm.strcat_streq_helpers(); }
         if (wasm_ir.module_uses_str_slice(mod)) { o = o + wasm.substr_helper(); }
+        if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
         o = o + wasm_ir.emit_functions(mod);
         o = o + "  (func $_start (call $proc_exit (call $main)))\n";
         o = o + "  (export \"_start\" (func $_start)))\n";

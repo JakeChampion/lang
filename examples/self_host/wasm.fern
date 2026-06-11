@@ -7222,7 +7222,7 @@ function arr_push_wide(vty: string, sop: string): string {
 // offset 0 so the generic `.len()` (load word @0) returns the entry
 // count. Fresh bump-allocated memory is already zero, so a new `used`
 // region reads as all-empty. Depends on $__fern_alloc.
-function map_helpers(): string {
+pub function map_helpers(): string {
     var o: string = "";
     // $__fern_str_hash(ptr) → 32-bit FNV-1a over a string block's bytes
     // ([len@0][bytes@4]).
@@ -10540,8 +10540,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_uses_divrem(mod)) { ir_out = ir_out + divrem_helpers(); }
         // $__fern_strcat + $__fern_streq; references $__fern_str_box from
         // heap_alloc_helpers (module_allocates pulls it in for string programs).
-        if (wasm_ir.module_uses_strings(mod)) { ir_out = ir_out + strcat_streq_helpers(); }
+        if (wasm_ir.module_uses_strings(mod) || wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + strcat_streq_helpers(); }
         if (wasm_ir.module_uses_str_slice(mod)) { ir_out = ir_out + substr_helper(); }
+        if (wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + map_helpers(); }
         ir_out = ir_out + wasm_ir.emit_functions(mod);
         ir_out = ir_out + "  (func $_start (call $proc_exit (call $main)))\n";
         ir_out = ir_out + "  (export \"_start\" (func $_start)))\n";

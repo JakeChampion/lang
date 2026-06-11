@@ -172,6 +172,9 @@ pub function op_opt_tag(): Op { return op0("opt_tag"); }
 // `opt_payload` pops [box] → the payload at offset 8 (x86/arm64) / 4 (wasm);
 // used to bind a Some/Ok/Err pattern's payload.
 pub function op_opt_payload(): Op { return op0("opt_payload"); }
+pub function op_map_new(keykind: i32): Op { return Op { kind: "map_new", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_set(keykind: i32): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_len(): Op { return op0("map_len"); }
 
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
@@ -283,6 +286,9 @@ pub function render_op(o: Op): string {
     if (o.kind == "opt_none") { return "opt_none"; }
     if (o.kind == "opt_tag") { return "opt_tag"; }
     if (o.kind == "opt_payload") { return "opt_payload"; }
+    if (o.kind == "map_new") { return "map_new " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_set") { return "map_set " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_len") { return "map_len"; }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }

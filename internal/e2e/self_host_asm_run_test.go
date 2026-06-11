@@ -1989,6 +1989,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"tuple-str-i32-destructure", "function main(): i32 { var (a, b) = (\"world\", 3); return a.len() + b; }", 8, "", ""},
 		{"tuple-struct-dotn", "struct P { x: i32, y: i32 } function main(): i32 { var t = (P { x: 4, y: 5 }, 2); return t.0.x * t.0.y + t.1; }", 22, "", ""},
 		{"tuple-local-destructure", "function main(): i32 { var t = (\"ab\", 10); var (s, n) = t; return s.len() + n; }", 12, "", ""},
+		{"map-i32-len3", "function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }", 3, "", ""},
+		{"map-i32-overwrite", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m = m.insert(11, 99); m = m.insert(7, 42); return m.len(); }", 2, "", ""},
+		{"map-i32-loop", "function main(): i32 { var m: Map[i32, i32] = map_new(4); var i = 0; while (i < 5) { m = m.insert(i, i*10); i = i + 1; } return m.len(); }", 5, "", ""},
+		{"map-str-keys", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"a\", 1); m = m.insert(\"bb\", 2); m = m.insert(\"a\", 9); return m.len(); }", 2, "", ""},
 		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
 		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},
