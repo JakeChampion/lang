@@ -80,6 +80,10 @@ func TestSelfHostF64ArrayWasmIR(t *testing.T) {
 		{"write", `function main(): i32 { var a: f64[] = [1.0, 2.0]; a[1] = 5.5; var x: f64 = a[0] + a[1]; if (x > 6.0) { return 8; } return 0; }`, 8},
 		// counted read loop: 1.5 + 2.5 + 3.0 = 7.0 > 6.0 -> 9
 		{"loop", `function main(): i32 { var a: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; var i = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } if (s > 6.0) { return 9; } return 0; }`, 9},
+		// for-in iteration: the element binding x is an 8-byte f64. 1.5+2.5+3.0 = 7.0 > 6.0 -> 9
+		{"forin", `function main(): i32 { var a: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; for x in a { s = s + x; } if (s > 6.0) { return 9; } return 0; }`, 9},
+		// for-in with a body comparison: count elements > 2.0 -> 2
+		{"forin-cmp", `function main(): i32 { var a: f64[] = [1.0, 2.5, 3.5, 0.5]; var c = 0; for x in a { if (x > 2.0) { c = c + 1; } } return c; }`, 2},
 		// f64[] param: 2.5 + 4.0 = 6.5 > 6.0 -> 5
 		{"param", `function sum(a: f64[]): f64 { return a[0] + a[1]; } function main(): i32 { var arr: f64[] = [2.5, 4.0]; var r: f64 = sum(arr); if (r > 6.0) { return 5; } return 0; }`, 5},
 		// expression-valued elements: a = [2.0, 4.0, 3.0]; a[1] + a[2] = 7.0 > 6.0 -> 6
