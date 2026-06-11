@@ -51,7 +51,8 @@ function main(): i32 {
     var a: i32 = elig("function three(): (i32, i32, i32) { return (4, 5, 6); } function main(): i32 { var (a, b, c) = three(); return a + b + c; }");
     var b: i32 = elig("function pair(): (string, i32) { return (\"hi\", 5); } function main(): i32 { var (s, n) = pair(); return s.len() + n; }");
     var c: i32 = elig("function trip(): (i32, i32, i32) { return (1, 2, 3); } function main(): i32 { var t = trip(); return t.0 + t.1 + t.2; }");
-    return a * 100 + b * 10 + c;
+    var d: i32 = elig("struct P { x: i32, y: i32 } function mk(): (P, i32) { return (P { x: 3, y: 4 }, 9); } function main(): i32 { var (p, n) = mk(); return p.x + p.y + n; }");
+    return a * 8 + b * 4 + c * 2 + d;
 }
 `
 	probePath := filepath.Join(dir, "zz_elig_probe.fern")
@@ -91,7 +92,7 @@ function main(): i32 {
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("probe did not exit normally")
 	}
-	if got := cmd.ProcessState.ExitCode(); got != 111 {
-		t.Errorf("tuple-returning IR eligibility = %d, want 111 (each digit is one case's all_eligible)", got)
+	if got := cmd.ProcessState.ExitCode(); got != 15 {
+		t.Errorf("tuple-returning IR eligibility = %d, want 15 (each bit is one case's all_eligible)", got)
 	}
 }

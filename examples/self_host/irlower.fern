@@ -2150,11 +2150,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // A tuple-returning function IS lowered when every element is scalar (i32 /
     // bool) or string: the body returns a tuple box (an 8-byte pointer, like any
     // value), and a call site recovers the element tags via tuple_ret_fns (see
-    // tuple_ret_type) to type `.N` / destructure. Tuples with array / struct /
-    // i64 / Option elements still bail — those would need RC / width / payload
-    // threading through the return — keeping non-scalar tuples local-only.
+    // tuple_ret_type) to type `.N` / destructure. Leaf-safe struct elements are
+    // allowed too (leak-only pointers, recovered by type tag). Tuples with array
+    // / i64 / Option elements still bail — those would need RC / width / payload
+    // threading through the return — keeping those non-scalar tuples local-only.
     if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40) {   // 40 = '('
-        if (!tuple_elems_scalar_or_str(fn.ret_type)) {
+        if (!tuple_elems_lowerable(fn.ret_type, structs)) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots };
         }
     }
@@ -2329,11 +2330,13 @@ pub function tuple_elem_tags(rt: string): string {
     return out;
 }
 
-// tuple_elems_scalar_or_str reports whether every element of tuple type `rt` is
-// a scalar (i32 / bool) or string — the set lower_func can return. Any other
-// element (array, struct, i64, Option/Result, nested tuple) makes it false so
-// the function bails to the AST path.
-pub function tuple_elems_scalar_or_str(rt: string): boolean {
+// tuple_elems_lowerable reports whether every element of tuple type `rt` is a
+// scalar (i32 / bool), a string, or a leaf-safe struct — the set lower_func can
+// return as a tuple box. A leaf-safe struct element is a leak-only pointer (no
+// RC), recovered at the call site by its type tag, like the struct-return path.
+// Array / i64 / Option/Result / nested-tuple elements still make it false so the
+// function bails to the AST path (they'd need RC / width / payload threading).
+pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): boolean {
     var tags: string = tuple_elem_tags(rt);
     if (tags.len() == 0) { return false; }
     var start: i32 = 0;
@@ -2341,7 +2344,9 @@ pub function tuple_elems_scalar_or_str(rt: string): boolean {
     while (i <= tags.len()) {
         if (i == tags.len() || tags[i] == 44) {   // 44 = ','
             var t: string = tags[start : i];
-            if (t != "i32" && t != "bool" && t != "string") { return false; }
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "string");
+            if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
+            if (!ok_elem) { return false; }
             start = i + 1;
         }
         i = i + 1;
