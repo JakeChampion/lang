@@ -733,10 +733,15 @@ function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
 // ir_bin_asm renders the asm for one IR binary op (lhs in %rax, rhs in %rcx,
 // result in %rax) — mirroring asm.fern's own ExprBinary sequences (64-bit,
 // signed i32 div/cmp) so the two paths agree exactly.
-function ir_bin_asm(kind: string): string {
+function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "add") { return "    addq %rcx, %rax\n"; }
     if (kind == "sub") { return "    subq %rcx, %rax\n"; }
     if (kind == "mul") { return "    imulq %rcx, %rax\n"; }
+    // i64 div/rem operate on the full 64-bit operands (no movslq truncation);
+    // i32 div/rem sign-extend the low 32 first so dirty upper bits don't skew
+    // the 64-bit idivq.
+    if (kind == "div_s" && width == 64) { return "    cqto\n    idivq %rcx\n"; }
+    if (kind == "rem_s" && width == 64) { return "    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
     if (kind == "div_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n"; }
     if (kind == "rem_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
     if (kind == "and") { return "    andq %rcx, %rax\n"; }
@@ -1064,7 +1069,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else {
             // binary op: pop rhs (rcx), lhs (rax), combine, push.
             s = s.write("    popq %rcx\n    popq %rax\n");
-            s = s.write(ir_bin_asm(o.kind));
+            s = s.write(ir_bin_asm(o.kind, o.width));
             s = s.write("    pushq %rax\n");
         }
         i = i + 1;

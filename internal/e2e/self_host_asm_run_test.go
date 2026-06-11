@@ -2038,6 +2038,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"i64-return", "function big(): i64 { return 4000000000; } function main(): i32 { var x: i64 = big() + 1000000000; if (x > 4000000000) { return 5; } return 0; }", 5, "", ""},
 		{"i64-param-mixed", "function f(a: i64, b: i32): i64 { return a + (b as i64); } function main(): i32 { var r: i64 = f(4000000000, 5); if (r > 4000000000) { return 9; } return 0; }", 9, "", ""},
 		{"i64-return-recursion", "function pow2(n: i32): i64 { if (n <= 0) { return 1; } return pow2(n - 1) * 2; } function main(): i32 { if (pow2(33) > 4000000000) { return 13; } return 0; }", 13, "", ""},
+		{"i64-div", "function main(): i32 { var a: i64 = 12000000000; var b: i64 = 4; var c: i64 = a / b; if (c > 2000000000) { return 7; } return 0; }", 7, "", ""},
+		{"i64-rem", "function main(): i32 { var a: i64 = 12000000007; var r = (a % 10) as i32; return r; }", 7, "", ""},
+		{"i64-div-trunc", "function main(): i32 { var a: i64 = 10000000000; var c: i64 = a / 3; if (c > 3000000000) { return 5; } return 0; }", 5, "", ""},
+		{"i64-div-signed", "function main(): i32 { var a: i64 = 0 - 12000000000; var c: i64 = a / 4; if (c < 0) { return 9; } return 0; }", 9, "", ""},
 		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
 		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},

@@ -215,6 +215,10 @@ function wasm_binop_w(kind: string, width: i32): string {
     if (kind == "add") { return "i64.add"; }
     if (kind == "sub") { return "i64.sub"; }
     if (kind == "mul") { return "i64.mul"; }
+    // Non-trapping i64 div/rem (x/0=0, x%0=x, INT64_MIN/-1=INT64_MIN), matching
+    // wasm.fern's AST path; emitted by divrem_helpers (module_uses_divrem).
+    if (kind == "div_s") { return "call $__fern_idiv64"; }
+    if (kind == "rem_s") { return "call $__fern_irem64"; }
     if (kind == "and") { return "i64.and"; }
     if (kind == "or") { return "i64.or"; }
     if (kind == "xor") { return "i64.xor"; }
@@ -287,6 +291,23 @@ pub function module_uses_divrem(mod: parser.Module): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_i64_divrem reports whether any div/rem op runs at 64-bit width, so
+// the $__fern_idiv64 / $__fern_irem64 helpers (divrem64_helpers) need emitting.
+pub function module_uses_i64_divrem(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if ((r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") && r.ops[i].width == 64) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
