@@ -851,6 +851,7 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
 pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprIdent(id) => { return s.is_i64arr_slot(s.slot_of(id.name)); },
+        parser.ExprSlice(sl) => { return expr_is_i64arr(sl.array, s); },
         _ => { return false; }
     }
     return false;
@@ -1340,15 +1341,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // locals collapse same-named locals of different types.)
             var slc_is_str: boolean = expr_is_str(slc.array, s);
             if (!slc_is_str && !expr_is_arr_src(slc.array, s)) { return s.fail(); }
-            // An f64[] slice copies 8-byte elements (arr_slice width 64 → the
-            // wasm $__fern_arr_slice8 helper); i32[] / string[] copy 4-byte
-            // elements. The result is a fresh f64[] (marked f64arr at the var
-            // binding via expr_is_f64arr's ExprSlice case).
-            // Slicing an i64[] isn't lowered this slice (would need an i64 8-byte
-            // slice copy + i64arr result tracking); bail to AST.
-            if (expr_is_i64arr(slc.array, s)) { return s.fail(); }
+            // An f64[] or i64[] slice copies 8-byte elements (arr_slice width 64
+            // → the wasm $__fern_arr_slice8 helper, a raw 8-byte move that serves
+            // both); i32[] / string[] copy 4-byte elements. The result is a fresh
+            // f64[]/i64[], marked at the var binding via expr_is_f64arr /
+            // expr_is_i64arr's ExprSlice cases.
             var slc_w: i32 = 32;
-            if (expr_is_f64arr(slc.array, s)) { slc_w = 64; }
+            if (expr_is_f64arr(slc.array, s) || expr_is_i64arr(slc.array, s)) { slc_w = 64; }
             var ssl: LowerState = lower_expr(slc.array, s);
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.start, ssl);
