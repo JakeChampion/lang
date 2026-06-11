@@ -487,10 +487,16 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             return "";
         },
         parser.ExprCall(c) => {
-            // A call to a struct-returning free function evaluates to that struct
-            // type (so `var p = make()` then `p.x` resolves).
+            // A call to a struct-returning function evaluates to that struct type
+            // (so `var p = make()` / `var p = obj.make()` then `p.x` resolves).
             match (c.callee) {
                 parser.ExprIdent(id) => { return s.struct_ret_type(id.name); },
+                parser.ExprFieldAccess(fa) => {
+                    // Method call `obj.make()` → key by "<Type>.<method>".
+                    var rty: string = expr_struct_type(fa.obj, s);
+                    if (rty == "") { return ""; }
+                    return s.struct_ret_type(rty + "." + fa.field);
+                },
                 _ => { return ""; }
             }
         },
@@ -1330,10 +1336,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         },
                         parser.ExprIdent(did) => { dtag = s.tuple_elem_tag(s.slot_of(did.name), dk); },
                         parser.ExprCall(dcl) => {
-                            // `var (a, b, …) = f()` — recover element dk's tag from
-                            // the tuple-returning free function's registry entry.
+                            // `var (a, b, …) = f()` / `= obj.f()` — recover element
+                            // dk's tag from the tuple-returning function's registry
+                            // entry (free fn by bare name, method by "Type.method").
                             match (dcl.callee) {
                                 parser.ExprIdent(dcid) => { dtag = csv_nth(s.tuple_ret_type(dcid.name), dk); },
+                                parser.ExprFieldAccess(dfa) => {
+                                    var drty: string = expr_struct_type(dfa.obj, s);
+                                    if (drty != "") { dtag = csv_nth(s.tuple_ret_type(drty + "." + dfa.field), dk); }
+                                },
                                 _ => {}
                             }
                         },
@@ -1462,6 +1473,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             // element tags so a later `t.N` recovers each type.
                             var mctt: string = sb.tuple_ret_type(mcid.name);
                             if (mctt.len() > 0) { sb = sb.mark_tuple_elems(slot, mctt); }
+                        },
+                        parser.ExprFieldAccess(mfa) => {
+                            // `var t = obj.f()` where the method returns a tuple:
+                            // key by "<Type>.<method>".
+                            var mrty: string = expr_struct_type(mfa.obj, sb);
+                            if (mrty != "") {
+                                var mmtt: string = sb.tuple_ret_type(mrty + "." + mfa.field);
+                                if (mmtt.len() > 0) { sb = sb.mark_tuple_elems(slot, mmtt); }
+                            }
                         },
                         _ => {}
                     }
@@ -2329,18 +2349,21 @@ pub function tuple_elems_scalar_or_str(rt: string): boolean {
     return true;
 }
 
-// tuple_ret_fns_of records "name|<elem tags>" for each free function whose
-// return type is a tuple, so a call site can recover the element types for
-// `.N` / destructure dispatch. Methods are omitted (the bare-name call-site
-// lookup stays unambiguous, mirroring i64_ret_fns_of / str_ret_fns_of).
+// tuple_ret_fns_of records "name|<elem tags>" for each function whose return
+// type is a tuple, so a call site can recover the element types for `.N` /
+// destructure dispatch. Free functions are keyed by bare name, methods by the
+// qualified "<BaseType>.<method>" label (no "." collision between the two).
 pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].receiver_type.len() > 0) { k = k + 1; continue; }
         var rt: string = funcs[k].ret_type;
         if (rt.len() > 0 && rt[0] == 40) {   // 40 = '('
-            out = out.append(funcs[k].name + "|" + tuple_elem_tags(rt));
+            // Free function → bare name; method → qualified "<BaseType>.<method>"
+            // (matching the call_direct dispatch label; no "." collision).
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key + "|" + tuple_elem_tags(rt));
         }
         k = k + 1;
     }
@@ -2349,15 +2372,18 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 
 // struct_ret_fns_of records "name|StructType" for each free function whose
 // return type is a leaf-safe struct, so a call site can type `var p = f()` for
-// later field access. Methods omitted (bare-name lookup stays unambiguous).
+// later field access. Free functions are keyed by bare name; methods by the
+// qualified "<BaseType>.<method>" the call site dispatches to (a "." never
+// appears in a bare name, so the key spaces don't collide).
 pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].receiver_type.len() > 0) { k = k + 1; continue; }
         var rt: string = funcs[k].ret_type;
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) {
-            out = out.append(funcs[k].name + "|" + rt);
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key + "|" + rt);
         }
         k = k + 1;
     }
