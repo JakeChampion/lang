@@ -2061,9 +2061,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // 8-byte arr_get (width 64 → f64.load on wasm). Marked f64 so the
             // loop body's uses of x pick the float ops and x declares as a wasm
             // (local f64). i32 / string[] elements use the 4-byte path.
-            // `for x in <i64[]>` isn't lowered this slice (the element binding +
-            // arr_get_i64 would need i64-value threading through the loop); bail.
-            if (s.is_i64arr_slot(aslot)) { return s.fail(); }
+            // `for x in <i64[]>`: the element binding x is an i64 (8-byte), read
+            // with arr_get_i64 (i64.load) and marked i64 so the loop body's uses
+            // of x route through lower_i64 and x declares as a wasm (local i64).
+            var elem_is_i64: boolean = s.is_i64arr_slot(aslot);
             var elem_is_f64: boolean = s.is_f64arr_slot(aslot);
             var elem_w: i32 = 32;
             if (elem_is_f64) { elem_w = 64; }
@@ -2077,6 +2078,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var xslot: i32 = ff.slot_of(fr.var_name);
             if (elem_is_str) { ff = ff.mark_str(xslot, true); }
             if (elem_is_f64) { ff = ff.mark_f64(xslot, true); }
+            if (elem_is_i64) { ff = ff.mark_i64(xslot, true); }
             ff = ff.emit(ir.op_block(0));   // depth 1 = exit
             ff = ff.emit(ir.op_loop(0));    // depth 0 = header
             // cond: idx < arr.len(); exit when NOT.
@@ -2086,10 +2088,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             ff = ff.emit(ir.op_bin("lt_s", 0, false));
             ff = ff.emit(ir.op_bin("not", 0, false));
             ff = ff.emit(ir.op_brif(1));
-            // x = arr[idx]  (8-byte f64 element or 4-byte i32 / string[] element)
+            // x = arr[idx]  (8-byte i64 / f64 element, or 4-byte i32 / string[])
             ff = ff.emit(ir.op_load_local(aslot));
             ff = ff.emit(ir.op_load_local(idxslot));
-            ff = ff.emit(ir.op_arr_get(elem_w));
+            if (elem_is_i64) { ff = ff.emit(ir.op_arr_get_i64()); }
+            else { ff = ff.emit(ir.op_arr_get(elem_w)); }
             ff = ff.emit(ir.op_store_local(xslot));
             ff = lower_block(fr.body, ff);
             if (!ff.ok) { return ff; }
