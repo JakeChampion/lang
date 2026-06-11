@@ -1002,6 +1002,54 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var w8: LowerState = w7.emit(ir.op_end());
             return w8.emit(ir.op_end());
         },
+        parser.StmtFor(fr) => {
+            // `for x in <arr>` over an array LOCAL/PARAM (i32[] or string[]) →
+            // a counted loop using existing ops. Other iter forms (calls,
+            // literals, maps) bail to AST; bodies with break/continue bail
+            // anyway (those statements aren't in the IR path). The array is an
+            // ident, so re-loading it each iteration is side-effect-free.
+            var aslot: i32 = 0 - 1;
+            match (fr.iter) {
+                parser.ExprIdent(iid) => { aslot = s.slot_of(iid.name); },
+                _ => {}
+            }
+            if (aslot < 0) { return s.fail(); }
+            if (!s.is_arr_slot(aslot)) { return s.fail(); }
+            var elem_is_str: boolean = s.is_strarr_slot(aslot);
+            // Fresh hidden index local + the user-visible element binding.
+            var idxname: string = "$foridx" + util.i32_to_string(s.local_names.len());
+            var ff: LowerState = s.add_local(idxname);
+            var idxslot: i32 = ff.slot_of(idxname);
+            ff = ff.emit(ir.op_const_i32(0));
+            ff = ff.emit(ir.op_store_local(idxslot));
+            ff = ff.add_local(fr.var_name);
+            var xslot: i32 = ff.slot_of(fr.var_name);
+            if (elem_is_str) { ff = ff.mark_str(xslot, true); }
+            ff = ff.emit(ir.op_block(0));   // depth 1 = exit
+            ff = ff.emit(ir.op_loop(0));    // depth 0 = header
+            // cond: idx < arr.len(); exit when NOT.
+            ff = ff.emit(ir.op_load_local(idxslot));
+            ff = ff.emit(ir.op_load_local(aslot));
+            ff = ff.emit(ir.op_arr_len());
+            ff = ff.emit(ir.op_bin("lt_s", 0, false));
+            ff = ff.emit(ir.op_bin("not", 0, false));
+            ff = ff.emit(ir.op_brif(1));
+            // x = arr[idx]
+            ff = ff.emit(ir.op_load_local(aslot));
+            ff = ff.emit(ir.op_load_local(idxslot));
+            ff = ff.emit(ir.op_arr_get());
+            ff = ff.emit(ir.op_store_local(xslot));
+            ff = lower_block(fr.body, ff);
+            if (!ff.ok) { return ff; }
+            // idx = idx + 1; back-edge.
+            ff = ff.emit(ir.op_load_local(idxslot));
+            ff = ff.emit(ir.op_const_i32(1));
+            ff = ff.emit(ir.op_bin("add", 0, false));
+            ff = ff.emit(ir.op_store_local(idxslot));
+            ff = ff.emit(ir.op_br(0));
+            ff = ff.emit(ir.op_end());
+            return ff.emit(ir.op_end());
+        },
         parser.StmtExpr(es) => {
             // Index-assignment `arr[i] = v` desugars to
             // __set_index(arr, idx, val) → lower base, index, value, then the
