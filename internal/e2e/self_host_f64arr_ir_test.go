@@ -18,10 +18,12 @@ import (
 // (the native interpreter's / hand-computed answer).
 //
 // Coverage: f64 array literal + indexed read, indexed write (a[i] = v), a counted
-// read loop, an f64[] param, and expression-valued elements — every f64-array
-// shape the IR lowers (arr_make / arr_get / arr_set width 64 -> 8-byte stride +
-// f64.load/store on wasm). f64[] returns, slices and for-in iteration stay on the
-// AST path by design (the whole-module eligibility gate bails them).
+// read loop, for-in iteration, an f64[] param, expression-valued elements, and
+// f64[]-returning functions (bound + directly indexed) — every f64-array shape
+// the IR lowers (arr_make / arr_get / arr_set width 64 -> 8-byte stride +
+// f64.load/store on wasm). f64-array slices still stay on the AST path by design
+// (the wasm __fern_arr_slice helper copies 4-byte elements); the whole-module
+// eligibility gate bails them.
 func TestSelfHostF64ArrayWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host f64-array wasm IR e2e")
@@ -90,6 +92,11 @@ func TestSelfHostF64ArrayWasmIR(t *testing.T) {
 		{"expr-elems", `function main(): i32 { var k: f64 = 2.0; var a: f64[] = [k, k * 2.0, k + 1.0]; var x: f64 = a[1] + a[2]; if (x > 6.0) { return 6; } return 0; }`, 6},
 		// mixed-precision: read an f64 element, cast to i32. a[2] = 9.5 -> 9
 		{"read-cast", `function main(): i32 { var a: f64[] = [7.5, 8.5, 9.5]; return a[2] as i32; }`, 9},
+		// f64[]-returning function (move-on-return): caller element-width-tracks
+		// the result as f64[]. a[0]+a[2] = 1.5+3.5 = 5.0 -> 5
+		{"ret", `function mk(): f64[] { return [1.5, 2.5, 3.5]; } function main(): i32 { var a: f64[] = mk(); var s: f64 = a[0] + a[2]; return s as i32; }`, 5},
+		// direct index of an f64[]-returning call: mk()[1] = 2.5 -> 2
+		{"ret-direct-index", `function mk(): f64[] { return [1.5, 2.5, 3.5]; } function main(): i32 { return mk()[1] as i32; }`, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

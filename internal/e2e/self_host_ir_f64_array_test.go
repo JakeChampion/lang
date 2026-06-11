@@ -21,9 +21,9 @@ import (
 //   (a) f64 array literal + indexed read  → ELIGIBLE (1)
 //   (b) f64 array indexed write a[i] = v  → ELIGIBLE (1)
 //   (c) f64[] param + indexed read        → ELIGIBLE (1)
-//   (d) f64[]-RETURNING function          → INELIGIBLE (0)  [call site can't
-//                                            recover element width — bailed]
-// Expected: a*8 + b*4 + c*2 + d == 8 + 4 + 2 + 0 == 14.
+//   (d) f64[]-RETURNING free function     → ELIGIBLE (1)  [f64arr_ret_fns lets
+//                                            the call site recover the width]
+// Expected: a*8 + b*4 + c*2 + d == 8 + 4 + 2 + 1 == 15.
 func TestSelfHostIRF64ArrayEligible(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -91,7 +91,7 @@ function main(): i32 {
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("probe did not exit normally")
 	}
-	if got := cmd.ProcessState.ExitCode(); got != 14 {
-		t.Errorf("f64-array IR eligibility = %d, want 14 (literal/write/param eligible; f64[] return ineligible)", got)
+	if got := cmd.ProcessState.ExitCode(); got != 15 {
+		t.Errorf("f64-array IR eligibility = %d, want 15 (literal/write/param/return all eligible)", got)
 	}
 }
