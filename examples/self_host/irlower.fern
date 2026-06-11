@@ -724,7 +724,6 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         // Array-payload variant construction isn't in this slice
                         // (the fresh-literal constraint is only wired for struct
                         // literals) — defer to AST.
-                        if (decl_has_scalar_array(s.structs, cid.name)) { return s.fail(); }
                         if (c.args.len() != decl_field_count(s.structs, cid.name)) { return s.fail(); }
                         var vctor: LowerState = s;
                         var vi: i32 = 0;
@@ -1217,6 +1216,8 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 ms = ms.mark_str(bslot, true);
                             } else if (decl_is_struct(ms.structs, ev_ty)) {
                                 ms = ms.mark_struct_type(bslot, ev_ty);
+                            } else if (is_scalar_array_type(ev_ty)) {
+                                ms = ms.mark_arr(bslot, true);
                             }
                         }
                         // Guard: `Variant(x) if <cond> =>` runs the body only when
