@@ -512,6 +512,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
         parser.ExprIdent(id) => {
             var slot: i32 = s.slot_of(id.name);
             if (slot >= 0) { return s.emit(ir.op_load_local(slot)); }
+            // The empty Option `None` → a payloadless box with tag 1.
+            if (id.name == "None") { return s.emit(ir.op_opt_none()); }
             // A bare struct name that isn't a local is a no-payload enum variant
             // value (e.g. `Red`, `Empty`): a 0-field variant box via struct_make.
             if (decl_is_struct(s.structs, id.name) && decl_field_count(s.structs, id.name) == 0) {
@@ -680,6 +682,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             vi = vi + 1;
                         }
                         return vctor.emit(ir.op_struct_make(cid.name, c.args.len()));
+                    }
+                    // Built-in Option / Result construction: Some(x)/Ok(x) wrap a
+                    // payload with tag 0, Err(x) with tag 1 (None is a bare ident,
+                    // handled in lower_expr's ExprIdent arm). The box is
+                    // [tag@0, payload@8] — type-agnostic, so the payload may be any
+                    // 8-byte value.
+                    if ((cid.name == "Some" || cid.name == "Ok") && c.args.len() == 1) {
+                        var so: LowerState = lower_expr(c.args[0], s);
+                        if (!so.ok) { return so; }
+                        return so.emit(ir.op_opt_make(0));
+                    }
+                    if (cid.name == "Err" && c.args.len() == 1) {
+                        var se: LowerState = lower_expr(c.args[0], s);
+                        if (!se.ok) { return se; }
+                        return se.emit(ir.op_opt_make(1));
                     }
                     if (c.args.len() > 6) { return s.fail(); }
                     var sc: LowerState = s;
@@ -995,7 +1012,38 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 var arm: parser.MatchArm = m.arms[mi];
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
-                        if (is_builtin_pattern(pv.type_name)) { return s.fail(); }
+                        if (is_builtin_pattern(pv.type_name)) {
+                            // Built-in Option / Result: discriminate on the i32 tag
+                            // at offset 0 (Some/Ok=0, None/Err=1), not the shape
+                            // pointer. Payload BINDING (`Some(x)`) needs the
+                            // payload's type to bind it correctly, which the IR path
+                            // doesn't track yet — so a binding arm bails to AST for
+                            // now (discrimination-only here). `true`/`false` boolean
+                            // patterns aren't Option/Result and bail too.
+                            if (pv.type_name == "true" || pv.type_name == "false") { return s.fail(); }
+                            var hb: boolean = pv.binding.len() > 0 && pv.binding != "_";
+                            if (hb) { return s.fail(); }
+                            var want: i32 = 0;
+                            if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
+                            ms = ms.emit(ir.op_block(0));   // arm block: br 0 = skip arm
+                            ms = ms.emit(ir.op_load_local(scrut_slot));
+                            ms = ms.emit(ir.op_opt_tag());
+                            ms = ms.emit(ir.op_const_i32(want));
+                            ms = ms.emit(ir.op_bin("ne", 0, false));   // 1 if tag != want
+                            ms = ms.emit(ir.op_brif(0));               // -> skip arm on mismatch
+                            if (arm.has_guard) {
+                                ms = lower_expr(arm.guard, ms);
+                                if (!ms.ok) { return ms; }
+                                ms = ms.emit(ir.op_bin("not", 0, false));
+                                ms = ms.emit(ir.op_brif(0));
+                            }
+                            ms = lower_block(arm.body, ms);
+                            if (!ms.ok) { return ms; }
+                            ms = ms.emit(ir.op_br(1));      // matched -> exit the match
+                            ms = ms.emit(ir.op_end());      // end arm block
+                            mi = mi + 1;
+                            continue;
+                        }
                         if (pv.extra_bindings.len() > 0) { return s.fail(); }
                         if (!decl_is_struct(ms.structs, pv.type_name)) { return s.fail(); }
                         if (!decl_is_leaksafe(ms.structs, pv.type_name)) { return s.fail(); }

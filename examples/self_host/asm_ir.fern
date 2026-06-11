@@ -100,6 +100,7 @@ function module_uses_heap(mod: parser.Module): boolean {
             if (r.ops[i].kind == "const_str" || r.ops[i].kind == "str_concat") { return true; }
             if (r.ops[i].kind == "str_slice") { return true; }
             if (r.ops[i].kind == "struct_make") { return true; }
+            if (r.ops[i].kind == "opt_make" || r.ops[i].kind == "opt_none") { return true; }
             if (r.ops[i].kind == "tuple_make") { return true; }
             i = i + 1;
         }
@@ -595,6 +596,20 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                 em = em - 1;
             }
             s = s.write("    pushq %rax\n");
+        } else if (o.kind == "opt_make") {
+            // Option/Result box [tag@0, payload@8], 16 bytes. Payload is on the
+            // operand stack; alloc first (it survives on the machine stack, like
+            // struct_make), then store tag + payload.
+            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", (%rax)\n");
+            s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
+        } else if (o.kind == "opt_none") {
+            // Payloadless box with tag 1 (None).
+            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            s = s.write("    movq $1, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
+        } else if (o.kind == "opt_tag") {
+            // pop box; tag is the i32 at offset 0.
+            s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
         } else if (o.kind == "struct_get") {
             // pop struct box; field at (index+1)*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");
