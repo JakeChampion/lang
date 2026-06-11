@@ -1144,6 +1144,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // literal: owned at rc=1, no alias-inc.) Elements must be i32 or the
             // element lowering bails.
             var n: i32 = arr.elements.len();
+            // f64 elements bail: the wasm array layout still uses a 4-byte
+            // element stride (correct for i32 and wasm32 pointers), which would
+            // truncate an 8-byte f64. Struct *fields* widened to 8-byte slots in
+            // #2721, but array elements are a separate, wider change (every
+            // arr_make/arr_get/arr_set/iter site is stride-bound), so an f64
+            // array literal falls back to the AST path until that lands. (The
+            // register backends already use 8-byte element slots, but we gate on
+            // the lowest-common-denominator backend so the IR subset stays
+            // uniformly correct.)
+            if (n > 0 && expr_is_f64(arr.elements[0], s)) { return s.fail(); }
             // i32[] and string[] literals are both supported: an i32 element
             // lowers to its value, a string element to its box pointer (const_str
             // etc.). The slot binding tracks string[]-ness (local_is_strarr) so
