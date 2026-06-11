@@ -177,6 +177,16 @@ pub function op_arr_make(n: i32, width: i32): Op {
 }
 pub function op_arr_get(width: i32): Op { return Op { kind: "arr_get", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 pub function op_arr_set(width: i32): Op { return Op { kind: "arr_set", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+// i64-element array ops: an 8-byte stride like f64, but the wasm backend uses
+// i64.load / i64.store (an INTEGER 8-byte slot) instead of f64.load/store. The
+// `unsigned` flag carries that "8-byte element is i64, not f64" distinction
+// (width 64 + unsigned => i64; width 64 + !unsigned => f64). The register
+// backends move 8-byte slots regardless and ignore it.
+pub function op_arr_make_i64(n: i32): Op {
+    return Op { kind: "arr_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+}
+pub function op_arr_get_i64(): Op { return Op { kind: "arr_get", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
+pub function op_arr_set_i64(): Op { return Op { kind: "arr_set", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 pub function op_arr_len(): Op { return op0("arr_len"); }
 pub function op_arr_rc(): Op { return op0("arr_rc"); }
 

@@ -1,0 +1,82 @@
+package e2e
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// TestSelfHostI64ArrayIR is the correctness gate for i64 arrays on the wasm IR
+// backend. Like the f64-array test it pins each program's IR result to a
+// hardcoded oracle (the wasm AST backend's i64-array layout differs, so this is
+// not an AST-vs-IR differential). First i64-array slice: literals, indexed read,
+// and i64[] params; writes / for-in / returns / slices stay on the AST path.
+func TestSelfHostI64ArrayIR(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host i64-array wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	runIR := func(t *testing.T, src string) int {
+		t.Helper()
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin, "-ir")
+		} else {
+			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+		}
+		cmd.Stdin = bytes.NewReader([]byte(src))
+		wat, err := cmd.Output()
+		if err != nil || len(wat) == 0 {
+			t.Fatalf("driver failed for %q: %v", src, err)
+		}
+		watFile := filepath.Join(dir, "ir_prog.wat")
+		if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+			t.Fatalf("write wat: %v", err)
+		}
+		run := exec.Command("wasmtime", "run", watFile)
+		_ = run.Run()
+		if run.ProcessState == nil || !run.ProcessState.Exited() {
+			t.Fatalf("wasmtime did not exit normally for %q:\n%s", src, wat)
+		}
+		return run.ProcessState.ExitCode()
+	}
+
+	cases := []struct {
+		name     string
+		src      string
+		expected int
+	}{
+		// literal + indexed read: 5e9 + 6e9 = 11e9 > 1e10 -> 7
+		{"read", `function main(): i32 { var a: i64[] = [5000000000, 6000000000]; var s: i64 = a[0] + a[1]; if (s > 10000000000) { return 7; } return 0; }`, 7},
+		// small i64 values still store/load 8 bytes: a[0]+a[1] = 3 -> 3
+		{"read-small", `function main(): i32 { var a: i64[] = [1, 2, 3]; var s: i64 = a[0] + a[1]; return s as i32; }`, 3},
+		// counted read loop accumulating i64: 1e10+2e10+3e10 = 6e10 > 5e10 -> 9
+		{"loop", `function main(): i32 { var a: i64[] = [10000000000, 20000000000, 30000000000]; var s: i64 = 0; var i = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } if (s > 50000000000) { return 9; } return 0; }`, 9},
+		// i64[] param: a[0]+a[1] = 11e9 > 1e10 -> 5
+		{"param", `function sum(a: i64[]): i64 { return a[0] + a[1]; } function main(): i32 { var arr: i64[] = [5000000000, 6000000000]; var r: i64 = sum(arr); if (r > 10000000000) { return 5; } return 0; }`, 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runIR(t, tc.src); got != tc.expected {
+				t.Errorf("i64-array wasm IR %q = %d, want %d", tc.name, got, tc.expected)
+			}
+		})
+	}
+}
