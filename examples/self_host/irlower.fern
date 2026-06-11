@@ -259,7 +259,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t == "i32" || t == "boolean" || t == "string" || is_scalar_array_type(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || is_scalar_array_type(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -403,6 +403,12 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                 _ => { return false; }
             }
             return false;
+        },
+        parser.ExprFieldAccess(fa) => {
+            // A string[]-typed struct field read `p.items` is a string[].
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return decl_field_type(s.structs, oty, fa.field) == "string[]";
         },
         _ => { return false; }
     }
@@ -1218,6 +1224,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 ms = ms.mark_struct_type(bslot, ev_ty);
                             } else if (is_scalar_array_type(ev_ty)) {
                                 ms = ms.mark_arr(bslot, true);
+                            } else if (ev_ty == "string[]") {
+                                ms = ms.mark_arr(bslot, true);
+                                ms = ms.mark_strarr(bslot, true);
                             }
                         }
                         // Guard: `Variant(x) if <cond> =>` runs the body only when
