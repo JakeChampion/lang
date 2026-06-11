@@ -2113,10 +2113,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         parser.ExprIdent(cid) => {
                             if (cid.name == "__set_index") {
                                 if (c.args.len() != 3) { return s.fail(); }
-                                // `a[i] = v` on an i64[] isn't lowered this slice
-                                // (the value is an i64, needing lower_i64 + an
-                                // arr_set_i64 store); bail to AST.
-                                if (arr_index_is_i64(c.args[0], s)) { return s.fail(); }
+                                // `a[i] = v` on an i64[]: base + index are i32, but
+                                // the value is an 8-byte i64 — lower it via lower_i64
+                                // and store with arr_set_i64 (i64.store on wasm).
+                                if (arr_index_is_i64(c.args[0], s)) {
+                                    var is64: LowerState = lower_expr(c.args[0], s);
+                                    if (!is64.ok) { return is64; }
+                                    is64 = lower_expr(c.args[1], is64);
+                                    if (!is64.ok) { return is64; }
+                                    is64 = lower_i64(c.args[2], is64);
+                                    if (!is64.ok) { return is64; }
+                                    return is64.emit(ir.op_arr_set_i64());
+                                }
                                 var ss: LowerState = lower_expr(c.args[0], s);
                                 if (!ss.ok) { return ss; }
                                 ss = lower_expr(c.args[1], ss);

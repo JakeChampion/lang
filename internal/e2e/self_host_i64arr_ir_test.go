@@ -71,6 +71,10 @@ func TestSelfHostI64ArrayIR(t *testing.T) {
 		{"loop", `function main(): i32 { var a: i64[] = [10000000000, 20000000000, 30000000000]; var s: i64 = 0; var i = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } if (s > 50000000000) { return 9; } return 0; }`, 9},
 		// i64[] param: a[0]+a[1] = 11e9 > 1e10 -> 5
 		{"param", `function sum(a: i64[]): i64 { return a[0] + a[1]; } function main(): i32 { var arr: i64[] = [5000000000, 6000000000]; var r: i64 = sum(arr); if (r > 10000000000) { return 5; } return 0; }`, 5},
+		// indexed write: a[1] = 9e9; a[0]+a[1] = 1e9+9e9 = 1e10; > 9.9e9 -> 8
+		{"write", `function main(): i32 { var a: i64[] = [1000000000, 2000000000]; a[1] = 9000000000; var s: i64 = a[0] + a[1]; if (s > 9900000000) { return 8; } return 0; }`, 8},
+		// write in a loop: fill a[i] = i*1e10, then sum = 0+1e10+2e10 = 3e10 > 2.5e10 -> 6
+		{"write-loop", `function main(): i32 { var a: i64[] = [0, 0, 0]; var i = 0; while (i < 3) { a[i] = (i as i64) * 10000000000; i = i + 1; } var s: i64 = a[0] + a[1] + a[2]; if (s > 25000000000) { return 6; } return 0; }`, 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
