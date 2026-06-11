@@ -383,6 +383,32 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    bl __fn_" + asmcore.sanitize_label(o.str) + "\n");
             if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "const_f64") {
+            // Float literal: GAS assembles the text to an IEEE double in .rodata;
+            // load its bits and push them (floats flow as their 8-byte pattern).
+            var flb: asmcore.LabelOut = asmcore.fresh_label(s);
+            s = flb.state;
+            s = s.write("    .section .rodata\n" + flb.name + ": .double " + o.str + "\n    .text\n");
+            s = s.write("    adrp x0, " + flb.name + "\n    add x0, x0, :lo12:" + flb.name + "\n    ldr d0, [x0]\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "fadd" || o.kind == "fsub" || o.kind == "fmul" || o.kind == "fdiv") {
+            // f64 arithmetic: pop rhs (x0) / lhs (x1) into d0/d1, op, push.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [sp], #16\n    fmov d0, x0\n    fmov d1, x1\n");
+            if (o.kind == "fadd") { s = s.write("    fadd d0, d1, d0\n"); }
+            else if (o.kind == "fsub") { s = s.write("    fsub d0, d1, d0\n"); }
+            else if (o.kind == "fmul") { s = s.write("    fmul d0, d1, d0\n"); }
+            else { s = s.write("    fdiv d0, d1, d0\n"); }
+            s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "flt" || o.kind == "fle" || o.kind == "fgt" || o.kind == "fge" || o.kind == "feq" || o.kind == "fne") {
+            // f64 compare → i32 0/1. fcmp's condition codes are NaN-aware (mi/ls
+            // are false when unordered); mirrors asm_arm64.fern.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [sp], #16\n    fmov d0, x0\n    fmov d1, x1\n    fcmp d1, d0\n");
+            if (o.kind == "flt") { s = s.write("    cset w0, mi\n"); }
+            else if (o.kind == "fle") { s = s.write("    cset w0, ls\n"); }
+            else if (o.kind == "fgt") { s = s.write("    cset w0, gt\n"); }
+            else if (o.kind == "fge") { s = s.write("    cset w0, ge\n"); }
+            else if (o.kind == "feq") { s = s.write("    cset w0, eq\n"); }
+            else { s = s.write("    cset w0, ne\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind == "end") {
             s = s.write(lp + util.i32_to_string(i) + ":\n");
         } else {

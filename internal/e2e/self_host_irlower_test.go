@@ -16,8 +16,10 @@ import (
 // code. Each case asserts AST -> IR -> eval reproduces the program's value —
 // the IR analogue of the ssa_run round-trip, proving the lowering +
 // interpreter are semantics-preserving on the straight-line i32 subset.
-// Constructs outside the subset (control flow, calls, floats) make
-// lower_func bail (exit 200).
+// Constructs outside the subset (control flow, calls, f64 signatures) make
+// lower_func bail (exit 200). (f64 LOCALS lower now; this round-trip
+// evaluator is integer-only, so f64-local run coverage lives in the IR-path
+// differential suites.)
 //
 // The driver is built natively via the Go x86-64 backend and fed each
 // program on stdin; its exit code is the IR-computed result.
@@ -125,8 +127,11 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// blocks are reused, not re-bumped.
 		{"heap-reuse-bounded", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; __rc_dec(b); var c = [7, 8, 9]; return __heap_used(); }", 20},
 		{"heap-live-grows", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var c = [7, 8, 9]; return __heap_used(); }", 60},
-		// Still out of subset -> lower bails (200): floats.
-		{"float-bails", "function main(): i32 { var x = 1.5; return 2; }", 200},
+		// f64 LOCALS now lower (const_f64 + the float ops); f64 in a function
+		// SIGNATURE is still out of subset -> lower bails (200). (f64 local
+		// lower+run is covered by self_host_ir_x86_test / the IR-path differential
+		// suites; the round-trip evaluator here is integer-only.)
+		{"f64-cast-bails", "function main(): i32 { var x: f64 = 1.5; var y: i32 = x as i32; return y; }", 200},
 	}
 
 	for _, tc := range cases {
