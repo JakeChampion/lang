@@ -175,6 +175,10 @@ pub function op_str_index(): Op { return op0("str_index"); }
 // len = end-start] sharing the source bytes. On wasm, strings are inline blocks
 // (no separate data pointer), so it COPIES via $__fern_substr. No bounds check.
 pub function op_str_slice(): Op { return op0("str_slice"); }
+// `arr_slice` pops [arr, start, end] → a fresh array holding arr[start:end]
+// (end exclusive), COPYING the 8-byte (x86/arm64) / 4-byte (wasm) element
+// payloads via __fern_arr_slice. No bounds check (matches the AST path).
+pub function op_arr_slice(): Op { return op0("arr_slice"); }
 
 // Built-in Option / Result ops. The value is a heap box [tag@0, payload@8]
 // (Some/Ok = tag 0, None/Err = tag 1) — distinct from user enums/structs, which
@@ -316,6 +320,7 @@ pub function render_op(o: Op): string {
     if (o.kind == "str_cmp") { return "str_cmp"; }
     if (o.kind == "str_index") { return "str_index"; }
     if (o.kind == "str_slice") { return "str_slice"; }
+    if (o.kind == "arr_slice") { return "arr_slice"; }
     if (o.kind == "opt_make") { return "opt_make " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "opt_none") { return "opt_none"; }
     if (o.kind == "opt_tag") { return "opt_tag"; }

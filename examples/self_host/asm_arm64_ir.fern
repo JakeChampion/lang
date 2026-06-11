@@ -227,6 +227,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    ldr x1, [x21]\n    add x1, x1, x20\n    str x1, [x0]\n");
             s = s.write("    sub x1, x19, x20\n    str x1, [x0, #8]\n");
             s = s.write("    ldr x21, [sp], #16\n    ldp x19, x20, [sp], #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "arr_slice") {
+            // operand stack [arr, start, end] (end top); __fern_arr_slice(x0=arr,
+            // x1=start, x2=end) -> fresh array in x0. asm_arm64.emit_runtime emits
+            // the helper when arr_slice is needed.
+            s = s.mark_heap();
+            s = s.mark_arr_slice();
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_slice\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "str_concat") {
             // operand stack [A, B] (B on top); __fern_str_concat(x0=A, x1=B) -> x0.
             s = s.mark_heap();

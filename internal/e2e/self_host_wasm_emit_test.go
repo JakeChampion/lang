@@ -256,6 +256,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-i64-div", "function main(): i32 { var a: i64 = 12000000000; var b: i64 = 4; var c: i64 = a / b; if (c > 2000000000) { return 7; } return 0; }", 7, ""},
 		{"ir-i64-rem", "function main(): i32 { var a: i64 = 12000000007; var r = (a % 10) as i32; return r; }", 7, ""},
 		{"ir-i64-div-signed", "function main(): i32 { var a: i64 = 0 - 12000000000; var c: i64 = a / 4; if (c < 0) { return 9; } return 0; }", 9, ""},
+		{"ir-arr-slice", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[2]; }", 60, ""},
+		{"ir-arr-slice-strarr", "function main(): i32 { var a = [\"x\", \"yy\", \"zzz\", \"w\"]; var b = a[1:3]; return b[0].len() + b[1].len(); }", 5, ""},
 		{"ir-struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, ""},
 		{"ir-struct-arr-survives", "struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [10, 20, 30] }; var other = [99, 99, 99, 99, 99]; return b.data[0] + b.data[2]; }", 40, ""},
 		{"ir-struct-arr-param", "struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }", 30, ""},

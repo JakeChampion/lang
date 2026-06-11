@@ -388,6 +388,45 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    subq %r9, %rax\n");
         s = s.write("    ret\n");
     }
+    // __fern_arr_slice (transcribed verbatim from asm.fern): %rdi = src arr,
+    // %rsi = start, %rdx = end → a fresh array holding src[start:end] (copies the
+    // 8-byte element payloads via __fern_arr_box). Drives array `a[start:end]`.
+    if (s.has_need("arr_slice")) {
+        s = s.write("__fern_arr_slice:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq %rdi, %r12\n");
+        s = s.write("    movq %rsi, %r13\n");
+        s = s.write("    movq %rdx, %r14\n");
+        s = s.write("    movq %r14, %r15\n");
+        s = s.write("    subq %r13, %r15\n");
+        s = s.write("    movq %r15, %rdi\n");
+        s = s.write("    call __fern_arr_box\n");
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Larr_slice_loop:\n");
+        s = s.write("    cmpq %r15, %rcx\n");
+        s = s.write("    jge .Larr_slice_done\n");
+        s = s.write("    movq %r13, %rdx\n");
+        s = s.write("    addq %rcx, %rdx\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    movq (%r12,%rdx,8), %rdi\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    movq %rdi, (%rax,%rdx,8)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Larr_slice_loop\n");
+        s = s.write(".Larr_slice_done:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
     // Map runtime (transcribed from asm.fern) — only for map-using modules, so a
     // non-map heap program doesn't pull in map_set's __fern_str_eq dependency.
     if (s.has_need("maps")) {
@@ -927,6 +966,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    movq (%r14), %rcx\n    addq %r13, %rcx\n    movq %rcx, (%rax)\n");
             s = s.write("    movq %r12, %rcx\n    subq %r13, %rcx\n    movq %rcx, 8(%rax)\n");
             s = s.write("    popq %r14\n    popq %r13\n    popq %r12\n    pushq %rax\n");
+        } else if (o.kind == "arr_slice") {
+            // operand stack [arr, start, end]; __fern_arr_slice(%rdi=arr,
+            // %rsi=start, %rdx=end) -> fresh array in %rax (copies elements).
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_arr_slice\n    pushq %rax\n");
+            s = s.mark_arr_slice();
         } else if (o.kind == "str_concat") {
             // operand stack: [box A, box B] (B on top). __fern_str_concat takes
             // %rdi = A, %rsi = B and returns the fresh box in %rax.
