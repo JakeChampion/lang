@@ -249,16 +249,19 @@ pub function op_map_values(): Op { return op0("map_values"); }
 pub function op_struct_make(type_name: string, nfields: i32): Op {
     return Op { kind: "struct_make", i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
-pub function op_struct_get(field_index: i32): Op {
-    return Op { kind: "struct_get", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+// width selects the field's load/store size on width-typed backends (wasm): 64
+// for an f64 field, 0 (i32-shaped) otherwise. The register backends use 8-byte
+// slots for every field and ignore it.
+pub function op_struct_get(field_index: i32, width: i32): Op {
+    return Op { kind: "struct_get", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 // struct_set pops [struct, value] and stores value into field `field_index`
 // (the in-place `p.x = v` mutation). Scalar fields only (leak-only structs);
 // the box is shared by reference, so aliases observe the write — matching the
 // AST path. Layout-agnostic: each backend writes at its own field offset.
-pub function op_struct_set(field_index: i32): Op {
-    return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+pub function op_struct_set(field_index: i32, width: i32): Op {
+    return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 // high-level tuple ops — layout-agnostic, like the struct ops, but a tuple box
