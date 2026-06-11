@@ -1771,6 +1771,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"str-index-loop", "function main(): i32 { var s = \"abc\"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }", 94, "", ""},
 		{"str-index-param", "function first(s: string): i32 { return s[0]; } function main(): i32 { return first(\"Z\"); }", 90, "", ""},
 		{"str-index-literal", "function main(): i32 { return \"Q\"[0]; }", 81, "", ""},
+		{"str-slice-len", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t.len(); }", 3, "", ""},
+		{"str-slice-idx0", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t[0]; }", 101, "", ""},
+		{"str-slice-chain", "function main(): i32 { return \"hello\"[1:4][2]; }", 108, "", ""},
+		{"str-slice-param", "function tok(s: string): i32 { return s[0:2].len(); } function main(): i32 { return tok(\"abcd\"); }", 2, "", ""},
 		{
 			"string-print-ident",
 			"function main(): i32 { var s = \"world\\n\"; write(s); return 0; }",

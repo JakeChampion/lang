@@ -154,6 +154,11 @@ pub function op_str_eq(): Op { return op0("str_eq"); }
 // [data@0,len@8] → byte at [data+i]; wasm data-section [len@0,bytes@4] → byte at
 // [s+4+i]). No bounds check (matches the AST path).
 pub function op_str_index(): Op { return op0("str_index"); }
+// `str_slice` pops [str, start, end] → a fresh string for `s[start:end]`. On
+// x86/arm64 this is a zero-copy VIEW: a new 16-byte box [data = src.data+start,
+// len = end-start] sharing the source bytes. On wasm, strings are inline blocks
+// (no separate data pointer), so it COPIES via $__fern_substr. No bounds check.
+pub function op_str_slice(): Op { return op0("str_slice"); }
 
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
@@ -260,6 +265,7 @@ pub function render_op(o: Op): string {
     if (o.kind == "str_concat") { return "str_concat"; }
     if (o.kind == "str_eq") { return "str_eq"; }
     if (o.kind == "str_index") { return "str_index"; }
+    if (o.kind == "str_slice") { return "str_slice"; }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }
