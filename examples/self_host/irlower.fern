@@ -242,14 +242,33 @@ pub function is_scalar_arr_field_access(e: parser.Expr, s: LowerState): boolean 
 }
 
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
+    return decl_is_leaksafe_d(structs, struct_name, 0);
+}
+
+// decl_is_leaksafe_d is the depth-bounded recursion: a struct is leak-safe if
+// every field is a scalar (i32/boolean/string/scalar-array) OR a struct that is
+// itself leak-safe (composite struct fields, leak mode — the pointer is stored
+// in one slot, no RC). The depth cap conservatively bails on deeply nested /
+// cyclic type graphs (a cycle would otherwise loop forever); bailing is safe (it
+// just routes the module to the AST path).
+function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, depth: i32): boolean {
+    if (depth > 16) { return false; }
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == struct_name) {
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t != "i32" && t != "boolean" && t != "string" && !is_scalar_array_type(t)) { return false; }
-                fi = fi + 1;
+                if (t == "i32" || t == "boolean" || t == "string" || is_scalar_array_type(t)) {
+                    fi = fi + 1;
+                    continue;
+                }
+                // A struct-typed field is allowed if its struct is leak-safe too.
+                if (decl_is_struct(structs, t) && decl_is_leaksafe_d(structs, t, depth + 1)) {
+                    fi = fi + 1;
+                    continue;
+                }
+                return false;
             }
             return true;
         }
@@ -320,6 +339,16 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
     match (e) {
         parser.ExprStructLit(sl) => { return sl.type_name; },
         parser.ExprIdent(id) => { return s.struct_type_of_slot(s.slot_of(id.name)); },
+        parser.ExprFieldAccess(fa) => {
+            // A struct-typed field read `obj.f` evaluates to the field's struct
+            // type (enables nested access `b.p.x`). Returns "" if obj isn't a
+            // struct or f isn't a struct-typed field.
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (decl_is_struct(s.structs, ft)) { return ft; }
+            return "";
+        },
         _ => { return ""; }
     }
     return "";
