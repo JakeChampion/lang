@@ -1985,6 +1985,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"enum-strarr-payload-forin", "enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { var n = 0; for s in w { n = n + s.len(); } return n; }, None => { return 0; } } return 0; } function main(): i32 { return f(Words([\"a\", \"bb\", \"ccc\"])); }", 6, "", ""},
 		{"struct-strarr-field-len", "struct Doc { lines: string[] } function nl(d: Doc): i32 { return d.lines.len(); } function main(): i32 { var d = Doc { lines: [\"x\", \"y\", \"z\"] }; return nl(d); }", 3, "", ""},
 		{"struct-strarr-field-index", "struct Doc { lines: string[] } function f(d: Doc): i32 { return d.lines[1].len(); } function main(): i32 { var d = Doc { lines: [\"a\", \"bb\", \"ccc\"] }; return f(d); }", 2, "", ""},
+		{"tuple-str-i32-dotn", "function main(): i32 { var t = (\"hello\", 7); return t.0.len() + t.1; }", 12, "", ""},
+		{"tuple-str-i32-destructure", "function main(): i32 { var (a, b) = (\"world\", 3); return a.len() + b; }", 8, "", ""},
+		{"tuple-struct-dotn", "struct P { x: i32, y: i32 } function main(): i32 { var t = (P { x: 4, y: 5 }, 2); return t.0.x * t.0.y + t.1; }", 22, "", ""},
+		{"tuple-local-destructure", "function main(): i32 { var t = (\"ab\", 10); var (s, n) = t; return s.len() + n; }", 12, "", ""},
 		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
 		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},
