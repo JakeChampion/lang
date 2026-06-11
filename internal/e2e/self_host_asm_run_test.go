@@ -2042,6 +2042,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"i64-rem", "function main(): i32 { var a: i64 = 12000000007; var r = (a % 10) as i32; return r; }", 7, "", ""},
 		{"i64-div-trunc", "function main(): i32 { var a: i64 = 10000000000; var c: i64 = a / 3; if (c > 3000000000) { return 5; } return 0; }", 5, "", ""},
 		{"i64-div-signed", "function main(): i32 { var a: i64 = 0 - 12000000000; var c: i64 = a / 4; if (c < 0) { return 9; } return 0; }", 9, "", ""},
+		{"arr-slice", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[2]; }", 60, "", ""},
+		{"arr-slice-len", "function main(): i32 { var a = [1, 2, 3, 4, 5]; var b = a[1:4]; return b.len(); }", 3, "", ""},
+		{"arr-slice-strarr", "function main(): i32 { var a = [\"x\", \"yy\", \"zzz\", \"w\"]; var b = a[1:3]; return b[0].len() + b[1].len(); }", 5, "", ""},
+		{"arr-slice-full", "function main(): i32 { var a = [5, 10, 15, 20]; var b = a[0:2]; return b[0] + b[1]; }", 15, "", ""},
 		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
 		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},

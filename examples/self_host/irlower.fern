@@ -520,6 +520,26 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
             if (oty == "") { return false; }
             return decl_field_type(s.structs, oty, fa.field) == "string[]";
         },
+        parser.ExprSlice(sl) => { return expr_is_strarr(sl.array, s); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// expr_is_arr_src reports whether `e` is an ARRAY (an array literal, an
+// array-marked local/param, an array-returning call, or a slice of one) — used
+// to route `e[start:end]` to arr_slice vs str_slice.
+pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        parser.ExprIdent(id) => { return s.is_arr_slot(s.slot_of(id.name)); },
+        parser.ExprSlice(sl) => { return expr_is_arr_src(sl.array, s); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return s.is_arr_ret_fn(cid.name); },
+                _ => { return false; }
+            }
+        },
         _ => { return false; }
     }
     return false;
@@ -997,19 +1017,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return sidx.emit(ir.op_arr_get());
         },
         parser.ExprSlice(slc) => {
-            // `s[start:end]` on a string → lower [src, start, end] then
-            // `str_slice` (a fresh string). Only string slicing is in the IR path
-            // yet; array slicing bails to the AST emitter. (The binding is `slc`,
-            // not `sl`: other arms bind `var sl: LowerState`, and the compiler's
-            // scope-blind locals collapse same-named locals of different types.)
-            if (!expr_is_str(slc.array, s)) { return s.fail(); }
+            // `s[start:end]` lowers [src, start, end] then `str_slice` (a fresh
+            // string) or `arr_slice` (a fresh array) depending on the source. A
+            // non-string, non-array source bails. (The binding is `slc`, not `sl`:
+            // other arms bind `var sl: LowerState`, and the compiler's scope-blind
+            // locals collapse same-named locals of different types.)
+            var slc_is_str: boolean = expr_is_str(slc.array, s);
+            if (!slc_is_str && !expr_is_arr_src(slc.array, s)) { return s.fail(); }
             var ssl: LowerState = lower_expr(slc.array, s);
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.start, ssl);
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.end, ssl);
             if (!ssl.ok) { return ssl; }
-            return ssl.emit(ir.op_str_slice());
+            if (slc_is_str) { return ssl.emit(ir.op_str_slice()); }
+            return ssl.emit(ir.op_arr_slice());
         },
         parser.ExprCall(c) => {
             // Direct call (bare-name callee, up to 6 args), or the `.len()`
@@ -1336,6 +1358,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         },
                         _ => {}
                     }
+                },
+                parser.ExprSlice(sl) => {
+                    // `var x = arr[a:b]`: arr_slice returns a FRESH owned array
+                    // (rc=1) — a move, no alias_inc. (A string slice isn't an
+                    // array.)
+                    if (expr_is_arr_src(sl.array, se)) { is_arr = true; }
                 },
                 _ => {}
             }
