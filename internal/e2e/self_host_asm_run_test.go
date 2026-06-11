@@ -2012,6 +2012,12 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"i64-mul", "function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }", 5, "", ""},
 		{"i64-sub-neg", "function main(): i32 { var a: i64 = 1000000000; var b: i64 = 2000000000; var c: i64 = a - b; if (c < 0) { return 9; } return 0; }", 9, "", ""},
 		{"i64-loop", "function main(): i32 { var s: i64 = 0; var i: i32 = 0; while (i < 100000) { s = s + 100000; i = i + 1; } if (s > 4000000000) { return 13; } return 0; }", 13, "", ""},
+		{"and-true", "function main(): i32 { var x = 5; if (x > 0 && x < 10) { return 7; } return 0; }", 7, "", ""},
+		{"and-false", "function main(): i32 { var x = 15; if (x > 0 && x < 10) { return 7; } return 0; }", 0, "", ""},
+		{"or-true", "function main(): i32 { var x = 15; if (x < 0 || x > 0) { return 3; } return 0; }", 3, "", ""},
+		{"and-or-nest", "function main(): i32 { var a = 1; var b = 0; var c = 5; if (a > 0 && b > 0 || c > 0) { return 9; } return 0; }", 9, "", ""},
+		{"and-not-operand", "function main(): i32 { var x = 5; if (!(x > 10) && x > 0) { return 4; } return 0; }", 4, "", ""},
+		{"and-bool-vars", "function main(): i32 { var f = 5 > 3; var g = 2 > 8; if (f && !g) { return 6; } return 0; }", 6, "", ""},
 		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
 		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},
