@@ -234,6 +234,20 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.mark_heap();
             s = s.mark_arr_slice();
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_slice\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "random_bytes") {
+            // operand stack [n]; __fern_random_bytes(x0=n) -> string box in x0.
+            // asm_arm64.emit_runtime emits the helper inside its heap block.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_random_bytes\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "random_i32") {
+            // no operands; __fern_random_i32() -> i32 in x0. Helper is gated by
+            // the random_i32 need (asm_arm64.emit_runtime), heap-independent.
+            s = s.need("random_i32");
+            s = s.write("    bl __fern_random_i32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "str_bytes") {
+            // operand stack [str box]; __fern_str_bytes(x0=box) -> fresh u8[] in x0.
+            s = s.mark_str_bytes();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_str_bytes\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "str_concat") {
             // operand stack [A, B] (B on top); __fern_str_concat(x0=A, x1=B) -> x0.
             s = s.mark_heap();

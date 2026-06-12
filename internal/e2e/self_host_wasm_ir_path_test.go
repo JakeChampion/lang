@@ -331,4 +331,30 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 			}
 		})
 	}
+
+	// IR-ONLY assertions (issue #2747 / uuid #2682). On wasm the legacy AST path
+	// types random_bytes as a u8[] array and has no as_bytes helper, so the
+	// byte-source builtins can't ride the differential gate — compile only via
+	// -ir and assert structural properties. The IR path's random_bytes returns
+	// a `[len][bytes]` string block (cross-backend-consistent), str_bytes a u8[].
+	// Exit codes stay in WASI's 0..125 range. (uuidV4Program is shared.)
+	irOnly := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
+		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
+		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
+		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); if (b.len() != 3) { return 20; } if (b[0] != 65) { return 21; } if (b[2] != 67) { return 22; } return 5; }`, 5},
+		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); if (b[0] != 65) { return 20; } if (b[1] != 66) { return 21; } return 6; }`, 6},
+		{"uuid-v4", uuidV4Program, 0},
+	}
+	for _, tc := range irOnly {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := emitAndRun(t, tc.src, true); got != tc.want {
+				t.Errorf("wasm IR path %q: exit = %d, want %d", tc.name, got, tc.want)
+			}
+		})
+	}
 }

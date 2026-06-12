@@ -39,6 +39,9 @@ function main(): i32 {
         // wasm.emit_module's use_ir dispatch does).
         var o: string = "(module\n";
         o = o + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+        // wasi random_get import (issue #2747) — must precede the function
+        // section. Emitted when the module uses random_bytes / random_i32.
+        if (wasm_ir.module_uses_random(mod)) { o = o + wasm.random_get_import(); }
         o = o + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
         // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -65,6 +68,13 @@ function main(): i32 {
         if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { o = o + wasm.arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
+        // Byte-source helpers (issue #2747). random_bytes returns a [len][bytes]
+        // string block; str_bytes returns a u8[]; both reference the heap runtime
+        // ($__fern_str_box / $__fern_arr_box) that module_allocates pulls in.
+        // random_i32 is heap-free. The import is emitted above.
+        if (wasm_ir.module_emits_op(mod, "random_bytes")) { o = o + wasm.random_bytes_ir_func(); }
+        if (wasm_ir.module_emits_op(mod, "random_i32")) { o = o + wasm.random_i32_func(); }
+        if (wasm_ir.module_emits_op(mod, "str_bytes")) { o = o + wasm.str_bytes_func(); }
         // Function-value support: the $fn<N> call_indirect signature types, the
         // funcref table, and its elem segment (empty for non-closure modules).
         o = o + wasm_ir.fn_support_section(mod);

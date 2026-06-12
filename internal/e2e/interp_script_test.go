@@ -296,6 +296,39 @@ function main(): i32 {
 	}
 }
 
+// std/uuid (#2682): uuid_v4 / uuid_v7 generation, built on the
+// cross-backend random_bytes byte source (#2747). Asserts the
+// canonical 36-char 8-4-4-4-12 shape, the version + variant
+// nibbles, that it validates via string.is_uuid(), and that two
+// draws differ.
+func TestInterpScriptUuid(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/uuid";
+import "std/string";
+function main(): i32 {
+    var a: string = uuid.uuid_v4();
+    if (a.len() != 36) { return 1; }
+    if (!a.is_uuid()) { return 2; }
+    if (a[14] != 52) { return 3; }          // version '4'
+    if (a[8] != 45 || a[13] != 45 || a[18] != 45 || a[23] != 45) { return 4; }
+    var b: string = uuid.uuid_v7();
+    if (b.len() != 36) { return 5; }
+    if (!b.is_uuid()) { return 6; }
+    if (b[14] != 55) { return 7; }          // version '7'
+    if (uuid.uuid_v4() == uuid.uuid_v4()) { return 8; }
+    return 0;
+}`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
 // A program that explicitly imports a stdlib module whose
 // transitive imports include `core/int` (or imports `core/int`
 // directly) hits the modload mangling path: the function name

@@ -751,6 +751,14 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => { return s.is_arr_ret_fn(cid.name); },
+                // `s.bytes()` / `s.as_bytes()` on a string receiver yields a
+                // fresh u8[] (op_str_bytes) — an rc-tracked array source.
+                parser.ExprFieldAccess(cfa) => {
+                    if ((cfa.field == "bytes" || cfa.field == "as_bytes") && c.args.len() == 0) {
+                        return expr_is_str(cfa.obj, s);
+                    }
+                    return false;
+                },
                 _ => { return false; }
             }
         },
@@ -768,9 +776,13 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprCall(c) => {
-            // A call to a string-returning user function (str_ret_fns).
+            // A call to a string-returning user function (str_ret_fns), or the
+            // random_bytes builtin (a fresh string of n random bytes).
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_str_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "random_bytes") { return true; }
+                    return s.is_str_ret_fn(cid.name);
+                },
                 _ => { return false; }
             }
             return false;
@@ -1592,6 +1604,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (c.args.len() != 0) { return s.fail(); }
                         return s.emit(ir.op_call_direct("__fern_heap_used", 0));
                     }
+                    // random_bytes(n): a fresh string of n CSPRNG bytes. The
+                    // result is a string box (str_index reads the bytes); the
+                    // IR backends emit the __fern_random_bytes helper.
+                    if (cid.name == "random_bytes" && c.args.len() == 1) {
+                        var rb: LowerState = lower_expr(c.args[0], s);
+                        if (!rb.ok) { return rb; }
+                        return rb.emit(ir.op_random_bytes());
+                    }
+                    // random_i32(): a single CSPRNG i32.
+                    if (cid.name == "random_i32" && c.args.len() == 0) {
+                        return s.emit(ir.op_random_i32());
+                    }
                     if (decl_is_struct(s.structs, cid.name)) {
                         if (!decl_is_leaksafe(s.structs, cid.name)) { return s.fail(); }
                         // Array-payload variant construction isn't in this slice
@@ -1739,6 +1763,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sl.ok) { return sl; }
                         if (str_recv) { return sl.emit(ir.op_str_len()); }
                         return sl.emit(ir.op_arr_len());
+                    }
+                    // `s.bytes()` / `s.as_bytes()` on a string receiver → a fresh
+                    // u8[] (one i32 slot per byte). The self-host slot-array model
+                    // has no zero-copy slice view, so as_bytes returns the same
+                    // fresh array as bytes (matches the AST path). Result is an
+                    // array — see expr_is_arr / lower_arr's mirror cases.
+                    if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && expr_is_str(fa.obj, s)) {
+                        var sb: LowerState = lower_expr(fa.obj, s);
+                        if (!sb.ok) { return sb; }
+                        return sb.emit(ir.op_str_bytes());
                     }
                     // Struct method call `p.method(args)` — static dispatch on the
                     // receiver's tracked struct type to `call_direct("<Type>.<m>")`
@@ -1977,6 +2011,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     match (cc.callee) {
                         parser.ExprIdent(fid) => {
                             if (se.is_arr_ret_fn(fid.name)) { is_arr = true; }
+                        },
+                        // `var b = s.bytes()` / `= s.as_bytes()`: op_str_bytes
+                        // returns a fresh owned u8[] (rc=1) — a move, track as array.
+                        parser.ExprFieldAccess(cfa) => {
+                            if ((cfa.field == "bytes" || cfa.field == "as_bytes") && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                         },
                         _ => {}
                     }

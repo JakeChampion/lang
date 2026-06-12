@@ -227,6 +227,24 @@ pub function op_str_slice(): Op { return op0("str_slice"); }
 // helper. The register backends copy 8-byte slots regardless and ignore it.
 pub function op_arr_slice(width: i32): Op { return Op { kind: "arr_slice", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 
+// Random / byte-source builtins (issue #2747) — the cross-backend byte source
+// uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
+// helper the IR backends emit (no `__fn_` body), so the eligibility gate treats
+// them as known ops rather than disqualifying call_directs.
+//
+// `random_bytes` pops [n] → a fresh string of n cryptographic-quality random
+// bytes (Linux getrandom / WASI random_get). Result is a string box; the bytes
+// have no encoding, so `s[i]` reads a 0..255 value (str_index).
+pub function op_random_bytes(): Op { return op0("random_bytes"); }
+// `random_i32` takes no operands → a single CSPRNG i32. A 4-byte random read
+// reinterpreted as an i32 (cheaper than random_bytes for one small value).
+pub function op_random_i32(): Op { return op0("random_i32"); }
+// `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
+// `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
+// has no separate zero-copy slice view, so as_bytes returns the same fresh
+// array (correct, just not zero-copy; mirrors the AST path).
+pub function op_str_bytes(): Op { return op0("str_bytes"); }
+
 // Built-in Option / Result ops. The value is a heap box [tag@0, payload@8]
 // (Some/Ok = tag 0, None/Err = tag 1) — distinct from user enums/structs, which
 // carry a shape pointer at offset 0. `opt_make` pops [payload] and builds the
