@@ -2555,15 +2555,15 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 // `mod__Name`. A no-op for single-file / same-module names. See
 // docs/TRAITS.md (Phase 3).
 // deriveKind classifies a (possibly module-mangled) derived-trait name
-// by its simple name: "Eq", "Display", "Ord", or "Hash". Returns "" for
-// any other trait — only these four are derivable.
+// by its simple name: "Eq", "Display", "Ord", "Hash", or "Json". Returns
+// "" for any other trait — only these five are derivable.
 func deriveKind(name string) string {
 	simple := name
 	if i := strings.LastIndex(simple, "__"); i >= 0 {
 		simple = simple[i+2:]
 	}
 	switch simple {
-	case "Eq", "Display", "Ord", "Hash":
+	case "Eq", "Display", "Ord", "Hash", "Json":
 		return simple
 	}
 	return ""
@@ -2604,7 +2604,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			_ = td
 			kind := deriveKind(dn)
 			if kind == "" {
-				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, and Hash are derivable", demangle(dn))
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, Hash, and Json are derivable", demangle(dn))
 				continue
 			}
 			var method *ast.FuncDecl
@@ -2617,6 +2617,8 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthOrd(sd, recvType)
 			case "Hash":
 				method = synthHash(sd, recvType)
+			case "Json":
+				method = synthJson(sd, recvType)
 			}
 			method.SourceModule = sd.SourceModule
 			bindDeriveTypeParams(method, implTypeParams, dn)
@@ -2654,8 +2656,10 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthEnumOrd(ed, recvType)
 			case "Hash":
 				method = synthEnumHash(ed, recvType)
+			case "Json":
+				method = synthEnumJson(ed, recvType)
 			default:
-				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, and Hash are derivable for enums", demangle(dn))
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, Hash, and Json are derivable for enums", demangle(dn))
 				continue
 			}
 			method.SourceModule = ed.SourceModule
@@ -3041,6 +3045,76 @@ func synthEnumHash(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 	return &ast.FuncDecl{
 		Name: "hash", Receiver: &ast.Param{Name: "self", Type: recv},
 		ReturnType: ast.NumberType{}, Body: body,
+	}
+}
+
+// synthJson builds a field-wise `to_json` rendering a struct as a JSON
+// object: `{"f1":<f1.to_json()>,"f2":<f2.to_json()>}`. Each field
+// composes through its own `Json` impl, so a type serialises as soon as
+// its fields do. Field names are identifiers, so they need no escaping
+// (string *values* are escaped by `impl Json for string`). Returns the
+// canonical JSON text directly — `json_encode` is unnecessary.
+func synthJson(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.StringLit{Value: "{"}
+	add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+	for i, f := range sd.Fields {
+		sep := ""
+		if i > 0 {
+			sep = ","
+		}
+		add(&ast.StringLit{Value: sep + "\"" + f.Name + "\":"})
+		add(methodCall(selfField(f.Name), "to_json"))
+	}
+	add(&ast.StringLit{Value: "}"})
+	return &ast.FuncDecl{
+		Name:       "to_json",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthEnumJson builds a variant-wise `to_json` using the externally-
+// tagged convention: a unit variant renders as the JSON string of its
+// name (`"Empty"`); a payload variant renders as a single-key object
+// (`{"Circle":<p0.to_json()>}`), with multiple payloads collected into a
+// JSON array (`{"Rect":[<p0>,<p1>]}`). Mirrors the Go synthEnumDisplay
+// shape; composes through each payload's `Json` impl.
+func synthEnumJson(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for k := range v.Payloads {
+			bind[k] = fmt.Sprintf("__p%d", k)
+		}
+		var expr ast.Expr
+		add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+		switch len(v.Payloads) {
+		case 0:
+			expr = &ast.StringLit{Value: "\"" + v.Name + "\""}
+		case 1:
+			expr = &ast.StringLit{Value: "{\"" + v.Name + "\":"}
+			add(methodCall(&ast.Ident{Name: bind[0]}, "to_json"))
+			add(&ast.StringLit{Value: "}"})
+		default:
+			expr = &ast.StringLit{Value: "{\"" + v.Name + "\":["}
+			for k := range v.Payloads {
+				if k > 0 {
+					add(&ast.StringLit{Value: ","})
+				}
+				add(methodCall(&ast.Ident{Name: bind[k]}, "to_json"))
+			}
+			add(&ast.StringLit{Value: "]}"})
+		}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.StringLit{Value: ""}},
+	}}
+	return &ast.FuncDecl{
+		Name: "to_json", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{}, Body: body,
 	}
 }
 

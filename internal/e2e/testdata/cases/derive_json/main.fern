@@ -1,0 +1,41 @@
+// `@derive(Json)` synthesises a field/variant-wise `to_json(): string`
+// (canonical JSON text), composing through each field's own `Json` impl
+// — a struct becomes a JSON object, an enum is externally tagged, string
+// values are escaped. The structural-serialisation spine for edge
+// handlers (serialise a response struct with no hand-written encoder).
+import "std/json";
+import "std/string";
+
+@derive(json.Json)
+struct User { id: i32, name: string, admin: boolean }
+
+@derive(json.Json)
+enum Shape { Empty, Circle(i32), Rect(i32, i32) }
+
+@derive(json.Json)
+struct Wrap { who: User, tag: string }
+
+function check(got: string, want: string, code: i32): i32 {
+    if (got == want) { return 0; }
+    return code;
+}
+
+function main(): i32 {
+    var u: User = User { id: 7, name: "Gloin", admin: true };
+    var r: i32 = check(u.to_json(), "{\"id\":7,\"name\":\"Gloin\",\"admin\":true}", 1);
+    if (r != 0) { return r; }
+    r = check(Empty.to_json(), "\"Empty\"", 2);
+    if (r != 0) { return r; }
+    r = check(Circle(5).to_json(), "{\"Circle\":5}", 3);
+    if (r != 0) { return r; }
+    r = check(Rect(2, 3).to_json(), "{\"Rect\":[2,3]}", 4);
+    if (r != 0) { return r; }
+    r = check(Wrap { who: u, tag: "hi" }.to_json(),
+              "{\"who\":{\"id\":7,\"name\":\"Gloin\",\"admin\":true},\"tag\":\"hi\"}", 5);
+    if (r != 0) { return r; }
+    // String escaping: quote + newline must be backslash-escaped.
+    var m: User = User { id: 0, name: "a\"b\nc", admin: false };
+    r = check(m.to_json(), "{\"id\":0,\"name\":\"a\\\"b\\nc\",\"admin\":false}", 6);
+    if (r != 0) { return r; }
+    return 42;
+}

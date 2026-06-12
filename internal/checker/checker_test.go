@@ -2343,7 +2343,7 @@ func TestDeriveErrors(t *testing.T) {
 		{`trait Foo { function bar(self: Self): i32; }
 @derive(Foo)
 struct S { x: i32 }
-function main(): i32 { return 0; }`, "only Eq, Display, Ord, and Hash are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Ord, Hash, and Json are derivable"},
 		// Unknown trait in derive.
 		{`@derive(Nope)
 struct S { x: i32 }
@@ -2369,7 +2369,7 @@ func TestDeriveEnumErrors(t *testing.T) {
 		{`trait Foo { function foo(self: Self): boolean; }
 @derive(Foo)
 enum E { A, B }
-function main(): i32 { return 0; }`, "only Eq, Display, Ord, and Hash are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Ord, Hash, and Json are derivable"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -2430,6 +2430,46 @@ function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.hash(); }`,
 function main(): i32 { return 0; }`
 	if err := checkSource(t, bad); err == nil {
 		t.Error("expected an error deriving Hash for a struct with a non-Hash field, got nil")
+	}
+}
+
+// `@derive(Json)` synthesises a field/variant-wise `to_json(): string`
+// (canonical JSON text), composing through each field's own `Json` impl.
+// A struct, an enum (externally tagged), a generic struct, and a nested
+// struct all derive; a field whose type doesn't implement Json is a clean
+// error. See docs/TRAITS.md.
+func TestDeriveJson(t *testing.T) {
+	const jsonTrait = `trait Json { function to_json(self: Self): string; }
+impl Json for i32 { function to_json(self: Self): string { return "0"; } }
+impl Json for string { function to_json(self: Self): string { return self; } }
+`
+	ok := []string{
+		// Plain struct.
+		jsonTrait + `@derive(Json) struct P { x: i32, y: i32 }
+function main(): i32 { var p: P = P { x: 1, y: 2 }; var s: string = p.to_json(); return 0; }`,
+		// Enum: unit, single-payload, multi-payload arms all synthesise.
+		jsonTrait + `@derive(Json) enum E { A, B(i32), C(i32, i32) }
+function main(): i32 { var e: E = C(1, 2); var s: string = e.to_json(); return 0; }`,
+		// Generic struct: parametric impl[T: Json] Json for Box[T].
+		jsonTrait + `@derive(Json) struct Box[T] { v: T }
+function main(): i32 { var b: Box[string] = Box { v: "hi" }; var s: string = b.to_json(); return 0; }`,
+		// Nested derived struct composes through the field's to_json.
+		jsonTrait + `@derive(Json) struct Inner { n: i32 }
+@derive(Json) struct Outer { a: Inner, tag: string }
+function main(): i32 { var o: Outer = Outer { a: Inner { n: 5 }, tag: "x" }; var s: string = o.to_json(); return 0; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("@derive(Json) should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	// A field whose type has no Json impl cannot derive Json.
+	bad := jsonTrait + `struct NoJson { z: i32 }
+@derive(Json) struct S { n: NoJson }
+function main(): i32 { return 0; }`
+	if err := checkSource(t, bad); err == nil {
+		t.Error("expected an error deriving Json for a struct with a non-Json field, got nil")
 	}
 }
 

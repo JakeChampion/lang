@@ -4891,6 +4891,26 @@ function synth_struct_hash(sd: StructDecl): FuncDecl {
     return FuncDecl { name: "hash", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
+// synth_struct_json: field-wise `to_json` rendering a struct as a JSON
+// object `{"f":<f.to_json()>,...}`, mirroring the Go synthJson so the
+// differential oracle agrees. Field names need no escaping (identifiers).
+function synth_struct_json(sd: StructDecl): FuncDecl {
+    var expr: Expr = e_string("{");
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        var sep: string = "";
+        if (i > 0) { sep = ","; }
+        expr = e_binary("+", expr, e_string(sep + "\"" + sd.fields[i].name + "\":"));
+        expr = e_binary("+", expr, dv_call0(dv_self_field(sd.fields[i].name), "to_json"));
+        i = i + 1;
+    }
+    expr = e_binary("+", expr, e_string("}"));
+    var body: Stmt[] = [s_return(expr)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
 // `Variant` — the same shape the Go synthEnumDisplay emits. Self-host
 // enum variants carry at most one payload (`__ev`), so a payload
@@ -5017,9 +5037,35 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
     return FuncDecl { name: "hash", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
+// synth_enum_json: variant-wise `to_json` — a unit variant renders as
+// its name as a JSON string (`"Empty"`); a payload variant as a single-
+// key object (`{"Circle":<__p0.to_json()>}`). Externally-tagged, matching
+// the Go synthEnumJson (self-host enum variants carry at most one payload).
+function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
+    var arms: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var v: StructDecl = variants[i];
+        if (v.fields.len() > 0) {
+            var e: Expr = e_string("{\"" + v.name + "\":");
+            e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_json"));
+            e = e_binary("+", e, e_string("}"));
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        } else {
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string("\"" + v.name + "\""))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        }
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_enum_derives appends the derivable enum methods. Display, Eq,
-// Ord, and Hash are supported (Ord uses variant-declaration order then a
-// lexicographic payload compare; Hash seeds with the variant tag).
+// Ord, Hash, and Json are supported (Ord uses variant-declaration order
+// then a lexicographic payload compare; Hash seeds with the variant tag;
+// Json is externally tagged).
 function synth_enum_derives(ename: string, variants: StructDecl[], derives: string[], funcs: FuncDecl[]): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
@@ -5028,15 +5074,16 @@ function synth_enum_derives(ename: string, variants: StructDecl[], derives: stri
         if (kind == "Eq") { funcs = funcs.append(synth_enum_eq(ename, variants)); }
         if (kind == "Ord") { funcs = funcs.append(synth_enum_ord(ename, variants)); }
         if (kind == "Hash") { funcs = funcs.append(synth_enum_hash(ename, variants)); }
+        if (kind == "Json") { funcs = funcs.append(synth_enum_json(ename, variants)); }
         di = di + 1;
     }
     return funcs;
 }
 
 // synth_derives appends the synthesised methods for each derivable trait
-// (`Eq` / `Display` / `Ord` / `Hash`) named in `derives` for struct `sd`
-// onto `funcs`. Non-derivable / unknown trait names are ignored (the Go
-// checker is the strict gate).
+// (`Eq` / `Display` / `Ord` / `Hash` / `Json`) named in `derives` for
+// struct `sd` onto `funcs`. Non-derivable / unknown trait names are
+// ignored (the Go checker is the strict gate).
 function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
@@ -5045,6 +5092,7 @@ function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): Fu
         if (kind == "Eq") { funcs = funcs.append(synth_struct_eq(sd)); }
         if (kind == "Ord") { funcs = funcs.append(synth_struct_ord(sd)); }
         if (kind == "Hash") { funcs = funcs.append(synth_struct_hash(sd)); }
+        if (kind == "Json") { funcs = funcs.append(synth_struct_json(sd)); }
         di = di + 1;
     }
     return funcs;
