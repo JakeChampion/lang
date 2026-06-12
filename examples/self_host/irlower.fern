@@ -2455,21 +2455,8 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             }
             // Retain (alias) + cow-guarded dec-on-overwrite of the slot's prior
             // value (the loop-rebind reclamation; null on the first binding, so
-            // a no-op there). An owned array slot drives the release. A struct
-            // binding rides the SAME generic rc_inc/rc_dec path: `var s2 = s1`
-            // (aliasing an existing struct local) retains, and an owned struct
-            // slot is released on loop-rebind — emit_arr_store's helpers are
-            // type-agnostic (__fern_rc_inc / __fern_rc_dec).
-            var struct_alias: boolean = false;
-            if (struct_ty.len() > 0) {
-                match (v.init) {
-                    parser.ExprIdent(said) => {
-                        if (se.struct_type_of_slot(se.slot_of(said.name)).len() > 0) { struct_alias = true; }
-                    },
-                    _ => { }
-                }
-            }
-            return emit_arr_store(sb, slot, alias_inc || struct_alias, is_arr || (struct_ty.len() > 0));
+            // a no-op there). An owned array slot drives the release.
+            return emit_arr_store(sb, slot, alias_inc, is_arr);
         },
         parser.StmtAssign(a) => {
             var slot: i32 = s.slot_of(a.target);
@@ -2560,9 +2547,6 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprIdent(rid) => {
                     var rs: i32 = se.slot_of(rid.name);
                     if (se.is_arr_slot(rs)) { moved = rs; }
-                    // A returned struct local is moved too — exclude it from the
-                    // struct dec-sweep so the caller's reference survives.
-                    if (se.struct_type_of_slot(rs).len() > 0) { moved = rs; }
                 },
                 _ => {}
             }
@@ -3130,22 +3114,6 @@ pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
             st = st.emit(ir.op_drop());
         }
         i = i + 1;
-    }
-    // Owned struct locals are freed the same way (closures slice 3a's array RC,
-    // now for structs): a SHALLOW rc-dec of the box at scope exit. Eligible
-    // structs are leak-safe (scalar/string fields only — decl_is_leaksafe), so
-    // there is no rc-tracked field to dangle; the box is freed, strings leak
-    // (as everywhere). A returned struct slot is `keep` (move-on-return), an
-    // aliased one was rc-inc'd at its binding, so it balances. Body locals are
-    // zeroed at entry, so an untaken-branch slot decs a null (guarded no-op).
-    var j: i32 = st.n_params;
-    while (j < st.local_struct_type.len()) {
-        if (j != keep && st.struct_type_of_slot(j).len() > 0) {
-            st = st.emit(ir.op_load_local(j));
-            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-            st = st.emit(ir.op_drop());
-        }
-        j = j + 1;
     }
     return st;
 }
