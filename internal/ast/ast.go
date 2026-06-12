@@ -1047,6 +1047,12 @@ type Binary struct {
 	// EqNegate is set for `!=` (lower as `!a.eq(b)`).
 	EqCall   *Call
 	EqNegate bool
+	// CmpCall is set by the checker when an ordering operator
+	// (`<` `<=` `>` `>=`) is applied to a composite type that
+	// implements `Ord`: the operator desugars to `a.cmp(b) <op> 0`
+	// (cmp returns -1/0/1). The post-check rewrite replaces the
+	// Binary with that scalar comparison; Op is preserved.
+	CmpCall *Call
 }
 type Unary struct {
 	P       Position

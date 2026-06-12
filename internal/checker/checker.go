@@ -2053,11 +2053,29 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// hidden side channel. Runs on success only; it also runs inside
 	// monomorph's re-check, so cloned generic bodies desugar too.
 	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
-		if b, ok := e.(*ast.Binary); ok && b.EqCall != nil {
+		b, ok := e.(*ast.Binary)
+		if !ok {
+			return e
+		}
+		if b.EqCall != nil {
 			if b.EqNegate {
 				return &ast.Unary{P: b.P, Op: "!", Operand: b.EqCall}
 			}
 			return b.EqCall
+		}
+		// Composite ordering: `a <op> b` → `a.cmp(b) <op> 0`. The
+		// resulting comparison is a plain signed-i32 Binary (cmp
+		// returns -1/0/1); stamp IntWidth so codegen picks i32.lt_s
+		// etc. (this node is created post-check, so the checker's
+		// width stamping never ran on it).
+		if b.CmpCall != nil {
+			return &ast.Binary{
+				P:        b.P,
+				Op:       b.Op,
+				Left:     b.CmpCall,
+				Right:    &ast.NumberLit{P: b.P, Value: 0, Width: 32},
+				IntWidth: 32,
+			}
 		}
 		return e
 	})
@@ -6958,6 +6976,32 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return common
 		case "<", ">", "<=", ">=":
+			// Composite-type ordering. `<` / `<=` / `>` / `>=` on a
+			// struct or enum desugars to the type's `Ord` impl —
+			// `a.cmp(b) <op> 0` (cmp returns -1/0/1). Without this the
+			// operator hit requireInteger and errored. Arrays / slices
+			// / tuples have no Ord yet.
+			if lt != nil && rt != nil && ast.Equal(lt, rt) {
+				switch lt.(type) {
+				case ast.StructType, ast.EnumType:
+					tn, _ := methodTypeName(lt)
+					if mangled, ok := c.info.Methods[tn+".cmp"]; ok && c.methodVisibleHere(mangled) {
+						cmpCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
+						if rt2 := c.checkExpr(cmpCall, s); rt2 != nil {
+							if nt, isNum := rt2.(ast.NumberType); !isNum || nt.NormalWidth() != 32 {
+								c.errfCode(n.P, "E041", "cannot order values of type %s with %q: its `cmp` method must return i32", lt, n.Op)
+							}
+						}
+						n.CmpCall = cmpCall
+						return ast.BoolType{}
+					}
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — add `@derive(Ord)` (or `impl Ord for %s`) so ordering can use structural comparison", lt, n.Op, tn)
+					return ast.BoolType{}
+				case ast.ArrayType, ast.SliceType, ast.TupleType:
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: structural ordering for arrays / slices / tuples is not supported", lt, n.Op)
+					return ast.BoolType{}
+				}
+			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
