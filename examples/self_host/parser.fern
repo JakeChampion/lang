@@ -1876,6 +1876,188 @@ function parse_loop_stmt(p: Par): StmtResult {
     return StmtResult { par: lb.par, stmt: s_while(e_bool(true), lb.body) };
 }
 
+// build_assign_stmt turns a parsed lvalue + assign-op + rhs into the
+// corresponding Stmt, shape-dispatching on the lvalue:
+//   * bare ident      → StmtAssign
+//   * `arr[idx]`      → builtin `__set_index(arr, idx, value)` expr-stmt
+//   * `obj.field`     → builtin `__set_field(obj, "field", value)` expr-stmt
+// Compound forms (`+=`, `-=`, …) desugar to `lhs = lhs <op> rhs` by
+// re-reading the lvalue. Factored out of parse_stmt so the C-style
+// `for (init; cond; step)` header can reuse the exact same assignment
+// shapes for its `step` (which has no trailing `;` to lean on).
+function build_assign_stmt(target: Expr, assign_op: string, rhs: Expr, aline: i32, acol: i32): Stmt {
+    var is_compound: boolean = assign_op == "+=" || assign_op == "-="
+                            || assign_op == "*=" || assign_op == "/="
+                            || assign_op == "%=";
+    match (target) {
+        ExprIdent(id) => {
+            var rhs2: Expr = rhs;
+            if (is_compound) {
+                // `x += y` desugars to `x = x + y`. Strip the
+                // trailing `=` off the op to recover the operator.
+                var op: string = assign_op[0:assign_op.len() - 1];
+                rhs2 = e_binary(op, e_ident(id.name), rhs);
+            }
+            return s_assign_at(id.name, rhs2, aline, acol, id.line, id.col);
+        },
+        ExprIndex(ix) => {
+            // `arr[idx] = rhs` → __set_index(arr, idx, rhs). A compound
+            // `arr[idx] += y` reads the element back: rhs becomes
+            // `arr[idx] <op> y`.
+            var irhs: Expr = rhs;
+            if (is_compound) {
+                var iop: string = assign_op[0:assign_op.len() - 1];
+                irhs = e_binary(iop, e_index(ix.array, ix.index), rhs);
+            }
+            var sargs: Expr[] = [];
+            sargs = sargs.append(ix.array);
+            sargs = sargs.append(ix.index);
+            sargs = sargs.append(irhs);
+            return s_expr(e_call(e_ident("__set_index"), sargs));
+        },
+        ExprFieldAccess(fa) => {
+            // `obj.field = rhs` → __set_field(obj, "field", rhs)
+            // (an expression statement; the emitter shape-dispatches
+            // to the field's slot). Compound forms desugar to a read
+            // of the same field (re-evaluates obj — fine for the
+            // simple lvalues that use this).
+            var frhs: Expr = rhs;
+            if (is_compound) {
+                var fop: string = assign_op[0:assign_op.len() - 1];
+                frhs = e_binary(fop, e_field_access(fa.obj, fa.field), rhs);
+            }
+            var fargs: Expr[] = [];
+            fargs = fargs.append(fa.obj);
+            // Carry the field-access dot position on the field-name
+            // string so the checker can report E048 (assign to an
+            // immutable field) at the dot, matching the Go checker's
+            // FieldAccess position. Codegen ignores the position.
+            fargs = fargs.append(e_string_at(fa.field, fa.line, fa.col));
+            fargs = fargs.append(frhs);
+            return s_expr(e_call(e_ident("__set_field"), fargs));
+        },
+        _ => { return s_unknown("lhs of assign must be ident, index, or field"); }
+    }
+}
+
+// parse_for_c_stmt parses the C-style `for (init; cond; step) { body }`
+// (`p` is positioned at the opening `(`) and DESUGARS it to existing
+// nodes — no new Stmt union member — so it lowers through the IR path
+// (and every backend) for free, the same way `loop` desugars to
+// `while (true)` and a bare block desugars to `if (true) { … }`.
+//
+// The shape (with a unique first-iteration flag `__forc_first_N`):
+//
+//   {                                  // if (true) { … } — scopes init + flag
+//     init;
+//     var __forc_first_N: boolean = true;
+//     while (true) {
+//       if (__forc_first_N) { __forc_first_N = false; } else { step; }
+//       if (!(cond)) { break; }
+//       <body>
+//     }
+//   }
+//
+// The flag holds `step` *after* the body on every iteration except the
+// first, and — crucially — runs it on `continue` too: `continue` re-enters
+// the `while` at the flag check, so the step executes before the next
+// condition test. That matches the native `ast.For` lowering, where the
+// `continue` target sits in an inner block *before* the step. (A naive
+// `while (cond) { body; step }` desugar would skip the step on `continue`.)
+//
+// `init` (a `var`/assignment/expr or empty), `cond` (defaults to `true`
+// when omitted) and `step` (a trailing assignment/expr or empty) are all
+// optional, matching the native grammar. `step` reuses build_assign_stmt
+// so `i = i + 1`, `i += 1`, `a[k] = v` and `o.f = v` all work as steps.
+function parse_for_c_stmt(p: Par): StmtResult {
+    // Token index of `(` — unique per loop, so the flag name can't
+    // clash across sibling or nested C-style fors in one parse.
+    var forc_id: i32 = p.pos;
+    p = p.advance();  // consume `(`
+
+    // init — runs once before the loop. `var i = …;` / `i = …;` / `expr;`
+    // all parse via parse_stmt (which consumes the separating `;`); an
+    // empty init is just the bare `;`.
+    var has_init: boolean = false;
+    var init_stmt: Stmt = s_unknown("");
+    if (p.peek_punct() == ";") {
+        p = p.advance();
+    } else {
+        var ir: StmtResult = parse_stmt(p);
+        p = ir.par;
+        init_stmt = ir.stmt;
+        has_init = true;
+    }
+
+    // cond — tested before each body. Omitted (`for (;;)`) means `true`.
+    var cond_expr: Expr = e_bool(true);
+    if (p.peek_punct() != ";") {
+        var cr: ExprResult = parse_expr(p);
+        p = cr.par;
+        cond_expr = cr.expr;
+    }
+    if (p.peek_punct() == ";") { p = p.advance(); }
+
+    // step — runs after each body (and on `continue`). Terminated by `)`,
+    // so it carries no trailing `;`; parse the optional assignment/expr by
+    // hand and route it through build_assign_stmt for the assign shapes.
+    var has_step: boolean = false;
+    var step_stmt: Stmt = s_unknown("");
+    if (p.peek_punct() != ")") {
+        var sse: ExprResult = parse_expr(p);
+        p = sse.par;
+        var sop: string = p.peek_punct();
+        var s_is_assign: boolean = sop == "=";
+        var s_is_compound: boolean = sop == "+=" || sop == "-="
+                                  || sop == "*=" || sop == "/=" || sop == "%=";
+        if (s_is_assign || s_is_compound) {
+            var saline: i32 = p.peek_line();
+            var sacol: i32 = p.peek_col();
+            p = p.advance();  // consume the assign-op
+            var sv: ExprResult = parse_expr(p);
+            p = sv.par;
+            step_stmt = build_assign_stmt(sse.expr, sop, sv.expr, saline, sacol);
+        } else {
+            step_stmt = s_expr(sse.expr);
+        }
+        has_step = true;
+    }
+    if (p.peek_punct() == ")") { p = p.advance(); }
+
+    var fb: BlockResult = parse_block(p);
+    p = fb.par;
+
+    var flag_name: string = "__forc_first_" + dl_itoa(forc_id);
+    var noelse: Stmt[] = [];
+
+    // Build the inner while-body: [step-guard], cond-break, then the body.
+    var inner: Stmt[] = [];
+    if (has_step) {
+        var then_b: Stmt[] = [];
+        then_b = then_b.append(s_assign(flag_name, e_bool(false)));
+        var else_b: Stmt[] = [];
+        else_b = else_b.append(step_stmt);
+        inner = inner.append(s_if(e_ident(flag_name), then_b, else_b));
+    }
+    var brk_then: Stmt[] = [];
+    brk_then = brk_then.append(s_break());
+    inner = inner.append(s_if(e_unary("!", cond_expr), brk_then, noelse));
+    var bi: i32 = 0;
+    while (bi < fb.body.len()) {
+        inner = inner.append(fb.body[bi]);
+        bi = bi + 1;
+    }
+
+    // Wrap init + flag + loop in an `if (true)` block so init's binding
+    // (and the flag) are scoped to the loop, not leaked to the enclosing
+    // block.
+    var outer: Stmt[] = [];
+    if (has_init) { outer = outer.append(init_stmt); }
+    if (has_step) { outer = outer.append(s_var(flag_name, "boolean", e_bool(true))); }
+    outer = outer.append(s_while(e_bool(true), inner));
+    return StmtResult { par: p, stmt: s_if(e_bool(true), outer, noelse) };
+}
+
 // parse_for_stmt parses a `for` statement (`p` is positioned at the
 // `for` keyword). Split out of parse_stmt's keyword dispatch so that
 // already-large function stays under the native backend's per-function
@@ -1889,26 +2071,50 @@ function parse_for_stmt(p: Par): StmtResult {
     // TokIdent (not in the lexer's keyword set), so peek
     // it through peek_ident rather than peek_keyword.
     p = p.advance();  // consume `for`
-    // `for (k, v) in m { body }` — map destructuring iteration. The
-    // two names are encoded as "k,v" in the for-var; the emitter
-    // detects the comma + a map iter and emits an iterator loop.
+    // A leading `(` is shared by two unrelated forms: the map
+    // destructuring `for (k, v) in m { body }` and the C-style
+    // `for (init; cond; step) { body }`. Disambiguate with the same
+    // fixed `( IDENT , IDENT ) in` lookahead the native parser uses —
+    // C-style never matches it (its init starts with `var`/`let`, `;`,
+    // or an expression, none of which is `IDENT , IDENT ) in`).
     if (p.peek_punct() == "(") {
-        p = p.advance();
-        var kvk: string = p.peek_ident();
-        if (kvk.len() > 0) { p = p.advance(); }
-        if (p.peek_punct() == ",") { p = p.advance(); }
-        var kvv: string = p.peek_ident();
-        if (kvv.len() > 0) { p = p.advance(); }
-        if (p.peek_punct() == ")") { p = p.advance(); }
-        if (p.peek_ident() == "in") { p = p.advance(); }
-        // Suppress trailing struct-literal parsing — the `{` that
-        // follows the iter opens the loop body, not a struct lit.
-        var kv_saved: boolean = p.no_struct;
-        var kvi: ExprResult = parse_expr(p.with_no_struct(true));
-        p = (kvi.par).with_no_struct(kv_saved);
-        var kvb: BlockResult = parse_block(p);
-        p = kvb.par;
-        return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
+        var c1: Par = p.advance();          // first token after `(`
+        var la1: string = c1.peek_ident();
+        var c2: Par = c1.advance();
+        var la2: string = c2.peek_punct();
+        var is_map: boolean = false;
+        if (la1.len() > 0 && la2 == ",") {
+            var c3: Par = c2.advance();
+            var la3: string = c3.peek_ident();
+            var c4: Par = c3.advance();
+            var la4: string = c4.peek_punct();
+            var c5: Par = c4.advance();
+            var la5: string = c5.peek_ident();
+            if (la3.len() > 0 && la4 == ")" && la5 == "in") { is_map = true; }
+        }
+        if (is_map) {
+            // `for (k, v) in m { body }` — map destructuring iteration.
+            // The two names are encoded as "k,v" in the for-var; the
+            // emitter detects the comma + a map iter and emits an
+            // iterator loop.
+            p = p.advance();
+            var kvk: string = p.peek_ident();
+            if (kvk.len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == ",") { p = p.advance(); }
+            var kvv: string = p.peek_ident();
+            if (kvv.len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == ")") { p = p.advance(); }
+            if (p.peek_ident() == "in") { p = p.advance(); }
+            // Suppress trailing struct-literal parsing — the `{` that
+            // follows the iter opens the loop body, not a struct lit.
+            var kv_saved: boolean = p.no_struct;
+            var kvi: ExprResult = parse_expr(p.with_no_struct(true));
+            p = (kvi.par).with_no_struct(kv_saved);
+            var kvb: BlockResult = parse_block(p);
+            p = kvb.par;
+            return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
+        }
+        return parse_for_c_stmt(p);
     }
     var fvar: string = p.peek_ident();
     if (fvar.len() == 0) {
@@ -2257,61 +2463,7 @@ function parse_stmt(p: Par): StmtResult {
         var av = parse_expr(p);
         p = av.par;
         if (p.peek_punct() == ";") { p = p.advance(); }
-        var rhs: Expr = av.expr;
-        // Dispatch on the lvalue shape: bare ident → StmtAssign;
-        // `arr[idx]` → desugar to the builtin __set_index(arr, idx,
-        // value) (an expression statement) so no new Stmt node is
-        // needed. Compound `arr[idx] += y` reads the element back (see
-        // the ExprIndex arm below); field compounds work the same way.
-        match (e.expr) {
-            ExprIdent(id) => {
-                var rhs2: Expr = rhs;
-                if (is_compound) {
-                    // `x += y` desugars to `x = x + y`. Strip the
-                    // trailing `=` off the op to recover the operator.
-                    var op: string = assign_op[0:assign_op.len() - 1];
-                    rhs2 = e_binary(op, e_ident(id.name), rhs);
-                }
-                return StmtResult { par: p, stmt: s_assign_at(id.name, rhs2, aline, acol, id.line, id.col) };
-            },
-            ExprIndex(ix) => {
-                // `arr[idx] = rhs` → __set_index(arr, idx, rhs). A compound
-                // `arr[idx] += y` reads the element back: rhs becomes
-                // `arr[idx] <op> y`.
-                var irhs: Expr = rhs;
-                if (is_compound) {
-                    var iop: string = assign_op[0:assign_op.len() - 1];
-                    irhs = e_binary(iop, e_index(ix.array, ix.index), rhs);
-                }
-                var sargs: Expr[] = [];
-                sargs = sargs.append(ix.array);
-                sargs = sargs.append(ix.index);
-                sargs = sargs.append(irhs);
-                return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_index"), sargs)) };
-            },
-            ExprFieldAccess(fa) => {
-                // `obj.field = rhs` → __set_field(obj, "field", rhs)
-                // (an expression statement; the emitter shape-dispatches
-                // to the field's slot). Compound forms desugar to a read
-                // of the same field (re-evaluates obj — fine for the
-                // simple lvalues that use this).
-                var frhs: Expr = rhs;
-                if (is_compound) {
-                    var fop: string = assign_op[0:assign_op.len() - 1];
-                    frhs = e_binary(fop, e_field_access(fa.obj, fa.field), rhs);
-                }
-                var fargs: Expr[] = [];
-                fargs = fargs.append(fa.obj);
-                // Carry the field-access dot position on the field-name
-                // string so the checker can report E048 (assign to an
-                // immutable field) at the dot, matching the Go checker's
-                // FieldAccess position. Codegen ignores the position.
-                fargs = fargs.append(e_string_at(fa.field, fa.line, fa.col));
-                fargs = fargs.append(frhs);
-                return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_field"), fargs)) };
-            },
-            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of assign must be ident, index, or field") }; }
-        }
+        return StmtResult { par: p, stmt: build_assign_stmt(e.expr, assign_op, av.expr, aline, acol) };
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
     return StmtResult { par: p, stmt: s_expr(e.expr) };

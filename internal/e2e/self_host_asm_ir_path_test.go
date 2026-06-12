@@ -276,6 +276,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"forin-i32-param", `function total(xs: i32[]): i32 { var s = 0; for v in xs { s = s + v; } return s; } function main(): i32 { var a = [1, 2, 3, 4, 5]; return total(a); }`},
 		{"forin-nested", `function main(): i32 { var xs = [1, 2, 3]; var t = 0; for a in xs { for b in xs { t = t + a * b; } } return t; }`},
 		{"forin-string", `function main(): i32 { var ss: string[] = ["a", "bb", "ccc", "dddd"]; var n = 0; for s in ss { n = n + s.len(); } return n; }`},
+		// C-style `for (init; cond; step)` (#2820) — parser.fern desugars it to
+		// `{ init; while (true) { <step-guard>; if (!cond) break; body } }`, all
+		// of which is IR-eligible, so the AST and IR paths must agree. The guard
+		// runs `step` after the body AND on `continue`, matching native semantics.
+		{"forc-sum", `function main(): i32 { var s = 0; for (var i = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`},
+		{"forc-continue", `function main(): i32 { var s = 0; for (var i = 0; i < 10; i = i + 1) { if (i % 2 == 0) { continue; } s = s + i; } return s; }`},
+		{"forc-break", `function main(): i32 { var s = 0; for (var i = 0; i < 100; i = i + 1) { if (i == 5) { break; } s = s + i; } return s; }`},
+		{"forc-nested", `function main(): i32 { var n = 0; for (var i = 0; i < 3; i = i + 1) { for (var j = 0; j < 4; j = j + 1) { n = n + 1; } } return n; }`},
+		{"forc-compound-step", `function main(): i32 { var s = 0; for (var i = 0; i < 5; i += 1) { s += i; } return s; }`},
+		{"forc-preinit", `function main(): i32 { var s = 0; var i = 0; for (i = 3; i < 6; i = i + 1) { s = s + i; } return s; }`},
 		{"enum-struct-payload", `struct BinExpr { left: i32, right: i32 } enum Expr { Lit(i32), Binary(BinExpr) } function eval(e: Expr): i32 { match (e) { Lit(n) => { return n; }, Binary(b) => { return b.left + b.right; } } return 0; } function main(): i32 { return eval(Lit(7)) + eval(Binary(BinExpr { left: 3, right: 9 })); }`},
 		{"enum-struct-payload-guard", `struct P { x: i32, y: i32 } enum Shape { Rect(P), Dot } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, _ => { return 0; } } return 0; } function main(): i32 { return area(Rect(P { x: 4, y: 5 })); }`},
 		{"enum-struct-payload-nested", `struct Inner { v: i32 } struct Mid { i: Inner } enum E { A(Mid), B } function f(e: E): i32 { match (e) { A(m) => { return m.i.v; }, B => { return 9; } } return 0; } function main(): i32 { return f(A(Mid { i: Inner { v: 42 } })) + f(B); }`},

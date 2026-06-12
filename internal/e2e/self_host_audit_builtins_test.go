@@ -41,6 +41,17 @@ var auditBuiltinCases = []struct {
 	// continue skipping evens, summing odds -> 1+3+5 = 9.
 	{"break", `function main(): i32 { var a: i32[] = [0,1,2,3,4,5,6,7]; var n: i32 = 0; for x in a { if (x == 5) { break; } n = n + 1; } return n; }`, 5},
 	{"continue", `function main(): i32 { var a: i32[] = [0,1,2,3,4,5]; var n: i32 = 0; for x in a { if (x % 2 == 0) { continue; } n = n + x; } return n; }`, 9},
+	// C-style `for (init; cond; step)` — desugared in parser.fern to a
+	// scoped `{ init; while (true) { <step-guard>; if (!cond) break; body } }`
+	// (issue #2820). Sum 1..10 -> 55.
+	{"c-style-for", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
+	// `continue` inside a C-style for must still run the step — otherwise
+	// this spins forever / sums wrong. Sum of odds 1,3,5,7,9 in 0..10 -> 25.
+	{"c-style-for-continue", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 10; i = i + 1) { if (i % 2 == 0) { continue; } s = s + i; } return s; }`, 25},
+	// `break` inside a C-style for exits the loop. Stop when i hits 5 -> sum 0..4 = 10.
+	{"c-style-for-break", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 100; i = i + 1) { if (i == 5) { break; } s = s + i; } return s; }`, 10},
+	// Nested C-style fors — the per-loop flag name must not clash. 3x3 grid -> 9.
+	{"c-style-for-nested", `function main(): i32 { var n: i32 = 0; for (var i: i32 = 0; i < 3; i = i + 1) { for (var j: i32 = 0; j < 3; j = j + 1) { n = n + 1; } } return n; }`, 9},
 }
 
 // Known self-host gaps surfaced by this audit (2026-06-12) — held out of
@@ -49,9 +60,6 @@ var auditBuiltinCases = []struct {
 // backend). Each is a goal-1 self-host widening, tracked by an issue.
 // Re-add the case here once its issue is fixed.
 //
-//   - C-style `for (init; cond; step)` — parser.fern has no such Stmt
-//     node; misparsed as foreach -> StmtUnknown -> segfault. Issue #2820.
-//       function main(): i32 { var s: i32 = 0; for (var i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; } // want 55
 //   - Bare block statement `{ ... }` — no StmtBlock in parser.fern;
 //     StmtUnknown -> inner statements dropped. Issue #2821.
 //       function main(): i32 { var b: i32 = 1; { var inner: i32 = 40; b = b + inner; } return b; } // want 41, gets 0

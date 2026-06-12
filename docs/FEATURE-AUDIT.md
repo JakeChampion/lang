@@ -116,11 +116,11 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `if`/`else` statement | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `if` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `while` loop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| `for(init; cond; step)` loop | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **self-host: unsupported → segfault, [#2820](https://github.com/JakeChampion/lang/issues/2820)** |
+| `for(init; cond; step)` loop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host desugars to `while` + first-iter step-guard ([#2820](https://github.com/JakeChampion/lang/issues/2820)) |
 | `for x in arr` / `for x in "str"` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | array ✅; **`for x in <string>` self-host wrong, [#2822](https://github.com/JakeChampion/lang/issues/2822)** |
 | inclusive / half-open ranges `for i in a..=b` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `0..4` half-open, `0..=5` inclusive |
 | `switch` statement (comma cases, default) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | multi-value case + default |
-| `break` / `continue` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | S ok in while/foreach; broken inside C-for ([#2820](https://github.com/JakeChampion/lang/issues/2820)) |
+| `break` / `continue` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | now ok inside C-style `for` too — `continue` re-runs the step ([#2820](https://github.com/JakeChampion/lang/issues/2820)) |
 | `return` (value + void) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **bare nested block `{}` self-host dropped, [#2821](https://github.com/JakeChampion/lang/issues/2821)** |
 | `struct` decl + literal + field access | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | + functional update `T { ...old, f: v }` |
@@ -300,15 +300,17 @@ nested blocks. ✅ on interp / x86-64 / arm64 / wasm.
 
 **Self-host arm (x86-64 + CI-gated arm64):** new test
 `internal/e2e/self_host_audit_builtins_test.go` — the same built-ins as isolated
-per-feature programs. 17 features pass on the self-hosted compiler. **Three
-genuine self-host gaps surfaced** (native handles all three on every backend),
-each filed as an issue and held out of the executed table:
+per-feature programs. The C-style `for` gap below is now closed (executed in the
+table); the remaining self-host gaps surfaced by the audit (native handles them
+on every backend) are filed as issues:
 
-- 🐛 **C-style `for (init; cond; step)`** — `examples/self_host/parser.fern`
-  has no such `Stmt` node (only the foreach `for VAR in EXPR`); a `for (` is
-  misparsed → `StmtUnknown` → the loop var is dereferenced as a pointer →
-  **segfault**. Also disables `break` / `continue` *inside* a C-for (they work
-  in `while` / foreach). [#2820](https://github.com/JakeChampion/lang/issues/2820).
+- ✅ **C-style `for (init; cond; step)`** — `examples/self_host/parser.fern` now
+  DESUGARS it (no new `Stmt` node) to `{ init; while (true) { <first-iter
+  step-guard>; if (!cond) break; body } }`, the same way `loop` becomes
+  `while (true)`. The first-iteration flag keeps the step *after* the body and
+  runs it on `continue` too, matching the native `ast.For` lowering. `break` /
+  `continue` work inside a C-for as a result.
+  [#2820](https://github.com/JakeChampion/lang/issues/2820).
 - 🐛 **Bare nested block `{ … }`** — no `StmtBlock` in the self-host `Stmt`
   union; the block becomes `StmtUnknown` and its inner statements are dropped
   (returns 0 instead of 41). [#2821](https://github.com/JakeChampion/lang/issues/2821).
