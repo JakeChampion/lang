@@ -7987,6 +7987,34 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
+    // __fern_random_i32() → a single CSPRNG i32: read 4 random bytes into a
+    // stack slot and reload them as an i32. Linux getrandom (syscall 278);
+    // Darwin getentropy (BSD 500). Heap-independent — gated by its own need
+    // (NOT the heap block) so a random_i32-only program still links it. New
+    // for the IR path; no legacy AST caller marks this need.
+    if (s.has_need("random_i32")) {
+        s = s.write(".globl __fern_random_i32\n");
+        s = s.write(".type __fern_random_i32, %function\n");
+        s = s.write("__fern_random_i32:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    sub sp, sp, #16\n");        // 4-byte landing buffer
+        s = s.write("    mov x0, sp\n");
+        s = s.write("    mov x1, #4\n");
+        if (darwin) {
+            s = s.write("    mov x16, #500\n");      // getentropy(buf, 4)
+            s = s.write("    svc #0x80\n");
+        } else {
+            s = s.write("    mov x2, #0\n");
+            s = s.write("    mov x8, #278\n");        // sys_getrandom(buf, 4, 0)
+            s = s.write("    svc #0\n");
+        }
+        s = s.write("    ldr w0, [sp]\n");           // 4 random bytes -> i32
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_random_i32, .-__fern_random_i32\n");
+    }
     // __fern_str_chars: x0 = source string box. Returns
     // x0 = string[] of 1-byte string boxes. Each box reuses
     // the source's data pointer at the appropriate offset

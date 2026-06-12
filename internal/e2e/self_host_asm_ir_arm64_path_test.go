@@ -308,6 +308,13 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"enum-unit", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }`},
 		{"enum-three", `enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }`},
 		{"enum-wildcard", `enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }`},
+		// Byte-source builtins (issue #2747) — deterministic shapes only.
+		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`},
+		{"random-bytes-len-var", `function main(): i32 { var s: string = random_bytes(13); return s.len(); }`},
+		{"as-bytes-len", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b.len(); }`},
+		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b[0] + b[1] + b[2]; }`},
+		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); return b[0] + b[1]; }`},
+		{"as-bytes-heap", `function main(): i32 { var b: i32[] = "ABCDEFGHIJ".as_bytes(); return b.len() + b[9]; }`},
 	}
 
 	for _, tc := range cases {
@@ -316,6 +323,27 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 			irCode := emitAndRun(t, tc.src, true)
 			if astCode != irCode {
 				t.Errorf("arm64 AST-path vs IR-path mismatch for %q: AST=%d IR=%d", tc.name, astCode, irCode)
+			}
+		})
+	}
+
+	// IR-ONLY assertions (issue #2747 / uuid #2682): random_i32 has no legacy
+	// arm64 AST counterpart, so compile only via -ir and assert structural
+	// properties. uuid_v4 exercises the full byte-source path through the IR
+	// backend. (uuidV4Program is shared via self_host_ir_uuid_program_test.go.)
+	irOnly := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
+		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
+		{"uuid-v4", uuidV4Program, 0},
+	}
+	for _, tc := range irOnly {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := emitAndRun(t, tc.src, true); got != tc.want {
+				t.Errorf("arm64 IR path %q: exit = %d, want %d", tc.name, got, tc.want)
 			}
 		})
 	}

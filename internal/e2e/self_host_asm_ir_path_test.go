@@ -375,6 +375,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// Out of the IR subset -> falls back to the AST emitter under -ir; must
 		// still match (proves the fallback path is intact).
 		{"method-falls-back", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
+		// Byte-source builtins (issue #2747) — DETERMINISTIC shapes only, so the
+		// AST and IR paths must agree. random_bytes(n).len() is always n; as_bytes
+		// / bytes byte values on a literal are fixed. (random_i32 + the random byte
+		// VALUES are non-deterministic, so they ride the IR-only block below.)
+		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`},
+		{"random-bytes-len-var", `function main(): i32 { var s: string = random_bytes(13); return s.len(); }`},
+		{"as-bytes-len", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b.len(); }`},
+		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b[0] + b[1] + b[2]; }`},
+		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); return b[0] + b[1]; }`},
+		{"as-bytes-heap", `function main(): i32 { var b: i32[] = "ABCDEFGHIJ".as_bytes(); return b.len() + b[9]; }`},
 	}
 
 	for _, tc := range cases {
@@ -383,6 +393,31 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 			irCode := emitAndRun(t, tc.src, true)
 			if astCode != irCode {
 				t.Errorf("AST-path vs IR-path mismatch for %q: AST=%d IR=%d", tc.name, astCode, irCode)
+			}
+		})
+	}
+
+	// IR-ONLY assertions (issue #2747 / uuid #2682). random_i32 has no legacy
+	// x86-64 AST counterpart, so it can't ride the differential gate — compile
+	// only via -ir and assert structural properties of the IR output. uuid_v4
+	// (random_bytes + sliced-hex string building) likewise exercises the full
+	// byte-source path through the IR backend.
+	irOnly := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
+		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
+		// A random byte is in 0..255.
+		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
+		// uuid_v4: 36 chars, '4' at index 14, '-' at 8, distinct draws.
+		{"uuid-v4", uuidV4Program, 0},
+	}
+	for _, tc := range irOnly {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := emitAndRun(t, tc.src, true); got != tc.want {
+				t.Errorf("IR path %q: exit = %d, want %d", tc.name, got, tc.want)
 			}
 		})
 	}

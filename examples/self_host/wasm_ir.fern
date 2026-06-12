@@ -283,6 +283,9 @@ pub function module_allocates(mod: parser.Module): boolean {
             if (k == "opt_make" || k == "opt_none") { return true; }
             if (k == "map_new" || k == "map_set") { return true; }
             if (k == "tuple_make") { return true; }
+            // random_bytes builds a string block (via $__fern_str_box); str_bytes
+            // builds a u8[] (via $__fern_arr_box). Both need the heap runtime.
+            if (k == "random_bytes" || k == "str_bytes") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -291,6 +294,29 @@ pub function module_allocates(mod: parser.Module): boolean {
     // $__fern_str_box, and strcat_helpers references it even for a str_eq-only
     // program, so $__fern_str_box (in heap_alloc_helpers) must be present.
     return module_uses_strings(mod);
+}
+
+// module_emits_op reports whether any lowered function emits an op of `kind` —
+// the shared scanner the random/byte-source helper gates use (issue #2747).
+pub function module_emits_op(mod: parser.Module, kind: string): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == kind) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_random reports whether the module calls random_bytes or random_i32
+// (so the wasi random_get import is emitted).
+pub function module_uses_random(mod: parser.Module): boolean {
+    return module_emits_op(mod, "random_bytes") || module_emits_op(mod, "random_i32");
 }
 
 // module_uses_divrem reports whether any function uses i32 div/rem (so the
@@ -643,6 +669,15 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // emitted conditionally (module_uses_arr_slice / _arr_slice8).
             if (o.width == 64) { out = out + "    call $__fern_arr_slice8\n"; }
             else { out = out + "    call $__fern_arr_slice\n"; }
+        } else if (o.kind == "random_bytes") {
+            // stack: n -> $__fern_random_bytes(n) -> fresh string block [len][bytes].
+            out = out + "    call $__fern_random_bytes\n";
+        } else if (o.kind == "random_i32") {
+            // -> $__fern_random_i32() -> i32.
+            out = out + "    call $__fern_random_i32\n";
+        } else if (o.kind == "str_bytes") {
+            // stack: s -> $__fern_str_bytes(s) -> fresh u8[] block.
+            out = out + "    call $__fern_str_bytes\n";
         } else if (o.kind == "str_concat") {
             // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
             out = out + "    call $__fern_strcat\n";
