@@ -495,6 +495,32 @@ function main(): i32 {
         return 254;
     }
 
+    // Immutability gate: reject the immutable-data cycle rules (E048 field
+    // assign / E049 reference-capture write-back / E055 discarded pure-
+    // collection result / E056 subscript assign) BEFORE codegen, so the
+    // compiler is not MORE permissive than the native compiler / `-check`
+    // (issue #2825 — the SSA / IR / AST codegen paths previously compiled
+    // forbidden field mutation like `p.x = v` straight to a working binary).
+    // Native always type-checks ahead of codegen; this is the matching gate
+    // for the self-host CLI's compile path. Filtered to the cycle rules so
+    // the partial checker's other rules can't false-positive-reject a valid
+    // program (or this very source under fixpoint), and reported with the
+    // same `line:col: error[CODE]: message` shape as `-check`.
+    var imm: checker.Diag[] = checker.filter_immutability(checker.check_module(merged).diags);
+    if (imm.len() > 0) {
+        var ii: i32 = 0;
+        while (ii < imm.len()) {
+            var idg: checker.Diag = imm[ii];
+            if (idg.line > 0) {
+                eprint(checker.itoa_nn(idg.line) + ":" + checker.itoa_nn(idg.col) + ": error[" + idg.code + "]: " + idg.message + "\n");
+            } else {
+                eprint("error[" + idg.code + "]: " + idg.message + "\n");
+            }
+            ii = ii + 1;
+        }
+        return 1;
+    }
+
     // -O: constant-fold the program before codegen (constfold.fold_module),
     // matching the native compiler's constant folding. Compile-only — applied
     // after -check / -interp / -fmt (which return above and want the original

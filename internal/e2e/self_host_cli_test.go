@@ -845,6 +845,50 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("compile-rejects-immutable-mutation", func(t *testing.T) {
+		// The COMPILE path (not just `-check`) must reject the immutable-data
+		// cycle rules before codegen, so the self-host compiler is not MORE
+		// permissive than native — which always type-checks ahead of codegen
+		// (issue #2825: `p.x = v` previously compiled+ran on the self-host).
+		// A rejection exits non-zero with the coded diagnostic on stderr and
+		// emits NO asm; the sanctioned functional-update form still compiles.
+		for _, c := range []struct {
+			name   string
+			src    string
+			reject string // non-empty ⇒ expect rejection with this on stderr
+		}{
+			{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 9; return p.x; }\n", "error[E048]"},
+			{"field-compound", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "error[E048]"},
+			{"subscript-assign", "function main(): i32 { var a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", "error[E056]"},
+			// Sanctioned replacements compile cleanly (no rejection).
+			{"functional-update-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 9 }; return p.x; }\n", ""},
+			{"with-ok", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(0, 9); return a[0]; }\n", ""},
+		} {
+			sp := filepath.Join(dir, "compile_"+c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			cmd := exec.Command(fernBin, sp)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			_ = cmd.Run()
+			code := cmd.ProcessState.ExitCode()
+			if c.reject == "" {
+				if code != 0 || stdout.Len() == 0 {
+					t.Errorf("%s: valid program rejected (exit %d, %d bytes asm)\nstderr: %s", c.name, code, stdout.Len(), stderr.String())
+				}
+				continue
+			}
+			if code == 0 {
+				t.Errorf("%s: forbidden mutation compiled (exit 0, %d bytes asm) — should be rejected", c.name, stdout.Len())
+			}
+			if !strings.Contains(stderr.String(), c.reject) {
+				t.Errorf("%s: stderr = %q, want %q", c.name, stderr.String(), c.reject)
+			}
+		}
+	})
+
 	t.Run("check-position-field", func(t *testing.T) {
 		// E043 (no such struct field) and E046 (bad tuple index) are
 		// reported at the field-access dot.

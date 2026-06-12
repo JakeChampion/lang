@@ -124,7 +124,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `return` (value + void) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **bare nested block `{}` self-host dropped, [#2821](https://github.com/JakeChampion/lang/issues/2821)** |
 | `struct` decl + literal + field access | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | + functional update `T { ...old, f: v }` |
-| Struct field immutability + functional update | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | fields immutable (E048); **self-host doesn't enforce, [#2825](https://github.com/JakeChampion/lang/issues/2825)** |
+| Struct field immutability + functional update | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | fields immutable (E048); self-host `fern` CLI now gates the compile path too ([#2825](https://github.com/JakeChampion/lang/issues/2825) fixed) |
 | Methods (receiver clause) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `enum` sum types + payloads | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. unit variants; wasm owned-model RC caveat [#2828](https://github.com/JakeChampion/lang/issues/2828) |
 | `match` (exhaustiveness checked) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | payload binding, comma-separated arms |
@@ -265,7 +265,15 @@ enforce this — it accepts `p.x = v` (and `p.x += v`) and mutates. This is the
 self-hosted compiler being *more permissive* than native (compiling forbidden
 programs), not a runtime miscompile; functional update — the sanctioned form —
 works on both. The fixtures use only functional update so they stay valid on
-both compilers.
+both compilers. **Fixed:** the self-host checker (`checker.fern`) already
+detected `E048`/`E056` (the parser desugars `p.x = v` → `__set_field(...)` and
+`a[i] = v` → `__set_index(...)`), and `fern -check` reported them — but the
+`fern` CLI's **compile path** ran codegen (SSA / IR / AST) without the
+immutability gate, so it compiled forbidden mutation straight to a binary.
+`fern.fern` now runs `filter_immutability(check_module(...).diags)` before
+codegen (the same gate `asm_load_run` already had), matching the native
+compiler, which always type-checks ahead of codegen. Guarded by
+`TestSelfHostCLIX86_64/compile-rejects-immutable-mutation`.
 
 **Finding — wasm owned-model RC over-release
 ([#2828](https://github.com/JakeChampion/lang/issues/2828)):** the differential
