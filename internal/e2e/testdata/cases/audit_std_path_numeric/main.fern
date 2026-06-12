@@ -1,0 +1,34 @@
+import "core/int";
+import "std/path";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+import "std/float";
+
+// Audit fixture: std/path + wider-int (i64/u32/u64) + std/float across
+// every native backend.
+
+function main(): i32 {
+    // std/path
+    if (path.path_join(["a", "b", "c"]) != "a/b/c") { print("FAIL join"); return 11; }
+    if (path.path_file_name("/x/y/z.txt") != "z.txt") { print("FAIL filename"); return 12; }
+    if (path.path_extension("z.txt") != "txt") { print("FAIL ext"); return 13; }
+
+    // std/i64
+    var big: i64 = 5000000000;
+    if ((0 - big).abs() != big) { print("FAIL i64-abs"); return 14; }
+    if (big.max(1) != big || big.min(1) != 1) { print("FAIL i64-minmax"); return 15; }
+
+    // std/u32 / std/u64
+    if ((12 as u32).max(7 as u32) != (12 as u32)) { print("FAIL u32-max"); return 16; }
+    if ((3 as u64).clamp(5 as u64, 9 as u64) != (5 as u64)) { print("FAIL u64-clamp"); return 17; }
+
+    // std/float
+    if ((16.0).sqrt() != 4.0) { print("FAIL sqrt"); return 18; }
+    if ((3.7).floor() as i32 != 3 || (3.2).ceil() as i32 != 4) { print("FAIL floorceil"); return 19; }
+    if (((0.0 - 2.5).abs() * 2.0) as i32 != 5) { print("FAIL fabs"); return 20; }
+    if (!(1.0).is_finite()) { print("FAIL finite"); return 21; }
+
+    print("OK");
+    return 0;
+}
