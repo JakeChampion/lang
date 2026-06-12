@@ -425,6 +425,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"map-has-and-not", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.has(1) && !m.has(2)) { return 7; } return 0; }`, 7},
 		{"map-has-and-true", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); if (m.has(1) && m.has(2)) { return 5; } return 0; }`, 5},
 		{"map-has-or-short", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.has(1) || m.has(2)) { return 9; } return 0; }`, 9},
+		// Re-binding the SAME name across two match arms (issue #2644). Each
+		// arm (guarded `Rect(p)` then unguarded `Rect(p)`) must get its own
+		// binding slot so the guard reads the right `p.x` and the fall-through
+		// arm reads its own `p`. Value assertions through the IR path: the bug
+		// was a wrong VALUE, so an AST/IR equality check alone wouldn't catch it.
+		{"match-rebind-struct", `struct P { x: i32, y: i32 } enum Shape { Dot, Rect(P) } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, Rect(p) => { return p.y + 100; }, Dot => { return 1; } } return 0; } function main(): i32 { return area(Rect(P { x: 0, y: 5 })); }`, 105},
+		{"match-rebind-i32", `enum E { A(i32), B } function g(e: E): i32 { match (e) { A(n) when n > 100 => { return n - 100; }, A(n) => { return n * 3; }, B => { return 0; } } return 0; } function main(): i32 { return g(A(7)) + g(A(150)); }`, 71},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
