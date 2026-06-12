@@ -1953,6 +1953,16 @@ function parse_for_stmt(p: Par): StmtResult {
 }
 
 function parse_stmt(p: Par): StmtResult {
+    // A bare block `{ ... }` in statement position is its own scope. The
+    // self-host Stmt union has no StmtBlock node, so desugar it to
+    // `if (true) { ... }` — reusing the scoped if-body (the same trick
+    // `loop` uses for `while (true)`). Map / struct literals only appear in
+    // expression position, so a leading `{` here is unambiguously a block.
+    if (p.peek_punct() == "{") {
+        var bb: BlockResult = parse_block(p);
+        var noelse: Stmt[] = [];
+        return StmtResult { par: bb.par, stmt: s_if(e_bool(true), bb.body, noelse) };
+    }
     var kw: string = p.peek_keyword();
     if (kw == "defer") {
         // `defer ACTION;` — the deferred action is an ordinary statement
