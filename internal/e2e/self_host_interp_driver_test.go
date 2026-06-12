@@ -65,6 +65,18 @@ var interpProgs = []struct {
 	{"cast-f64-to-i32", "function main(): i32 { var f: f64 = 3.9; return f as i32; }", 3},
 	{"cast-i32-to-f64", "function main(): i32 { var n: i32 = 5; var f: f64 = n as f64; return (f + 0.5) as i32; }", 5},
 	{"cast-in-i64-array-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98},
+	// Range-for `for i in LOW..HIGH`: the parser emits a synthetic
+	// __range(LOW, HIGH) for-iter that the IR path lowers (irlower) but the
+	// interpreter doesn't understand — parser.desugar_ranges_module (run in
+	// interp.eval_module) rewrites it to a counting while-loop so the interp
+	// evaluates it. Without that, an undesugared __range iter mis-evaluates
+	// (a 254 non-i32 result). Covers continue/break (the increment is at the
+	// top of the desugared loop) and empty/reversed (zero iterations).
+	{"range-sum", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }", 10},
+	{"range-continue", "function main(): i32 { var s = 0; for i in 0..10 { if (i % 2 == 1) { continue; } s = s + i; } return s; }", 20},
+	{"range-break", "function main(): i32 { var s = 0; for i in 0..100 { if (i == 5) { break; } s = s + i; } return s; }", 10},
+	{"range-empty", "function main(): i32 { var c = 7; for i in 5..5 { c = c + 1; } return c; }", 7},
+	{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference

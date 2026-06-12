@@ -1308,7 +1308,12 @@ function eval_program(prog: parser.Stmt[]): Value {
 // functions. If `main` exists, call it with no args. Otherwise
 // fall back to running the top-level stmts in a fresh env that
 // still has access to the function table.
-pub function eval_module(mod: parser.Module): Value {
+pub function eval_module(raw_mod: parser.Module): Value {
+    // Lower `for i in LOW..HIGH` range-loops (iter = the synthetic `__range`
+    // call) to counting while-loops up front — the interpreter's StmtFor only
+    // iterates arrays, so an undesugared `__range` iter would mis-evaluate.
+    // (The IR path keeps the `__range` shape for irlower.lower_range_for.)
+    var mod: parser.Module = parser.desugar_ranges_module(raw_mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {

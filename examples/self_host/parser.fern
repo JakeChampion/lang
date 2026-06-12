@@ -4772,6 +4772,125 @@ pub function insert_resource_drops(mod: Module): Module {
     return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
+// ---------------------------------------------------------------------------
+// Range-for desugaring for the NON-IR consumers.
+//
+// `for i in LOW..HIGH` parses to a StmtFor whose iter is the synthetic
+// `__range(LOW, HIGH)` call (see parse_stmt). The IR path lowers that directly
+// (irlower.lower_range_for); but the AST emitters, the SSA backend, and the
+// tree-walking interpreter don't know `__range` — left untouched, they emit a
+// `call __fn___range` (a link error) or mis-evaluate the iter. So for those
+// consumers we desugar the `__range` for-iter into a counting while-loop built
+// from existing nodes:
+//
+//     var i = LOW - 1;
+//     var $hi_<var> = HIGH;          // HIGH evaluated once (`0..f()` calls f once)
+//     while (true) {
+//         i = i + 1;                 // increment at the TOP so a user `continue`
+//         if (i >= $hi_<var>) break; // (which jumps to the while header) still
+//         <body>                     // advances the counter — break/continue work
+//     }
+//
+// Empty / reversed ranges (`5..5`, `9..3`) run zero iterations. The helpers
+// return BARE Stmt[] (never a struct wrapping a fresh array) to avoid the
+// native RC free-list reclaim that corrupts a freshly-built array placed in a
+// struct-literal field (cf. #2759), mirroring desugar_switch_block.
+//
+// This runs in module_with_builtins (AST emitters), interp.eval_module, and
+// ssa.build_func — NOT on the IR path (lift_lambdas), which keeps the
+// `__range` shape for lower_range_for.
+function iter_range_args(iter: Expr): Expr[] {
+    match (iter) {
+        ExprCall(c) => {
+            if (c.args.len() != 2) { return []; }
+            match (c.callee) {
+                ExprIdent(id) => { if (id.name == "__range") { return c.args; } },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return [];
+}
+
+pub function desugar_ranges_block(body: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        var r: Stmt[] = desugar_ranges_one(body[i]);
+        var j: i32 = 0;
+        while (j < r.len()) { out = out.append(r[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+function desugar_ranges_one(st: Stmt): Stmt[] {
+    match (st) {
+        StmtFor(fr) => {
+            var dbody: Stmt[] = desugar_ranges_block(fr.body);
+            var rargs: Expr[] = iter_range_args(fr.iter);
+            if (rargs.len() == 2) {
+                var hi_name: string = "$hi_" + fr.var_name;
+                var ivar: Stmt = s_var(fr.var_name, "i32", e_binary("-", rargs[0], e_number("1", "", false)));
+                var hivar: Stmt = s_var(hi_name, "i32", rargs[1]);
+                var incr: Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
+                var brk: Stmt = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
+                var wbody: Stmt[] = [incr, brk];
+                var k: i32 = 0;
+                while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }
+                return [ivar, hivar, s_while(e_bool(true), wbody)];
+            }
+            return [StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody }];
+        },
+        StmtIf(f) => {
+            return [StmtIf { cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
+        },
+        StmtWhile(w) => {
+            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body) }];
+        },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var a: i32 = 0;
+            while (a < m.arms.len()) {
+                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                a = a + 1;
+            }
+            return [StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin }];
+        },
+        StmtSwitch(sw) => {
+            var cases: SwitchCase[] = [];
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                cases = cases.append(SwitchCase { values: sw.cases[ci].values, body: desugar_ranges_block(sw.cases[ci].body) });
+                ci = ci + 1;
+            }
+            return [StmtSwitch { scrutinee: sw.scrutinee, cases: cases, has_default: sw.has_default, default_body: desugar_ranges_block(sw.default_body), line: sw.line, col: sw.col }];
+        },
+        StmtDefer(d) => {
+            var r: Stmt[] = desugar_ranges_one(d.action);
+            if (r.len() == 1) { return [StmtDefer { action: r[0] }]; }
+            return [st];
+        },
+        _ => { return [st]; }
+    }
+    return [st];
+}
+
+pub function desugar_ranges_func(fd: FuncDecl): FuncDecl {
+    return FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_ranges_block(fd.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count };
+}
+
+pub function desugar_ranges_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        funcs = funcs.append(desugar_ranges_func(mod.funcs[i]));
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
 pub function module_with_builtins(mod: Module): Module {
     // Automatic drop for owned WIT resource handles (P5 slice 3): insert a
     // `defer <drop>(h);` for each kept `own R` local and synthesize the
@@ -4781,7 +4900,7 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(hoist_local_funcs_module(desugar_switches_module(mod))))));
+    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(mod)))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
