@@ -48,11 +48,10 @@ func TestArm64BorrowInferMatchesOwned(t *testing.T) {
 // still run under the production (borrow-on) model via TestFernFixtures on
 // all four backends — only the owned-vs-borrow differential is skipped here.
 //
-//   - audit_types_match: the owned path over-releases a heap-carrying enum
-//     value passed as an owned fn parameter and consumed by match. #2828.
-var wasmBorrowInferKnownDivergent = map[string]bool{
-	"audit_types_match": true,
-}
+// (Empty — #2828 fixed: the owned-model enum-param fall-off drop's tag stash
+// was allocated after the function's scratch-local count was taken, leaving
+// it undeclared on wasm. audit_types_match now matches across both models.)
+var wasmBorrowInferKnownDivergent = map[string]bool{}
 
 func TestWASMBorrowInferMatchesOwned(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
