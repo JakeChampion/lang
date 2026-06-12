@@ -421,7 +421,10 @@ pub function module_uses_i64_divrem(mod: parser.Module): boolean {
 // funcref table (fn_support_section), the register backends through the
 // function's code address.
 pub function wasm_eligible(mod: parser.Module): boolean {
-    return asm_ir.eligible_core(mod);
+    // read_int reads stdin, which the wasm runtime here does not support — a
+    // read_int module stays on the AST path on wasm (where it is likewise
+    // unsupported), while x86 / arm64 lower it through the IR path.
+    return asm_ir.eligible_core(mod) && !module_emits_op(mod, "read_int");
 }
 
 // should_use_ir: the use_ir default is on AND the module is wasm-eligible — the

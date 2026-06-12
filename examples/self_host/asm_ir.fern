@@ -363,6 +363,53 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    syscall\n");
         s = s.write("    ret\n");
     }
+    // __fern_read_int: read up to 16 bytes from stdin (fd 0), parse a leading
+    // optional-sign decimal into %rax. Transcribed verbatim from asm.fern. Gated on
+    // the read_int need the op handler marked.
+    if (s.has_need("read_int")) {
+        s = s.write("__fern_read_int:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    subq $32, %rsp\n");
+        s = s.write("    movq $0, %rdi\n");
+        s = s.write("    leaq -16(%rbp), %rsi\n");
+        s = s.write("    movq $16, %rdx\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    leaq -16(%rbp), %rcx\n");
+        s = s.write("    leaq -16(%rbp), %r8\n");
+        s = s.write("    addq %rax, %r8\n");
+        s = s.write("    movq $0, %r9\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    cmpq %rcx, %r8\n");
+        s = s.write("    je .Lri_done\n");
+        s = s.write("    movzbq (%rcx), %rax\n");
+        s = s.write("    cmpq $45, %rax\n");
+        s = s.write("    jne .Lri_loop\n");
+        s = s.write("    movq $1, %r10\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write(".Lri_loop:\n");
+        s = s.write("    cmpq %rcx, %r8\n");
+        s = s.write("    je .Lri_done\n");
+        s = s.write("    movzbq (%rcx), %rax\n");
+        s = s.write("    subq $48, %rax\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jl .Lri_done\n");
+        s = s.write("    cmpq $9, %rax\n");
+        s = s.write("    jg .Lri_done\n");
+        s = s.write("    imulq $10, %r9\n");
+        s = s.write("    addq %rax, %r9\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lri_loop\n");
+        s = s.write(".Lri_done:\n");
+        s = s.write("    cmpq $0, %r10\n");
+        s = s.write("    je .Lri_no_neg\n");
+        s = s.write("    negq %r9\n");
+        s = s.write(".Lri_no_neg:\n");
+        s = s.write("    movq %r9, %rax\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
     // String helpers — register-arg ABI (%rdi = box A, %rsi = box B), transcribed
     // verbatim from asm.fern's emit_runtime so the IR path's str_concat / str_eq
     // call the identical bodies. Gated on the needs the op handlers marked.
@@ -1301,6 +1348,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // Push the syscall return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_print_str\n    pushq %rax\n");
             s = s.need("str_print");
+        } else if (o.kind == "read_int") {
+            // no args -> read an i32 from stdin (the AST path's __fern_read_int),
+            // push the result (a value op).
+            s = s.write("    call __fern_read_int\n    pushq %rax\n");
+            s = s.need("read_int");
         } else if (o.kind == "map_set") {
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
@@ -1520,7 +1572,7 @@ pub function emit_module_ir(mod: parser.Module): string {
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (module_uses_heap(mod) || s.has_need("i32_to_string") || s.has_need("print_int")) { s = emit_ir_runtime(s); }
+    if (module_uses_heap(mod) || s.has_need("i32_to_string") || s.has_need("print_int") || s.has_need("read_int")) { s = emit_ir_runtime(s); }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }

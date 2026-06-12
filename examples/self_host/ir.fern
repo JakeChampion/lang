@@ -276,6 +276,11 @@ pub function op_print_int(): Op { return op0("print_int"); }
 // to `print_str(s + "\n")` (str_concat with a "\n" literal); `write(s)` is a bare
 // print_str. Lowers to each backend's __fern_print_str helper.
 pub function op_print_str(): Op { return op0("print_str"); }
+// `read_int` reads a line from stdin and parses a leading optional-sign decimal,
+// pushing the i32 (a VALUE op — no args, leaves the result on the stack). Lowers
+// to each backend's __fern_read_int helper. No wasm support (no stdin read), so a
+// read_int module is wasm-ineligible (wasm_eligible) and stays on the AST path.
+pub function op_read_int(): Op { return op0("read_int"); }
 // `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
 // hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
 // built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
