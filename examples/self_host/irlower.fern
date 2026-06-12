@@ -1530,7 +1530,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var vctor: LowerState = s;
                         var vi: i32 = 0;
                         while (vi < c.args.len()) {
-                            vctor = lower_expr(c.args[vi], vctor);
+                            // An i64 payload field is an 8-byte i64 value (a bare
+                            // integer literal isn't self-evidently i64), so lower it
+                            // via lower_i64; struct_make 64-bit-stores it (it reads
+                            // the field type). f64 / i32 / string / struct payloads
+                            // ride lower_expr.
+                            if (struct_field_is_i64(s.structs, cid.name, vi)) { vctor = lower_i64(c.args[vi], vctor); }
+                            else { vctor = lower_expr(c.args[vi], vctor); }
                             if (!vctor.ok) { return vctor; }
                             vi = vi + 1;
                         }
@@ -2485,17 +2491,27 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         if (has_bind) {
                             ms = ms.add_local(pv.binding);
                             var bslot: i32 = ms.slot_of(pv.binding);
+                            // Read the payload (field 0) at its width: an i64
+                            // payload uses struct_get_i64 (i64.load), an f64 one
+                            // struct_get width 64 (f64.load), else the i32 read.
+                            var ev_ty: string = decl_field_type(ms.structs, pv.type_name, "__ev");
                             ms = ms.emit(ir.op_load_local(scrut_slot));
-                            ms = ms.emit(ir.op_struct_get(0, 0));   // payload @ field 0 (i32-shaped)
+                            if (ev_ty == "i64") { ms = ms.emit(ir.op_struct_get_i64(0)); }
+                            else if (ev_ty == "f64") { ms = ms.emit(ir.op_struct_get(0, 64)); }
+                            else { ms = ms.emit(ir.op_struct_get(0, 0)); }
                             ms = ms.emit(ir.op_store_local(bslot));
                             // Type the bound payload for downstream dispatch: a
                             // string payload (`Word(string)`) as a string; a
                             // struct payload (`Binary(BinExpr)`) with its struct
                             // type so `p.field` resolves (the compiler's own AST
-                            // shape — enums of structs).
-                            var ev_ty: string = decl_field_type(ms.structs, pv.type_name, "__ev");
+                            // shape — enums of structs); an i64 / f64 payload so
+                            // later uses route through lower_i64 / the float ops.
                             if (ev_ty == "string") {
                                 ms = ms.mark_str(bslot, true);
+                            } else if (ev_ty == "i64") {
+                                ms = ms.mark_i64(bslot, true);
+                            } else if (ev_ty == "f64") {
+                                ms = ms.mark_f64(bslot, true);
                             } else if (decl_is_struct(ms.structs, ev_ty)) {
                                 ms = ms.mark_struct_type(bslot, ev_ty);
                             } else if (is_scalar_array_type(ev_ty)) {
