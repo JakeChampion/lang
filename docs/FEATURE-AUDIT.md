@@ -214,6 +214,8 @@ per-function bugs in the audit log.
 | `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
 | `std/base64` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range |
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` |
+| `std/crypto` | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | SHA-256 vectors ✅ native (`audit_std_crypto`); **self-host miscompiles the digest, [#2861](https://github.com/JakeChampion/lang/issues/2861)** |
+| `std/uuid` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host pending |
 | `std/url` | ✅ | ✅ | 🐛 | ✅ | | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption**, [#2817](https://github.com/JakeChampion/lang/issues/2817) (audit log 2026-06-09) |
 | `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test` |
 | `std/http` | | | | | | ⬜ | |
@@ -243,6 +245,29 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — 🐛 self-host miscompiles std/crypto SHA-256 ([#2861](https://github.com/JakeChampion/lang/issues/2861))
+
+`std/crypto` `sha256_hex` returns the **correct** digest on the native compiler
+(all four backends, validated against the canonical `"abc"` and `""` vectors in
+the new `audit_std_crypto` fixture) but a **wrong, deterministic** digest on the
+self-hosted compiler:
+
+- `sha256_hex("abc")` → `b0a24a6b…` (want `ba7816bf…`)
+- `sha256_hex("")`    → `ca297d15…` (want `e3b0c442…`)
+
+Every u32 primitive was verified correct in isolation on self-host (rotate,
+shift, shift-by-u32-amount, 2- and 5-term wrapping add, 3-way XOR, the `__rotr`
+helper, u8→u32 word assembly, u32[] build/read, large hex literals like
+`0xb5c0fbcf`), so it's an **emergent** miscompile in the 64-round composition,
+not a single op. `hmac_sha256_*` is built on the same core and is likely
+affected. Self-host crypto is held out pending the fix.
+
+Also landed `audit_std_uuid` (v4 length / dash positions / version nibble /
+uniqueness) — ✅ on all four native backends.
+
+(Context: #2828 was fixed upstream by #2854 — the wasm owned-model enum-param
+over-release — so `audit_types_match`'s skip-list entry was removed.)
 
 ### 2026-06-12 — std/path + std/i64 + std/u32 + std/u64 + std/float audited (native 4-backend; no new bugs)
 
