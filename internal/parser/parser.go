@@ -3290,6 +3290,44 @@ func (p *parser) parseCast() (ast.Expr, error) {
 	return expr, nil
 }
 
+// parseCallArgs parses a comma-separated argument list up to (but not
+// consuming) the closing `)`. An argument of the form `name = expr` (a single
+// `=`, not `==`) is a named argument; its name is recorded in the parallel
+// `names` slice ("" for positional). `names` is nil when every argument is
+// positional (the common case), so all-positional calls are unchanged.
+func (p *parser) parseCallArgs() ([]ast.Expr, []string, error) {
+	var args []ast.Expr
+	var names []string
+	anyNamed := false
+	if p.match(lexer.Punct, ")") {
+		return args, nil, nil
+	}
+	for {
+		name := ""
+		// `ident =` (and not `==`) introduces a named argument.
+		if p.peek().Kind == lexer.Ident && p.i+1 < len(p.tokens) &&
+			p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "=" {
+			name = p.peek().Text
+			p.advance() // name
+			p.advance() // =
+			anyNamed = true
+		}
+		a, err := p.parseExpr()
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, a)
+		names = append(names, name)
+		if _, ok := p.accept(lexer.Punct, ","); !ok {
+			break
+		}
+	}
+	if !anyNamed {
+		return args, nil, nil
+	}
+	return args, names, nil
+}
+
 func (p *parser) parseCall() (ast.Expr, error) {
 	expr, err := p.parsePrimary()
 	if err != nil {
@@ -3299,23 +3337,14 @@ func (p *parser) parseCall() (ast.Expr, error) {
 		switch {
 		case p.match(lexer.Punct, "("):
 			open := p.advance()
-			var args []ast.Expr
-			if !p.match(lexer.Punct, ")") {
-				for {
-					a, err := p.parseExpr()
-					if err != nil {
-						return nil, err
-					}
-					args = append(args, a)
-					if _, ok := p.accept(lexer.Punct, ","); !ok {
-						break
-					}
-				}
+			args, names, err := p.parseCallArgs()
+			if err != nil {
+				return nil, err
 			}
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return nil, err
 			}
-			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args}
+			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names}
 			if db, err := p.maybeDesugarBuild(expr.(*ast.Call)); err != nil {
 				return nil, err
 			} else if db != nil {
@@ -3354,23 +3383,14 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				if _, err := p.expect(lexer.Punct, "("); err != nil {
 					return nil, err
 				}
-				var args []ast.Expr
-				if !p.match(lexer.Punct, ")") {
-					for {
-						a, err := p.parseExpr()
-						if err != nil {
-							return nil, err
-						}
-						args = append(args, a)
-						if _, ok := p.accept(lexer.Punct, ","); !ok {
-							break
-						}
-					}
+				args, names, err := p.parseCallArgs()
+				if err != nil {
+					return nil, err
 				}
 				if _, err := p.expect(lexer.Punct, ")"); err != nil {
 					return nil, err
 				}
-				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, TypeArgs: typeArgs}
+				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names, TypeArgs: typeArgs}
 				continue
 			}
 			open := p.advance()

@@ -1883,3 +1883,31 @@ func TestDefaultParamRequiredAfterOptional(t *testing.T) {
 		t.Fatal("expected an error: required param after a defaulted one")
 	}
 }
+
+// TestNamedArgs covers parsing named call arguments (`f(a, b = 2)`): ArgNames
+// is parallel to Args, "" for positional, and nil when all positional.
+func TestNamedArgs(t *testing.T) {
+	prog, err := Parse(`function f(a: i32, b: i32, c: i32): i32 { return a; } function main(): i32 { return f(1, c = 3, b = 2); }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	body := prog.Funcs[1].Body
+	ret := body.Stmts[0].(*ast.Return)
+	call := ret.Value.(*ast.Call)
+	if len(call.Args) != 3 {
+		t.Fatalf("want 3 args, got %d", len(call.Args))
+	}
+	if len(call.ArgNames) != 3 || call.ArgNames[0] != "" || call.ArgNames[1] != "c" || call.ArgNames[2] != "b" {
+		t.Errorf("ArgNames = %#v, want [\"\", \"c\", \"b\"]", call.ArgNames)
+	}
+
+	// All-positional call leaves ArgNames nil.
+	prog2, err := Parse(`function f(a: i32): i32 { return a; } function main(): i32 { return f(1); }`)
+	if err != nil {
+		t.Fatalf("parse2: %v", err)
+	}
+	call2 := prog2.Funcs[1].Body.Stmts[0].(*ast.Return).Value.(*ast.Call)
+	if call2.ArgNames != nil {
+		t.Errorf("all-positional call should have nil ArgNames, got %#v", call2.ArgNames)
+	}
+}

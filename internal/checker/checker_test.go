@@ -2925,3 +2925,31 @@ function main(): i32 {
 		t.Fatal("calling extern @import with a mistyped argument should error")
 	}
 }
+
+// TestNamedArgs covers named-argument resolution: valid reorderings check
+// clean, and the misuse cases produce the right diagnostics.
+func TestNamedArgs(t *testing.T) {
+	good := []string{
+		`function f(a: i32, b: i32, c: i32): i32 { return a; } function main(): i32 { return f(1, c = 3, b = 2); }`,
+		`function f(a: i32, b: i32 = 2): i32 { return a + b; } function main(): i32 { return f(a = 1); }`,
+		`function f(a: i32, b: i32 = 2, c: i32 = 3): i32 { return a; } function main(): i32 { return f(1, c = 9); }`,
+	}
+	for _, src := range good {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+
+	bad := []struct{ src, want string }{
+		{`function f(a: i32, b: i32): i32 { return a; } function main(): i32 { return f(1, z = 2); }`, "no parameter named"},
+		{`function f(a: i32, b: i32): i32 { return a; } function main(): i32 { return f(1, a = 2); }`, "duplicate argument"},
+		{`function f(a: i32, b: i32): i32 { return a; } function main(): i32 { return f(a = 1, 2); }`, "positional argument after named"},
+		{`function f(a: i32, b: i32): i32 { return a; } function main(): i32 { return f(a = 1); }`, "missing argument for parameter"},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: want error containing %q, got %v", c.src, c.want, err)
+		}
+	}
+}
