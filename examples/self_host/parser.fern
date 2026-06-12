@@ -3243,7 +3243,21 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
 function func_ret_of(funcs: FuncDecl[], name: string): string {
     var i: i32 = 0;
     while (i < funcs.len()) {
-        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) { return funcs[i].ret_type; }
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) { return funcs[i].ret_type; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// assoc_ret_of returns the return type of the associated function (or method)
+// `<tyname>.<method>` — a receiver-LESS impl method keyed by its receiver type,
+// like a derived `default()`. Lets mono_infer type an associated call
+// `Inner.default()` so a generic constructor body `Box { v: Inner.default() }`
+// infers its instantiation key (Box[Inner]) from the field value.
+function assoc_ret_of(funcs: FuncDecl[], tyname: string, method: string): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == method && funcs[i].receiver_type == tyname) { return funcs[i].ret_type; }
         i = i + 1;
     }
     return "";
@@ -3284,6 +3298,17 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => { return func_ret_of(funcs, cid.name); },
+                ExprFieldAccess(cfa) => {
+                    // Associated call `Type.method()` (e.g. `Inner.default()`):
+                    // the object is a bare type name, so infer the method's
+                    // return type — lets a generic constructor body infer its
+                    // instantiation key from a defaulted field value.
+                    match (cfa.obj) {
+                        ExprIdent(oid) => { return assoc_ret_of(funcs, oid.name, cfa.field); },
+                        _ => { return ""; }
+                    }
+                    return "";
+                },
                 _ => { return ""; }
             }
             return "";
@@ -3526,27 +3551,68 @@ function subst_ty(name: string, tparams: string[], cts: string[]): string {
     return name;
 }
 
-// subst_stmts rewrites `var x: T` annotations to the concrete type in a
-// cloned body (the only type annotations a body carries). Exprs hold no
-// open type annotations, so they're passed through.
+// subst_expr substitutes a type-parameter NAME used as a value-level
+// identifier with its concrete type. The only place a type parameter `T`
+// appears as an expression is the OBJECT of an associated call — `T.default()`
+// in a monomorphised generic body — so substituting any matching ExprIdent
+// rewrites it to `Concrete.default()`, which then resolves like any associated
+// call (issue #2779 item 3). Recurses through the expression shapes a generic
+// body can carry; other leaves pass through. Struct-literal TYPE names are left
+// alone (the struct-literal monomorphiser, ms_expr, mangles `Box` → `Box__C`).
+function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
+    match (e) {
+        ExprIdent(id) => {
+            var k: i32 = tp_index(id.name, tparams);
+            if (k >= 0) { return ExprIdent { name: cts[k], line: id.line, col: id.col }; }
+            return e;
+        },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: subst_expr(fa.obj, tparams, cts), field: fa.field, line: fa.line, col: fa.col }; },
+        ExprCall(c) => {
+            var na: Expr[] = [];
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { na = na.append(subst_expr(c.args[ci], tparams, cts)); ci = ci + 1; }
+            return ExprCall { callee: subst_expr(c.callee, tparams, cts), args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        ExprStructLit(sl) => {
+            var nv: Expr[] = [];
+            var si: i32 = 0;
+            while (si < sl.field_values.len()) { nv = nv.append(subst_expr(sl.field_values[si], tparams, cts)); si = si + 1; }
+            var nb: Expr = sl.base;
+            if (sl.has_base) { nb = subst_expr(sl.base, tparams, cts); }
+            return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col };
+        },
+        ExprBinary(b) => { return ExprBinary { op: b.op, left: subst_expr(b.left, tparams, cts), right: subst_expr(b.right, tparams, cts), line: b.line, col: b.col }; },
+        ExprUnary(u) => { return ExprUnary { op: u.op, operand: subst_expr(u.operand, tparams, cts), line: u.line, col: u.col }; },
+        ExprIndex(ix) => { return ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts) }; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// subst_stmts rewrites `var x: T` type annotations to the concrete type in a
+// cloned generic body, AND substitutes type-parameter names appearing as
+// expression objects (`T.default()` → `Concrete.default()`, via subst_expr).
 function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: v.init, line: v.line, col: v.col }); },
-            StmtIf(f) => { out = out.append(StmtIf { cond: f.cond, then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
-            StmtWhile(w) => { out = out.append(StmtWhile { cond: w.cond, body: subst_stmts(w.body, tparams, cts) }); },
-            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: fr.iter, body: subst_stmts(fr.body, tparams, cts) }); },
+            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col }); },
+            StmtReturn(r) => { out = out.append(StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
+            StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts) }); },
+            StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
+            StmtIf(f) => { out = out.append(StmtIf { cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts) }); },
+            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts) }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
                 while (j < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: m.arms[j].guard, has_guard: m.arms[j].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: subst_expr(m.arms[j].guard, tparams, cts), has_guard: m.arms[j].has_guard });
                     j = j + 1;
                 }
-                out = out.append(StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin });
+                out = out.append(StmtMatch { scrutinee: subst_expr(m.scrutinee, tparams, cts), arms: arms, line: m.line, col: m.col, origin: m.origin });
             },
             _ => { out = out.append(st); }
         }
@@ -3885,6 +3951,39 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
     return RExpr { rexpr: e, rins: ins };
 }
 
+// retype_assoc_ctor rewrites a receiver-less associated call on a GENERIC
+// struct base — `Box.default()` — to its monomorphised name
+// `Box__Inner.default()` when the binding's annotation pins the instantiation
+// (`var b: Box[Inner] = Box.default()`). A receiver-less constructor has no
+// arguments to infer its type params from, so the instantiation is taken from
+// the annotation (`concrete` = the mangled struct name `Box__Inner`); the
+// matching method clone is `<concrete>.<method>`. The generic-struct guard
+// keeps a plain `mod.func()` untouched. Other inits pass through.
+function retype_assoc_ctor(init: Expr, concrete: string, gstructs: StructDecl[]): Expr {
+    match (init) {
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        ExprIdent(oid) => {
+                            if (gstruct_index(gstructs, oid.name) >= 0) {
+                                var pfx: string = oid.name + "__";
+                                if (concrete.len() > pfx.len() && concrete[0 : pfx.len()] == pfx) {
+                                    return ExprCall { callee: ExprFieldAccess { obj: ExprIdent { name: concrete, line: oid.line, col: oid.col }, field: fa.field, line: fa.line, col: fa.col }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc };
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return init;
+}
+
 // ms_stmt rewrites one statement: generic-struct annotations on a `var`
 // go through mg_ty, struct literals through ms_expr, threading env+ins.
 function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmtOne {
@@ -3892,7 +3991,11 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         StmtVar(v) => {
             var iv: RExpr = ms_expr(v.init, env, gstructs, funcs, ins);
             var ta: TyIns = mg_ty(v.type_name, gstructs, iv.rins);
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+            // A receiver-less associated constructor `Box.default()` bound to a
+            // generic-struct annotation takes its instantiation from that
+            // annotation: rewrite it to `Box__Inner.default()`.
+            var ninit: Expr = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs);
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
@@ -3994,7 +4097,15 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
 // struct's name at synth time) stay intact.
 function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[]): FuncDecl {
     var cts: string[] = split_dunder(key);
+    // Substitute with the generic STRUCT's type params (not the method's, which
+    // a synthesized method like default() leaves empty). The struct's params are
+    // the ones a method body refers to — e.g. a derived default()'s
+    // `T.default()`; subst_stmts rewrites both `var x: T` annotations and the
+    // `T.default()` object. A parametric-impl method's own type params match the
+    // struct's, so this is equivalent for those.
+    var gsi: i32 = gstruct_index(gstructs, base);
     var tparams: string[] = m.type_params;
+    if (gsi >= 0) { tparams = gstructs[gsi].type_params; }
     var mang: string = base + "__" + key;
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
@@ -4052,8 +4163,9 @@ pub function monomorphize_structs(mod: Module): Module {
     while (fi2 < mod.funcs.len()) {
         var fn: FuncDecl = mod.funcs[fi2];
         var rbase: string = strip_struct_base(fn.receiver_type);
-        if (fn.receiver_name.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {
-            // generic-struct method — dropped here, cloned in phase 2.
+        if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {
+            // generic-struct method OR receiver-less associated fn (a derived
+            // `default()`, receiver_name "") — dropped here, cloned in phase 2.
         } else {
             var fr: FRes = ms_func(fn, gstructs, mod.funcs, ins);
             ins = fr.fins;
@@ -4093,7 +4205,7 @@ pub function monomorphize_structs(mod: Module): Module {
             var mi: i32 = 0;
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
-                if (mm.receiver_name.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
+                if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
                     var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins);
                     ins = br2.rins3;
@@ -5781,6 +5893,12 @@ function synth_struct_default(sd: StructDecl): FuncDecl {
     var body: Stmt[] = [s_return(lit)];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
+    // Like the other derived struct methods, default() carries NO function-level
+    // type params (an empty list keeps monomorphize_module from treating it as a
+    // generic free function). When the struct is generic, the struct-method
+    // monomorphiser clones it per instantiation and substitutes `T` using the
+    // STRUCT's type params (clone_struct_method) — so a generic body's
+    // `T.default()` becomes `Concrete.default()`.
     return FuncDecl { name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
