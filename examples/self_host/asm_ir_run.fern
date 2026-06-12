@@ -28,8 +28,9 @@ function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var emitted: string = "";
-    if (use_ir && asm_ir.all_eligible(mod)) {
-        emitted = asm_ir.emit_module_ir(mod);
+    var lm: parser.Module = asm_ir.lift_lambdas(mod);
+    if (use_ir && asm_ir.all_eligible(lm)) {
+        emitted = asm_ir.emit_module_ir(lm);
     } else {
         emitted = asm.emit_module(parser.module_with_builtins(mod));
     }
