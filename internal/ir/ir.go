@@ -1958,10 +1958,53 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 // pointer-shaped payloads) is tracked as a follow-up.
 func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int) map[string]bool {
 	out := map[string]bool{}
+	// A function taken as a value (a MakeClosure / indirect-call
+	// target) must NOT use the two-word (tag, payload) pair-form
+	// return ABI: indirect calls go through the single-word heap-box
+	// ABI (addClosureSigType / the native indirect-call seam thread
+	// one slot per result), so a pair-form return would mismatch the
+	// call-site signature and corrupt the stack (segfault on natives,
+	// validation error on wasm). Heap-form keeps the function's return
+	// shape and the indirect-call ABI in agreement. See #2753.
+	// Address-taken functions: a function whose name appears as a
+	// value rather than only as a direct call. closureconv leaves a
+	// top-level function passed as a value as a bare Ident (it does
+	// NOT wrap it in a MakeClosure), so detect both forms: a
+	// MakeClosure target, or an Ident naming a function that is not a
+	// Call's callee. Over-detecting here only forgoes the pair-form
+	// optimization (heap-form is always correct), so it's safe.
+	calleeIdents := map[*ast.Ident]bool{}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if c, ok := n.(*ast.Call); ok {
+			if id, ok := c.Callee.(*ast.Ident); ok {
+				calleeIdents[id] = true
+			}
+		}
+		return true
+	})
+	closureTargets := map[string]bool{}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.MakeClosure:
+			if x.FuncName != "" {
+				closureTargets[x.FuncName] = true
+			}
+		case *ast.Ident:
+			if !calleeIdents[x] {
+				if _, isFunc := info.FuncSigs[x.Name]; isFunc {
+					closureTargets[x.Name] = true
+				}
+			}
+		}
+		return true
+	})
 	for {
 		grew := false
 		for _, fn := range prog.Funcs {
 			if out[fn.Name] {
+				continue
+			}
+			if closureTargets[fn.Name] {
 				continue
 			}
 			if !isPairFormEligible(fn, info, ptrW, out) {
