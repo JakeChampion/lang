@@ -1,0 +1,33 @@
+// examples/self_host/asm_pathprobe_run.fern — observability driver for the
+// IR-vs-AST path decision. Reads Fern source from stdin, parses + lifts
+// lambdas, and prints "ir" if the module is fully IR-eligible
+// (asm_ir.all_eligible) — i.e. emit_module would route it through
+// asm_ir.emit_module_ir — or "ast" if any function bails the module to the
+// AST emitter. This is a pure decision probe: it emits NO assembly, so the
+// Go-side gate (self_host_trait_irpath_test.go) can assert WHICH path a
+// program takes without assembling + running it. Kept as a SEPARATE driver
+// so asm.fern / asm_run stay untouched (the byte-identical self-bootstrap is
+// unaffected).
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./asm_ir";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    // Mirror the production path exactly: emit_module (asm.fern) receives a
+    // module_with_builtins-processed module (desugar + monomorphisation +
+    // builtin-enum injection), then checks all_eligible on lift_lambdas of
+    // THAT. The probe must run the same pipeline or it sees un-monomorphised
+    // generics and under-reports IR eligibility.
+    var bm: parser.Module = parser.module_with_builtins(mod);
+    var lm: parser.Module = asm_ir.lift_lambdas(bm);
+    if (asm_ir.all_eligible(lm)) {
+        print("ir\n");
+    } else {
+        print("ast\n");
+    }
+    return 0;
+}
