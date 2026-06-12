@@ -301,8 +301,20 @@ pub function op_struct_set_i64(field_index: i32): Op {
 pub function op_tuple_make(n: i32): Op {
     return Op { kind: "tuple_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
+// op_tuple_make_k carries the comma-joined element KINDS (e.g. "i32,i64,f64") in
+// `str` so the wasm backend uses a uniform 8-byte slot per element and stores
+// each with the matching instruction (i64.store for "i64", f64.store for "f64",
+// else i32.store). The register backends already use 8-byte slots and ignore it.
+pub function op_tuple_make_k(n: i32, kinds: string): Op {
+    return Op { kind: "tuple_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
+}
 pub function op_tuple_get(idx: i32): Op {
     return Op { kind: "tuple_get", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+// 8-byte tuple element reads: width 64 selects an 8-byte load; `unsigned` picks
+// i64.load (set) vs f64.load (clear). Offsets are a uniform 8-byte stride.
+pub function op_tuple_get_w(idx: i32, width: i32, is_i64: boolean): Op {
+    return Op { kind: "tuple_get", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 // variant_is pops an enum-variant box and pushes 1 if it is the variant named

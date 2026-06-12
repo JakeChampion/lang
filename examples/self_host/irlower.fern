@@ -319,12 +319,40 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
     return "";
 }
 
+// literal_is_i64 reports whether a non-negative integer literal text is too big
+// for i32 (so it is an i64 value): >10 digits always, exactly 10 digits if it
+// exceeds i32-max "2147483647". (Negative literals are unary minus over a
+// positive literal, so the sign is handled separately.)
+pub function literal_is_i64(text: string): boolean {
+    var n: i32 = text.len();
+    if (n > 10) { return true; }
+    if (n < 10) { return false; }
+    var m: string = "2147483647";
+    var i: i32 = 0;
+    while (i < 10) {
+        if (text[i] > m[i]) { return true; }
+        if (text[i] < m[i]) { return false; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // elem_type_tag computes the type tag of an expression for tuple-element typing:
-// "string" for a string, a struct type name for a struct, else "i32" (scalar).
+// "string" for a string, a struct type name for a struct, "i64"/"f64" for an
+// 8-byte scalar, else "i32" (scalar). The 8-byte tags drive the wasm tuple's
+// per-element i64.store/load vs f64.store/load (and route i64 through lower_i64).
 pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     if (expr_is_str(e, s)) { return "string"; }
     var st: string = expr_struct_type(e, s);
     if (st != "") { return st; }
+    if (expr_is_f64(e, s)) { return "f64"; }
+    if (infer_expr_width(e, s) == 64) { return "i64"; }
+    // A bare integer literal too big for i32 is an i64 (an i64-typed local /
+    // expr is already caught by infer_expr_width above).
+    match (e) {
+        parser.ExprNumber(num) => { if (!num.is_float && literal_is_i64(num.text)) { return "i64"; } },
+        _ => {}
+    }
     return "i32";
 }
 
@@ -994,8 +1022,11 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             return 32;
         },
         parser.ExprFieldAccess(fa) => {
-            // An i64 struct field read `p.x` is an i64 value.
-            if (util.is_all_digits(fa.field)) { return 32; }
+            // An i64 tuple element `t.N` or i64 struct field `p.x` is an i64 value.
+            if (util.is_all_digits(fa.field)) {
+                if (expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64") { return 64; }
+                return 32;
+            }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty != "" && struct_field_is_i64(s.structs, oty, s.field_index_in(oty, fa.field))) { return 64; }
             return 32;
@@ -1066,9 +1097,17 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             return s.fail();
         },
         parser.ExprFieldAccess(fa) => {
-            // An i64 struct field read `p.x` is an 8-byte i64 value: lower the
-            // struct then struct_get_i64 (i64.load on wasm). A non-i64 field bails
-            // (its i32/f64 read lives in lower_expr).
+            // An i64 tuple element `t.N` is an 8-byte i64 value: lower the tuple
+            // then tuple_get_w(..i64). An i64 struct field `p.x` likewise reads
+            // via struct_get_i64. Non-i64 reads bail (their i32/f64 path lives in
+            // lower_expr).
+            if (util.is_all_digits(fa.field)) {
+                var tn: i32 = util.digits_to_i32(fa.field);
+                if (expr_tuple_elem_tag(fa.obj, tn, s) != "i64") { return s.fail(); }
+                var ts: LowerState = lower_expr(fa.obj, s);
+                if (!ts.ok) { return ts; }
+                return ts.emit(ir.op_tuple_get_w(tn, 64, true));
+            }
             var fty: string = expr_struct_type(fa.obj, s);
             if (fty == "") { return s.fail(); }
             var fidx: i32 = s.field_index_in(fty, fa.field);
@@ -1182,9 +1221,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // element i at slot i). The receiver must be a tuple; a non-tuple
             // numeric access can't type-check, so this is unambiguous.
             if (util.is_all_digits(fa.field)) {
+                var tgi: i32 = util.digits_to_i32(fa.field);
                 var so0: LowerState = lower_expr(fa.obj, s);
                 if (!so0.ok) { return so0; }
-                return so0.emit(ir.op_tuple_get(util.digits_to_i32(fa.field)));
+                // An 8-byte element (i64 / f64) reads with the matching load; an
+                // i64 element in an i32 context is a checker error (the valid i64
+                // read routes through lower_i64). i32 / string / struct elements
+                // keep the 4-byte read.
+                var tgt: string = expr_tuple_elem_tag(fa.obj, tgi, s);
+                if (tgt == "i64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, true)); }
+                if (tgt == "f64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, false)); }
+                return so0.emit(ir.op_tuple_get(tgi));
             }
             // Bare struct field read `p.x` → struct_get at x's decl index. (As a
             // call receiver — `p.len()` — field access is handled in ExprCall; a
@@ -1380,14 +1427,23 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "") { return s.fail(); }
                 tei = tei + 1;
             }
+            // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
+            // so the wasm backend stores each at the right width, and lower an
+            // i64 element via lower_i64 (8-byte i64 value); f64 / i32 / string /
+            // struct elements ride lower_expr.
+            var tkinds: string = "";
             var ts: LowerState = s;
             var tj: i32 = 0;
             while (tj < tn) {
-                ts = lower_expr(tup.elements[tj], ts);
+                var tek: string = elem_type_tag(tup.elements[tj], ts);
+                if (tj > 0) { tkinds = tkinds + ","; }
+                tkinds = tkinds + tek;
+                if (tek == "i64") { ts = lower_i64(tup.elements[tj], ts); }
+                else { ts = lower_expr(tup.elements[tj], ts); }
                 if (!ts.ok) { return ts; }
                 tj = tj + 1;
             }
-            return ts.emit(ir.op_tuple_make(tn));
+            return ts.emit(ir.op_tuple_make_k(tn, tkinds));
         },
         parser.ExprIndex(ix) => {
             // arr[idx] → lower the array (base) then the index, then `arr_get`
@@ -1732,9 +1788,6 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 while (dk < dn) {
                     dt = dt.add_local(dnames[dk]);
                     var dkslot: i32 = dt.slot_of(dnames[dk]);
-                    dt = dt.emit(ir.op_load_local(tmp_slot));
-                    dt = dt.emit(ir.op_tuple_get(dk));
-                    dt = dt.emit(ir.op_store_local(dkslot));
                     // Type the binding from the source tuple's element tag: an
                     // inline `(e0, e1, …)` literal from the element exprs, a tuple
                     // local/param from its tracked tags. (Tags read from `s`, the
@@ -1760,7 +1813,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         },
                         _ => {}
                     }
+                    // Emit the element read at its width (8-byte i64/f64 use the
+                    // matching load), then store + type the binding. An i64
+                    // element marks the slot i64 (so later uses route through
+                    // lower_i64); an f64 element marks it f64.
+                    dt = dt.emit(ir.op_load_local(tmp_slot));
+                    if (dtag == "i64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
+                    else if (dtag == "f64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
+                    else { dt = dt.emit(ir.op_tuple_get(dk)); }
+                    dt = dt.emit(ir.op_store_local(dkslot));
                     if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
+                    else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
+                    else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
                     else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
                     dk = dk + 1;
                 }
