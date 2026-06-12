@@ -485,6 +485,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
 // without a cycle: asm_arm64_ir never imports asm_arm64. Caller must ensure
 // asm_ir.all_eligible(mod) and have seeded `s` (struct_decls / funcs).
 pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
+    // Infer return types for unannotated functions so the IR path's
+    // ret-type-keyed call tagging matches the AST path (parity with the
+    // x86 IR path in asm_ir.emit_module_ir).
+    mod = parser.infer_ret_types_module(mod);
+    s = asmcore.EmitState { ...s, funcs: mod.funcs };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
     var arf: string[] = asm_ir.array_ret_fns(mod);

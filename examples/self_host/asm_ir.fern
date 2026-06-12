@@ -1408,6 +1408,10 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // function via the IR, then a `_start` that calls __fn_main and exits with
 // its result. Caller must ensure all_eligible(mod).
 pub function emit_module_ir(mod: parser.Module): string {
+    // Infer return types for unannotated functions so the IR path's
+    // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
+    // matches the AST path, which gets the same via module_with_builtins.
+    mod = parser.infer_ret_types_module(mod);
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
     s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
