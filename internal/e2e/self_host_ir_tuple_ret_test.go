@@ -33,10 +33,11 @@ func TestSelfHostIRTupleReturnEligible(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	// Probe: all_eligible must be true for tuple-returning programs of three
-	// shapes — destructure-from-call, string+i32 element tuple, and `.N` access
-	// on a returned tuple local. Exit code = a*100 + b*10 + c (each 0/1), so a
-	// fully-covered run exits 111.
+	// Probe: all_eligible must be true for tuple-returning programs of five
+	// shapes — destructure-from-call, string+i32 element tuple, `.N` access on a
+	// returned tuple local, leaf-struct+i32 element tuple, and an (i64, f64)
+	// element tuple (8-byte elements). Exit code packs one bit per case
+	// (a*16 + b*8 + c*4 + d*2 + e), so a fully-covered run exits 31.
 	probe := `import "./lexer";
 import "./parser";
 import "./asm_ir";
@@ -52,7 +53,8 @@ function main(): i32 {
     var b: i32 = elig("function pair(): (string, i32) { return (\"hi\", 5); } function main(): i32 { var (s, n) = pair(); return s.len() + n; }");
     var c: i32 = elig("function trip(): (i32, i32, i32) { return (1, 2, 3); } function main(): i32 { var t = trip(); return t.0 + t.1 + t.2; }");
     var d: i32 = elig("struct P { x: i32, y: i32 } function mk(): (P, i32) { return (P { x: 3, y: 4 }, 9); } function main(): i32 { var (p, n) = mk(); return p.x + p.y + n; }");
-    return a * 8 + b * 4 + c * 2 + d;
+    var e: i32 = elig("function mk(): (i64, f64) { return (20000000000, 2.5); } function main(): i32 { var (a, x) = mk(); if (a > 15000000000) { return 1; } if (x > 2.0) { return 2; } return 0; }");
+    return a * 16 + b * 8 + c * 4 + d * 2 + e;
 }
 `
 	probePath := filepath.Join(dir, "zz_elig_probe.fern")
@@ -92,7 +94,7 @@ function main(): i32 {
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("probe did not exit normally")
 	}
-	if got := cmd.ProcessState.ExitCode(); got != 15 {
-		t.Errorf("tuple-returning IR eligibility = %d, want 15 (each bit is one case's all_eligible)", got)
+	if got := cmd.ProcessState.ExitCode(); got != 31 {
+		t.Errorf("tuple-returning IR eligibility = %d, want 31 (each bit is one case's all_eligible)", got)
 	}
 }

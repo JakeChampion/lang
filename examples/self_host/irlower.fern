@@ -2788,12 +2788,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         }
     }
     // A tuple-returning function IS lowered when every element is scalar (i32 /
-    // bool) or string: the body returns a tuple box (an 8-byte pointer, like any
-    // value), and a call site recovers the element tags via tuple_ret_fns (see
-    // tuple_ret_type) to type `.N` / destructure. Leaf-safe struct elements are
-    // allowed too (leak-only pointers, recovered by type tag). Tuples with array
-    // / i64 / Option elements still bail — those would need RC / width / payload
-    // threading through the return — keeping those non-scalar tuples local-only.
+    // bool / i64 / f64) or string: the body returns a tuple box (an 8-byte
+    // pointer, like any value) whose elements ride uniform 8-byte slots, and a
+    // call site recovers the element tags via tuple_ret_fns (see tuple_ret_type)
+    // to type `.N` / destructure — including the 8-byte i64.load/f64.load width
+    // for an i64/f64 element (op_tuple_get_w in the `.N` and destructure paths).
+    // Leaf-safe struct elements are allowed too (leak-only pointers, recovered by
+    // type tag). Tuples with array / Option elements still bail — those would
+    // need RC / payload threading through the return — keeping them local-only.
     if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40) {   // 40 = '('
         if (!tuple_elems_lowerable(fn.ret_type, structs)) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
@@ -2986,7 +2988,7 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
     while (i <= tags.len()) {
         if (i == tags.len() || tags[i] == 44) {   // 44 = ','
             var t: string = tags[start : i];
-            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "string");
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "string" || t == "i64" || t == "f64");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
             if (!ok_elem) { return false; }
             start = i + 1;
