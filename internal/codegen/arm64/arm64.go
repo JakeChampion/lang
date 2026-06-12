@@ -52,9 +52,12 @@ const (
 	sysListen    = 201
 	sysAccept    = 202
 	// clock_gettime(2): asm-generic table syscall 113.
-	// Used by `__fern_now_unix_ms` for the wall-clock-now
-	// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
+	// Used by `__fern_now_unix_ms` / `__fern_monotonic_ns` for the
+	// clock-now surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
 	sysClockGettime = 113
+	// nanosleep(2): asm-generic table syscall 101. Backs
+	// `__fern_sleep_ms`.
+	sysNanosleep = 101
 )
 
 // Darwin BSD syscall numbers (xnu/bsd/kern/syscalls.master).
@@ -80,6 +83,10 @@ const (
 	// clock_gettime the Linux now-helper uses.
 	darFstat64      = 339
 	darGettimeofday = 116
+	// select (BSD 93): Darwin has no nanosleep syscall, so
+	// `__fern_sleep_ms` sleeps via select(0, NULL, NULL, NULL,
+	// &timeout) with a `struct timeval {i64 tv_sec @0, i64 tv_usec @8}`.
+	darSelect = 93
 )
 
 // linuxDarwinSysno maps a logical syscall name to (Linux, Darwin)
@@ -249,6 +256,10 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 				g.usesEnv = true
 			case "now_unix_ms":
 				g.usesNowUnixMs = true
+			case "monotonic_ns":
+				g.usesMonotonicNs = true
+			case "sleep_ms":
+				g.usesSleepMs = true
 			}
 		}
 	}
@@ -406,6 +417,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
+	}
+	if g.usesMonotonicNs {
+		g.emitMonotonicNsRuntime()
+	}
+	if g.usesSleepMs {
+		g.emitSleepMsRuntime()
 	}
 	if g.usesArgs {
 		g.emitArgsRuntime()
@@ -3522,6 +3539,110 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitMonotonicNsRuntime emits `__fern_monotonic_ns()` —
+// monotonic nanoseconds in x0 as i64. On Linux:
+// `clock_gettime(CLOCK_MONOTONIC, &ts)` (asm-generic syscall
+// 113) → `tv_sec * 1e9 + tv_nsec`. On Darwin (no clock_gettime
+// syscall): read the architectural counter CNTVCT_EL0 and scale
+// by its frequency CNTFRQ_EL0 (24 MHz on Apple Silicon) to
+// nanoseconds, computed as `(count/freq)*1e9 +
+// ((count%freq)*1e9)/freq` to avoid the u64 overflow a bare
+// `count*1e9` hits over long uptimes. The monotonic clock has an
+// unspecified zero, so only the DELTA between two readings is
+// meaningful — what benchmark timing wants. Mirrors the
+// self-host asm_arm64.fern recipe.
+func (g *generator) emitMonotonicNsRuntime() {
+	g.line("")
+	g.line(".global __fern_monotonic_ns")
+	g.typeDirective("__fern_monotonic_ns")
+	g.label("__fern_monotonic_ns")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	if g.darwin {
+		g.emit("mrs x9, cntvct_el0")     // count
+		g.emit("mrs x10, cntfrq_el0")    // freq (Hz)
+		g.emit("udiv x11, x9, x10")      // sec = count / freq
+		g.emit("msub x12, x11, x10, x9") // rem = count - sec*freq
+		g.emit("ldr x13, =1000000000")
+		g.emit("mul x11, x11, x13")  // sec * 1e9
+		g.emit("mul x12, x12, x13")  // rem * 1e9
+		g.emit("udiv x12, x12, x10") // (rem*1e9) / freq
+		g.emit("add x0, x11, x12")   // ns
+		g.emit("ldp x29, x30, [sp], #16")
+		g.emit("ret")
+		g.sizeDirective("__fern_monotonic_ns")
+		g.line(".ltorg")
+		return
+	}
+	g.emit("sub sp, sp, #16") // timespec
+	g.emit("mov x0, #1")      // CLOCK_MONOTONIC
+	g.emit("mov x1, sp")      // &timespec
+	g.emit("mov x8, #%d", sysClockGettime)
+	g.emit("svc #0")
+	g.emit("ldr x9, [sp]") // tv_sec
+	g.emit("ldr x10, =1000000000")
+	g.emit("mul x9, x9, x10")   // sec * 1e9
+	g.emit("ldr x11, [sp, #8]") // tv_nsec
+	g.emit("add x0, x9, x11")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_monotonic_ns")
+	g.line(".ltorg")
+}
+
+// emitSleepMsRuntime emits `__fern_sleep_ms(ms)` — pause for
+// `ms` milliseconds (arg in x0, i64). ms <= 0 returns at once.
+// Splits ms into a timespec `{ tv_sec = ms/1000; tv_nsec =
+// (ms%1000)*1e6 }` on the stack. On Linux: `nanosleep(&req,
+// NULL)` (syscall 101). On Darwin (no nanosleep syscall):
+// `select(0, NULL, NULL, NULL, &timeout)` with a `timeval
+// { tv_sec; tv_usec = (ms%1000)*1000 }` (BSD 93). Void — the
+// operand-stack push is gated off by returnIsVoid. Best-effort
+// (errno / early-wake remainder ignored), matching the self-host
+// recipe and the interpreter.
+func (g *generator) emitSleepMsRuntime() {
+	g.line("")
+	g.line(".global __fern_sleep_ms")
+	g.typeDirective("__fern_sleep_ms")
+	g.label("__fern_sleep_ms")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #32")
+	g.emit("cmp x0, #0")
+	g.emit("b.le .Lsleep_ms_done")
+	g.emit("mov x9, #1000")
+	g.emit("udiv x10, x0, x9")      // sec
+	g.emit("msub x11, x10, x9, x0") // rem ms
+	g.emit("str x10, [sp]")         // tv_sec
+	if g.darwin {
+		g.emit("mov x12, #1000")
+		g.emit("mul x11, x11, x12") // tv_usec = rem * 1000
+		g.emit("str x11, [sp, #8]")
+		g.emit("mov x0, #0") // nfds
+		g.emit("mov x1, #0") // readfds
+		g.emit("mov x2, #0") // writefds
+		g.emit("mov x3, #0") // errorfds
+		g.emit("mov x4, sp") // timeout
+		g.emit("mov x16, #%d", darSelect)
+		g.emit("svc #0x80")
+	} else {
+		g.emit("ldr x12, =1000000")
+		g.emit("mul x11, x11, x12") // tv_nsec = rem * 1e6
+		g.emit("str x11, [sp, #8]")
+		g.emit("mov x0, sp") // &req
+		g.emit("mov x1, #0") // rem = NULL
+		g.emit("mov x8, #%d", sysNanosleep)
+		g.emit("svc #0")
+	}
+	g.label(".Lsleep_ms_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_sleep_ms")
+	g.line(".ltorg")
+}
+
 // emitArgsRuntime emits `__fern_args()` — returns a length-
 // prefixed `string[]` materialised from the argc/argv pair
 // captured by emitStartRuntime. Each entry is a fresh
@@ -5747,6 +5868,16 @@ type generator struct {
 	// "not yet ported" error (it would need libSystem
 	// stitching or mach_absolute_time + mach_timebase_info).
 	usesNowUnixMs bool
+	// usesMonotonicNs pulls in `__fern_monotonic_ns()` — monotonic
+	// nanoseconds via `clock_gettime(CLOCK_MONOTONIC, &ts)` (#113) on
+	// Linux (returns `tv_sec * 1e9 + tv_nsec` in x0), or the
+	// CNTVCT_EL0/CNTFRQ_EL0 architectural counter on Darwin.
+	usesMonotonicNs bool
+	// usesSleepMs pulls in `__fern_sleep_ms(ms)` — best-effort sleep
+	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#101) on
+	// Linux, or `select(0,…,&timeout)` (BSD 93) on Darwin; ms <= 0
+	// returns immediately. Void.
+	usesSleepMs bool
 	// usesFloatTranscendentals pulls in the f64 transcendental
 	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus their
 	// shared .rodata polynomial-coefficient table. arm64 has no
@@ -8150,6 +8281,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// into (sec, nsec) for `Instant`.
 			target = "__fern_now_unix_ms"
 			g.usesNowUnixMs = true
+		case "monotonic_ns":
+			// monotonic_ns(): monotonic nanoseconds via
+			// clock_gettime(CLOCK_MONOTONIC, ...) (Linux) or the
+			// CNTVCT_EL0 architectural counter (Darwin). Returns i64
+			// in x0; backs benchmark/elapsed timing.
+			target = "__fern_monotonic_ns"
+			g.usesMonotonicNs = true
+		case "sleep_ms":
+			// sleep_ms(ms): best-effort sleep via nanosleep (Linux)
+			// or select (Darwin). Void.
+			target = "__fern_sleep_ms"
+			g.usesSleepMs = true
 		case "args":
 			// args(): returns a length-prefixed string[] of
 			// argv. Caches the result so repeat calls are O(1).
