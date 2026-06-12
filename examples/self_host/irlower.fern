@@ -3964,6 +3964,238 @@ function lift_stmts(stmts: parser.Stmt[], acc: LiftAcc, gfns: string[]): LiftStm
     return LiftStmts { stmts: out, acc: a };
 }
 
+// --- Capturing lambdas via classic lambda-lifting (closures slice 2c) ---
+//
+// A capturing lambda bound to a local and used ONLY as a direct call —
+// `var f = function(x){ … base … }; … f(a) … f(b) …` — needs no closure box:
+// hoist it to __lam_<k>(origparams…, captures…) and rewrite each `f(args)` to
+// `__lam_<k>(args…, captures…)`, threading the captured values as ordinary
+// arguments. Pure AST rewrite: the lifted body is unchanged (its free vars are
+// now same-named params), and the existing direct-call IR path lowers the
+// result on every backend. Declines (leaving ExprLambda → AST) when a capture's
+// type can't be resolved, a capture (or f) is reassigned, or f escapes as a
+// value — first-class capturing closures (box + env) are a later slice.
+
+// lambda_captures returns the lambda's free variables (its captures): every used
+// identifier that is not a param, a local it binds, a global function, or a
+// literal keyword. Deduped, first-seen order.
+function lambda_captures(lam: parser.ExprLambda, gfns: string[]): string[] {
+    var used: string[] = [];
+    var si: i32 = 0;
+    while (si < lam.body.len()) { used = astwalk.collect_idents_stmt(lam.body[si], used); si = si + 1; }
+    var bound: string[] = [];
+    var pi: i32 = 0;
+    while (pi < lam.params.len()) { bound = bound.append(lam.params[pi].name); pi = pi + 1; }
+    var bi: i32 = 0;
+    while (bi < lam.body.len()) { bound = astwalk.collect_bound_stmt(lam.body[bi], bound); bi = bi + 1; }
+    var caps: string[] = [];
+    var ui: i32 = 0;
+    while (ui < used.len()) {
+        var u: string = used[ui];
+        if (util.index_of_str(bound, u) < 0 && util.index_of_str(gfns, u) < 0
+                && u != "None" && u != "true" && u != "false"
+                && util.index_of_str(caps, u) < 0) {
+            caps = caps.append(u);
+        }
+        ui = ui + 1;
+    }
+    return caps;
+}
+
+// cap_type resolves a captured variable's type from the enclosing function: a
+// param type, an annotated `var c: T`, or a literal-initialised `var c = <lit>`.
+// "" when it can't (the caller then declines the lift). Mirrors
+// ssa.resolve_capture_type.
+function cap_type(name: string, fd: parser.FuncDecl): string {
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) {
+        if (fd.params[pi].name == name) { return fd.params[pi].type_name; }
+        pi = pi + 1;
+    }
+    var si: i32 = 0;
+    while (si < fd.body.len()) {
+        match (fd.body[si]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if (v.type_name.len() > 0) { return v.type_name; }
+                    match (v.init) {
+                        parser.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
+                        parser.ExprString(_) => { return "string"; },
+                        parser.ExprBool(_) => { return "boolean"; },
+                        _ => { return ""; }
+                    }
+                }
+            },
+            _ => { }
+        }
+        si = si + 1;
+    }
+    return "";
+}
+
+// body_assign_targets collects the names reassigned (`x = …`) anywhere in a body
+// (recursing control flow + match arms). Used to decline lifting when a capture
+// — or the closure local — is mutated, so the lifted call-time argument always
+// equals the capture's value at the lambda's definition.
+function body_assign_targets(stmts: parser.Stmt[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => { out = out.append(a.target); },
+            parser.StmtIf(f) => {
+                out = append_all(out, body_assign_targets(f.then_body));
+                out = append_all(out, body_assign_targets(f.else_body));
+            },
+            parser.StmtWhile(w) => { out = append_all(out, body_assign_targets(w.body)); },
+            parser.StmtFor(fr) => { out = append_all(out, body_assign_targets(fr.body)); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { out = append_all(out, body_assign_targets(m.arms[ai].body)); ai = ai + 1; }
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function append_all(dst: string[], src: string[]): string[] {
+    var i: i32 = 0;
+    while (i < src.len()) { dst = dst.append(src[i]); i = i + 1; }
+    return dst;
+}
+
+// subst_fcall_expr rewrites every direct call `fname(args)` to
+// `lname(args, capargs…)`, recursing through the call-bearing expression forms.
+// Calls only — a bare `fname` used as a value is left in place and caught by the
+// caller's post-rewrite check.
+function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs: parser.Expr[]): parser.Expr {
+    match (e) {
+        parser.ExprCall(c) => {
+            var nargs: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { nargs = nargs.append(subst_fcall_expr(c.args[i], fname, lname, capargs)); i = i + 1; }
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == fname) {
+                        var ca: i32 = 0;
+                        while (ca < capargs.len()) { nargs = nargs.append(capargs[ca]); ca = ca + 1; }
+                        var lc: parser.Expr = parser.ExprIdent { name: lname, line: 0, col: 0 };
+                        return parser.ExprCall { callee: lc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc };
+                    }
+                },
+                _ => { }
+            }
+            var rc: parser.Expr = subst_fcall_expr(c.callee, fname, lname, capargs);
+            return parser.ExprCall { callee: rc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        parser.ExprBinary(b) => {
+            return parser.ExprBinary { op: b.op, left: subst_fcall_expr(b.left, fname, lname, capargs), right: subst_fcall_expr(b.right, fname, lname, capargs), line: b.line, col: b.col };
+        },
+        parser.ExprUnary(u) => {
+            return parser.ExprUnary { op: u.op, operand: subst_fcall_expr(u.operand, fname, lname, capargs), line: u.line, col: u.col };
+        },
+        parser.ExprIndex(ix) => {
+            return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs) };
+        },
+        parser.ExprFieldAccess(fa) => {
+            return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col };
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
+function subst_fcall_stmts(stmts: parser.Stmt[], fname: string, lname: string, capargs: parser.Expr[]): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { var ns: parser.Stmt = parser.StmtReturn { value: subst_fcall_expr(r.value, fname, lname, capargs), line: r.line, col: r.col }; out = out.append(ns); },
+            parser.StmtVar(v) => { var ns: parser.Stmt = parser.StmtVar { name: v.name, type_name: v.type_name, init: subst_fcall_expr(v.init, fname, lname, capargs), line: v.line, col: v.col }; out = out.append(ns); },
+            parser.StmtExpr(s) => { var ns: parser.Stmt = parser.StmtExpr { value: subst_fcall_expr(s.value, fname, lname, capargs) }; out = out.append(ns); },
+            parser.StmtAssign(a) => { var ns: parser.Stmt = parser.StmtAssign { target: a.target, value: subst_fcall_expr(a.value, fname, lname, capargs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; out = out.append(ns); },
+            parser.StmtIf(f) => { var ns: parser.Stmt = parser.StmtIf { cond: subst_fcall_expr(f.cond, fname, lname, capargs), then_body: subst_fcall_stmts(f.then_body, fname, lname, capargs), else_body: subst_fcall_stmts(f.else_body, fname, lname, capargs) }; out = out.append(ns); },
+            parser.StmtWhile(w) => { var ns: parser.Stmt = parser.StmtWhile { cond: subst_fcall_expr(w.cond, fname, lname, capargs), body: subst_fcall_stmts(w.body, fname, lname, capargs) }; out = out.append(ns); },
+            parser.StmtFor(fr) => { var ns: parser.Stmt = parser.StmtFor { var_name: fr.var_name, iter: subst_fcall_expr(fr.iter, fname, lname, capargs), body: subst_fcall_stmts(fr.body, fname, lname, capargs) }; out = out.append(ns); },
+            _ => { out = out.append(stmts[i]); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+struct ClosureLift { body: parser.Stmt[], acc: LiftAcc, changed: boolean }
+
+// try_lift_binding attempts to lift the capturing lambda bound at body[idx] to
+// fname. Returns changed=true with the rewritten body + appended lifted fn when
+// every guard holds, else the inputs unchanged.
+function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: parser.ExprLambda, fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], assigns: string[]): ClosureLift {
+    var caps: string[] = lambda_captures(lam, gfns);
+    if (caps.len() == 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
+    if (util.index_of_str(assigns, fname) >= 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
+    var ctypes: string[] = [];
+    var ci: i32 = 0;
+    while (ci < caps.len()) {
+        var t: string = cap_type(caps[ci], fd);
+        if (t.len() == 0 || util.index_of_str(assigns, caps[ci]) >= 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
+        ctypes = ctypes.append(t);
+        ci = ci + 1;
+    }
+    var lparams: parser.ParamDecl[] = [];
+    var pj: i32 = 0;
+    while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
+    var cj: i32 = 0;
+    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false }); cj = cj + 1; }
+    var lname: string = "__lam_" + util.i32_to_string(acc.counter);
+    var notp: string[] = [];
+    var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+    var capargs: parser.Expr[] = [];
+    var ca: i32 = 0;
+    while (ca < caps.len()) { capargs = capargs.append(parser.ExprIdent { name: caps[ca], line: 0, col: 0 }); ca = ca + 1; }
+    var rest: parser.Stmt[] = [];
+    var ri: i32 = idx + 1;
+    while (ri < body.len()) { rest = rest.append(body[ri]); ri = ri + 1; }
+    var subst_rest: parser.Stmt[] = subst_fcall_stmts(rest, fname, lname, capargs);
+    var newbody: parser.Stmt[] = [];
+    var ki: i32 = 0;
+    while (ki < idx) { newbody = newbody.append(body[ki]); ki = ki + 1; }
+    var sj: i32 = 0;
+    while (sj < subst_rest.len()) { newbody = newbody.append(subst_rest[sj]); sj = sj + 1; }
+    var allids: string[] = [];
+    var aj: i32 = 0;
+    while (aj < newbody.len()) { allids = astwalk.collect_idents_stmt(newbody[aj], allids); aj = aj + 1; }
+    if (util.index_of_str(allids, fname) >= 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
+    var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(newfn), counter: acc.counter + 1 };
+    return ClosureLift { body: newbody, acc: nacc, changed: true };
+}
+
+// closure_lift_one lifts the FIRST liftable capturing-lambda binding in body
+// (top-level statements). The caller loops until no change.
+function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, gfns: string[]): ClosureLift {
+    var assigns: string[] = body_assign_targets(body);
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprLambda(lam) => {
+                        if (!lambda_has_no_captures(lam, gfns)) {
+                            var lifted: ClosureLift = try_lift_binding(body, i, v.name, lam, fd, acc, gfns, assigns);
+                            if (lifted.changed) { return lifted; }
+                        }
+                    },
+                    _ => { }
+                }
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return ClosureLift { body: body, acc: acc, changed: false };
+}
+
 // lift_lambdas is the module pre-pass. Returns the module unchanged when no
 // lambda was lifted (keeping lambda-free modules byte-identical), else a module
 // whose bodies reference the hoisted __lam_<k> functions, with those functions
@@ -3980,9 +4212,20 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[fi];
-        var r: LiftStmts = lift_stmts(fd.body, acc, gfns);
+        // 1. Capturing lambdas bound to a local + only directly called: param-lift.
+        var cbody: parser.Stmt[] = fd.body;
+        var more: boolean = true;
+        while (more) {
+            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, gfns);
+            cbody = cl.body;
+            acc = cl.acc;
+            more = cl.changed;
+        }
+        // 2. No-capture lambdas passed as call arguments: hoist to function values.
+        var r: LiftStmts = lift_stmts(cbody, acc, gfns);
         acc = r.acc;
-        newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: r.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        var nb: parser.Stmt[] = r.stmts;
+        newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
         fi = fi + 1;
     }
     if (acc.counter == 0) { return mod; }
