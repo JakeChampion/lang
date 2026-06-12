@@ -1,0 +1,7 @@
+Point { x: 1, y: 2 }
+Named { id: 7, label: "hi" }
+Dot
+Circle(5)
+Tag("ab")
+Nested { p: Point { x: 3, y: 4 }, n: 9 }
+"a\"b\\c"

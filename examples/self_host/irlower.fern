@@ -957,10 +957,13 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                 },
                 // `X.to_string()` yields a string box (the i32 runtime helper or
                 // the string-identity case); a struct's generated `to_string`
-                // (@derive(Display)) is likewise string-typed. Either way the
+                // (@derive(Display)) is likewise string-typed. `to_debug`
+                // (@derive(Debug)) is the same shape — always string-returning,
+                // including on an ENUM receiver (whose expr_struct_type is "",
+                // so the str_ret_fn path below can't reach it). Either way the
                 // result feeds `+` concat / `.len()` as a string.
                 parser.ExprFieldAccess(cfa) => {
-                    if (cfa.field == "to_string" && c.args.len() == 0) { return true; }
+                    if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return true; }
                     // A string-returning METHOD call `recv.m(...)`. Methods store
                     // their bare name (`receiver_type` is separate), so str_ret_fns
                     // records `m` by bare name — same as the free-call lookup above.

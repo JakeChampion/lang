@@ -321,6 +321,10 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"enum-unit", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }`},
 		{"enum-three", `enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }`},
 		{"enum-wildcard", `enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }`},
+		// `@derive(Debug)` (#2708) — type-directed `to_debug`; AST and IR wasm
+		// paths must agree on the rendered length. Strings render quoted.
+		{"derive-debug-struct", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } function main(): i32 { return P { x: 7, name: "hi" }.to_debug().len(); }`},
+		{"derive-debug-enum", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len() + Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`},
 		// Method call -> out of the IR subset; falls back to AST under -ir.
 		{"method-falls-back", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
 	}
@@ -410,6 +414,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"foreach-continue", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 15) { continue; } t = t + x; } return t; }", 60},
 		{"foreach-break", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 20) { break; } t = t + x; } return t; }", 30},
 		{"range-nested-break", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { if (j == 2) { break; } t = t + 1; } } return t; }", 6},
+		// `@derive(Debug)` exact rendered lengths on the wasm IR path (#2708):
+		// `P { x: 7, name: "hi" }` is 22 chars (string quoted); the enum sum is
+		// `Dot`(3) + `Circle(5)`(9) + `Tag("ab")`(9) = 21.
+		{"derive-debug-struct-len", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } function main(): i32 { return P { x: 7, name: "hi" }.to_debug().len(); }`, 22},
+		{"derive-debug-enum-len", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len() + Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`, 21},
 		// `for x in <EXPR>` over a non-ident iterable (array literal / call
 		// returning an array): snapshotted into a hidden local, then iterated.
 		{"foreach-literal", "function main(): i32 { var s = 0; for x in [1, 2, 3, 4] { s = s + x; } return s; }", 10},

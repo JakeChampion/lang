@@ -8870,8 +8870,8 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
                     }
                     // join always yields a string (array receiver).
                     if (fa.field == "join") { return true; }
-                    // .to_string() always yields a string.
-                    if (fa.field == "to_string") { return true; }
+                    // .to_string() / .to_debug() always yield a string.
+                    if (fa.field == "to_string" || fa.field == "to_debug") { return true; }
                     // get_or on a string-valued map yields a string.
                     if (fa.field == "get_or" && c.args.len() == 2 && is_str_val_map(fa.obj, cx)) { return true; }
                     // A receiver method declared to return string.
