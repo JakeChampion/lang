@@ -1,0 +1,77 @@
+import "std/i32";
+
+// Audit fixture: composite types + pattern matching, on every native
+// backend (interp / x86-64 / arm64 / wasm). Each failing check prints
+// "FAIL <id>" and returns a distinct non-zero code; success prints "OK".
+//
+// Covers (docs/FEATURE-AUDIT.md §A / §C):
+//   struct decl / literal / field access / field mutation / compound
+//   field assign, methods (receiver clause), enum sum types + payloads,
+//   match (statement + expression), tuples + destructuring, and the
+//   built-in Option[T] / Result[T,E] sum types.
+
+struct Point { x: i32, y: i32 }
+
+function (p: Point) manhattan(): i32 { return p.x + p.y; }
+
+enum Shape { Circle(i32), Square(i32), Unit }
+
+function area3(s: Shape): i32 {
+    match (s) {
+        Circle(r) => { return r * r * 3; },
+        Square(a) => { return a * a; },
+        Unit => { return 1; }
+    }
+}
+
+function swap2(a: i32, b: i32): (i32, i32) { return (b, a); }
+
+function main(): i32 {
+    // --- struct: literal + field access ---
+    var p: Point = Point { x: 7, y: 3 };
+    if (p.x != 7 || p.y != 3) { print("FAIL struct-lit"); return 11; }
+    if (p.manhattan() != 10) { print("FAIL method"); return 12; }
+
+    // --- struct: functional update (fields are immutable after
+    //     construction; rebuild with `T { ...old, field: value }`) ---
+    var p2: Point = Point { ...p, x: 40 };
+    var p3: Point = Point { ...p2, y: 8 };
+    if (p3.x != 40 || p3.y != 8 || p.x != 7) { print("FAIL struct-update"); return 13; }
+
+    // --- enum + payloads + match statement ---
+    if (area3(Circle(4)) != 48) { print("FAIL enum-circle"); return 14; }
+    if (area3(Square(6)) != 36) { print("FAIL enum-square"); return 15; }
+    if (area3(Unit) != 1) { print("FAIL enum-unit"); return 16; }
+
+    // --- match as expression ---
+    var s: Shape = Square(5);
+    var m: i32 = match (s) {
+        Circle(r) => r + 1,
+        Square(a) => a + 2,
+        Unit => 0
+    };
+    if (m != 7) { print("FAIL match-expr"); return 17; }
+
+    // --- tuples + destructuring ---
+    var t: (i32, i32) = (7, 3);
+    if (t.0 != 7 || t.1 != 3) { print("FAIL tuple-index"); return 18; }
+    var (a, b) = swap2(3, 7);
+    if (a != 7 || b != 3) { print("FAIL tuple-destr"); return 19; }
+
+    // --- Option[T] ---
+    var some: Option[i32] = Some(42);
+    var none: Option[i32] = None;
+    var sv: i32 = match (some) { Some(v) => v, None => 0 };
+    var nv: i32 = match (none) { Some(v) => v, None => 99 };
+    if (sv != 42 || nv != 99) { print("FAIL option"); return 20; }
+
+    // --- Result[T, E] ---
+    var ok: Result[i32, i32] = Ok(5);
+    var err: Result[i32, i32] = Err(9);
+    var ov: i32 = match (ok) { Ok(v) => v, Err(e) => 0 - e };
+    var ev: i32 = match (err) { Ok(v) => v, Err(e) => e };
+    if (ov != 5 || ev != 9) { print("FAIL result"); return 21; }
+
+    print("OK");
+    return 0;
+}

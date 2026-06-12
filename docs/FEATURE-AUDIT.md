@@ -108,7 +108,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | f-strings / interpolation | | | | | | ⬜ | confirm syntax exists |
 | Owned arrays `T[]` + indexing | | | | | | ⬜ | |
 | Slice views `[T]` | | | | | | ⬜ | |
-| Tuples `(T, U)` + destructuring | | | | | | ⬜ | |
+| Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `var (a,b) = …` |
 | `Map[K, V]` literal + ops | | | | | | ⬜ | core/map |
 | Array literals | | | | | | ⬜ | |
 | `var x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i32 path; wider types pending |
@@ -123,12 +123,12 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `break` / `continue` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | S ok in while/foreach; broken inside C-for ([#2820](https://github.com/JakeChampion/lang/issues/2820)) |
 | `return` (value + void) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **bare nested block `{}` self-host dropped, [#2821](https://github.com/JakeChampion/lang/issues/2821)** |
-| `struct` decl + literal + field access | | | | | | ⬜ | |
-| Struct field mutation / compound field assign | | | | | | ⬜ | |
-| Methods (receiver clause) | | | | | | ⬜ | |
-| `enum` sum types + payloads | | | | | | ⬜ | |
-| `match` (exhaustiveness checked) | | | | | | ⬜ | |
-| `match` as expression | | | | | | ⬜ | |
+| `struct` decl + literal + field access | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | + functional update `T { ...old, f: v }` |
+| Struct field immutability + functional update | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | fields immutable (E048); **self-host doesn't enforce, [#2825](https://github.com/JakeChampion/lang/issues/2825)** |
+| Methods (receiver clause) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| `enum` sum types + payloads | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. unit variants |
+| `match` (exhaustiveness checked) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | payload binding, comma-separated arms |
+| `match` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Generic structs/enums (monomorphised) | | | | | | ⬜ | |
 | Generic functions + inference | | | | | | ⬜ | |
 | Traits (`Display`/`Eq`/`Ord`, bounds) | | | | | | ⬜ | core/cmp |
@@ -179,8 +179,8 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 
 | Type | I | X | A | W | S | Status | Notes |
 |------|---|---|---|---|---|--------|-------|
-| `Option[T]` (`Some`/`None`) | | | | | | ⬜ | |
-| `Result[T, E]` (`Ok`/`Err`) | | | | | | ⬜ | |
+| `Option[T]` (`Some`/`None`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | construct + match both arms |
+| `Result[T, E]` (`Ok`/`Err`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | construct + match both arms |
 | `IoError` variants | | | | | | ⬜ | |
 | `JsonValue` variants | | | | | | ⬜ | |
 | `Reader` / `Writer` | | | | | | ⬜ | |
@@ -243,6 +243,33 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — composite types + pattern matching audited; struct-immutability self-host gap found
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_types_match` — struct decl / literal / field
+access / **functional update**, methods (receiver clause), enum sum types +
+payloads (incl. unit variants), `match` statement + expression, tuples + `.0`/`.1`
++ destructuring, and the built-in `Option[T]` / `Result[T, E]`. ✅ on
+interp / x86-64 / arm64 / wasm.
+
+**Self-host arm (x86-64 + CI-gated arm64):** new test
+`internal/e2e/self_host_audit_types_test.go` — the same as 12 isolated programs.
+All pass on the self-hosted compiler.
+
+**Finding — struct-field immutability not enforced on self-host
+([#2825](https://github.com/JakeChampion/lang/issues/2825)):** Fern struct
+fields are immutable after construction (native `-check` rejects `p.x = v` with
+`E048`, directing to `T { ...old, x: v }`). The self-host checker does **not**
+enforce this — it accepts `p.x = v` (and `p.x += v`) and mutates. This is the
+self-hosted compiler being *more permissive* than native (compiling forbidden
+programs), not a runtime miscompile; functional update — the sanctioned form —
+works on both. The fixtures use only functional update so they stay valid on
+both compilers.
+
+**Note (language direction):** the older "Struct field mutation / compound field
+assign" §A row is obsolete — that operation is now a compile error. The row is
+replaced with "Struct field immutability + functional update".
 
 ### 2026-06-12 — self-host dimension added; §A foundational built-ins audited; 3 self-host gaps found
 
