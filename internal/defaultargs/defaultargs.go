@@ -1,64 +1,157 @@
-// Package defaultargs fills omitted trailing arguments at call sites from the
-// callee's declared default parameter values. It runs after parsing/modload
-// and before the checker, so the checker and every later pass (monomorph,
-// codegen) see complete positional calls and need no knowledge of defaults.
+// Package defaultargs resolves call arguments against the callee's declared
+// parameters before type-checking: it reorders named arguments
+// (`f(b = 2, a = 1)`) into positional order and fills omitted parameters from
+// their default values (`function f(a, b = 128)` called `f(5)` → `f(5, 128)`).
+// It runs at the start of the checker, so the checker and every later pass
+// (monomorph, codegen) see a complete positional `Args` list and need no
+// knowledge of defaults or names.
 //
-// Only free-function calls (a bare identifier callee) are filled; method
-// default-fill is a follow-up. A call is filled only when every omitted
-// parameter has a default — a genuinely missing required argument is left for
-// the checker to report as an arity error.
+// Only direct calls to a named free function are resolved (a bare identifier
+// callee); methods and indirect calls are out of scope (a named argument on
+// one is an error). For a purely positional call, only trailing defaults are
+// filled — a genuinely missing required argument is left for the checker's
+// arity error (E004), preserving prior behaviour.
 package defaultargs
 
-import "github.com/jakechampion/lang/internal/ast"
+import (
+	"fmt"
 
-// Fill rewrites p in place.
-func Fill(p *ast.Program) {
+	"github.com/jakechampion/lang/internal/ast"
+)
+
+// Error is a resolution diagnostic the checker surfaces.
+type Error struct {
+	Pos  ast.Position
+	Code string
+	Msg  string
+}
+
+// Fill rewrites p in place and returns any resolution errors.
+func Fill(p *ast.Program) []Error {
 	if p == nil {
-		return
+		return nil
 	}
 	// name -> declared params (with defaults). Methods are excluded: their
-	// call sites are field-access callees, not bare identifiers, so they
-	// never match the lookup below.
+	// call sites are field-access callees, not bare identifiers.
 	funcs := map[string][]ast.Param{}
 	for _, f := range p.Funcs {
 		if f.Receiver == nil {
 			funcs[f.Name] = f.Params
 		}
 	}
+	var errs []Error
 	ast.RewriteProgramExprs(p, func(e ast.Expr) ast.Expr {
 		call, ok := e.(*ast.Call)
 		if !ok {
 			return e
 		}
-		id, ok := call.Callee.(*ast.Ident)
-		if !ok {
+		hasNamed := false
+		for _, n := range call.ArgNames {
+			if n != "" {
+				hasNamed = true
+				break
+			}
+		}
+		id, isIdent := call.Callee.(*ast.Ident)
+
+		if !hasNamed {
+			// Purely positional — fill trailing defaults only.
+			if !isIdent {
+				return e
+			}
+			params, known := funcs[id.Name]
+			if !known || len(call.Args) >= len(params) {
+				return e
+			}
+			for i := len(call.Args); i < len(params); i++ {
+				if params[i].Default == nil {
+					return e // a required arg is missing; leave for E004
+				}
+			}
+			for i := len(call.Args); i < len(params); i++ {
+				call.Args = append(call.Args, cloneExpr(params[i].Default))
+			}
 			return e
 		}
-		params, ok := funcs[id.Name]
-		if !ok || len(call.Args) >= len(params) {
+
+		// Named arguments are present.
+		if !isIdent {
+			errs = append(errs, Error{call.P, "E060", "named arguments are only supported on direct calls to named functions"})
 			return e
 		}
-		// Fill only when every omitted parameter has a default; otherwise a
-		// required argument is missing — leave it for the checker's E004.
-		for i := len(call.Args); i < len(params); i++ {
-			if params[i].Default == nil {
+		params, known := funcs[id.Name]
+		if !known {
+			errs = append(errs, Error{call.P, "E060", fmt.Sprintf("named arguments are not supported for call to %q", id.Name)})
+			return e
+		}
+		result := make([]ast.Expr, len(params))
+		filled := make([]bool, len(params))
+		pos := 0
+		seenNamed := false
+		for i, a := range call.Args {
+			name := ""
+			if i < len(call.ArgNames) {
+				name = call.ArgNames[i]
+			}
+			if name == "" {
+				if seenNamed {
+					errs = append(errs, Error{call.P, "E060", "positional argument after named argument"})
+					return e
+				}
+				if pos >= len(params) {
+					errs = append(errs, Error{call.P, "E004", fmt.Sprintf("function %q expects %d argument(s), got more", id.Name, len(params))})
+					return e
+				}
+				result[pos] = a
+				filled[pos] = true
+				pos++
+			} else {
+				seenNamed = true
+				idx := paramIndex(params, name)
+				if idx < 0 {
+					errs = append(errs, Error{call.P, "E060", fmt.Sprintf("%q has no parameter named %q", id.Name, name)})
+					return e
+				}
+				if filled[idx] {
+					errs = append(errs, Error{call.P, "E060", fmt.Sprintf("duplicate argument for parameter %q", name)})
+					return e
+				}
+				result[idx] = a
+				filled[idx] = true
+			}
+		}
+		// Fill the rest from defaults; a still-unfilled required param is an error.
+		for i := range params {
+			if filled[i] {
+				continue
+			}
+			if params[i].Default != nil {
+				result[i] = cloneExpr(params[i].Default)
+			} else {
+				errs = append(errs, Error{call.P, "E004", fmt.Sprintf("missing argument for parameter %q of %q", params[i].Name, id.Name)})
 				return e
 			}
 		}
-		for i := len(call.Args); i < len(params); i++ {
-			call.Args = append(call.Args, cloneExpr(params[i].Default))
-		}
+		call.Args = result
+		call.ArgNames = nil
 		return e
 	})
+	return errs
 }
 
-// cloneExpr makes a fresh copy of a default-value expression so that distinct
-// call sites don't share a node (later passes stamp type/width info onto
-// expression nodes in place). It covers the shapes a default realistically
-// takes — literals, identifiers (constant references), and unary/binary
-// combinations of them; anything else is returned as-is (a rare, deep default
-// expression shared across call sites is still type-correct, it just loses the
-// per-site annotation isolation).
+func paramIndex(params []ast.Param, name string) int {
+	for i := range params {
+		if params[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// cloneExpr makes a fresh copy of a default-value expression so distinct call
+// sites don't share a node (later passes stamp type/width info onto nodes in
+// place). Covers the shapes a default realistically takes; anything else is
+// returned as-is.
 func cloneExpr(e ast.Expr) ast.Expr {
 	switch x := e.(type) {
 	case *ast.NumberLit:

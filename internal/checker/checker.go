@@ -620,10 +620,6 @@ func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	// Fill omitted trailing arguments from default parameter values before any
-	// type-checking, so the rest of the checker (and every later pass) sees a
-	// complete positional call. Idempotent — safe across LSP re-checks.
-	defaultargs.Fill(prog)
 	return checkImpl(ctx, prog)
 }
 
@@ -731,6 +727,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// so they're exempt.
 	if prog.LoadedStdlibPaths != nil && !prog.LoadedStdlibPaths["stdlib://core/map.fern"] {
 		c.requireMapImport = true
+	}
+	// Resolve named arguments + fill default parameter values before any
+	// type-checking, so the rest of the checker (and every later pass) sees a
+	// complete positional call. Resolution diagnostics surface as checker
+	// errors. Idempotent — safe across LSP re-checks.
+	for _, fe := range defaultargs.Fill(prog) {
+		c.errfCode(fe.Pos, fe.Code, "%s", fe.Msg)
 	}
 
 	// Surface shadow-attempts on reserved built-in type names

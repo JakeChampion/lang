@@ -935,6 +935,13 @@ type Call struct {
 	P      Position
 	Callee Expr
 	Args   []Expr
+	// ArgNames, when non-nil, is parallel to Args: ArgNames[i] is the
+	// parameter name a named argument `name = expr` targets, or "" for a
+	// positional argument. nil when the call is all-positional (the common
+	// case). The internal/defaultargs pass reorders named arguments into
+	// positional order and fills defaults, then clears ArgNames — so the
+	// checker and every later pass only ever see a positional Args list.
+	ArgNames []string
 	// IsPipe is set by the parser when this Call was synthesised
 	// from a `LHS |> Callee(args...)` pipe expression: Args[0] is
 	// the original LHS, Args[1:] are the original explicit args.
