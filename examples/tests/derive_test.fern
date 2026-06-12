@@ -1,14 +1,15 @@
 import "core/cmp";
+import "std/json";
 import "std/test";
-// examples/tests/derive_test.fern — `@derive(Eq, Display, Ord)` on
-// structs, over the real `core/cmp` traits. Doubles as the self-host
-// regression gate (compiled through the import-resolving driver, so it
-// exercises core/cmp's primitive impls — unlike the self-contained
-// trait-test cases). The derived methods must agree with the Go
-// checker's synthesis byte-for-byte (the runner is differential against
-// the interpreter oracle). See docs/TRAITS.md.
+// examples/tests/derive_test.fern — `@derive(Eq, Display, Ord, Hash,
+// Json)` on structs, over the real `core/cmp` + `std/json` traits.
+// Doubles as the self-host regression gate (compiled through the import-
+// resolving driver, so it exercises the primitive impls — unlike the
+// self-contained trait-test cases). The derived methods must agree with
+// the Go checker's synthesis byte-for-byte (the runner is differential
+// against the interpreter oracle). See docs/TRAITS.md.
 
-@derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash)
+@derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash, json.Json)
 struct Point { x: i32, y: i32 }
 
 @derive(cmp.Eq, cmp.Display)
@@ -17,7 +18,7 @@ struct Inner { n: i32 }
 @derive(cmp.Eq, cmp.Display)
 struct Outer { a: Inner, tag: string }
 
-@derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash)
+@derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash, json.Json)
 enum Shape { Circle(i32), Square(i32), Empty }
 
 function test_eq_reflexive(): Option[string] {
@@ -139,6 +140,19 @@ function test_enum_hash_law(): Option[string] {
     return test.fail("same variant + payload should hash equal");
 }
 
+function test_json_struct(): Option[string] {
+    var p: Point = Point { x: 3, y: 7 };
+    return test.assert_eq(p.to_json(), "{\"x\":3,\"y\":7}");
+}
+
+function test_json_enum_payload(): Option[string] {
+    return test.assert_eq(Circle(5).to_json(), "{\"Circle\":5}");
+}
+
+function test_json_enum_unit(): Option[string] {
+    return test.assert_eq(Empty.to_json(), "\"Empty\"");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("derive");
     r = r.it("eq reflexive",        test_eq_reflexive());
@@ -158,5 +172,8 @@ function main(): i32 {
     r = r.it("enum ord across variants", test_enum_ord_across_variants());
     r = r.it("hash law",                 test_hash_law());
     r = r.it("enum hash law",            test_enum_hash_law());
+    r = r.it("json struct",              test_json_struct());
+    r = r.it("json enum payload",        test_json_enum_payload());
+    r = r.it("json enum unit",           test_json_enum_unit());
     return r.finish();
 }

@@ -32,6 +32,12 @@ import "core/map";
 // String / byte methods inside the encoder / parser bodies.
 import "std/string";
 import "std/i32";
+// Numeric `to_string` for the `impl Json for <int>` serialisers.
+import "std/i64";
+import "std/u32";
+import "std/u64";
+// Float `to_string` for the `impl Json for f32 / f64` serialisers.
+import "std/float";
 
 function __json_hex_lower(d: i32): i32 {
     if (d < 10) { return d + 48; }   // '0' + d
@@ -631,4 +637,63 @@ pub function json_is_null(v: JsonValue): boolean {
         _ => { return false; }
     }
     return false;
+}
+
+// === Json trait + @derive(Json) ===
+//
+// `Json` is the structural-serialisation spine: `v.to_json()` returns
+// canonical JSON text. `@derive(Json)` synthesises it field-/variant-
+// wise (the checker's synthJson / synthEnumJson) so a type serialises as
+// soon as its fields do — no per-type encoder. A struct becomes a JSON
+// object (`{"field":<value>}`), an enum is externally tagged (a unit
+// variant is its name as a JSON string; a payload variant is a single-
+// key object, multiple payloads a JSON array). The primitive impls below
+// are the leaves of that composition; string values are escaped through
+// the same `__json_escape` the `JsonValue` encoder uses.
+//
+//   @derive(json.Json)
+//   struct User { id: i32, name: string, admin: boolean }
+//   var body: string = User { id: 7, name: "Glóin", admin: true }.to_json();
+//   // {"id":7,"name":"Glóin","admin":true}
+//
+// Floats are leaves too (decimal `to_string`). Arrays / maps aren't yet
+// — a follow-up adds the generic `(xs: T[]) to_json[T: Json]()` array
+// serialiser (blocked on a monomorph gap, #2766) and map objects.
+pub trait Json {
+    function to_json(self: Self): string;
+}
+
+impl Json for i32 {
+    function to_json(self: Self): string { return self.to_string(); }
+}
+impl Json for i64 {
+    function to_json(self: Self): string { return self.to_string(); }
+}
+impl Json for u32 {
+    function to_json(self: Self): string { return self.to_string(); }
+}
+impl Json for u64 {
+    function to_json(self: Self): string { return self.to_string(); }
+}
+impl Json for boolean {
+    function to_json(self: Self): string {
+        if (self) { return "true"; }
+        return "false";
+    }
+}
+// Floats serialise as their decimal `to_string`. Like the `JNumber`
+// encoder, valid JSON numeric formatting is the caller's responsibility:
+// a non-finite value (NaN / ±Inf) has no JSON representation and would
+// produce invalid output — guard those before serialising if they can
+// occur.
+impl Json for f64 {
+    function to_json(self: Self): string { return self.to_string(); }
+}
+impl Json for f32 {
+    function to_json(self: Self): string { return self.to_string(); }
+}
+impl Json for string {
+    function to_json(self: Self): string {
+        return "\"" + __json_escape(self) + "\"";
+    }
 }

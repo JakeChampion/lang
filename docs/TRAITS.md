@@ -272,10 +272,28 @@ runtime.
   multi-file e2e tests (`internal/e2e/traits_test.go`).
 
 ### 6.7 `derive` (Phase 4)
-`@derive(Display, Eq)` on a struct/enum synthesises field-wise impls. The
-checker already walks field layouts; generation is mechanical. This is
-what makes traits *ergonomic* and is the lever that finally collapses the
-`assert_eq_*` family.
+`@derive(Trait, …)` on a struct/enum synthesises field-/variant-wise
+impls. The checker already walks field layouts; generation is mechanical.
+This is what makes traits *ergonomic* and is the lever that finally
+collapses the `assert_eq_*` family.
+
+Five traits are derivable today (`deriveKind`, `synthesizeDerives`):
+
+| Trait     | Synthesised method      | Shape |
+|-----------|-------------------------|-------|
+| `Eq`      | `eq(self, other)`       | field-wise `&&` / variant match |
+| `Ord`     | `cmp(self, other): i32` | lexicographic fields; variant-declaration order |
+| `Display` | `to_string(self)`       | `Name { f: …, … }` / `Variant(p)` |
+| `Hash`    | `hash(self): i32`       | `h = h*31 + f.hash()`; enum seeds with the variant tag |
+| `Json`    | `to_json(self): string` | JSON object; enums externally tagged |
+
+Each composes through the same trait on every field/payload, so a type is
+`@derive`-able as soon as its fields are — and a generic type derives a
+*parametric* impl (`@derive(Hash) struct Box[T]` → `impl[T: Hash] Hash for
+Box[T]`). `Eq`/`Ord`/`Display`/`Hash` live in `core/cmp`; `Json` in
+`std/json` (it returns canonical JSON text and reuses the `JsonValue`
+encoder's string escaper). All five are mirrored in the self-hosted
+compiler's `synth_*` so the differential oracle agrees.
 
 ## 7. Phasing
 
