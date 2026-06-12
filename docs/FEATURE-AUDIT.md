@@ -2,12 +2,28 @@
 
 This document is the **living record** of an ongoing audit of every
 built-in language feature and every standard-library function in Fern.
-The goal: confirm each feature works **correctly on every backend**
-(interpreter, x86-64, arm64, wasm) and fix any bugs found along the way.
+The goal: confirm each feature works **correctly on every backend, in
+both the native and the self-hosted compiler** — and fix any bugs found
+along the way.
+
+Two compilers, each with its own backends, are in scope:
+
+- **Native** (the Go implementation): four backends — the AST
+  **interp**reter, **x86-64**, **arm64**, **wasm**. Audited with the
+  data-driven fixture harness (`TestFernFixtures`), which runs a program
+  across all four and checks stdout + exit code.
+- **Self-hosted** (the Fern-in-Fern compiler under `examples/self_host/`):
+  driven by the `self_host_*_test.go` harnesses, which build a driver
+  binary (`asm_run.fern` / `asm_ir_run.fern` / `asm_arm64_run.fern` /
+  `wasm_ir_run.fern` / `interp_run.fern`), feed it Fern source, then
+  assemble + run the result and check the exit code. The self-hosted
+  compiler has a narrower **IR subset** than the native one (goal 1 in
+  CLAUDE.md is to widen it until the legacy AST fallback is never taken),
+  so it is the more likely place to surface gaps.
 
 It is meant to stay up to date — when a feature is audited, its row is
-updated; when a bug is found and fixed, it is logged in the
-[Audit log](#audit-log) at the bottom.
+updated; when a bug is found, an issue is opened and the finding is
+logged in the [Audit log](#audit-log) at the bottom.
 
 ## Testing strategy — property-based + differential
 
@@ -54,116 +70,124 @@ run rather than SKIP):
 |------|---------|
 | ⬜ | Not yet audited |
 | 🔄 | Audit in progress |
-| ✅ | Verified working on all four backends |
+| ✅ | Verified working on all audited backends |
 | ⚠️ | Works, but with a documented caveat / partial-backend support |
-| 🐛 | Bug found — see audit log |
+| 🐛 | Bug found — see audit log (issue linked) |
 | 🔧 | Bug found **and fixed** — see audit log |
 
-The per-feature backend columns (I / X / A / W = interp / x86-64 / arm64 /
-wasm) record where a fixture or test confirms the feature. Blank = not yet
-confirmed on that backend.
+The per-feature backend columns (I / X / A / W = native interp / x86-64 /
+arm64 / wasm) record where a fixture or test confirms the feature on the
+**native** compiler. The **S** column records confirmation on the
+**self-hosted** compiler (any of its backends; a caveat notes which).
+Blank = not yet confirmed on that backend.
 
 ---
 
 ## A. Built-in language features
 
-| Feature | I | X | A | W | Status | Notes |
-|---------|---|---|---|---|--------|-------|
-| Integer arithmetic `+ - * / %` | | | | | ⬜ | |
-| Integer comparison `== != < > <= >=` | | | | | ⬜ | |
-| Boolean logic `&& \|\| !` (short-circuit) | | | | | ⬜ | |
-| Bitwise `& \| ^ << >>` | ✅ | ✅ | ✅ | ✅ | ✅ | exercised by prop generators (LCG) |
-| Unary minus `-x` | | | | | ⬜ | |
-| Operator precedence / parenthesisation | | | | | ⬜ | |
-| Sized int types `i8 i16 i32 i64 u8 u16 u32 u64` | | | | | ⬜ | incl. `isize`/`usize` |
-| Integer overflow / wrapping semantics | | | | | ⬜ | see INTEGER-SEMANTICS.md |
-| Float types `f32 f64` arithmetic | | | | | ⬜ | |
-| Float comparison + NaN semantics | | | | | ⬜ | see FLOAT-SEMANTICS.md |
-| `boolean` type + literals | | | | | ⬜ | |
-| `string` type: `+`, `==`/`!=`, indexing | | | | | ⬜ | |
-| String literals + escape sequences | | | | | ⬜ | |
-| f-strings / interpolation | | | | | ⬜ | confirm syntax exists |
-| Owned arrays `T[]` + indexing | | | | | ⬜ | |
-| Slice views `[T]` | | | | | ⬜ | |
-| Tuples `(T, U)` + destructuring | | | | | ⬜ | |
-| `Map[K, V]` literal + ops | | | | | ⬜ | core/map |
-| Array literals | | | | | ⬜ | |
-| `var x: T = expr;` + type inference | | | | | ⬜ | |
-| Compound assignment `+= -= *= …` | | | | | ⬜ | |
-| `if`/`else` statement | | | | | ⬜ | |
-| `if` as expression | | | | | ⬜ | |
-| `while` loop | | | | | ⬜ | |
-| `for(init; cond; step)` loop | | | | | ⬜ | |
-| `for x in arr` / `for x in "str"` | | | | | ⬜ | |
-| `switch` statement (comma cases, default) | | | | | ⬜ | |
-| `break` / `continue` | | | | | ⬜ | |
-| `return` (value + void) | | | | | ⬜ | |
-| Blocks + expression statements | | | | | ⬜ | |
-| `struct` decl + literal + field access | | | | | ⬜ | |
-| Struct field mutation / compound field assign | | | | | ⬜ | |
-| Methods (receiver clause) | | | | | ⬜ | |
-| `enum` sum types + payloads | | | | | ⬜ | |
-| `match` (exhaustiveness checked) | | | | | ⬜ | |
-| `match` as expression | | | | | ⬜ | |
-| Generic structs/enums (monomorphised) | | | | | ⬜ | |
-| Generic functions + inference | | | | | ⬜ | |
-| Traits (`Display`/`Eq`/`Ord`, bounds) | | | | | ⬜ | core/cmp |
-| Nested functions + closures (capture) | | | | | ⬜ | |
-| Function values / indirect calls | | | | | ⬜ | |
-| Lambdas `(x) => expr` | | | | | ⬜ | confirm syntax |
-| Tail-call optimisation | | | | | ⬜ | |
-| Modules / imports (`import "./path";`) | | | | | ⬜ | |
-| Visibility (`pub`) | | | | | ⬜ | front-end only |
-| Top-level `const` (folded) | | | | | ⬜ | |
-| `len(x)` builtin | | | | | ⬜ | |
+Self-host (**S**) verification for §A landed via
+`internal/e2e/self_host_audit_builtins_test.go` (per-feature isolated
+programs through the self-hosted x86-64 driver + CI-gated arm64); native
+(**I/X/A/W**) via the `audit_core_builtins` fixture (all four backends).
+
+| Feature | I | X | A | W | S | Status | Notes |
+|---------|---|---|---|---|---|--------|-------|
+| Integer arithmetic `+ - * / %` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. trunc-toward-zero for negatives |
+| Integer comparison `== != < > <= >=` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Boolean logic `&& \|\| !` (short-circuit) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | non-eval proven via trap-skip RHS (÷0) |
+| Bitwise `& \| ^ << >>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | prop generators (LCG) + audit fixture |
+| Unary minus `-x` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Operator precedence / parenthesisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `2+3*4`, left-assoc, parens |
+| Sized int types `i8 i16 i32 i64 u8 u16 u32 u64` | | | | | | ⬜ | incl. `isize`/`usize` |
+| Integer overflow / wrapping semantics | | | | | | ⬜ | see INTEGER-SEMANTICS.md |
+| Float types `f32 f64` arithmetic | | | | | | ⬜ | |
+| Float comparison + NaN semantics | | | | | | ⬜ | see FLOAT-SEMANTICS.md |
+| `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
+| `string` type: `+`, `==`/`!=`, indexing | | | | | | ⬜ | self-host byte-index/`.len()` ok (#2822 ctx) |
+| String literals + escape sequences | | | | | | ⬜ | |
+| f-strings / interpolation | | | | | | ⬜ | confirm syntax exists |
+| Owned arrays `T[]` + indexing | | | | | | ⬜ | |
+| Slice views `[T]` | | | | | | ⬜ | |
+| Tuples `(T, U)` + destructuring | | | | | | ⬜ | |
+| `Map[K, V]` literal + ops | | | | | | ⬜ | core/map |
+| Array literals | | | | | | ⬜ | |
+| `var x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i32 path; wider types pending |
+| Compound assignment `+= -= *= …` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+= -= *= /= %=` |
+| `if`/`else` statement | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| `if` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| `while` loop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| `for(init; cond; step)` loop | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **self-host: unsupported → segfault, [#2820](https://github.com/JakeChampion/lang/issues/2820)** |
+| `for x in arr` / `for x in "str"` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | array ✅; **`for x in <string>` self-host wrong, [#2822](https://github.com/JakeChampion/lang/issues/2822)** |
+| inclusive / half-open ranges `for i in a..=b` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `0..4` half-open, `0..=5` inclusive |
+| `switch` statement (comma cases, default) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | multi-value case + default |
+| `break` / `continue` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | S ok in while/foreach; broken inside C-for ([#2820](https://github.com/JakeChampion/lang/issues/2820)) |
+| `return` (value + void) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **bare nested block `{}` self-host dropped, [#2821](https://github.com/JakeChampion/lang/issues/2821)** |
+| `struct` decl + literal + field access | | | | | | ⬜ | |
+| Struct field mutation / compound field assign | | | | | | ⬜ | |
+| Methods (receiver clause) | | | | | | ⬜ | |
+| `enum` sum types + payloads | | | | | | ⬜ | |
+| `match` (exhaustiveness checked) | | | | | | ⬜ | |
+| `match` as expression | | | | | | ⬜ | |
+| Generic structs/enums (monomorphised) | | | | | | ⬜ | |
+| Generic functions + inference | | | | | | ⬜ | |
+| Traits (`Display`/`Eq`/`Ord`, bounds) | | | | | | ⬜ | core/cmp |
+| Nested functions + closures (capture) | | | | | | ⬜ | |
+| Function values / indirect calls | | | | | | ⬜ | |
+| Lambdas `(x) => expr` | | | | | | ⬜ | confirm syntax |
+| Tail-call optimisation | | | | | | ⬜ | |
+| Modules / imports (`import "./path";`) | | | | | | ⬜ | |
+| Visibility (`pub`) | | | | | | ⬜ | front-end only |
+| Top-level `const` (folded) | | | | | | ⬜ | |
+| `len(x)` builtin | | | | | | ⬜ | |
 
 ## B. Built-in functions (checker-registered)
 
-| Function | I | X | A | W | Status | Notes |
-|----------|---|---|---|---|--------|-------|
-| `print(s)` | | | | | ⬜ | stdout + newline |
-| `write(s)` | | | | | ⬜ | stdout raw |
-| `eprint(s)` | | | | | ⬜ | stderr |
-| `putchar(b)` | | | | | ⬜ | single byte |
-| `len(x)` | | | | | ⬜ | string / array |
-| `args(): string[]` | | | | | ⬜ | |
-| `env(name): Option[string]` | | | | | ⬜ | |
-| `exit(code)` | | | | | ⬜ | |
-| `stdin()/stdout()/stderr()` | | | | | ⬜ | Reader/Writer |
-| `read_file` / `write_file` | | | | | ⬜ | |
-| `open_reader/open_writer/open_appender` | | | | | ⬜ | |
-| Reader `.read_line()/.read_chunk(n)/.close()` | | | | | ⬜ | |
-| Writer `.write(s)/.close()` | | | | | ⬜ | |
-| `read_line()` (free) | | | | | ⬜ | |
-| `read_dir` / `stat` | | | | | ⬜ | |
-| `remove_file` / `remove_dir_all` | | | | | ⬜ | |
-| `temp_dir(prefix)` | | | | | ⬜ | |
-| `subprocess(...)` | | | | | ⬜ | |
-| `sleep_ms` | | | | | ⬜ | |
-| `now_unix_ms` / `now_ns` / `monotonic_ns` | | | | | ⬜ | |
-| `random_bytes` / `random_i32` | | | | | ⬜ | |
-| `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | ⬜ | |
-| float math builtins `__sqrt_f64` etc. | | | | | ⬜ | via std/float |
-| `strbuf_reset/append/take` | | | | | ⬜ | |
-| `__heap_bump_bytes` | | | | | ⬜ | introspection |
-| `__rc_*` (inc/dec/get/underflow_count) | | | | | ⬜ | RC introspection |
-| TCP: `tcp_listen/accept/recv/send/close` | | | | | ⬜ | |
-| `udp_send` | | | | | ⬜ | |
-| `map_new` + Map methods | | | | | ⬜ | |
+| Function | I | X | A | W | S | Status | Notes |
+|----------|---|---|---|---|---|--------|-------|
+| `print(s)` | | | | | | ⬜ | stdout + newline |
+| `write(s)` | | | | | | ⬜ | stdout raw |
+| `eprint(s)` | | | | | | ⬜ | stderr |
+| `putchar(b)` | | | | | | ⬜ | single byte |
+| `len(x)` | | | | | | ⬜ | string / array |
+| `args(): string[]` | | | | | | ⬜ | |
+| `env(name): Option[string]` | | | | | | ⬜ | |
+| `exit(code)` | | | | | | ⬜ | |
+| `stdin()/stdout()/stderr()` | | | | | | ⬜ | Reader/Writer |
+| `read_file` / `write_file` | | | | | | ⬜ | |
+| `open_reader/open_writer/open_appender` | | | | | | ⬜ | |
+| Reader `.read_line()/.read_chunk(n)/.close()` | | | | | | ⬜ | |
+| Writer `.write(s)/.close()` | | | | | | ⬜ | |
+| `read_line()` (free) | | | | | | ⬜ | |
+| `read_dir` / `stat` | | | | | | ⬜ | |
+| `remove_file` / `remove_dir_all` | | | | | | ⬜ | |
+| `temp_dir(prefix)` | | | | | | ⬜ | |
+| `subprocess(...)` | | | | | | ⬜ | |
+| `sleep_ms` | | | | | | ⬜ | |
+| `now_unix_ms` / `now_ns` / `monotonic_ns` | | | | | | ⬜ | |
+| `random_bytes` / `random_i32` | | | | | | ⬜ | |
+| `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
+| float math builtins `__sqrt_f64` etc. | | | | | | ⬜ | via std/float |
+| `strbuf_reset/append/take` | | | | | | ⬜ | |
+| `__heap_bump_bytes` | | | | | | ⬜ | introspection |
+| `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
+| TCP: `tcp_listen/accept/recv/send/close` | | | | | | ⬜ | |
+| `udp_send` | | | | | | ⬜ | |
+| `map_new` + Map methods | | | | | | ⬜ | |
 
 ## C. Built-in types (checker-synthesised)
 
-| Type | I | X | A | W | Status | Notes |
-|------|---|---|---|---|--------|-------|
-| `Option[T]` (`Some`/`None`) | | | | | ⬜ | |
-| `Result[T, E]` (`Ok`/`Err`) | | | | | ⬜ | |
-| `IoError` variants | | | | | ⬜ | |
-| `JsonValue` variants | | | | | ⬜ | |
-| `Reader` / `Writer` | | | | | ⬜ | |
-| `HttpRequest` / `HttpResponse` | | | | | ⬜ | |
-| `Url` | | | | | ⬜ | |
-| `Map[K, V]` / `MapIter[K, V]` | | | | | ⬜ | |
-| Time types (`Instant`/`Date`/…) | | | | | ⬜ | via std/time |
+| Type | I | X | A | W | S | Status | Notes |
+|------|---|---|---|---|---|--------|-------|
+| `Option[T]` (`Some`/`None`) | | | | | | ⬜ | |
+| `Result[T, E]` (`Ok`/`Err`) | | | | | | ⬜ | |
+| `IoError` variants | | | | | | ⬜ | |
+| `JsonValue` variants | | | | | | ⬜ | |
+| `Reader` / `Writer` | | | | | | ⬜ | |
+| `HttpRequest` / `HttpResponse` | | | | | | ⬜ | |
+| `Url` | | | | | | ⬜ | |
+| `Map[K, V]` / `MapIter[K, V]` | | | | | | ⬜ | |
+| Time types (`Instant`/`Date`/…) | | | | | | ⬜ | via std/time |
 
 ## D. Standard library — `std/`
 
@@ -171,45 +195,45 @@ Function lists are mirrored from `docs/STDLIB.md`. Each module gets a row;
 the audit drills into individual functions as needed and records
 per-function bugs in the audit log.
 
-| Module | I | X | A | W | Status | Notes |
-|--------|---|---|---|---|--------|-------|
-| `std/i32` (~80 methods) | | | | | ⬜ | |
-| `std/i64` | | | | | ⬜ | |
-| `std/u32` | | | | | ⬜ | |
-| `std/u64` | | | | | ⬜ | |
-| `std/float` | | | | | ⬜ | |
-| `std/string` (~120 methods) | 🔄 | 🔄 | 🔄 | 🔄 | 🔄 | `prop_string_involution` covers `reverse_bytes`/`to_lower`/`to_upper` laws; rest pending |
-| `std/array` | | | | | ⬜ | |
-| `std/math` | | | | | ⬜ | |
-| `std/sort` | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
-| `std/format` | | | | | ⬜ | |
-| `std/csv` | | | | | ⬜ | |
-| `std/log` | | | | | ⬜ | |
-| `std/io` | | | | | ⬜ | |
-| `std/io_buffered` | | | | | ⬜ | |
-| `std/path` | | | | | ⬜ | |
-| `std/base64` | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range |
-| `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` |
-| `std/url` | ✅ | ✅ | 🐛 | ✅ | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption bug**, see audit log 2026-06-09 |
-| `std/json` | | | | | ⬜ | |
-| `std/http` | | | | | ⬜ | |
-| `std/tcp` | | | | | ⬜ | |
-| `std/headers` | | | | | ⬜ | |
-| `std/stream` | | | | | ⬜ | |
-| `std/time` | | | | | ⬜ | |
-| `std/task` | | | | | ⬜ | |
-| `std/mock_platform` | | | | | ⬜ | |
-| `std/test` (~150 assertions) | | | | | ⬜ | |
-| `std/fuzz` | | | | | ⬜ | |
+| Module | I | X | A | W | S | Status | Notes |
+|--------|---|---|---|---|---|--------|-------|
+| `std/i32` (~80 methods) | | | | | | ⬜ | |
+| `std/i64` | | | | | | ⬜ | |
+| `std/u32` | | | | | | ⬜ | |
+| `std/u64` | | | | | | ⬜ | |
+| `std/float` | | | | | | ⬜ | |
+| `std/string` (~120 methods) | 🔄 | 🔄 | 🔄 | 🔄 | | 🔄 | `prop_string_involution` covers `reverse_bytes`/`to_lower`/`to_upper` laws; rest pending |
+| `std/array` | | | | | | ⬜ | |
+| `std/math` | | | | | | ⬜ | |
+| `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
+| `std/format` | | | | | | ⬜ | |
+| `std/csv` | | | | | | ⬜ | |
+| `std/log` | | | | | | ⬜ | |
+| `std/io` | | | | | | ⬜ | |
+| `std/io_buffered` | | | | | | ⬜ | |
+| `std/path` | | | | | | ⬜ | |
+| `std/base64` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range |
+| `std/hex` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` |
+| `std/url` | ✅ | ✅ | 🐛 | ✅ | | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption**, [#2817](https://github.com/JakeChampion/lang/issues/2817) (audit log 2026-06-09) |
+| `std/json` | | | | | | ⬜ | |
+| `std/http` | | | | | | ⬜ | |
+| `std/tcp` | | | | | | ⬜ | |
+| `std/headers` | | | | | | ⬜ | |
+| `std/stream` | | | | | | ⬜ | |
+| `std/time` | | | | | | ⬜ | |
+| `std/task` | | | | | | ⬜ | |
+| `std/mock_platform` | | | | | | ⬜ | |
+| `std/test` (~150 assertions) | | | | | | ⬜ | |
+| `std/fuzz` | | | | | | ⬜ | |
 
 ## E. Core library — `core/`
 
-| Module | I | X | A | W | Status | Notes |
-|--------|---|---|---|---|--------|-------|
-| `core/int` | | | | | ⬜ | |
-| `core/cmp` (traits) | | | | | ⬜ | |
-| `core/map` | | | | | ⬜ | |
-| `core/no_prelude` | | | | | ⬜ | no-op sentinel |
+| Module | I | X | A | W | S | Status | Notes |
+|--------|---|---|---|---|---|--------|-------|
+| `core/int` | | | | | | ⬜ | |
+| `core/cmp` (traits) | | | | | | ⬜ | |
+| `core/map` | | | | | | ⬜ | |
+| `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
 
 ---
 
@@ -220,7 +244,52 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
-### 2026-06-09 — 🐛 arm64 heap-corruption in the RcFree freelist drop/reuse path (OPEN, top priority)
+### 2026-06-12 — self-host dimension added; §A foundational built-ins audited; 3 self-host gaps found
+
+**Scope change:** the audit now covers the **self-hosted** compiler as a
+first-class dimension alongside native (new **S** column on every table).
+Self-host verification is driven by `self_host_*_test.go` harnesses (build a
+driver binary from `examples/self_host/`, feed it Fern source, assemble + run,
+check exit code).
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_core_builtins` — a single program exercising
+integer arithmetic / comparison / bitwise / unary minus, operator precedence,
+boolean logic **with short-circuit non-evaluation proven via a divide-by-zero
+RHS that must never run**, compound assignment, `if`/`else`, `if`-expression,
+`while`, C-style `for`, `for`-in array, `for`-in **string**, inclusive +
+half-open ranges, `switch` (comma cases + default), `break` / `continue`, and
+nested blocks. ✅ on interp / x86-64 / arm64 / wasm.
+
+**Self-host arm (x86-64 + CI-gated arm64):** new test
+`internal/e2e/self_host_audit_builtins_test.go` — the same built-ins as isolated
+per-feature programs. 17 features pass on the self-hosted compiler. **Three
+genuine self-host gaps surfaced** (native handles all three on every backend),
+each filed as an issue and held out of the executed table:
+
+- 🐛 **C-style `for (init; cond; step)`** — `examples/self_host/parser.fern`
+  has no such `Stmt` node (only the foreach `for VAR in EXPR`); a `for (` is
+  misparsed → `StmtUnknown` → the loop var is dereferenced as a pointer →
+  **segfault**. Also disables `break` / `continue` *inside* a C-for (they work
+  in `while` / foreach). [#2820](https://github.com/JakeChampion/lang/issues/2820).
+- 🐛 **Bare nested block `{ … }`** — no `StmtBlock` in the self-host `Stmt`
+  union; the block becomes `StmtUnknown` and its inner statements are dropped
+  (returns 0 instead of 41). [#2821](https://github.com/JakeChampion/lang/issues/2821).
+- 🐛 **`for x in <string>`** — the self-host foreach lowering assumes an array
+  memory layout (len@0, elem at `base+idx*8+8`) for the iterable; a string is
+  `{ data_ptr@0, len@8 }` with byte elements, so it reads the data pointer as
+  the length and 8-byte-strides into the header (returns 2 instead of 131).
+  String `.len()` / byte-index work in isolation on self-host.
+  [#2822](https://github.com/JakeChampion/lang/issues/2822).
+
+All three are goal-1 self-host widenings (extend `parser.fern`'s `Stmt` union +
+the foreach lowering across `irlower.fern` / the AST backends). Re-add each held
+-out case to `self_host_audit_builtins_test.go` once its issue is fixed.
+
+**Also:** opened [#2817](https://github.com/JakeChampion/lang/issues/2817) for
+the arm64 `std/url` heap-corruption bug below (reconfirmed reproducing today).
+
+### 2026-06-09 — 🐛 arm64 heap-corruption in the RcFree freelist drop/reuse path (OPEN, top priority — now [#2817](https://github.com/JakeChampion/lang/issues/2817))
 
 **Found by:** `prop_url_roundtrip` property fixture — `url_decode(url_encode(s)) == s`
 over 300 deterministic random inputs (full 0..255 byte range, lengths 0..47).
