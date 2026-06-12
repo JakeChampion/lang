@@ -1052,6 +1052,25 @@ pub function lower_range_for(var_name: string, iter: parser.Expr, body: parser.S
     return rs.emit(ir.op_end()).exit_loop();
 }
 
+// lower_foreach_snapshot lowers `for x in <EXPR>` where the iterable is not a
+// bare local — an array literal (`for x in [1, 2, 3]`) or a call returning an
+// array (`for x in mk()`). It binds the iterable to a hidden local through the
+// normal `var` lowering (which marks the slot's array / element-type flags and
+// RC-owns the value — a fresh literal or a move-on-return result is owned, so
+// the exit-sweep frees it), then re-lowers the loop over that local via the
+// ident-foreach path. The caller guards that fr.iter is not an ident and the
+// loop var has no comma (the `for k, v in m` map form needs a map local). Kept
+// in its own function so the already-large StmtFor arm doesn't grow (oversized
+// functions miscompile on the native backend — cf. #2720).
+pub function lower_foreach_snapshot(var_name: string, iter: parser.Expr, body: parser.Stmt[], s: LowerState): LowerState {
+    var itn: string = "$forit" + util.i32_to_string(s.local_names.len());
+    var sv: parser.Stmt = parser.StmtVar { name: itn, type_name: "", init: iter, line: 0, col: 0 };
+    var s2: LowerState = lower_stmt(sv, s);
+    if (!s2.ok) { return s2; }
+    var nf: parser.Stmt = parser.StmtFor { var_name: var_name, iter: parser.ExprIdent { name: itn, line: 0, col: 0 }, body: body };
+    return lower_stmt(nf, s2);
+}
+
 // is_cmp_kind reports whether an IR bin-op kind produces an i32 boolean (a
 // comparison / equality) rather than a value of the operand width.
 pub function is_cmp_kind(kind: string): boolean {
@@ -2615,6 +2634,23 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // functions miscompile on the native backend — cf. #2720).
             if (for_iter_is_range(fr.iter)) {
                 return lower_range_for(fr.var_name, fr.iter, fr.body, s);
+            }
+            // `for x in <EXPR>` over a non-ident iterable (array literal or a
+            // call returning an array): snapshot it into a hidden local, then
+            // iterate that local (lower_foreach_snapshot). The bare-ident forms
+            // — array foreach and the `for k, v in m` map foreach below — read
+            // the slot directly, so they stay on their own paths; a comma var
+            // (map form) is left to the map path / AST fallback.
+            var for_iter_ident: boolean = false;
+            var for_var_comma: boolean = false;
+            match (fr.iter) { parser.ExprIdent(_) => { for_iter_ident = true; }, _ => {} }
+            var fvci: i32 = 0;
+            while (fvci < fr.var_name.len()) {
+                if (fr.var_name[fvci] == 44) { for_var_comma = true; }
+                fvci = fvci + 1;
+            }
+            if (!for_iter_ident && !for_var_comma) {
+                return lower_foreach_snapshot(fr.var_name, fr.iter, fr.body, s);
             }
             // `for k, v in m` over a map LOCAL → snapshot keys()/values() into
             // two hidden locals, then a counted loop binding k = keys[i],

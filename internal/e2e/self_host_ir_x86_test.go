@@ -142,6 +142,12 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"foreach-break", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 20) { break; } t = t + x; } return t; }", 30},
 		{"foreach-break-continue", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 15) { continue; } if (x == 25) { break; } t = t + x; } return t; }", 35},
 		{"range-nested-break", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { if (j == 2) { break; } t = t + 1; } } return t; }", 6},
+		// `for x in <EXPR>` over a non-ident iterable: array literal and a call
+		// returning an array are snapshotted into a hidden local, then iterated.
+		{"foreach-literal", "function main(): i32 { var s = 0; for x in [1, 2, 3, 4] { s = s + x; } return s; }", 10},
+		{"foreach-call", "function mk(): i32[] { return [10, 20, 30]; } function main(): i32 { var s = 0; for y in mk() { s = s + y; } return s; }", 60},
+		{"foreach-literal-break", "function main(): i32 { var s = 0; for x in [5, 10, 15, 20] { if (x == 15) { break; } s = s + x; } return s; }", 15},
+		{"foreach-call-continue", "function mk(): i32[] { return [1, 2, 3, 4, 5]; } function main(): i32 { var s = 0; for x in mk() { if (x % 2 == 0) { continue; } s = s + x; } return s; }", 9},
 		{"loop-continue", "function main(): i32 { var i = 0; var s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
 		// Direct calls + multi-function programs + recursion (slice 6) -> real
 		// x86 call/ret with the SysV integer-register arg convention.
