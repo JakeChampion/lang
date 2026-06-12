@@ -1039,6 +1039,14 @@ type Binary struct {
 	// uses it to pick the `_u` variant of div / rem / shr /
 	// comparison operators.
 	IsUnsigned bool
+	// EqCall is set by the checker when `==` / `!=` is applied to a
+	// composite type (struct / enum) that implements `Eq`: the
+	// operator desugars to the type's structural `eq` method. The
+	// IR lowers this Call instead of an identity-comparing OpEq, so
+	// `a == b` means value equality, not heap-pointer equality.
+	// EqNegate is set for `!=` (lower as `!a.eq(b)`).
+	EqCall   *Call
+	EqNegate bool
 }
 type Unary struct {
 	P       Position

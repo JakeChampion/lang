@@ -79,6 +79,48 @@ func TestTypeErrors(t *testing.T) {
 	}
 }
 
+// Composite `==` / `!=` must be structural equality via the type's
+// `Eq` impl, not silent heap-pointer identity. A struct/enum that does
+// not implement `Eq` is rejected (with a derive hint); arrays/slices/
+// tuples are rejected (no structural eq yet); a type that does
+// implement `Eq` type-checks (and desugars to `a.eq(b)`).
+func TestCompositeEqualityRoutesToEq(t *testing.T) {
+	const eqI32 = `trait Eq { function eq(self: Self, other: Self): boolean; }
+impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
+`
+	reject := []struct {
+		src  string
+		want string
+	}{
+		{`struct P { x: i32 }
+function main(): i32 { var a: P = P{x:1}; var b: P = P{x:1}; if (a == b) { return 1; } return 0; }`,
+			"does not implement `Eq`"},
+		{`function main(): i32 { var a: i32[] = [1,2]; var b: i32[] = [1,2]; if (a == b) { return 1; } return 0; }`,
+			"structural equality for arrays"},
+	}
+	for _, c := range reject {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected rejection, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: error %q does not contain %q", c.src, err.Error(), c.want)
+		}
+	}
+	// With Eq derived, composite == type-checks cleanly.
+	ok := eqI32 + `@derive(Eq) struct P { x: i32, y: i32 }
+@derive(Eq) enum E { A, B(i32) }
+function main(): i32 {
+    var a: P = P{x:1, y:2}; var b: P = P{x:1, y:2};
+    if (a == b) { if (A == A) { if (B(1) != B(2)) { return 0; } } }
+    return 1;
+}`
+	if err := checkSource(t, ok); err != nil {
+		t.Errorf("composite == with derived Eq should type-check, got: %v", err)
+	}
+}
+
 // Phase 5 of docs/PRELUDE-TO-MODULES.md retired the auto-injected
 // prelude: stdlib methods are no longer in scope unless their module
 // is imported. A program that calls `.split` without `import

@@ -2044,6 +2044,24 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	if len(c.errors) > 0 {
 		return c.info, diag.Errors(c.errors)
 	}
+
+	// Composite-type `==` / `!=` was type-checked into a structural
+	// `eq` method call stashed on `Binary.EqCall`. Replace each such
+	// Binary in place with that call (`!a.eq(b)` for `!=`) so every
+	// later pass — monomorph instantiation, treeshake liveness,
+	// codegen, interp — sees an ordinary method call rather than a
+	// hidden side channel. Runs on success only; it also runs inside
+	// monomorph's re-check, so cloned generic bodies desugar too.
+	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
+		if b, ok := e.(*ast.Binary); ok && b.EqCall != nil {
+			if b.EqNegate {
+				return &ast.Unary{P: b.P, Op: "!", Operand: b.EqCall}
+			}
+			return b.EqCall
+		}
+		return e
+	})
+
 	return c.info, nil
 }
 
@@ -6990,6 +7008,36 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
 				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
+			}
+			// Composite-type equality. `==` / `!=` on a struct or
+			// enum is STRUCTURAL equality via the type's `Eq` impl —
+			// it desugars to `a.eq(b)` (and `!a.eq(b)` for `!=`), not
+			// heap-pointer identity. Without this, the operator
+			// silently lowered to `i32.eq` on the two pointers, so
+			// structurally-equal values compared unequal. Scalars /
+			// strings / bools keep their fast native compare below;
+			// arrays / slices / tuples have no structural eq yet.
+			if lt != nil && rt != nil && ast.Equal(lt, rt) {
+				switch lt.(type) {
+				case ast.StructType, ast.EnumType:
+					tn, _ := methodTypeName(lt)
+					if mangled, ok := c.info.Methods[tn+".eq"]; ok && c.methodVisibleHere(mangled) {
+						eqCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "eq"}, Args: []ast.Expr{n.Right}}
+						if rt2 := c.checkExpr(eqCall, s); rt2 != nil {
+							if _, isBool := rt2.(ast.BoolType); !isBool {
+								c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: its `eq` method must return boolean", lt, n.Op)
+							}
+						}
+						n.EqCall = eqCall
+						n.EqNegate = n.Op == "!="
+						return ast.BoolType{}
+					}
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — add `@derive(Eq)` (or `impl Eq for %s`) so `==` can use structural equality", lt, n.Op, tn)
+					return ast.BoolType{}
+				case ast.ArrayType, ast.SliceType, ast.TupleType:
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: structural equality for arrays / slices / tuples is not supported — compare elements individually", lt, n.Op)
+					return ast.BoolType{}
+				}
 			}
 			// String-vs-string equality compares contents; flag so
 			// codegen lowers to a runtime call rather than i32.eq.
