@@ -1369,6 +1369,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // Push the syscall return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_eprint_str\n    pushq %rax\n");
             s = s.need("eprint");
+        } else if (o.kind == "exit") {
+            // [n] -> sys_exit(n). Never returns; the pushed dummy keeps the
+            // operand-stack shape for the statement-level drop.
+            s = s.write("    popq %rdi\n    movq $60, %rax\n    syscall\n    pushq $0\n");
         } else if (o.kind == "map_set") {
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");

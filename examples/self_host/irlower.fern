@@ -2116,6 +2116,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         eis = eis.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                         return eis.emit(ir.op_eprint_str());
                     }
+                    // Built-in `exit(n)` — terminate the process with exit code n
+                    // (an inline sys_exit / proc_exit per backend).
+                    if (cid.name == "exit" && c.args.len() == 1) {
+                        var xs: LowerState = lower_expr(c.args[0], s);
+                        if (!xs.ok) { return xs; }
+                        return xs.emit(ir.op_exit());
+                    }
                     // Built-in `len(x)` — the free-function spelling of `.len()`:
                     // a string reads the box's length field (str_len), an array
                     // the header (arr_len). Mirrors the `.len()` method dispatch
