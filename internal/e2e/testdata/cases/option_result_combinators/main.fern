@@ -1,0 +1,30 @@
+// Combinators on the built-in Option / Result enums (std/option,
+// std/result) — ordinary generic methods enabled by the generic-
+// methods keystone (#2692). All exercised here are scalar-callback or
+// non-callback, so they run on every backend.
+import "std/option";
+import "std/result";
+
+function inc(x: i32): i32 { return x + 1; }
+function pos(x: i32): boolean { return x > 0; }
+
+function main(): i32 {
+    var a: Option[i32] = Some(10);
+    var n: Option[i32] = None;
+    var r: i32 = 0;
+    r = r + a.unwrap_or(0) + n.unwrap_or(5);           // 10 + 5 = 15
+    if (a.is_some() && n.is_none()) { r = r + 1; }      // 16
+    r = r + a.map(inc).unwrap_or(0);                    // 11 -> 27
+    r = r + a.filter(pos).unwrap_or(0);                 // 10 -> 37
+    var oe: Result[i32, i32] = a.ok_or(99);             // Ok(10)
+    r = r + oe.unwrap_or(0);                             // 47
+
+    var ok: Result[i32, i32] = Ok(20);
+    var er: Result[i32, i32] = Err(3);
+    r = r + ok.unwrap_or(0) + er.unwrap_or(8);          // +28 = 75
+    r = r + ok.map(inc).unwrap_or(0);                   // +21 = 96
+    if (ok.is_ok() && er.is_err()) { r = r + 1; }       // 97
+    r = r + ok.ok().unwrap_or(0);                       // +20 = 117
+    r = r + er.err().unwrap_or(0);                      // +3  = 120
+    return r;                                            // 120
+}
