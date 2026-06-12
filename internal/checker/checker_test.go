@@ -167,6 +167,16 @@ function main(): i32 { var o: Opt[i32] = Has(9); return o.unwrap_or(0); }`,
 struct Box[T] { v: T }
 function (b: Box[Foo]) deep(): i32 { return b.v.v; }
 function main(): i32 { var b: Box[Foo] = Box { v: Foo { v: 5 } }; return b.deep(); }`,
+		// Element-polymorphic receivers: owned array `T[]` and slice `[T]`.
+		`function (xs: T[]) first(): T { return xs[0]; }
+function main(): i32 { var a: i32[] = [3, 4]; return a.first(); }`,
+		`function (xs: [T]) head(): T { return xs[0]; }
+function main(): i32 { var a: i32[] = [7, 8]; var s: [i32] = a[0:2]; return s.head(); }`,
+		`function (xs: T[]) count_where(p: (T) => boolean): i32 {
+    var n: i32 = 0; var i: i32 = 0;
+    while (i < xs.len()) { if (p(xs[i])) { n = n + 1; } i = i + 1; } return n; }
+function pos(x: i32): boolean { return x > 0; }
+function main(): i32 { var a: i32[] = [1, 0 - 1, 2]; return a.count_where(pos); }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {
@@ -1329,13 +1339,21 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 }
 
 func TestMethodRejectsNonStructReceiver(t *testing.T) {
-	// `i32` (a built-in numeric receiver) is now permitted —
-	// it's how the prelude declares `i32.to_string()` etc.
-	// What's rejected is receivers that aren't a struct,
-	// enum, or built-in scalar — eg an array type.
+	// `i32` (a built-in numeric receiver) is permitted — it's how the
+	// prelude declares `i32.to_string()` etc. An array receiver is
+	// permitted only when it's element-polymorphic (`(xs: T[])`); a
+	// CONCRETE element type is rejected, because the "Array" method
+	// namespace can't distinguish element types — a `(xs: i32[]) sum()`
+	// would wrongly apply to `string[]` too.
 	src := `function (xs: i32[]) sum(): i32 { return 0; }`
 	if err := checkSource(t, src); err == nil {
-		t.Error("expected error for array receiver")
+		t.Error("expected error for concrete-element array receiver")
+	}
+	// The element-polymorphic form is accepted (see
+	// TestGenericReceiverMethods for the positive cases).
+	if err := checkSource(t, `function (xs: T[]) first(): T { return xs[0]; }
+function main(): i32 { var a: i32[] = [1]; return a.first(); }`); err != nil {
+		t.Errorf("element-polymorphic array receiver should be accepted, got: %v", err)
 	}
 }
 

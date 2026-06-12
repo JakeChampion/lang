@@ -1798,8 +1798,32 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				}
 			case ast.BoolType:
 				typeName = "boolean"
+			case ast.ArrayType:
+				// Element-polymorphic method on an owned array,
+				// `function (xs: T[]) first(): T`. Registered under the
+				// same "Array" namespace the built-in array methods +
+				// the call-site dispatch use; `collectFreeTypeVars`
+				// already bound the element type-var, so it's a generic
+				// method inferred from the receiver's element type.
+				// The element MUST be a type variable: the "Array"
+				// namespace can't distinguish element types, so a
+				// concrete `(xs: i32[]) ...` would wrongly apply to every
+				// array — reject it.
+				if _, ok := rt.Elem.(ast.ParamType); !ok {
+					c.errfCode(fn.P, "E021", "array-receiver method must be element-polymorphic (e.g. `(xs: T[])`); a concrete element type like %s is not supported", fn.Receiver.Type)
+					continue
+				}
+				typeName = "Array"
+			case ast.SliceType:
+				// Same for a slice view, `function (xs: [T]) head(): T`,
+				// under the "slice" namespace.
+				if _, ok := rt.Elem.(ast.ParamType); !ok {
+					c.errfCode(fn.P, "E021", "slice-receiver method must be element-polymorphic (e.g. `(xs: [T])`); a concrete element type like %s is not supported", fn.Receiver.Type)
+					continue
+				}
+				typeName = "slice"
 			default:
-				c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, or built-in type, got %s", fn.Receiver.Type)
+				c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got %s", fn.Receiver.Type)
 				continue
 			}
 			methodKey := typeName + "." + fn.Name
