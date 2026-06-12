@@ -146,6 +146,35 @@ function main(): i32 {
 	}
 }
 
+// Methods declared on a generic struct / enum receiver bind the
+// receiver's type variables implicitly (`T` in `Box[T]`), so they
+// type-check and dispatch per instantiation. A receiver type-arg that
+// names a real type stays concrete.
+func TestGenericReceiverMethods(t *testing.T) {
+	ok := []string{
+		`struct Box[T] { v: T }
+function (b: Box[T]) get(): T { return b.v; }
+function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.get(); }`,
+		`struct Pair[A, B] { fst: A, snd: B }
+function (p: Pair[A, B]) first(): A { return p.fst; }
+function main(): i32 { var p: Pair[i32, i32] = Pair { fst: 3, snd: 4 }; return p.first(); }`,
+		`enum Opt[T] { Nil, Has(T) }
+function (o: Opt[T]) unwrap_or(d: T): T { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
+function main(): i32 { var o: Opt[i32] = Has(9); return o.unwrap_or(0); }`,
+		// A receiver type-arg naming a real struct is a concrete
+		// instantiation, not a type variable.
+		`struct Foo { v: i32 }
+struct Box[T] { v: T }
+function (b: Box[Foo]) deep(): i32 { return b.v.v; }
+function main(): i32 { var b: Box[Foo] = Box { v: Foo { v: 5 } }; return b.deep(); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("generic-receiver method should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+}
+
 // Phase 5 of docs/PRELUDE-TO-MODULES.md retired the auto-injected
 // prelude: stdlib methods are no longer in scope unless their module
 // is imported. A program that calls `.split` without `import
