@@ -2077,6 +2077,39 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Range form: `for IDENT in LOW..HIGH body` — desugar to a
+	// C-style for over the half-open interval [LOW, HIGH). HIGH is
+	// bound once (so `for i in 0..f()` calls f() a single time), and
+	// the loop variable IS the user binding, so `continue` — which
+	// runs the For step — still increments. parseExpr stops at `..`
+	// (not a binary operator), so `expr` is LOW.
+	if p.match(lexer.Punct, "..") {
+		p.advance() // ..
+		prevNS2 := p.noStructLit
+		p.noStructLit = true
+		high, err := p.parseExpr()
+		p.noStructLit = prevNS2
+		if err != nil {
+			return nil, err
+		}
+		body, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		rid := p.nextForeachID()
+		hiName := fmt.Sprintf("__range_hi_%d", rid)
+		mkI := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
+		declHi := &ast.Var{P: kw.Pos, Name: hiName, Init: high}
+		loop := &ast.For{
+			P:    kw.Pos,
+			Init: &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: expr},
+			Cond: &ast.Binary{P: kw.Pos, Op: "<", Left: mkI(nameTok.Text), Right: mkI(hiName)},
+			Step: &ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(nameTok.Text),
+				Value: &ast.Binary{P: kw.Pos, Op: "+", Left: mkI(nameTok.Text), Right: &ast.NumberLit{P: kw.Pos, Value: 1}}}},
+			Body: body,
+		}
+		return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{declHi, loop}}, nil
+	}
 	body, err := p.parseStmt()
 	if err != nil {
 		return nil, err

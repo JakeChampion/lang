@@ -162,6 +162,7 @@ func Keywords() []string {
 // longest-prefix rule picks the right one.
 var multiPunct = []string{
 	"<<=", ">>=", "...",
+	"..",
 	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "=>", "|>",
 	"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
 }

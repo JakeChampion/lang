@@ -1,0 +1,16 @@
+// `for i in LOW..HIGH` iterates the half-open interval [LOW, HIGH).
+// HIGH is evaluated once; `continue` still advances (runs the step).
+function hi(): i32 { return 6; }
+function main(): i32 {
+    var sum: i32 = 0;
+    for i in 0..5 { sum = sum + i; }            // 0+1+2+3+4 = 10
+    for j in 2..hi() {                           // hi() called once
+        if (j == 4) { continue; }                // skip 4
+        sum = sum + j;                            // 2+3+5 = 10  -> 20
+    }
+    for k in 5..5 { sum = sum + 100; }           // empty
+    for m in 9..3 { sum = sum + 100; }           // reversed -> empty
+    var n: i32 = 3;
+    for p in 0..n { sum = sum + 7; }             // +21 -> 41
+    return sum;                                   // 41
+}

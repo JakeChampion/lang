@@ -222,6 +222,43 @@ func TestForEachOverArrayDesugars(t *testing.T) {
 	}
 }
 
+// `for i in LOW..HIGH { body }` desugars to a Block of `{ var
+// __range_hi = HIGH; for (var i = LOW; i < __range_hi; i = i + 1)
+// { body } }` — HIGH bound once, a For (not While) so `continue`
+// advances via the step.
+func TestForInRangeDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		var sum: i32 = 0;
+		for i in 0..5 {
+			sum = sum + i;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block)
+	if !ok {
+		t.Fatalf("range-for should desugar to Block, got %T", prog.Funcs[0].Body.Stmts[1])
+	}
+	if len(blk.Stmts) != 2 {
+		t.Fatalf("expected 2 inner stmts (hi-bind / for), got %d", len(blk.Stmts))
+	}
+	if _, ok := blk.Stmts[0].(*ast.Var); !ok {
+		t.Errorf("first stmt should bind HIGH once (Var), got %T", blk.Stmts[0])
+	}
+	loop, ok := blk.Stmts[1].(*ast.For)
+	if !ok {
+		t.Fatalf("second stmt should be a For (so continue advances), got %T", blk.Stmts[1])
+	}
+	if loop.Init == nil || loop.Cond == nil || loop.Step == nil {
+		t.Errorf("desugared For must have Init/Cond/Step; got %+v", loop)
+	}
+	if b, ok := loop.Cond.(*ast.Binary); !ok || b.Op != "<" {
+		t.Errorf("range loop cond should be `i < hi`, got %T %v", loop.Cond, loop.Cond)
+	}
+}
+
 // `for c in "hi"` works the same way — strings support `len()` and
 // indexing, so the desugar applies identically.
 func TestForEachOverStringDesugars(t *testing.T) {
