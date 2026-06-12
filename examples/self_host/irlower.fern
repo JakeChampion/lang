@@ -452,6 +452,42 @@ pub function (s: LowerState) mark_i64arr(i: i32, v: boolean): LowerState {
     return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr.with(i, v), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
+// variant_enum_owner returns the enum a variant struct belongs to
+// (StructDecl.enum_owner, set when the parser desugars an enum's variants),
+// or "" if `name` isn't a known enum variant. Lets the IR path recover a
+// freshly-constructed variant's enum type for `<Enum>.<method>` dispatch.
+pub function variant_enum_owner(structs: parser.StructDecl[], name: string): string {
+    var vi: i32 = 0;
+    while (vi < structs.len()) {
+        if (structs[vi].name == name) { return structs[vi].enum_owner; }
+        vi = vi + 1;
+    }
+    return "";
+}
+
+// expr_enum_type returns the enum type an expression evaluates to when it is a
+// variant CONSTRUCTION (`Has(x)` — a call to a variant name) or a bare unit
+// variant (`A`, not a local), else "". Used to dispatch a method called
+// directly on a freshly-constructed variant (`Has(5).eq(…)`) to
+// `<Enum>.<method>`; an enum value held in a LOCAL is already typed via the
+// slot's struct_type, so this only covers the fresh-construction receiver.
+pub function expr_enum_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return variant_enum_owner(s.structs, id.name); },
+                _ => { return ""; }
+            }
+        },
+        parser.ExprIdent(id) => {
+            if (s.slot_of(id.name) < 0) { return variant_enum_owner(s.structs, id.name); }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // ---- struct decl helpers -----------------------------------------------
 // The core lookups take the decl array directly (so lower_func can use them
 // while building its initial state); the LowerState methods delegate.
@@ -2213,10 +2249,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // (decl_is_struct) or, for an enum / type-returning associated
                     // fn, by a registered "<Type>.<f>" return type — never via
                     // is_enum_like_name, which also matches MODULE names
-                    // (util/parser) and would hijack every `mod.func()` call.
+                    // (util/parser) and would hijack every `mod.func()` call. A
+                    // UNIT VARIANT is excluded (variant_enum_owner != "") — `Nil.m()`
+                    // is a receiver-method call on a variant value, not an
+                    // associated call on a type, so it falls through to the
+                    // enum-method dispatch below.
                     match (fa.obj) {
                         parser.ExprIdent(tid) => {
-                            if (s.slot_of(tid.name) < 0 && (decl_is_struct(s.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "")) {
+                            if (s.slot_of(tid.name) < 0 && variant_enum_owner(s.structs, tid.name) == "" && (decl_is_struct(s.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "")) {
                                 var asf: LowerState = s;
                                 var afi: i32 = 0;
                                 while (afi < c.args.len()) {
@@ -2254,6 +2294,25 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             ai = ai + 1;
                         }
                         return sm.emit(ir.op_call_direct(rty + "." + fa.field, 1 + c.args.len()));
+                    }
+                    // Enum method called directly on a FRESH variant construction
+                    // (`Has(5).eq(other)`) or a bare unit variant (`A.method()`).
+                    // expr_struct_type doesn't type a fresh variant (it isn't a
+                    // local), so recover the enum from the variant's enum_owner and
+                    // dispatch to `<Enum>.<method>` with the constructed variant as
+                    // arg 0 — the same shape-pointer box `match`'s variant_is reads.
+                    var ety: string = expr_enum_type(fa.obj, s);
+                    if (ety != "") {
+                        var em: LowerState = lower_expr(fa.obj, s);
+                        if (!em.ok) { return em; }
+                        var eai: i32 = 0;
+                        while (eai < c.args.len()) {
+                            if (em.param_is_i64(ety + "." + fa.field, eai)) { em = lower_i64(c.args[eai], em); }
+                            else { em = lower_expr(c.args[eai], em); }
+                            if (!em.ok) { return em; }
+                            eai = eai + 1;
+                        }
+                        return em.emit(ir.op_call_direct(ety + "." + fa.field, 1 + c.args.len()));
                     }
                     // Primitive-receiver method call `n.method(args)` (impl Trait
                     // for i32/string/i64/f64) — derive the receiver's primitive
