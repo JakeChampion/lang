@@ -21,6 +21,7 @@
 import "./ir";
 import "./parser";
 import "./util";
+import "./astwalk";
 
 // LowerState threads the accumulated Op[] and the local-slot table
 // (slot i -> name) immutably, in the self-host style. `n_params` records
@@ -3812,4 +3813,165 @@ pub function do_branch(ops: ir.Op[], pc: i32, d: i32): i32 {
     var op: i32 = enclosing_opener(ops, pc, d);
     if (ops[op].kind == "loop") { return op + 1; }
     return find_matching_end(ops, op + 1) + 1;
+}
+
+// --- Lambda lifting (closures slice 2a: no-capture lambdas as call arguments) ---
+//
+// lift_lambdas rewrites a module so that a no-capture lambda passed directly as
+// a call argument is hoisted to a fresh top-level function (__lam_<k>) and the
+// argument becomes a bare reference to it. That bare reference, at a "fn"-typed
+// param position, is exactly the function VALUE that closures slice 1 lowers via
+// const_func — so capture-free lambdas-as-callbacks ride the slice-1 machinery
+// with no new IR ops. Capturing lambdas (and lambdas in positions this bounded
+// walk doesn't reach) are left as ExprLambda, so the module falls back to the
+// AST backend. A module with no lifted lambda is returned UNCHANGED (so the
+// lambda-free fixpoint is byte-identical).
+
+pub struct LiftAcc { funcs: parser.FuncDecl[], counter: i32 }
+struct LiftExpr { expr: parser.Expr, acc: LiftAcc }
+struct LiftStmts { stmts: parser.Stmt[], acc: LiftAcc }
+
+// lambda_has_no_captures: every identifier the body uses must be one of the
+// lambda's params, a local it binds, a global function, or a literal keyword —
+// nothing from the enclosing scope. (A conservative check: a false "captures"
+// only costs a fallback to AST, never correctness.)
+function lambda_has_no_captures(lam: parser.ExprLambda, gfns: string[]): boolean {
+    var used: string[] = [];
+    var si: i32 = 0;
+    while (si < lam.body.len()) { used = astwalk.collect_idents_stmt(lam.body[si], used); si = si + 1; }
+    var bound: string[] = [];
+    var pi: i32 = 0;
+    while (pi < lam.params.len()) { bound = bound.append(lam.params[pi].name); pi = pi + 1; }
+    var bi: i32 = 0;
+    while (bi < lam.body.len()) { bound = astwalk.collect_bound_stmt(lam.body[bi], bound); bi = bi + 1; }
+    var ui: i32 = 0;
+    while (ui < used.len()) {
+        var u: string = used[ui];
+        if (util.index_of_str(bound, u) < 0 && util.index_of_str(gfns, u) < 0
+                && u != "None" && u != "true" && u != "false") {
+            return false;
+        }
+        ui = ui + 1;
+    }
+    return true;
+}
+
+// lift_call_arg lifts one call argument: a no-capture lambda becomes __lam_<k>
+// and the argument a bare reference to it; any other argument recurses (so a
+// lambda nested inside a call argument is still reached).
+function lift_call_arg(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
+    match (e) {
+        parser.ExprLambda(lam) => {
+            if (lambda_has_no_captures(lam, gfns)) {
+                var nm: string = "__lam_" + util.i32_to_string(acc.counter);
+                var tp: string[] = [];
+                var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+                var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
+                return LiftExpr { expr: parser.ExprIdent { name: nm, line: 0, col: 0 }, acc: nacc };
+            }
+            return LiftExpr { expr: e, acc: acc };
+        },
+        _ => { return lift_expr_walk(e, acc, gfns); }
+    }
+    return LiftExpr { expr: e, acc: acc };
+}
+
+// lift_expr_walk recurses through the expression forms that commonly hold calls,
+// rewriting lambda arguments. Unhandled forms pass through unchanged.
+function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
+    match (e) {
+        parser.ExprCall(c) => {
+            var a: LiftAcc = acc;
+            var nargs: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var r: LiftExpr = lift_call_arg(c.args[i], a, gfns);
+                a = r.acc;
+                nargs = nargs.append(r.expr);
+                i = i + 1;
+            }
+            return LiftExpr { expr: parser.ExprCall { callee: c.callee, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, acc: a };
+        },
+        _ => { return LiftExpr { expr: e, acc: acc }; }
+    }
+    return LiftExpr { expr: e, acc: acc };
+}
+
+// lift_stmt rewrites a single statement, recursing into nested bodies + the
+// call-bearing expression positions (return / var-init / expr-stmt / control
+// conditions). Other statements pass through.
+function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
+    match (st) {
+        parser.StmtReturn(r) => {
+            var e: LiftExpr = lift_expr_walk(r.value, acc, gfns);
+            return LiftStmts { stmts: [parser.StmtReturn { value: e.expr, line: r.line, col: r.col }], acc: e.acc };
+        },
+        parser.StmtVar(v) => {
+            var e: LiftExpr = lift_expr_walk(v.init, acc, gfns);
+            return LiftStmts { stmts: [parser.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col }], acc: e.acc };
+        },
+        parser.StmtExpr(s) => {
+            var e: LiftExpr = lift_expr_walk(s.value, acc, gfns);
+            return LiftStmts { stmts: [parser.StmtExpr { value: e.expr }], acc: e.acc };
+        },
+        parser.StmtIf(f) => {
+            var ce: LiftExpr = lift_expr_walk(f.cond, acc, gfns);
+            var tb: LiftStmts = lift_stmts(f.then_body, ce.acc, gfns);
+            var eb: LiftStmts = lift_stmts(f.else_body, tb.acc, gfns);
+            return LiftStmts { stmts: [parser.StmtIf { cond: ce.expr, then_body: tb.stmts, else_body: eb.stmts }], acc: eb.acc };
+        },
+        parser.StmtWhile(w) => {
+            var ce: LiftExpr = lift_expr_walk(w.cond, acc, gfns);
+            var b: LiftStmts = lift_stmts(w.body, ce.acc, gfns);
+            return LiftStmts { stmts: [parser.StmtWhile { cond: ce.expr, body: b.stmts }], acc: b.acc };
+        },
+        parser.StmtFor(fo) => {
+            var ie: LiftExpr = lift_expr_walk(fo.iter, acc, gfns);
+            var b: LiftStmts = lift_stmts(fo.body, ie.acc, gfns);
+            return LiftStmts { stmts: [parser.StmtFor { var_name: fo.var_name, iter: ie.expr, body: b.stmts }], acc: b.acc };
+        },
+        _ => { return LiftStmts { stmts: [st], acc: acc }; }
+    }
+    return LiftStmts { stmts: [st], acc: acc };
+}
+
+function lift_stmts(stmts: parser.Stmt[], acc: LiftAcc, gfns: string[]): LiftStmts {
+    var a: LiftAcc = acc;
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var r: LiftStmts = lift_stmt(stmts[i], a, gfns);
+        a = r.acc;
+        var j: i32 = 0;
+        while (j < r.stmts.len()) { out = out.append(r.stmts[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return LiftStmts { stmts: out, acc: a };
+}
+
+// lift_lambdas is the module pre-pass. Returns the module unchanged when no
+// lambda was lifted (keeping lambda-free modules byte-identical), else a module
+// whose bodies reference the hoisted __lam_<k> functions, with those functions
+// appended.
+pub function lift_lambdas(mod: parser.Module): parser.Module {
+    var gfns: string[] = [];
+    var gi: i32 = 0;
+    while (gi < mod.funcs.len()) {
+        if (mod.funcs[gi].receiver_type.len() == 0) { gfns = gfns.append(mod.funcs[gi].name); }
+        gi = gi + 1;
+    }
+    var acc: LiftAcc = LiftAcc { funcs: [], counter: 0 };
+    var newfuncs: parser.FuncDecl[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[fi];
+        var r: LiftStmts = lift_stmts(fd.body, acc, gfns);
+        acc = r.acc;
+        newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: r.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        fi = fi + 1;
+    }
+    if (acc.counter == 0) { return mod; }
+    var li: i32 = 0;
+    while (li < acc.funcs.len()) { newfuncs = newfuncs.append(acc.funcs[li]); li = li + 1; }
+    return parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }

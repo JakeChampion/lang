@@ -1228,6 +1228,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     return s;
 }
 
+// lift_lambdas re-exports irlower's lambda-lift pre-pass so the dispatch sites
+// (asm.emit_module / asm_ir_run) can hoist no-capture lambda arguments before
+// the eligibility check + emit without importing irlower directly.
+pub function lift_lambdas(mod: parser.Module): parser.Module {
+    return irlower.lift_lambdas(mod);
+}
+
 // emit_module_ir emits a full all-i32-eligible module via the IR path. The
 // program is self-contained (pure i32 uses no runtime helpers): every
 // function via the IR, then a `_start` that calls __fn_main and exits with
