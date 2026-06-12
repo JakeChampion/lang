@@ -113,6 +113,12 @@ function is_valid_numeric_suffix(s: string): boolean {
 // iterates a sorted-by-length string list; here we hand-code the
 // length-3 cases first, then length-2, then fall through. Returns
 // the matched literal text, or "" if none matched.
+//
+// `..` (the half-open range operator, `for i in LO..HI`) is in the
+// length-2 set; the length-3 `...` spread is checked first so `...`
+// never mis-lexes as `..` + `.`. A float needs a digit right after
+// `.` (scan_number's guard), and `.field` / `.0` stay single-dot, so
+// `..` never clashes with field access or fractions.
 function match_multipunct(src: string, i: i32, n: i32): string {
     if (i + 3 <= n) {
         var s3: string = src[i:i + 3];
@@ -122,7 +128,7 @@ function match_multipunct(src: string, i: i32, n: i32): string {
         var s2: string = src[i:i + 2];
         if (s2 == "==" || s2 == "!=" || s2 == "<=" || s2 == ">="
             || s2 == "&&" || s2 == "||" || s2 == "<<" || s2 == ">>"
-            || s2 == "=>" || s2 == "|>"
+            || s2 == "=>" || s2 == "|>" || s2 == ".."
             || s2 == "+=" || s2 == "-=" || s2 == "*=" || s2 == "/="
             || s2 == "%=" || s2 == "&=" || s2 == "|=" || s2 == "^=") {
             return s2;
