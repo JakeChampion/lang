@@ -187,6 +187,33 @@ pub function __map_cow_inplace(m: usize): usize {
     return nm;
 }
 
+// __map_clone unconditionally deep-copies a Map handle — the rc>1 branch
+// of __map_cow_inplace, but always taken. It produces a fresh handle (rc=1)
+// over a freshly-copied kv buffer, fully independent of the source.
+//
+// Used by container construction (issue #2763): when a struct field of Map
+// type is initialised by a COW mutator result (`Struct { m: s.m.insert(...) }`),
+// that result may be the SAME handle the borrowed source still owns (the COW
+// mutates in place at rc==1). Storing it into the new container without copying
+// makes the two structs alias one buffer; dropping the old one then frees it
+// out from under the new one — a use-after-free. Cloning gives the new
+// container its own buffer so the lifetimes are independent. (The buffer copy
+// is shallow over pointer-shaped values, matching __map_cow_inplace; precise
+// per-value retain is the Perceus port's job — roadmap goal 2.)
+pub function __map_clone(m: usize): usize {
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var entryStride: i32 = 2 * __ptr_width();
+    var bufBytes: i32 = 16 + cap * (4 + entryStride);
+    var newBuf: usize = __alloc(bufBytes);
+    __memcpy(newBuf, buf, bufBytes);
+    var base: usize = __alloc(16);
+    __store_i32(base, 1);
+    var nm: usize = base + 8;
+    __store_ptr(nm, newBuf);
+    return nm;
+}
+
 pub function __map_len_impl(m: usize): i32 {
     var buf: usize = __load_ptr(m);
     return __load_i32(buf + 4);

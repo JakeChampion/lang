@@ -45,14 +45,21 @@ var watHelperDeps = map[string][]string{
 	// owned map traces back to a map_new. It transitively pulls in
 	// __map_dec_value / __map_val_kind / __map_val_stride from its
 	// body.
+	//
+	// The three COW mutators (set / delete / clear) also root
+	// __map_clone: the StructLit IR lowering injects a __map_clone
+	// call when a Map-typed struct field is initialised by one of
+	// these mutator results (issue #2763), and that injection — like
+	// __map_drop_values above — happens after lowering, so there's no
+	// AST reference for tree-shake to follow on its own.
 	"map_new":                   {"map_new_impl", "__map_drop_values"},
 	"__method_Map_len":          {"__map_len_impl"},
 	"__method_Map_has":          {"__map_has_impl", "__map_lookup", "__map_hash"},
 	"__method_Map_get":          {"__map_get_impl", "__map_lookup", "__map_hash"},
 	"__method_Map_get_or":       {"__map_get_or_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_set":          {"__map_set_impl", "__map_grow", "__map_hash", "__map_lookup_val"},
-	"__method_Map_delete":       {"__map_delete_impl", "__map_hash"},
-	"__method_Map_clear":        {"__map_clear_impl"},
+	"__method_Map_set":          {"__map_set_impl", "__map_grow", "__map_hash", "__map_lookup_val", "__map_clone"},
+	"__method_Map_delete":       {"__map_delete_impl", "__map_hash", "__map_clone"},
+	"__method_Map_clear":        {"__map_clear_impl", "__map_clone"},
 	"__method_Map_keys":         {"__map_keys_impl", "__map_column"},
 	"__method_Map_values":       {"__map_values_impl", "__map_column"},
 	"__method_Map_iter":         {"__map_iter_impl"},
