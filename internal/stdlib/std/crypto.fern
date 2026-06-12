@@ -1,0 +1,231 @@
+// std/crypto — SHA-256 and HMAC-SHA256 (FIPS 180-4 / RFC 2104).
+//
+// Pure-Fern, no dependencies — suited to the fast-startup / no-deps
+// posture. All arithmetic is on `u32` (wrapping add, logical `>>`),
+// so the round math is exact on every backend. Inputs are raw byte
+// strings (`s[i]` is a 0..255 byte); outputs come in two shapes:
+// `*_hex` (lowercase 64-char digest) and `*_bytes` (raw 32-byte
+// digest string). Verified against the standard NIST / RFC 4231
+// known-answer vectors.
+
+// __crypto_k returns the 64 SHA-256 round constants (the first 32
+// bits of the fractional parts of the cube roots of the first 64
+// primes).
+function __crypto_k(): u32[] {
+    return [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ];
+}
+
+// __crypto_h0 returns the 8 SHA-256 initial hash words (the first 32
+// bits of the fractional parts of the square roots of the first 8
+// primes).
+function __crypto_h0(): u32[] {
+    return [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+}
+
+// Right-rotate x by n bits (n in 1..31).
+function __rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); }
+
+// __zeros32 builds a fresh n-element u32[] of zeros (the message
+// schedule scratch; the language has no __alloc for u32[]).
+function __zeros32(n: i32): u32[] {
+    var a: u32[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = a.append(0); i = i + 1; }
+    return a;
+}
+
+// __sha256_compress folds one 64-byte block (msg[off .. off+63]) into
+// the 8-word state `h`, returning the updated state.
+function __sha256_compress(h: u32[], k: u32[], msg: u8[], off: i32): u32[] {
+    // Message schedule: w[0..15] big-endian from the block, w[16..63]
+    // by the recurrence.
+    var w: u32[] = __zeros32(64);
+    var t: i32 = 0;
+    while (t < 16) {
+        var b: i32 = off + t * 4;
+        var word: u32 = ((msg[b] as u32) << 24) | ((msg[b + 1] as u32) << 16) | ((msg[b + 2] as u32) << 8) | (msg[b + 3] as u32);
+        w = w.with(t, word);
+        t = t + 1;
+    }
+    t = 16;
+    while (t < 64) {
+        var w15: u32 = w[t - 15];
+        var w2: u32 = w[t - 2];
+        var s0: u32 = __rotr(w15, 7) ^ __rotr(w15, 18) ^ (w15 >> 3);
+        var s1: u32 = __rotr(w2, 17) ^ __rotr(w2, 19) ^ (w2 >> 10);
+        w = w.with(t, w[t - 16] + s0 + w[t - 7] + s1);
+        t = t + 1;
+    }
+    // Working variables.
+    var a: u32 = h[0];
+    var bb: u32 = h[1];
+    var c: u32 = h[2];
+    var d: u32 = h[3];
+    var e: u32 = h[4];
+    var f: u32 = h[5];
+    var g: u32 = h[6];
+    var hh: u32 = h[7];
+    t = 0;
+    while (t < 64) {
+        var bs1: u32 = __rotr(e, 6) ^ __rotr(e, 11) ^ __rotr(e, 25);
+        var ch: u32 = (e & f) ^ ((e ^ 0xffffffff) & g);
+        var t1: u32 = hh + bs1 + ch + k[t] + w[t];
+        var bs0: u32 = __rotr(a, 2) ^ __rotr(a, 13) ^ __rotr(a, 22);
+        var maj: u32 = (a & bb) ^ (a & c) ^ (bb & c);
+        var t2: u32 = bs0 + maj;
+        hh = g;
+        g = f;
+        f = e;
+        e = d + t1;
+        d = c;
+        c = bb;
+        bb = a;
+        a = t1 + t2;
+        t = t + 1;
+    }
+    var out: u32[] = __zeros32(8);
+    out = out.with(0, h[0] + a);
+    out = out.with(1, h[1] + bb);
+    out = out.with(2, h[2] + c);
+    out = out.with(3, h[3] + d);
+    out = out.with(4, h[4] + e);
+    out = out.with(5, h[5] + f);
+    out = out.with(6, h[6] + g);
+    out = out.with(7, h[7] + hh);
+    return out;
+}
+
+// __sha256_core hashes a byte array and returns the 32-byte digest.
+function __sha256_core(msg: u8[]): u8[] {
+    var ml: i32 = msg.len();
+    // Padded length: message + 0x80 + zero fill + 8-byte bit length,
+    // rounded up to a multiple of 64.
+    var total: i32 = ml + 1 + 8;
+    var plen: i32 = total;
+    if (total % 64 != 0) { plen = total + (64 - (total % 64)); }
+    var m: u8[] = __alloc_u8(plen);   // zero-filled
+    var i: i32 = 0;
+    while (i < ml) { m = m.with(i, msg[i]); i = i + 1; }
+    m = m.with(ml, 0x80 as u8);
+    // 64-bit big-endian bit length in the final 8 bytes.
+    var bits: i64 = (ml as i64) * 8;
+    var j: i32 = 0;
+    while (j < 8) {
+        var shift: i64 = (j * 8) as i64;
+        m = m.with(plen - 1 - j, ((bits >> shift) & 255) as u8);
+        j = j + 1;
+    }
+    var k: u32[] = __crypto_k();
+    var h: u32[] = __crypto_h0();
+    var off: i32 = 0;
+    while (off < plen) {
+        h = __sha256_compress(h, k, m, off);
+        off = off + 64;
+    }
+    // Serialize the 8 state words big-endian into 32 bytes.
+    var digest: u8[] = __alloc_u8(32);
+    var wi: i32 = 0;
+    while (wi < 8) {
+        var word: u32 = h[wi];
+        digest = digest.with(wi * 4, ((word >> 24) & 255) as u8);
+        digest = digest.with(wi * 4 + 1, ((word >> 16) & 255) as u8);
+        digest = digest.with(wi * 4 + 2, ((word >> 8) & 255) as u8);
+        digest = digest.with(wi * 4 + 3, (word & 255) as u8);
+        wi = wi + 1;
+    }
+    return digest;
+}
+
+// __str_to_bytes copies a raw byte string into a fresh u8[] (each
+// `s[i]` is a 0..255 byte). Used instead of `s.as_bytes()` because
+// that returns a `[u8]` slice; the hash core works on `u8[]` arrays
+// (the same type __alloc_u8 builds for HMAC's intermediate blocks).
+function __str_to_bytes(s: string): u8[] {
+    var n: i32 = s.len();
+    var b: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) { b = b.with(i, s[i] as u8); i = i + 1; }
+    return b;
+}
+
+// __hex_digit renders a nibble (0-15) as a lowercase hex character.
+function __hex_digit(n: i32): string {
+    return "0123456789abcdef"[n : n + 1];
+}
+
+// __bytes_to_hex renders a byte array as a lowercase hex string.
+function __bytes_to_hex(b: u8[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < b.len()) {
+        var v: i32 = b[i] as i32;
+        out = out + __hex_digit((v >> 4) & 15) + __hex_digit(v & 15);
+        i = i + 1;
+    }
+    return out;
+}
+
+// sha256_bytes returns the raw 32-byte SHA-256 digest of `s` as a
+// byte string.
+pub function sha256_bytes(s: string): string {
+    return string_from_bytes(__sha256_core(__str_to_bytes(s)));
+}
+
+// sha256_hex returns the SHA-256 digest of `s` as a 64-character
+// lowercase hex string.
+pub function sha256_hex(s: string): string {
+    return __bytes_to_hex(__sha256_core(__str_to_bytes(s)));
+}
+
+// __block_key normalizes an HMAC key to the 64-byte SHA-256 block
+// size: keys longer than 64 bytes are hashed first, then all keys are
+// zero-padded to 64 bytes.
+function __block_key(key: u8[]): u8[] {
+    var k: u8[] = key;
+    if (key.len() > 64) { k = __sha256_core(key); }
+    var out: u8[] = __alloc_u8(64);   // zero-filled
+    var i: i32 = 0;
+    while (i < k.len()) { out = out.with(i, k[i]); i = i + 1; }
+    return out;
+}
+
+// __hmac_core computes HMAC-SHA256(key, msg) and returns the 32-byte
+// digest. inner = H((k0 ^ ipad) || msg); out = H((k0 ^ opad) || inner).
+function __hmac_core(key: u8[], msg: u8[]): u8[] {
+    var k0: u8[] = __block_key(key);
+    // Inner block: (k0 ^ 0x36) followed by the message.
+    var inner: u8[] = __alloc_u8(64 + msg.len());
+    var i: i32 = 0;
+    while (i < 64) { inner = inner.with(i, ((k0[i] as i32) ^ 0x36) as u8); i = i + 1; }
+    var j: i32 = 0;
+    while (j < msg.len()) { inner = inner.with(64 + j, msg[j]); j = j + 1; }
+    var inner_hash: u8[] = __sha256_core(inner);
+    // Outer block: (k0 ^ 0x5c) followed by the inner hash (32 bytes).
+    var outer: u8[] = __alloc_u8(64 + 32);
+    i = 0;
+    while (i < 64) { outer = outer.with(i, ((k0[i] as i32) ^ 0x5c) as u8); i = i + 1; }
+    j = 0;
+    while (j < 32) { outer = outer.with(64 + j, inner_hash[j]); j = j + 1; }
+    return __sha256_core(outer);
+}
+
+// hmac_sha256_bytes returns the raw 32-byte HMAC-SHA256 digest as a
+// byte string.
+pub function hmac_sha256_bytes(key: string, msg: string): string {
+    return string_from_bytes(__hmac_core(__str_to_bytes(key), __str_to_bytes(msg)));
+}
+
+// hmac_sha256_hex returns the HMAC-SHA256 digest as a 64-character
+// lowercase hex string.
+pub function hmac_sha256_hex(key: string, msg: string): string {
+    return __bytes_to_hex(__hmac_core(__str_to_bytes(key), __str_to_bytes(msg)));
+}
