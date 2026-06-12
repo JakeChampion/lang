@@ -1057,6 +1057,66 @@ function main(): i32 {
 	}
 }
 
+// Issue #2763: a value-type struct wrapping a Map (the `Set[T]` shape),
+// reconstructed through a method — `return IntSet { m: s.m.insert(...) }`.
+// The COW mutator returns the borrowed receiver's handle mutated in place,
+// so without a clone the new struct aliases the caller's map and dropping
+// the old struct frees it from under the new one (segfault on x86-64,
+// corruption elsewhere). The StructLit lowering now clones a Map field
+// initialised by a COW mutator result. Covers insert (set), a duplicate
+// (size stays 2), and a `.without` (delete) mutator on the same shape.
+func TestWASMMapFieldStructRebind(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"insert-dedup", `
+import "core/map";
+struct IntSet { m: Map[i32, i32] }
+function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
+function (s: IntSet) len(): i32 { return s.m.len(); }
+function main(): i32 {
+    var s: IntSet = IntSet { m: map_new(4) };
+    s = s.insert(10);
+    s = s.insert(20);
+    s = s.insert(10);
+    return s.len();
+}`, 2},
+		{"single-insert", `
+import "core/map";
+struct IntSet { m: Map[i32, i32] }
+function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
+function (s: IntSet) len(): i32 { return s.m.len(); }
+function main(): i32 {
+    var s: IntSet = IntSet { m: map_new(4) };
+    s = s.insert(10);
+    return s.len();
+}`, 1},
+		{"insert-then-without", `
+import "core/map";
+struct IntSet { m: Map[i32, i32] }
+function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
+function (s: IntSet) remove(x: i32): IntSet { return IntSet { m: s.m.without(x) }; }
+function (s: IntSet) len(): i32 { return s.m.len(); }
+function main(): i32 {
+    var s: IntSet = IntSet { m: map_new(4) };
+    s = s.insert(10);
+    s = s.insert(20);
+    s = s.insert(30);
+    s = s.remove(20);
+    return s.len();
+}`, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runWasm(t, tc.src); got != tc.want {
+				t.Errorf("wasm %s: got %d, want %d (issue #2763)", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
 // Map dynamic resize: insert past the initial capacity and
 // verify all entries remain reachable. Without resize this
 // would trap on `unreachable`; with resize the buffer doubles
@@ -3374,7 +3434,6 @@ function main(): i32 { return g(A(7)) + g(A(150)); }`, 71},
 		})
 	}
 }
-
 
 // over the parent's storage. Verifies len + indexing on a slice
 // over an owned array AND sub-slicing (slice-of-slice).

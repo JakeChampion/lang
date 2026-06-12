@@ -10434,6 +10434,20 @@ func (b *builder) expr(e ast.Expr) error {
 			if needsRcIncOnAlias(f.Value, b) && !b.moveSites[f.Value] {
 				b.emitAliasInc(f.Value)
 			}
+			// Issue #2763: a Map-typed field initialised by a COW mutator
+			// result (`Struct { m: s.m.insert(...) }`) may be the SAME handle
+			// the borrowed source still owns — the COW mutates in place at
+			// rc<=1. needsRcIncOnAlias is false for a Call, so the value is
+			// stored as a move with no retain; the new container would then
+			// alias the source's buffer and a later drop of either frees it
+			// out from under the other (use-after-free → segfault). Clone the
+			// map so the container owns an independent buffer. A fresh
+			// `map_new()` result is NOT a mutator call, so it still moves in
+			// (no needless copy / no leak). The fast ownership-flow-aware
+			// inc-only path is the Perceus port's job (roadmap goal 2).
+			if isMapType(fieldType(sd.Fields, f.Name)) && isMapMutatorCall(f.Value) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
+			}
 			// Reuse payloadStoreOp so the store is correctly
 			// sized for the field's declared type: i32 / f32
 			// / sub-i32 → 4 bytes, i64 / f64 → 8 bytes, and
@@ -15412,6 +15426,30 @@ func isSelfMapMutation(value ast.Expr, targetName string) bool {
 	}
 	recv, ok := call.Args[0].(*ast.Ident)
 	return ok && recv.Name == targetName
+}
+
+// isMapMutatorCall reports whether e is a call to one of the Map COW
+// mutators (`m.insert` / `.without` / `.cleared`, mangled to
+// __method_Map_set / _delete / _clear). These go through __map_cow_inplace
+// and, when the receiver map is uniquely owned (rc<=1 — the borrow case),
+// mutate it IN PLACE and return the SAME handle rather than a fresh copy.
+// Storing such a result into a freshly-constructed container therefore
+// aliases the receiver's buffer; the container must clone it to stay
+// independent (issue #2763 — Map field in a value-type struct double-freed).
+func isMapMutatorCall(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch id.Name {
+	case "__method_Map_set", "__method_Map_delete", "__method_Map_clear":
+		return true
+	}
+	return false
 }
 
 func isArrayTypeOfLocal(name string, b *builder) bool {
