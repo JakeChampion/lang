@@ -112,7 +112,13 @@ function __sha256_core(msg: u8[]): u8[] {
     var total: i32 = ml + 1 + 8;
     var plen: i32 = total;
     if (total % 64 != 0) { plen = total + (64 - (total % 64)); }
-    var m: u8[] = __alloc_u8(plen);   // zero-filled
+    // __alloc_u8 does NOT guarantee zeroed memory on the AOT backends (a
+    // reused freelist block carries stale bytes), so the padding region must
+    // be written explicitly — zero the whole buffer first, then lay down the
+    // message, the 0x80 marker, and the length.
+    var m: u8[] = __alloc_u8(plen);
+    var z: i32 = 0;
+    while (z < plen) { m = m.with(z, 0 as u8); z = z + 1; }
     var i: i32 = 0;
     while (i < ml) { m = m.with(i, msg[i]); i = i + 1; }
     m = m.with(ml, 0x80 as u8);
@@ -192,7 +198,11 @@ pub function sha256_hex(s: string): string {
 function __block_key(key: u8[]): u8[] {
     var k: u8[] = key;
     if (key.len() > 64) { k = __sha256_core(key); }
-    var out: u8[] = __alloc_u8(64);   // zero-filled
+    // Zero the block explicitly (key padding) — __alloc_u8 isn't guaranteed
+    // zeroed on the AOT backends.
+    var out: u8[] = __alloc_u8(64);
+    var z: i32 = 0;
+    while (z < 64) { out = out.with(z, 0 as u8); z = z + 1; }
     var i: i32 = 0;
     while (i < k.len()) { out = out.with(i, k[i]); i = i + 1; }
     return out;
