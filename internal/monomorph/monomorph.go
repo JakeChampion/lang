@@ -650,6 +650,30 @@ func concreteTypeNameOf(t ast.Type) (string, bool) {
 		return x.Name, true
 	case ast.EnumType:
 		return x.Name, true
+	// Primitive type params resolve associated calls onto a primitive impl
+	// (`impl Default for i32` → `__assoc_i32_default`): name them the same way
+	// the checker names a primitive method receiver, so `T.f()` with `T=i32`
+	// rewrites to `i32.f()`.
+	case ast.StringType:
+		return "string", true
+	case ast.BoolType:
+		return "boolean", true
+	case ast.NumberType:
+		switch {
+		case x.NormalWidth() == 64 && x.IsSigned():
+			return "i64", true
+		case x.NormalWidth() == 64 && !x.IsSigned():
+			return "u64", true
+		case !x.IsSigned():
+			return "u32", true
+		default:
+			return "i32", true
+		}
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return "f64", true
+		}
+		return "f32", true
 	}
 	return "", false
 }
