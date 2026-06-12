@@ -7651,7 +7651,7 @@ pub function map_helpers(): string {
 // `(n).to_string()` (the desugaring of an f-string interpolant): format
 // an i32 / i64 into a fresh `[len][bytes]` heap block. Depends on
 // $__fern_alloc.
-function to_string_helpers(): string {
+pub function to_string_helpers(): string {
     var o: string = "";
     o = o + "  (func $__fern_i32_to_str (param $n i32) (result i32)\n";
     o = o + "    (local $neg i32) (local $mag i32) (local $len i32) (local $blk i32) (local $p i32)\n";
@@ -10689,7 +10689,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
                 + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod)) {
+        // i32.to_string() allocates its decimal-text box, so it needs the heap
+        // allocator even in an otherwise alloc-free module (mirrors asm_ir's
+        // has_need("i32_to_string") gate on the register backend).
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod)) {
             ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -10698,6 +10701,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // $__fern_strcat + $__fern_streq; references $__fern_str_box from
         // heap_alloc_helpers (module_allocates pulls it in for string programs).
         if (wasm_ir.module_uses_strings(mod) || wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + strcat_streq_helpers(); }
+        // $__fern_i32_to_str backs i32.to_string() (wasm_helper_symbol maps the
+        // IR call_direct("__fern_i32_to_string") to it).
+        if (wasm_ir.module_uses_i32_to_string(mod)) { ir_out = ir_out + to_string_helpers(); }
         if (wasm_ir.module_uses_str_cmp(mod)) { ir_out = ir_out + strcmp_helper(); }
         if (wasm_ir.module_uses_str_slice(mod)) { ir_out = ir_out + substr_helper(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { ir_out = ir_out + arr_slice_helper(); }

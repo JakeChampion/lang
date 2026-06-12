@@ -135,6 +135,15 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"str-concat-eq", `function main(): i32 { var a = "foo"; var b = "foobar"; if (a + "bar" == b) { return 11; } return 0; }`},
 		{"str-param-len", `function slen(s: string): i32 { return s.len(); } function main(): i32 { var x = "abcd"; return slen(x); }`},
 		{"str-param-concat", `function jn(a: string, b: string): i32 { return (a + b).len(); } function main(): i32 { return jn("xx", "yyy"); }`},
+		// Builtin i32.to_string() — IR routes to the __fn___fern_i32_to_string
+		// stack-ABI wrapper (tail-calls asm_arm64's register-ABI body); AST uses
+		// the same decimal helper. Exit codes must match across both paths.
+		{"to-string-basic", `function main(): i32 { var a = (42).to_string(); return a.len(); }`},
+		{"to-string-digits", `function main(): i32 { var a = (42).to_string(); if (a[0] != 52) { return 80; } if (a[1] != 50) { return 81; } return a.len(); }`},
+		{"to-string-negative", `function main(): i32 { var n = (5 - 12).to_string(); if (n[0] != 45) { return 82; } if (n[1] != 55) { return 83; } return n.len(); }`},
+		{"to-string-zero", `function main(): i32 { var z = (0).to_string(); if (z[0] != 48) { return 84; } return z.len(); }`},
+		{"to-string-concat", `function main(): i32 { var m = "n=" + (7).to_string(); return m.len(); }`},
+		{"to-string-identity", `function main(): i32 { var s = "hi"; var t = s.to_string(); return t.len(); }`},
 		// String-returning function isn't IR-lowered yet -> module falls back to AST.
 		// String-returning functions now route through the IR (str_ret_fns tracks the
 		// result as a string; the box just leaks). Param + concat + return too.

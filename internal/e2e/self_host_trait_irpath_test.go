@@ -22,16 +22,18 @@ import (
 // asm_ir.all_eligible — what emit_module checks) and prints "ir"/"ast" without
 // emitting any assembly, so the gate is fast and assembler-free.
 //
-// Frontier (post short-circuit-&&/|| slice):
+// Frontier (post to_string-builtin slice):
 //   - Concrete struct-impl methods + monomorphised struct/primitive bounded
 //     generics + parametric struct impls + primitive-receiver methods + ENUM
 //     methods on an enum-typed LOCAL/param + struct-ARRAY element dispatch +
-//     short-circuit `&&`/`||` with a call/index RHS (the field-wise derived Eq
-//     shape) all lower through the IR path.
-//   - `dyn Trait`, enum methods called directly on a variant construction
-//     (`Has(5).eq(…)`, which needs the variant->enum map), and the
-//     string-building @derive Display (the `.to_string()` builtin has no IR
-//     runtime body) still fall back to the AST emitter — the next slices.
+//     short-circuit `&&`/`||` with a call/index RHS + the i32/string
+//     `.to_string()` builtin (so every @derive(Display) — struct, enum, and
+//     generic — and the string-building parametric impl) all lower through the
+//     IR path. The i32 helper is __fern_i32_to_string (a stack-ABI body on the
+//     register backends; $__fern_i32_to_str on wasm).
+//   - `dyn Trait` and enum methods called directly on a variant construction
+//     (`Has(5).eq(…)`, which needs the variant->enum map) still fall back to the
+//     AST emitter — the next slices.
 var traitIRPath = map[string]string{
 	"trait-impl-method":                          "ir",
 	"trait-impl-arg":                             "ir",
@@ -47,17 +49,17 @@ var traitIRPath = map[string]string{
 	"trait-struct-array-loop-method":             "ir",
 	"trait-derive-struct-eq":                     "ir",
 	"trait-derive-struct-ord":                    "ir",
-	"trait-derive-struct-display-nested":         "ast",
+	"trait-derive-struct-display-nested":         "ir",
 	"trait-enum-method":                          "ir",
-	"trait-derive-enum-display":                  "ast",
+	"trait-derive-enum-display":                  "ir",
 	"trait-derive-enum-eq":                       "ast",
 	"trait-derive-enum-ord":                      "ast",
-	"trait-generic-struct-derive-display-i32":    "ast",
-	"trait-generic-struct-derive-display-string": "ast",
-	"trait-generic-struct-derive-display-both":   "ast",
+	"trait-generic-struct-derive-display-i32":    "ir",
+	"trait-generic-struct-derive-display-string": "ir",
+	"trait-generic-struct-derive-display-both":   "ir",
 	"trait-generic-struct-derive-eq":             "ir",
 	"trait-generic-struct-derive-ord":            "ir",
-	"trait-generic-struct-parametric-impl":       "ast",
+	"trait-generic-struct-parametric-impl":       "ir",
 }
 
 // TestSelfHostTraitIRPathX86_64 asserts the IR-vs-AST routing for every trait
