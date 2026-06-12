@@ -3184,6 +3184,31 @@ func (c *checker) methodVisibleHere(mangled string) bool {
 	return c.info.ModuleImports[c.current.SourceModule][methodSrc]
 }
 
+// methodImplementsTrait reports whether calling `methodName` on receiver
+// type `typeName` resolves to a *trait-impl* method — i.e. some trait
+// declares a method of that name and `typeName` implements that trait.
+// Trait-impl methods are part of the public trait contract (coherent +
+// orphan-checked), so unlike a module's *inherent* methods (which
+// methodVisibleHere gates by the import graph) they are callable wherever
+// the receiver type flows. This is what lets a bounded generic method
+// defined in one module — e.g. std/json's `(xs: T[]) to_json[T: Json]()`
+// — dispatch `xs[i].to_json()` to a *user* type's derived impl after the
+// monomorphiser substitutes T and re-checks the clone from the defining
+// module's context (where the user module isn't imported).
+func (c *checker) methodImplementsTrait(typeName, methodName string) bool {
+	for traitName, td := range c.info.Traits {
+		if !c.info.Impls[traitName][typeName] {
+			continue
+		}
+		for _, m := range td.Methods {
+			if m.Name == methodName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type checker struct {
 	info        *Info
 	errors      []error
@@ -6887,7 +6912,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if typeName != "" {
 				key := typeName + "." + fa.Field
-				if mangled, ok := c.info.Methods[key]; ok && c.methodVisibleHere(mangled) {
+				if mangled, ok := c.info.Methods[key]; ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
 					// Preserve the source-level call site so the LSP
 					// can resolve hover / goto-def on `area` in
 					// `p.area()` after we rewrite the AST to a

@@ -1,0 +1,21 @@
+// Regression gate for the monomorph cross-module trait-dispatch fix
+// (#2766): `render_all` lives in `./lib`; `Item` and its `Render` impl
+// live here. Before the fix, monomorphising `render_all` for `Item[]`
+// re-checked the clone from lib's module context and rejected
+// `xs[i].render()` with "struct Item has no field render", because lib
+// doesn't import this module. Trait-impl methods now bypass that gate.
+import "./lib";
+
+struct Item { id: i32 }
+impl lib.Render for Item {
+    function render(self: Self): string {
+        if (self.id == 1) { return "a"; }
+        if (self.id == 2) { return "bb"; }
+        return "ccc";
+    }
+}
+
+function main(): i32 {
+    var items: Item[] = [Item { id: 1 }, Item { id: 2 }, Item { id: 3 }];
+    return items.render_all().len();   // "a" + "bb" + "ccc" = 6
+}
