@@ -3040,7 +3040,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 }
                                 if (srt == "") { return s.fail(); }
                                 ptag = opt_payload_type(srt, pv.type_name);
-                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64") { return s.fail(); }
+                                // A leaf-safe struct payload (Some(p) / Ok(p) /
+                                // Err(p) where p is a scalar-field struct) is stored
+                                // by pointer at offset 8 — identical to the string
+                                // case — so it reads via op_opt_payload and binds as
+                                // a struct slot (its type tagged below for `p.field`).
+                                var ptag_is_struct: boolean = decl_is_struct(ms.structs, ptag) && decl_is_leaksafe(ms.structs, ptag);
+                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct) { return s.fail(); }
                             }
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -3067,6 +3073,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
                                 else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
                                 else if (ptag == "f64") { ms = ms.mark_f64(pbslot, true); }
+                                // A struct payload: tag the bound slot's struct type so
+                                // `p.field` resolves. It is BORROWED from the enum box
+                                // (not a fresh `var p = P{...}`), so it is never in
+                                // reclaimable_names — correctly left to leak, no double-free.
+                                else if (decl_is_struct(ms.structs, ptag) && decl_is_leaksafe(ms.structs, ptag)) { ms = ms.mark_struct_type(pbslot, ptag); }
                             }
                             if (arm.has_guard) {
                                 ms = lower_expr(arm.guard, ms);
