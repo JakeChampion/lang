@@ -980,6 +980,10 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => { if (s.is_i64_ret_fn(cid.name)) { return 64; } },
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return 64; }
+                },
                 _ => {}
             }
             return 32;
@@ -1047,11 +1051,15 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             return r.emit(ir.op_bin(kind, 64, false));
         },
         parser.ExprCall(c) => {
-            // A call to an i64-returning function IS an i64 value: lower it via
-            // the normal call path (which pushes the result), recognised as i64.
+            // A call to an i64-returning free function OR method IS an i64 value:
+            // lower it via the normal call path (which pushes the result).
             match (c.callee) {
                 parser.ExprIdent(cid) => {
                     if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return lower_expr(e, s); }
                 },
                 _ => {}
             }
@@ -1595,9 +1603,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sm.ok) { return sm; }
                         var ai: i32 = 0;
                         while (ai < c.args.len()) {
-                            // f64 args ride lower_expr like any f64 value. (i64
-                            // method params are deferred with i64 methods.)
-                            sm = lower_expr(c.args[ai], sm);
+                            // An i64 method param: the arg is an 8-byte i64 value,
+                            // lowered via lower_i64 (param_is_i64 keyed by the
+                            // method's "<Type>.<method>" label). f64 args ride
+                            // lower_expr like any f64 value.
+                            if (sm.param_is_i64(rty + "." + fa.field, ai)) { sm = lower_i64(c.args[ai], sm); }
+                            else { sm = lower_expr(c.args[ai], sm); }
                             if (!sm.ok) { return sm; }
                             ai = ai + 1;
                         }
@@ -2684,22 +2695,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // declares (result i64). x86-64/arm64 need no ABI change (i64 shares the
     // 64-bit slot). The register backends keep their stack-arg ABI; only wasm's
     // typed signature differs, handled in the backend from fn.params/fn.ret_type.
-    // A METHOD with i64 in its signature is still deferred: an i64-field-reading
-    // method body (`return c.base`) needs i64 struct fields (struct_get_i64), a
-    // separate prerequisite — so i64 methods bail to AST for now. (f64 methods
-    // ARE lowered: f64 struct fields landed in #2721.)
-    if (fn.receiver_name.len() > 0) {
-        if (ret_i64) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
-        }
-        var mpi: i32 = 0;
-        while (mpi < fn.params.len()) {
-            if (fn.params[mpi].type_name == "i64") {
-                return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
-            }
-            mpi = mpi + 1;
-        }
-    }
+    // A METHOD with i64 in its signature IS lowered now: i64_ret_fns_of records
+    // its i64 SIGNATURE keyed "<Type>.<method>", so the call site recovers the
+    // result's i64-ness (infer_expr_width / lower_i64 method cases) and routes
+    // i64 args through lower_i64 (param_is_i64 keyed by the same label). An
+    // i64-field-reading body (`return c.base`) works now that i64 struct fields
+    // lower (#2733: struct_get_i64).
     var names: string[] = [];
     var isarr: boolean[] = [];
     var isstr: boolean[] = [];
@@ -2978,10 +2979,9 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        // Methods with i64 in their signature are not lowered (lower_func bails
-        // them); recording only free functions keeps the bare-name lookup
-        // unambiguous. (i64 methods await i64 struct fields.)
-        if (funcs[k].receiver_type.len() > 0) { k = k + 1; continue; }
+        // Free functions are keyed by bare name; methods (lowered now) by the
+        // qualified "<BaseType>.<method>" the call site dispatches to (a "." never
+        // appears in a bare name, so the key spaces don't collide).
         var retf: boolean = funcs[k].ret_type == "i64";
         var flags: string = "";
         var any: boolean = retf;
@@ -2994,7 +2994,9 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         if (any) {
             var rc: string = "0";
             if (retf) { rc = "1"; }
-            out = out.append(funcs[k].name + "|" + rc + flags);
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key + "|" + rc + flags);
         }
         k = k + 1;
     }
