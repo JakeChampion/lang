@@ -561,7 +561,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.formatExpr(x.Expr, precLowest)
 		f.b.WriteByte(';')
 	case *ast.Defer:
-		f.b.WriteString("defer ")
+		if x.OnError {
+			f.b.WriteString("errdefer ")
+		} else {
+			f.b.WriteString("defer ")
+		}
 		f.formatExpr(x.Expr, precLowest)
 		f.b.WriteByte(';')
 	case *ast.Switch:

@@ -493,6 +493,30 @@ defer w.close();
 	}
 }
 
+// `errdefer` statements round-trip through the formatter and keep the
+// `errdefer` keyword (not silently rewritten to `defer`). The printer
+// branches on ast.Defer.OnError.
+func TestFormatErrDeferRoundTrip(t *testing.T) {
+	srcs := []string{
+		`function f(): Result[i32, i32] { errdefer cleanup(); return Ok(0); }`,
+		`function f(r: Reader): Result[i32, i32] {
+errdefer r.close();
+defer log();
+return Ok(0);
+}`,
+	}
+	for _, src := range srcs {
+		got := formatSrc(t, src)
+		if !strings.Contains(got, "errdefer ") {
+			t.Errorf("`errdefer` keyword stripped from output for input %q:\n%s", src, got)
+		}
+		again := formatSrc(t, got)
+		if got != again {
+			t.Errorf("format not idempotent for input %q:\nfirst:\n%s\nsecond:\n%s", src, got, again)
+		}
+	}
+}
+
 // An anonymous function expression (lambda) used as a call argument
 // must survive formatting. Before the fix formatExpr had no
 // `*ast.Lambda` case, so it fell through to the empty default and

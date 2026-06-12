@@ -3330,10 +3330,31 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 
 // emitDeferCleanup walks the registered defers in reverse
 // source order and emits `if active[i] { <expr>; }` for each.
-// Called from `Return` lowering and from the implicit-return
-// path at the end of `lowerFunc`.
+// Called from `Return` lowering, the `?` error path, and the
+// implicit-return path at the end of `lowerFunc`. Plain `defer`s
+// run on EVERY exit; `errdefer`s (OnError) are skipped here and
+// replayed separately by emitErrDeferCleanup on the error paths.
 func (b *builder) emitDeferCleanup() error {
+	return b.emitDeferCleanupKind(false)
+}
+
+// emitErrDeferCleanup replays only the `errdefer`s (OnError) —
+// in reverse source order, each guarded by its active flag. It
+// runs in ADDITION to emitDeferCleanup, and only on error exits:
+// the `?` operator's None/Err propagation and a `return` of a
+// failure variant from an Option/Result-returning function.
+func (b *builder) emitErrDeferCleanup() error {
+	return b.emitDeferCleanupKind(true)
+}
+
+// emitDeferCleanupKind is the shared body: replay the registered
+// defers in reverse source order, restricted to those whose
+// OnError matches `onError`.
+func (b *builder) emitDeferCleanupKind(onError bool) error {
 	for i := len(b.defers) - 1; i >= 0; i-- {
+		if b.defers[i].OnError != onError {
+			continue
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: b.deferSlots[i]})
 		b.openIf(BlockTypeVoid)
 		// Evaluate the deferred expression. Drop the result
@@ -3347,6 +3368,26 @@ func (b *builder) emitDeferCleanup() error {
 		b.closeScope()
 	}
 	return nil
+}
+
+// hasErrDefers reports whether any registered defer is an
+// `errdefer`. Gating every errdefer-specific emission on this
+// keeps functions without an errdefer byte-identical to before.
+func (b *builder) hasErrDefers() bool {
+	for _, d := range b.defers {
+		if d.OnError {
+			return true
+		}
+	}
+	return false
+}
+
+// isOptionOrResultType reports whether t is `Option[...]` or
+// `Result[...]` — the return types whose failure variant
+// (None / Err, tag 1) triggers an errdefer on `return`.
+func isOptionOrResultType(t ast.Type) bool {
+	et, ok := t.(ast.EnumType)
+	return ok && (et.Name == "Option" || et.Name == "Result")
 }
 
 // emitRcDecLocalsAtExit emits __fern_rc_dec for every
@@ -7162,6 +7203,20 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
+	// Zero-init every defer / errdefer active flag. The flag is set
+	// to 1 only when its statement is reached at runtime; the per-
+	// exit cleanup reads it to skip a defer registered inside a
+	// branch that didn't run. The slot is otherwise uninitialised
+	// stack space on the natives, and in a function that builds an
+	// enum return value (e.g. `return Err(...)`) that slot can hold
+	// non-zero garbage — spuriously firing an unreached defer. (The
+	// wasm locals are zero by spec, so this only corrects the
+	// natives, but emitting unconditionally keeps the backends in
+	// lockstep.) Pre-zero so the active-flag guard is sound.
+	for _, slot := range b.deferSlots {
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
 	// Consumed-threaded param entry-inc: a promoted consumed param (see
 	// computeConsumedParams) is reclaimed callee-side — its reassignment-
 	// overwrites and the exit sweep deep-drop it — but the caller passes it
@@ -8440,6 +8495,25 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitDeferCleanup(); err != nil {
 				return err
 			}
+			// errdefer: a `return` is an error exit only when the
+			// returned value is the failure variant (None / Err,
+			// tag 1) of an Option/Result. Functions with an
+			// errdefer are kept out of the pair-form ABI (see the
+			// pair-form eligibility check), so the stashed value is
+			// always a heap box with its tag at offset 0 — read it
+			// and replay the errdefers under that branch. Gated on
+			// hasErrDefers so non-errdefer functions are unchanged.
+			if b.hasErrDefers() && isOptionOrResultType(b.fn.ReturnType) {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpLoad})             // tag @ box+0
+				b.emit(Op{Kind: OpConstI32, I32: 1}) // failure variant idx
+				b.emit(Op{Kind: OpEq})
+				b.openIf(BlockTypeVoid)
+				if err := b.emitErrDeferCleanup(); err != nil {
+					return err
+				}
+				b.closeScope()
+			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 		}
 		// Return-transfer inc: when the returned value ALIASES an
@@ -9594,6 +9668,11 @@ func (b *builder) expr(e ast.Expr) error {
 		// were never dec'd (an rc leak / count inflation that defeats
 		// the rc==1 mutate-in-place fast path).
 		if err := b.emitDeferCleanup(); err != nil {
+			return err
+		}
+		// `?` always leaves via the error path (None/Err propagation),
+		// so this is exactly where `errdefer` rollbacks fire.
+		if err := b.emitErrDeferCleanup(); err != nil {
 			return err
 		}
 		// Decide how the dec sweep treats the value THIS path returns,

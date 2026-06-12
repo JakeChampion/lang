@@ -379,7 +379,9 @@ type Interp struct {
 	// (`return val`, falloff to Void) iterate the frame in
 	// reverse before popping it. Nested calls get their own
 	// frame — defers inside a callee don't run in the caller.
-	deferStack [][]ast.Expr
+	// `onError` marks an `errdefer`: it runs only on an error
+	// exit (`?` propagation or a `return` of None/Err).
+	deferStack [][]deferEntry
 	// tcpListeners / tcpConns are the interpreter's analogue
 	// of OS socket fds. The AOT backends return raw kernel
 	// fds; the interpreter returns opaque integer IDs into
@@ -2108,32 +2110,69 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 		// (None / Err) into a function-level early return. The
 		// expression evaluator can't unwind statements on its
 		// own, so it raises this sentinel error type and the
-		// call wrapper here catches it.
+		// call wrapper here catches it. That's an error exit, so
+		// errdefers fire.
 		if early, ok := err.(*tryOpEarlyReturn); ok {
-			i.runDefers(defers, e)
+			i.runDefers(defers, e, true)
 			return early.val, nil
 		}
-		i.runDefers(defers, e)
+		i.runDefers(defers, e, false)
 		return nil, err
 	}
-	i.runDefers(defers, e)
+	i.runDefers(defers, e, r.flow == flowReturn && isErrReturnValue(r.val))
 	if r.flow == flowReturn {
 		return r.val, nil
 	}
 	return Void{}, nil
 }
 
+// deferEntry is one scheduled cleanup: the expression to
+// evaluate and whether it came from an `errdefer` (runs only on
+// an error exit) rather than a plain `defer` (runs on every
+// exit).
+type deferEntry struct {
+	expr    ast.Expr
+	onError bool
+}
+
 // runDefers evaluates the LIFO list of expressions a callee
-// accumulated via `defer expr;` statements. Each one runs
+// accumulated via `defer` / `errdefer` statements. Each one runs
 // against the env at function exit — closures already capture
 // any local bindings they read; deferred expressions just read
 // the same env. Errors from a deferred expression are dropped
 // (defer is "fire and forget" at function exit) — matching
 // codegen which doesn't propagate them either.
-func (i *Interp) runDefers(defers []ast.Expr, e *env) {
+//
+// Plain defers run on every exit. errdefers run only when
+// errorExit is set (the `?` operator propagating, or a `return`
+// of a None/Err value), and after the plain defers — matching
+// the codegen emit order (emitDeferCleanup then
+// emitErrDeferCleanup).
+func (i *Interp) runDefers(defers []deferEntry, e *env, errorExit bool) {
 	for k := len(defers) - 1; k >= 0; k-- {
-		_, _ = i.evalExpr(defers[k], e)
+		if defers[k].onError {
+			continue
+		}
+		_, _ = i.evalExpr(defers[k].expr, e)
 	}
+	if !errorExit {
+		return
+	}
+	for k := len(defers) - 1; k >= 0; k-- {
+		if !defers[k].onError {
+			continue
+		}
+		_, _ = i.evalExpr(defers[k].expr, e)
+	}
+}
+
+// isErrReturnValue reports whether a returned value is the
+// failure variant of an Option/Result — `None` or `Err` (variant
+// index 1) — i.e. whether a plain `return v` of it counts as an
+// error exit for `errdefer`.
+func isErrReturnValue(v Value) bool {
+	ev, ok := v.(*Enum)
+	return ok && ev.Index == 1 && (ev.EnumName == "Option" || ev.EnumName == "Result")
 }
 
 func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
@@ -2426,7 +2465,7 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		// call (REPL top level) — treat as a no-op since
 		// there's no exit point to run the deferred expr at.
 		if n := len(i.deferStack); n > 0 {
-			i.deferStack[n-1] = append(i.deferStack[n-1], x.Expr)
+			i.deferStack[n-1] = append(i.deferStack[n-1], deferEntry{expr: x.Expr, onError: x.OnError})
 		}
 		return result{flow: flowNormal}, nil
 	}
@@ -3041,10 +3080,11 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	defers := i.deferStack[len(i.deferStack)-1]
 	i.deferStack = i.deferStack[:len(i.deferStack)-1]
 	if err != nil {
-		i.runDefers(defers, e)
+		_, early := err.(*tryOpEarlyReturn)
+		i.runDefers(defers, e, early)
 		return nil, err
 	}
-	i.runDefers(defers, e)
+	i.runDefers(defers, e, r.flow == flowReturn && isErrReturnValue(r.val))
 	if r.flow == flowReturn {
 		return r.val, nil
 	}

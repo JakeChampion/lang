@@ -132,6 +132,10 @@ var keywords = map[string]bool{
 	"match": true,
 	"when":  true,
 	"defer": true,
+	// `errdefer EXPR;` — like `defer`, but runs only on an error
+	// exit (`?` propagation or a `return` of None / Err). See
+	// ast.Defer.OnError.
+	"errdefer": true,
 	// `trait` declares a named set of method signatures; `impl
 	// Trait for Type { … }` provides bodies. See docs/TRAITS.md.
 	// `Self` stays a contextual type name (handled in the parser),
