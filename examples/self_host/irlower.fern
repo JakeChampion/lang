@@ -889,6 +889,73 @@ pub function stmts_have_break_continue(stmts: parser.Stmt[]): boolean {
     return false;
 }
 
+// for_iter_is_range reports whether a for-loop iter is the synthetic
+// `__range(LOW, HIGH)` call the parser emits for `for i in LOW..HIGH`.
+// Mirrors the checker's for_iter_is_range (which binds the loop var to i32).
+pub function for_iter_is_range(iter: parser.Expr): boolean {
+    match (iter) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 2) { return false; }
+            match (c.callee) {
+                parser.ExprIdent(id) => { return id.name == "__range"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
+// lower_range_for lowers `for i in LOW..HIGH { body }` (iter = the synthetic
+// `__range(LOW, HIGH)` call) to a counted loop over the half-open interval:
+// HIGH is bound once into a hidden local (so `for i in 0..f()` calls f()
+// once), i = LOW, then `while (i < hi) { body; i = i + 1 }`. The caller has
+// already bailed bodies containing break/continue (a `continue` would skip
+// the increment), so the counted shape is safe. LOW / HIGH are i32 exprs.
+// Split out of lower_stmt's StmtFor arm so that arm stays small (oversized
+// functions miscompile on the native backend — cf. #2720).
+pub function lower_range_for(var_name: string, iter: parser.Expr, body: parser.Stmt[], s: LowerState): LowerState {
+    var r_lo: parser.Expr = iter;
+    var r_hi: parser.Expr = iter;
+    match (iter) {
+        parser.ExprCall(rc) => {
+            r_lo = rc.args[0];
+            r_hi = rc.args[1];
+        },
+        _ => {}
+    }
+    // hidden HIGH bound (evaluated once)
+    var hin: string = "$forhi" + util.i32_to_string(s.local_names.len());
+    var rs: LowerState = s.add_local(hin);
+    var hislot: i32 = rs.slot_of(hin);
+    rs = lower_expr(r_hi, rs);
+    if (!rs.ok) { return rs; }
+    rs = rs.emit(ir.op_store_local(hislot));
+    // loop var i = LOW (user-visible i32 binding)
+    rs = rs.add_local(var_name);
+    var islot: i32 = rs.slot_of(var_name);
+    rs = lower_expr(r_lo, rs);
+    if (!rs.ok) { return rs; }
+    rs = rs.emit(ir.op_store_local(islot));
+    rs = rs.emit(ir.op_block(0));   // depth 1 = exit
+    rs = rs.emit(ir.op_loop(0));    // depth 0 = header
+    // cond: i < hi ; exit when NOT.
+    rs = rs.emit(ir.op_load_local(islot));
+    rs = rs.emit(ir.op_load_local(hislot));
+    rs = rs.emit(ir.op_bin("lt_s", 0, false));
+    rs = rs.emit(ir.op_bin("not", 0, false));
+    rs = rs.emit(ir.op_brif(1));
+    rs = lower_block(body, rs);
+    if (!rs.ok) { return rs; }
+    // i = i + 1; back-edge.
+    rs = rs.emit(ir.op_load_local(islot));
+    rs = rs.emit(ir.op_const_i32(1));
+    rs = rs.emit(ir.op_bin("add", 0, false));
+    rs = rs.emit(ir.op_store_local(islot));
+    rs = rs.emit(ir.op_br(0));
+    rs = rs.emit(ir.op_end());
+    return rs.emit(ir.op_end());
+}
+
 // is_cmp_kind reports whether an IR bin-op kind produces an i32 boolean (a
 // comparison / equality) rather than a value of the operand width.
 pub function is_cmp_kind(kind: string): boolean {
@@ -2322,6 +2389,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // for-loop break/continue correctly). while-loop break/continue IS
             // supported (its increment, if any, is user-written in the body).
             if (stmts_have_break_continue(fr.body)) { return s.fail(); }
+            // Range form `for i in LOW..HIGH` — the parser encodes the
+            // half-open interval as a synthetic `__range(LOW, HIGH)` call.
+            // lower_range_for emits the counted loop. Kept in its own function
+            // so this already-large match arm doesn't grow further (oversized
+            // functions miscompile on the native backend — cf. #2720).
+            if (for_iter_is_range(fr.iter)) {
+                return lower_range_for(fr.var_name, fr.iter, fr.body, s);
+            }
             // `for k, v in m` over a map LOCAL → snapshot keys()/values() into
             // two hidden locals, then a counted loop binding k = keys[i],
             // v = values[i]. The two snapshots share iteration order on every

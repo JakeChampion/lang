@@ -519,6 +519,23 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
     return false;
 }
 
+// for_iter_is_range reports whether a for-loop iter is the synthetic
+// `__range(LOW, HIGH)` call the parser emits for `for i in LOW..HIGH`.
+// The checker uses it to bind the loop var to i32; irlower carries its
+// own copy (different module) to drive the counted-loop lowering.
+function for_iter_is_range(iter: parser.Expr): boolean {
+    match (iter) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 2) { return false; }
+            match (c.callee) {
+                parser.ExprIdent(id) => { return id.name == "__range"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
 function (s: Scope) enter_loop(): Scope {
     return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type };
 }
@@ -1374,12 +1391,22 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             // a scope where var_name is bound to the array's
             // elem type, and loop_depth+1 so inner break /
             // continue type-check.
-            var it: Type = check_expr(f.iter, s);
+            //
+            // Range form `for i in LOW..HIGH` arrives as a synthetic
+            // `__range(LOW, HIGH)` call (parser desugar). The loop var
+            // is an i32 over the half-open interval; bind it directly
+            // instead of typing the (function-less) `__range` callee.
+            // LOW / HIGH are still walked for E001 etc. by call_diags.
             var elem_ty: Type = t_unknown("for-in iter not an array");
             var ok: boolean = true;
-            match (it) {
-                TypeArray(ta) => { elem_ty = ta.elem; },
-                _ => { ok = false; }
+            if (for_iter_is_range(f.iter)) {
+                elem_ty = t_i32();
+            } else {
+                var it: Type = check_expr(f.iter, s);
+                match (it) {
+                    TypeArray(ta) => { elem_ty = ta.elem; },
+                    _ => { ok = false; }
+                }
             }
             var body_scope: Scope = s.enter_loop().bind(f.var_name, elem_ty);
             var fOk: boolean = check_block(f.body, body_scope);

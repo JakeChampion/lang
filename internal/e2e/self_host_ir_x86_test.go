@@ -106,6 +106,17 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"sum-to-100", "function main(): i32 { var i = 0; var s = 0; while (i < 100) { i = i + 1; s = s + i; } return s % 256; }", 186},
 		{"if-in-loop", "function main(): i32 { var i = 0; var c = 0; while (i < 10) { if (i > 4) { c = c + 1; } i = i + 1; } return c; }", 5},
 		{"nested-loop", "function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
+		// Range-for `for i in LOW..HIGH` (closes #2699 self-host IR slice):
+		// the parser desugars to __range(LOW, HIGH) and irlower lowers it to a
+		// counted loop over the half-open interval -> real x86 jumps + labels.
+		{"range-sum", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }", 10},
+		{"range-count", "function main(): i32 { var c = 0; for i in 0..10 { c = c + 1; } return c; }", 10},
+		{"range-nonzero-low", "function main(): i32 { var s = 0; for i in 3..7 { s = s + i; } return s; }", 18},
+		{"range-empty", "function main(): i32 { var c = 7; for i in 5..5 { c = c + 1; } return c; }", 7},
+		{"range-reversed", "function main(): i32 { var c = 9; for i in 9..3 { c = c + 1; } return c; }", 9},
+		{"range-hi-expr", "function main(): i32 { var n = 4; var s = 0; for i in 1..n + 1 { s = s + i; } return s; }", 10},
+		{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
+		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
 		// Direct calls + multi-function programs + recursion (slice 6) -> real
 		// x86 call/ret with the SysV integer-register arg convention.
 		{"simple-call", "function helper(): i32 { return 5; } function main(): i32 { return helper(); }", 5},

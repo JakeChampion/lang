@@ -1979,9 +1979,26 @@ function parse_stmt(p: Par): StmtResult {
         var f_saved: boolean = p.no_struct;
         var fiter = parse_expr(p.with_no_struct(true));
         p = (fiter.par).with_no_struct(f_saved);
+        var iter_expr: Expr = fiter.expr;
+        // Range form `for IDENT in LOW..HIGH { body }`. parse_expr stops
+        // at `..` (not a binary operator), so `fiter.expr` is LOW; read
+        // `..` + HIGH and encode the half-open interval as a synthetic
+        // `__range(LOW, HIGH)` call — the same parser-internal-builtin
+        // idiom as `__set_index` / `__set_field`. The checker binds the
+        // loop var to i32 and irlower lowers it to a counted loop; the
+        // call shape rides through constfold / substitution / printing
+        // for free (LOW, HIGH are ordinary i32 sub-expressions).
+        if (p.peek_punct() == "..") {
+            p = p.advance();   // consume `..`
+            var hi_saved: boolean = p.no_struct;
+            var fhi = parse_expr(p.with_no_struct(true));
+            p = (fhi.par).with_no_struct(hi_saved);
+            var rargs: Expr[] = [fiter.expr, fhi.expr];
+            iter_expr = e_call(e_ident("__range"), rargs);
+        }
         var fb: BlockResult = parse_block(p);
         p = fb.par;
-        return StmtResult { par: p, stmt: s_for(fvar, fiter.expr, fb.body) };
+        return StmtResult { par: p, stmt: s_for(fvar, iter_expr, fb.body) };
     }
     // `let` and `var` introduce a binding the same way here — the
     // self-host compiler doesn't track the immutability distinction

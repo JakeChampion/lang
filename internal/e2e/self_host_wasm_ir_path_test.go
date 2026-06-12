@@ -349,6 +349,19 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); if (b.len() != 3) { return 20; } if (b[0] != 65) { return 21; } if (b[2] != 67) { return 22; } return 5; }`, 5},
 		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); if (b[0] != 65) { return 20; } if (b[1] != 66) { return 21; } return 6; }`, 6},
 		{"uuid-v4", uuidV4Program, 0},
+		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
+		// AST wasm path has no range desugar, so this rides the IR-only gate:
+		// the parser emits __range(LOW, HIGH) and irlower lowers a counted loop
+		// to wasm block/loop/br_if. Half-open, HIGH bound once, empty/reversed
+		// ranges run zero iterations.
+		{"range-sum", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }", 10},
+		{"range-count", "function main(): i32 { var c = 0; for i in 0..10 { c = c + 1; } return c; }", 10},
+		{"range-nonzero-low", "function main(): i32 { var s = 0; for i in 3..7 { s = s + i; } return s; }", 18},
+		{"range-empty", "function main(): i32 { var c = 7; for i in 5..5 { c = c + 1; } return c; }", 7},
+		{"range-reversed", "function main(): i32 { var c = 9; for i in 9..3 { c = c + 1; } return c; }", 9},
+		{"range-hi-expr", "function main(): i32 { var n = 4; var s = 0; for i in 1..n + 1 { s = s + i; } return s; }", 10},
+		{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
+		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
