@@ -895,6 +895,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
 // caller side lets wasm.fern import this module for the use_ir dispatch without
 // a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
 pub function emit_functions(mod: parser.Module): string {
+    // Infer return types for unannotated functions so the IR path's
+    // ret-type-keyed call tagging matches the AST path (parity with the
+    // x86 IR path in asm_ir.emit_module_ir).
+    mod = parser.infer_ret_types_module(mod);
     var str_vals: string[] = str_values(mod);
     var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
     var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
