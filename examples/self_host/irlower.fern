@@ -635,7 +635,28 @@ pub function decl_field_count(structs: parser.StructDecl[], struct_name: string)
 pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
     match (e) {
         parser.ExprStructLit(sl) => { return sl.type_name; },
-        parser.ExprIdent(id) => { return s.struct_type_of_slot(s.slot_of(id.name)); },
+        parser.ExprIdent(id) => {
+            var idsl: i32 = s.slot_of(id.name);
+            // An ARRAY slot's local_struct_type holds its ELEMENT struct type
+            // (for `arr[i]` recovery below), NOT the slot's own type — the array
+            // value itself is not a struct, so report "".
+            if (s.is_arr_slot(idsl)) { return ""; }
+            return s.struct_type_of_slot(idsl);
+        },
+        parser.ExprIndex(ix) => {
+            // Indexing a struct ARRAY `arr[i]` evaluates to the element struct
+            // type, carried in the (is_arr) array slot's local_struct_type. Lets
+            // `arr[i].field` / `arr[i].method()` resolve without an intermediate
+            // typed local. i32[]/string[] arrays carry "" → not a struct.
+            match (ix.array) {
+                parser.ExprIdent(aid) => {
+                    var asl: i32 = s.slot_of(aid.name);
+                    if (s.is_arr_slot(asl)) { return s.struct_type_of_slot(asl); }
+                },
+                _ => {}
+            }
+            return "";
+        },
         parser.ExprFieldAccess(fa) => {
             // A struct-typed tuple element `t.N` evaluates to that struct type.
             if (util.is_all_digits(fa.field)) {
@@ -2207,6 +2228,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // enum name in local_struct_type too, so `a.method()` dispatches to
             // `<Enum>.<method>` (enum-receiver methods).
             else if (struct_ty == "" && is_enum_like_name(v.type_name, se.structs)) { struct_ty = v.type_name; }
+            // A struct-ARRAY annotation (`var ps: P[]`) carries the ELEMENT
+            // struct type (the slot is is_arr, so it reads as the element type
+            // for `ps[i]` / `for x in ps`, not the slot's own type).
+            else if (struct_ty == "" && is_array_type_name(v.type_name)
+                     && decl_is_struct(se.structs, v.type_name[0 : v.type_name.len() - 2])) {
+                struct_ty = v.type_name[0 : v.type_name.len() - 2];
+            }
             // string[] tracking (element typing for a[i]); the annotation is
             // authoritative too. The array itself is already is_arr (RC-tracked).
             var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";
@@ -2559,6 +2587,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             if (elem_is_str) { ff = ff.mark_str(xslot, true); }
             if (elem_is_f64) { ff = ff.mark_f64(xslot, true); }
             if (elem_is_i64) { ff = ff.mark_i64(xslot, true); }
+            // `for x in <struct[]>`: x is a struct (pointer) element — carry the
+            // element struct type (from the array slot's local_struct_type) so
+            // `x.field` / `x.method()` in the body resolve. The element loads
+            // via the default 4-byte/slot arr_get like a string element.
+            var elem_struct: string = s.struct_type_of_slot(aslot);
+            if (elem_struct != "") { ff = ff.mark_struct_type(xslot, elem_struct); }
             ff = ff.emit(ir.op_block(0));   // depth 1 = exit
             ff = ff.emit(ir.op_loop(0));    // depth 0 = header
             // cond: idx < arr.len(); exit when NOT.
@@ -3159,6 +3193,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         var pty: string = "";
         if (decl_is_struct(structs, fn.params[i].type_name)) { pty = fn.params[i].type_name; }
         else if (is_enum_like_name(fn.params[i].type_name, structs)) { pty = fn.params[i].type_name; }
+        // A struct-array param `a: P[]` carries the ELEMENT struct type, so
+        // `a[i].field` / `for x in a` over the borrowed array resolve.
+        else if (is_array_type_name(fn.params[i].type_name)
+                 && decl_is_struct(structs, fn.params[i].type_name[0 : fn.params[i].type_name.len() - 2])) {
+            pty = fn.params[i].type_name[0 : fn.params[i].type_name.len() - 2];
+        }
         structty = structty.append(pty);
         // An Option[T]/Result[T,E] param is opt-tracked so `match (param)` can
         // recover the payload type.
