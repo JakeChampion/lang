@@ -192,6 +192,48 @@ function main(): i32 { var b: Box[i32] = Box { v: 7 }; var c: Box[boolean] = b.m
 	}
 }
 
+// Return-position type inference (#2668): a generic function whose type
+// parameter appears only in its result type (not in any argument) can
+// have that parameter inferred from the destination — the `var x: T =`
+// annotation or the enclosing `return`'s declared type. Without a
+// destination there's nothing to infer from, so it must still error.
+func TestReturnPositionInference(t *testing.T) {
+	ok := []string{
+		// T bound from a `var` annotation.
+		`function empty[T](): T[] { return []; }
+function main(): i32 { var xs: i32[] = empty(); return xs.len(); }`,
+		// T bound through a `return` whose function result is concrete.
+		`function empty[T](): T[] { return []; }
+function strs(): string[] { return empty(); }
+function main(): i32 { return strs().len(); }`,
+		// Argument-driven binding still wins when both are present; the
+		// destination is merely consulted for *unbound* parameters.
+		`function wrap[T](x: T): T[] { return [x]; }
+function main(): i32 { var xs: i32[] = wrap(5); return xs.len(); }`,
+		// Generic struct result inferred from the destination.
+		`struct Box[T] { v: T }
+function make_box[T](v: T): Box[T] { return Box { v: v }; }
+function main(): i32 { var b: Box[i32] = make_box(3); return b.v; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("return-position inference should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	// No destination to infer from → the unbound parameter must still be
+	// reported as un-inferable.
+	bad := `function empty[T](): T[] { return []; }
+function main(): i32 { empty(); return 0; }`
+	err := checkSource(t, bad)
+	if err == nil {
+		t.Fatal("expected E040 for un-inferable return-only type parameter, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not infer type parameter") {
+		t.Errorf("error %q does not mention the inference failure", err.Error())
+	}
+}
+
 // Phase 5 of docs/PRELUDE-TO-MODULES.md retired the auto-injected
 // prelude: stdlib methods are no longer in scope unless their module
 // is imported. A program that calls `.split` without `import

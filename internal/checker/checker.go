@@ -3053,6 +3053,17 @@ type checker struct {
 	// elements to a `dyn Trait[]` destination. See docs/DYN-TRAITS.md.
 	elemHint ast.Type
 
+	// expectedType is the destination/result type a generic call's
+	// return-position type parameters can be inferred from when the
+	// arguments don't pin them. Set around `checkExpr` of a `var x:
+	// T = call(...)` initializer and a `return call(...)` value;
+	// the generic-call completion seeds its substitution from this
+	// (return type ↔ expectedType) before reporting "could not
+	// infer". A call clears it before checking its own arguments so
+	// it never leaks into nested calls. Enables return-position
+	// inference like `var s: Set[i32] = set_new();` (#2668).
+	expectedType ast.Type
+
 	// requireMapImport is set when the program was loaded through
 	// modload (LoadedStdlibPaths != nil) but `core/map` isn't in the
 	// import closure. Map operations (`map_new`, a `Map { … }`
@@ -5300,7 +5311,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			return
 		}
 		c.setElemHintFor(n.Value, want)
+		c.expectedType = want
 		got := c.checkExpr(n.Value, s)
+		c.expectedType = nil
 		c.elemHint = nil
 		c.settleNumeric(n.Value, want)
 		// Refresh `got` from the post-settle AST — the
@@ -5329,7 +5342,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
 		}
 		c.setElemHintFor(n.Init, n.Type)
+		c.expectedType = n.Type
 		got := c.checkExpr(n.Init, s)
+		c.expectedType = nil
 		c.elemHint = nil
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
@@ -6467,6 +6482,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return nil
 	case *ast.Call:
+		// Snapshot the destination type this call's result flows into
+		// (set by `var x: T = …` / `return …`) and clear the field so
+		// it can't leak into the argument sub-expressions we check
+		// below — only *this* call's generic completion may consult it
+		// for return-position inference (#2668).
+		callExpected := c.expectedType
+		c.expectedType = nil
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "map_new" {
 			c.needCoreMap(n.P)
 		}
@@ -6934,6 +6956,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		if genericFn != nil {
+			// Return-position inference (#2668): if the arguments
+			// didn't pin every type parameter, fold in the call's
+			// destination type. `var s: Set[i32] = set_new();` and
+			// `return set_new();` leave T unbound from the (empty)
+			// args, but the `Set[i32]` / declared-return type unifies
+			// against the function's result `Set[T]` to bind T = i32.
+			// Only the still-unbound params are filled; argument-driven
+			// bindings already in `sub` win.
+			if callExpected != nil && sub != nil {
+				c.unifyType(ft.Result, callExpected, sub)
+			}
 			// Substitute the inferred sub through the result so
 			// callers see a concrete type, AND record TypeArgs in
 			// declaration order for the monomorphiser.
