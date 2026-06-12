@@ -44,6 +44,11 @@ var auditBuiltinCases = []struct {
 	// Bare nested block `{ ... }` — fixed by #2821 (#2831 added StmtBlock
 	// to the self-host parser). Re-enabled here as a regression guard.
 	{"nested-block", `function main(): i32 { var b: i32 = 1; { var inner: i32 = 40; b = b + inner; } return b; }`, 41},
+	// C-style `for (var i = …; …; …)` — fixed by #2820 (#2841: parser
+	// desugar to a while-loop with a first-iteration flag so `continue`
+	// re-runs the step). Runs on this AST path too (the desugar is at parse
+	// time). Re-enabled as a regression guard.
+	{"c-style-for", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
 }
 
 // Known self-host gaps surfaced by this audit (2026-06-12) — held out of
@@ -52,12 +57,13 @@ var auditBuiltinCases = []struct {
 // Each is a goal-1 self-host widening, tracked by an issue. Re-add the
 // case here once its issue is fixed.
 //
-//   - C-style `for (init; cond; step)` — parser.fern has no such Stmt
-//     node; misparsed as foreach -> StmtUnknown -> segfault. Issue #2820.
-//       function main(): i32 { var s: i32 = 0; for (var i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; } // want 55
-//   - `for x in <string>` — foreach lowering assumes array layout
-//     (len@0, elem*8+8) for the string iterable. Issue #2822.
-//       function main(): i32 { var s: i32 = 0; for b in "AB" { s = s + b; } return s; } // want 131, gets 2
+//   - `for x in <string>` — the foreach lowering assumed an array layout
+//     (len@0, elem*8+8) for the string iterable. Fixed on the IR path by
+//     #2822 (#2834: irlower desugars to a byte-index counted loop), guarded
+//     by self_host_for_in_string_ir_test.go. This AST-path driver (asm_run)
+//     still routes a string foreach through the array path, so the case
+//     stays held out here until the AST backend is taught the same.
+//       function main(): i32 { var s: i32 = 0; for b in "AB" { s = s + b; } return s; } // want 131, gets 2 on AST
 
 // TestSelfHostAuditBuiltinsX86_64 runs each isolated built-in through the
 // self-hosted x86-64 driver and asserts the exit code.
