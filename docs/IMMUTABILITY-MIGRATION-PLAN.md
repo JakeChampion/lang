@@ -1,7 +1,16 @@
 # Immutability migration plan — scope + struct-update design
 
 Date: 2026-06-01.
-Status: planning. No compiler or `.fern` code changed by this doc.
+Status: **shipped (Go reference compiler); self-host enforcement partial.**
+The immutability rules described here are live and tested in the native
+checker — `E048` (struct fields immutable after construction), `E056`
+(`arr[i] = v` subscripts read-only), `E049` (reference-typed closure-capture
+write-back rejected), `E055` (discarded value-returning collection result),
+`E057` (`Cell[T]` restricted to cycle-free scalar/string `T`). The
+sanctioned mutable escape hatch is `Cell[T]` (see `docs/CELL-TYPE-PLAN.md`).
+Remaining work is **self-host parity**: not all self-host drivers gate on
+these rules yet and `checker.fern` does not enforce `E057` — see the
+"cycle-freedom enforcement is compiler-dependent" issue in the tracker.
 
 ## Purpose
 
