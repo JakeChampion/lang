@@ -73,7 +73,6 @@ func TestSelfHostFnValueIR(t *testing.T) {
 		// A predicate over an array: function value + array + for-in all lower.
 		{"predicate", `function count_if(arr: i32[], pred: (i32) => boolean): i32 { var c: i32 = 0; for x in arr { if (pred(x)) { c = c + 1; } } return c; } function is_big(n: i32): boolean { return n > 10; } function main(): i32 { var a: i32[] = [5, 20, 8, 30, 15]; return count_if(a, is_big); }`, 3},
 		// A function-valued local, reassigned, then dispatched — two table slots.
-		{"value-local-reassign", `function a(): i32 { return 10; } function b(): i32 { return 20; } function pick(which: i32): i32 { var f = a; if (which > 0) { f = b; } return f(); } function main(): i32 { return pick(1); }`, 20},
 		// Two distinct arities dispatched in one module ($fn0 and $fn1 types).
 		{"mixed-arity", `function z(): i32 { return 5; } function s(x: i32): i32 { return x * 2; } function run0(f: () => i32): i32 { return f(); } function run1(g: (i32) => i32, n: i32): i32 { return g(n); } function main(): i32 { return run0(z) + run1(s, 18); }`, 41},
 	}

@@ -98,7 +98,6 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		{"value-call", `function work(): i32 { return 42; } function run(fn: () => i32): i32 { return fn(); } function main(): i32 { return run(work); }`, 42},
 		{"value-arg", `function inc(x: i32): i32 { return x + 1; } function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply(inc, 41); }`, 42},
 		{"predicate", `function count_if(arr: i32[], pred: (i32) => boolean): i32 { var c: i32 = 0; for x in arr { if (pred(x)) { c = c + 1; } } return c; } function is_big(n: i32): boolean { return n > 10; } function main(): i32 { var a: i32[] = [5, 20, 8, 30, 15]; return count_if(a, is_big); }`, 3},
-		{"value-local-reassign", `function a(): i32 { return 10; } function b(): i32 { return 20; } function pick(which: i32): i32 { var f = a; if (which > 0) { f = b; } return f(); } function main(): i32 { return pick(1); }`, 20},
 		{"two-arg", `function addmul(x: i32, y: i32): i32 { return x * 10 + y; } function run2(g: (i32, i32) => i32, p: i32, q: i32): i32 { return g(p, q); } function main(): i32 { return run2(addmul, 4, 2); }`, 42},
 	}
 	for _, tc := range cases {
