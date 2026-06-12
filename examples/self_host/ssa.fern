@@ -1541,9 +1541,9 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     var bi: i32 = 0;
     while (bi < fr.body.len()) { wbody = wbody.append(fr.body[bi]); bi = bi + 1; }
 
-    var loop: parser.Stmt = parser.StmtWhile { cond: guard, body: wbody };
+    var lp: parser.Stmt = parser.StmtWhile { cond: guard, body: wbody };
 
-    var chain: parser.Stmt[] = [decl_arr, decl_i, loop];
+    var chain: parser.Stmt[] = [decl_arr, decl_i, lp];
     return build_stmts(chain, s);
 }
 

@@ -788,6 +788,32 @@ func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
 	}
 }
 
+func TestLabeledBreakContinueAccepted(t *testing.T) {
+	src := `function f(): i32 {
+		outer: for i in 0..3 {
+			inner: loop {
+				if (i == 1) { break outer; }
+				continue inner;
+			}
+		}
+		return 0;
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error for valid labeled break/continue: %v", err)
+	}
+}
+
+func TestUnknownLoopLabelRejected(t *testing.T) {
+	for _, src := range []string{
+		`function f(): i32 { outer: for i in 0..3 { break nope; } return 0; }`,
+		`function f(): i32 { outer: while (true) { continue nope; } return 0; }`,
+	} {
+		if err := checkSource(t, src); err == nil {
+			t.Errorf("expected E058 for unknown loop label in: %s", src)
+		}
+	}
+}
+
 func TestIfExprTypechecks(t *testing.T) {
 	for _, src := range []string{
 		`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`,

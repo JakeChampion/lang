@@ -259,6 +259,71 @@ func TestForInRangeDesugars(t *testing.T) {
 	}
 }
 
+// `loop { ... }` desugars to `while (true) { ... }` — a While with a
+// literal-true Cond — so every backend handles it with no new node.
+func TestLoopDesugarsToWhileTrue(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		var i: i32 = 0;
+		loop { i = i + 1; if (i >= 3) { break; } }
+		return i;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, ok := prog.Funcs[0].Body.Stmts[1].(*ast.While)
+	if !ok {
+		t.Fatalf("loop should desugar to While, got %T", prog.Funcs[0].Body.Stmts[1])
+	}
+	if b, ok := w.Cond.(*ast.BoolLit); !ok || !b.Value {
+		t.Errorf("loop Cond should be literal `true`, got %T %v", w.Cond, w.Cond)
+	}
+}
+
+// A label before a loop is parsed onto the loop node, and labeled
+// `break`/`continue` carry the target label.
+func TestLabeledLoopsAndBreakContinue(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		outer: while (true) {
+			inner: loop {
+				break outer;
+				continue inner;
+			}
+		}
+		return 0;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer, ok := prog.Funcs[0].Body.Stmts[0].(*ast.While)
+	if !ok || outer.Label != "outer" {
+		t.Fatalf("expected labeled While `outer`, got %T %q", prog.Funcs[0].Body.Stmts[0], labelOf(prog.Funcs[0].Body.Stmts[0]))
+	}
+	innerBody := outer.Body.(*ast.Block).Stmts
+	inner, ok := innerBody[0].(*ast.While)
+	if !ok || inner.Label != "inner" {
+		t.Fatalf("expected labeled loop->While `inner`, got %T", innerBody[0])
+	}
+	stmts := inner.Body.(*ast.Block).Stmts
+	br, ok := stmts[0].(*ast.Break)
+	if !ok || br.Label != "outer" {
+		t.Errorf("expected `break outer`, got %T %+v", stmts[0], stmts[0])
+	}
+	cont, ok := stmts[1].(*ast.Continue)
+	if !ok || cont.Label != "inner" {
+		t.Errorf("expected `continue inner`, got %T %+v", stmts[1], stmts[1])
+	}
+}
+
+func labelOf(s ast.Stmt) string {
+	switch n := s.(type) {
+	case *ast.While:
+		return n.Label
+	case *ast.For:
+		return n.Label
+	}
+	return ""
+}
+
 // `for c in "hi"` works the same way — strings support `len()` and
 // indexing, so the desugar applies identically.
 func TestForEachOverStringDesugars(t *testing.T) {

@@ -1,0 +1,13 @@
+// `loop { ... }` is the canonical infinite loop (desugars to
+// `while (true)`); a plain `break` / `continue` works inside it.
+function main(): i32 {
+    var i: i32 = 0;
+    var evens: i32 = 0;
+    loop {
+        i = i + 1;
+        if (i % 2 == 1) { continue; }   // count only even i
+        evens = evens + 1;
+        if (i >= 10) { break; }          // i = 2,4,6,8,10 -> 5 evens
+    }
+    return evens * 10 + i;               // 5*10 + 10 = 60
+}

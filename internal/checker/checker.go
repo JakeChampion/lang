@@ -3246,6 +3246,10 @@ type checker struct {
 	current     *ast.FuncDecl
 	loopDepth   int
 	switchDepth int
+	// loopLabels is the stack of in-scope loop labels (innermost last),
+	// pushed while checking a labeled `while`/`for`/`loop` body so a
+	// `break label` / `continue label` can be validated against it.
+	loopLabels []string
 
 	// ownFuncs maps a function name to its per-parameter `own` flags (only
 	// recorded for functions that have at least one owned parameter). Built
@@ -5335,6 +5339,16 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 	}
 }
 
+// labelInScope reports whether `label` names an enclosing labeled loop.
+func (c *checker) labelInScope(label string) bool {
+	for _, l := range c.loopLabels {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 	switch n := st.(type) {
 	case *ast.Block:
@@ -5483,7 +5497,13 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.Cond.Pos(), "E008", "while condition must be boolean, got %s", t)
 		}
 		c.loopDepth++
+		if n.Label != "" {
+			c.loopLabels = append(c.loopLabels, n.Label)
+		}
 		c.checkStmt(n.Body, s)
+		if n.Label != "" {
+			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
+		}
 		c.loopDepth--
 	case *ast.For:
 		// Init runs in a new scope so a `for (var i = 0; ...)` doesn't
@@ -5497,9 +5517,15 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.Cond.Pos(), "E008", "for condition must be boolean, got %s", ct)
 		}
 		c.loopDepth++
+		if n.Label != "" {
+			c.loopLabels = append(c.loopLabels, n.Label)
+		}
 		c.checkStmt(n.Body, inner)
 		if n.Step != nil {
 			c.checkStmt(n.Step, inner)
+		}
+		if n.Label != "" {
+			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
 		}
 		c.loopDepth--
 	case *ast.Break:
@@ -5507,10 +5533,14 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// or inside a `switch` case (exits the switch).
 		if c.loopDepth == 0 && c.switchDepth == 0 {
 			c.errfCode(n.P, "E011", "break outside of a loop or switch")
+		} else if n.Label != "" && !c.labelInScope(n.Label) {
+			c.errfCode(n.P, "E058", "break label %q does not match any enclosing loop", n.Label)
 		}
 	case *ast.Continue:
 		if c.loopDepth == 0 {
 			c.errfCode(n.P, "E011", "continue outside of a loop")
+		} else if n.Label != "" && !c.labelInScope(n.Label) {
+			c.errfCode(n.P, "E058", "continue label %q does not match any enclosing loop", n.Label)
 		}
 	case *ast.Return:
 		want := c.current.ReturnType

@@ -89,7 +89,7 @@ function is_suffix_start(b: i32): boolean { return b == 105 || b == 117 || b == 
 function is_keyword(name: string): boolean {
     return name == "function" || name == "var" || name == "let"
         || name == "use" || name == "if" || name == "else"
-        || name == "while" || name == "for" || name == "break"
+        || name == "while" || name == "for" || name == "loop" || name == "break"
         || name == "continue" || name == "return"
         || name == "true" || name == "false"
         || name == "boolean" || name == "void" || name == "string"

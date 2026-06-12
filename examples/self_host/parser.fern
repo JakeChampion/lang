@@ -1824,6 +1824,17 @@ function stmts_mention(stmts: Stmt[], name: string): boolean {
     return false;
 }
 
+// parse_loop_stmt parses `loop { body }` — the canonical infinite loop —
+// and desugars it to `while (true) { body }` so it rides the existing
+// StmtWhile IR lowering (block/loop/br_if) with no new node or emitter
+// arm. Kept in its own function so parse_stmt (already very large) doesn't
+// grow — an oversized function miscompiles on the native backend (#2720).
+function parse_loop_stmt(p: Par): StmtResult {
+    var p2: Par = p.advance();
+    var lb: BlockResult = parse_block(p2);
+    return StmtResult { par: lb.par, stmt: s_while(e_bool(true), lb.body) };
+}
+
 function parse_stmt(p: Par): StmtResult {
     var kw: string = p.peek_keyword();
     if (kw == "defer") {
@@ -1939,6 +1950,7 @@ function parse_stmt(p: Par): StmtResult {
         p = wb.par;
         return StmtResult { par: p, stmt: s_while(wc.expr, wb.body) };
     }
+    if (kw == "loop") { return parse_loop_stmt(p); }
     if (kw == "for") {
         // `for VAR in EXPR { body }`. `in` arrives as a plain
         // TokIdent (not in the lexer's keyword set), so peek

@@ -108,6 +108,11 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
 		{"range-body-if", "function main(): i32 { var c = 0; for i in 0..10 { if (i > 4) { c = c + 1; } } return c; }", 5},
 		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
+		// `loop { }` infinite loop (closes #2676 loop-form, self-host IR slice):
+		// desugars to `while (true)`, so it rides the existing StmtWhile lowering
+		// (block/loop/br_if) — break/continue work as in any while loop.
+		{"loop-break", "function main(): i32 { var i = 0; loop { i = i + 1; if (i >= 7) { break; } } return i; }", 7},
+		{"loop-continue", "function main(): i32 { var i = 0; var s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
 		// Direct calls + multi-function programs + recursion (slice 6).
 		{"simple-call", "function helper(): i32 { return 5; } function main(): i32 { return helper(); }", 5},
 		{"call-args", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(4, 5); }", 9},

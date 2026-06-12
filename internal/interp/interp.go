@@ -2079,6 +2079,11 @@ const (
 type result struct {
 	flow flowKind
 	val  Value
+	// label carries the target loop label of a `break`/`continue` (empty
+	// for the unlabeled form). A loop consumes the signal only when the
+	// label is empty or matches its own; otherwise it propagates so an
+	// outer labeled loop handles it.
+	label string
 }
 
 func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
@@ -2224,7 +2229,13 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 				return r, nil
 			}
 			if r.flow == flowBreak {
+				if r.label != "" && r.label != x.Label {
+					return r, nil // targets an outer labeled loop
+				}
 				break
+			}
+			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
+				return r, nil // targets an outer labeled loop
 			}
 			// flowContinue or flowNormal: re-test the condition.
 		}
@@ -2252,7 +2263,13 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 				return r, nil
 			}
 			if r.flow == flowBreak {
+				if r.label != "" && r.label != x.Label {
+					return r, nil // targets an outer labeled loop
+				}
 				break
+			}
+			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
+				return r, nil // targets an outer labeled loop
 			}
 			// flowContinue or flowNormal: run step and re-test.
 			if x.Step != nil {
@@ -2263,9 +2280,9 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		}
 		return result{flow: flowNormal}, nil
 	case *ast.Break:
-		return result{flow: flowBreak}, nil
+		return result{flow: flowBreak, label: x.Label}, nil
 	case *ast.Continue:
-		return result{flow: flowContinue}, nil
+		return result{flow: flowContinue, label: x.Label}, nil
 	case *ast.Return:
 		if x.Value == nil {
 			return result{flow: flowReturn, val: Void{}}, nil
@@ -2328,7 +2345,10 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 				if r.flow == flowReturn || r.flow == flowContinue {
 					return r, nil
 				}
-				// flowBreak / flowNormal: leave the switch.
+				if r.flow == flowBreak && r.label != "" {
+					return r, nil // labeled break targets an enclosing loop, not this switch
+				}
+				// unlabeled flowBreak / flowNormal: leave the switch.
 				return result{flow: flowNormal}, nil
 			}
 		}
@@ -2339,6 +2359,9 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 			}
 			if r.flow == flowReturn || r.flow == flowContinue {
 				return r, nil
+			}
+			if r.flow == flowBreak && r.label != "" {
+				return r, nil // labeled break targets an enclosing loop
 			}
 		}
 		return result{flow: flowNormal}, nil

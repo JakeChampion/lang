@@ -8648,7 +8648,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             var fa: string = "$__fa" + util.i32_to_string(d);
             var id: i32 = st.n;
             var brk: string = "$fbrk_" + util.i32_to_string(id);
-            var loop: string = "$floop_" + util.i32_to_string(id);
+            var lp: string = "$floop_" + util.i32_to_string(id);
             // `continue` must still run the index increment, so it
             // branches to the END of a body block (bodycont), after which
             // the increment + loop-back run. `break` branches to brk.
@@ -8663,7 +8663,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             var head: string =
                 "    (local.set " + fa + " " + emit_expr(f.iter, st.cx, 0) + ")\n"
                 + "    (local.set " + fi + " (i32.const 0))\n"
-                + "    (block " + brk + " (loop " + loop + "\n"
+                + "    (block " + brk + " (loop " + lp + "\n"
                 + "    (br_if " + brk + " (i32.ge_s (local.get " + fi + ") (i32.load (local.get " + fa + "))))\n"
                 + "    (local.set $" + f.var_name + " (" + elem_load_op(ekind) + " (i32.add (i32.add (local.get " + fa + ") (i32.const 8)) (i32.mul (local.get " + fi + ") (i32.const " + eslot + ")))))\n"
                 + "    (block " + bodycont + "\n";
@@ -8678,7 +8678,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             inner = emit_stmts(f.body, inner);
             return WState {
                 ...inner,
-                out: inner.out + "    )\n    (local.set " + fi + " (i32.add (local.get " + fi + ") (i32.const 1)))\n    (br " + loop + ")))\n",
+                out: inner.out + "    )\n    (local.set " + fi + " (i32.add (local.get " + fi + ") (i32.const 1)))\n    (br " + lp + ")))\n",
                 brk: outer_brk,
                 cont: outer_cont,
                 fd: d,
