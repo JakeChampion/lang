@@ -277,7 +277,7 @@ impls. The checker already walks field layouts; generation is mechanical.
 This is what makes traits *ergonomic* and is the lever that finally
 collapses the `assert_eq_*` family.
 
-Five traits are derivable today (`deriveKind`, `synthesizeDerives`):
+Six traits are derivable today (`deriveKind`, `synthesizeDerives`):
 
 | Trait     | Synthesised method      | Shape |
 |-----------|-------------------------|-------|
@@ -286,14 +286,40 @@ Five traits are derivable today (`deriveKind`, `synthesizeDerives`):
 | `Display` | `to_string(self)`       | `Name { f: …, … }` / `Variant(p)` |
 | `Hash`    | `hash(self): i32`       | `h = h*31 + f.hash()`; enum seeds with the variant tag |
 | `Json`    | `to_json(self): string` | JSON object; enums externally tagged |
+| `Default` | `default(): Self`       | zero value — scalars' zero literal, nominal fields delegate to *their* `default()`; an enum defaults to its first variant (payloads defaulted) |
 
 Each composes through the same trait on every field/payload, so a type is
 `@derive`-able as soon as its fields are — and a generic type derives a
 *parametric* impl (`@derive(Hash) struct Box[T]` → `impl[T: Hash] Hash for
-Box[T]`). `Eq`/`Ord`/`Display`/`Hash` live in `core/cmp`; `Json` in
-`std/json` (it returns canonical JSON text and reuses the `JsonValue`
-encoder's string escaper). All five are mirrored in the self-hosted
-compiler's `synth_*` so the differential oracle agrees.
+Box[T]`). `Eq`/`Ord`/`Display`/`Hash`/`Default` live in `core/cmp`; `Json`
+in `std/json` (it returns canonical JSON text and reuses the `JsonValue`
+encoder's string escaper). `Eq`/`Ord`/`Display`/`Hash`/`Json` are mirrored
+in the self-hosted compiler's `synth_*`; `Default` is native-only so far
+(its trait method is an *associated function* — see §6.8 — which the
+self-host frontend doesn't parse yet).
+
+### 6.8 Associated functions
+A trait method declared with **no `self` receiver** is an *associated
+function*, called on the type rather than a value — the constructor /
+static-method shape (`Type.f(args)`, dot-qualified like `Color.Red`, no
+`::`):
+
+```fern
+trait Default { function default(): Self; }
+impl Default for Point { function default(): Self { return Point { x: 0, y: 0 }; } }
+var p: Point = Point.default();          // `Self` resolves to Point
+function mk[T: Default](): T { return T.default(); }   // generic constructor
+```
+
+The parser marks a receiver-less trait/impl method (`TraitMethod.Assoc` /
+`FuncDecl.AssocType`); the checker hoists it to `__assoc_<Type>_<name>`
+(registered under the `Type.name` key), resolves a `Type.f()` call (a
+`FieldAccess` on a type name, not a value) to the flat name with no
+receiver prepended, and — for a `T.f()` on a bounded type parameter —
+defers like a bounded method, with monomorph rewriting the target to the
+concrete type. `default` is usable as a member name even though it's a
+switch keyword (`expectMemberName`). This is what `@derive(Default)` builds
+on. Native-only so far; self-host parity is a follow-up.
 
 ## 7. Phasing
 

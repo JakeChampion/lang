@@ -50,6 +50,15 @@ pub trait Hash {
     function hash(self: Self): i32;
 }
 
+// `Default.default()` is an *associated function* (no `self`): it builds a
+// type's zero value, called as `Type.default()`. `@derive(Default)`
+// composes field/variant-wise — scalars use their zero literal, nominal
+// fields delegate to their own `default()`, and an enum defaults to its
+// first variant — so a type has a default as soon as its fields do.
+pub trait Default {
+    function default(): Self;
+}
+
 // ---- Display ---------------------------------------------------
 // Numeric + string types already have `to_string`; empty impls adopt
 // it. `boolean` does not, so it gets a real body.

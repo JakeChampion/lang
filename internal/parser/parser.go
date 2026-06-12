@@ -623,7 +623,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		if err != nil {
 			return nil, err
 		}
-		mname, err := p.expect(lexer.Ident, "")
+		mname, err := p.expectMemberName()
 		if err != nil {
 			return nil, err
 		}
@@ -904,6 +904,20 @@ func (p *parser) parseResourceDecl() (*ast.ResourceDecl, error) {
 	return &ast.ResourceDecl{P: kw.Pos, Name: nameTok.Text}, nil
 }
 
+// expectMemberName parses a member name (a function/method name, a trait
+// method name, or a field/method after `.`). It accepts a normal Ident
+// and also the handful of reserved words that are usable as member names
+// in these positions without ambiguity — currently just `default`, so
+// `Type.default()` (the `@derive(Default)` constructor) and a hand-written
+// `function default(): Self` both work even though `default` is a switch
+// keyword. The keyword stays reserved everywhere else.
+func (p *parser) expectMemberName() (lexer.Token, error) {
+	if tok, ok := p.accept(lexer.Keyword, "default"); ok {
+		return tok, nil
+	}
+	return p.expect(lexer.Ident, "")
+}
+
 // maybeQualify consumes an optional `.ident` suffix and returns the
 // possibly-qualified name (`mod.Trait`). modload rewrites the qualifier
 // to the imported module's mangled prefix. The leading identifier has
@@ -1031,7 +1045,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		}
 		receiver = &ast.Param{Name: rname.Text, NamePos: rname.Pos, Type: rtype, Own: rOwn}
 	}
-	name, err := p.expect(lexer.Ident, "")
+	name, err := p.expectMemberName()
 	if err != nil {
 		return nil, err
 	}
@@ -3398,7 +3412,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: numTok.Text, FieldPos: numTok.Pos}
 				continue
 			}
-			fname, err := p.expect(lexer.Ident, "")
+			fname, err := p.expectMemberName()
 			if err != nil {
 				return nil, err
 			}

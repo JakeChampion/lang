@@ -2586,15 +2586,15 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 // `mod__Name`. A no-op for single-file / same-module names. See
 // docs/TRAITS.md (Phase 3).
 // deriveKind classifies a (possibly module-mangled) derived-trait name
-// by its simple name: "Eq", "Display", "Ord", "Hash", or "Json". Returns
-// "" for any other trait — only these five are derivable.
+// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", or
+// "Default". Returns "" for any other trait — only these are derivable.
 func deriveKind(name string) string {
 	simple := name
 	if i := strings.LastIndex(simple, "__"); i >= 0 {
 		simple = simple[i+2:]
 	}
 	switch simple {
-	case "Eq", "Display", "Ord", "Hash", "Json":
+	case "Eq", "Display", "Ord", "Hash", "Json", "Default":
 		return simple
 	}
 	return ""
@@ -2635,7 +2635,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			_ = td
 			kind := deriveKind(dn)
 			if kind == "" {
-				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, Hash, and Json are derivable", demangle(dn))
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, Hash, Json, and Default are derivable", demangle(dn))
 				continue
 			}
 			var method *ast.FuncDecl
@@ -2650,6 +2650,13 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthHash(sd, recvType)
 			case "Json":
 				method = synthJson(sd, recvType)
+			case "Default":
+				m, badField, badType := synthDefault(sd, recvType)
+				if m == nil {
+					c.errfCode(sd.P, "E021", "cannot @derive(Default) for %s: field %q has type %s, which has no default; implement Default by hand", demangle(sd.Name), badField, badType)
+					continue
+				}
+				method = m
 			}
 			method.SourceModule = sd.SourceModule
 			bindDeriveTypeParams(method, implTypeParams, dn)
@@ -2689,8 +2696,15 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthEnumHash(ed, recvType)
 			case "Json":
 				method = synthEnumJson(ed, recvType)
+			case "Default":
+				m, badType := synthEnumDefault(ed, recvType)
+				if m == nil {
+					c.errfCode(ed.P, "E021", "cannot @derive(Default) for enum %s: first variant has a payload of type %s, which has no default; implement Default by hand", demangle(ed.Name), badType)
+					continue
+				}
+				method = m
 			default:
-				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, Hash, and Json are derivable for enums", demangle(dn))
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, Hash, Json, and Default are derivable for enums", demangle(dn))
 				continue
 			}
 			method.SourceModule = ed.SourceModule
@@ -3077,6 +3091,89 @@ func synthEnumHash(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 		Name: "hash", Receiver: &ast.Param{Name: "self", Type: recv},
 		ReturnType: ast.NumberType{}, Body: body,
 	}
+}
+
+// defaultDeriveExpr returns the default value for a field/payload of type
+// t, used by `@derive(Default)`. Scalars get their zero literal; a nominal
+// type (struct / enum / bound type-param) delegates to *its* `default()`
+// associated function so derivation composes. Reports false for a type
+// with no obvious default (array, map, tuple, slice, function) — the
+// caller turns that into a "implement Default by hand" diagnostic.
+func defaultDeriveExpr(t ast.Type) (ast.Expr, bool) {
+	switch ft := t.(type) {
+	case ast.NumberType:
+		return &ast.NumberLit{}, true
+	case ast.FloatType:
+		return &ast.FloatLit{}, true
+	case ast.BoolType:
+		return &ast.BoolLit{Value: false}, true
+	case ast.StringType:
+		return &ast.StringLit{Value: ""}, true
+	case ast.StructType:
+		return defaultAssocCall(ft.Name), true
+	case ast.EnumType:
+		return defaultAssocCall(ft.Name), true
+	case ast.ParamType:
+		return defaultAssocCall(ft.Name), true
+	}
+	return nil, false
+}
+
+// defaultAssocCall builds `Type.default()` — the associated-function call
+// the derived Default delegates to for a nominal field type.
+func defaultAssocCall(typeName string) ast.Expr {
+	return &ast.Call{Callee: &ast.FieldAccess{Target: &ast.Ident{Name: typeName}, Field: "default"}}
+}
+
+// synthDefault builds a struct's derived `default()` associated function:
+// `function default(): Self { return Name { f0: <zero>, f1: <zero>, … }; }`.
+// Returns (nil, fieldName, fieldType) if a field has no derivable default.
+func synthDefault(sd *ast.StructDecl, recv ast.StructType) (*ast.FuncDecl, string, ast.Type) {
+	fields := make([]ast.FieldInit, 0, len(sd.Fields))
+	for _, f := range sd.Fields {
+		dv, ok := defaultDeriveExpr(f.Type)
+		if !ok {
+			return nil, f.Name, f.Type
+		}
+		fields = append(fields, ast.FieldInit{Name: f.Name, Value: dv})
+	}
+	lit := &ast.StructLit{TypeName: recv.Name, Fields: fields, TypeArgs: recv.Args}
+	return &ast.FuncDecl{
+		Name:       "default",
+		AssocType:  recv.Name,
+		ReturnType: recv,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: lit}}},
+	}, "", nil
+}
+
+// synthEnumDefault builds an enum's derived `default()` associated
+// function: the FIRST variant, with each payload defaulted. Returns
+// (nil, payloadType) if a first-variant payload has no derivable default.
+func synthEnumDefault(ed *ast.EnumDecl, recv ast.EnumType) (*ast.FuncDecl, ast.Type) {
+	if len(ed.Variants) == 0 {
+		return nil, nil
+	}
+	v0 := ed.Variants[0]
+	var value ast.Expr
+	if len(v0.Payloads) == 0 {
+		value = &ast.Ident{Name: v0.Name, EnumName: recv.Name}
+	} else {
+		args := make([]ast.Expr, len(v0.Payloads))
+		for i, pt := range v0.Payloads {
+			dv, ok := defaultDeriveExpr(pt)
+			if !ok {
+				return nil, pt
+			}
+			args[i] = dv
+		}
+		value = &ast.Call{Callee: &ast.Ident{Name: v0.Name, EnumName: recv.Name}, Args: args}
+	}
+	return &ast.FuncDecl{
+		Name:       "default",
+		AssocType:  recv.Name,
+		ReturnType: recv,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: value}}},
+	}, nil
 }
 
 // synthJson builds a field-wise `to_json` rendering a struct as a JSON
