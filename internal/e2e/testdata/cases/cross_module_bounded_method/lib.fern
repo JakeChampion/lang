@@ -1,0 +1,16 @@
+// A bounded element-polymorphic generic method defined in its OWN module.
+// When monomorphised for a type declared in another module, its
+// `xs[i].render()` call must dispatch to that type's `Render` impl even
+// though this module doesn't import the caller's — trait-impl methods are
+// part of the public trait contract, not gated by the import graph.
+pub trait Render { function render(self: Self): string; }
+
+pub function (xs: T[]) render_all[T: Render](): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        out = out + xs[i].render();
+        i = i + 1;
+    }
+    return out;
+}
