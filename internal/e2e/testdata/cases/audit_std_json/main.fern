@@ -1,0 +1,17 @@
+import "core/int";
+import "std/json";
+
+// Audit fixture: std/json parse -> getters -> re-encode -> re-parse,
+// across every native backend.
+
+function main(): i32 {
+    match (json.json_parse("{\"a\":1,\"b\":[2,3],\"c\":\"hi\"}")) {
+        Some(v) => {
+            match (json.json_get_i32(v, "a")) { Some(n) => { if (n != 1) { print("FAIL geti"); return 11; } }, None => { print("FAIL geti-none"); return 12; } }
+            match (json.json_get_string(v, "c")) { Some(s) => { if (s != "hi") { print("FAIL gets"); return 13; } }, None => { print("FAIL gets-none"); return 14; } }
+            var enc: string = json.json_encode(v);
+            match (json.json_parse(enc)) { Some(v2) => { print("OK"); return 0; }, None => { print("FAIL reparse"); return 15; } }
+        },
+        None => { print("FAIL parse"); return 16; }
+    }
+}

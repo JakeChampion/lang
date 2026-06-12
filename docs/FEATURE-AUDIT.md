@@ -182,7 +182,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `Option[T]` (`Some`/`None`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | construct + match both arms |
 | `Result[T, E]` (`Ok`/`Err`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | construct + match both arms |
 | `IoError` variants | | | | | | ⬜ | |
-| `JsonValue` variants | | | | | | ⬜ | |
+| `JsonValue` variants | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | via `std/json` parse/encode roundtrip (`audit_std_json`) |
 | `Reader` / `Writer` | | | | | | ⬜ | |
 | `HttpRequest` / `HttpResponse` | | | | | | ⬜ | |
 | `Url` | | | | | | ⬜ | |
@@ -198,29 +198,29 @@ per-function bugs in the audit log.
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
 | `std/i32` (~80 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | representative set (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum) — `audit_std_numeric`; self-host via array bundle |
-| `std/i64` | | | | | | ⬜ | |
-| `std/u32` | | | | | | ⬜ | |
-| `std/u64` | | | | | | ⬜ | |
-| `std/float` | | | | | | ⬜ | |
+| `std/i64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host pending |
+| `std/u32` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | max — `audit_std_path_numeric`; self-host pending |
+| `std/u64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | clamp — `audit_std_path_numeric`; self-host pending |
+| `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host pending |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
-| `std/format` | | | | | | ⬜ | |
-| `std/csv` | | | | | | ⬜ | |
+| `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host pending |
+| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host pending |
 | `std/log` | | | | | | ⬜ | |
 | `std/io` | | | | | | ⬜ | |
 | `std/io_buffered` | | | | | | ⬜ | |
-| `std/path` | | | | | | ⬜ | |
+| `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
 | `std/base64` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range |
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` |
 | `std/url` | ✅ | ✅ | 🐛 | ✅ | | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption**, [#2817](https://github.com/JakeChampion/lang/issues/2817) (audit log 2026-06-09) |
-| `std/json` | | | | | | ⬜ | |
+| `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test` |
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
 | `std/stream` | | | | | | ⬜ | |
-| `std/time` | | | | | | ⬜ | |
+| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host pending |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | | | | | | ⬜ | |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
@@ -243,6 +243,36 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — std/path + std/i64 + std/u32 + std/u64 + std/float audited (native 4-backend; no new bugs)
+
+New native fixture `audit_std_path_numeric` — `path_join` / `path_file_name` /
+`path_extension`; i64 `abs`/`min`/`max`; u32 `max`; u64 `clamp`; float
+`sqrt`/`floor`/`ceil`/`abs`/`is_finite`. ✅ on interp / x86-64 / arm64 / wasm and
+the wasm owned-vs-borrow gate. Self-host: `std/path` is import-free, covered by
+new `self_host_audit_stdpath_test.go` (join/file_name/extension); the wider-int
+and float modules are ⚠️ pending on self-host. No new bugs.
+
+Author note: `path_join(parts: string[])` takes an array, not varargs.
+
+### 2026-06-12 — std/json + std/time + std/format + std/csv audited (native 4-backend; no new bugs)
+
+New native fixtures, all ✅ on interp / x86-64 / arm64 / wasm and clearing the
+wasm owned-vs-borrow differential gate:
+- `audit_std_json` — `json_parse` → `json_get_i32` / `json_get_string` →
+  `json_encode` → re-parse (also covers the §C `JsonValue` variants). Self-host
+  covered by the existing `self_host_json_test.go`.
+- `audit_std_time` — `is_leap_year` / `days_in_month` / `date_make` /
+  `format_iso`.
+- `audit_std_textfmt` — `csv_parse_line` / `csv_join` / `csv_escape` +
+  `format.format_bytes`.
+
+No new bugs. `std/time` / `std/format` / `std/csv` self-host coverage is pending
+(their bundles pull `std/string`/`std/array`); marked ⚠️ until added.
+
+Author note: module-level free functions are called qualified
+(`json.json_parse`, `csv.csv_parse_line`); `json_parse` returns `Option`
+(not `Result`); the integer getter is `json_get_i32`.
 
 ### 2026-06-12 — std/string core methods audited (native 4-backend differential)
 
