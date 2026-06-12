@@ -17,9 +17,10 @@ import (
 // FREE-function signature (param/return) are eligible. It compiles a self-host
 // probe that calls
 // asm_ir.all_eligible and bit-packs the per-case results into the exit code.
-// Case (d) — an f64 METHOD signature — must still be INELIGIBLE (methods with
-// 64-bit signatures are deferred, mirroring i64 methods), pinning the boundary;
-// so the want is 8+4+2+0 = 14.
+// Case (d) — an f64 METHOD signature — is now ALSO eligible (f64 methods lower
+// through the IR; f64_ret_fns_of records methods keyed "<Type>.<method>"). i64
+// methods stay deferred until i64 struct fields land. So the want is
+// 8+4+2+1 = 15.
 func TestSelfHostIRF64Eligible(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -32,9 +33,9 @@ func TestSelfHostIRF64Eligible(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	// (a) arithmetic+compare, (b) negation, (c) mixed-precedence chain are all
-	// eligible (bits 8/4/2); (d) an f64 SIGNATURE is NOT (bit 1 stays 0) — so
-	// the want is 8+4+2+0 = 14.
+	// (a) f64 locals, (b) i32<->f64 casts, (c) f64 free-fn signature, (d) f64
+	// METHOD signature are ALL eligible now (bits 8/4/2/1) — so the want is
+	// 8+4+2+1 = 15.
 	probe := `import "./lexer";
 import "./parser";
 import "./asm_ir";
@@ -90,7 +91,7 @@ function main(): i32 {
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("probe did not exit normally")
 	}
-	if got := cmd.ProcessState.ExitCode(); got != 14 {
-		t.Errorf("f64 IR eligibility = %d, want 14 (locals eligible: bits 8/4/2; an f64 signature stays bit 1 = 0)", got)
+	if got := cmd.ProcessState.ExitCode(); got != 15 {
+		t.Errorf("f64 IR eligibility = %d, want 15 (f64 locals/casts/free-fn + f64 METHOD all eligible: bits 8/4/2/1)", got)
 	}
 }
