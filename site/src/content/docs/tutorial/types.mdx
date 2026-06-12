@@ -47,9 +47,9 @@ function main(): i32 {
 
 ## Enums
 
-Tagged unions with optional positional payloads. The standard
-library injects `Option[T]` and `Result[T, E]`, so you don't
-re-declare them.
+Tagged unions with optional positional payloads. `Option[T]` and
+`Result[T, E]` are built into the language — always in scope, so you
+never re-declare them.
 
 <FernPlayground
   code={`enum Shape {

@@ -75,8 +75,8 @@ enum Option[T] { Some(T), None }
 enum Result[T, E] { Ok(T), Err(E) }
 ```
 
-Both are injected by the prelude — declare them yourself only to
-shadow them.
+Both are built into the language — always in scope, no import
+required. Declare them yourself only if you want to shadow them.
 
 The postfix `?` operator unwraps the success variant and early-
 returns the failure variant:
