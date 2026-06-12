@@ -8,12 +8,11 @@
 //   var parsed: Result[Config, string] = Config::from_json(body);
 //   var cfg: Config = parsed.unwrap_or(default_config());
 //
-// NOTE: callback combinators (`map` / `map_err` / `unwrap_or_else`)
-// invoke their function through an indirect call; keep the callback's
-// parameter/return scalar / bool / pointer-shaped — a composite
-// (`string`, `Option`, …) hits a pre-existing indirect-call codegen
-// limitation on the native + wasm backends. `and_then` (whose callback
-// always returns a `Result`) is intentionally omitted until that lands.
+// NOTE: callback combinators invoke their function through an indirect
+// call. Composite callback parameter / return types (struct, enum,
+// `Option` / `Result`) work on every backend; a two-word `string`
+// callback parameter / return is still limited at the indirect-call
+// seam (#2753), so keep `string`-typed callbacks out of these for now.
 // Non-callback combinators work for every type on every backend.
 
 import "core/cmp";
@@ -42,6 +41,12 @@ pub function (r: Result[T, E]) unwrap_or_else(f: (E) => T): T {
 // map transforms the `Ok` value, leaving an `Err` untouched.
 pub function (r: Result[T, E]) map[U](f: (T) => U): Result[U, E] {
     match (r) { Ok(x) => { return Ok(f(x)); }, Err(e) => { return Err(e); } }
+}
+
+// and_then chains a result-returning function on the `Ok` value
+// (flat-map / `?`-style), short-circuiting on `Err`.
+pub function (r: Result[T, E]) and_then[U](f: (T) => Result[U, E]): Result[U, E] {
+    match (r) { Ok(x) => { return f(x); }, Err(e) => { return Err(e); } }
 }
 
 // map_err transforms the `Err` value, leaving an `Ok` untouched.

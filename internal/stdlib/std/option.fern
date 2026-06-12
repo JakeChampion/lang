@@ -9,14 +9,12 @@
 //   var name: Option[string] = headers.get("name");
 //   var greeting: string = name.map(greet).unwrap_or("hello, stranger");
 //
-// NOTE: callback combinators (`map` / `filter` / `unwrap_or_else`)
-// invoke their function through an indirect call. A function whose
-// parameter or return is a composite (a `string`, another `Option`,
-// etc.) hits a pre-existing indirect-call codegen limitation on the
-// native + wasm backends, so keep callbacks scalar / bool / pointer-
-// shaped there. `and_then` / `or_else` (whose callback always returns
-// an `Option`) are intentionally omitted until that codegen lands —
-// they would have no working native instantiation today. Non-callback
+// NOTE: callback combinators invoke their function through an indirect
+// call. Composite callback parameter / return types (struct, enum,
+// another `Option` / `Result`) work on every backend. A two-word
+// `string` callback parameter / return is still limited at the
+// indirect-call seam on the native + wasm backends (#2753) — keep
+// `string`-typed callbacks out of these for now. Non-callback
 // combinators work for every `T` on every backend.
 
 import "core/cmp";
@@ -45,6 +43,17 @@ pub function (o: Option[T]) unwrap_or_else(f: () => T): T {
 // map applies `f` to the contained value, or propagates `None`.
 pub function (o: Option[T]) map[U](f: (T) => U): Option[U] {
     match (o) { Some(x) => { return Some(f(x)); }, None => { return None; } }
+}
+
+// and_then chains an option-returning function (flat-map / `?`-style),
+// short-circuiting on `None`.
+pub function (o: Option[T]) and_then[U](f: (T) => Option[U]): Option[U] {
+    match (o) { Some(x) => { return f(x); }, None => { return None; } }
+}
+
+// or_else returns this option if present, else the result of `f`.
+pub function (o: Option[T]) or_else(f: () => Option[T]): Option[T] {
+    match (o) { Some(x) => { return Some(x); }, None => { return f(); } }
 }
 
 // filter keeps the value only when `pred` holds, else yields `None`.
