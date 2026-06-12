@@ -520,6 +520,32 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
     return false;
 }
 
+// is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
+// not a primitive, struct, array, or bracketed/tuple generic. Mirrors the AST
+// emitter's is_enum_recv heuristic (asmcore.is_enum_recv) — a bare nominal that
+// isn't anything else is an enum. Used to carry an enum-typed local / param /
+// receiver's type name in local_struct_type, so `x.method()` on an enum value
+// dispatches to `<Enum>.<method>` (the enum-receiver-method path). A name that
+// is really a scalar type alias would be mis-marked, but the only consequence
+// is a method-dispatch label that calls_only_known finds absent → the module
+// bails to AST; never a miscompile.
+pub function is_enum_like_name(t: string, structs: parser.StructDecl[]): boolean {
+    if (t.len() == 0) { return false; }
+    if (t == "i32" || t == "boolean" || t == "bool" || t == "string"
+        || t == "i64" || t == "f64" || t == "f32" || t == "float" || t == "void") { return false; }
+    if (decl_is_struct(structs, t)) { return false; }
+    if (is_array_type_name(t)) { return false; }
+    // A bracketed generic (Option[..]/Result[..]/Map[..]/Box[..]) or a tuple
+    // "(..)" is not a bare enum.
+    var ci: i32 = 0;
+    while (ci < t.len()) {
+        if (t[ci] == 91) { return false; }   // '['
+        ci = ci + 1;
+    }
+    if (t[0:1] == "(") { return false; }
+    return true;
+}
+
 // decl_has_scalar_array reports whether a struct has any scalar-array field.
 pub function decl_has_scalar_array(structs: parser.StructDecl[], struct_name: string): boolean {
     var i: i32 = 0;
@@ -657,6 +683,22 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
 pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // A struct receiver is NOT a primitive — let the struct path handle it.
     if (expr_struct_type(e, s) != "") { return ""; }
+    // An enum value is not a primitive either: a variant construction `V(x)`
+    // (call to a variant-struct name) or a unit variant `V` (bare ident naming
+    // one). Returning "" bails the module to AST rather than mis-dispatching to
+    // `i32.<method>` — its `<Enum>.<method>` dispatch needs the variant->enum
+    // map (a later slice). An enum value held in a LOCAL is dispatched earlier
+    // via expr_struct_type (the local carries the enum name).
+    match (e) {
+        parser.ExprCall(vc) => {
+            match (vc.callee) {
+                parser.ExprIdent(vci) => { if (decl_is_struct(s.structs, vci.name)) { return ""; } },
+                _ => {}
+            }
+        },
+        parser.ExprIdent(uvi) => { if (decl_is_struct(s.structs, uvi.name)) { return ""; } },
+        _ => {}
+    }
     // Arrays / tuples / maps aren't primitive receivers either; their builtin
     // methods (.len / .append / map ops) are intercepted before this fallback.
     if (expr_is_str(e, s)) { return "string"; }
@@ -2161,6 +2203,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // resolves the field index. Leak-only scalar structs — no RC.
             var struct_ty: string = expr_struct_type(v.init, se);
             if (struct_ty == "" && decl_is_struct(se.structs, v.type_name)) { struct_ty = v.type_name; }
+            // An enum-typed annotation (`var a: Shape = Circle(3)`) carries the
+            // enum name in local_struct_type too, so `a.method()` dispatches to
+            // `<Enum>.<method>` (enum-receiver methods).
+            else if (struct_ty == "" && is_enum_like_name(v.type_name, se.structs)) { struct_ty = v.type_name; }
             // string[] tracking (element typing for a[i]); the annotation is
             // authoritative too. The array itself is already is_arr (RC-tracked).
             var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";
@@ -3057,21 +3103,28 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // dispatch); a PRIMITIVE receiver (impl Trait for i32/boolean/string/i64/
     // f64) binds slot 0 as the scalar/string/i64/f64 it is — like a leading
     // param of that type — so `self` reads correctly and the call site's
-    // primitive-receiver dispatch (expr_recv_prim_type) resolves. An
-    // enum / array / non-leaksafe-struct receiver still bails the module to AST.
+    // primitive-receiver dispatch (expr_recv_prim_type) resolves. An ENUM
+    // receiver binds slot 0 as a plain (heap-pointer) slot carrying the enum
+    // type name, so `match (self)` works and an enum-typed call site dispatches
+    // to `<Enum>.<method>`. An array / Option / tuple / non-leaksafe-struct
+    // receiver still bails the module to AST.
     if (fn.receiver_name.len() > 0) {
         var rbase: string = util.base_type_name(fn.receiver_type);
         var r_is_struct: boolean = decl_is_struct(structs, rbase);
         var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64" || rbase == "f64";
+        var r_is_enum: boolean = is_enum_like_name(rbase, structs);
         if (r_is_struct) {
             if (!decl_is_leaksafe(structs, rbase)) {
                 return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
             }
-        } else if (!r_is_prim) {
+        } else if (!r_is_prim && !r_is_enum) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
+        // A nominal receiver (struct or enum) carries its type name in
+        // local_struct_type — a struct for field access, an enum for a
+        // `self.method()` (enum) dispatch. A primitive carries "".
         var rsty: string = "";
-        if (r_is_struct) { rsty = rbase; }
+        if (r_is_struct || r_is_enum) { rsty = rbase; }
         names = names.append(fn.receiver_name);
         isarr = isarr.append(false);
         isstr = isstr.append(rbase == "string");
@@ -3100,9 +3153,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // dispatch); strings aren't RC'd, so there is no borrow bookkeeping.
         isstr = isstr.append(fn.params[i].type_name == "string");
         isstrarr = isstrarr.append(fn.params[i].type_name == "string[]");
-        // A struct-typed param carries its type name for field-access dispatch.
+        // A struct-typed param carries its type name for field-access dispatch;
+        // an enum-typed param carries the enum name so `param.method()`
+        // dispatches to `<Enum>.<method>`.
         var pty: string = "";
         if (decl_is_struct(structs, fn.params[i].type_name)) { pty = fn.params[i].type_name; }
+        else if (is_enum_like_name(fn.params[i].type_name, structs)) { pty = fn.params[i].type_name; }
         structty = structty.append(pty);
         // An Option[T]/Result[T,E] param is opt-tracked so `match (param)` can
         // recover the payload type.
