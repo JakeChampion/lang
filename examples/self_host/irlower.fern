@@ -698,9 +698,15 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprIdent(id) => { return s.is_f64arr_slot(s.slot_of(id.name)); },
         parser.ExprCall(c) => {
-            // A call to an f64[]-returning free function (f64arr_ret_fns).
+            // A call to an f64[]-returning free function OR method (f64arr_ret_fns,
+            // methods keyed "<Type>.<method>").
             match (c.callee) {
                 parser.ExprIdent(cid) => { return s.is_f64arr_ret_fn(cid.name); },
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty == "") { return false; }
+                    return s.is_f64arr_ret_fn(crty + "." + cfa.field);
+                },
                 _ => { return false; }
             }
             return false;
@@ -862,9 +868,14 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
     match (arr) {
         parser.ExprIdent(id) => { return s.is_f64arr_slot(s.slot_of(id.name)); },
         parser.ExprCall(c) => {
-            // Direct index of an f64[]-returning call: `f()[i]`.
+            // Direct index of an f64[]-returning call: `f()[i]` or `obj.m()[i]`.
             match (c.callee) {
                 parser.ExprIdent(cid) => { return s.is_f64arr_ret_fn(cid.name); },
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty == "") { return false; }
+                    return s.is_f64arr_ret_fn(crty + "." + cfa.field);
+                },
                 _ => { return false; }
             }
             return false;
@@ -881,9 +892,14 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
     match (arr) {
         parser.ExprIdent(id) => { return s.is_i64arr_slot(s.slot_of(id.name)); },
         parser.ExprCall(c) => {
-            // Direct index of an i64[]-returning call: `f()[i]`.
+            // Direct index of an i64[]-returning call: `f()[i]` or `obj.m()[i]`.
             match (c.callee) {
                 parser.ExprIdent(cid) => { return s.is_i64arr_ret_fn(cid.name); },
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty == "") { return false; }
+                    return s.is_i64arr_ret_fn(crty + "." + cfa.field);
+                },
                 _ => { return false; }
             }
             return false;
@@ -902,9 +918,15 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
         parser.ExprIdent(id) => { return s.is_i64arr_slot(s.slot_of(id.name)); },
         parser.ExprSlice(sl) => { return expr_is_i64arr(sl.array, s); },
         parser.ExprCall(c) => {
-            // A call to an i64[]-returning free function (i64arr_ret_fns).
+            // A call to an i64[]-returning free function OR method (i64arr_ret_fns,
+            // methods keyed "<Type>.<method>").
             match (c.callee) {
                 parser.ExprIdent(cid) => { return s.is_i64arr_ret_fn(cid.name); },
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty == "") { return false; }
+                    return s.is_i64arr_ret_fn(crty + "." + cfa.field);
+                },
                 _ => { return false; }
             }
             return false;
@@ -2730,22 +2752,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // lower_i64, and the wasm signature carries (result i64))?
     var ret_i64: boolean = fn.ret_type == "i64";
     var ret_i64arr: boolean = fn.ret_type == "i64[]";
-    // f64[]-returning functions ARE lowered now: f64arr_ret_fns records them, so
-    // the call site `var x = f()` element-width-tracks x as f64[] (is_f64arr) and
-    // a later x[i] reads an 8-byte f64. The body returns an f64-array pointer
-    // (move-on-return like any array). A METHOD returning f64[] is deferred
-    // (f64arr_ret_fns_of records only free functions, mirroring the other
-    // registries' free-function-only rule), so its callers stay on AST.
-    if (fn.receiver_name.len() > 0 && fn.ret_type == "f64[]") {
-        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
-    }
-    // i64[]-RETURNING free functions ARE lowered now: i64arr_ret_fns records
-    // them, so the call site `var x = f()` element-types x as i64[] and x[i]
-    // reads an 8-byte i64. A METHOD returning i64[] is deferred (the registry
-    // records only free functions, mirroring the f64arr/i64 method rules).
-    if (fn.receiver_name.len() > 0 && fn.ret_type == "i64[]") {
-        return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
-    }
+    // f64[]/i64[]-returning functions ARE lowered now — including METHODS:
+    // f64arr_ret_fns / i64arr_ret_fns record them keyed by bare name (free fns)
+    // or "<Type>.<method>" (methods), so a call site `var x = obj.f()`
+    // element-width-tracks x as f64[]/i64[] (expr_is_f64arr / expr_is_i64arr's
+    // method-call case) and a later x[i] reads an 8-byte f64/i64. The body
+    // returns an f64/i64-array pointer (move-on-return like any array); a method
+    // adds nothing array-specific — the receiver binds as slot 0 like any other
+    // method, so the array-return and method machineries simply compose.
     // A FREE function with f64 in its signature IS lowered now: an f64 param is
     // marked f64 in the local table (so it loads/stores like any 8-byte value
     // and the wasm sig declares (param f64)); an f64 return lowers its value
@@ -3045,27 +3059,35 @@ pub function f64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     }
     return out;
 }
-// f64arr_ret_fns_of collects the names of a module's f64[]-returning FREE
-// functions, so a call-site `var x = f()` element-width-tracks x as f64[].
+// f64arr_ret_fns_of collects the names of a module's f64[]-returning functions,
+// so a call-site `var x = f()` element-width-tracks x as f64[]. Free functions
+// are keyed by bare name; methods by the qualified "<BaseType>.<method>" the
+// call site dispatches to (a "." never appears in a bare name, so the key spaces
+// don't collide — same convention as f64_ret_fns_of).
 pub function f64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].receiver_type.len() == 0 && funcs[k].ret_type == "f64[]") {
-            out = out.append(funcs[k].name);
+        if (funcs[k].ret_type == "f64[]") {
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key);
         }
         k = k + 1;
     }
     return out;
 }
-// i64arr_ret_fns_of collects the names of a module's i64[]-returning FREE
-// functions, so a call-site `var x = f()` element-types x as i64[].
+// i64arr_ret_fns_of collects the names of a module's i64[]-returning functions,
+// so a call-site `var x = f()` element-types x as i64[]. Methods are keyed by the
+// qualified "<BaseType>.<method>" (see f64arr_ret_fns_of).
 pub function i64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].receiver_type.len() == 0 && funcs[k].ret_type == "i64[]") {
-            out = out.append(funcs[k].name);
+        if (funcs[k].ret_type == "i64[]") {
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key);
         }
         k = k + 1;
     }
@@ -3126,8 +3148,9 @@ pub function (s: LowerState) is_f64_ret_fn(name: string): boolean {
     }
     return false;
 }
-// is_f64arr_ret_fn reports whether free function `name` returns f64[] (so a
-// `var x = f()` binding element-width-tracks x as f64[]).
+// is_f64arr_ret_fn reports whether `name` returns f64[] (so a `var x = f()`
+// binding element-width-tracks x as f64[]). `name` is the bare callee for a free
+// function or the qualified "<Type>.<method>" for a method call.
 pub function (s: LowerState) is_f64arr_ret_fn(name: string): boolean {
     var i: i32 = 0;
     while (i < s.f64arr_ret_fns.len()) {
@@ -3136,7 +3159,8 @@ pub function (s: LowerState) is_f64arr_ret_fn(name: string): boolean {
     }
     return false;
 }
-// is_i64arr_ret_fn reports whether free function `name` returns i64[].
+// is_i64arr_ret_fn reports whether `name` returns i64[] (bare name or
+// "<Type>.<method>", same convention as is_f64arr_ret_fn).
 pub function (s: LowerState) is_i64arr_ret_fn(name: string): boolean {
     var i: i32 = 0;
     while (i < s.i64arr_ret_fns.len()) {
