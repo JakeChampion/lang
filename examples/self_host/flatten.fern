@@ -326,7 +326,9 @@ function rewrite_params(params: parser.ParamDecl[], ctx: RewriteCtx): parser.Par
         out = out.append(parser.ParamDecl {
             name: params[i].name,
             type_name: rewrite_type_name(params[i].type_name, ctx),
-            own: params[i].own
+            own: params[i].own,
+            has_default: params[i].has_default,
+            default_value: params[i].default_value
         });
         i = i + 1;
     }

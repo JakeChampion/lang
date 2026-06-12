@@ -4713,7 +4713,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     var pj: i32 = 0;
     while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
     var cj: i32 = 0;
-    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false }); cj = cj + 1; }
+    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown("") }); cj = cj + 1; }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
@@ -4786,7 +4786,7 @@ function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[]): HoistResul
                         ci = ci + 1;
                     }
                     // params = __env first, then the lambda's declared params.
-                    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false }];
+                    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown("") }];
                     var pj: i32 = 0;
                     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
                     // body = capture reads (var cap = __env[1+i]) then the lambda body.
@@ -4815,7 +4815,11 @@ function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[]): HoistResul
 // lambda was lifted (keeping lambda-free modules byte-identical), else a module
 // whose bodies reference the hoisted __lam_<k> functions, with those functions
 // appended.
-pub function lift_lambdas(mod: parser.Module): parser.Module {
+pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
+    // Fill omitted trailing arguments from default parameter values before the
+    // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
+    // as `f(5, 128)`. No-op for default-free modules.
+    var mod: parser.Module = parser.fill_default_args_module(raw_mod);
     var gfns: string[] = [];
     var gi: i32 = 0;
     while (gi < mod.funcs.len()) {

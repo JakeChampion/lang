@@ -56,6 +56,10 @@ var interpProgs = []struct {
 	{"locals", "function main(): i32 { var x: i32 = 10; var y: i32 = 32; return x + y; }", 42},
 	{"if", "function main(): i32 { if (5 > 3) { return 1; } return 0; }", 1},
 	{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(19, 23); }", 42},
+	// Default parameter values — fill_default_args_module (run in
+	// interp.eval_module) completes the omitted trailing argument.
+	{"default-one", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(41); }", 42},
+	{"default-multi", "function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; } function main(): i32 { return box(1) - 81; }", 42},
 	{"float", "function main(): i32 { var f: f64 = 3.5; var g: f64 = 2.5; if (f + g > 5.0) { return 7; } return 0; }", 7},
 	// `as` numeric casts — the interp's unary evaluator previously errored
 	// on every `as_<Type>` op ("unknown unary op"); now an integer-target

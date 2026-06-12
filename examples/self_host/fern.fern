@@ -450,6 +450,9 @@ function main(): i32 {
         }
     }
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+    // Fill omitted trailing args from default parameter values up front, so the
+    // checker, SSA, interpreter, and AST fallback all see complete calls.
+    merged = parser.fill_default_args_module(merged);
 
     if (mode_scan) { return ssa_scan(merged.funcs, merged.structs); }
 

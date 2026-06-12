@@ -136,6 +136,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// match the AST path through asm.fern's stack-arg ABI.
 		{"call-one-arg", "function inc(n: i32): i32 { return n + 1; } function main(): i32 { return inc(41); }"},
 		{"call-two-args", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(40, 2); }"},
+		// Default parameter values: an omitted trailing argument is filled from
+		// the parameter's declared default (parser.fill_default_args_module, run
+		// in lift_lambdas for the IR path), so the call reaches the IR complete.
+		{"default-one", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(41); }"},
+		{"default-override", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(40, 2); }"},
+		{"default-multi", "function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; } function main(): i32 { return box(1); }"},
+		{"default-expr", "function add(a: i32, b: i32 = 5 + 5): i32 { return a + b; } function main(): i32 { return add(32); }"},
 		{"call-three-args", "function f(a: i32, b: i32, c: i32): i32 { return a * 100 + b * 10 + c; } function main(): i32 { return f(1, 2, 3); }"},
 		{"call-arg-order", "function sub(a: i32, b: i32): i32 { return a - b; } function main(): i32 { return sub(50, 8); }"},
 		{"call-nested-args", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(add(10, 20), add(5, 7)); }"},
