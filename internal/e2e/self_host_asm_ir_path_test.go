@@ -379,6 +379,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"enum-unit", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }`},
 		{"enum-three", `enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }`},
 		{"enum-wildcard", `enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }`},
+		// `@derive(Debug)` (#2708) — the self-host synthesizes a type-directed
+		// `to_debug` (numbers → to_string, strings → quoted, nominal → to_debug),
+		// matching the native structural output. The AST and IR paths must agree
+		// on the rendered length. (The inline `trait Debug` is discarded by the
+		// self-host; it keeps the program valid for the native compiler.)
+		{"derive-debug-struct", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } function main(): i32 { return P { x: 7, name: "hi" }.to_debug().len(); }`},
+		{"derive-debug-enum-unit", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len(); }`},
+		{"derive-debug-enum-payload", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`},
+		{"derive-debug-nested", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } @derive(Debug) struct N { p: P, n: i32 } function main(): i32 { return N { p: P { x: 1, name: "z" }, n: 9 }.to_debug().len(); }`},
 		// Out of the IR subset -> falls back to the AST emitter under -ir; must
 		// still match (proves the fallback path is intact).
 		{"method-falls-back", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},

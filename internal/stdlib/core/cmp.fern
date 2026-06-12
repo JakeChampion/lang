@@ -59,6 +59,18 @@ pub trait Default {
     function default(): Self;
 }
 
+// `Debug.to_debug()` is developer/diagnostic formatting, distinct from
+// `Display` (user-facing). `@derive(Debug)` renders the STRUCTURAL form —
+// `Name { f: <debug f>, … }` for structs, `Variant(<debug payload>)` for
+// enums — composing field/variant-wise through each field's own `Debug`.
+// The one difference from the derived `Display` is that **strings are
+// quoted** (`"hi"` not `hi`), so a debug dump is unambiguous. This is the
+// `{:?}` half of the Display/Debug split (and the clean shape for
+// `assert_eq[T: Eq + Debug]` in the test runner). See docs/TRAITS.md.
+pub trait Debug {
+    function to_debug(self: Self): string;
+}
+
 // ---- Display ---------------------------------------------------
 // Numeric + string types already have `to_string`; empty impls adopt
 // it. `boolean` does not, so it gets a real body.
@@ -194,5 +206,49 @@ impl Hash for string {
             i = i + 1;
         }
         return h;
+    }
+}
+
+// ---- Debug -----------------------------------------------------
+// Numeric types debug as their decimal form (same as `to_string`);
+// `boolean` as `true`/`false`. `string` is QUOTED with `"` — and the
+// quote / backslash / newline / tab inside are escaped — so a debug dump
+// round-trips visibly. These primitive impls let `[T: Debug]` generics
+// (the test runner's `assert_eq`) and nested `@derive(Debug)` fields
+// resolve `(v).to_debug()` for any leaf type.
+
+impl Debug for i32 {
+    function to_debug(self: Self): string { return self.to_string(); }
+}
+impl Debug for i64 {
+    function to_debug(self: Self): string { return self.to_string(); }
+}
+impl Debug for u32 {
+    function to_debug(self: Self): string { return self.to_string(); }
+}
+impl Debug for u64 {
+    function to_debug(self: Self): string { return self.to_string(); }
+}
+impl Debug for boolean {
+    function to_debug(self: Self): string {
+        if (self) { return "true"; }
+        return "false";
+    }
+}
+impl Debug for string {
+    function to_debug(self: Self): string {
+        var out: string = "\"";
+        var i: i32 = 0;
+        var n: i32 = self.len();
+        while (i < n) {
+            var b: i32 = self[i];
+            if (b == 34) { out = out + "\\\""; }        // "
+            else { if (b == 92) { out = out + "\\\\"; }  // backslash
+            else { if (b == 10) { out = out + "\\n"; }
+            else { if (b == 9) { out = out + "\\t"; }
+            else { out = out + self[i : i + 1]; } } } }
+            i = i + 1;
+        }
+        return out + "\"";
     }
 }

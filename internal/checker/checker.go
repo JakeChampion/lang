@@ -2594,15 +2594,15 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 // `mod__Name`. A no-op for single-file / same-module names. See
 // docs/TRAITS.md (Phase 3).
 // deriveKind classifies a (possibly module-mangled) derived-trait name
-// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", or
-// "Default". Returns "" for any other trait — only these are derivable.
+// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "Default",
+// or "Debug". Returns "" for any other trait — only these are derivable.
 func deriveKind(name string) string {
 	simple := name
 	if i := strings.LastIndex(simple, "__"); i >= 0 {
 		simple = simple[i+2:]
 	}
 	switch simple {
-	case "Eq", "Display", "Ord", "Hash", "Json", "Default":
+	case "Eq", "Display", "Ord", "Hash", "Json", "Default", "Debug":
 		return simple
 	}
 	return ""
@@ -2643,7 +2643,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			_ = td
 			kind := deriveKind(dn)
 			if kind == "" {
-				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, Hash, Json, and Default are derivable", demangle(dn))
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", demangle(dn))
 				continue
 			}
 			var method *ast.FuncDecl
@@ -2652,6 +2652,8 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthEq(sd, recvType)
 			case "Display":
 				method = synthDisplay(sd, recvType)
+			case "Debug":
+				method = synthDebug(sd, recvType)
 			case "Ord":
 				method = synthOrd(sd, recvType)
 			case "Hash":
@@ -2698,6 +2700,8 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthEnumEq(ed, recvType)
 			case "Display":
 				method = synthEnumDisplay(ed, recvType)
+			case "Debug":
+				method = synthEnumDebug(ed, recvType)
 			case "Ord":
 				method = synthEnumOrd(ed, recvType)
 			case "Hash":
@@ -2712,7 +2716,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				}
 				method = m
 			default:
-				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, Hash, Json, and Default are derivable for enums", demangle(dn))
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums", demangle(dn))
 				continue
 			}
 			method.SourceModule = ed.SourceModule
@@ -2878,6 +2882,41 @@ func synthEnumDisplay(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 	}
 }
 
+// synthEnumDebug builds a variant-wise `to_debug` rendering `Variant` /
+// `Variant(<debug payload>, …)`, the Debug sibling of synthEnumDisplay —
+// each payload is rendered through its own `Debug` (so a string payload is
+// quoted). Identical shape to the derived Display otherwise.
+func synthEnumDebug(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for i := range v.Payloads {
+			bind[i] = fmt.Sprintf("__p%d", i)
+		}
+		var expr ast.Expr = &ast.StringLit{Value: v.Name}
+		if len(v.Payloads) > 0 {
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: "("})
+			for i := range v.Payloads {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_debug"))
+			}
+			add(&ast.StringLit{Value: ")"})
+		}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.StringLit{Value: ""}},
+	}}
+	return &ast.FuncDecl{
+		Name: "to_debug", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{}, Body: body,
+	}
+}
+
 // synthEnumOrd builds a variant-wise `cmp`: a variant declared earlier
 // sorts before one declared later (by tag); within the same variant,
 // payloads are compared lexicographically. `match self`, then for each
@@ -2992,6 +3031,37 @@ func synthDisplay(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	}
 	return &ast.FuncDecl{
 		Name:       "to_string",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthDebug builds a `to_debug` that renders the structural `Name { f: …,
+// … }` form, like synthDisplay, but composes through each field's `Debug`
+// (`self.f.to_debug()`) rather than `Display`. The practical difference is
+// that a string field renders QUOTED (`name: "hi"` vs Display's `name: hi`)
+// via `impl Debug for string` in core/cmp. The generated method delegates
+// to the primitive Debug impls / nested derived Debug methods, so it
+// composes exactly as the derived Display does.
+func synthDebug(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.StringLit{Value: demangle(sd.Name) + " {"}
+	add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+	for i, f := range sd.Fields {
+		sep := " "
+		if i > 0 {
+			sep = ", "
+		}
+		add(&ast.StringLit{Value: sep + f.Name + ": "})
+		add(methodCall(selfField(f.Name), "to_debug"))
+	}
+	if len(sd.Fields) == 0 {
+		add(&ast.StringLit{Value: "}"})
+	} else {
+		add(&ast.StringLit{Value: " }"})
+	}
+	return &ast.FuncDecl{
+		Name:       "to_debug",
 		Receiver:   &ast.Param{Name: "self", Type: recv},
 		ReturnType: ast.StringType{},
 		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},

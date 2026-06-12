@@ -277,13 +277,14 @@ impls. The checker already walks field layouts; generation is mechanical.
 This is what makes traits *ergonomic* and is the lever that finally
 collapses the `assert_eq_*` family.
 
-Six traits are derivable today (`deriveKind`, `synthesizeDerives`):
+Seven traits are derivable today (`deriveKind`, `synthesizeDerives`):
 
 | Trait     | Synthesised method      | Shape |
 |-----------|-------------------------|-------|
 | `Eq`      | `eq(self, other)`       | field-wise `&&` / variant match |
 | `Ord`     | `cmp(self, other): i32` | lexicographic fields; variant-declaration order |
 | `Display` | `to_string(self)`       | `Name { f: …, … }` / `Variant(p)` |
+| `Debug`   | `to_debug(self): string`| structural like `Display`, but strings render QUOTED (`label: "hi"`, `Tag("ab")`) — the `{:?}` half of the Display/Debug split |
 | `Hash`    | `hash(self): i32`       | `h = h*31 + f.hash()`; enum seeds with the variant tag |
 | `Json`    | `to_json(self): string` | JSON object; enums externally tagged |
 | `Default` | `default(): Self`       | zero value — scalars' zero literal, nominal fields delegate to *their* `default()`; an enum defaults to its first variant (payloads defaulted) |
@@ -291,12 +292,20 @@ Six traits are derivable today (`deriveKind`, `synthesizeDerives`):
 Each composes through the same trait on every field/payload, so a type is
 `@derive`-able as soon as its fields are — and a generic type derives a
 *parametric* impl (`@derive(Hash) struct Box[T]` → `impl[T: Hash] Hash for
-Box[T]`). `Eq`/`Ord`/`Display`/`Hash`/`Default` live in `core/cmp`; `Json`
-in `std/json` (it returns canonical JSON text and reuses the `JsonValue`
-encoder's string escaper). `Eq`/`Ord`/`Display`/`Hash`/`Json` are mirrored
-in the self-hosted compiler's `synth_*`; `Default` is native-only so far
-(its trait method is an *associated function* — see §6.8 — which the
-self-host frontend doesn't parse yet).
+Box[T]`). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/`Default` live in `core/cmp`;
+`Json` in `std/json` (it returns canonical JSON text and reuses the
+`JsonValue` encoder's string escaper). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/
+`Json` are mirrored in the self-hosted compiler's `synth_*`; `Default` is
+native-only so far (its trait method is an *associated function* — see §6.8
+— which the self-host frontend doesn't parse yet).
+
+`Debug`'s self-host `synth_*` renders **type-directed** (numeric/boolean
+scalars via `to_string`, strings quoted inline, nominal fields via their
+own `to_debug`) rather than routing primitives through a `Debug` trait
+method — the self-host discards `impl` bodies, so `(i32).to_debug()` has no
+target there. The native checker instead resolves the primitive
+`impl Debug for {i32,…,string,boolean}` impls in `core/cmp` (and quotes /
+escapes strings); both produce identical output.
 
 ### 6.8 Associated functions
 A trait method declared with **no `self` receiver** is an *associated

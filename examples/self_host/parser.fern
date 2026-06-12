@@ -5577,6 +5577,57 @@ function synth_struct_display(sd: StructDecl): FuncDecl {
     return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
+// dv_debug_render builds the Debug rendering of a single value of static
+// type `t`. Unlike the native checker — which routes every field through a
+// `Debug` trait method — the self-host has no trait-impl methods on
+// primitives (it discards `impl` bodies; `__fn_i32__to_debug` would be
+// undefined), so it renders type-directed, matching the native output:
+//   * `string`  → quoted: `"\"" + v + "\""` (so a dump is unambiguous).
+//   * numeric / boolean scalar → `v.to_string()` (a built-in, as derived
+//     Display uses).
+//   * anything else (a nominal struct/enum) → `v.to_debug()`, composing
+//     through its own derived Debug.
+// (Strings with embedded quotes/backslashes aren't escaped here — the
+// native `impl Debug for string` does, a small self-host fidelity gap.)
+function dv_is_debug_scalar(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+        || t == "f32" || t == "f64" || t == "boolean";
+}
+function dv_debug_render(value: Expr, t: string): Expr {
+    if (t == "string") {
+        return e_binary("+", e_binary("+", e_string("\""), value), e_string("\""));
+    }
+    if (dv_is_debug_scalar(t)) {
+        return dv_call0(value, "to_string");
+    }
+    return dv_call0(value, "to_debug");
+}
+
+// synth_struct_debug: `to_debug` rendering the structural `Name { f: …, …
+// }` form — the Debug sibling of synth_struct_display. The one difference
+// from the derived Display is that a string field renders QUOTED
+// (`name: "hi"`), via dv_debug_render. Mirrors the Go synthDebug output.
+function synth_struct_debug(sd: StructDecl): FuncDecl {
+    var expr: Expr = e_string(sd.name + " {");
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        var sep: string = " ";
+        if (i > 0) { sep = ", "; }
+        expr = e_binary("+", expr, e_string(sep + sd.fields[i].name + ": "));
+        expr = e_binary("+", expr, dv_debug_render(dv_self_field(sd.fields[i].name), sd.fields[i].type_name));
+        i = i + 1;
+    }
+    if (sd.fields.len() == 0) {
+        expr = e_binary("+", expr, e_string("}"));
+    } else {
+        expr = e_binary("+", expr, e_string(" }"));
+    }
+    var body: Stmt[] = [s_return(expr)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_struct_eq: field-wise `self.f.eq(other.f) && …` (true for an
 // empty struct).
 function synth_struct_eq(sd: StructDecl): FuncDecl {
@@ -5674,6 +5725,32 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
     return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
+// synth_enum_debug: `to_debug` rendering `Variant` / `Variant(<debug
+// payload>)` — the Debug sibling of synth_enum_display. The payload is
+// rendered type-directed (a string payload is quoted) via dv_debug_render.
+// Like synth_enum_display this covers payload-less and single-payload
+// variants. Mirrors the Go synthEnumDebug output.
+function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
+    var arms: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var v: StructDecl = variants[i];
+        if (v.fields.len() > 0) {
+            var e: Expr = e_string(v.name + "(");
+            e = e_binary("+", e, dv_debug_render(e_ident("__p0"), v.fields[0].type_name));
+            e = e_binary("+", e, e_string(")"));
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        } else {
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        }
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
 // synth_enum_eq: match self, then match other — same variant compares
@@ -5850,6 +5927,7 @@ function synth_enum_derives(ename: string, variants: StructDecl[], derives: stri
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
         if (kind == "Display") { funcs = funcs.append(synth_enum_display(ename, variants)); }
+        if (kind == "Debug") { funcs = funcs.append(synth_enum_debug(ename, variants)); }
         if (kind == "Eq") { funcs = funcs.append(synth_enum_eq(ename, variants)); }
         if (kind == "Ord") { funcs = funcs.append(synth_enum_ord(ename, variants)); }
         if (kind == "Hash") { funcs = funcs.append(synth_enum_hash(ename, variants)); }
@@ -5956,6 +6034,7 @@ function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): Fu
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
         if (kind == "Display") { funcs = funcs.append(synth_struct_display(sd)); }
+        if (kind == "Debug") { funcs = funcs.append(synth_struct_debug(sd)); }
         if (kind == "Eq") { funcs = funcs.append(synth_struct_eq(sd)); }
         if (kind == "Ord") { funcs = funcs.append(synth_struct_ord(sd)); }
         if (kind == "Hash") { funcs = funcs.append(synth_struct_hash(sd)); }
