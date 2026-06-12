@@ -10612,7 +10612,11 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // rc_runtime_helpers), so wasm_ir does NOT import wasm — no cycle. Component
     // modes and out-of-subset modules (strings, structs, methods, …) fall
     // through to the AST emitter below, so the bootstrap is unaffected.
-    if (!component && wasm_ir.should_use_ir(mod)) {
+    var lm: parser.Module = wasm_ir.lift_lambdas(mod);
+    if (!component && wasm_ir.should_use_ir(lm)) {
+        // Hoist no-capture lambda call-args (closures slice 2a) before emit;
+        // lambda-free modules are unchanged, and the AST path below keeps `mod`.
+        mod = lm;
         var ir_out: string = "(module\n";
         ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";

@@ -8160,7 +8160,13 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // self-host compiler itself still compiles via AST and the bootstrap is
     // unaffected. asm_arm64_ir does NOT import asm_arm64 (no cycle); the
     // runtime is reused from here, not duplicated.
-    if (asmcore.new_state().use_ir && asm_ir.all_eligible(mod)) {
+    var lm: parser.Module = asm_ir.lift_lambdas(mod);
+    if (asmcore.new_state().use_ir && asm_ir.all_eligible(lm)) {
+        // Hoist no-capture lambda call-args (closures slice 2a); lambda-free
+        // modules are unchanged. Re-seed s with the lifted funcs (the earlier
+        // seeding used the original mod) so the IR path sees __lam_<k>.
+        mod = lm;
+        s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
         s = asm_arm64_ir.emit_body(mod, s);
         // Expand the declarative runtime-dependency closure (e.g. a map op
         // marks need("maps"), which pulls in arr_push / str_eq / heap) before

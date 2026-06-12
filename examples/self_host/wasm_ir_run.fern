@@ -27,7 +27,13 @@ function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var emitted: string = "";
-    if (use_ir && wasm_ir.wasm_eligible(mod)) {
+    var lm: parser.Module = wasm_ir.lift_lambdas(mod);
+    if (use_ir && wasm_ir.wasm_eligible(lm)) {
+        // Hoist no-capture lambda arguments to top-level functions (closures
+        // slice 2a) so callback-style lambdas ride the slice-1 function-value
+        // path; lambda-free modules are unchanged. The AST fallback keeps the
+        // original `mod`.
+        mod = lm;
         // Force the IR path: orchestrate the module wrapper + wasm's heap/RC
         // runtime + wasm_ir.emit_functions (the same orchestration
         // wasm.emit_module's use_ir dispatch does).
