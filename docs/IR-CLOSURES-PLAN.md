@@ -220,29 +220,92 @@ counts by exit code. (This slice changes no eligibility on its own — it
 is wired in by Slice 3 — so to satisfy `deadcode` it lands *together
 with* Slice 3, or its first consumer.)
 
-### Slice 3 — capturing lambdas (env-box ABI)
+## Status (what shipped, and the open frontier)
 
-- New ops `op_make_closure(name, ncap)` / capture-store, and
-  `op_call_closure(argc)` lowering (env-first).
-- `irlower` lowers the `make_closure` marker → box alloc
-  (`__fern_str_box`), store table_idx@0 + captures@4+i*4, with the
-  `ptrW`-aware 8-byte slots already used elsewhere (`WidthPtr`).
-- Capture reads inside the hoisted body → load from `__env + off`.
-- Backends emit the env-box construction + the env-first
-  `call_closure_direct`, mirroring wasm.fern:5744-5782 / 5474-5486 and
-  the register mirrors.
-- Perceus: closure boxes are RC values; captured strings/arrays/structs
-  inc at construction and dec at closure death (`capture_kind`). This
-  must integrate with the IR path's existing RC insertion.
-- **Tests**: the remaining `self_host_closures_test.go` cases
-  (`capture-local`, `multi-capture`, `capture-string`,
-  `return-closure`) re-expressed as wasm-IR oracle cases.
+Slices 1 + 2 landed as a sequence of merged PRs, NOT via the original
+`closureconv.fern` shape — lambda-lifting turned out simpler than a
+hoisting/marker pass:
+
+- **Function values** (capture-free, named or `function(){…}` as a
+  call-argument) lower on **all three IR backends**: `const_func` →
+  funcref table on wasm, code-address on x86-64/arm64; `call_indirect`
+  dispatches. (`asm_ir` / `asm_arm64_ir` / `wasm_ir`.)
+- **Capturing lambdas bound to a local and only directly called**
+  (`var f = function(x){ … cap … }; … f(a) …`) lower via classic
+  **lambda-lifting**: hoist to `__lam_<k>(origparams…, captures…)` and
+  rewrite each call to thread the captured values as ordinary arguments —
+  no box, no new op. `irlower.lift_lambdas` (closure_lift_one +
+  lift_stmt). Declines (→ AST) when a capture's type is unresolvable, a
+  capture / the closure local is reassigned, or the closure escapes as a
+  value.
+- The lift work surfaced and fixed an unrelated **checker** correctness
+  bug: an inline enum-variant literal in a struct-field array literal
+  lowered without its tag (missing `setElemHintFor`). Fixed.
+
+`op_call_closure(argc)` exists in `ir.fern` but is an **unwired stub**;
+there is no `op_make_closure`. The open frontier is the one closure shape
+lambda-lifting can't handle:
+
+### Slice 3 — first-class (escaping) capturing closures (env-box ABI)
+
+A capturing closure that is **passed as a value, returned, or stored**
+can't be lambda-lifted (the captures aren't in scope at the call site),
+so it needs a heap **box** that carries them. Currently these fall back
+to the AST backend (which handles them correctly — this is a goal-1
+IR-widening, not a correctness gap).
+
+**Box layout** — a dedicated heap alloc (8-byte `WidthPtr` slots), NOT a
+tuple literal (a tuple literal would mis-type against the `(T…)=>R`
+"fn" type in the checker; the box is an IR-level representation of that
+type). Slot 0 = the callable (funcref-table index on wasm / code address
+on the register backends, i.e. what `const_func` produces); slots 1.. =
+captures in lift order.
+
+**Lowering** (irlower, the op-based path — distinct from lambda-lifting):
+- An escaping capturing `ExprLambda` → hoist its body to
+  `__lam_<k>(origparams…, __env)`; prepend a capture read per slot
+  (`var cap_i = <load __env slot 1+i>`); at the site emit
+  `op_make_closure(__lam_<k>, ncap)` + the capture values.
+- `op_make_closure` → box alloc, store callable@0 + caps@1.. .
+- A call through a closure-typed value → `op_call_closure(argc)`: load
+  box[0], push (args…, box) — the box itself is the trailing `__env` —
+  and `call_indirect` with the lifted signature (arity **+1**).
+- Capture reads in the hoisted body → load from `__env` slot.
+
+**The plain-fn vs closure representation problem** (the crux): a
+`"fn"`-typed value can be EITHER a Slice-1 plain function value (bare
+callable) OR a closure box. A generic `"fn"` parameter must call both
+uniformly. Two staged sub-slices:
+- **3a (additive, no Slice-1 migration)** — support closures that are
+  bound to a local / returned and called through a value irlower can
+  *track* as a closure (a per-value "is-closure" bit, seeded by
+  closure-producing sources: a make_closure binding, or a function whose
+  body returns a closure). Restriction: a single binding/param can't mix
+  box and bare values. Covers `make_adder(5); add5(3)` and locally-held
+  closures. Slice-1 plain fn-values stay on their bare-address call.
+- **3b (uniform, mixing through `"fn"` params)** — make EVERY fn-value a
+  box: a plain function used as a value gets an **env-dropping wrapper**
+  `__envwrap_<f>(args…, __env){ return f(args…); }`, boxed as
+  `[__envwrap_<f>]`; every call is a `call_closure`. This subsumes
+  Slice 1's `const_func`/`call_indirect` and removes the per-value bit.
+  Higher-risk (touches the now-solid Slice-1 path), so it ships only with
+  the full fn-value + lambda gate re-green on every backend.
+
+**Perceus**: closure boxes are RC values; captured strings/arrays/structs
+inc at make_closure and dec at the box's drop (`capture_kind`). Must
+integrate with the IR path's existing RC insertion. (For 3a, start with
+scalar-only captures to defer this.)
+
+**Tests**: hardcoded-oracle wasm-IR cases (exit codes ≤125) with an
+emitted-code assertion that the IR path was taken (no AST runtime), per
+the lesson from the lambda slices — `return-closure`, `capture-local`,
+`multi-capture`, then `capture-string` once RC lands. x86-64 fixpoint +
+the flip-readiness freelist corpus on every slice.
 
 ### Slice 4 — closures returning closures / nested + mutual recursion
 
-`return-closure` already lands in Slice 3 for the single level; this
-slice covers nested lambdas (lambda inside lambda — capture chaining)
-and the Tarjan-SCC mutual-recursion handling from the native pass
+Nested lambdas (lambda inside lambda — capture chaining) and the
+Tarjan-SCC mutual-recursion handling from the native pass
 (closureconv.go:123-187), if/when the self-host needs it.
 
 ## Validation per slice
