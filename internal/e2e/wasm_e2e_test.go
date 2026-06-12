@@ -3295,7 +3295,87 @@ function main(): i32 {
 	}
 }
 
-// Slice views (`[T]`) — `arr[a:b]` produces a non-owning view
+// Re-binding the SAME name across two match arms (a guarded `Rect(p)`
+// followed by an unguarded `Rect(p)`, each reading `p`). Regression for
+// issue #2644, which reported the wasm backend reading the wrong value
+// for the guarded arm's payload bind when a later arm re-binds the same
+// name — i.e. the two `p` bindings colliding on one slot. Each arm must
+// get its own binding slot so the guard reads the right `p.x` and the
+// fall-through arm reads its own `p`. Every sub-case is also a
+// cross-backend contract: x86-64 / interp produce the same values (the
+// issue's core complaint was an x86-64-vs-wasm divergence), guarded here
+// on the result-printer harness.
+func TestWASMMatchRebindSameName(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// The issue's exact repro: guard true → first arm → 4*5=20, so
+		// 20*10 + area(Dot)=1 == 201.
+		{"issue-repro", `
+struct P { x: i32, y: i32 }
+enum Shape { Dot, Rect(P) }
+function area(s: Shape): i32 {
+    match (s) {
+        Rect(p) when p.x > 0 => { return p.x * p.y; },
+        Rect(p) => { return 0; },
+        Dot => { return 1; }
+    }
+    return 0;
+}
+function main(): i32 { return area(Rect(P { x: 4, y: 5 })) * 10 + area(Dot); }`, 201},
+		// Guard false → falls through to the unguarded arm, which reads
+		// its OWN `p` (p.y == 5) → 105.
+		{"both-arms-read-p", `
+struct P { x: i32, y: i32 }
+enum Shape { Dot, Rect(P) }
+function area(s: Shape): i32 {
+    match (s) {
+        Rect(p) when p.x > 0 => { return p.x * p.y; },
+        Rect(p) => { return p.y + 100; },
+        Dot => { return 1; }
+    }
+    return 0;
+}
+function main(): i32 { return area(Rect(P { x: 0, y: 5 })); }`, 105},
+		// Three arms binding `p`, two guarded: the middle guard (p.x > 5)
+		// wins for x=7 → p.x*2 == 14.
+		{"three-arms-bind-p", `
+struct P { x: i32, y: i32 }
+enum Shape { Rect(P) }
+function f(s: Shape): i32 {
+    match (s) {
+        Rect(p) when p.x > 10 => { return 1; },
+        Rect(p) when p.x > 5 => { return p.x * 2; },
+        Rect(p) => { return p.y; }
+    }
+    return 0;
+}
+function main(): i32 { return f(Rect(P { x: 7, y: 99 })); }`, 14},
+		// i32-payload re-bind across a guarded + unguarded arm.
+		{"i32-payload-rebind", `
+enum E { A(i32), B }
+function g(e: E): i32 {
+    match (e) {
+        A(n) when n > 100 => { return n - 100; },
+        A(n) => { return n * 3; },
+        B => { return 0; }
+    }
+    return 0;
+}
+function main(): i32 { return g(A(7)) + g(A(150)); }`, 71},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runWasm(t, tc.src); got != tc.want {
+				t.Errorf("wasm %s: got %d, want %d (issue #2644)", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+
 // over the parent's storage. Verifies len + indexing on a slice
 // over an owned array AND sub-slicing (slice-of-slice).
 // Exercises the new $__slice_make + $__slice_idx runtime helpers,
