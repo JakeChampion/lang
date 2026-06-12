@@ -177,6 +177,13 @@ function main(): i32 { var a: i32[] = [7, 8]; var s: [i32] = a[0:2]; return s.he
     while (i < xs.len()) { if (p(xs[i])) { n = n + 1; } i = i + 1; } return n; }
 function pos(x: i32): boolean { return x > 0; }
 function main(): i32 { var a: i32[] = [1, 0 - 1, 2]; return a.count_where(pos); }`,
+		// Method-level type param: `map[U]` introduces U (inferred from
+		// the argument) alongside the receiver's T.
+		`struct Box[T] { v: T }
+function (b: Box[T]) map[U](f: (T) => U): Box[U] { return Box { v: f(b.v) }; }
+function (b: Box[T]) get(): T { return b.v; }
+function big(x: i32): boolean { return x > 3; }
+function main(): i32 { var b: Box[i32] = Box { v: 7 }; var c: Box[boolean] = b.map(big); if (c.get()) { return 0; } return 1; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {

@@ -900,7 +900,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			seen[tp] = true
 		}
 		c.collectFreeTypeVars(fn.Receiver.Type, &vars, seen)
-		fn.TypeParams = append(fn.TypeParams, vars...)
+		// Receiver type-vars go FIRST: the call site seeds them
+		// positionally from the receiver's type args (a method like
+		// `(b: Box[T]) map[U](...)` gets T from the receiver and infers
+		// U from the arguments), so T must precede any post-name `[U]`.
+		fn.TypeParams = append(vars, fn.TypeParams...)
 	}
 
 	// Now that the enum set is known, walk every type position in
@@ -6839,7 +6843,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				genericFn = fn
 				sub = make(map[string]ast.Type, len(fn.TypeParams))
 				if len(n.TypeArgs) > 0 {
-					if len(n.TypeArgs) != len(fn.TypeParams) {
+					// Too MANY type args is always wrong. Too FEW is an
+					// error for an explicit call-site `f[i32](x)` (the
+					// `type-arg-too-few` contract), but ALLOWED for a
+					// method call (`n.Method != nil`): a generic-method
+					// call seeds only the receiver's type-vars here (they
+					// come first in fn.TypeParams) and the remaining
+					// method-level params are inferred from the arguments
+					// below. The "could not infer" check afterwards still
+					// catches a param that nothing binds.
+					tooMany := len(n.TypeArgs) > len(fn.TypeParams)
+					tooFew := len(n.TypeArgs) < len(fn.TypeParams)
+					if tooMany || (tooFew && n.Method == nil) {
 						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
 							fn.Name, len(fn.TypeParams), len(n.TypeArgs))
 					}
