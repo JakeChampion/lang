@@ -26,6 +26,7 @@ function main(): i32 {
 
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    mod = parser.fill_default_args_module(mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {

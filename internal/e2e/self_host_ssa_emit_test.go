@@ -96,6 +96,10 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
 		// Multi-function: System V argument passing + call/return.
 		{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(3, 4); }", 7},
+		// Default parameter values — fill_default_args_module (run in the SSA
+		// driver) completes the omitted trailing argument.
+		{"default-one", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(6); }", 7},
+		{"default-multi", "function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; } function main(): i32 { return box(1); }", 123},
 		{"call-expr", "function sq(x: i32): i32 { return x * x; } function main(): i32 { return sq(5) + sq(3); }", 34},
 		{"recursion", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
 		// break / continue lower to extra loop edges; codegen must handle the

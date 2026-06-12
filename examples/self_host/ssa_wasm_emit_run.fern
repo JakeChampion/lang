@@ -15,6 +15,7 @@ import "./ssa_wasm";
 
 function main(): i32 {
     var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    mod = parser.fill_default_args_module(mod);
     // Pointer-returning functions get a 64-bit call result on the native
     // backends; on wasm32 every value is i32, but mark_ptr_calls still needs
     // the ptr_ret set, so derive it the same way the native driver does.
