@@ -1040,6 +1040,34 @@ func TestRunnerArrayStructuralVerbsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/log_test.fern` exercises the leveled `Logger`
+// added to std/log (#2683): min-level threshold filtering, the five
+// levels TRACE..ERROR, structured key/value fields, and the JSON-line
+// output mode. Assertions target the pure `render(msg)` output. The
+// logger is structs + strings only, so it also runs through the
+// self-host stdtest gate (TestSelfHostStdTestE2E case "log").
+func TestRunnerLogExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/log_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - text basic",
+		"ok 3 - threshold filters below",
+		"ok 6 - json fields",
+		"ok 7 - json escaping",
+		"ok 9 - at explicit level",
+		"# pass 9",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/map_verbs_test.fern` exercises the higher-level
 // Map verbs added to core/map (#2685): `entries`, `merge` / `extend`,
 // `from`, and `get_or_insert`, over both i32 and string keys (including
