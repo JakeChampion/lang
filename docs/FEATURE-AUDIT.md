@@ -103,14 +103,14 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Float types `f32 f64` arithmetic | | | | | | ⬜ | |
 | Float comparison + NaN semantics | | | | | | ⬜ | see FLOAT-SEMANTICS.md |
 | `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
-| `string` type: `+`, `==`/`!=`, indexing | | | | | | ⬜ | self-host byte-index/`.len()` ok (#2822 ctx) |
+| `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `s[i:j]`, `.len()` |
 | String literals + escape sequences | | | | | | ⬜ | |
 | f-strings / interpolation | | | | | | ⬜ | confirm syntax exists |
-| Owned arrays `T[]` + indexing | | | | | | ⬜ | |
+| Owned arrays `T[]` + indexing + `.with` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | index, `.len()`, `.with` (reassign idiom); **read-after-`.with` aliases on compiled backends, [#2832](https://github.com/JakeChampion/lang/issues/2832)** |
 | Slice views `[T]` | | | | | | ⬜ | |
 | Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `var (a,b) = …` |
-| `Map[K, V]` literal + ops | | | | | | ⬜ | core/map |
-| Array literals | | | | | | ⬜ | |
+| `Map[K, V]` literal + ops | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `insert`/`get_or`/`has`/`len`, i32 + string keys |
+| Array literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `var x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i32 path; wider types pending |
 | Compound assignment `+= -= *= …` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+= -= *= /= %=` |
 | `if`/`else` statement | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -122,7 +122,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `switch` statement (comma cases, default) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | multi-value case + default |
 | `break` / `continue` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | S ok in while/foreach; broken inside C-for ([#2820](https://github.com/JakeChampion/lang/issues/2820)) |
 | `return` (value + void) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **bare nested block `{}` self-host dropped, [#2821](https://github.com/JakeChampion/lang/issues/2821)** |
+| Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | bare nested block `{}` — self-host gap fixed ([#2821](https://github.com/JakeChampion/lang/issues/2821) / #2831), re-enabled as guard |
 | `struct` decl + literal + field access | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | + functional update `T { ...old, f: v }` |
 | Struct field immutability + functional update | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | fields immutable (E048); **self-host doesn't enforce, [#2825](https://github.com/JakeChampion/lang/issues/2825)** |
 | Methods (receiver clause) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -139,7 +139,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Modules / imports (`import "./path";`) | | | | | | ⬜ | |
 | Visibility (`pub`) | | | | | | ⬜ | front-end only |
 | Top-level `const` (folded) | | | | | | ⬜ | |
-| `len(x)` builtin | | | | | | ⬜ | |
+| `len(x)` / `.len()` builtin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | string / array / map |
 
 ## B. Built-in functions (checker-registered)
 
@@ -186,7 +186,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `Reader` / `Writer` | | | | | | ⬜ | |
 | `HttpRequest` / `HttpResponse` | | | | | | ⬜ | |
 | `Url` | | | | | | ⬜ | |
-| `Map[K, V]` / `MapIter[K, V]` | | | | | | ⬜ | |
+| `Map[K, V]` / `MapIter[K, V]` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | Map ops audited (i32+string keys); MapIter cursor pending |
 | Time types (`Instant`/`Date`/…) | | | | | | ⬜ | via std/time |
 
 ## D. Standard library — `std/`
@@ -243,6 +243,32 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — strings / arrays / maps audited; Array.with reuse soundness bug found; #2821 fix re-guarded
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_strings_arrays_maps` — string `.len()` /
+concat / `==`/`!=` / byte index / slice `s[i:j]`; array literal / index / `.len()`
+/ `.with` / iteration; `Map` `insert` / `get_or` / `has` / `len` with i32 and
+string keys. ✅ on interp / x86-64 / arm64 / wasm.
+
+**Self-host arm (x86-64 + CI-gated arm64):** new test
+`internal/e2e/self_host_audit_data_test.go` — the same as 13 isolated programs.
+All pass on the self-hosted compiler.
+
+**Finding — `Array.with` in-place reuse is unsound when the receiver stays live
+([#2832](https://github.com/JakeChampion/lang/issues/2832)):** for
+`var c = a.with(i, v)` followed by a read of the original `a`, the interpreter
+gives value semantics (`a` unchanged) while **all four compiled backends**
+(native x86-64 / arm64 / wasm + self-host) reuse `a`'s buffer in place, so `c`
+and `a` alias and the original is mutated. `fern -check` accepts the program. The
+fix is in reuse analysis (only reuse a dead/uniquely-owned receiver) or the
+checker (reject use-after-consume). Fixtures use the canonical reassignment
+idiom (`w = w.with(i, v)`), well-defined everywhere.
+
+**Re-guarded:** #2821 (self-host bare block `{ }`) was fixed upstream (#2831);
+the `nested-block` case is re-enabled in `self_host_audit_builtins_test.go` and
+the §A Blocks row flipped to 🔧.
 
 ### 2026-06-12 — composite types + pattern matching audited; struct-immutability self-host gap found
 
