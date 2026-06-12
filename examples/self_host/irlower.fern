@@ -3901,14 +3901,15 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
 // call-bearing expression positions (return / var-init / expr-stmt / control
 // conditions). Other statements pass through.
 //
-// NOTE: each rebuilt statement is bound to a `var ns` before being placed in the
-// returned `[ns]` array. Constructing the statement INLINE in the array literal
-// (`stmts: [parser.StmtReturn { … }]`) inside this 2-field result struct hits a
-// native-compiler free-list bug — the inline temporary's buffer is reclaimed
-// while the struct still references it, so the statement reads back as a corrupt
-// variant and the whole lifted module silently bails IR eligibility to AST. The
-// `var` binding makes the value a tracked local, which the escape analysis
-// retains. See internal/ir TestFreelistInlineLiteralEscape.
+// NOTE: each rebuilt statement is bound to a `var ns: parser.Stmt` before being
+// placed in the returned `[ns]` array. Constructing the variant INLINE in the
+// array literal (`stmts: [parser.StmtReturn { … }]`) used to read back corrupt:
+// the checker did not propagate the Stmt-union element type into an array
+// literal in a struct-field position, so the inline variant lowered WITHOUT its
+// discriminant tag and the whole lifted module silently bailed IR eligibility to
+// AST. That checker bug is now fixed (internal/checker StructLit field
+// setElemHintFor; e2e TestInlineEnumVariantInStructArrayField); the typed `var`
+// binding is retained as a robust, self-documenting way to express the move.
 function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     match (st) {
         parser.StmtReturn(r) => {
