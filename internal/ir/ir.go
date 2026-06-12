@@ -3170,6 +3170,12 @@ type builder struct {
 	// per-site so only the local's LAST alias moves — earlier aliases
 	// of the same local keep their inc.
 	moveSites map[ast.Node]bool
+	// arraySetInc[call] is true for a `__method_Array_set` (`.with`) call
+	// whose receiver is LIVE after the call (read again, and not a
+	// reassign-to-self), so emitArraySet must rc-inc the receiver buffer
+	// before __fern_arr_cow_inplace to force the copy path — otherwise the
+	// rc==1 in-place reuse aliases/mutates the still-live receiver (#2832).
+	arraySetInc map[*ast.Call]bool
 	// reuseSources pairs a construction site C (the *ast.StructLit or
 	// *ast.TupleLit node) with the name of a dead, owned struct/tuple local D
 	// whose box C reuses in place — the general FBIP win (Perceus reuse
@@ -4650,6 +4656,80 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 // `var x` definition isn't an Ident node, so the count covers reads
 // plus assign-target writes — the alias being the last occurrence
 // therefore also rules out any later read OR reassignment of x.
+// isArraySetCall reports whether c is a desugared `arr.with(i, v)` —
+// `__method_Array_set(arr, i, v)`.
+func isArraySetCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	return ok && id.Name == "__method_Array_set" && len(c.Args) == 3
+}
+
+// computeArraySetIncs decides, for each `.with` call, whether emitArraySet
+// must rc-inc the receiver before __fern_arr_cow_inplace (forcing a copy).
+// The inc is needed exactly when the receiver is a bare local that is read
+// AGAIN after this call and is NOT the target of a reassign-to-self
+// (`a = a.with(...)`), where the old buffer is overwritten by the result.
+// A receiver at its last use, a non-ident receiver (a fresh temp), or a
+// reassign-to-self is a MOVE — left to the in-place rc==1 fast path, so the
+// canonical allocation-free idiom is unaffected (#2832).
+func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
+	incs := map[*ast.Call]bool{}
+	if b.fn.Body == nil {
+		return incs
+	}
+	idx := 0
+	identIdx := map[*ast.Ident]int{}
+	maxIdx := map[string]int{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			idx++
+			identIdx[id] = idx
+			if idx > maxIdx[id.Name] {
+				maxIdx[id.Name] = idx
+			}
+		}
+		return true
+	})
+	// reassign-to-self: `A = A.with(...)` — the receiver's old value is
+	// overwritten by the result, so reuse is sound (no inc).
+	reassignSelf := map[*ast.Call]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		a, ok := n.(*ast.Assign)
+		if !ok {
+			return true
+		}
+		tid, tok := a.Target.(*ast.Ident)
+		c, cok := a.Value.(*ast.Call)
+		if tok && cok && isArraySetCall(c) {
+			if rid, rok := c.Args[0].(*ast.Ident); rok && rid.Name == tid.Name {
+				reassignSelf[c] = true
+			}
+		}
+		return true
+	})
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || !isArraySetCall(c) {
+			return true
+		}
+		if reassignSelf[c] {
+			incs[c] = false
+			return true
+		}
+		rid, rok := c.Args[0].(*ast.Ident)
+		if !rok {
+			// Non-ident receiver (a fresh temp, e.g. `f().with(...)`): dead
+			// after the call, so reuse is sound.
+			incs[c] = false
+			return true
+		}
+		// Live after the call iff this occurrence is NOT the receiver
+		// name's last use.
+		incs[c] = identIdx[rid] != maxIdx[rid.Name]
+		return true
+	})
+	return incs
+}
+
 func (b *builder) computeMovedLocals() map[string]bool {
 	moved := map[string]bool{}
 	if b.fn.Body == nil {
@@ -7110,6 +7190,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	b.freeEligible = b.computeFreeEligible()
 	b.moveSites = map[ast.Node]bool{}
 	b.movedLocals = b.computeMovedLocals()
+	b.arraySetInc = b.computeArraySetIncs()
 	b.reuseSources, b.reuseConsumed = b.computeReuseSources()
 	b.consumingMatchReuse = map[*ast.Call]bool{}
 	b.closureTarget = map[string]string{}
@@ -16921,6 +17002,16 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	// buf = __fern_arr_cow_inplace(arr, stride)
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
+	}
+	// Receiver live after the call (#2832): rc-inc the buffer so
+	// cow_inplace sees rc >= 2 and takes the COPY path, leaving the
+	// receiver's buffer untouched. __fern_rc_inc returns its argument, so
+	// the pointer stays on the stack for cow_inplace. (cow_inplace's copy
+	// path decs back, so the balance is: receiver keeps rc 1, the fresh
+	// copy is rc 1.) A move receiver (last use / reassign-self / temp)
+	// skips this and keeps the rc==1 in-place fast path.
+	if b.arraySetInc[n] {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
