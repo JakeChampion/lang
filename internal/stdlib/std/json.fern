@@ -36,6 +36,8 @@ import "std/i32";
 import "std/i64";
 import "std/u32";
 import "std/u64";
+// Float `to_string` for the `impl Json for f32 / f64` serialisers.
+import "std/float";
 
 function __json_hex_lower(d: i32): i32 {
     if (d < 10) { return d + 48; }   // '0' + d
@@ -654,8 +656,9 @@ pub function json_is_null(v: JsonValue): boolean {
 //   var body: string = User { id: 7, name: "Glóin", admin: true }.to_json();
 //   // {"id":7,"name":"Glóin","admin":true}
 //
-// Arrays / maps / floats are not yet leaves of the spine — a follow-up
-// adds a generic `impl[T: Json] Json for T[]` and float formatting.
+// Floats are leaves too (decimal `to_string`). Arrays / maps aren't yet
+// — a follow-up adds the generic `(xs: T[]) to_json[T: Json]()` array
+// serialiser (blocked on a monomorph gap, #2766) and map objects.
 pub trait Json {
     function to_json(self: Self): string;
 }
@@ -677,6 +680,17 @@ impl Json for boolean {
         if (self) { return "true"; }
         return "false";
     }
+}
+// Floats serialise as their decimal `to_string`. Like the `JNumber`
+// encoder, valid JSON numeric formatting is the caller's responsibility:
+// a non-finite value (NaN / ±Inf) has no JSON representation and would
+// produce invalid output — guard those before serialising if they can
+// occur.
+impl Json for f64 {
+    function to_json(self: Self): string { return self.to_string(); }
+}
+impl Json for f32 {
+    function to_json(self: Self): string { return self.to_string(); }
 }
 impl Json for string {
     function to_json(self: Self): string {

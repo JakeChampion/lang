@@ -15,6 +15,9 @@ enum Shape { Empty, Circle(i32), Rect(i32, i32) }
 @derive(json.Json)
 struct Wrap { who: User, tag: string }
 
+@derive(json.Json)
+struct Measure { value: f64, unit: string }
+
 function check(got: string, want: string, code: i32): i32 {
     if (got == want) { return 0; }
     return code;
@@ -36,6 +39,10 @@ function main(): i32 {
     // String escaping: quote + newline must be backslash-escaped.
     var m: User = User { id: 0, name: "a\"b\nc", admin: false };
     r = check(m.to_json(), "{\"id\":0,\"name\":\"a\\\"b\\nc\",\"admin\":false}", 6);
+    if (r != 0) { return r; }
+    // Floats serialise as their decimal form (valid JSON numbers).
+    var d: Measure = Measure { value: 3.14, unit: "m" };
+    r = check(d.to_json(), "{\"value\":3.14,\"unit\":\"m\"}", 7);
     if (r != 0) { return r; }
     return 42;
 }
