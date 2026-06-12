@@ -98,10 +98,10 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Bitwise `& \| ^ << >>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | prop generators (LCG) + audit fixture |
 | Unary minus `-x` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Operator precedence / parenthesisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `2+3*4`, left-assoc, parens |
-| Sized int types `i8 i16 i32 i64 u8 u16 u32 u64` | | | | | | ⬜ | incl. `isize`/`usize` |
-| Integer overflow / wrapping semantics | | | | | | ⬜ | see INTEGER-SEMANTICS.md |
-| Float types `f32 f64` arithmetic | | | | | | ⬜ | |
-| Float comparison + NaN semantics | | | | | | ⬜ | see FLOAT-SEMANTICS.md |
+| Sized int types `i8 i16 i32 i64 u8 u16 u32 u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i64 arith, u8/u16 cast; out-of-range literal is a static error |
+| Integer overflow / wrapping semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | runtime narrowing cast wraps mod 2ⁿ |
+| Float types `f32 f64` arithmetic | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+ * /`, f32 + f64 |
+| Float comparison + NaN semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | `< > >=` audited; NaN semantics pending |
 | `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
 | `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `s[i:j]`, `.len()` |
 | String literals + escape sequences | | | | | | ⬜ | |
@@ -129,13 +129,13 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `enum` sum types + payloads | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. unit variants; wasm owned-model RC caveat [#2828](https://github.com/JakeChampion/lang/issues/2828) |
 | `match` (exhaustiveness checked) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | payload binding, comma-separated arms |
 | `match` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| Generic structs/enums (monomorphised) | | | | | | ⬜ | |
-| Generic functions + inference | | | | | | ⬜ | |
-| Traits (`Display`/`Eq`/`Ord`, bounds) | | | | | | ⬜ | core/cmp |
-| Nested functions + closures (capture) | | | | | | ⬜ | |
-| Function values / indirect calls | | | | | | ⬜ | |
-| Lambdas `(x) => expr` | | | | | | ⬜ | confirm syntax |
-| Tail-call optimisation | | | | | | ⬜ | |
+| Generic structs/enums (monomorphised) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `Box[T]` + generic method |
+| Generic functions + inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `id[T](x: T): T`, inferred |
+| Traits (`Display`/`Eq`/`Ord`, bounds) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | trait + impl method dispatch |
+| Nested functions + closures (capture) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `function(x: T): R { … cap … }` |
+| Function values / indirect calls | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | named fn as value; higher-order |
+| Lambdas (anonymous `function(…)`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **arrow `(x) => e` is match-arm-only, NOT a lambda** |
+| Tail-call optimisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | depth 5000 self-recursion, no overflow |
 | Modules / imports (`import "./path";`) | | | | | | ⬜ | |
 | Visibility (`pub`) | | | | | | ⬜ | front-end only |
 | Top-level `const` (folded) | | | | | | ⬜ | |
@@ -243,6 +243,30 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — sized ints / floats / generics / traits / closures audited (no new bugs)
+
+**Native arm (all four backends):** two new fixtures —
+`internal/e2e/testdata/cases/audit_numeric_types` (i64 arithmetic, u8/u16
+cast-wrapping, narrowing cast, f32/f64 arithmetic + comparison) and
+`audit_generics_traits_closures` (generic fn + struct + method, trait + impl
+dispatch, anonymous-function lambda, closure capture, function values,
+higher-order, tail-call at depth 5000). ✅ on interp / x86-64 / arm64 / wasm,
+and both clear the wasm owned-vs-borrow differential gate.
+
+**Self-host arm (x86-64 + CI-gated arm64):** new test
+`internal/e2e/self_host_audit_numgen_test.go` — 17 isolated programs covering
+all of the above. All pass on the self-hosted compiler.
+
+**Notes (no bugs filed):**
+- **Lambda syntax** is the anonymous `function(x: T): R { … }` form. The arrow
+  `(x) => e` is **match-arm-only** — native rejects it as a lambda value with
+  `P001`. The §A "Lambdas" row is corrected accordingly. (The self-host parser
+  accepts the invalid arrow form and then miscompiles it rather than erroring —
+  an error-reporting parity nuance, not a valid-program miscompile.)
+- **Out-of-range integer literal in a cast** (`300 as u8`) is a **static**
+  checker error on native (`literal 300 does not fit in u8`); wrapping is for
+  **runtime** values (`v as u8`). Fixtures use runtime values for wrap tests.
 
 ### 2026-06-12 — strings / arrays / maps audited; Array.with reuse soundness bug found; #2821 fix re-guarded
 
