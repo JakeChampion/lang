@@ -5656,8 +5656,59 @@ function parse_impl_decl(p: Par): ImplResult {
         var fr: FuncResult = parse_func_decl(p);
         p = fr.par;
         var m: FuncDecl = fr.func;
-        // Peel the first param (`self`) into the receiver and rewrite
-        // `Self` -> impl_type across the remaining params + return.
+        // An impl method whose first parameter is `self` is a receiver
+        // method; one whose first parameter is anything else (or which
+        // has no parameters at all) is an *associated function* —
+        // `Type.f(args)` with no receiver, e.g. a constructor like
+        // `Point.make(x, y)`. The two are encoded in the same FuncDecl
+        // shape: the emitters key a method's label off `receiver_type`
+        // and read `has_recv = receiver_name.len() > 0`, so an associated
+        // function is just a FuncDecl with `receiver_type = impl_type`
+        // and an EMPTY `receiver_name` (no receiver slot). Avoid indexing
+        // `m.params[0]` when there are no params.
+        var has_self: boolean = false;
+        if (m.params.len() > 0) {
+            if (m.params[0].name == "self") { has_self = true; }
+        }
+        // Shared: rewrite a `Self` return type to the concrete impl type,
+        // and merge the impl's (bounded) type params into the method's.
+        var rt: string = m.ret_type;
+        if (rt == "Self") { rt = impl_type; }
+        // A parametric impl makes every method generic over the impl's
+        // type params (so the monomorphiser — once it grows generic-
+        // receiver-method support — can clone per instantiation; until
+        // then a method whose generic field is a heap value dispatches
+        // dynamically and works as-is). Merge the impl's params with any
+        // the method declared itself.
+        var mtps: string[] = m.type_params;
+        var ti: i32 = 0;
+        while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
+        if (!has_self) {
+            // Associated function: keep ALL params (none is a receiver),
+            // rewrite `Self` -> impl_type across them, and emit with an
+            // empty receiver_name.
+            var aparams: ParamDecl[] = [];
+            var ai: i32 = 0;
+            while (ai < m.params.len()) {
+                var apt: string = m.params[ai].type_name;
+                if (apt == "Self") { apt = impl_type; }
+                aparams = aparams.append(ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value });
+                ai = ai + 1;
+            }
+            out = out.append(FuncDecl {
+                name: m.name,
+                receiver_name: "",
+                receiver_type: impl_type,
+                type_params: mtps,
+                params: aparams,
+                ret_type: rt,
+                body: m.body, line: m.line, col: m.col,
+                import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count
+            });
+            continue;
+        }
+        // Receiver method: peel the first param (`self`) into the receiver
+        // and rewrite `Self` -> impl_type across the remaining params.
         var rname: string = "self";
         var newparams: ParamDecl[] = [];
         var i: i32 = 0;
@@ -5671,17 +5722,6 @@ function parse_impl_decl(p: Par): ImplResult {
             }
             i = i + 1;
         }
-        var rt: string = m.ret_type;
-        if (rt == "Self") { rt = impl_type; }
-        // A parametric impl makes every method generic over the impl's
-        // type params (so the monomorphiser — once it grows generic-
-        // receiver-method support — can clone per instantiation; until
-        // then a method whose generic field is a heap value dispatches
-        // dynamically and works as-is). Merge the impl's params with any
-        // the method declared itself.
-        var mtps: string[] = m.type_params;
-        var ti: i32 = 0;
-        while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
         out = out.append(FuncDecl {
             name: m.name,
             receiver_name: rname,
