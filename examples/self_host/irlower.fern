@@ -451,7 +451,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || is_scalar_array_type(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || is_scalar_array_type(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -522,8 +522,14 @@ pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: strin
 // op_struct_set: 64 if the field is f64, else 0 (i32-shaped). Drives wasm's
 // f64.load/store vs i32.load/store selection (register backends ignore it).
 pub function struct_field_width(structs: parser.StructDecl[], struct_name: string, index: i32): i32 {
-    if (decl_field_type_at(structs, struct_name, index) == "f64") { return 64; }
+    var t: string = decl_field_type_at(structs, struct_name, index);
+    if (t == "f64" || t == "i64") { return 64; }
     return 0;
+}
+// struct_field_is_i64 reports whether field `index` of `struct_name` is i64 (an
+// 8-byte INTEGER field — i64.load/store on wasm, vs f64.load/store for f64).
+pub function struct_field_is_i64(structs: parser.StructDecl[], struct_name: string, index: i32): boolean {
+    return decl_field_type_at(structs, struct_name, index) == "i64";
 }
 
 pub function (s: LowerState) field_index_in(struct_name: string, field: string): i32 {
@@ -978,6 +984,13 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             if (arr_index_is_i64(ix.array, s)) { return 64; }
             return 32;
         },
+        parser.ExprFieldAccess(fa) => {
+            // An i64 struct field read `p.x` is an i64 value.
+            if (util.is_all_digits(fa.field)) { return 32; }
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty != "" && struct_field_is_i64(s.structs, oty, s.field_index_in(oty, fa.field))) { return 64; }
+            return 32;
+        },
         _ => { return 32; }
     }
 }
@@ -1038,6 +1051,19 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 _ => {}
             }
             return s.fail();
+        },
+        parser.ExprFieldAccess(fa) => {
+            // An i64 struct field read `p.x` is an 8-byte i64 value: lower the
+            // struct then struct_get_i64 (i64.load on wasm). A non-i64 field bails
+            // (its i32/f64 read lives in lower_expr).
+            var fty: string = expr_struct_type(fa.obj, s);
+            if (fty == "") { return s.fail(); }
+            var fidx: i32 = s.field_index_in(fty, fa.field);
+            if (fidx < 0) { return s.fail(); }
+            if (!struct_field_is_i64(s.structs, fty, fidx)) { return s.fail(); }
+            var fs: LowerState = lower_expr(fa.obj, s);
+            if (!fs.ok) { return fs; }
+            return fs.emit(ir.op_struct_get_i64(fidx));
         },
         parser.ExprIndex(ix) => {
             // a[i] on an i64[] is an 8-byte i64 element: lower base + index (i32
@@ -1115,13 +1141,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             _ => { return s.fail(); }
                         }
                     }
-                    sm = lower_expr(slit.field_values[found], sm);
+                    // An i64 field value is an 8-byte i64 (a bare integer literal
+                    // isn't self-evidently i64), so lower it via lower_i64.
+                    if (struct_field_is_i64(s.structs, slit.type_name, di)) {
+                        sm = lower_i64(slit.field_values[found], sm);
+                    } else {
+                        sm = lower_expr(slit.field_values[found], sm);
+                    }
                     if (!sm.ok) { return sm; }
                 } else if (slit.has_base) {
-                    // copy decl field di from the base: base then struct_get(di)
+                    // copy decl field di from the base: base then struct_get(di).
+                    // An i64 field copies 8 bytes (struct_get_i64).
                     sm = lower_expr(slit.base, sm);
                     if (!sm.ok) { return sm; }
-                    sm = sm.emit(ir.op_struct_get(di, struct_field_width(s.structs, slit.type_name, di)));
+                    if (struct_field_is_i64(s.structs, slit.type_name, di)) { sm = sm.emit(ir.op_struct_get_i64(di)); }
+                    else { sm = sm.emit(ir.op_struct_get(di, struct_field_width(s.structs, slit.type_name, di))); }
                 } else {
                     // a non-update literal must set every field
                     return s.fail();
@@ -1148,6 +1182,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (idx < 0) { return s.fail(); }
             var so: LowerState = lower_expr(fa.obj, s);
             if (!so.ok) { return so; }
+            // An i64 field reads an 8-byte integer (i64.load); f64 an 8-byte
+            // float; i32 the 4-byte path. (An i64 field in an i32 context is a
+            // checker error; a valid i64 read routes through lower_i64 below.)
+            if (struct_field_is_i64(s.structs, sty, idx)) { return so.emit(ir.op_struct_get_i64(idx)); }
             return so.emit(ir.op_struct_get(idx, struct_field_width(s.structs, sty, idx)));
         },
         parser.ExprIdent(id) => {
@@ -2214,6 +2252,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 if (fidx < 0) { return s.fail(); }
                                 var sf: LowerState = lower_expr(c.args[0], s);
                                 if (!sf.ok) { return sf; }
+                                // An i64 field stores an 8-byte i64: lower the
+                                // value via lower_i64 and store with struct_set_i64
+                                // (i64.store on wasm). f64 / i32 fields keep the
+                                // existing struct_set(width) path.
+                                if (struct_field_is_i64(s.structs, fsty, fidx)) {
+                                    sf = lower_i64(c.args[2], sf);
+                                    if (!sf.ok) { return sf; }
+                                    return sf.emit(ir.op_struct_set_i64(fidx));
+                                }
                                 sf = lower_expr(c.args[2], sf);
                                 if (!sf.ok) { return sf; }
                                 return sf.emit(ir.op_struct_set(fidx, struct_field_width(s.structs, fsty, fidx)));

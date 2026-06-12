@@ -281,6 +281,16 @@ pub function op_struct_get(field_index: i32, width: i32): Op {
 pub function op_struct_set(field_index: i32, width: i32): Op {
     return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
+// i64-field struct ops: an 8-byte field like f64, but the wasm backend uses
+// i64.load / i64.store (an INTEGER 8-byte slot). The `unsigned` flag carries the
+// "8-byte field is i64, not f64" distinction (width 64 + unsigned => i64). The
+// register backends use 8-byte slots for every field and ignore it.
+pub function op_struct_get_i64(field_index: i32): Op {
+    return Op { kind: "struct_get", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+}
+pub function op_struct_set_i64(field_index: i32): Op {
+    return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+}
 
 // high-level tuple ops — layout-agnostic, like the struct ops, but a tuple box
 // has NO shape/type-id slot (field access is the numeric `.0` / `.1` spelling,

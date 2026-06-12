@@ -624,7 +624,11 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             var em: i32 = nf - 1;
             while (em >= 0) {
                 var emoff: i32 = 8 + em * 8;
-                if (irlower.decl_field_type_at(structs, o.str, em) == "f64") {
+                var emft: string = irlower.decl_field_type_at(structs, o.str, em);
+                if (emft == "i64") {
+                    out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                } else if (emft == "f64") {
                     out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
                     out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
                 } else {
@@ -635,17 +639,21 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             }
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind == "struct_get") {
-            // stack: struct ptr -> load(ptr + 8 + index*8). An f64 field
-            // (o.width == 64) reads via f64.load.
+            // stack: struct ptr -> load(ptr + 8 + index*8). An 8-byte field
+            // (width 64) reads via i64.load for an i64 field (unsigned) or
+            // f64.load for an f64 field; i32 fields the 4-byte path.
             out = out + "    i32.const " + util.i32_to_string(8 + o.i32_imm * 8) + "\n    i32.add\n";
-            if (o.width == 64) { out = out + "    f64.load\n"; }
+            if (o.width == 64 && o.unsigned) { out = out + "    i64.load\n"; }
+            else if (o.width == 64) { out = out + "    f64.load\n"; }
             else { out = out + "    i32.load\n"; }
         } else if (o.kind == "struct_set") {
             // stack: box, val -> store val at box + 8 + index*8. Stash val in the
-            // matching scratch (f64tmp for an f64 field, else eltmp), recompute
-            // the address, then store.
+            // matching scratch (i64tmp for an i64 field, f64tmp for an f64 field,
+            // else eltmp), recompute the address, then store.
             var soff: i32 = 8 + o.i32_imm * 8;
-            if (o.width == 64) {
+            if (o.width == 64 && o.unsigned) {
+                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+            } else if (o.width == 64) {
                 out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
             } else {
                 out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
