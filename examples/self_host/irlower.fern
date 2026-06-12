@@ -711,15 +711,20 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             match (c.callee) {
                 parser.ExprIdent(id) => { return s.struct_ret_type(id.name); },
                 parser.ExprFieldAccess(fa) => {
-                    // Associated-function call `Type.make()` — the object is a
-                    // bare DECLARED-STRUCT name (not a local slot), so key the
-                    // return type by "<Type>.<method>" directly. This lets
-                    // `Type.make(..).x` and an inferred `var p = Type.make(..)`
-                    // recover the constructed struct type.
+                    // Associated-function call `Type.make()` / `Enum.default()` —
+                    // the object is a bare TYPE name (struct or enum), not a local
+                    // slot. Key the return type by "<Type>.<method>" directly via
+                    // the registry (struct_ret_fns now records enum returns too).
+                    // A non-empty result both recovers the constructed type — so
+                    // `Type.make(..).x` and an inferred `var p = Type.make(..)` /
+                    // `var e = Enum.default()` resolve — AND distinguishes the
+                    // associated call from a module call `mod.func()` (whose key
+                    // is the bare `func`, never `mod.func`, so it returns "").
                     match (fa.obj) {
                         parser.ExprIdent(tid) => {
-                            if (decl_is_struct(s.structs, tid.name) && s.slot_of(tid.name) < 0) {
-                                return s.struct_ret_type(tid.name + "." + fa.field);
+                            if (s.slot_of(tid.name) < 0) {
+                                var art: string = s.struct_ret_type(tid.name + "." + fa.field);
+                                if (art != "") { return art; }
                             }
                         },
                         _ => {}
@@ -2135,18 +2140,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         }
                     }
                     // Associated-function call `Type.f(args)` — a receiver-less
-                    // impl method (e.g. a constructor `Point.make(x, y)`). The
-                    // callee object is a bare DECLARED-STRUCT name that is NOT a
-                    // local slot (a same-named local would be a value receiver,
-                    // handled by the struct-method path below). Lower the args
-                    // with NO receiver and dispatch to the "<Type>.<f>" label
-                    // (the associated FuncDecl is keyed there by module_has_func).
-                    // decl_is_struct — not is_enum_like_name — is used on purpose:
-                    // is_enum_like_name also matches MODULE names (util/parser),
-                    // which would hijack every `mod.func()` call.
+                    // impl method (e.g. a constructor `Point.make(x, y)` or a
+                    // derived `Enum.default()`). The callee object is a bare TYPE
+                    // name that is NOT a local slot (a same-named local would be a
+                    // value receiver, handled by the struct-method path below).
+                    // Lower the args with NO receiver and dispatch to the
+                    // "<Type>.<f>" label (the associated FuncDecl is keyed there by
+                    // module_has_func). The target is recognised as a STRUCT name
+                    // (decl_is_struct) or, for an enum / type-returning associated
+                    // fn, by a registered "<Type>.<f>" return type — never via
+                    // is_enum_like_name, which also matches MODULE names
+                    // (util/parser) and would hijack every `mod.func()` call.
                     match (fa.obj) {
                         parser.ExprIdent(tid) => {
-                            if (decl_is_struct(s.structs, tid.name) && s.slot_of(tid.name) < 0) {
+                            if (s.slot_of(tid.name) < 0 && (decl_is_struct(s.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "")) {
                                 var asf: LowerState = s;
                                 var afi: i32 = 0;
                                 while (afi < c.args.len()) {
@@ -3932,16 +3939,24 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 }
 
 // struct_ret_fns_of records "name|StructType" for each free function whose
-// return type is a leaf-safe struct, so a call site can type `var p = f()` for
-// later field access. Free functions are keyed by bare name; methods by the
-// qualified "<BaseType>.<method>" the call site dispatches to (a "." never
-// appears in a bare name, so the key spaces don't collide).
+// return type is a leaf-safe struct OR an ENUM, so a call site can type
+// `var p = f()` for later field access / `match`, and an associated call
+// `Type.f()` (struct or enum) is recognised by its registered return type.
+// Free functions are keyed by bare name; methods by the qualified
+// "<BaseType>.<method>" the call site dispatches to (a "." never appears in a
+// bare name, so the key spaces don't collide). An enum return is a leak-only
+// variant box (its variants are leaf-safe structs); is_enum_like_name can
+// over-match a non-enum bare nominal, but a spurious entry only risks an AST
+// fallback at a call site (never a miscompile) — the stage-2 fixpoint guards it.
 pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
-        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) {
+        var elig: boolean = false;
+        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) { elig = true; }
+        else if (is_enum_like_name(rt, structs)) { elig = true; }
+        if (elig) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key + "|" + rt);
