@@ -10703,9 +10703,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         mod = lm;
         var ir_out: string = "(module\n";
         ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
-        // print_int / print_str write via WASI fd_write — import it only when the
-        // module prints.
-        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str")) {
+        // print_int / print_str / eprint_str / putchar write via WASI fd_write
+        // — import it only when the module writes to stdout or stderr.
+        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar")) {
             ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";

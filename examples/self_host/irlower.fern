@@ -2081,6 +2081,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pis.ok) { return pis; }
                         return pis.emit(ir.op_print_int());
                     }
+                    // Built-in `putchar(c)` — write c's low byte to stdout
+                    // (write(1, &byte, 1), no newline). Lowers the i32 arg then
+                    // op_putchar, which each backend emits as a call into the same
+                    // __fern_putchar runtime the native compiler uses. A reserved
+                    // builtin (the checker already knows it), so it never shadows a
+                    // user function. Issue #2839 — self-host putchar IR support.
+                    if (cid.name == "putchar" && c.args.len() == 1) {
+                        var pcs: LowerState = lower_expr(c.args[0], s);
+                        if (!pcs.ok) { return pcs; }
+                        return pcs.emit(ir.op_putchar());
+                    }
                     // Built-in `write(s)` / `print(s)` — write a string's bytes to
                     // stdout. `print` appends a newline (Fern's print == println):
                     // it desugars to `print_str(s + "\n")` via the existing str_concat

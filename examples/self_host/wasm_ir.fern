@@ -772,6 +772,18 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // stack: n -> proc_exit(n) (already imported for _start). Never returns;
             // push a dummy i32 for the statement-level drop.
             out = out + "    call $proc_exit\n    i32.const 0\n";
+        } else if (o.kind == "putchar") {
+            // stack: byte -> write its low byte to stdout. Inlines the same scratch
+            // iovec + $fd_write path the AST backend uses (wasm.fern's putchar): the
+            // byte is on the operand stack, so stash it in the eltmp scratch local to
+            // store it at scratch addr 16, point the iovec (base@0, len@4) at it, and
+            // fd_write fd 1. Push a dummy i32 for the statement-level drop (#2839).
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    i32.const 16\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n";
+            out = out + "    i32.const 0\n    i32.const 16\n    i32.store\n";
+            out = out + "    i32.const 4\n    i32.const 1\n    i32.store\n";
+            out = out + "    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $fd_write\n    drop\n";
+            out = out + "    i32.const 0\n";
         } else if (o.kind == "map_set") {
             // stack: map, k, v -> push vis (0 = i32 value) -> map_set -> map.
             out = out + "    i32.const 0\n    call $__fern_map_set\n";
