@@ -22,15 +22,15 @@ import (
 // asm_ir.all_eligible — what emit_module checks) and prints "ir"/"ast" without
 // emitting any assembly, so the gate is fast and assembler-free.
 //
-// Frontier (post enum-local-receiver slice):
+// Frontier (post struct-array-element-typing slice):
 //   - Concrete struct-impl methods + monomorphised struct/primitive bounded
 //     generics + parametric struct impls + primitive-receiver methods + ENUM
-//     methods called on an enum-typed LOCAL/param (`var a: Shape = …; a.m()`)
-//     all lower through the IR path.
-//   - `dyn Trait`, struct-array for-loop method dispatch, enum methods called
-//     directly on a variant construction (`Has(5).eq(…)`, which needs the
-//     variant->enum map), and the string-building @derive Display / `&&`-chained
-//     field-wise Eq still fall back to the AST emitter — the next slices.
+//     methods on an enum-typed LOCAL/param + struct-ARRAY element dispatch
+//     (`arr[i].m()`, `for x in arr { x.m() }`) all lower through the IR path.
+//   - `dyn Trait`, enum methods called directly on a variant construction
+//     (`Has(5).eq(…)`, which needs the variant->enum map), and the
+//     string-building @derive Display / `&&`-chained field-wise Eq still fall
+//     back to the AST emitter — the next slices.
 var traitIRPath = map[string]string{
 	"trait-impl-method":                          "ir",
 	"trait-impl-arg":                             "ir",
@@ -43,7 +43,7 @@ var traitIRPath = map[string]string{
 	"trait-bounded-generic-two-params":           "ir",
 	"trait-parametric-impl-struct-elem":          "ir",
 	"trait-dyn-object-heterogeneous":             "ast",
-	"trait-struct-array-loop-method":             "ast",
+	"trait-struct-array-loop-method":             "ir",
 	"trait-derive-struct-eq":                     "ast",
 	"trait-derive-struct-ord":                    "ir",
 	"trait-derive-struct-display-nested":         "ast",
