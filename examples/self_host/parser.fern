@@ -789,6 +789,20 @@ function (p: Par) peek_ident(): string {
     return "";
 }
 
+// peek_member_name returns the identifier at the cursor, OR a reserved
+// keyword that is nonetheless allowed in MEMBER position — currently only
+// `default` (a `switch` keyword that doubles as the `Default` trait's
+// method name `Type.default()`). Returns "" otherwise. Mirrors the Go
+// parser's expectMemberName; used for function/method names and field
+// access so `function default()` and `obj.default()` parse while the
+// keyword stays reserved everywhere else.
+function (p: Par) peek_member_name(): string {
+    var nm: string = p.peek_ident();
+    if (nm.len() > 0) { return nm; }
+    if (p.peek_keyword() == "default") { return "default"; }
+    return "";
+}
+
 // Result types — both pieces of the (new_parser, parsed_thing)
 // pair we need to thread through recursive-descent. Avoids a
 // stateful `var p: Par` shared across helpers.
@@ -1024,7 +1038,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             var dline: i32 = p.peek_line();
             var dcol: i32 = p.peek_col();
             p = p.advance();
-            var fname: string = p.peek_ident();
+            var fname: string = p.peek_member_name();
             if (fname.len() == 0) {
                 match (p.peek()) {
                     lexer.TokNumber(n) => { fname = n.text; },
@@ -2584,7 +2598,7 @@ function parse_func_decl(p: Par): FuncResult {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    var name: string = p.peek_ident();
+    var name: string = p.peek_member_name();
     if (name.len() == 0) {
         return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0 } };
     }
@@ -5473,10 +5487,91 @@ function synth_enum_derives(ename: string, variants: StructDecl[], derives: stri
     return funcs;
 }
 
+// ---- @derive(Default) -------------------------------------------------
+// `Default.default()` is an ASSOCIATED function (no `self`): `Type.default()`
+// builds a type's zero value. For a concrete struct the field types are
+// concrete, so each field's default is either a scalar zero literal or a
+// nominal field's own `Type.default()` (a plain associated call — item 1's
+// IR path resolves it). Mirrors the Go synthDefault / defaultDeriveExpr.
+
+// dv_is_scalar reports whether a type is a primitive scalar whose default
+// is a zero literal: i32/i64/u32/u64 → 0, f32/f64 → 0.0, boolean → false,
+// string → "".
+function dv_is_scalar(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+        || t == "f32" || t == "f64" || t == "boolean" || t == "string";
+}
+
+// dv_default_derivable reports whether a field type has a derivable
+// default: a scalar, or a bare NOMINAL name (a struct/enum whose own
+// `default()` supplies the value). An array / map / generic / tuple /
+// function shape — anything carrying `[`, `]`, `(`, `)`, `,` or a space —
+// has no derived default (mirroring the Go defaultDeriveExpr's ok=false).
+function dv_default_derivable(t: string): boolean {
+    if (dv_is_scalar(t)) { return true; }
+    if (t.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < t.len()) {
+        var c: i32 = t[i];
+        // [ ] ( ) , space → a non-nominal shape.
+        if (c == 91 || c == 93 || c == 40 || c == 41 || c == 44 || c == 32) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// dv_default_expr builds the default value for a field of type `t`: a
+// scalar zero literal, or `T.default()` (an associated call, no receiver)
+// for a nominal type that delegates to its own derived default.
+function dv_default_expr(t: string): Expr {
+    if (t == "string") { return e_string(""); }
+    if (t == "boolean") { return e_bool(false); }
+    if (t == "f32" || t == "f64") { return e_number("0.0", "", true); }
+    if (dv_is_scalar(t)) { return e_number("0", "", false); }
+    var noargs: Expr[] = [];
+    return e_call(e_field_access(e_ident(t), "default"), noargs);
+}
+
+// struct_default_derivable reports whether EVERY field of `sd` has a
+// derivable default (so the whole struct does). The Go checker is the
+// strict gate; here we simply skip synthesis when a field isn't
+// derivable, leaving `Type.default()` unresolved — the same end state as
+// the Go path's error (no default method synthesised).
+function struct_default_derivable(sd: StructDecl): boolean {
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        if (!dv_default_derivable(sd.fields[i].type_name)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// synth_struct_default: the associated function `function default(): Self
+// { return Name { f0: <dv>, … }; }` — receiver-less (empty receiver_name),
+// so it lowers via the associated-function IR path (item 1). Mirrors the
+// Go synthDefault.
+function synth_struct_default(sd: StructDecl): FuncDecl {
+    var fnames: string[] = [];
+    var fvals: Expr[] = [];
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        fnames = fnames.append(sd.fields[i].name);
+        fvals = fvals.append(dv_default_expr(sd.fields[i].type_name));
+        i = i + 1;
+    }
+    var lit: Expr = e_struct_lit(sd.name, fnames, fvals, 0, 0);
+    var body: Stmt[] = [s_return(lit)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_derives appends the synthesised methods for each derivable trait
-// (`Eq` / `Display` / `Ord` / `Hash` / `Json`) named in `derives` for
-// struct `sd` onto `funcs`. Non-derivable / unknown trait names are
-// ignored (the Go checker is the strict gate).
+// (`Eq` / `Display` / `Ord` / `Hash` / `Json` / `Default`) named in
+// `derives` for struct `sd` onto `funcs`. Non-derivable / unknown trait
+// names are ignored (the Go checker is the strict gate). `Default` is the
+// only associated (receiver-less) one — and only synthesised when every
+// field is itself default-derivable.
 function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
@@ -5486,6 +5581,7 @@ function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): Fu
         if (kind == "Ord") { funcs = funcs.append(synth_struct_ord(sd)); }
         if (kind == "Hash") { funcs = funcs.append(synth_struct_hash(sd)); }
         if (kind == "Json") { funcs = funcs.append(synth_struct_json(sd)); }
+        if (kind == "Default") { if (struct_default_derivable(sd)) { funcs = funcs.append(synth_struct_default(sd)); } }
         di = di + 1;
     }
     return funcs;
