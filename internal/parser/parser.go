@@ -1149,11 +1149,13 @@ func (p *parser) looksLikeReceiverClause() bool {
 		}
 		p.i++
 	}
-	// After the receiver `)`, we expect `name(`.
+	// After the receiver `)`, we expect `name(` — or `name[` for a
+	// method with its own type parameters (`(b: Box[T]) map[U](...)`),
+	// whose `[U]` list the post-name parse picks up.
 	ok := p.peek().Kind == lexer.Ident
 	if ok {
 		p.i++
-		ok = p.match(lexer.Punct, "(")
+		ok = p.peek().Kind == lexer.Punct && (p.peek().Text == "(" || p.peek().Text == "[")
 	}
 	p.i = start
 	return ok
