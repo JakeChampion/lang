@@ -8,7 +8,7 @@ template: splash
 # resolve to `/lang/tutorial/install/` etc. instead of 404-ing
 # at the apex `/tutorial/install/`.
 hero:
-  tagline: A small, fast-startup language for CLI tools and edge HTTP servers.
+  tagline: A small, statically-typed language that compiles to fast-starting native binaries and tiny WebAssembly modules — built for CLI tools and edge HTTP handlers.
   actions:
     - text: Get started
       link: /lang/tutorial/install/
@@ -26,30 +26,41 @@ hero:
 import { Card, CardGrid } from "@astrojs/starlight/components";
 import FernPlayground from "../../components/FernPlayground.astro";
 
-**Fern** is a small, statically-typed compiled language. One source
-compiles to lean CLI binaries and tiny wasm edge modules across arm64
-(Linux + macOS), x86-64, and WebAssembly.
+**Fern** is a small, statically-typed compiled language with no runtime
+and no garbage collector. One source file compiles to a lean native
+binary or a self-contained `.wasm` component — the same program, across
+arm64 (Linux + macOS), x86-64 (Linux), and WebAssembly.
+
+It's designed for two jobs where startup time and binary size matter:
+**short-lived CLI tools** and **edge-function-style HTTP servers**. No
+JIT warm-up, no interpreter boot, no megabytes of runtime to ship —
+your code starts in milliseconds and exits clean.
 
 <CardGrid stagger>
-  <Card title="Fast-startup binaries" icon="rocket">
-    Native arm64 + x86-64 ELF, no runtime, no GC. Link statically,
-    start in milliseconds.
+  <Card title="Starts in milliseconds" icon="rocket">
+    Statically-linked native ELF / Mach-O with no runtime and no GC.
+    Nothing to warm up — `main` runs the instant the process does.
   </Card>
-  <Card title="WebAssembly ready" icon="puzzle">
-    WASI Preview 2 component output. Drop the `.wasm` into wasmtime
-    or any host — no glue code.
+  <Card title="WebAssembly, batteries included" icon="puzzle">
+    `-target wasm` emits a self-contained WASI Preview 2 component.
+    Drop it into wasmtime or any host — no JS glue, no adapter wrangling.
   </Card>
-  <Card title="Real editor support" icon="laptop">
-    `fern-lsp` ships hover, goto-definition, completion, signature
-    help, inlay hints, rename, format-on-save, and a VS Code extension.
+  <Card title="A type system that catches bugs" icon="approve-check-circle">
+    Sized integers with no silent coercions, monomorphised generics,
+    tagged-union enums with *exhaustive* matching, and built-in
+    `Option` / `Result` for honest error handling.
   </Card>
-  <Card title="Type-checked" icon="approve-check-circle">
-    Sized integers, monomorphised generics, tagged-union enums with
-    exhaustive matching, `Option` and `Result` built in.
+  <Card title="Editor support out of the box" icon="laptop">
+    `fern-lsp` brings hover, goto-definition, completion, signature
+    help, inlay hints, workspace rename, and format-on-save — with a
+    ready-to-install VS Code extension.
   </Card>
 </CardGrid>
 
 ## Hello, world
+
+Every program is a `main` returning an `i32` exit code. Edit the snippet
+and hit **Run** — it executes right here in your browser.
 
 <FernPlayground
   code={`function main(): i32 {
@@ -58,11 +69,73 @@ compiles to lean CLI binaries and tiny wasm edge modules across arm64
 }`}
 />
 
+## A real CLI tool, end to end
+
+Fern reads `argv`, streams stdin or files, and uses `Result` + `match`
+for fallible I/O — so a Unix-style filter is short and total. Here's the
+core of a `grep`-like line filter:
+
+<FernPlayground
+  code={`import "std/string";
+import "std/io";
+
+function main(): i32 {
+    var argv: string[] = args();
+    if (argv.len() < 2) {
+        eprint("usage: grep PATTERN");
+        return 2;
+    }
+    var pattern: string = argv[1];
+
+    match (io.read_input("-")) {       // "-" means stdin
+        Ok(text) => {
+            var found: boolean = false;
+            var lines: string[] = text.lines();
+            var i: i32 = 0;
+            while (i < lines.len()) {
+                if (lines[i].contains(pattern)) {
+                    print(lines[i]);
+                    found = true;
+                }
+                i = i + 1;
+            }
+            return if (found) { 0 } else { 1 };  // grep's exit convention
+        },
+        Err(_) => {
+            eprint("grep: read error");
+            return 2;
+        }
+    }
+}`}
+  autoRun={false}
+/>
+
+The [CLI tutorial](tutorial/cli-tool/) builds this out into a full tool
+with flags and multiple files.
+
+## Why Fern?
+
+- **No surprises at the type boundary.** There's no untyped `int` and no
+  implicit numeric coercion — widths are explicit, so an `i32` never
+  silently becomes an `i64`. `match` is exhaustive; the compiler fails
+  the build when you forget a case.
+- **Errors are values, not exceptions.** `Result` and `Option` are
+  built into the language. The `?` operator threads failures up without
+  ceremony, and there's no hidden control flow to reason about.
+- **One language, three backends.** The same source targets native
+  arm64/x86-64 and WebAssembly through a shared, target-agnostic IR.
+  Prototype with the interpreter, then compile for production.
+- **Small by design.** Fern began TypeScript-flavoured but has grown its
+  own shape, taking cues from Roc, Zig, Rust, and Go where they fit the
+  goal: tiny, fast, predictable programs.
+
 ## Where next
 
-- **[Tutorial](tutorial/install/)** — install the toolchain and learn
-  the language one concept at a time.
-- **[Reference](reference/syntax/)** — syntax and type system docs.
-- **[Standard library](stdlib/)** — every `std/*` function with
-  signatures and examples.
+- **[Tutorial](tutorial/install/)** — install the toolchain and learn the
+  language one concept at a time, from variables to a working HTTP handler.
+- **[Build a CLI tool](tutorial/cli-tool/)** — args, stdin/files, exit codes.
+- **[Build an HTTP handler](tutorial/http-server/)** — routing, JSON, and a
+  WASI component you can `wasmtime serve`.
+- **[Reference](reference/syntax/)** — syntax, types, error handling, tooling.
+- **[Standard library](stdlib/)** — every `std/*` function with signatures.
 - **[Playground](playground/)** — try Fern in your browser, no install.

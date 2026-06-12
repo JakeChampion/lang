@@ -71,3 +71,5 @@ extension installed:
 - Hover over `util.run()` to see the imported function's signature.
 - Cmd/Ctrl-click jumps from the call site to `util.fern`.
 - Rename a `pub` function and every cross-file caller updates.
+
+[Next: Build a CLI tool →](../cli-tool/)
