@@ -2198,7 +2198,13 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs
     return build_func_seeded(fd, structs, build_seed(funcs));
 }
 
-pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[], seed: Seed): BResult {
+pub function build_func_seeded(raw_fd: parser.FuncDecl, structs: parser.StructDecl[], seed: Seed): BResult {
+    // Lower `for i in LOW..HIGH` range-loops (iter = the synthetic `__range`
+    // call) to counting while-loops before SSA construction — the SSA StmtFor
+    // builder iterates arrays, so an undesugared `__range` iter would emit a
+    // `call __fn___range` (a link error). The IR path keeps the `__range`
+    // shape for irlower.lower_range_for; this only affects the SSA backend.
+    var fd: parser.FuncDecl = parser.desugar_ranges_func(raw_fd);
     var sym: string = fn_sym(fd);
     var f0: SFunc = SFunc { name: sym, nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
     // Params occupy value ids 0..nparams-1, defined by "param" insts in the
