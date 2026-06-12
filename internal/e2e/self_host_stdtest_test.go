@@ -254,6 +254,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"lang_binary_e2e", langSrcAbs(t, "examples/tests/lang_binary_e2e_test.fern"), ""},
 		{"sort_wider", langSrcAbs(t, "examples/tests/sort_wider_test.fern"), ""},
 		{"array_reductions", langSrcAbs(t, "examples/tests/array_reductions_test.fern"), ""},
+		{"array_structural_verbs", langSrcAbs(t, "examples/tests/array_structural_verbs_test.fern"), ""},
 		{"wide_numerics", langSrcAbs(t, "examples/tests/wide_numerics_test.fern"), ""},
 		{"wider_array_contains_count", langSrcAbs(t, "examples/tests/wider_array_contains_count_test.fern"), ""},
 		{"sorted_unique_range", langSrcAbs(t, "examples/tests/sorted_unique_range_test.fern"), ""},
