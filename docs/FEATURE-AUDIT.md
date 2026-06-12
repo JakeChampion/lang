@@ -126,7 +126,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `struct` decl + literal + field access | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | + functional update `T { ...old, f: v }` |
 | Struct field immutability + functional update | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | fields immutable (E048); **self-host doesn't enforce, [#2825](https://github.com/JakeChampion/lang/issues/2825)** |
 | Methods (receiver clause) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| `enum` sum types + payloads | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. unit variants |
+| `enum` sum types + payloads | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. unit variants; wasm owned-model RC caveat [#2828](https://github.com/JakeChampion/lang/issues/2828) |
 | `match` (exhaustiveness checked) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | payload binding, comma-separated arms |
 | `match` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Generic structs/enums (monomorphised) | | | | | | ⬜ | |
@@ -266,6 +266,16 @@ self-hosted compiler being *more permissive* than native (compiling forbidden
 programs), not a runtime miscompile; functional update — the sanctioned form —
 works on both. The fixtures use only functional update so they stay valid on
 both compilers.
+
+**Finding — wasm owned-model RC over-release
+([#2828](https://github.com/JakeChampion/lang/issues/2828)):** the differential
+gate `TestWASMBorrowInferMatchesOwned` (owned-everywhere vs production
+borrow-inference) flagged a divergence on `audit_types_match`. Bisected to **an
+enum value carrying a payload, passed as an owned function parameter and consumed
+by `match`** — the owned (borrow-off) wasm lowering over-releases (traps), while
+the production default (borrow-on) is correct. Masked in production; the fixture
+is skip-listed out of that one differential gate (referencing #2828) but still
+runs on all four backends under the production model via `TestFernFixtures`.
 
 **Note (language direction):** the older "Struct field mutation / compound field
 assign" §A row is obsolete — that operation is now a compile error. The row is
