@@ -718,3 +718,80 @@ pub function __mapiter_value_impl(it: usize): usize {
 pub function __mapiter_advance_impl(it: usize) {
     __store_i32(it + 8, __load_i32(it + 8) + 1);
 }
+
+// === higher-level Map verbs (#2685) =============================
+//
+// Built on the core builtins above (`keys` / `get` / `insert` /
+// `len` / `map_new`). These are ordinary element-polymorphic Fern —
+// they work for every K / V the map supports and need no codegen
+// support — so they live alongside the runtime that backs them
+// rather than in a separate module (which would double-bind the
+// `map` import name against `core/map`).
+
+// `m.entries()` — every key/value pair as a fresh `(K, V)[]`, in the
+// map's iteration order. One call instead of zipping `keys()` with a
+// per-key `get()` (or driving the `iter()` cursor by hand). Empty map
+// → empty array.
+pub function (m: Map[K, V]) entries(): (K, V)[] {
+    var out: (K, V)[] = [];
+    for k in m.keys() {
+        match (m.get(k)) {
+            Some(v) => { out = out.append((k, v)); },
+            None => {}
+        }
+    }
+    return out;
+}
+
+// `m.merge(other)` — a fresh map with all of `m`'s entries plus all of
+// `other`'s; on a key present in both, `other`'s value wins (last-write
+// semantics, matching a left-to-right `insert` fold). Neither input is
+// mutated.
+pub function (m: Map[K, V]) merge(other: Map[K, V]): Map[K, V] {
+    var out: Map[K, V] = m;
+    for k in other.keys() {
+        match (other.get(k)) {
+            Some(v) => { out = out.insert(k, v); },
+            None => {}
+        }
+    }
+    return out;
+}
+
+// `m.extend(other)` — synonym for `merge`, named for the in-place
+// "add all of other" intuition even though (like every map op) it
+// returns a fresh value rather than mutating.
+pub function (m: Map[K, V]) extend(other: Map[K, V]): Map[K, V] {
+    return m.merge(other);
+}
+
+// `from(pairs)` — build a `Map[K, V]` from a `(K, V)[]`. Later pairs
+// overwrite earlier ones on a duplicate key. (A free function rather
+// than `Map::from` until associated-function namespacing lands, #2700;
+// call it qualified: `map.from(pairs)`.)
+pub function from[K, V](pairs: (K, V)[]): Map[K, V] {
+    var m: Map[K, V] = map_new(pairs.len());
+    for p in pairs {
+        m = m.insert(p.0, p.1);
+    }
+    return m;
+}
+
+// `m.get_or_insert(k, fallback)` — insert-if-absent in a single lookup,
+// the value-type-friendly shape of Roc's `Dict.update` for the common
+// "default then use" case. Returns `(map, value)`: if `k` is present,
+// the map is unchanged and its existing value is returned; otherwise
+// `fallback` is inserted and returned. Threading the map back out keeps
+// the map's value semantics (`insert` yields a fresh map) explicit:
+//
+//     var (m2, n) = counts.get_or_insert(key, 0);
+//     m = m2.insert(key, n + 1);
+pub function (m: Map[K, V]) get_or_insert(k: K, fallback: V): (Map[K, V], V) {
+    match (m.get(k)) {
+        Some(v) => { return (m, v); },
+        None => {
+            var m2: Map[K, V] = m.insert(k, fallback);
+            return (m2, fallback);
+        }
+    }
+}
