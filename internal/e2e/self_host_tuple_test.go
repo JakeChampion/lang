@@ -22,6 +22,13 @@ var tupleTypeCases = []struct {
 	{"var-tuple-type", "function main(): i32 { var p: (i32, i32) = (5, 6); return p.0 * p.1; }", 30},
 	{"option-of-tuple", "function f(): Option[(i32, i32)] { return Some((10, 20)); } function main(): i32 { match (f()) { Some(p) => { return p.0 + p.1; }, None => { return 0; } } return 0; }", 30},
 	{"tuple-param", "function add(p: (i32, i32)): i32 { return p.0 + p.1; } function main(): i32 { return add((19, 23)); }", 42},
+	// Tuple literal with an i32[] element (leak mode): the array pointer rides
+	// one tuple slot and `t.N` recovers it via tuple_get — `(t.0)[i]`, a bound
+	// `var a = t.0; a[i]`, and `a.len()` all work without extra element-tag
+	// plumbing (array ops only need the pointer the tuple_get produces).
+	{"tuple-arr-elem", "function main(): i32 { var t = ([10, 20, 30], 9); var a = t.0; return a[0] + a[2] + t.1; }", 49},
+	{"tuple-arr-len", "function main(): i32 { var t = ([10, 20, 30], 9); var a = t.0; return a.len() + t.1; }", 12},
+	{"tuple-arr-direct-index", "function main(): i32 { var t = ([10, 20, 30], 9); return (t.0)[1] + t.1; }", 29},
 }
 
 // TestSelfHostTupleTypeX86_64 compiles tuple-type programs with the

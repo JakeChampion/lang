@@ -380,6 +380,10 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"asc-ret", "function make(): i32[] { var a = [10, 20, 30]; return a as i32[]; } function main(): i32 { var x = make(); return x[0] + x[2]; }", 40},
 		{"asc-nested-index", "function main(): i32 { var a = [3, 4]; return (a as i32[])[0] + (a as i32[])[1]; }", 7},
 		{"asc-str-method", "function main(): i32 { return (\"hello\" as string).len(); }", 5},
+		{"tup-arr-scalar", "function main(): i32 { var t = ([10, 20, 30], 9); return t.1; }", 9},
+		{"tup-arr-index", "function main(): i32 { var t = ([10, 20, 30], 9); return (t.0)[0] + (t.0)[2]; }", 40},
+		{"tup-arr-bind", "function main(): i32 { var t = ([10, 20, 30], 9); var a = t.0; return a[0] + a[2] + t.1; }", 49},
+		{"tup-arr-len", "function main(): i32 { var t = ([10, 20, 30], 9); var a = t.0; return a.len() + t.1; }", 12},
 		// break / continue inside a `for` loop (#2788): the index advances at
 		// the TOP of the loop, so `continue` (br-to-header) re-runs the advance
 		// and `break` exits. Range-for and array-foreach forms on wasm.
