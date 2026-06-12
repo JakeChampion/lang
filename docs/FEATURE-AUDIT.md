@@ -197,14 +197,14 @@ per-function bugs in the audit log.
 
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
-| `std/i32` (~80 methods) | | | | | | ⬜ | |
+| `std/i32` (~80 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | representative set (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum) — `audit_std_numeric`; self-host via array bundle |
 | `std/i64` | | | | | | ⬜ | |
 | `std/u32` | | | | | | ⬜ | |
 | `std/u64` | | | | | | ⬜ | |
 | `std/float` | | | | | | ⬜ | |
 | `std/string` (~120 methods) | 🔄 | 🔄 | 🔄 | 🔄 | | 🔄 | `prop_string_involution` covers `reverse_bytes`/`to_lower`/`to_upper` laws; rest pending |
-| `std/array` | | | | | | ⬜ | |
-| `std/math` | | | | | | ⬜ | |
+| `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
+| `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
 | `std/format` | | | | | | ⬜ | |
 | `std/csv` | | | | | | ⬜ | |
@@ -243,6 +243,24 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — std library: std/i32 + std/math + std/array reductions audited (no new bugs)
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_std_numeric` — std/i32 scalar methods
+(abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum), std/math (range), and
+std/array reductions (sum/max/min/product/sorted_asc). ✅ on interp / x86-64 /
+arm64 / wasm — a 4-backend differential check that these heavily-used pure
+functions agree everywhere.
+
+**Self-host arm (x86-64 + CI-gated arm64):** new test
+`internal/e2e/self_host_audit_stdarray_test.go` broadens the std/array bundle
+coverage (sum / product / sorted_asc / max) beyond the existing single gcd_all
+case; std/math is already covered by `self_host_math_test.go`. All green.
+
+No new bugs. Author notes: native array `.max()` / `.min()` return `Option[i32]`
+(empty-array-safe); `std/math.i32_max`/`i32_min` are 2-arg scalar helpers while
+the array-reduction `max`/`min` are receiver methods.
 
 ### 2026-06-12 — env / clock / randomness builtins audited; native `monotonic_ns` + `sleep_ms` gap found
 
