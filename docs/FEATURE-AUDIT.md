@@ -145,14 +145,14 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 
 | Function | I | X | A | W | S | Status | Notes |
 |----------|---|---|---|---|---|--------|-------|
-| `print(s)` | | | | | | ⬜ | stdout + newline |
-| `write(s)` | | | | | | ⬜ | stdout raw |
-| `eprint(s)` | | | | | | ⬜ | stderr |
-| `putchar(b)` | | | | | | ⬜ | single byte |
-| `len(x)` | | | | | | ⬜ | string / array |
+| `print(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stdout + newline |
+| `write(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stdout raw, no newline |
+| `eprint(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stderr (not on stdout) |
+| `putchar(b)` | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **self-host: undefined `__fn_putchar`, [#2839](https://github.com/JakeChampion/lang/issues/2839)** |
+| `len(x)` / `.len()` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native uses `.len()` method; self-host also has free `len(x)` |
 | `args(): string[]` | | | | | | ⬜ | |
 | `env(name): Option[string]` | | | | | | ⬜ | |
-| `exit(code)` | | | | | | ⬜ | |
+| `exit(code)` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | native interp/x86/arm + self-host; wasm proc_exit vs result-line harness |
 | `stdin()/stdout()/stderr()` | | | | | | ⬜ | Reader/Writer |
 | `read_file` / `write_file` | | | | | | ⬜ | |
 | `open_reader/open_writer/open_appender` | | | | | | ⬜ | |
@@ -243,6 +243,30 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — I/O built-in functions audited; self-host `putchar` gap found
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_io_builtins` — exact-stdout pinning of
+`write` (raw), `putchar` (byte), `print` (line), `eprint` (stderr, must not
+reach stdout), and `.len()` (string + array). ✅ on interp / x86-64 / arm64 /
+wasm.
+
+**Self-host arm (x86-64):** new test
+`internal/e2e/self_host_audit_io_test.go` — checks the compiled program's
+stdout + exit code for `print` / `write` / `eprint` / `len` / `exit`. All pass.
+
+**Finding — `putchar` unsupported on self-host
+([#2839](https://github.com/JakeChampion/lang/issues/2839)):** the self-hosted
+compiler lowers `putchar(b)` to `call __fn_putchar` but never emits that runtime,
+so the program fails to link (both IR and legacy paths). Native inlines it as a
+`write(1, …)` syscall. Held out of the self-host I/O table, referencing #2839.
+
+**Notes:** native exposes `len` only as the `.len()` method (free `len(x)` is an
+undefined identifier); the self-host front-end also accepts free `len(x)` — a
+minor permissiveness difference. `exit(code)` with code > 1 doesn't round-trip
+through the wasm result-line harness (proc_exit terminates before the result
+line), so the §B `exit` wasm cell is ⚠️.
 
 ### 2026-06-12 — sized ints / floats / generics / traits / closures audited (no new bugs)
 
