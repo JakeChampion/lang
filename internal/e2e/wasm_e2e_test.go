@@ -1035,6 +1035,28 @@ function main(): i32 {
 	}
 }
 
+// Two `m.has()` calls under a short-circuiting `&&` with a `!` on the
+// second operand. Regression for issue #2652: on the self-hosted wasm
+// backend `m.has(1) && !m.has(2)` evaluated to 0 instead of 7 — a
+// stack/value interaction between the `map_has` call sequence and the
+// `&&` short-circuit block. `m.has(1)` is true, `m.has(2)` is false, so
+// `!m.has(2)` is true and the `&&` is true. The native backend always
+// agreed with the correct answer; this guards it on the result-printer
+// (wasm) harness so the cross-backend contract stays explicit.
+func TestWASMMapHasShortCircuit(t *testing.T) {
+	src := `
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(1, 10);
+    if (m.has(1) && !m.has(2)) { return 7; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("got %d, want 7 (m.has(1) && !m.has(2) short-circuit, issue #2652)", got)
+	}
+}
+
 // Map dynamic resize: insert past the initial capacity and
 // verify all entries remain reachable. Without resize this
 // would trap on `unreachable`; with resize the buffer doubles

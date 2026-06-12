@@ -401,6 +401,16 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"foreach-literal", "function main(): i32 { var s = 0; for x in [1, 2, 3, 4] { s = s + x; } return s; }", 10},
 		{"foreach-call", "function mk(): i32[] { return [10, 20, 30]; } function main(): i32 { var s = 0; for y in mk() { s = s + y; } return s; }", 60},
 		{"foreach-call-continue", "function mk(): i32[] { return [1, 2, 3, 4, 5]; } function main(): i32 { var s = 0; for x in mk() { if (x % 2 == 0) { continue; } s = s + x; } return s; }", 9},
+		// Two `m.has()` calls under a short-circuiting `&&` with a `!` on the
+		// second (issue #2652). The IR path lowers the calling RHS behind the LHS
+		// via a temp-local + block (the short-circuit shape); `m.has(1)` is true,
+		// `m.has(2)` is false, so `!m.has(2)` is true and the `&&` yields 7. This
+		// is a value assertion (not just the AST/IR differential) because the bug
+		// produced 0 on BOTH the AST and IR formulations — equality alone wouldn't
+		// catch it.
+		{"map-has-and-not", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.has(1) && !m.has(2)) { return 7; } return 0; }`, 7},
+		{"map-has-and-true", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); if (m.has(1) && m.has(2)) { return 5; } return 0; }`, 5},
+		{"map-has-or-short", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); if (m.has(1) || m.has(2)) { return 9; } return 0; }`, 9},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
