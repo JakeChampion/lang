@@ -1893,7 +1893,50 @@ function parse_for_stmt(p: Par): StmtResult {
     // two names are encoded as "k,v" in the for-var; the emitter
     // detects the comma + a map iter and emits an iterator loop.
     if (p.peek_punct() == "(") {
+        var cfl: i32 = p.peek_line();
+        var cfc: i32 = p.peek_col();
         p = p.advance();
+        // C-style `for (var i = INIT; COND; STEP) { BODY }` — distinguished
+        // from the `for (k, v) in m` map form by a `var` init. The self-host
+        // Stmt union has no C-style-for node, so desugar to a scoped while
+        // loop with a first-iteration flag, so a `continue` re-runs STEP
+        // (matching C semantics) instead of skipping it. Reuses if / while /
+        // break (no new node). (#2820)
+        if (p.peek_keyword() == "var") {
+            var fcinit: StmtResult = parse_stmt(p);   // `var i = INIT;` (eats `;`)
+            p = fcinit.par;
+            var fccond: ExprResult = parse_expr(p);   // `COND`
+            p = fccond.par;
+            if (p.peek_punct() == ";") { p = p.advance(); }
+            var stepone: Stmt[] = [];                 // STEP (no `;`, stops at `)`)
+            if (p.peek_punct() != ")") {
+                var fcstep: StmtResult = parse_stmt(p);
+                p = fcstep.par;
+                stepone = [fcstep.stmt];
+            }
+            if (p.peek_punct() == ")") { p = p.advance(); }
+            var fcbody: BlockResult = parse_block(p);
+            p = fcbody.par;
+            var flag: string = "__forc_" + util.i32_to_string(cfl) + "_" + util.i32_to_string(cfc);
+            var noelse: Stmt[] = [];
+            var wbody: Stmt[] = [];
+            // if (!first) { STEP }   -- runs STEP before every iteration but
+            //                           the first, so a `continue` runs it too.
+            wbody = wbody.append(s_if(e_unary("!", e_ident(flag)), stepone, noelse));
+            // first = false
+            wbody = wbody.append(s_assign(flag, e_bool(false)));
+            // if (!(COND)) { break }
+            var breakone: Stmt[] = [s_break()];
+            wbody = wbody.append(s_if(e_unary("!", fccond.expr), breakone, noelse));
+            var fbi: i32 = 0;
+            while (fbi < fcbody.body.len()) { wbody = wbody.append(fcbody.body[fbi]); fbi = fbi + 1; }
+            // { INIT; var first = true; while (true) { <wbody> } }  (scoped via if-true)
+            var outer: Stmt[] = [];
+            outer = outer.append(fcinit.stmt);
+            outer = outer.append(s_var(flag, "", e_bool(true)));
+            outer = outer.append(s_while(e_bool(true), wbody));
+            return StmtResult { par: p, stmt: s_if(e_bool(true), outer, noelse) };
+        }
         var kvk: string = p.peek_ident();
         if (kvk.len() > 0) { p = p.advance(); }
         if (p.peek_punct() == ",") { p = p.advance(); }
