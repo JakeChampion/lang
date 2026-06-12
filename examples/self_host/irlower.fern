@@ -3037,11 +3037,31 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
                         if (is_builtin_pattern(pv.type_name)) {
-                            // Built-in Option / Result: discriminate on the i32 tag
-                            // at offset 0 (Some/Ok=0, None/Err=1), not the shape
-                            // pointer. `true`/`false` boolean patterns aren't
-                            // Option/Result and bail.
-                            if (pv.type_name == "true" || pv.type_name == "false") { return s.fail(); }
+                            // A `true`/`false` boolean pattern: the scrutinee is
+                            // already a 0/1 value in scrut_slot (no tag to extract),
+                            // so the arm tests it directly — skip on mismatch, run the
+                            // body, exit the match. Mirrors the Option-tag arm shape.
+                            if (pv.type_name == "true" || pv.type_name == "false") {
+                                var bwant: i32 = 0;
+                                if (pv.type_name == "true") { bwant = 1; }
+                                ms = ms.emit(ir.op_block(0));   // arm block: br 0 = skip arm
+                                ms = ms.emit(ir.op_load_local(scrut_slot));
+                                ms = ms.emit(ir.op_const_i32(bwant));
+                                ms = ms.emit(ir.op_bin("ne", 0, false));   // 1 if scrut != want
+                                ms = ms.emit(ir.op_brif(0));               // -> skip arm on mismatch
+                                if (arm.has_guard) {
+                                    ms = lower_expr(arm.guard, ms);
+                                    if (!ms.ok) { return ms; }
+                                    ms = ms.emit(ir.op_bin("not", 0, false));
+                                    ms = ms.emit(ir.op_brif(0));
+                                }
+                                ms = lower_block(arm.body, ms);
+                                if (!ms.ok) { return ms; }
+                                ms = ms.emit(ir.op_br(1));      // matched -> exit the match
+                                ms = ms.emit(ir.op_end());      // end arm block
+                                mi = mi + 1;
+                                continue;
+                            }
                             var hb: boolean = pv.binding.len() > 0 && pv.binding != "_";
                             // A payload binding needs the payload's type. Only a
                             // direct-call scrutinee `f()` whose ret_type is recorded
