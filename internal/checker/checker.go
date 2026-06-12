@@ -879,6 +879,30 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		c.info.Resources[rd.Name] = rd
 	}
 
+	// Bind receiver type-variables for generic-receiver methods. A
+	// method like `function (b: Box[T]) get(): T` introduces T as an
+	// implicit type parameter, inferred from the receiver at the call
+	// site — unless the name resolves to a concrete struct / enum /
+	// built-in. This mirrors how `@derive` methods on a generic type
+	// get their type params bound (bindDeriveTypeParams); once
+	// fn.TypeParams carries T, resolveTypeNames below rewrites T to a
+	// ParamType across the receiver / params / return / body, and the
+	// ordinary generic-method inference + monomorph path takes over.
+	// Runs before resolveTypeNames so the rewrite sees the params; the
+	// struct / enum sets are already populated above.
+	for _, fn := range prog.Funcs {
+		if fn.Receiver == nil {
+			continue
+		}
+		var vars []string
+		seen := map[string]bool{}
+		for _, tp := range fn.TypeParams {
+			seen[tp] = true
+		}
+		c.collectFreeTypeVars(fn.Receiver.Type, &vars, seen)
+		fn.TypeParams = append(fn.TypeParams, vars...)
+	}
+
 	// Now that the enum set is known, walk every type position in
 	// the program and rewrite StructType{Name: X} → EnumType when
 	// X resolves to an enum. The parser doesn't know which named
@@ -2639,6 +2663,44 @@ func deriveRecvEnum(ed *ast.EnumDecl) (ast.EnumType, []string) {
 		args[i] = ast.ParamType{Name: tp}
 	}
 	return ast.EnumType{Name: ed.Name, Args: args}, ed.TypeParams
+}
+
+// collectFreeTypeVars walks a method-receiver type and collects the
+// names that are NOT known structs / enums — i.e. the implicit type
+// variables a generic-receiver method binds (the `T` in `Box[T]`).
+// Built-in scalar types are NumberType / FloatType / BoolType /
+// StringType, not named StructType, so they're excluded naturally; a
+// name that happens to match a real struct / enum is treated as a
+// concrete instantiation, not a variable. Dedupes via `seen`.
+func (c *checker) collectFreeTypeVars(t ast.Type, out *[]string, seen map[string]bool) {
+	named := func(name string, args []ast.Type) {
+		_, isStruct := c.info.Structs[name]
+		_, isEnum := c.info.Enums[name]
+		if !isStruct && !isEnum {
+			if !seen[name] {
+				seen[name] = true
+				*out = append(*out, name)
+			}
+			return
+		}
+		for i := range args {
+			c.collectFreeTypeVars(args[i], out, seen)
+		}
+	}
+	switch x := t.(type) {
+	case ast.StructType:
+		named(x.Name, x.Args)
+	case ast.EnumType:
+		named(x.Name, x.Args)
+	case ast.ArrayType:
+		c.collectFreeTypeVars(x.Elem, out, seen)
+	case ast.SliceType:
+		c.collectFreeTypeVars(x.Elem, out, seen)
+	case ast.TupleType:
+		for i := range x.Elems {
+			c.collectFreeTypeVars(x.Elems[i], out, seen)
+		}
+	}
 }
 
 // bindDeriveTypeParams turns a synthesised derive method into a generic
