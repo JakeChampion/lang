@@ -1483,14 +1483,41 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // call / index / division (where skipping it matters) bails to the AST
             // path, which does proper control-flow short-circuiting.
             if (b.op == "&&" || b.op == "||") {
-                if (!is_eager_safe(b.right)) { return s.fail(); }
-                var lsc: LowerState = lower_expr(b.left, s);
-                if (!lsc.ok) { return lsc; }
-                var rsc: LowerState = lower_expr(b.right, lsc);
-                if (!rsc.ok) { return rsc; }
                 var scop: string = "and";
                 if (b.op == "||") { scop = "or"; }
-                return rsc.emit(ir.op_bin(scop, 0, false));
+                // Fast path: a trap-free, side-effect-free RHS is just `&` / `|`
+                // of the two boolean (0/1) values — no control flow needed.
+                if (is_eager_safe(b.right)) {
+                    var lsc: LowerState = lower_expr(b.left, s);
+                    if (!lsc.ok) { return lsc; }
+                    var rsc: LowerState = lower_expr(b.right, lsc);
+                    if (!rsc.ok) { return rsc; }
+                    return rsc.emit(ir.op_bin(scop, 0, false));
+                }
+                // Short-circuit: the RHS may call / index / divide (where NOT
+                // evaluating it matters), so guard it behind the LHS via a temp
+                // local + a block (the proven match-arm control shape):
+                //   tmp = L
+                //   block { load tmp; [&& only: not]; br_if 0; tmp = R }
+                //   load tmp          // result = L ? R : L  (&&) / L ? L : R (||)
+                // For `&&` we skip R when L is FALSE (load L, not, br_if); for
+                // `||` we skip R when L is TRUE (load L, br_if). tmp then holds
+                // L on the skip path (the short-circuit value) and R otherwise.
+                var sl0: LowerState = lower_expr(b.left, s);
+                if (!sl0.ok) { return sl0; }
+                var scn: string = "$sc" + util.i32_to_string(sl0.local_names.len());
+                sl0 = sl0.add_local(scn);
+                var scslot: i32 = sl0.slot_of(scn);
+                sl0 = sl0.emit(ir.op_store_local(scslot));
+                sl0 = sl0.emit(ir.op_block(0));
+                sl0 = sl0.emit(ir.op_load_local(scslot));
+                if (b.op == "&&") { sl0 = sl0.emit(ir.op_bin("not", 0, false)); }
+                sl0 = sl0.emit(ir.op_brif(0));
+                var sr0: LowerState = lower_expr(b.right, sl0);
+                if (!sr0.ok) { return sr0; }
+                sr0 = sr0.emit(ir.op_store_local(scslot));
+                sr0 = sr0.emit(ir.op_end());
+                return sr0.emit(ir.op_load_local(scslot));
             }
             // String dispatch: on string operands, `+` is concat and `==`/`!=`
             // are byte-equality (str_eq, then `not` for `!=`). Ordering compares

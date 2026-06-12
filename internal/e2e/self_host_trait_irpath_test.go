@@ -22,15 +22,16 @@ import (
 // asm_ir.all_eligible — what emit_module checks) and prints "ir"/"ast" without
 // emitting any assembly, so the gate is fast and assembler-free.
 //
-// Frontier (post struct-array-element-typing slice):
+// Frontier (post short-circuit-&&/|| slice):
 //   - Concrete struct-impl methods + monomorphised struct/primitive bounded
 //     generics + parametric struct impls + primitive-receiver methods + ENUM
-//     methods on an enum-typed LOCAL/param + struct-ARRAY element dispatch
-//     (`arr[i].m()`, `for x in arr { x.m() }`) all lower through the IR path.
+//     methods on an enum-typed LOCAL/param + struct-ARRAY element dispatch +
+//     short-circuit `&&`/`||` with a call/index RHS (the field-wise derived Eq
+//     shape) all lower through the IR path.
 //   - `dyn Trait`, enum methods called directly on a variant construction
 //     (`Has(5).eq(…)`, which needs the variant->enum map), and the
-//     string-building @derive Display / `&&`-chained field-wise Eq still fall
-//     back to the AST emitter — the next slices.
+//     string-building @derive Display (the `.to_string()` builtin has no IR
+//     runtime body) still fall back to the AST emitter — the next slices.
 var traitIRPath = map[string]string{
 	"trait-impl-method":                          "ir",
 	"trait-impl-arg":                             "ir",
@@ -44,7 +45,7 @@ var traitIRPath = map[string]string{
 	"trait-parametric-impl-struct-elem":          "ir",
 	"trait-dyn-object-heterogeneous":             "ast",
 	"trait-struct-array-loop-method":             "ir",
-	"trait-derive-struct-eq":                     "ast",
+	"trait-derive-struct-eq":                     "ir",
 	"trait-derive-struct-ord":                    "ir",
 	"trait-derive-struct-display-nested":         "ast",
 	"trait-enum-method":                          "ir",
