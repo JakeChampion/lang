@@ -108,6 +108,31 @@ function main(): i32 { var a: P = P{x:1}; var b: P = P{x:1}; if (a == b) { retur
 			t.Errorf("%q: error %q does not contain %q", c.src, err.Error(), c.want)
 		}
 	}
+	// Ordering operators on composites route to `Ord::cmp`; without
+	// an Ord impl they're rejected, arrays/tuples are rejected, and a
+	// type with Ord type-checks.
+	const ordI32 = `trait Ord { function cmp(self: Self, other: Self): i32; }
+impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
+`
+	ordReject := []struct {
+		src  string
+		want string
+	}{
+		{`struct P { x: i32 }
+function main(): i32 { var a: P = P{x:1}; var b: P = P{x:2}; if (a < b) { return 1; } return 0; }`,
+			"does not implement `Ord`"},
+	}
+	for _, c := range ordReject {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: want error containing %q, got %v", c.src, c.want, err)
+		}
+	}
+	if err := checkSource(t, ordI32+`@derive(Ord) struct P { x: i32 }
+function main(): i32 { var a: P = P{x:1}; var b: P = P{x:2}; if (a < b) { if (b >= a) { return 0; } } return 1; }`); err != nil {
+		t.Errorf("composite ordering with derived Ord should type-check, got: %v", err)
+	}
+
 	// With Eq derived, composite == type-checks cleanly.
 	ok := eqI32 + `@derive(Eq) struct P { x: i32, y: i32 }
 @derive(Eq) enum E { A, B(i32) }

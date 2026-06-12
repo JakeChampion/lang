@@ -127,12 +127,15 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 			x.Args[i] = rewriteExpr(x.Args[i], fn)
 		}
 	case *Binary:
-		// A composite `==`/`!=` carries its desugared `eq` call in
-		// EqCall; rewrite inside that (its operands), not Left/Right
-		// (which the replacement discards).
-		if x.EqCall != nil {
+		// A composite `==`/`!=` (EqCall) or ordering op (CmpCall)
+		// carries its desugared method call; rewrite inside that (its
+		// operands), not Left/Right (which the replacement discards).
+		switch {
+		case x.EqCall != nil:
 			rewriteExprChildren(x.EqCall, fn)
-		} else {
+		case x.CmpCall != nil:
+			rewriteExprChildren(x.CmpCall, fn)
+		default:
 			x.Left = rewriteExpr(x.Left, fn)
 			x.Right = rewriteExpr(x.Right, fn)
 		}
