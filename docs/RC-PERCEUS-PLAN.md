@@ -1,5 +1,9 @@
 # RC + Perceus implementation plan
 
+> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857).
+> This doc is a living progress log — verify the latest slice before picking up
+> an item.
+
 Implementation plan for refcounted heap values with compile-time
 Perceus optimisation.
 

@@ -1,5 +1,10 @@
 # Improvements drawn from fernsmith work
 
+> **Status:** most items have landed (see the audit below). The still-open items
+> (#5, #11, #15, #16) are tracked in GitHub as
+> [#2852](https://github.com/JakeChampion/lang/issues/2852); #13 and #14 are
+> already tracked as #2669 and #2673.
+
 This list collects the compiler-correctness gaps, design rough edges,
 and test-infrastructure improvements surfaced while building the
 fernsmith generator + differential oracle (PRs #583..#620). Each

@@ -1,5 +1,10 @@
 # Self-hosting: remaining work plan
 
+> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857)
+> surfaces the still-open frontiers across this and the sibling RC/checker plan
+> docs. This doc is a living progress log — verify the latest slice before
+> picking up an item.
+
 Tracks the modules / features the self-hosted compiler
 (`examples/self_host/`) cannot yet compile, with a concrete plan per
 item. Ordered roughly easiest → hardest. Each item ships as its own PR
