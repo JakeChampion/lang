@@ -74,9 +74,23 @@ The decision's 4-step sequencing is:
    real latent violation — a self-host test program using the old
    discarded-result `m.insert(...)` idiom — now fixed to `m = m.insert(...)`.
 
+   **Compile-driver gate — also DONE for the unified `fern.fern` CLI.** The
+   production self-hosted driver (`fern.fern`, the one that routes codegen
+   through SSA / IR with the AST emitter as fallback) now runs the same
+   `filter_immutability(check_module(merged).diags)` gate after flattening,
+   ahead of every codegen path — so `fern <prog>` rejects a cycle-rule
+   violation (E048 `p.x = v`, E056 `a[i] = v`, …) instead of compiling a
+   silently-mutating binary, matching native and `fern -check` (issue #2825).
+   Verified by the `emit-rejects-immutability` subtest in
+   `self_host_cli_test.go`; the full `fern.fern` module closure already passes
+   the native checker's immutability rules, so the self-host gate (a filtered
+   subset) is false-positive-free on it.
+
    **Still to do:** the stdin drivers (`asm_run` / `asm_arm64_run`, used for
-   small single-file programs) and the wasm/ssa drivers don't gate yet — a
-   mechanical follow-up applying the same three lines. The replacement
+   small single-file programs) and the IR-path differential drivers
+   (`asm_ir_run` / `asm_arm64_ir_run`) don't gate yet — a mechanical follow-up
+   applying the same three lines (their behaviour-equivalence harnesses don't
+   feed them forbidden programs). The replacement
    idioms — struct-update (`T { ...old, f: v }`) and `arr = arr.with(i, v)`
    — parse, emit, and run on every backend (verified by
    `self_host_struct_update_test.go`, `self_host_functional_update_test.go`,

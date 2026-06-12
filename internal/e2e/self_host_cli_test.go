@@ -101,6 +101,57 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("emit-rejects-immutability", func(t *testing.T) {
+		// The compile path (default mode) runs the immutable-data cycle gate
+		// before codegen, the way the native compiler checks before it emits:
+		// a program that violates E048 (field assign) / E056 (subscript assign)
+		// is rejected with the diagnostic on stderr + a non-zero exit, NOT
+		// compiled into a silently-mutating binary (issue #2825). This covers
+		// every codegen path below the gate — SSA, IR, and the AST fallback —
+		// since the gate sits ahead of all of them. The functional-update form
+		// compiles cleanly. (`-check` already reported these; this proves the
+		// emit path enforces them too.)
+		for _, c := range []struct {
+			name, src, wantDiag string
+		}{
+			{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", "error[E048]"},
+			{"field-compound", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "error[E048]"},
+			{"subscript-assign", "function main(): i32 { var a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", "error[E056]"},
+			{"valid-functional-update", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 5 }; return p.x; }\n", ""},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "imm_"+c.name+".fern")
+				if err := os.WriteFile(srcPath, []byte(c.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				cmd := exec.Command(fernBin, srcPath)
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout = &stdout
+				cmd.Stderr = &stderr
+				_ = cmd.Run()
+				code := cmd.ProcessState.ExitCode()
+				if c.wantDiag == "" {
+					if code != 0 {
+						t.Fatalf("valid program exited %d, want 0\nstderr: %s", code, stderr.String())
+					}
+					if stdout.Len() == 0 {
+						t.Fatal("valid program produced 0 bytes of asm")
+					}
+					return
+				}
+				if code == 0 {
+					t.Fatalf("rejected program exited 0, want non-zero (emitted %d bytes of asm)", stdout.Len())
+				}
+				if !strings.Contains(stderr.String(), c.wantDiag) {
+					t.Errorf("stderr missing %q\ngot stderr: %s", c.wantDiag, stderr.String())
+				}
+				if stdout.Len() != 0 {
+					t.Errorf("rejected program emitted %d bytes of asm to stdout, want 0", stdout.Len())
+				}
+			})
+		}
+	})
+
 	t.Run("emit-ssa", func(t *testing.T) {
 		// -ssa routes an in-subset program through AST → SSA → optimise →
 		// regalloc → emit. Assemble + run; exit code is the program's value.

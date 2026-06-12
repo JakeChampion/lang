@@ -13,9 +13,10 @@ import (
 // arm is the `audit_types_match` fixture (all four native backends).
 //
 // NOTE: struct fields are immutable after construction — the sanctioned
-// update is functional (`T { ...old, f: v }`). The native checker rejects
-// `p.x = v` (E048); the self-host checker currently does NOT (issue
-// #2825), so these cases deliberately use only functional update.
+// update is functional (`T { ...old, f: v }`). Both compilers reject
+// `p.x = v` (E048): native via its checker, the self-host `fern.fern` via
+// the immutable-data gate ahead of codegen (issue #2825, now fixed). These
+// cases use only functional update so they stay valid on both compilers.
 var auditTypesCases = []struct {
 	name string
 	src  string

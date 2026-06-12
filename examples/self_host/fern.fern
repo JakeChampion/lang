@@ -495,6 +495,22 @@ function main(): i32 {
         return 254;
     }
 
+    // Immutability gate: reject the immutable-data cycle rules (E048 field
+    // assign / E049 capture write-back / E055 discarded pure result / E056
+    // subscript assign) before ANY codegen path — SSA, IR, or the AST fallback
+    // all sit below this point, so the gate covers them uniformly, the way the
+    // native compiler checks before it emits. Without it, a program the
+    // language forbids (`p.x = v`) would compile and silently mutate on the
+    // self-host (issue #2825) even though `fern -check` flags it. Filtered to
+    // the cycle rules so the partial checker's other rules can't
+    // false-positive-reject a valid program; matches asm_load_run's gate. A hit
+    // prints the diagnostic to stderr and fails the build (exit 1).
+    var imm: checker.Diag[] = checker.filter_immutability(checker.check_module(merged).diags);
+    if (imm.len() > 0) {
+        eprint(checker.format_diags(imm));
+        return 1;
+    }
+
     // -O: constant-fold the program before codegen (constfold.fold_module),
     // matching the native compiler's constant folding. Compile-only — applied
     // after -check / -interp / -fmt (which return above and want the original

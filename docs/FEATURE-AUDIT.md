@@ -124,7 +124,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `return` (value + void) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **bare nested block `{}` self-host dropped, [#2821](https://github.com/JakeChampion/lang/issues/2821)** |
 | `struct` decl + literal + field access | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | + functional update `T { ...old, f: v }` |
-| Struct field immutability + functional update | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | fields immutable (E048); **self-host doesn't enforce, [#2825](https://github.com/JakeChampion/lang/issues/2825)** |
+| Struct field immutability + functional update | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | fields immutable (E048); self-host `fern.fern` gates it before codegen ([#2825](https://github.com/JakeChampion/lang/issues/2825)) |
 | Methods (receiver clause) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `enum` sum types + payloads | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. unit variants; wasm owned-model RC caveat [#2828](https://github.com/JakeChampion/lang/issues/2828) |
 | `match` (exhaustiveness checked) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | payload binding, comma-separated arms |
@@ -257,15 +257,19 @@ interp / x86-64 / arm64 / wasm.
 `internal/e2e/self_host_audit_types_test.go` — the same as 12 isolated programs.
 All pass on the self-hosted compiler.
 
-**Finding — struct-field immutability not enforced on self-host
+**Resolved — struct-field immutability now enforced on self-host
 ([#2825](https://github.com/JakeChampion/lang/issues/2825)):** Fern struct
 fields are immutable after construction (native `-check` rejects `p.x = v` with
-`E048`, directing to `T { ...old, x: v }`). The self-host checker does **not**
-enforce this — it accepts `p.x = v` (and `p.x += v`) and mutates. This is the
-self-hosted compiler being *more permissive* than native (compiling forbidden
-programs), not a runtime miscompile; functional update — the sanctioned form —
-works on both. The fixtures use only functional update so they stay valid on
-both compilers.
+`E048`, directing to `T { ...old, x: v }`). Previously the self-host *compile*
+path accepted `p.x = v` (and `p.x += v`) and mutated — `fern -check` flagged it
+but `fern <prog>` emitted a silently-mutating binary. The unified `fern.fern`
+driver now runs the immutable-data cycle gate (E048/E049/E055/E056, the same one
+`asm_load_run` already had) ahead of **all** codegen paths — SSA, IR, and the
+AST fallback — so the self-hosted compiler refuses the forbidden program just
+like native does, regardless of backend. Functional update — the sanctioned
+form — still compiles cleanly. Covered by the `emit-rejects-immutability`
+subtest in `internal/e2e/self_host_cli_test.go`. The audit fixtures use only
+functional update so they stay valid on both compilers.
 
 **Finding — wasm owned-model RC over-release
 ([#2828](https://github.com/JakeChampion/lang/issues/2828)):** the differential
