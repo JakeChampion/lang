@@ -1119,12 +1119,14 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	}
 
 	var ret ast.Type = ast.VoidType{}
+	retAnnotated := false
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
 		t, err := p.parseType()
 		if err != nil {
 			return nil, err
 		}
 		ret = t
+		retAnnotated = true
 	}
 
 	// A body-less function (`function f(): T;`) is an import declaration —
@@ -1140,15 +1142,16 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		}
 	}
 	return &ast.FuncDecl{
-		P:          kw.Pos,
-		Name:       name.Text,
-		NamePos:    funcNamePos,
-		TypeParams: typeParams,
-		Bounds:     bounds,
-		Params:     params,
-		ReturnType: ret,
-		Body:       body,
-		Receiver:   receiver,
+		P:                 kw.Pos,
+		Name:              name.Text,
+		NamePos:           funcNamePos,
+		TypeParams:        typeParams,
+		Bounds:            bounds,
+		Params:            params,
+		ReturnType:        ret,
+		ReturnUnannotated: !retAnnotated && body != nil,
+		Body:              body,
+		Receiver:          receiver,
 	}, nil
 }
 
