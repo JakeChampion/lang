@@ -202,7 +202,7 @@ per-function bugs in the audit log.
 | `std/u32` | | | | | | ⬜ | |
 | `std/u64` | | | | | | ⬜ | |
 | `std/float` | | | | | | ⬜ | |
-| `std/string` (~120 methods) | 🔄 | 🔄 | 🔄 | 🔄 | | 🔄 | `prop_string_involution` covers `reverse_bytes`/`to_lower`/`to_upper` laws; rest pending |
+| `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
@@ -243,6 +243,22 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — std/string core methods audited (native 4-backend differential)
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_std_string` — `to_upper` / `to_lower` /
+`trim` / `starts_with` / `ends_with` / `contains` / `index_of` / `replace` /
+`repeat` / `pad_start` / `split`, with result strings compared directly. ✅ on
+interp / x86-64 / arm64 / wasm.
+
+**Self-host:** already covered by `internal/e2e/self_host_string_test.go`, which
+bundles the full std/string and exercises the same core methods (index_of /
+trim / upper / lower / contains / starts_with / replace / repeat / split) — so
+no new self-host test was needed. The §D std/string row is promoted from 🔄 to
+✅ for the core set (the full ~120-method surface remains a ⚠️ follow-up).
+
+Author note: `pad_start(n, ch)` takes the fill string as a second argument.
 
 ### 2026-06-12 — std library: std/i32 + std/math + std/array reductions audited (no new bugs)
 

@@ -1,0 +1,26 @@
+import "core/int";
+import "std/string";
+
+// Audit fixture: representative std/string methods across every native
+// backend. Result strings are compared directly; lengths gate the
+// collection-returning methods.
+
+function main(): i32 {
+    if ("hello".to_upper() != "HELLO") { print("FAIL upper"); return 11; }
+    if ("HeLLo".to_lower() != "hello") { print("FAIL lower"); return 12; }
+    if ("  hi  ".trim() != "hi") { print("FAIL trim"); return 13; }
+    if (!"hello".starts_with("he") || !"hello".ends_with("lo")) { print("FAIL ends"); return 14; }
+    if (!"hello".contains("ell") || "hello".contains("xyz")) { print("FAIL contains"); return 15; }
+    if ("hello".index_of("l") != 2) { print("FAIL indexof"); return 16; }
+    if ("hello".replace("l", "L") != "heLLo") { print("FAIL replace"); return 17; }
+    if ("ab".repeat(3) != "ababab") { print("FAIL repeat"); return 18; }
+    if ("x".pad_start(3, " ") != "  x") { print("FAIL padstart"); return 19; }
+
+    // collection-returning: split
+    var parts: string[] = "a,b,c".split(",");
+    if (parts.len() != 3) { print("FAIL split-len"); return 20; }
+    if (parts[0] != "a" || parts[2] != "c") { print("FAIL split-elem"); return 21; }
+
+    print("OK");
+    return 0;
+}
