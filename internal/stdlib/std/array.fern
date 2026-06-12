@@ -939,3 +939,33 @@ pub function enumerate[T](xs: T[]): (i32, T)[] {
     }
     return out;
 }
+
+// ---- Generic array methods --------------------------------------
+//
+// Method forms of the combinators above, so pipelines read
+// left-to-right — `xs.map(f).filter(keep)` instead of the inside-out
+// `filter(map(xs, f), keep)`. Enabled by element-polymorphic method
+// receivers (#2692); each just delegates to the free function. Same
+// callback constraint as the free versions: a callback whose
+// parameter / return is a composite (`string`, `Option`, …) hits the
+// indirect-call codegen limitation (#2753) on the native + wasm
+// backends, so keep callbacks scalar / bool / pointer-shaped there.
+
+// `xs.map(f)` — apply `f` to every element, yielding a new array.
+pub function (xs: T[]) map[U](f: (T) => U): U[] { return map(xs, f); }
+
+// `xs.filter(keep)` — keep only elements where `keep` holds.
+pub function (xs: T[]) filter(keep: (T) => boolean): T[] { return filter(xs, keep); }
+
+// `xs.fold(init, f)` — left fold over the elements.
+pub function (xs: T[]) fold[A](init: A, f: (A, T) => A): A { return fold(xs, init, f); }
+
+// `xs.any(pred)` / `xs.all(pred)` — existential / universal quantifier.
+pub function (xs: T[]) any(pred: (T) => boolean): boolean { return any(xs, pred); }
+pub function (xs: T[]) all(pred: (T) => boolean): boolean { return all(xs, pred); }
+
+// `xs.find(pred)` — first element satisfying `pred`, or `None`.
+pub function (xs: T[]) find(pred: (T) => boolean): Option[T] { return find(xs, pred); }
+
+// `xs.enumerate()` — pair each element with its 0-based index.
+pub function (xs: T[]) enumerate(): (i32, T)[] { return enumerate(xs); }
