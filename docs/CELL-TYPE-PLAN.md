@@ -6,8 +6,10 @@ reference compiler does `cell_new` / `get` / `set` + cycle-free E057 + full
 rc reclamation; the self-host backends handle `Cell[string]` for free
 (single-pointer strings → the slot is one word, same as `Cell[i32]`),
 verified across every backend. §3a (migrate the `lam_ctr`/`lamdefs`
-array-cells to `Cell`, then `arr[i] = v` → E056) is the remaining
-downstream step — now unblocked on both compilers.
+array-cells to `Cell`, then `arr[i] = v` → E056) has **landed**: `E056`
+is live in the native checker (`internal/checker/checker.go:7090`), so
+array-element assignment is rejected with a `arr = arr.with(i, value)`
+hint. The text below describing §3a as "remaining" is historical.
 
 ## Purpose
 

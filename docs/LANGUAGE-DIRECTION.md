@@ -358,10 +358,17 @@ Deferred to a follow-up:
   `Pair[i32, string] { … }`). Needs lookahead to
   disambiguate from `arr[i]`. Inference covers the
   ergonomic baseline.
-- Generic constraints (`T: Eq`, `T: Hash`). Probably never —
-  the Fern doesn't have a trait system; users pass functions
-  explicitly when they need polymorphism beyond what's
-  captured by the type variable alone (Gleam's posture).
+- ~~Generic constraints (`T: Eq`, `T: Hash`). Probably never —
+  the Fern doesn't have a trait system.~~ **Reversed — shipped.**
+  Fern now has a real trait system (`trait` / `impl Trait for
+  Type`, nominal, statically dispatched via monomorphisation;
+  see `docs/TRAITS.md`). Bounded generics `[T: Display + Eq]`
+  are in (`FuncDecl.Bounds`), `core/cmp.fern` defines
+  `Display` / `Eq` / `Ord`, and `@derive(Eq | Ord | Display)`
+  synthesizes the methods. Explicit type args at call sites
+  are still deferred (`E040`); inference covers the baseline.
+  Users can still pass functions explicitly (Gleam's posture)
+  where a trait would be overkill.
 
 ### PR 4 — Built-in `Map<K, V>` + ergonomics layer
 
@@ -554,6 +561,19 @@ Deferred to a follow-up:
   `Option[Option[i64]]` works too.
 
 ### PR 5 — Memory model first-class
+
+> **⚠️ Superseded (2026-06-01): arenas were removed.** The
+> `arena { … }` block, `arena_save`/`arena_restore`, the implicit
+> per-handler arena, and the native two-cursor allocator described
+> in this section have all been **deleted** — see
+> `docs/ARENA-DECISION.md`. Per-request / per-scope memory is now
+> reclaimed solely by **reference counting** (Perceus-style; see
+> `docs/RC-PERCEUS-PLAN.md` and `docs/OWNERSHIP-INFERENCE-PLAN.md`).
+> The text below is retained for historical context; everywhere it
+> says "arena scope," read "the value's RC lifetime." The slice
+> non-escape contract still holds, but its enforcement boundary is
+> now RC ownership, not an arena reset (there is still no static
+> escape check — see the `[T]` slice lifetime issue in the tracker).
 
 - **`arena { … }` block shipped.** Sugar for `arena_save() →
   body → arena_restore()` so the bump-allocator cursor snaps
