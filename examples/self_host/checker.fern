@@ -219,6 +219,24 @@ function is_unknown(t: Type): boolean {
     return false;
 }
 
+// is_composite_type reports whether `t` is a struct / enum (union) /
+// array / tuple — a heap value whose `==` would otherwise mean
+// pointer identity. The native compiler routes composite `==` to the
+// type's structural `Eq` impl; the self-host compiler has no trait /
+// derive support yet, so it rejects composite `==` (matching the
+// native E041 the way the scalar-mismatch case already does) rather
+// than silently comparing heap pointers.
+function is_composite_type(t: Type): boolean {
+    match (t) {
+        TypeStruct(_) => { return true; },
+        TypeUnion(_) => { return true; },
+        TypeArray(_) => { return true; },
+        TypeTuple(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // is_primitive_type reports whether t is one of the scalar primitives
 // (i32 / bool / string / f64). Used by the E034 array-element check to
 // stay conservative — it only compares element types when both are
@@ -3098,6 +3116,12 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var ert: Type = check_expr(b.right, s);
                 if (!is_unknown(elt) && !is_unknown(ert) && !type_eq(elt, ert)) {
                     out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
+                } else if (!is_unknown(elt) && type_eq(elt, ert) && is_composite_type(elt)) {
+                    // Composite `==` / `!=` would mean heap-pointer identity,
+                    // not value equality. Reject it (the native compiler
+                    // routes it to a structural `Eq` impl; the self-host has
+                    // no traits yet).
+                    out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " values with \"" + b.op + "\": composite (struct / enum / array / tuple) equality is not supported", b.line, b.col));
                 }
             }
             // E009: `+` is overloaded — both string (concat), both i32, or
