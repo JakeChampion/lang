@@ -163,6 +163,52 @@ function emit_ir_random_i32(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_monotonic_ns / emit_ir_now_unix_ms append the clock-reading helpers,
+// transcribed verbatim from asm.fern's emit_runtime so the IR path is a
+// byte-compatible drop-in for the AST path's clock builtins. Kept OUT of
+// emit_ir_runtime (heap-gated) — a pure-scalar program that only times
+// something allocates nothing, so its helper must still emit. clock_gettime is
+// x86-64 syscall 228; the kernel writes a `struct timespec { i64 tv_sec; i64
+// tv_nsec }`. Errno is ignored (fixed clock id + stack buffer we control).
+function emit_ir_monotonic_ns(s: asmcore.EmitState): asmcore.EmitState {
+    // monotonic_ns: CLOCK_MONOTONIC=1 → tv_sec*1e9 + tv_nsec.
+    s = s.write("__fern_monotonic_ns:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $16, %rsp\n");          // timespec
+    s = s.write("    movq $1, %rdi\n");           // CLOCK_MONOTONIC
+    s = s.write("    movq %rsp, %rsi\n");         // &timespec
+    s = s.write("    movq $228, %rax\n");         // clock_gettime
+    s = s.write("    syscall\n");
+    s = s.write("    movq (%rsp), %rax\n");       // tv_sec
+    s = s.write("    imulq $1000000000, %rax, %rax\n"); // sec * 1e9
+    s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
+    return s;
+}
+function emit_ir_now_unix_ms(s: asmcore.EmitState): asmcore.EmitState {
+    // now_unix_ms: CLOCK_REALTIME=0 → tv_sec*1000 + tv_nsec/1e6.
+    s = s.write("__fern_now_unix_ms:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $16, %rsp\n");          // timespec
+    s = s.write("    movq $0, %rdi\n");           // CLOCK_REALTIME
+    s = s.write("    movq %rsp, %rsi\n");         // &timespec
+    s = s.write("    movq $228, %rax\n");         // clock_gettime
+    s = s.write("    syscall\n");
+    s = s.write("    movq (%rsp), %r10\n");       // tv_sec
+    s = s.write("    imulq $1000, %r10, %r10\n"); // sec * 1000
+    s = s.write("    movq 8(%rsp), %rax\n");      // tv_nsec
+    s = s.write("    movq $0, %rdx\n");
+    s = s.write("    movq $1000000, %rcx\n");
+    s = s.write("    divq %rcx\n");               // rax = nsec / 1e6
+    s = s.write("    addq %r10, %rax\n");
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_ir_runtime appends the array/RC/heap runtime the IR path needs, using
 // asm.fern's OWN array layout + helper bodies (transcribed verbatim from
 // asm.fern's emit_runtime) so the IR path is a byte-compatible DROP-IN: the
@@ -1354,6 +1400,14 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // no operands; __fern_random_i32() -> i32 in %rax.
             s = s.write("    call __fern_random_i32\n    pushq %rax\n");
             s = s.need("random_i32");
+        } else if (o.kind == "monotonic_ns") {
+            // no operands; __fern_monotonic_ns() -> i64 in %rax.
+            s = s.write("    call __fern_monotonic_ns\n    pushq %rax\n");
+            s = s.need("monotonic_ns");
+        } else if (o.kind == "now_unix_ms") {
+            // no operands; __fern_now_unix_ms() -> i64 in %rax.
+            s = s.write("    call __fern_now_unix_ms\n    pushq %rax\n");
+            s = s.need("now_unix_ms");
         } else if (o.kind == "str_bytes") {
             // operand stack [str box]; __fern_str_bytes(%rdi=box) -> fresh u8[] in %rax.
             s = s.write("    popq %rdi\n    call __fern_str_bytes\n    pushq %rax\n");
@@ -1667,5 +1721,9 @@ pub function emit_module_ir(mod: parser.Module): string {
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
+    // Clock helpers: allocation-free, so emitted independently of the heap
+    // runtime (a clock-only program is heap-free), like random_i32.
+    if (s.has_need("monotonic_ns")) { s = emit_ir_monotonic_ns(s); }
+    if (s.has_need("now_unix_ms")) { s = emit_ir_now_unix_ms(s); }
     return strbuf_take();
 }
