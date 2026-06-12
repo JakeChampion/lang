@@ -3900,35 +3900,50 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
 // lift_stmt rewrites a single statement, recursing into nested bodies + the
 // call-bearing expression positions (return / var-init / expr-stmt / control
 // conditions). Other statements pass through.
+//
+// NOTE: each rebuilt statement is bound to a `var ns` before being placed in the
+// returned `[ns]` array. Constructing the statement INLINE in the array literal
+// (`stmts: [parser.StmtReturn { … }]`) inside this 2-field result struct hits a
+// native-compiler free-list bug — the inline temporary's buffer is reclaimed
+// while the struct still references it, so the statement reads back as a corrupt
+// variant and the whole lifted module silently bails IR eligibility to AST. The
+// `var` binding makes the value a tracked local, which the escape analysis
+// retains. See internal/ir TestFreelistInlineLiteralEscape.
 function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     match (st) {
         parser.StmtReturn(r) => {
             var e: LiftExpr = lift_expr_walk(r.value, acc, gfns);
-            return LiftStmts { stmts: [parser.StmtReturn { value: e.expr, line: r.line, col: r.col }], acc: e.acc };
+            var ns: parser.Stmt = parser.StmtReturn { value: e.expr, line: r.line, col: r.col };
+            return LiftStmts { stmts: [ns], acc: e.acc };
         },
         parser.StmtVar(v) => {
             var e: LiftExpr = lift_expr_walk(v.init, acc, gfns);
-            return LiftStmts { stmts: [parser.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col }], acc: e.acc };
+            var ns: parser.Stmt = parser.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col };
+            return LiftStmts { stmts: [ns], acc: e.acc };
         },
         parser.StmtExpr(s) => {
             var e: LiftExpr = lift_expr_walk(s.value, acc, gfns);
-            return LiftStmts { stmts: [parser.StmtExpr { value: e.expr }], acc: e.acc };
+            var ns: parser.Stmt = parser.StmtExpr { value: e.expr };
+            return LiftStmts { stmts: [ns], acc: e.acc };
         },
         parser.StmtIf(f) => {
             var ce: LiftExpr = lift_expr_walk(f.cond, acc, gfns);
             var tb: LiftStmts = lift_stmts(f.then_body, ce.acc, gfns);
             var eb: LiftStmts = lift_stmts(f.else_body, tb.acc, gfns);
-            return LiftStmts { stmts: [parser.StmtIf { cond: ce.expr, then_body: tb.stmts, else_body: eb.stmts }], acc: eb.acc };
+            var ns: parser.Stmt = parser.StmtIf { cond: ce.expr, then_body: tb.stmts, else_body: eb.stmts };
+            return LiftStmts { stmts: [ns], acc: eb.acc };
         },
         parser.StmtWhile(w) => {
             var ce: LiftExpr = lift_expr_walk(w.cond, acc, gfns);
             var b: LiftStmts = lift_stmts(w.body, ce.acc, gfns);
-            return LiftStmts { stmts: [parser.StmtWhile { cond: ce.expr, body: b.stmts }], acc: b.acc };
+            var ns: parser.Stmt = parser.StmtWhile { cond: ce.expr, body: b.stmts };
+            return LiftStmts { stmts: [ns], acc: b.acc };
         },
         parser.StmtFor(fo) => {
             var ie: LiftExpr = lift_expr_walk(fo.iter, acc, gfns);
             var b: LiftStmts = lift_stmts(fo.body, ie.acc, gfns);
-            return LiftStmts { stmts: [parser.StmtFor { var_name: fo.var_name, iter: ie.expr, body: b.stmts }], acc: b.acc };
+            var ns: parser.Stmt = parser.StmtFor { var_name: fo.var_name, iter: ie.expr, body: b.stmts };
+            return LiftStmts { stmts: [ns], acc: b.acc };
         },
         _ => { return LiftStmts { stmts: [st], acc: acc }; }
     }
