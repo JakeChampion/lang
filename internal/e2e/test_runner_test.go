@@ -1040,6 +1040,34 @@ func TestRunnerArrayStructuralVerbsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/map_verbs_test.fern` exercises the higher-level
+// Map verbs added to core/map (#2685): `entries`, `merge` / `extend`,
+// `from`, and `get_or_insert`, over both i32 and string keys (including
+// the get_or_insert word-count use case). Twelve cases. These verbs use
+// Option + tuples + generic map ops which the self-host compiler can't
+// lower yet, so — like the closure combinators — they are gated through
+// the interpreter rather than the self-host stdtest gate.
+func TestRunnerMapVerbsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/map_verbs_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - entries sum k+v",
+		"ok 4 - from pairs",
+		"ok 7 - merge other wins",
+		"ok 12 - get_or_insert word count",
+		"# pass 12",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/set_eq_test.fern` exercises the order-
 // independent (multiset) array assertions:
 // `assert_set_eq_i32` / `_string` and `assert_subset_i32` /
