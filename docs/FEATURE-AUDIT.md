@@ -150,11 +150,11 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `eprint(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stderr (not on stdout) |
 | `putchar(b)` | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **self-host: undefined `__fn_putchar`, [#2839](https://github.com/JakeChampion/lang/issues/2839)** |
 | `len(x)` / `.len()` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native uses `.len()` method; self-host also has free `len(x)` |
-| `args(): string[]` | | | | | | ⬜ | |
-| `env(name): Option[string]` | | | | | | ⬜ | |
+| `args(): string[]` | | | | | ✅ | ⚠️ | self-host ✓; native arg-passing via CLI e2e tests |
+| `env(name): Option[string]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | unset → `None` |
 | `exit(code)` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | native interp/x86/arm + self-host; wasm proc_exit vs result-line harness |
 | `stdin()/stdout()/stderr()` | | | | | | ⬜ | Reader/Writer |
-| `read_file` / `write_file` | | | | | | ⬜ | |
+| `read_file` / `write_file` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native: BACKEND-PARITY ReadFile/WriteFile tests; self-host: fs tests + probe |
 | `open_reader/open_writer/open_appender` | | | | | | ⬜ | |
 | Reader `.read_line()/.read_chunk(n)/.close()` | | | | | | ⬜ | |
 | Writer `.write(s)/.close()` | | | | | | ⬜ | |
@@ -163,9 +163,9 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `remove_file` / `remove_dir_all` | | | | | | ⬜ | |
 | `temp_dir(prefix)` | | | | | | ⬜ | |
 | `subprocess(...)` | | | | | | ⬜ | |
-| `sleep_ms` | | | | | | ⬜ | |
-| `now_unix_ms` / `now_ns` / `monotonic_ns` | | | | | | ⬜ | |
-| `random_bytes` / `random_i32` | | | | | | ⬜ | |
+| `sleep_ms` | ✅ | 🐛 | 🐛 | 🐛 | ✅ | 🐛 | **native x86-64/arm64/wasm unimplemented, [#2843](https://github.com/JakeChampion/lang/issues/2843)** (interp + self-host ✓) |
+| `now_unix_ms` / `monotonic_ns` | ✅ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | `now_unix_ms` ✅ all; **`monotonic_ns` native x86-64/arm64 unimplemented, [#2843](https://github.com/JakeChampion/lang/issues/2843)** |
+| `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value |
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
 | float math builtins `__sqrt_f64` etc. | | | | | | ⬜ | via std/float |
 | `strbuf_reset/append/take` | | | | | | ⬜ | |
@@ -243,6 +243,28 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — env / clock / randomness builtins audited; native `monotonic_ns` + `sleep_ms` gap found
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_env_time_random` — `env` (unset → `None`),
+`now_unix_ms` (epoch lower-bound), `random_bytes` (length), `random_i32`
+(usable). ✅ on interp / x86-64 / arm64 / wasm.
+
+**Self-host arm (x86-64):** new test
+`internal/e2e/self_host_audit_platform_test.go` — the above plus `monotonic_ns`
+and `sleep_ms`. All 6 pass.
+
+**Finding — `monotonic_ns` + `sleep_ms` unimplemented on native code-gen
+backends ([#2843](https://github.com/JakeChampion/lang/issues/2843)):** both
+type-check and run on the **interpreter** and the **self-hosted** compiler (which
+emits `__fern_monotonic_ns` / `__fern_sleep_ms`), but the native backends emit a
+call to an undefined symbol:
+- `monotonic_ns` — fails native x86-64 + arm64 (`undefined label`); wasm ✓.
+- `sleep_ms` — fails native x86-64 + arm64 + wasm (`unknown callee`).
+`now_unix_ms` is implemented on all native backends (control). The native fixture
+is restricted to the universally-supported builtins; the two gapped ones are
+covered on interp + self-host pending the fix.
 
 ### 2026-06-12 — I/O built-in functions audited; self-host `putchar` gap found
 

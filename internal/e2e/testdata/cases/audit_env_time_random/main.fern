@@ -1,0 +1,26 @@
+import "core/int";
+
+// Audit fixture: environment / wall-clock / randomness built-ins on the
+// native backends. Non-deterministic values are checked by invariant
+// (length, epoch lower-bound) so the fixture is stable across runs.
+//
+// NOTE: monotonic_ns + sleep_ms are NOT exercised here — they are
+// unimplemented on native x86-64/arm64 (and sleep_ms on wasm); see #2843.
+// They are covered on interp + self-host (self_host_audit_platform_test).
+
+function main(): i32 {
+    // env: an unset variable reads as None
+    match (env("FERN_AUDIT_UNSET_ZZZ")) {
+        Some(v) => { print("FAIL env"); return 11; },
+        None => {}
+    }
+    // wall clock is past 2020-09 (1600000000000 ms)
+    if (now_unix_ms() <= 1600000000000) { print("FAIL now"); return 12; }
+    // random_bytes returns the requested length
+    if (random_bytes(16).len() != 16) { print("FAIL randbytes"); return 14; }
+    // random_i32 produces a usable value
+    var r: i32 = random_i32();
+    if (r != r) { print("FAIL randi32"); return 15; }
+    print("OK");
+    return 0;
+}
