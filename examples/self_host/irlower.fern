@@ -1743,13 +1743,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // in source order (element 0 deepest), then tuple_make boxes them.
             var tn: i32 = tup.elements.len();
             if (tn == 0) { return s.fail(); }
-            // Scalar, string, and struct elements are allowed (leak mode: each
-            // is one slot, stored pointer-safely). Array / nested-tuple / other
-            // heap elements still bail (their downstream typing isn't tracked).
+            // Scalar, string, struct, and i32[] array elements are allowed (leak
+            // mode: each is one pointer-or-scalar slot, stored pointer-safely).
+            // An i32[] element rides one slot as its data pointer; `t.N` recovers
+            // it via tuple_get, and array ops only need that pointer (no extra
+            // element-tag plumbing — deliberately NOT broadening the shared
+            // elem_type_tag, which feeds tuple destructure / arg sites too).
+            // string[] / f64[] / i64[] arrays, nested tuples, and other heap
+            // elements still bail.
             var tei: i32 = 0;
             while (tei < tn) {
                 var el: parser.Expr = tup.elements[tei];
-                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "") { return s.fail(); }
+                var el_arr_ok: boolean = expr_is_arr_src(el, s)
+                    && !expr_is_strarr(el, s) && !expr_is_f64arr(el, s) && !expr_is_i64arr(el, s);
+                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok) { return s.fail(); }
                 tei = tei + 1;
             }
             // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
