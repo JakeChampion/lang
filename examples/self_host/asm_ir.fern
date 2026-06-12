@@ -410,6 +410,53 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
+    // __fern_read_line: no args. Alloc a 256-byte buffer, sys_read(0, buf, 256),
+    // scan for '\n', alloc a 16-byte box {data@0, len@8} and return it. Transcribed
+    // verbatim from asm.fern. Gated on the str_read_line need; calls __fern_alloc.
+    if (s.has_need("str_read_line")) {
+        s = s.write("__fern_read_line:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    movq $256, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r12\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    movq $0, %rdi\n");
+        s = s.write("    movq %r12, %rsi\n");
+        s = s.write("    movq $256, %rdx\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq %r12, %rcx\n");
+        s = s.write("    movq %r12, %r8\n");
+        s = s.write("    addq %r13, %r8\n");
+        s = s.write(".Lrl_scan:\n");
+        s = s.write("    cmpq %rcx, %r8\n");
+        s = s.write("    je .Lrl_no_nl\n");
+        s = s.write("    movzbq (%rcx), %rax\n");
+        s = s.write("    cmpq $10, %rax\n");
+        s = s.write("    je .Lrl_found\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrl_scan\n");
+        s = s.write(".Lrl_no_nl:\n");
+        s = s.write("    movq %r13, %rdx\n");
+        s = s.write("    jmp .Lrl_box\n");
+        s = s.write(".Lrl_found:\n");
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    subq %r12, %rdx\n");
+        s = s.write(".Lrl_box:\n");
+        s = s.write("    pushq %rdx\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    popq %rdx\n");
+        s = s.write("    movq %r12, (%rax)\n");
+        s = s.write("    movq %rdx, 8(%rax)\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
     // __fern_eprint_str: %rdi = string box {data@0, len@8} → write(2, data, len)
     // (stderr). Transcribed verbatim from asm.fern. Gated on the eprint need.
     if (s.has_need("eprint")) {
@@ -1364,6 +1411,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // push the result (a value op).
             s = s.write("    call __fern_read_int\n    pushq %rax\n");
             s = s.need("read_int");
+        } else if (o.kind == "read_line") {
+            // no args -> read one line from stdin into a fresh string box (the AST
+            // path's __fern_read_line, which allocates), push the box (a value op).
+            s = s.write("    call __fern_read_line\n    pushq %rax\n");
+            s = s.need("heap").need("str_read_line");
         } else if (o.kind == "eprint_str") {
             // [strbox] -> write its bytes to stderr (the AST path's __fern_eprint_str).
             // Push the syscall return so the statement-level drop balances.
@@ -1592,7 +1644,7 @@ pub function emit_module_ir(mod: parser.Module): string {
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (module_uses_heap(mod) || s.has_need("i32_to_string") || s.has_need("print_int") || s.has_need("read_int")) { s = emit_ir_runtime(s); }
+    if (module_uses_heap(mod) || s.has_need("i32_to_string") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line")) { s = emit_ir_runtime(s); }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
