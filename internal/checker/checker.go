@@ -3361,6 +3361,15 @@ type checker struct {
 	current     *ast.FuncDecl
 	loopDepth   int
 	switchDepth int
+	// inferReturns, when non-nil, accumulates the type of every
+	// `return EXPR` statement checked in the body of the CURRENT
+	// function — set up by checkFunction only for an unannotated
+	// function (current.ReturnUnannotated) so its return type can be
+	// inferred from the unified return-expression types. A nil entry
+	// records a bare `return;`. It is pointer-saved/restored around
+	// each checkFunction so nested function/lambda checks (which set
+	// their own current) don't cross-contaminate. See inferReturnType.
+	inferReturns *[]ast.Type
 	// loopLabels is the stack of in-scope loop labels (innermost last),
 	// pushed while checking a labeled `while`/`for`/`loop` body so a
 	// `break label` / `continue label` can be validated against it.
@@ -4725,6 +4734,21 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		return
 	}
 
+	// Return-type inference: a plain (non-method, non-generic) function
+	// that wrote no `: Type` accumulates its return-expression types
+	// while the body is checked, then unifies them into a concrete
+	// return type (replacing the defaulted void). Methods / generics /
+	// associated functions are out of scope for now and keep void.
+	infer := fn.ReturnUnannotated && fn.Receiver == nil && fn.MethodRecv == "" && fn.AssocType == "" && len(fn.TypeParams) == 0
+	prevInfer := c.inferReturns
+	var rets []ast.Type
+	if infer {
+		c.inferReturns = &rets
+	} else {
+		c.inferReturns = nil
+	}
+	defer func() { c.inferReturns = prevInfer }()
+
 	root := newScope(nil)
 	for _, p := range fn.Params {
 		if _, dup := root.names[p.Name]; dup {
@@ -4733,6 +4757,9 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		root.names[p.Name] = p.Type
 	}
 	c.checkBlock(fn.Body, root)
+	if infer {
+		c.inferReturnType(fn, rets)
+	}
 	c.checkOwnedParams(fn)
 	// A value-returning function must return on every path. Falling off
 	// the end leaves the result undefined (the interpreter yields Void
@@ -4742,6 +4769,66 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !funcBodyExits(fn.Body) {
 		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
 	}
+}
+
+// inferReturnType folds the return-expression types collected while
+// checking an unannotated function's body (rets; a nil entry is a bare
+// `return;`) into a single return type and stamps it on the FuncDecl +
+// its registered signature. Only fires for functions that defaulted to
+// void, which currently error if they return a value — so this never
+// changes the meaning of already-valid code.
+func (c *checker) inferReturnType(fn *ast.FuncDecl, rets []ast.Type) {
+	var unified ast.Type
+	hasVoid := false
+	for _, t := range rets {
+		if t == nil {
+			hasVoid = true
+			continue
+		}
+		if unified == nil {
+			unified = t
+			continue
+		}
+		if u, ok := unifyReturnType(unified, t); ok {
+			unified = u
+		} else {
+			c.errfCode(fn.P, "E002", "cannot infer return type for %q: conflicting return types %s and %s; add an explicit return type", fn.Name, unified, t)
+			// Keep the first type so downstream has something concrete.
+		}
+	}
+	if unified == nil {
+		// No value returns (only bare `return;` or none): stays void.
+		return
+	}
+	if hasVoid {
+		c.errfCode(fn.P, "E012", "function %q returns a value on some paths but not others; add an explicit return type", fn.Name)
+	}
+	fn.ReturnType = unified
+	if sig, ok := c.info.FuncSigs[fn.Name]; ok {
+		sig.Result = unified
+	}
+}
+
+// unifyReturnType merges two inferred return-expression types into one.
+// Beyond exact equality it bridges an under-specified enum constructor
+// against a specified one — `return None;` types as a payload-less
+// `Option`, which adopts the `Option[i32]` from a sibling `return
+// Some(n);` (and the same for `Result`). Anything else is a conflict.
+func unifyReturnType(a, b ast.Type) (ast.Type, bool) {
+	if ast.Equal(a, b) {
+		return a, true
+	}
+	ea, aok := a.(ast.EnumType)
+	eb, bok := b.(ast.EnumType)
+	if aok && bok && ea.Name == eb.Name {
+		if len(ea.Args) == 0 && len(eb.Args) > 0 {
+			return eb, true
+		}
+		if len(eb.Args) == 0 && len(ea.Args) > 0 {
+			return ea, true
+		}
+	}
+	return a, false
 }
 
 // methodConsumesReceiver reports whether the method named by a call's
@@ -5659,6 +5746,20 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 	case *ast.Return:
 		want := c.current.ReturnType
+		// Return-type inference: in an unannotated function we don't yet
+		// know `want`, so instead of checking against void we record each
+		// return's type (nil for a bare `return;`) and let checkFunction
+		// unify them into the function's return type afterward.
+		if c.inferReturns != nil && c.current.ReturnUnannotated {
+			if n.Value == nil {
+				*c.inferReturns = append(*c.inferReturns, nil)
+				return
+			}
+			got := c.checkExpr(n.Value, s)
+			got = postSettleType(n.Value, got)
+			*c.inferReturns = append(*c.inferReturns, got)
+			return
+		}
 		if n.Value == nil {
 			if !ast.Equal(want, ast.VoidType{}) {
 				c.errfCode(n.P, "E012", "return without value in function returning %s", want)

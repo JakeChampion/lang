@@ -1667,7 +1667,16 @@ type FuncDecl struct {
 	Bounds     map[string][]string
 	Params     []Param
 	ReturnType Type
-	Body       *Block
+	// ReturnUnannotated records that the source wrote no `: Type` after
+	// the parameter list, so ReturnType was defaulted to void by the
+	// parser. The checker uses it to INFER the return type from the
+	// function's `return` expressions (when they unify to a single
+	// type) instead of forcing void — an explicit `: void` keeps
+	// ReturnUnannotated false. Synthetic decls (monomorph clones,
+	// closure hoists, derive synth) leave it false, so they are never
+	// re-inferred. See checker.inferReturns.
+	ReturnUnannotated bool
+	Body              *Block
 	// ImportIface / ImportWITName bind a body-less `function` to a WIT
 	// import via an `@import("wasi:iface@x.y.z", "wit-func-name")` attribute
 	// (bring-your-own WIT, P4 — docs/WIT-BRING-YOUR-OWN.md). ImportIface is
