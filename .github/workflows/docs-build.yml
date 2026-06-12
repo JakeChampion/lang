@@ -31,6 +31,9 @@ on:
       - "cmd/ferndoc/**"
       - "web/**"
       - "site/**"
+      # The docs site loads this TextMate grammar for ```fern code
+      # highlighting, so a grammar edit should rebuild the docs.
+      - "editors/vscode/syntaxes/**"
       - "internal/ast/**"
       - "internal/checker/**"
       - "internal/constfold/**"

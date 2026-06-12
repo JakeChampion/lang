@@ -33,6 +33,8 @@ on:
       - "cmd/ferndoc/**"
       - "web/**"
       - "site/**"
+      # Docs site loads this grammar for ```fern highlighting.
+      - "editors/vscode/syntaxes/**"
       - "internal/ast/**"
       - "internal/checker/**"
       - "internal/constfold/**"
