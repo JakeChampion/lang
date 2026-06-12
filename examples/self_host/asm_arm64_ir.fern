@@ -383,6 +383,32 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    bl __fn_" + asmcore.sanitize_label(o.str) + "\n");
             if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "const_func") {
+            // A function VALUE is the function's code address (adrp/add of its
+            // label) — push it. No funcref table (the address is the value);
+            // call_indirect dispatches through it with blr.
+            var cfl: string = "__fn_" + asmcore.sanitize_label(o.str);
+            s = s.write("    adrp x0, " + cfl + "\n    add x0, x0, :lo12:" + cfl + "\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "call_indirect") {
+            // Indirect call: the rt-stack holds [arg0(deepest) … argN-1,
+            // fn_addr(top)]. Pop the target into x9 (scratch), reverse the args so
+            // arg0 is on TOP (param[i] at [x29,#16+i*16]), blr through it, pop the
+            // args, push x0. Same arg discipline as call_direct.
+            var icargc: i32 = o.i32_imm;
+            s = s.write("    ldr x9, [sp], #16\n");
+            var ih: i32 = 0;
+            while (ih < icargc / 2) {
+                var ilo: i32 = ih * 16;
+                var ihi: i32 = (icargc - 1 - ih) * 16;
+                s = s.write("    ldr x0, [sp, #" + util.i32_to_string(ilo) + "]\n");
+                s = s.write("    ldr x1, [sp, #" + util.i32_to_string(ihi) + "]\n");
+                s = s.write("    str x0, [sp, #" + util.i32_to_string(ihi) + "]\n");
+                s = s.write("    str x1, [sp, #" + util.i32_to_string(ilo) + "]\n");
+                ih = ih + 1;
+            }
+            s = s.write("    blr x9\n");
+            if (icargc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(icargc * 16) + "\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind == "const_f64") {
             // Float literal: GAS assembles the text to an IEEE double in .rodata;
             // load its bits and push them (floats flow as their 8-byte pattern).

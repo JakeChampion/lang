@@ -365,11 +365,11 @@ pub function module_uses_i64_divrem(mod: parser.Module): boolean {
 // wasm_eligible: the whole module is in the IR's i32 + arrays subset (the same
 // backend-independent gate the asm backends use — rejects non-lowerable
 // functions and builtin calls). wasm covers everything that gate admits.
-// wasm_eligible is the WASM eligibility gate. Unlike the register backends'
-// all_eligible, it uses eligible_core directly — so it ALSO admits modules with
-// plain function values (const_func / call_indirect), which this backend lowers
-// through a funcref table (see fn_support_section). The register backends keep
-// bailing on those (all_eligible adds the !module_uses_fn_values restriction).
+// wasm_eligible is the WASM eligibility gate — eligible_core, the same gate the
+// register backends now use (all_eligible). Plain function values (const_func /
+// call_indirect) are admitted on every backend; wasm lowers them through a
+// funcref table (fn_support_section), the register backends through the
+// function's code address.
 pub function wasm_eligible(mod: parser.Module): boolean {
     return asm_ir.eligible_core(mod);
 }

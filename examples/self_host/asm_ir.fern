@@ -752,15 +752,13 @@ pub function eligible_core(mod: parser.Module): boolean {
     return true;
 }
 
-// all_eligible is the REGISTER-backend (x86-64 / arm64) eligibility: eligible_core
-// plus "no plain function values". The register IR backends don't emit the
-// closure ops (const_func / call_indirect) yet, so a module that uses them falls
-// back to their AST emitter. The wasm backend has no such restriction
-// (wasm_ir.wasm_eligible == eligible_core), so function values lower there.
+// all_eligible is the module eligibility gate for every backend now: it is
+// eligible_core. Plain function values (const_func / call_indirect) lower on all
+// three IR backends — wasm through a funcref table, the register backends through
+// the function's code address (no table needed). (Capturing lambdas are a later
+// slice and still bail via lower_func.)
 pub function all_eligible(mod: parser.Module): boolean {
-    if (!eligible_core(mod)) { return false; }
-    if (module_uses_fn_values(mod)) { return false; }
-    return true;
+    return eligible_core(mod);
 }
 
 // const_funcs_only_known reports whether every function-value reference
@@ -776,24 +774,6 @@ function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module): boolea
         i = i + 1;
     }
     return true;
-}
-
-// module_uses_fn_values reports whether any function in the module lowers to a
-// function-value op (const_func / call_indirect). Gates the register backends
-// off such modules (they keep the AST path) while wasm lowers them.
-pub function module_uses_fn_values(mod: parser.Module): boolean {
-    var noret: string[] = [];
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs));
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind == "const_func" || r.ops[i].kind == "call_indirect") { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
 }
 
 // module_has_func reports whether `name` is a function defined in the module.
@@ -1162,6 +1142,32 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             }
             s = s.write("    call __fn_" + asmcore.sanitize_label(o.str) + "\n");
             if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
+            s = s.write("    pushq %rax\n");
+        } else if (o.kind == "const_func") {
+            // A function VALUE is the function's code address — push it. Register
+            // backends need no funcref table (unlike wasm's table index): the
+            // address is the value, dispatched directly by call_indirect.
+            s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %rax\n    pushq %rax\n");
+        } else if (o.kind == "call_indirect") {
+            // Indirect call through a function value: the stack holds
+            // [arg0(deepest) … argN-1, fn_addr(top)]. Pop the target into a
+            // scratch reg, reverse the args so arg0 is on TOP (the stack-arg ABI
+            // the callee reads at +16+i*8(%rbp)), call through the pointer, pop
+            // the args, push the result. Same arg discipline as call_direct.
+            var icargc: i32 = o.i32_imm;
+            s = s.write("    popq %r11\n");
+            var ih: i32 = 0;
+            while (ih < icargc / 2) {
+                var ilo: i32 = ih * 8;
+                var ihi: i32 = (icargc - 1 - ih) * 8;
+                s = s.write("    movq " + util.i32_to_string(ilo) + "(%rsp), %rax\n");
+                s = s.write("    movq " + util.i32_to_string(ihi) + "(%rsp), %rcx\n");
+                s = s.write("    movq %rax, " + util.i32_to_string(ihi) + "(%rsp)\n");
+                s = s.write("    movq %rcx, " + util.i32_to_string(ilo) + "(%rsp)\n");
+                ih = ih + 1;
+            }
+            s = s.write("    call *%r11\n");
+            if (icargc > 0) { s = s.write("    addq $" + util.i32_to_string(icargc * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
         } else if (o.kind == "const_f64") {
             // Float literal: GAS assembles the source text to an IEEE double in
