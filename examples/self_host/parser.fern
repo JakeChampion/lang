@@ -5637,10 +5637,49 @@ function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
     return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
+// enum_default_derivable reports whether an enum has a derivable default: it
+// has at least one variant, and every payload of its FIRST variant is itself
+// default-derivable. Mirrors the Go synthEnumDefault's gate.
+function enum_default_derivable(variants: StructDecl[]): boolean {
+    if (variants.len() == 0) { return false; }
+    var v0: StructDecl = variants[0];
+    var i: i32 = 0;
+    while (i < v0.fields.len()) {
+        if (!dv_default_derivable(v0.fields[i].type_name)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// synth_enum_default: the associated function `function default(): Self {
+// return <FirstVariant>(<dv>, …); }` — an enum defaults to its first variant,
+// each payload defaulted. Receiver-less (empty receiver_name), so it lowers
+// via the associated-function IR path; a unit first variant builds a bare
+// variant value, a payload one a variant construction. Mirrors the Go
+// synthEnumDefault.
+function synth_enum_default(ename: string, variants: StructDecl[]): FuncDecl {
+    var v0: StructDecl = variants[0];
+    var value: Expr = e_ident(v0.name);
+    if (v0.fields.len() > 0) {
+        var args: Expr[] = [];
+        var i: i32 = 0;
+        while (i < v0.fields.len()) {
+            args = args.append(dv_default_expr(v0.fields[i].type_name));
+            i = i + 1;
+        }
+        value = e_call(e_ident(v0.name), args);
+    }
+    var body: Stmt[] = [s_return(value)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "default", receiver_name: "", receiver_type: ename, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_enum_derives appends the derivable enum methods. Display, Eq,
-// Ord, Hash, and Json are supported (Ord uses variant-declaration order
-// then a lexicographic payload compare; Hash seeds with the variant tag;
-// Json is externally tagged).
+// Ord, Hash, Json, and Default are supported (Ord uses variant-declaration
+// order then a lexicographic payload compare; Hash seeds with the variant
+// tag; Json is externally tagged; Default is the first variant defaulted —
+// the only associated/receiver-less one).
 function synth_enum_derives(ename: string, variants: StructDecl[], derives: string[], funcs: FuncDecl[]): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
@@ -5650,6 +5689,7 @@ function synth_enum_derives(ename: string, variants: StructDecl[], derives: stri
         if (kind == "Ord") { funcs = funcs.append(synth_enum_ord(ename, variants)); }
         if (kind == "Hash") { funcs = funcs.append(synth_enum_hash(ename, variants)); }
         if (kind == "Json") { funcs = funcs.append(synth_enum_json(ename, variants)); }
+        if (kind == "Default") { if (enum_default_derivable(variants)) { funcs = funcs.append(synth_enum_default(ename, variants)); } }
         di = di + 1;
     }
     return funcs;
