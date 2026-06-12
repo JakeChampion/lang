@@ -3,12 +3,7 @@ package e2e
 // cryptoVectorsProgram exercises std/crypto against standard SHA-256 and
 // HMAC-SHA256 known-answer vectors (NIST / RFC 2104). It returns 0 on success
 // or a small non-zero code identifying the failed vector. Used by the
-// interp / x86-64 / wasm crypto e2e tests (issue #2681).
-//
-// NOTE: arm64 native is deliberately NOT covered — it hits a pre-existing
-// native-backend freelist corruption bug on the 2nd allocation-heavy call
-// (tracked in #2768); single calls are correct but this multi-vector program
-// is not. interp / x86-64 / wasm all pass.
+// interp / x86-64 / arm64 / wasm crypto e2e tests (issue #2681).
 const cryptoVectorsProgram = `
 import "std/crypto";
 function main(): i32 {
