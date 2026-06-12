@@ -8,7 +8,7 @@ import "std/test";
 // checker's synthesis byte-for-byte (the runner is differential against
 // the interpreter oracle). See docs/TRAITS.md.
 
-@derive(cmp.Eq, cmp.Display, cmp.Ord)
+@derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash)
 struct Point { x: i32, y: i32 }
 
 @derive(cmp.Eq, cmp.Display)
@@ -17,7 +17,7 @@ struct Inner { n: i32 }
 @derive(cmp.Eq, cmp.Display)
 struct Outer { a: Inner, tag: string }
 
-@derive(cmp.Eq, cmp.Display, cmp.Ord)
+@derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash)
 enum Shape { Circle(i32), Square(i32), Empty }
 
 function test_eq_reflexive(): Option[string] {
@@ -119,6 +119,26 @@ function test_enum_ord_across_variants(): Option[string] {
     return test.assert_eq(sign(Empty.cmp(Circle(0))), "gt");
 }
 
+// Hash's contract is the law `a == b ⇒ a.hash() == b.hash()` —
+// equal values hash equal. (Distinguishing distinct values is a
+// distribution property, not a guarantee; the native-backend fixture
+// `testdata/cases/hash_struct_enum` exercises that the mix actually
+// spreads.) These law tests stay deterministic on every backend.
+
+function test_hash_law(): Option[string] {
+    // Eq ⇒ equal hashes: equal-valued points must hash the same.
+    var a: Point = Point { x: 3, y: 7 };
+    var b: Point = Point { x: 3, y: 7 };
+    if (a.hash() == b.hash()) { return None; }
+    return test.fail("equal points should hash equal");
+}
+
+function test_enum_hash_law(): Option[string] {
+    // Same variant + payload hashes equal.
+    if (Circle(5).hash() == Circle(5).hash()) { return None; }
+    return test.fail("same variant + payload should hash equal");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("derive");
     r = r.it("eq reflexive",        test_eq_reflexive());
@@ -136,5 +156,7 @@ function main(): i32 {
     r = r.it("enum eq diff payload", test_enum_eq_diff_payload());
     r = r.it("enum ord within variant",  test_enum_ord_within_variant());
     r = r.it("enum ord across variants", test_enum_ord_across_variants());
+    r = r.it("hash law",                 test_hash_law());
+    r = r.it("enum hash law",            test_enum_hash_law());
     return r.finish();
 }

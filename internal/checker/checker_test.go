@@ -2301,7 +2301,7 @@ func TestDeriveErrors(t *testing.T) {
 		{`trait Foo { function bar(self: Self): i32; }
 @derive(Foo)
 struct S { x: i32 }
-function main(): i32 { return 0; }`, "only Eq, Display, and Ord are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Ord, and Hash are derivable"},
 		// Unknown trait in derive.
 		{`@derive(Nope)
 struct S { x: i32 }
@@ -2327,7 +2327,7 @@ func TestDeriveEnumErrors(t *testing.T) {
 		{`trait Foo { function foo(self: Self): boolean; }
 @derive(Foo)
 enum E { A, B }
-function main(): i32 { return 0; }`, "only Eq, Display, and Ord are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Ord, and Hash are derivable"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -2353,6 +2353,41 @@ function main(): i32 {
 }`
 	if err := checkSource(t, src); err != nil {
 		t.Fatalf("generic-enum @derive should check: %v", err)
+	}
+}
+
+// `@derive(Hash)` synthesises a field/variant-wise `hash(): i32`,
+// composing through each field's own `Hash` impl. A struct, an enum, and
+// a generic struct all derive; a field whose type doesn't implement Hash
+// is a clean error (the derived method's `[T: Hash]` bound, or the
+// missing primitive impl, is unsatisfied). See docs/TRAITS.md.
+func TestDeriveHash(t *testing.T) {
+	const hashTrait = `trait Hash { function hash(self: Self): i32; }
+impl Hash for i32 { function hash(self: Self): i32 { return self; } }
+`
+	ok := []string{
+		// Plain struct.
+		hashTrait + `@derive(Hash) struct P { x: i32, y: i32 }
+function main(): i32 { var p: P = P { x: 1, y: 2 }; return p.hash(); }`,
+		// Enum (tag-seeded, payload-folded).
+		hashTrait + `@derive(Hash) enum E { A, B(i32), C(i32, i32) }
+function main(): i32 { var e: E = C(1, 2); return e.hash(); }`,
+		// Generic struct: parametric `impl[T: Hash] Hash for Box[T]`.
+		hashTrait + `@derive(Hash) struct Box[T] { v: T }
+function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.hash(); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("@derive(Hash) should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	// A field whose type has no Hash impl cannot derive Hash.
+	bad := hashTrait + `struct NoHash { z: i32 }
+@derive(Hash) struct S { n: NoHash }
+function main(): i32 { return 0; }`
+	if err := checkSource(t, bad); err == nil {
+		t.Error("expected an error deriving Hash for a struct with a non-Hash field, got nil")
 	}
 }
 

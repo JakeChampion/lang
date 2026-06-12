@@ -2555,15 +2555,15 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 // `mod__Name`. A no-op for single-file / same-module names. See
 // docs/TRAITS.md (Phase 3).
 // deriveKind classifies a (possibly module-mangled) derived-trait name
-// by its simple name: "Eq", "Display", or "Ord". Returns "" for any
-// other trait — only these three are derivable.
+// by its simple name: "Eq", "Display", "Ord", or "Hash". Returns "" for
+// any other trait — only these four are derivable.
 func deriveKind(name string) string {
 	simple := name
 	if i := strings.LastIndex(simple, "__"); i >= 0 {
 		simple = simple[i+2:]
 	}
 	switch simple {
-	case "Eq", "Display", "Ord":
+	case "Eq", "Display", "Ord", "Hash":
 		return simple
 	}
 	return ""
@@ -2604,7 +2604,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			_ = td
 			kind := deriveKind(dn)
 			if kind == "" {
-				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, and Ord are derivable", demangle(dn))
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, and Hash are derivable", demangle(dn))
 				continue
 			}
 			var method *ast.FuncDecl
@@ -2615,6 +2615,8 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthDisplay(sd, recvType)
 			case "Ord":
 				method = synthOrd(sd, recvType)
+			case "Hash":
+				method = synthHash(sd, recvType)
 			}
 			method.SourceModule = sd.SourceModule
 			bindDeriveTypeParams(method, implTypeParams, dn)
@@ -2650,8 +2652,10 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthEnumDisplay(ed, recvType)
 			case "Ord":
 				method = synthEnumOrd(ed, recvType)
+			case "Hash":
+				method = synthEnumHash(ed, recvType)
 			default:
-				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, and Ord are derivable for enums", demangle(dn))
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Ord, and Hash are derivable for enums", demangle(dn))
 				continue
 			}
 			method.SourceModule = ed.SourceModule
@@ -2961,6 +2965,82 @@ func synthOrd(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 		Params:     []ast.Param{{Name: "other", Type: recv}},
 		ReturnType: ast.NumberType{},
 		Body:       &ast.Block{Stmts: stmts},
+	}
+}
+
+// hashSeed is the field-wise hash combiner's starting value (a small
+// odd prime); hashMul is the per-field multiplier — the textbook
+// `h = h * 31 + field.hash()` fold. Distinct fields/variants of equal
+// content stay distinguished because the multiply rotates earlier
+// contributions into higher bits before each new field is mixed in.
+const (
+	hashSeed = 17
+	hashMul  = 31
+)
+
+// hashFold appends `h = h * 31 + <e>.hash();` to stmts, where `e` is a
+// field/payload accessor expression. The combiner is shared by the
+// struct and enum synthesizers.
+func hashFold(stmts []ast.Stmt, e ast.Expr) []ast.Stmt {
+	return append(stmts, &ast.ExprStmt{Expr: &ast.Assign{
+		Target: &ast.Ident{Name: "__h"},
+		Value: &ast.Binary{
+			Op:    "+",
+			Left:  &ast.Binary{Op: "*", Left: &ast.Ident{Name: "__h"}, Right: &ast.NumberLit{Value: hashMul}},
+			Right: methodCall(e, "hash"),
+		},
+	}})
+}
+
+// synthHash builds a field-wise `hash`: seed an accumulator, fold each
+// field's `.hash()` through `h = h * 31 + f.hash()`, and return it. The
+// seed-only result for a field-less struct is a fine constant hash. Pairs
+// with the derived `Eq` so `a == b ⇒ a.hash() == b.hash()`.
+func synthHash(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	stmts := []ast.Stmt{
+		&ast.Var{Name: "__h", Type: ast.NumberType{}, Init: &ast.NumberLit{Value: hashSeed}},
+	}
+	for _, f := range sd.Fields {
+		stmts = hashFold(stmts, selfField(f.Name))
+	}
+	stmts = append(stmts, &ast.Return{Value: &ast.Ident{Name: "__h"}})
+	return &ast.FuncDecl{
+		Name:       "hash",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.NumberType{},
+		Body:       &ast.Block{Stmts: stmts},
+	}
+}
+
+// synthEnumHash builds a variant-wise `hash`: match self, seed the
+// accumulator with the variant's tag (its declaration index) so distinct
+// variants with identical payloads hash differently, then fold each
+// payload's `.hash()` through the same combiner.
+func synthEnumHash(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for i, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for k := range v.Payloads {
+			bind[k] = fmt.Sprintf("__p%d", k)
+		}
+		// Seed with the tag so payload-less variants (and same-shaped
+		// payloads across variants) stay distinct.
+		stmts := []ast.Stmt{
+			&ast.Var{Name: "__h", Type: ast.NumberType{}, Init: &ast.NumberLit{Value: int64(hashSeed + i)}},
+		}
+		for k := range v.Payloads {
+			stmts = hashFold(stmts, &ast.Ident{Name: bind[k]})
+		}
+		stmts = append(stmts, &ast.Return{Value: &ast.Ident{Name: "__h"}})
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: stmts}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.NumberLit{Value: 0}},
+	}}
+	return &ast.FuncDecl{
+		Name: "hash", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.NumberType{}, Body: body,
 	}
 }
 
