@@ -662,20 +662,36 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // stack: variant box -> i32.load (type_id @0) == struct_type_id(name)
             out = out + "    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
         } else if (o.kind == "tuple_make") {
-            // n elements on the stack (element n-1 on top). Box = [e0@0, e1@4, …]
-            // via $__fern_str_box (rc-headered), n*4 bytes, no type-id slot.
+            // n elements on the stack (element n-1 on top). Box = [e0@0, e1@8, …]
+            // via $__fern_str_box (rc-headered), n*8 bytes (uniform 8-byte slots,
+            // matching the register backends so an i64/f64 element fits), no
+            // type-id slot. Each element stores with the instruction its KIND
+            // (o.str = "k0,k1,…") selects: i64.store / f64.store / i32.store.
             var tn: i32 = o.i32_imm;
-            out = out + "    i32.const " + util.i32_to_string(tn * 4) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    i32.const " + util.i32_to_string(tn * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
             var tem: i32 = tn - 1;
             while (tem >= 0) {
-                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
-                out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                var tk: string = irlower.csv_nth(o.str, tem);
+                if (tk == "i64") {
+                    out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                } else if (tk == "f64") {
+                    out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                } else {
+                    out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                }
                 tem = tem - 1;
             }
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind == "tuple_get") {
-            // stack: tuple box -> i32.load(box + index*4)
-            out = out + "    i32.const " + util.i32_to_string(o.i32_imm * 4) + "\n    i32.add\n    i32.load\n";
+            // stack: tuple box -> load(box + index*8). An 8-byte element (width 64)
+            // reads via i64.load (unsigned) or f64.load; i32 elements i32.load.
+            out = out + "    i32.const " + util.i32_to_string(o.i32_imm * 8) + "\n    i32.add\n";
+            if (o.width == 64 && o.unsigned) { out = out + "    i64.load\n"; }
+            else if (o.width == 64) { out = out + "    f64.load\n"; }
+            else { out = out + "    i32.load\n"; }
         } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {
             // Runtime RC helper: the arg is already on the wasm stack; the
             // helper takes it as a param and returns the ptr / count.
