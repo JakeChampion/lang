@@ -10640,6 +10640,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_uses_arr_slice(mod)) { ir_out = ir_out + arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { ir_out = ir_out + arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + map_helpers(); }
+        // Function-value support (the $fn<N> types, funcref table + elem segment);
+        // empty for non-closure modules so their output is byte-unchanged.
+        ir_out = ir_out + wasm_ir.fn_support_section(mod);
         ir_out = ir_out + wasm_ir.emit_functions(mod);
         ir_out = ir_out + "  (func $_start (call $proc_exit (call $main)))\n";
         ir_out = ir_out + "  (export \"_start\" (func $_start)))\n";

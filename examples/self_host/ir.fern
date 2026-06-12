@@ -102,8 +102,12 @@ pub function op_const_f64(v: f64): Op {
 pub function op_const_str(s: string): Op {
     return Op { kind: "const_str", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
 }
-pub function op_const_func(table_idx: i32): Op {
-    return Op { kind: "const_func", i32_imm: table_idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+// op_const_func pushes a plain (capture-free) function VALUE — a function
+// pointer. `str` carries the function's name; `i32_imm` is a table-index slot
+// the backend fills (wasm resolves the name to its funcref-table index at emit
+// time, so irlower can pass 0 here). The value is consumed by op_call_indirect.
+pub function op_const_func(table_idx: i32, name: string): Op {
+    return Op { kind: "const_func", i32_imm: table_idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 // locals

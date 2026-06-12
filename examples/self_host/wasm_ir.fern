@@ -365,21 +365,99 @@ pub function module_uses_i64_divrem(mod: parser.Module): boolean {
 // wasm_eligible: the whole module is in the IR's i32 + arrays subset (the same
 // backend-independent gate the asm backends use — rejects non-lowerable
 // functions and builtin calls). wasm covers everything that gate admits.
+// wasm_eligible is the WASM eligibility gate. Unlike the register backends'
+// all_eligible, it uses eligible_core directly — so it ALSO admits modules with
+// plain function values (const_func / call_indirect), which this backend lowers
+// through a funcref table (see fn_support_section). The register backends keep
+// bailing on those (all_eligible adds the !module_uses_fn_values restriction).
 pub function wasm_eligible(mod: parser.Module): boolean {
-    return asm_ir.all_eligible(mod);
+    return asm_ir.eligible_core(mod);
 }
 
-// should_use_ir: the use_ir default is on AND the module is eligible — the
+// should_use_ir: the use_ir default is on AND the module is wasm-eligible — the
 // dispatch wasm.emit_module consults to route eligible modules through the IR.
+// Uses wasm_eligible (not all_eligible) so function-value modules lower on wasm.
 pub function should_use_ir(mod: parser.Module): boolean {
-    return asmcore.new_state().use_ir && asm_ir.all_eligible(mod);
+    return asmcore.new_state().use_ir && wasm_eligible(mod);
+}
+
+// fn_value_table collects the module's address-taken functions (the targets of
+// const_func ops) in first-seen, deduped order. The position of a name here is
+// its funcref-table slot index — both the const_func `i32.const <idx>` and the
+// elem segment in fn_support_section index into this list, so they agree.
+pub function fn_value_table(mod: parser.Module): string[] {
+    var noret: string[] = [];
+    var out: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "const_func" && util.index_of_str(out, r.ops[i].str) < 0) {
+                out = out.append(r.ops[i].str);
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// indirect_arities collects the distinct argument counts used by call_indirect
+// ops across the module (deduped), so fn_support_section declares one
+// `$fn<argc>` signature type per arity actually dispatched.
+function indirect_arities(mod: parser.Module): i32[] {
+    var noret: string[] = [];
+    var out: i32[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_indirect" && !slot_in_list(out, r.ops[i].i32_imm)) {
+                out = out.append(r.ops[i].i32_imm);
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// fn_support_section emits the WAT module items that back plain function values:
+// one `(type $fn<N> (func (param i32)×N (result i32)))` per dispatched arity, a
+// `(table <M> funcref)` sized to the address-taken set, and an `(elem (i32.const
+// 0) $f0 $f1 …)` filling it in fn_value_table order. Empty string when the
+// module has no function values, so non-closure modules are byte-unchanged.
+pub function fn_support_section(mod: parser.Module): string {
+    var ft: string[] = fn_value_table(mod);
+    if (ft.len() == 0) { return ""; }
+    var out: string = "";
+    var arities: i32[] = indirect_arities(mod);
+    var ai: i32 = 0;
+    while (ai < arities.len()) {
+        out = out + "  (type $fn" + util.i32_to_string(arities[ai]) + " (func";
+        var pj: i32 = 0;
+        while (pj < arities[ai]) { out = out + " (param i32)"; pj = pj + 1; }
+        out = out + " (result i32)))\n";
+        ai = ai + 1;
+    }
+    out = out + "  (table " + util.i32_to_string(ft.len()) + " funcref)\n";
+    out = out + "  (elem (i32.const 0)";
+    var ei: i32 = 0;
+    while (ei < ft.len()) {
+        out = out + " $" + ft[ei];
+        ei = ei + 1;
+    }
+    out = out + ")\n";
+    return out;
 }
 
 // emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
-function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[]): string {
+function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[]): string {
     var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, str_ret, strarr_ret, opt_ret, i64_ret, tuple_ret, struct_ret, f64_ret, f64arr_ret, i64arr_ret);
     var arrtmp: i32 = r.n_locals;
@@ -716,6 +794,17 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    call " + wasm_helper_symbol(o.str) + "\n";
         } else if (o.kind == "call_direct") {
             out = out + "    call $" + o.str + "\n";
+        } else if (o.kind == "const_func") {
+            // A function VALUE is its slot index in the module's funcref table
+            // (fn_table). The table is built over the address-taken functions in
+            // first-seen order (fn_value_table), so the index here matches the
+            // elem segment fn_support_section emits.
+            out = out + "    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str)) + "\n";
+        } else if (o.kind == "call_indirect") {
+            // Indirect call: args + the table index are already on the stack
+            // (the index pushed last, on top). Dispatch through the per-arity
+            // signature `$fn<argc>` (all-i32 params/result this slice).
+            out = out + "    call_indirect (type $fn" + util.i32_to_string(o.i32_imm) + ")\n";
         } else {
             out = out + "    " + wasm_binop_w(o.kind, o.width) + "\n";
         }
@@ -750,10 +839,11 @@ pub function emit_functions(mod: parser.Module): string {
     var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
     var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
     var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
+    var ft: string[] = fn_value_table(mod);
     var out: string = "";
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, srf, sarf, orf, irf, trf, srtf, frf, farf, iarf);
+        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, srf, sarf, orf, irf, trf, srtf, frf, farf, iarf, ft);
         fi = fi + 1;
     }
     return out;
