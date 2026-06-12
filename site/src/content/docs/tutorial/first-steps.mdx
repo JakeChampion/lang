@@ -9,9 +9,10 @@ import FernPlayground from "../../../components/FernPlayground.astro";
 
 ## Variables
 
-`var` declares a mutable binding; `let` is reserved for pattern-
-binding (covered later). Annotate the type, or let the checker
-infer it from the initialiser.
+`var` declares a mutable binding. Annotate the type, or let the checker
+infer it from the initialiser. (`let` is a separate, refutable
+pattern-binding form — see
+[Language features](../../reference/language-features/#refutable-bindings--let--else).)
 
 <FernPlayground
   code={`function main(): i32 {

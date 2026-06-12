@@ -1,22 +1,45 @@
 ---
 title: Install
-description: Build the Fern toolchain from source.
+description: Get the Fern toolchain — prebuilt binaries or a one-command build from source.
 sidebar:
   order: 1
 ---
 
-Fern is a Go-built compiler. Until prebuilt binaries land, build
-from source — one command.
+There are two ways to get `fern`: download a prebuilt binary, or build
+from source with Go. Both take about a minute.
 
-## Prerequisites
+## Option A — prebuilt binary (fastest)
 
-- **Go 1.24+** ([download](https://go.dev/dl/)). The compiler is a
-  single Go module with no external dependencies.
-- **A C linker** for native targets (`clang` or `gcc`; `cc` is
-  fine). Only needed to produce ELF / Mach-O executables; the WASM
-  target needs no linker.
+Every push to `main` publishes a rolling [**nightly
+release**][nightly] with statically-linked binaries. Grab the one for
+your platform:
 
-## Build the toolchain
+| Platform              | Asset                          |
+| --------------------- | ------------------------------ |
+| Linux x86-64          | `fern-linux-x86_64.tar.gz`     |
+| Linux arm64           | `fern-linux-arm64.tar.gz`      |
+| macOS (Apple Silicon) | `fern-darwin-arm64.tar.gz`     |
+
+```bash
+# Linux x86-64 — swap the asset name for your platform.
+curl -fsSL -o fern.tar.gz \
+  https://github.com/JakeChampion/lang/releases/download/nightly/fern-linux-x86_64.tar.gz
+tar -xzf fern.tar.gz
+install -m755 fern ~/.local/bin/fern    # anywhere on your $PATH
+```
+
+Each asset ships a `*.tar.gz.sha256` alongside it if you want to verify
+the download.
+
+## Option B — build from source
+
+If you have Go, install straight from the module path:
+
+```bash
+go install github.com/jakechampion/lang/cmd/fern@latest
+```
+
+Or clone and build — useful if you also want the companion tools:
 
 ```bash
 git clone https://github.com/JakeChampion/lang
@@ -24,13 +47,20 @@ cd lang
 go build -o ~/.local/bin/fern ./cmd/fern
 ```
 
-`fern` is now on your `PATH`. Verify:
+Building needs **Go 1.24+** ([download](https://go.dev/dl/)). The
+compiler is a single Go module with no external dependencies. Producing
+*native* ELF / Mach-O executables also needs a **C linker** (`clang`,
+`gcc`, or `cc`); the WASM target needs no linker.
+
+## Verify the install
 
 ```bash
 fern -help
 ```
 
 ### Companion binaries
+
+These are only built from a source checkout (`go build ./cmd/...`):
 
 | Binary       | Build command                          | Purpose                          |
 | ------------ | -------------------------------------- | -------------------------------- |
@@ -64,3 +94,5 @@ wasmtime hello.wasm
 ```
 
 [Next: First steps →](../first-steps/)
+
+[nightly]: https://github.com/JakeChampion/lang/releases/tag/nightly
