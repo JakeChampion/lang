@@ -2525,6 +2525,19 @@ function main(): i32 { var o: Opt = Opt.empty(); match (o) { Nothing => { return
 struct P { x: i32 }
 impl Zero for P { function zero(): Self { return P { x: 9 }; } }
 function main(): i32 { return P.zero().x; }`,
+		// Generic associated dispatch: `T.f()` on a bounded type param,
+		// resolved per monomorphisation.
+		`trait Zero { function zero(): Self; }
+struct P { x: i32 }
+impl Zero for P { function zero(): Self { return P { x: 0 }; } }
+function mk[T: Zero](): T { return T.zero(); }
+function main(): i32 { var p: P = mk(); return p.x; }`,
+		// Generic associated dispatch with an argument.
+		`trait From { function of(n: i32): Self; }
+struct Box { v: i32 }
+impl From for Box { function of(n: i32): Self { return Box { v: n }; } }
+function build[T: From](n: i32): T { return T.of(n); }
+function main(): i32 { var b: Box = build(7); return b.v; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {

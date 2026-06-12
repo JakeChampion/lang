@@ -3171,6 +3171,16 @@ func (c *checker) checkOpaqueAccess(sd *ast.StructDecl, pos ast.Position, what s
 	}
 }
 
+// containsString reports whether `xs` contains `s`.
+func containsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveTraitMethodForParam looks up method `field` among the traits
 // bound on type parameter `paramName` in the function currently being
 // checked. Returns the matching trait-method signature and the trait
@@ -6788,6 +6798,33 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
 				if _, shadowed := s.lookup(tid.Name); !shadowed {
+					// Generic associated dispatch: `T.f(args)` where `T` is
+					// a bounded type parameter of the current function whose
+					// trait declares an associated function `f`. Type via
+					// the trait signature (`Self` -> `ParamType(T)`) but
+					// leave the Callee a FieldAccess — `T` is still abstract.
+					// Monomorph substitutes `T` -> the concrete type in the
+					// target Ident and re-check resolves the now-concrete
+					// `Concrete.f()` to `__assoc_<Concrete>_f`. Mirrors the
+					// deferred bounded-*method* path below.
+					if c.current != nil && containsString(c.current.TypeParams, tid.Name) {
+						if tm, _, found := c.resolveTraitMethodForParam(tid.Name, fa.Field); found && tm.Assoc {
+							tp := ast.ParamType{Name: tid.Name}
+							if len(n.Args) != len(tm.Params) {
+								c.errfCode(n.P, "E004", "associated function %q expects %d argument(s), got %d", fa.Field, len(tm.Params), len(n.Args))
+								return ast.SubstSelf(tm.Result, tp)
+							}
+							for i, arg := range n.Args {
+								at := c.checkExpr(arg, s)
+								want := ast.SubstSelf(tm.Params[i].Type, tp)
+								if at != nil && !c.assignable(want, at) {
+									c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
+								}
+							}
+							n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tp}
+							return ast.SubstSelf(tm.Result, tp)
+						}
+					}
 					_, isStruct := c.info.Structs[tid.Name]
 					_, isEnum := c.info.Enums[tid.Name]
 					if isStruct || isEnum {

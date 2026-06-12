@@ -641,6 +641,19 @@ func containsParamType(t ast.Type) bool {
 	return false
 }
 
+// concreteTypeNameOf returns the nominal name of a struct/enum type (the
+// receiver name used to resolve an associated function). Reports false
+// for non-nominal types (a still-parametric arg, a scalar, etc.).
+func concreteTypeNameOf(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name, true
+	case ast.EnumType:
+		return x.Name, true
+	}
+	return "", false
+}
+
 func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 	if e == nil {
 		return
@@ -659,6 +672,25 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 		if len(x.TypeArgs) > 0 {
 			for i := range x.TypeArgs {
 				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
+			}
+		}
+		// Generic associated dispatch `T.f(args)`: the checker stamps the
+		// call with Method.Receiver = ParamType(T) and leaves the callee a
+		// FieldAccess whose target Ident *is* the type-param name (that's
+		// what distinguishes it from a value-receiver `x.m()`, whose target
+		// is a value). Rewrite the target to the concrete type so the
+		// re-check resolves `Concrete.f()` → `__assoc_<Concrete>_f`.
+		if x.Method != nil {
+			if pt, ok := x.Method.Receiver.(ast.ParamType); ok {
+				if fa, ok := x.Callee.(*ast.FieldAccess); ok {
+					if tid, ok := fa.Target.(*ast.Ident); ok && tid.Name == pt.Name {
+						if ct, ok := sub[pt.Name]; ok {
+							if name, ok2 := concreteTypeNameOf(ct); ok2 {
+								fa.Target = &ast.Ident{P: tid.P, Name: name}
+							}
+						}
+					}
+				}
 			}
 		}
 		substituteExpr(x.Callee, sub)
