@@ -230,11 +230,17 @@ pub function op_arr_slice(width: i32): Op { return Op { kind: "arr_slice", i32_i
 // payloadless box with tag 1; `opt_tag` pops [box] → the i32 tag at offset 0
 // (drives Some/None/Ok/Err discrimination in match).
 pub function op_opt_make(tag: i32): Op { return Op { kind: "opt_make", i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// 8-byte (i64 / f64) payload variant: width 64 selects an 8-byte store, and
+// `unsigned` picks i64.store (set) vs f64.store (clear). The wasm box widens its
+// payload slot to 8 bytes (matching the register backends, which already do).
+pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op { return Op { kind: "opt_make", i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
 pub function op_opt_none(): Op { return op0("opt_none"); }
 pub function op_opt_tag(): Op { return op0("opt_tag"); }
 // `opt_payload` pops [box] → the payload at offset 8 (x86/arm64) / 4 (wasm);
 // used to bind a Some/Ok/Err pattern's payload.
 pub function op_opt_payload(): Op { return op0("opt_payload"); }
+// 8-byte payload read: width 64 + the i64 flag select i64.load vs f64.load.
+pub function op_opt_payload_w(width: i32, is_i64: boolean): Op { return Op { kind: "opt_payload", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
 pub function op_map_new(keykind: i32): Op { return Op { kind: "map_new", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 pub function op_map_set(keykind: i32): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 pub function op_map_len(): Op { return op0("map_len"); }

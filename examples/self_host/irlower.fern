@@ -1549,13 +1549,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // [tag@0, payload@8] — type-agnostic, so the payload may be any
                     // 8-byte value.
                     if ((cid.name == "Some" || cid.name == "Ok") && c.args.len() == 1) {
-                        var so: LowerState = lower_expr(c.args[0], s);
+                        var sptag: string = elem_type_tag(c.args[0], s);
+                        var so: LowerState = s;
+                        if (sptag == "i64") { so = lower_i64(c.args[0], so); } else { so = lower_expr(c.args[0], so); }
                         if (!so.ok) { return so; }
+                        if (sptag == "i64") { return so.emit(ir.op_opt_make_w(0, 64, true)); }
+                        if (sptag == "f64") { return so.emit(ir.op_opt_make_w(0, 64, false)); }
                         return so.emit(ir.op_opt_make(0));
                     }
                     if (cid.name == "Err" && c.args.len() == 1) {
-                        var se: LowerState = lower_expr(c.args[0], s);
+                        var eptag: string = elem_type_tag(c.args[0], s);
+                        var se: LowerState = s;
+                        if (eptag == "i64") { se = lower_i64(c.args[0], se); } else { se = lower_expr(c.args[0], se); }
                         if (!se.ok) { return se; }
+                        if (eptag == "i64") { return se.emit(ir.op_opt_make_w(1, 64, true)); }
+                        if (eptag == "f64") { return se.emit(ir.op_opt_make_w(1, 64, false)); }
                         return se.emit(ir.op_opt_make(1));
                     }
                     // No arity cap: the call ABI is fully stack-based on every
@@ -2423,7 +2431,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 }
                                 if (srt == "") { return s.fail(); }
                                 ptag = opt_payload_type(srt, pv.type_name);
-                                if (ptag != "i32" && ptag != "boolean" && ptag != "string") { return s.fail(); }
+                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64") { return s.fail(); }
                             }
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -2439,9 +2447,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 ms = ms.add_local(pv.binding);
                                 var pbslot: i32 = ms.slot_of(pv.binding);
                                 ms = ms.emit(ir.op_load_local(scrut_slot));
-                                ms = ms.emit(ir.op_opt_payload());
+                                // Read the payload at its width (an i64/f64 payload
+                                // uses the matching 8-byte load) and type the bound
+                                // name so later uses route correctly (i64 ->
+                                // lower_i64; f64 -> the float ops).
+                                if (ptag == "i64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
+                                else if (ptag == "f64") { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
+                                else { ms = ms.emit(ir.op_opt_payload()); }
                                 ms = ms.emit(ir.op_store_local(pbslot));
                                 if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
+                                else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
+                                else if (ptag == "f64") { ms = ms.mark_f64(pbslot, true); }
                             }
                             if (arm.has_guard) {
                                 ms = lower_expr(arm.guard, ms);

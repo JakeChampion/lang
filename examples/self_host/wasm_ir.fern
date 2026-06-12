@@ -567,16 +567,29 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_cmp") {
             // stack: a, b -> $__fern_strcmp(a, b) -> signed -/0/+.
             out = out + "    call $__fern_strcmp\n";
+        } else if (o.kind == "opt_make" && o.width == 64) {
+            // 8-byte-payload Option/Result box [tag@0, payload@8], 16 bytes — so an
+            // i64/f64 payload fits. Distinct from the i32 box below (and from the
+            // runtime's map-get box) BY the payload type: the match reads the same
+            // width, so the offsets agree. Store the payload via i64/f64.store.
+            if (o.unsigned) { out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n"; }
+            else { out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n"; }
+            out = out + "    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n";
+            if (o.unsigned) { out = out + "    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n"; }
+            else { out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n"; }
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind == "opt_make") {
-            // Option/Result box [tag@0, payload@4], 8 bytes (wasm 4-byte slots).
-            // Payload on the stack; stash it, alloc, store tag + payload.
+            // i32-payload Option/Result box [tag@0, payload@4], 8 bytes (matches
+            // the runtime's map-get box). Payload on the stack; stash, alloc, store.
             out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
             out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind == "opt_none") {
-            // Payloadless box with tag 1 (None).
+            // Payloadless box with tag 1 (None), 8 bytes (no payload read on None).
             out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n";
@@ -584,8 +597,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "opt_tag") {
             // pop box; tag is the i32 at offset 0.
             out = out + "    i32.load\n";
+        } else if (o.kind == "opt_payload" && o.width == 64) {
+            // 8-byte payload at offset 8: i64.load (unsigned) or f64.load.
+            out = out + "    i32.const 8\n    i32.add\n";
+            if (o.unsigned) { out = out + "    i64.load\n"; }
+            else { out = out + "    f64.load\n"; }
         } else if (o.kind == "opt_payload") {
-            // pop box; payload is at offset 4 (wasm 4-byte slots).
+            // i32 payload at offset 4 (matches opt_make + the runtime map-get box).
             out = out + "    i32.const 4\n    i32.add\n    i32.load\n";
         } else if (o.kind == "map_new") {
             // stack: hint -> fresh map. i32 keys vs string keys.
