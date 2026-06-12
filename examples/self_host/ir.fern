@@ -266,6 +266,11 @@ pub function op_opt_payload_w(width: i32, is_i64: boolean): Op { return Op { kin
 pub function op_map_new(keykind: i32): Op { return Op { kind: "map_new", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 pub function op_map_set(keykind: i32): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 pub function op_map_len(): Op { return op0("map_len"); }
+// `print_int` pops an i32 and writes its decimal text to stdout (no newline),
+// pushing a dummy result (the syscall return) so a statement-level drop balances.
+// Lowers to a call into each backend's __fern_print_int runtime helper — the same
+// helper + symbol the AST path emits, so behaviour is identical.
+pub function op_print_int(): Op { return op0("print_int"); }
 // `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
 // hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
 // built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key

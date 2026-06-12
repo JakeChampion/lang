@@ -6270,7 +6270,7 @@ function print_int64_helper(buf: i32): string {
 // the correct digits even for INT_MIN (0 - INT_MIN = INT_MIN, whose
 // unsigned value is exactly 2147483648). No trailing newline — matching
 // the native print_int.
-function print_int_helper(buf: i32): string {
+pub function print_int_helper(buf: i32): string {
     var b: string = util.i32_to_string(buf);
     var be: string = util.i32_to_string(buf + 16);
     var o: string = "";
@@ -10681,6 +10681,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         mod = lm;
         var ir_out: string = "(module\n";
         ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+        // print_int writes via WASI fd_write — import it only when the module prints.
+        if (wasm_ir.module_emits_op(mod, "print_int")) {
+            ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+        }
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. wasm_ir
         // supplies the distinct values + offsets; the byte encoding reuses this
@@ -10712,6 +10716,13 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_uses_arr_slice(mod)) { ir_out = ir_out + arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { ir_out = ir_out + arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + map_helpers(); }
+        // print_int's $__fern_print_int: the digit buffer sits in the 16-byte
+        // scratch reserved just past the string blocks (the `+16` in
+        // wasm_ir.fl_base_for); the fd_write iovec uses the low-24 scratch (memory
+        // 0/4/8), which the data section starts above (str_offset base 24).
+        if (wasm_ir.module_emits_op(mod, "print_int")) {
+            ir_out = ir_out + print_int_helper(wasm_ir.str_offset(sv, sv.len()));
+        }
         // Function-value support (the $fn<N> types, funcref table + elem segment);
         // empty for non-closure modules so their output is byte-unchanged.
         ir_out = ir_out + wasm_ir.fn_support_section(mod);
