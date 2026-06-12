@@ -1855,3 +1855,31 @@ func TestMapBuildDesugars(t *testing.T) {
 		t.Errorf("b.insert should desugar to an Assign, got %T", es.Expr)
 	}
 }
+
+// TestDefaultParam covers parsing default parameter values
+// (`function f(a: i32, b: i32 = 128)`) and the rule that a required
+// parameter may not follow a defaulted one.
+func TestDefaultParam(t *testing.T) {
+	prog, err := Parse(`function f(a: i32, b: i32 = 128): i32 { return a + b; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	fn := prog.Funcs[0]
+	if len(fn.Params) != 2 {
+		t.Fatalf("want 2 params, got %d", len(fn.Params))
+	}
+	if fn.Params[0].Default != nil {
+		t.Errorf("param a should have no default")
+	}
+	def, ok := fn.Params[1].Default.(*ast.NumberLit)
+	if !ok || def.Value != 128 {
+		t.Errorf("param b default should be NumberLit 128, got %#v", fn.Params[1].Default)
+	}
+}
+
+func TestDefaultParamRequiredAfterOptional(t *testing.T) {
+	_, err := Parse(`function f(a: i32 = 1, b: i32): i32 { return a + b; }`)
+	if err == nil {
+		t.Fatal("expected an error: required param after a defaulted one")
+	}
+}
