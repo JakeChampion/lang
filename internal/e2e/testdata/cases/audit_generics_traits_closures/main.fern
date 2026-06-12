@@ -1,0 +1,62 @@
+import "core/int";
+
+// Audit fixture: generics, traits, and closures/function values on every
+// native backend (interp / x86-64 / arm64 / wasm). Each failing check
+// prints "FAIL <id>" and returns a distinct non-zero code; success "OK".
+//
+// Covers (docs/FEATURE-AUDIT.md §A): generic function + struct + method,
+// trait + impl method dispatch, anonymous-function lambda, closure
+// capture, function values, higher-order functions, and tail-call
+// optimisation (deep self-recursion must not overflow the stack).
+//
+// NOTE: the lambda syntax is `function(x: T): R { ... }` — the arrow
+// `=>` is match-arm-only and is NOT a lambda form (native rejects it).
+
+function id[T](x: T): T { return x; }
+
+struct Box[T] { v: T }
+function (b: Box[i32]) get(): i32 { return b.v; }
+
+trait Doubler { function dbl(self: Self): i32; }
+impl Doubler for i32 { function dbl(self: Self): i32 { return self * 2; } }
+
+function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+
+function named_inc(x: i32): i32 { return x + 1; }
+
+function sum_to(n: i32, acc: i32): i32 {
+    if (n == 0) { return acc; }
+    return sum_to(n - 1, acc + n); // tail call
+}
+
+function main(): i32 {
+    // --- generic function + struct + method ---
+    if (id(42) != 42) { print("FAIL generic-fn"); return 11; }
+    var box: Box[i32] = Box { v: 33 };
+    if (box.v != 33 || box.get() != 33) { print("FAIL generic-struct"); return 12; }
+
+    // --- trait + impl dispatch ---
+    if ((21).dbl() != 42) { print("FAIL trait"); return 13; }
+
+    // --- anonymous-function lambda ---
+    var inc: (i32) => i32 = function(x: i32): i32 { return x + 1; };
+    if (inc(41) != 42) { print("FAIL lambda"); return 14; }
+
+    // --- closure capture ---
+    var n: i32 = 10;
+    var addn: (i32) => i32 = function(x: i32): i32 { return x + n; };
+    if (addn(5) != 15) { print("FAIL closure"); return 15; }
+
+    // --- function value (named fn used as a value) ---
+    var fv: (i32) => i32 = named_inc;
+    if (fv(7) != 8) { print("FAIL fn-value"); return 16; }
+
+    // --- higher-order: pass a closure to a function ---
+    if (apply(inc, 100) != 101) { print("FAIL higher-order"); return 17; }
+
+    // --- tail-call optimisation (no stack overflow at depth 5000) ---
+    if (sum_to(5000, 0) != 12502500) { print("FAIL tco"); return 18; }
+
+    print("OK");
+    return 0;
+}

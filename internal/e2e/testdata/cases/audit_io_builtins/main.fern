@@ -1,0 +1,21 @@
+import "core/int";
+
+// Audit fixture: stdout/stderr built-in functions on every native backend
+// (interp / x86-64 / arm64 / wasm). The expected stdout is exact, so this
+// pins the exact bytes each builtin emits and their ordering.
+//
+// Covers (docs/FEATURE-AUDIT.md §B): write (raw, no newline), putchar
+// (single byte), print (line + trailing newline), eprint (stderr — must
+// NOT appear on stdout), len (string + array).
+
+function main(): i32 {
+    eprint("to-stderr"); // goes to fd 2; must not pollute stdout
+    write("Hi");         // stdout: "Hi" (no newline)
+    putchar(33);         // '!'  -> "Hi!"
+    putchar(10);         // '\n' -> "Hi!\n"
+    if ("abc".len() != 3) { print("FAIL len-str"); return 11; }
+    var arr: i32[] = [1, 2, 3, 4];
+    if (arr.len() != 4) { print("FAIL len-arr"); return 12; }
+    print("done");       // stdout: "done\n"
+    return 0;
+}

@@ -98,10 +98,10 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Bitwise `& \| ^ << >>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | prop generators (LCG) + audit fixture |
 | Unary minus `-x` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Operator precedence / parenthesisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `2+3*4`, left-assoc, parens |
-| Sized int types `i8 i16 i32 i64 u8 u16 u32 u64` | | | | | | ⬜ | incl. `isize`/`usize` |
-| Integer overflow / wrapping semantics | | | | | | ⬜ | see INTEGER-SEMANTICS.md |
-| Float types `f32 f64` arithmetic | | | | | | ⬜ | |
-| Float comparison + NaN semantics | | | | | | ⬜ | see FLOAT-SEMANTICS.md |
+| Sized int types `i8 i16 i32 i64 u8 u16 u32 u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i64 arith, u8/u16 cast; out-of-range literal is a static error |
+| Integer overflow / wrapping semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | runtime narrowing cast wraps mod 2ⁿ |
+| Float types `f32 f64` arithmetic | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+ * /`, f32 + f64 |
+| Float comparison + NaN semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | `< > >=` audited; NaN semantics pending |
 | `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
 | `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `s[i:j]`, `.len()` |
 | String literals + escape sequences | | | | | | ⬜ | |
@@ -129,13 +129,13 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `enum` sum types + payloads | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. unit variants; wasm owned-model RC caveat [#2828](https://github.com/JakeChampion/lang/issues/2828) |
 | `match` (exhaustiveness checked) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | payload binding, comma-separated arms |
 | `match` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| Generic structs/enums (monomorphised) | | | | | | ⬜ | |
-| Generic functions + inference | | | | | | ⬜ | |
-| Traits (`Display`/`Eq`/`Ord`, bounds) | | | | | | ⬜ | core/cmp |
-| Nested functions + closures (capture) | | | | | | ⬜ | |
-| Function values / indirect calls | | | | | | ⬜ | |
-| Lambdas `(x) => expr` | | | | | | ⬜ | confirm syntax |
-| Tail-call optimisation | | | | | | ⬜ | |
+| Generic structs/enums (monomorphised) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `Box[T]` + generic method |
+| Generic functions + inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `id[T](x: T): T`, inferred |
+| Traits (`Display`/`Eq`/`Ord`, bounds) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | trait + impl method dispatch |
+| Nested functions + closures (capture) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `function(x: T): R { … cap … }` |
+| Function values / indirect calls | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | named fn as value; higher-order |
+| Lambdas (anonymous `function(…)`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **arrow `(x) => e` is match-arm-only, NOT a lambda** |
+| Tail-call optimisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | depth 5000 self-recursion, no overflow |
 | Modules / imports (`import "./path";`) | | | | | | ⬜ | |
 | Visibility (`pub`) | | | | | | ⬜ | front-end only |
 | Top-level `const` (folded) | | | | | | ⬜ | |
@@ -145,16 +145,16 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 
 | Function | I | X | A | W | S | Status | Notes |
 |----------|---|---|---|---|---|--------|-------|
-| `print(s)` | | | | | | ⬜ | stdout + newline |
-| `write(s)` | | | | | | ⬜ | stdout raw |
-| `eprint(s)` | | | | | | ⬜ | stderr |
-| `putchar(b)` | | | | | | ⬜ | single byte |
-| `len(x)` | | | | | | ⬜ | string / array |
-| `args(): string[]` | | | | | | ⬜ | |
-| `env(name): Option[string]` | | | | | | ⬜ | |
-| `exit(code)` | | | | | | ⬜ | |
+| `print(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stdout + newline |
+| `write(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stdout raw, no newline |
+| `eprint(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stderr (not on stdout) |
+| `putchar(b)` | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **self-host: undefined `__fn_putchar`, [#2839](https://github.com/JakeChampion/lang/issues/2839)** |
+| `len(x)` / `.len()` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native uses `.len()` method; self-host also has free `len(x)` |
+| `args(): string[]` | | | | | ✅ | ⚠️ | self-host ✓; native arg-passing via CLI e2e tests |
+| `env(name): Option[string]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | unset → `None` |
+| `exit(code)` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | native interp/x86/arm + self-host; wasm proc_exit vs result-line harness |
 | `stdin()/stdout()/stderr()` | | | | | | ⬜ | Reader/Writer |
-| `read_file` / `write_file` | | | | | | ⬜ | |
+| `read_file` / `write_file` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native: BACKEND-PARITY ReadFile/WriteFile tests; self-host: fs tests + probe |
 | `open_reader/open_writer/open_appender` | | | | | | ⬜ | |
 | Reader `.read_line()/.read_chunk(n)/.close()` | | | | | | ⬜ | |
 | Writer `.write(s)/.close()` | | | | | | ⬜ | |
@@ -163,9 +163,9 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `remove_file` / `remove_dir_all` | | | | | | ⬜ | |
 | `temp_dir(prefix)` | | | | | | ⬜ | |
 | `subprocess(...)` | | | | | | ⬜ | |
-| `sleep_ms` | | | | | | ⬜ | |
-| `now_unix_ms` / `now_ns` / `monotonic_ns` | | | | | | ⬜ | |
-| `random_bytes` / `random_i32` | | | | | | ⬜ | |
+| `sleep_ms` | ✅ | 🐛 | 🐛 | 🐛 | ✅ | 🐛 | **native x86-64/arm64/wasm unimplemented, [#2843](https://github.com/JakeChampion/lang/issues/2843)** (interp + self-host ✓) |
+| `now_unix_ms` / `monotonic_ns` | ✅ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | `now_unix_ms` ✅ all; **`monotonic_ns` native x86-64/arm64 unimplemented, [#2843](https://github.com/JakeChampion/lang/issues/2843)** |
+| `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value |
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
 | float math builtins `__sqrt_f64` etc. | | | | | | ⬜ | via std/float |
 | `strbuf_reset/append/take` | | | | | | ⬜ | |
@@ -197,14 +197,14 @@ per-function bugs in the audit log.
 
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
-| `std/i32` (~80 methods) | | | | | | ⬜ | |
+| `std/i32` (~80 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | representative set (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum) — `audit_std_numeric`; self-host via array bundle |
 | `std/i64` | | | | | | ⬜ | |
 | `std/u32` | | | | | | ⬜ | |
 | `std/u64` | | | | | | ⬜ | |
 | `std/float` | | | | | | ⬜ | |
-| `std/string` (~120 methods) | 🔄 | 🔄 | 🔄 | 🔄 | | 🔄 | `prop_string_involution` covers `reverse_bytes`/`to_lower`/`to_upper` laws; rest pending |
-| `std/array` | | | | | | ⬜ | |
-| `std/math` | | | | | | ⬜ | |
+| `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
+| `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
+| `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
 | `std/format` | | | | | | ⬜ | |
 | `std/csv` | | | | | | ⬜ | |
@@ -243,6 +243,110 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-12 — std/string core methods audited (native 4-backend differential)
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_std_string` — `to_upper` / `to_lower` /
+`trim` / `starts_with` / `ends_with` / `contains` / `index_of` / `replace` /
+`repeat` / `pad_start` / `split`, with result strings compared directly. ✅ on
+interp / x86-64 / arm64 / wasm.
+
+**Self-host:** already covered by `internal/e2e/self_host_string_test.go`, which
+bundles the full std/string and exercises the same core methods (index_of /
+trim / upper / lower / contains / starts_with / replace / repeat / split) — so
+no new self-host test was needed. The §D std/string row is promoted from 🔄 to
+✅ for the core set (the full ~120-method surface remains a ⚠️ follow-up).
+
+Author note: `pad_start(n, ch)` takes the fill string as a second argument.
+
+### 2026-06-12 — std library: std/i32 + std/math + std/array reductions audited (no new bugs)
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_std_numeric` — std/i32 scalar methods
+(abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum), std/math (range), and
+std/array reductions (sum/max/min/product/sorted_asc). ✅ on interp / x86-64 /
+arm64 / wasm — a 4-backend differential check that these heavily-used pure
+functions agree everywhere.
+
+**Self-host arm (x86-64 + CI-gated arm64):** new test
+`internal/e2e/self_host_audit_stdarray_test.go` broadens the std/array bundle
+coverage (sum / product / sorted_asc / max) beyond the existing single gcd_all
+case; std/math is already covered by `self_host_math_test.go`. All green.
+
+No new bugs. Author notes: native array `.max()` / `.min()` return `Option[i32]`
+(empty-array-safe); `std/math.i32_max`/`i32_min` are 2-arg scalar helpers while
+the array-reduction `max`/`min` are receiver methods.
+
+### 2026-06-12 — env / clock / randomness builtins audited; native `monotonic_ns` + `sleep_ms` gap found
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_env_time_random` — `env` (unset → `None`),
+`now_unix_ms` (epoch lower-bound), `random_bytes` (length), `random_i32`
+(usable). ✅ on interp / x86-64 / arm64 / wasm.
+
+**Self-host arm (x86-64):** new test
+`internal/e2e/self_host_audit_platform_test.go` — the above plus `monotonic_ns`
+and `sleep_ms`. All 6 pass.
+
+**Finding — `monotonic_ns` + `sleep_ms` unimplemented on native code-gen
+backends ([#2843](https://github.com/JakeChampion/lang/issues/2843)):** both
+type-check and run on the **interpreter** and the **self-hosted** compiler (which
+emits `__fern_monotonic_ns` / `__fern_sleep_ms`), but the native backends emit a
+call to an undefined symbol:
+- `monotonic_ns` — fails native x86-64 + arm64 (`undefined label`); wasm ✓.
+- `sleep_ms` — fails native x86-64 + arm64 + wasm (`unknown callee`).
+`now_unix_ms` is implemented on all native backends (control). The native fixture
+is restricted to the universally-supported builtins; the two gapped ones are
+covered on interp + self-host pending the fix.
+
+### 2026-06-12 — I/O built-in functions audited; self-host `putchar` gap found
+
+**Native arm (all four backends):** new fixture
+`internal/e2e/testdata/cases/audit_io_builtins` — exact-stdout pinning of
+`write` (raw), `putchar` (byte), `print` (line), `eprint` (stderr, must not
+reach stdout), and `.len()` (string + array). ✅ on interp / x86-64 / arm64 /
+wasm.
+
+**Self-host arm (x86-64):** new test
+`internal/e2e/self_host_audit_io_test.go` — checks the compiled program's
+stdout + exit code for `print` / `write` / `eprint` / `len` / `exit`. All pass.
+
+**Finding — `putchar` unsupported on self-host
+([#2839](https://github.com/JakeChampion/lang/issues/2839)):** the self-hosted
+compiler lowers `putchar(b)` to `call __fn_putchar` but never emits that runtime,
+so the program fails to link (both IR and legacy paths). Native inlines it as a
+`write(1, …)` syscall. Held out of the self-host I/O table, referencing #2839.
+
+**Notes:** native exposes `len` only as the `.len()` method (free `len(x)` is an
+undefined identifier); the self-host front-end also accepts free `len(x)` — a
+minor permissiveness difference. `exit(code)` with code > 1 doesn't round-trip
+through the wasm result-line harness (proc_exit terminates before the result
+line), so the §B `exit` wasm cell is ⚠️.
+
+### 2026-06-12 — sized ints / floats / generics / traits / closures audited (no new bugs)
+
+**Native arm (all four backends):** two new fixtures —
+`internal/e2e/testdata/cases/audit_numeric_types` (i64 arithmetic, u8/u16
+cast-wrapping, narrowing cast, f32/f64 arithmetic + comparison) and
+`audit_generics_traits_closures` (generic fn + struct + method, trait + impl
+dispatch, anonymous-function lambda, closure capture, function values,
+higher-order, tail-call at depth 5000). ✅ on interp / x86-64 / arm64 / wasm,
+and both clear the wasm owned-vs-borrow differential gate.
+
+**Self-host arm (x86-64 + CI-gated arm64):** new test
+`internal/e2e/self_host_audit_numgen_test.go` — 17 isolated programs covering
+all of the above. All pass on the self-hosted compiler.
+
+**Notes (no bugs filed):**
+- **Lambda syntax** is the anonymous `function(x: T): R { … }` form. The arrow
+  `(x) => e` is **match-arm-only** — native rejects it as a lambda value with
+  `P001`. The §A "Lambdas" row is corrected accordingly. (The self-host parser
+  accepts the invalid arrow form and then miscompiles it rather than erroring —
+  an error-reporting parity nuance, not a valid-program miscompile.)
+- **Out-of-range integer literal in a cast** (`300 as u8`) is a **static**
+  checker error on native (`literal 300 does not fit in u8`); wrapping is for
+  **runtime** values (`v as u8`). Fixtures use runtime values for wrap tests.
 
 ### 2026-06-12 — strings / arrays / maps audited; Array.with reuse soundness bug found; #2821 fix re-guarded
 
