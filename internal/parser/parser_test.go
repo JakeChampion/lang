@@ -259,6 +259,36 @@ func TestForInRangeDesugars(t *testing.T) {
 	}
 }
 
+// `for i in LOW..=HIGH { body }` is the inclusive (closed-interval)
+// range: same desugar as the half-open form bar the loop condition,
+// which becomes `i <= hi` so HIGH is itself visited.
+func TestForInInclusiveRangeDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		var sum: i32 = 0;
+		for i in 0..=5 {
+			sum = sum + i;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block)
+	if !ok {
+		t.Fatalf("inclusive range-for should desugar to Block, got %T", prog.Funcs[0].Body.Stmts[1])
+	}
+	if len(blk.Stmts) != 2 {
+		t.Fatalf("expected 2 inner stmts (hi-bind / for), got %d", len(blk.Stmts))
+	}
+	loop, ok := blk.Stmts[1].(*ast.For)
+	if !ok {
+		t.Fatalf("second stmt should be a For, got %T", blk.Stmts[1])
+	}
+	if b, ok := loop.Cond.(*ast.Binary); !ok || b.Op != "<=" {
+		t.Errorf("inclusive range loop cond should be `i <= hi`, got %T %v", loop.Cond, loop.Cond)
+	}
+}
+
 // `loop { ... }` desugars to `while (true) { ... }` — a While with a
 // literal-true Cond — so every backend handles it with no new node.
 func TestLoopDesugarsToWhileTrue(t *testing.T) {

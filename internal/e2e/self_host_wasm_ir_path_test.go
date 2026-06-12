@@ -365,6 +365,20 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"range-hi-expr", "function main(): i32 { var n = 4; var s = 0; for i in 1..n + 1 { s = s + i; } return s; }", 10},
 		{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
 		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
+		// Inclusive range-for `for i in LOW..=HIGH` (#2699): the closed
+		// interval [LOW, HIGH] — irlower emits a `le_s` (i <= hi) loop
+		// condition instead of the half-open `lt_s`. HIGH bound once;
+		// a single-point range runs one iteration; reversed runs zero.
+		{"rangei-sum", "function main(): i32 { var s = 0; for i in 0..=5 { s = s + i; } return s; }", 15},
+		{"rangei-count", "function main(): i32 { var c = 0; for i in 0..=10 { c = c + 1; } return c; }", 11},
+		{"rangei-nonzero-low", "function main(): i32 { var s = 0; for i in 3..=7 { s = s + i; } return s; }", 25},
+		{"rangei-single", "function main(): i32 { var c = 0; for i in 5..=5 { c = c + 1; } return c; }", 1},
+		{"rangei-reversed", "function main(): i32 { var c = 9; for i in 9..=3 { c = c + 1; } return c; }", 9},
+		{"rangei-hi-expr", "function main(): i32 { var n = 4; var s = 0; for i in 1..=n + 1 { s = s + i; } return s; }", 15},
+		{"rangei-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..=side() { c = c + 1; } return c; }", 5},
+		{"rangei-nested", "function main(): i32 { var t = 0; for i in 0..=2 { for j in 0..=2 { t = t + 1; } } return t; }", 9},
+		{"rangei-continue", "function main(): i32 { var s = 0; for i in 0..=10 { if (i == 3) { continue; } s = s + i; } return s; }", 52},
+		{"rangei-break", "function main(): i32 { var s = 0; for i in 0..=10 { if (i == 7) { break; } s = s + i; } return s; }", 21},
 		// `loop { }` infinite loop (#2676 loop-form): desugars to while(true)
 		// and rides the existing StmtWhile IR lowering on wasm.
 		{"loop-break", "function main(): i32 { var i = 0; loop { i = i + 1; if (i >= 7) { break; } } return i; }", 7},

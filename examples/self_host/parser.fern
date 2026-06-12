@@ -2021,14 +2021,20 @@ function parse_stmt(p: Par): StmtResult {
         // idiom as `__set_index` / `__set_field`. The checker binds the
         // loop var to i32 and irlower lowers it to a counted loop; the
         // call shape rides through constfold / substitution / printing
-        // for free (LOW, HIGH are ordinary i32 sub-expressions).
-        if (p.peek_punct() == "..") {
-            p = p.advance();   // consume `..`
+        // for free (LOW, HIGH are ordinary i32 sub-expressions). The
+        // inclusive form `LOW..=HIGH` emits `__range_incl(LOW, HIGH)`
+        // instead, which irlower lowers with a `<=` (closed-interval)
+        // condition.
+        var range_punct: string = p.peek_punct();
+        if (range_punct == ".." || range_punct == "..=") {
+            p = p.advance();   // consume `..` or `..=`
             var hi_saved: boolean = p.no_struct;
             var fhi = parse_expr(p.with_no_struct(true));
             p = (fhi.par).with_no_struct(hi_saved);
             var rargs: Expr[] = [fiter.expr, fhi.expr];
-            iter_expr = e_call(e_ident("__range"), rargs);
+            var range_fn: string = "__range";
+            if (range_punct == "..=") { range_fn = "__range_incl"; }
+            iter_expr = e_call(e_ident(range_fn), rargs);
         }
         var fb: BlockResult = parse_block(p);
         p = fb.par;

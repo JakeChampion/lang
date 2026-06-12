@@ -959,14 +959,31 @@ pub function map_binop(op: string): string {
 }
 
 // for_iter_is_range reports whether a for-loop iter is the synthetic
-// `__range(LOW, HIGH)` call the parser emits for `for i in LOW..HIGH`.
-// Mirrors the checker's for_iter_is_range (which binds the loop var to i32).
+// `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
+// for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. Mirrors the checker's
+// for_iter_is_range (which binds the loop var to i32).
 pub function for_iter_is_range(iter: parser.Expr): boolean {
     match (iter) {
         parser.ExprCall(c) => {
             if (c.args.len() != 2) { return false; }
             match (c.callee) {
-                parser.ExprIdent(id) => { return id.name == "__range"; },
+                parser.ExprIdent(id) => { return id.name == "__range" || id.name == "__range_incl"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
+// for_iter_is_range_incl reports whether the for-loop iter is the
+// inclusive `__range_incl(LOW, HIGH)` form (closed interval [LOW, HIGH]),
+// so lower_range_for emits a `<=` rather than `<` loop condition.
+pub function for_iter_is_range_incl(iter: parser.Expr): boolean {
+    match (iter) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 2) { return false; }
+            match (c.callee) {
+                parser.ExprIdent(id) => { return id.name == "__range_incl"; },
                 _ => { return false; }
             }
         },
@@ -1013,7 +1030,9 @@ pub function ascription_rebind(v: parser.StmtVar): parser.Stmt {
 }
 
 // lower_range_for lowers `for i in LOW..HIGH { body }` (iter = the synthetic
-// `__range(LOW, HIGH)` call) to a counted loop over the half-open interval:
+// `__range(LOW, HIGH)` call) to a counted loop over the half-open interval —
+// or the closed interval `[LOW, HIGH]` for the inclusive `__range_incl` form
+// (`for i in LOW..=HIGH`), which only changes the loop condition to `i <= hi`.
 // HIGH is bound once into a hidden local (so `for i in 0..f()` calls f()
 // once), i = LOW, then `while (i < hi) { body; i = i + 1 }`. The caller has
 // already bailed bodies containing break/continue (a `continue` would skip
@@ -1030,6 +1049,10 @@ pub function lower_range_for(var_name: string, iter: parser.Expr, body: parser.S
         },
         _ => {}
     }
+    // Closed interval `[LOW, HIGH]` (`for i in LOW..=HIGH`) exits on `i <= hi`;
+    // the half-open `[LOW, HIGH)` default exits on `i < hi`.
+    var cond_kind: string = "lt_s";
+    if (for_iter_is_range_incl(iter)) { cond_kind = "le_s"; }
     // hidden HIGH bound (evaluated once)
     var hin: string = "$forhi" + util.i32_to_string(s.local_names.len());
     var rs: LowerState = s.add_local(hin);
@@ -1056,10 +1079,10 @@ pub function lower_range_for(var_name: string, iter: parser.Expr, body: parser.S
     rs = rs.emit(ir.op_const_i32(1));
     rs = rs.emit(ir.op_bin("add", 0, false));
     rs = rs.emit(ir.op_store_local(islot));
-    // cond: i < hi ; exit when NOT.
+    // cond: i < hi (or i <= hi for the inclusive form) ; exit when NOT.
     rs = rs.emit(ir.op_load_local(islot));
     rs = rs.emit(ir.op_load_local(hislot));
-    rs = rs.emit(ir.op_bin("lt_s", 0, false));
+    rs = rs.emit(ir.op_bin(cond_kind, 0, false));
     rs = rs.emit(ir.op_bin("not", 0, false));
     rs = rs.emit(ir.op_brif(1));
     rs = lower_block(body, rs);

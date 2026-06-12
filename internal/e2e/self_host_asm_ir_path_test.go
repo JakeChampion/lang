@@ -420,6 +420,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		// uuid_v4: 36 chars, '4' at index 14, '-' at 8, distinct draws.
 		{"uuid-v4", uuidV4Program, 0},
+		// Range-for through the x86-64 self-host IR path (#2699). The legacy
+		// AST x86-64 emitter has no range desugar, so these ride the IR-only
+		// gate. Half-open `..` and inclusive `..=` (closed interval) — the
+		// latter exits on `i <= hi`, so it visits HIGH and runs one more
+		// iteration than the half-open form.
+		{"range-sum", `function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }`, 10},
+		{"rangei-sum", `function main(): i32 { var s = 0; for i in 0..=5 { s = s + i; } return s; }`, 15},
+		{"rangei-single", `function main(): i32 { var c = 0; for i in 5..=5 { c = c + 1; } return c; }`, 1},
+		{"rangei-reversed", `function main(): i32 { var c = 9; for i in 9..=3 { c = c + 1; } return c; }`, 9},
+		{"rangei-continue", `function main(): i32 { var s = 0; for i in 0..=10 { if (i == 3) { continue; } s = s + i; } return s; }`, 52},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
