@@ -2432,6 +2432,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                      && decl_is_struct(se.structs, v.type_name[0 : v.type_name.len() - 2])) {
                 struct_ty = v.type_name[0 : v.type_name.len() - 2];
             }
+            // A struct-array LITERAL without annotation (`var ps = [P { .. }, ..]`):
+            // infer the ELEMENT struct type from the first element, matching the
+            // `var ps: P[]` annotation path above, so `ps[i].field` / `for x in ps`
+            // recover it instead of bailing to the AST fallback (#2793 sibling).
+            else if (struct_ty == "") {
+                match (v.init) {
+                    parser.ExprArray(arrl) => {
+                        if (arrl.elements.len() > 0) {
+                            var est: string = expr_struct_type(arrl.elements[0], se);
+                            if (est != "" && decl_is_struct(se.structs, est)) { struct_ty = est; }
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // string[] tracking (element typing for a[i]); the annotation is
             // authoritative too. The array itself is already is_arr (RC-tracked).
             var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";

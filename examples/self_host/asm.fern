@@ -7334,7 +7334,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    .align 8\n");
         s = s.write("__fern_strbuf_len: .quad 0\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_strbuf_data: .skip 16777216\n");   // 16 MiB
+        s = s.write("__fern_strbuf_data: .skip 67108864\n");   // 64 MiB (was 16 MiB — the self-host self-compile output is ~16.7 MB and was overflowing it)
         s = s.write("    .section .text\n");
         // reset: len = 0
         s = s.write(".globl __fern_strbuf_reset\n");
@@ -7349,6 +7349,17 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq 8(%rdi), %rcx\n");               // src len
         s = s.write("    leaq __fern_strbuf_data(%rip), %rdx\n");
         s = s.write("    addq __fern_strbuf_len(%rip), %rdx\n");// dst = data + len
+        // Bounds check: trap (exit 137, like __fern_alloc) if this append would
+        // run past the 64 MiB buffer, rather than silently corrupting adjacent
+        // .bss and segfaulting later. %rcx = src len here.
+        s = s.write("    movq __fern_strbuf_len(%rip), %rax\n");
+        s = s.write("    addq %rcx, %rax\n");
+        s = s.write("    cmpq $67108864, %rax\n");
+        s = s.write("    jbe .Lsbapp_inbounds\n");
+        s = s.write("    movq $60, %rax\n");
+        s = s.write("    movq $137, %rdi\n");
+        s = s.write("    syscall\n");
+        s = s.write(".Lsbapp_inbounds:\n");
         s = s.write("    cmpq $0, %rcx\n");
         s = s.write("    je .Lsbapp_done\n");
         s = s.write(".Lsbapp_loop:\n");
