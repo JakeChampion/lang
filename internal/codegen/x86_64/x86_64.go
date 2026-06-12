@@ -298,6 +298,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRandomBytes {
 		g.emitRandomBytesRuntime()
 	}
+	if g.usesRandomI32 {
+		g.emitRandomI32Runtime()
+	}
+	if g.usesAsBytes {
+		g.emitStringAsBytesRuntime()
+	}
 	if g.usesReadLine {
 		g.emitReadLineRuntime()
 	}
@@ -407,6 +413,8 @@ type generator struct {
 	usesStrSlice        bool
 	usesSliceMake       bool
 	usesRandomBytes     bool
+	usesRandomI32       bool
+	usesAsBytes         bool
 	usesReadLine        bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
@@ -642,6 +650,12 @@ func (g *generator) recordUse(target string) {
 		g.usesMemcpy = true
 	case "random_bytes":
 		g.usesRandomBytes = true
+		g.usesAlloc = true
+	case "random_i32":
+		g.usesRandomI32 = true
+	case "__method_string_as_bytes":
+		g.usesAsBytes = true
+		g.usesSliceMake = true
 		g.usesAlloc = true
 	case "read_line":
 		g.usesReadLine = true
@@ -1661,6 +1675,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_write_file"
 		case "random_bytes":
 			target = "__fern_random_bytes"
+		case "random_i32":
+			target = "__fern_random_i32"
 		case "read_line":
 			target = "__fern_read_line"
 		case "__method_Reader_read_line":
@@ -4911,6 +4927,87 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_random_bytes, .-__fern_random_bytes")
+}
+
+// emitRandomI32Runtime emits `__fern_random_i32()` — returns a
+// single cryptographic-quality i32 via one `getrandom(buf, 4, 0)`
+// syscall into a 4-byte stack slot, reloaded as a sign-extended
+// i32 in eax. Mirrors the interp's `crypto/rand` 4-byte read and
+// the wasm `random_get` path. Pointer-clean: the buffer lives in
+// the red zone below rsp so no frame setup is needed beyond the
+// syscall.
+func (g *generator) emitRandomI32Runtime() {
+	g.line("")
+	g.line(".globl __fern_random_i32")
+	g.line(".type __fern_random_i32, @function")
+	g.label("__fern_random_i32")
+	// getrandom(buf=rsp-8, n=4, flags=0). The 128-byte red zone
+	// below rsp is ours; getrandom won't write past n=4 bytes.
+	g.emit("lea rdi, [rsp - 8]")
+	g.emit("mov esi, 4")
+	g.emit("xor edx, edx")
+	g.emit(fmt.Sprintf("mov eax, %d", sysGetrandom))
+	g.emit("syscall")
+	g.emit("mov eax, [rsp - 8]") // sign-extends into rax via 32-bit load semantics
+	g.emit("ret")
+	g.line(".size __fern_random_i32, .-__fern_random_i32")
+}
+
+// emitStringAsBytesRuntime emits `__method_string_as_bytes(s)` —
+// builds an 8-byte slice header `(data_ptr, len)` aliasing the
+// receiver string's bytes (the non-copying `.as_bytes()` view).
+// Heap-form strings (LSB tag 0) reuse their data pointer directly;
+// SSO inline strings (LSB tag 1) are first promoted to a fresh
+// heap buffer so the slice header points at real linear memory
+// that outlives the call. Returns the slice header pointer in rax.
+// Mirrors wasm's buildStringAsBytesBody.
+func (g *generator) emitStringAsBytesRuntime() {
+	g.line("")
+	g.line(".globl __method_string_as_bytes")
+	g.line(".type __method_string_as_bytes, @function")
+	g.label("__method_string_as_bytes")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")  // scratch: [rbp-8] inline spill, [rbp-16] len, [rbp-24] data
+	g.emit("push rbx")     // callee-saved scratch (preserve 16-byte alignment via even pushes below)
+	g.emit("push r12")
+	g.emit("mov rbx, rdi") // rbx = string value (inline or heap ptr)
+	id := g.labelCounter
+	g.labelCounter++
+	g.emit("test bl, 1")
+	g.emit(fmt.Sprintf("jnz .Lasbytes_inline_%d", id))
+	// Heap form: data ptr = value, len = [value-4].
+	g.emit("mov r12, rbx")          // data ptr
+	g.emit("mov esi, [rbx - 4]")    // len
+	g.emit(fmt.Sprintf("jmp .Lasbytes_make_%d", id))
+	g.label(fmt.Sprintf(".Lasbytes_inline_%d", id))
+	// Inline form: length in bits 1..3, bytes 1..7 of the value.
+	g.emit("mov rax, rbx")
+	g.emit("shr rax, 1")
+	g.emit("and eax, 7")
+	g.emit("mov [rbp - 16], eax") // stash len
+	// Promote: alloc(len), copy the inline bytes in.
+	g.emit("mov edi, eax")
+	g.emit("call __fern_alloc")
+	g.emit("mov r12, rax")       // r12 = fresh buffer
+	g.emit("mov [rbp - 8], rbx") // spill the 8-byte inline value
+	// Copy len bytes from [rbp-8 + 1] (skip the tag/len byte) to r12.
+	g.emit("mov rdi, r12")
+	g.emit("lea rsi, [rbp - 7]")  // &inline_value + 1
+	g.emit("mov ecx, [rbp - 16]") // count
+	g.emit("cld")
+	g.emit("rep movsb")
+	g.emit("mov esi, [rbp - 16]") // len for the slice header
+	g.label(fmt.Sprintf(".Lasbytes_make_%d", id))
+	// __fern_slice_make(data=r12, len=esi) -> header in rax.
+	g.emit("mov rdi, r12")
+	g.emit("call __fern_slice_make")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __method_string_as_bytes, .-__method_string_as_bytes")
 }
 
 // emitReadLineRuntime emits `__fern_read_line()` — reads

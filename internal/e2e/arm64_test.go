@@ -10607,6 +10607,47 @@ func TestArm64RandomBytes(t *testing.T) {
 	}
 }
 
+// arm64 random_i32() — single CSPRNG i32 via a 4-byte getrandom
+// read. Cross-backend companion to the interp / x86-64 / wasm
+// random_i32 paths (issue #2747). Folds two draws into a live-
+// and-varying signal: exit 7 = good, 0 = stuck-zero, 1 = the two
+// draws matched (non-varying generator).
+func TestArm64RandomI32(t *testing.T) {
+	_, code := compileAndRunArm64(t, `function main(): i32 {
+    var a: i32 = random_i32();
+    var b: i32 = random_i32();
+    if (a == 0) { return 0; }
+    if (a == b) { return 1; }
+    return 7;
+}`)
+	if code != 7 {
+		t.Errorf("random_i32: exit = %d, want 7 (0=stuck-zero, 1=non-varying)", code)
+	}
+}
+
+// arm64 s.as_bytes() — non-copying (data, len) → slice<u8> view.
+// Under the two-word string ABI the receiver arrives as
+// (data, len); the helper builds a slice header aliasing those
+// bytes (issue #2747). Verifies the slice length and that
+// indexing reads back the original bytes for both inline-sized
+// ("ABC") and heap-sized ("ABCDEFGHIJ") source strings.
+func TestArm64StringAsBytes(t *testing.T) {
+	// 3 (len) + 65+66+67 = 201.
+	if _, code := compileAndRunArm64(t, `function main(): i32 {
+    var b = "ABC".as_bytes();
+    return b.len() + (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
+}`); code != 201 {
+		t.Errorf("inline as_bytes: exit = %d, want 201 (3 + 65+66+67)", code)
+	}
+	// 10 (len) + 'J' (74) = 84.
+	if _, code := compileAndRunArm64(t, `function main(): i32 {
+    var b = "ABCDEFGHIJ".as_bytes();
+    return b.len() + (b[9] as i32);
+}`); code != 84 {
+		t.Errorf("heap as_bytes: exit = %d, want 84 (10 + 'J')", code)
+	}
+}
+
 // arm64 eprint + exit. eprint(s) writes to fd 2 (stderr); exit(code)
 // is a direct exit syscall and skips main's normal return path.
 // Combined: write to stderr, then bail with a specific code.

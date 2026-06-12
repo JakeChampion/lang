@@ -1236,6 +1236,48 @@ func TestX86_64RandomBytes(t *testing.T) {
 	}
 }
 
+// random_i32() — single CSPRNG i32 via a 4-byte getrandom(2)
+// read. Cross-backend companion to the interp / arm64 / wasm
+// random_i32 paths (issue #2747). We can't assert a specific
+// value, so the program folds many draws into a "saw a non-zero
+// AND saw two differing draws" signal — exit 7 means the source
+// is live and varying, exit 0/1 flags a stuck generator.
+func TestX86_64RandomI32(t *testing.T) {
+	_, code := compileAndRunX86_64(t, `function main(): i32 {
+    var a: i32 = random_i32();
+    var b: i32 = random_i32();
+    if (a == 0) { return 0; }
+    if (a == b) { return 1; }
+    return 7;
+}`)
+	if code != 7 {
+		t.Errorf("random_i32: exit = %d, want 7 (0=stuck-zero, 1=non-varying)", code)
+	}
+}
+
+// s.as_bytes() — non-copying (data, len) → slice<u8> view.
+// Was `undefined label "__method_string_as_bytes"` on x86-64
+// before #2747. Verifies the slice length matches the source
+// string and that indexing the view reads back the original
+// bytes. Covers both the SSO inline form ("ABC", ≤7 bytes) and
+// the heap form ("ABCDEFGHIJ", >7 bytes).
+func TestX86_64StringAsBytes(t *testing.T) {
+	// Inline string: 'A'+'B'+'C' = 65+66+67 = 198.
+	if _, code := compileAndRunX86_64(t, `function main(): i32 {
+    var b = "ABC".as_bytes();
+    return b.len() + (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
+}`); code != 201 {
+		t.Errorf("inline as_bytes: exit = %d, want 201 (3 + 65+66+67)", code)
+	}
+	// Heap string: len 10 + last byte 'J' (74) = 84.
+	if _, code := compileAndRunX86_64(t, `function main(): i32 {
+    var b = "ABCDEFGHIJ".as_bytes();
+    return b.len() + (b[9] as i32);
+}`); code != 84 {
+		t.Errorf("heap as_bytes: exit = %d, want 84 (10 + 'J')", code)
+	}
+}
+
 // stdin().read_line() — exercises the 4 KiB .bss buffer +
 // byte-by-byte read syscall + Option[string] result. Two
 // runs:

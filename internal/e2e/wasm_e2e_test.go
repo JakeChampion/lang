@@ -5709,6 +5709,23 @@ func TestWASMRandomBytes(t *testing.T) {
 	}
 }
 
+// random_i32() on WASM (preview1) goes through
+// `wasi_snapshot_preview1.random_get` into a 4-byte buffer.
+// Cross-backend companion to the interp / x86-64 / arm64
+// random_i32 paths (issue #2747). Liveness-and-variance only:
+// two draws must differ.
+func TestWASMRandomI32(t *testing.T) {
+	src := `function main(): i32 {
+		var a: i32 = random_i32();
+		var b: i32 = random_i32();
+		if (a == b) { return 1; }
+		return 0;
+	}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("WASM random_i32: exit = %d, want 0 (1 = two draws matched)", got)
+	}
+}
+
 func TestWASMOptionFloatPayload(t *testing.T) {
 	src := `function pick(): Option[f32] { return Some(3.14); }
 		function main(): i32 {

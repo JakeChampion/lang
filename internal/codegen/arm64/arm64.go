@@ -422,6 +422,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRandomBytes {
 		g.emitRandomBytesRuntime()
 	}
+	if g.usesRandomI32 {
+		g.emitRandomI32Runtime()
+	}
+	if g.usesAsBytes {
+		g.emitStringAsBytesRuntime()
+	}
 	if g.usesIoError {
 		g.emitIoErrorRuntime()
 	}
@@ -4165,6 +4171,69 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.line(".ltorg")
 }
 
+// emitRandomI32Runtime emits `__fern_random_i32()` — returns a
+// single cryptographic-quality i32 by reading 4 CSPRNG bytes
+// into a stack slot and reloading them as a (little-endian) i32.
+// Mirrors the interp's `crypto/rand` 4-byte read and the wasm
+// `random_get` path.
+//
+// Linux: getrandom(buf, 4, 0) (syscall 278). Darwin: getentropy(
+// buf, 4) (syscall 500). No `bl` is made, so x30 needn't be
+// saved — we only reserve 16 bytes of stack (kept 16-aligned)
+// for the 4-byte landing buffer.
+func (g *generator) emitRandomI32Runtime() {
+	g.line("")
+	g.line(".global __fern_random_i32")
+	g.typeDirective("__fern_random_i32")
+	g.label("__fern_random_i32")
+	g.emit("sub sp, sp, #16")
+	if g.darwin {
+		// getentropy(buf=sp, len=4), syscall 500.
+		g.emit("mov x0, sp")
+		g.emit("mov x1, #4")
+		g.emit("mov x16, #%d", darGetentropy)
+		g.emit("svc #0x80")
+	} else {
+		// getrandom(buf=sp, len=4, flags=0), syscall 278.
+		g.emit("mov x0, sp")
+		g.emit("mov x1, #4")
+		g.emit("mov x2, #0")
+		g.syscall("getrandom")
+	}
+	g.emit("ldr w0, [sp]") // 4 random bytes → i32
+	g.emit("add sp, sp, #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_random_i32")
+	g.line(".ltorg")
+}
+
+// emitStringAsBytesRuntime emits `__method_string_as_bytes(s)` —
+// the non-copying `.as_bytes()` view: an 8-byte slice header
+// `(data_ptr, len)` aliasing the receiver string's bytes.
+//
+// arm64 always runs the two-word string ABI (arm64.Emit forces
+// `TwoWordOverride`), so the receiver already arrives as
+// (x0=data, x1=len) — exactly __fern_slice_make's argument
+// shape. The header aliases the source bytes (heap or .rodata
+// for literals); no copy is needed. We tail-call slice_make.
+func (g *generator) emitStringAsBytesRuntime() {
+	g.line("")
+	g.line(".global __method_string_as_bytes")
+	g.typeDirective("__method_string_as_bytes")
+	g.label("__method_string_as_bytes")
+	if !ast.UseTwoWordStrings(8) {
+		// Single-word (LSB-tagged SSO) strings would need inline-
+		// promotion here before a slice can alias real memory.
+		// arm64.Emit never selects that ABI; surface it loudly
+		// rather than emit silently-wrong asm (mirrors syscall()).
+		panic("arm64 __method_string_as_bytes: single-word string ABI unsupported")
+	}
+	// (x0=data, x1=len) → __fern_slice_make(data, len) → header.
+	g.emit("b __fern_slice_make")
+	g.sizeDirective("__method_string_as_bytes")
+	g.line(".ltorg")
+}
+
 // emitIoErrorRuntime emits `__fern_io_error(errno, path) → ptr`
 // — constructs an `IoError` enum-box for the given Linux errno.
 // Layout matches the IR: 16-byte box `{tag:i32 @0, _:i32 @4,
@@ -5691,6 +5760,13 @@ type generator struct {
 	// `getentropy(2)` on Darwin. Suitable for session IDs,
 	// tokens, etc.
 	usesRandomBytes bool
+	// usesRandomI32 pulls in `__fern_random_i32()` — a single
+	// CSPRNG i32 via a 4-byte getrandom / getentropy read.
+	usesRandomI32 bool
+	// usesAsBytes pulls in `__method_string_as_bytes(s)` — the
+	// non-copying `(data, len)` → slice<u8> view. Depends on
+	// __fern_slice_make.
+	usesAsBytes bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes `__fern_read_file(path)` /
 	// `__fern_write_file(path, content)`. Both return enum
@@ -6329,8 +6405,9 @@ func (g *generator) slotIsString(idx int32) bool {
 // string counts as 2). __fern_str_inc / __fern_str_dec both take a
 // single (data, len) string → 2 slots.
 var twoWordStrHelperArgSlots = map[string]int{
-	"__fern_str_inc": 2,
-	"__fern_str_dec": 2,
+	"__fern_str_inc":            2,
+	"__fern_str_dec":            2,
+	"__method_string_as_bytes": 2,
 }
 
 // callArgTypes returns the parameter types of an OpCallDirect /
@@ -8160,6 +8237,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// getentropy (syscall 500, max 256 bytes/call).
 			target = "__fern_random_bytes"
 			g.usesRandomBytes = true
+			g.usesAlloc = true
+		case "random_i32":
+			// random_i32(): a single CSPRNG i32. Linux reads 4
+			// bytes via getrandom (syscall 278); Darwin via
+			// getentropy (syscall 500).
+			target = "__fern_random_i32"
+			g.usesRandomI32 = true
+		case "__method_string_as_bytes":
+			// s.as_bytes(): non-copying (data, len) → slice<u8>
+			// header. Under the two-word ABI the receiver already
+			// arrives as (data, len); the helper just builds a
+			// slice header aliasing those bytes.
+			target = "__method_string_as_bytes"
+			g.usesAsBytes = true
+			g.usesSliceMake = true
 			g.usesAlloc = true
 		}
 		// Compute the effective operand-stack slot count for
