@@ -7724,6 +7724,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.errfCode(n.P, "E007", "duplicate field %q in struct literal", f.Name)
 			}
 			seen[f.Name] = true
+			// Propagate the field's element type into a direct array-literal
+			// value so its elements coerce to the field's element type — the
+			// same hint the Var / Return / call-argument positions set. Without
+			// it, `Wrap { items: [Leaf{...}] }` (field type `Node[]`, an enum
+			// array) leaves each inline variant literal unwrapped: it lowers as a
+			// bare struct with no variant tag, and reads back as the wrong
+			// variant. maybeWrapForUnion below only widens a DIRECT variant field
+			// value, not the elements of an array field.
+			c.setElemHintFor(f.Value, expected)
 			vt := c.checkExpr(f.Value, s)
 			if vt == nil {
 				continue
