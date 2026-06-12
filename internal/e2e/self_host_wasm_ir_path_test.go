@@ -366,6 +366,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// and rides the existing StmtWhile IR lowering on wasm.
 		{"loop-break", "function main(): i32 { var i = 0; loop { i = i + 1; if (i >= 7) { break; } } return i; }", 7},
 		{"loop-continue", "function main(): i32 { var i = 0; var s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
+		// Type ascription on the IR path (#2669): `e as T[]` is a zero-cost
+		// annotation lowered as identity (the array operand carries the value).
+		{"asc-arr-nonempty", "function main(): i32 { var a = [3, 4] as i32[]; return a[0] + a[1]; }", 7},
+		{"asc-arr-empty", "function main(): i32 { var a = [] as i32[]; a = [5, 10]; return a[0] + a[1]; }", 15},
+		{"asc-arr-len", "function main(): i32 { var a = [] as i32[]; return a.len(); }", 0},
+		{"asc-str-len", "function main(): i32 { var s = \"hello\" as string; return s.len(); }", 5},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
