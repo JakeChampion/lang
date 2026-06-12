@@ -42,9 +42,9 @@ function main(): i32 {
         // wasi random_get import (issue #2747) — must precede the function
         // section. Emitted when the module uses random_bytes / random_i32.
         if (wasm_ir.module_uses_random(mod)) { o = o + wasm.random_get_import(); }
-        // print_int / print_str write via WASI fd_write — import it only when the
-        // module prints.
-        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str")) {
+        // print_int / print_str / eprint_str / putchar write via WASI fd_write
+        // — import it only when the module writes to stdout or stderr.
+        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar")) {
             o = o + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
         o = o + "  (memory (export \"memory\") 16)\n";

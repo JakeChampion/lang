@@ -3850,6 +3850,22 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    svc #0\n");
         s = s.write("    ret\n");
     }
+    // __fern_putchar: x0 = i32 byte value → write(1, &byte, 1). Materialise the
+    // byte on the stack so the kernel has a real address to read (the byte-level
+    // twin of __fern_print_str). Gated on the putchar need the IR backend marks
+    // (issue #2839); the AST path doesn't mark it, so this is inert there.
+    if (s.has_need("putchar")) {
+        s = s.write("__fern_putchar:\n");
+        s = s.write("    sub sp, sp, #16\n");    // 16-byte slot (sp alignment)
+        s = s.write("    strb w0, [sp]\n");      // store the byte
+        s = s.write("    mov x1, sp\n");         // buf
+        s = s.write("    mov x2, #1\n");         // len
+        s = s.write("    mov x0, #1\n");         // fd = stdout
+        s = s.write("    mov x8, #64\n");        // sys_write
+        s = s.write("    svc #0\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    ret\n");
+    }
     // __fern_str_concat: x0 = box A, x1 = box B → x0 = new box.
     if (s.has_need("str_concat")) {
         s = s.write("__fern_str_concat:\n");
