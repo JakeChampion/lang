@@ -44,7 +44,7 @@ function main(): i32 {
         if (wasm_ir.module_uses_random(mod)) { o = o + wasm.random_get_import(); }
         // print_int / print_str write via WASI fd_write — import it only when the
         // module prints.
-        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str")) {
+        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str")) {
             o = o + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
         o = o + "  (memory (export \"memory\") 16)\n";
@@ -86,6 +86,7 @@ function main(): i32 {
         // the string blocks (the `+16` in fl_base_for); iovec in the low-24 scratch.
         if (wasm_ir.module_emits_op(mod, "print_int")) { o = o + wasm.print_int_helper(wasm_ir.str_offset(sv, sv.len())); }
         if (wasm_ir.module_emits_op(mod, "print_str")) { o = o + wasm.print_str_helper(); }
+        if (wasm_ir.module_emits_op(mod, "eprint_str")) { o = o + wasm.eprint_str_helper(); }
         if (wasm_ir.module_emits_op(mod, "str_bytes")) { o = o + wasm.str_bytes_func(); }
         // Function-value support: the $fn<N> call_indirect signature types, the
         // funcref table, and its elem segment (empty for non-closure modules).

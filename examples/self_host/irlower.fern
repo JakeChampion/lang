@@ -2066,6 +2066,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (cid.name == "read_int" && c.args.len() == 0) {
                         return s.emit(ir.op_read_int());
                     }
+                    // Built-in `eprint(s)` — write a string's bytes to stderr (fd 2,
+                    // no newline). `eprint_int(n)` is its int companion: i32_to_string
+                    // then eprint_str (no third helper). Both lower to op_eprint_str.
+                    if (cid.name == "eprint" && c.args.len() == 1) {
+                        var eps: LowerState = lower_expr(c.args[0], s);
+                        if (!eps.ok) { return eps; }
+                        return eps.emit(ir.op_eprint_str());
+                    }
+                    if (cid.name == "eprint_int" && c.args.len() == 1) {
+                        var eis: LowerState = lower_expr(c.args[0], s);
+                        if (!eis.ok) { return eis; }
+                        eis = eis.emit(ir.op_call_direct("__fern_i32_to_string", 1));
+                        return eis.emit(ir.op_eprint_str());
+                    }
                     // Built-in `len(x)` — the free-function spelling of `.len()`:
                     // a string reads the box's length field (str_len), an array
                     // the header (arr_len). Mirrors the `.len()` method dispatch

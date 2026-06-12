@@ -303,6 +303,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // __fern_read_int, reused via the read_int need). Push x0 (the value).
             s = s.need("read_int");
             s = s.write("    bl __fern_read_int\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "eprint_str") {
+            // [strbox] -> write its bytes to stderr (asm_arm64.emit_runtime's
+            // __fern_eprint_str, reused via the eprint need). Push x0 for the drop.
+            s = s.need("eprint");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_eprint_str\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "map_set") {
             // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind).
             s = s.need("maps");
