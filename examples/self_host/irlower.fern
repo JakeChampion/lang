@@ -703,6 +703,19 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             match (c.callee) {
                 parser.ExprIdent(id) => { return s.struct_ret_type(id.name); },
                 parser.ExprFieldAccess(fa) => {
+                    // Associated-function call `Type.make()` — the object is a
+                    // bare DECLARED-STRUCT name (not a local slot), so key the
+                    // return type by "<Type>.<method>" directly. This lets
+                    // `Type.make(..).x` and an inferred `var p = Type.make(..)`
+                    // recover the constructed struct type.
+                    match (fa.obj) {
+                        parser.ExprIdent(tid) => {
+                            if (decl_is_struct(s.structs, tid.name) && s.slot_of(tid.name) < 0) {
+                                return s.struct_ret_type(tid.name + "." + fa.field);
+                            }
+                        },
+                        _ => {}
+                    }
                     // Method call `obj.make()` → key by "<Type>.<method>".
                     var rty: string = expr_struct_type(fa.obj, s);
                     if (rty == "") { return ""; }
@@ -2089,6 +2102,32 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!t2s.ok) { return t2s; }
                             return t2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                         }
+                    }
+                    // Associated-function call `Type.f(args)` — a receiver-less
+                    // impl method (e.g. a constructor `Point.make(x, y)`). The
+                    // callee object is a bare DECLARED-STRUCT name that is NOT a
+                    // local slot (a same-named local would be a value receiver,
+                    // handled by the struct-method path below). Lower the args
+                    // with NO receiver and dispatch to the "<Type>.<f>" label
+                    // (the associated FuncDecl is keyed there by module_has_func).
+                    // decl_is_struct — not is_enum_like_name — is used on purpose:
+                    // is_enum_like_name also matches MODULE names (util/parser),
+                    // which would hijack every `mod.func()` call.
+                    match (fa.obj) {
+                        parser.ExprIdent(tid) => {
+                            if (decl_is_struct(s.structs, tid.name) && s.slot_of(tid.name) < 0) {
+                                var asf: LowerState = s;
+                                var afi: i32 = 0;
+                                while (afi < c.args.len()) {
+                                    if (asf.param_is_i64(tid.name + "." + fa.field, afi)) { asf = lower_i64(c.args[afi], asf); }
+                                    else { asf = lower_expr(c.args[afi], asf); }
+                                    if (!asf.ok) { return asf; }
+                                    afi = afi + 1;
+                                }
+                                return asf.emit(ir.op_call_direct(tid.name + "." + fa.field, c.args.len()));
+                            }
+                        },
+                        _ => {}
                     }
                     // Struct method call `p.method(args)` — static dispatch on the
                     // receiver's tracked struct type to `call_direct("<Type>.<m>")`
