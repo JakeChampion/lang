@@ -2369,7 +2369,7 @@ func TestDeriveErrors(t *testing.T) {
 		{`trait Foo { function bar(self: Self): i32; }
 @derive(Foo)
 struct S { x: i32 }
-function main(): i32 { return 0; }`, "only Eq, Display, Ord, Hash, and Json are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Ord, Hash, Json, and Default are derivable"},
 		// Unknown trait in derive.
 		{`@derive(Nope)
 struct S { x: i32 }
@@ -2395,7 +2395,7 @@ func TestDeriveEnumErrors(t *testing.T) {
 		{`trait Foo { function foo(self: Self): boolean; }
 @derive(Foo)
 enum E { A, B }
-function main(): i32 { return 0; }`, "only Eq, Display, Ord, Hash, and Json are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Ord, Hash, Json, and Default are derivable"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -2456,6 +2456,60 @@ function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.hash(); }`,
 function main(): i32 { return 0; }`
 	if err := checkSource(t, bad); err == nil {
 		t.Error("expected an error deriving Hash for a struct with a non-Hash field, got nil")
+	}
+}
+
+// `@derive(Default)` synthesises a `default()` associated function that
+// builds a type's zero value, called as `Type.default()`. Scalars use
+// their zero literal; nominal fields delegate to their own `default()`
+// (composition); a generic field uses the bound `T.default()`; an enum
+// defaults to its first variant. A field type with no default is a clean
+// error. See docs/TRAITS.md.
+func TestDeriveDefault(t *testing.T) {
+	const defTrait = `trait Default { function default(): Self; }
+`
+	ok := []string{
+		// Plain struct of scalars.
+		defTrait + `@derive(Default) struct P { x: i32, y: string, f: boolean }
+function main(): i32 { var p: P = P.default(); return p.x + p.y.len(); }`,
+		// Composition: a nominal field delegates to its own default().
+		defTrait + `@derive(Default) struct Inner { n: i32 }
+@derive(Default) struct Outer { i: Inner, k: i32 }
+function main(): i32 { var o: Outer = Outer.default(); return o.i.n + o.k; }`,
+		// Enum defaults to its first variant.
+		defTrait + `@derive(Default) enum E { A, B(i32) }
+function main(): i32 { var e: E = E.default(); match (e) { A => { return 0; }, B(n) => { return n; } } }`,
+		// Enum whose first variant carries payloads (each defaulted).
+		defTrait + `@derive(Default) enum E { First(i32, i32), Second }
+function main(): i32 { var e: E = E.default(); match (e) { First(a, b) => { return a + b; }, Second => { return 9; } } }`,
+		// Generic struct: parametric `impl[T: Default] Default for Box[T]`.
+		defTrait + `@derive(Default) struct Inner { n: i32 }
+@derive(Default) struct Box[T] { v: T }
+function main(): i32 { var b: Box[Inner] = Box.default(); return b.v.n; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("@derive(Default) should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	bad := []struct{ src, want string }{
+		// A field whose type has no derivable default (array).
+		{defTrait + `@derive(Default) struct S { xs: i32[] }
+function main(): i32 { return 0; }`, "no default"},
+		// An enum whose first variant has a non-defaultable payload.
+		{defTrait + `@derive(Default) enum E { A([i32]), B }
+function main(): i32 { return 0; }`, "no default"},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected error containing %q, got nil\nsrc: %s", c.want, c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
 	}
 }
 
