@@ -2614,7 +2614,7 @@ function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
                 var rec: parser.Stmt[] = switch_diag_block(one);
-                out = out.append(parser.StmtDefer { action: rec[0] });
+                out = out.append(parser.StmtDefer { action: rec[0], on_error: d.on_error });
             },
             _ => { out = out.append(st); }
         }

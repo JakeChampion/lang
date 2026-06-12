@@ -434,6 +434,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"opt-some-payload-add", "function mk(): Option[i32] { return Some(40); } function main(): i32 { match (mk()) { Some(v) => { return v + 2; }, None => { return 0; } } return 1; }", 42, ""},
 		{"result-ok", "function run(): Result[i32, i32] { return Ok(40); } function main(): i32 { match (run()) { Ok(v) => { return v + 2; }, Err(e) => { return e; } } return 1; }", 42, ""},
 		{"result-err", "function run(): Result[i32, i32] { return Err(13); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e; } } return 1; }", 13, ""},
+		// errdefer (parse-time desugar, shared by every backend): cleanup runs
+		// only on a `return None`/`Err`, observed via a 1-element i32[] cell.
+		{"errdefer-err-fires", "function f(out: i32[], x: i32): Result[i32, i32] { errdefer out[0] = 9; if (x < 0) { return Err(1); } return Ok(x); } function main(): i32 { var a: i32[] = [0]; match (f(a, -1)) { Ok(v) => {}, Err(e) => {} } return a[0]; }", 9, ""},
+		{"errdefer-ok-no-fire", "function f(out: i32[], x: i32): Result[i32, i32] { errdefer out[0] = 9; if (x < 0) { return Err(1); } return Ok(x); } function main(): i32 { var a: i32[] = [0]; match (f(a, 5)) { Ok(v) => {}, Err(e) => {} } return a[0]; }", 0, ""},
 		{"opt-wildcard", "function mk(): Option[i32] { return None; } function main(): i32 { match (mk()) { Some(v) => { return v; }, _ => { return 99; } } return 1; }", 99, ""},
 		// Match-arm guards (`Pat when <expr> =>`): a true guard runs the arm; a
 		// false guard falls through to the next arm (the guard reads the binding).

@@ -169,7 +169,11 @@ pub struct StmtUnknown { kind: string }
 // parser and the lower_defers pass (module_with_builtins) — that pass
 // eliminates every StmtDefer before any backend emits, so the emitters
 // never lower one at runtime (their arms are there for exhaustiveness).
-pub struct StmtDefer { action: Stmt }
+//
+// `on_error` is 1 for an `errdefer` — cleanup that runs only on an error
+// exit (a `return` of a None/Err value), not on success or falloff. 0 for
+// a plain `defer`. lower_defers schedules the two kinds at the right exits.
+pub struct StmtDefer { action: Stmt, on_error: i32 }
 
 // StmtSwitch models `switch (scrut) { case v0, v1: …  default: … }`. Like
 // StmtDefer it is a TRANSIENT node: the parser builds it (instead of
@@ -599,7 +603,8 @@ function p_variant(type_name: string, binding: string): Pattern {
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
-function s_defer(action: Stmt): Stmt { return StmtDefer { action: action }; }
+function s_defer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 0 }; }
+function s_errdefer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 1 }; }
 
 // desugar_switch lowers a StmtSwitch to the nested if/else-if chain the
 // backends consume — each `case v0, v1: body` becomes
@@ -667,7 +672,7 @@ pub function desugar_switch_in_stmt(st: Stmt): Stmt {
             }
             return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
-        StmtDefer(d) => { return StmtDefer { action: desugar_switch_in_stmt(d.action) }; },
+        StmtDefer(d) => { return StmtDefer { action: desugar_switch_in_stmt(d.action), on_error: d.on_error }; },
         _ => { return st; }
     }
     return st;
@@ -1866,6 +1871,13 @@ function parse_stmt(p: Par): StmtResult {
         p = p.advance();  // consume `defer`
         var da: StmtResult = parse_stmt(p);
         return StmtResult { par: da.par, stmt: s_defer(da.stmt) };
+    }
+    if (kw == "errdefer") {
+        // `errdefer ACTION;` — like `defer`, but lower_defers schedules it
+        // only on an error exit (a `return` of a None/Err value).
+        p = p.advance();  // consume `errdefer`
+        var ea: StmtResult = parse_stmt(p);
+        return StmtResult { par: ea.par, stmt: s_errdefer(ea.stmt) };
     }
     if (kw == "function") {
         // Local (nested) function declaration: desugar to a closure-valued
@@ -4092,90 +4104,121 @@ function dl_itoa(n: i32): string {
     return s;
 }
 
-struct DeferAcc { stmts: Stmt[], actions: Stmt[] }
+struct DeferAcc { stmts: Stmt[], actions: Stmt[], flags: i32[] }
 
 // dl_collect_stmt(s) rebuild the body with each `defer ACTION` replaced by
-// `__dfa<i> = 1`, accumulating the actions (index = position in the list).
-// Recurses through nested blocks so a conditional defer gets its flag set
-// only when its branch runs.
-function dl_collect_stmts(stmts: Stmt[], actions: Stmt[]): DeferAcc {
+// `__dfa<i> = 1`, accumulating the actions (index = position in the list)
+// and a parallel `flags` list (0 = plain defer, 1 = errdefer). Recurses
+// through nested blocks so a conditional defer gets its flag set only when
+// its branch runs.
+function dl_collect_stmts(stmts: Stmt[], actions: Stmt[], flags: i32[]): DeferAcc {
     var out: Stmt[] = [];
     var acc: Stmt[] = actions;
+    var afl: i32[] = flags;
     var i: i32 = 0;
     while (i < stmts.len()) {
-        var r: DeferAcc = dl_collect_stmt(stmts[i], acc);
+        var r: DeferAcc = dl_collect_stmt(stmts[i], acc, afl);
         var j: i32 = 0;
         while (j < r.stmts.len()) { out = out.append(r.stmts[j]); j = j + 1; }
         acc = r.actions;
+        afl = r.flags;
         i = i + 1;
     }
-    return DeferAcc { stmts: out, actions: acc };
+    return DeferAcc { stmts: out, actions: acc, flags: afl };
 }
 
-function dl_collect_stmt(st: Stmt, actions: Stmt[]): DeferAcc {
+function dl_collect_stmt(st: Stmt, actions: Stmt[], flags: i32[]): DeferAcc {
     match (st) {
         StmtDefer(d) => {
             var setflag: Stmt = s_assign("__dfa" + dl_itoa(actions.len()), e_number("1", "", false));
             var one: Stmt[] = [setflag];
-            return DeferAcc { stmts: one, actions: actions.append(d.action) };
+            return DeferAcc { stmts: one, actions: actions.append(d.action), flags: flags.append(d.on_error) };
         },
         StmtIf(f) => {
-            var tr: DeferAcc = dl_collect_stmts(f.then_body, actions);
-            var er: DeferAcc = dl_collect_stmts(f.else_body, tr.actions);
+            var tr: DeferAcc = dl_collect_stmts(f.then_body, actions, flags);
+            var er: DeferAcc = dl_collect_stmts(f.else_body, tr.actions, tr.flags);
             var one: Stmt[] = [s_if(f.cond, tr.stmts, er.stmts)];
-            return DeferAcc { stmts: one, actions: er.actions };
+            return DeferAcc { stmts: one, actions: er.actions, flags: er.flags };
         },
         StmtWhile(w) => {
-            var br: DeferAcc = dl_collect_stmts(w.body, actions);
+            var br: DeferAcc = dl_collect_stmts(w.body, actions, flags);
             var one: Stmt[] = [s_while(w.cond, br.stmts)];
-            return DeferAcc { stmts: one, actions: br.actions };
+            return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
         },
         StmtFor(fr) => {
-            var br: DeferAcc = dl_collect_stmts(fr.body, actions);
+            var br: DeferAcc = dl_collect_stmts(fr.body, actions, flags);
             var one: Stmt[] = [s_for(fr.var_name, fr.iter, br.stmts)];
-            return DeferAcc { stmts: one, actions: br.actions };
+            return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var acc: Stmt[] = actions;
+            var afl: i32[] = flags;
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc);
+                var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc, afl);
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 acc = ar.actions;
+                afl = ar.flags;
                 i = i + 1;
             }
             var one: Stmt[] = [s_match(m.scrutinee, arms)];
-            return DeferAcc { stmts: one, actions: acc };
+            return DeferAcc { stmts: one, actions: acc, flags: afl };
         },
         _ => {
             var one: Stmt[] = [st];
-            return DeferAcc { stmts: one, actions: actions };
+            return DeferAcc { stmts: one, actions: actions, flags: flags };
         }
     }
 }
 
-// dl_cleanup builds the LIFO cleanup: for i = n-1 .. 0, `if (__dfa<i>) { action_i }`.
-function dl_cleanup(actions: Stmt[]): Stmt[] {
+// dl_cleanup_kind builds the LIFO cleanup for one kind: for i = n-1 .. 0,
+// `if (__dfa<i>) { action_i }`, restricted to actions whose on_error flag
+// equals `want` (0 = plain defer, 1 = errdefer). With every flag 0 (no
+// errdefer) `want = 0` reproduces the original all-actions cleanup, so a
+// defer-only function lowers byte-identically.
+function dl_cleanup_kind(actions: Stmt[], flags: i32[], want: i32): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = actions.len() - 1;
     while (i >= 0) {
-        var body1: Stmt[] = [actions[i]];
-        var noelse: Stmt[] = [];
-        out = out.append(s_if(e_ident("__dfa" + dl_itoa(i)), body1, noelse));
+        if (flags[i] == want) {
+            var body1: Stmt[] = [actions[i]];
+            var noelse: Stmt[] = [];
+            out = out.append(s_if(e_ident("__dfa" + dl_itoa(i)), body1, noelse));
+        }
         i = i - 1;
     }
     return out;
 }
 
+// dl_is_err_value reports whether a return value is statically a None/Err —
+// the failure variant — so an `errdefer` should fire on this return. `None`
+// is a bare ident; `Err(x)` is a call to the `Err` constructor. (`?`
+// propagation is not visible to this parse-time pass — same scope as the
+// self-host's plain `defer`, which also only fires on explicit returns.)
+function dl_is_err_value(e: Expr): boolean {
+    match (e) {
+        ExprIdent(id) => { return id.name == "None"; },
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprIdent(cid) => { return cid.name == "Err"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
 // dl_expand_returns replaces each `return E` with
-// `__defret = E; <cleanup>; return __defret;` (the value is captured before
-// the deferred actions run). A bare/void return just runs cleanup first.
-function dl_expand_returns(stmts: Stmt[], cleanup: Stmt[]): Stmt[] {
+// `__defret = E; <cleanup_all>; [<cleanup_err> if E is None/Err]; return __defret;`
+// (the value is captured before the deferred actions run). cleanup_all (plain
+// defers) runs on every return; cleanup_err (errdefers) runs only when the
+// returned value is a None/Err. A bare/void return runs cleanup_all only.
+function dl_expand_returns(stmts: Stmt[], cleanup_all: Stmt[], cleanup_err: Stmt[]): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
-        var ex: Stmt[] = dl_expand_return_stmt(stmts[i], cleanup);
+        var ex: Stmt[] = dl_expand_return_stmt(stmts[i], cleanup_all, cleanup_err);
         var j: i32 = 0;
         while (j < ex.len()) { out = out.append(ex[j]); j = j + 1; }
         i = i + 1;
@@ -4183,7 +4226,7 @@ function dl_expand_returns(stmts: Stmt[], cleanup: Stmt[]): Stmt[] {
     return out;
 }
 
-function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
+function dl_expand_return_stmt(st: Stmt, cleanup_all: Stmt[], cleanup_err: Stmt[]): Stmt[] {
     match (st) {
         StmtReturn(r) => {
             var isvoid: boolean = false;
@@ -4194,28 +4237,32 @@ function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
             var out: Stmt[] = [];
             if (!isvoid) { out = out.append(s_assign("__defret", r.value)); }
             var i: i32 = 0;
-            while (i < cleanup.len()) { out = out.append(cleanup[i]); i = i + 1; }
+            while (i < cleanup_all.len()) { out = out.append(cleanup_all[i]); i = i + 1; }
+            if (!isvoid && dl_is_err_value(r.value)) {
+                var k: i32 = 0;
+                while (k < cleanup_err.len()) { out = out.append(cleanup_err[k]); k = k + 1; }
+            }
             if (isvoid) { out = out.append(s_return(r.value)); }
             else { out = out.append(s_return(e_ident("__defret"))); }
             return out;
         },
         StmtIf(f) => {
-            var one: Stmt[] = [s_if(f.cond, dl_expand_returns(f.then_body, cleanup), dl_expand_returns(f.else_body, cleanup))];
+            var one: Stmt[] = [s_if(f.cond, dl_expand_returns(f.then_body, cleanup_all, cleanup_err), dl_expand_returns(f.else_body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtWhile(w) => {
-            var one: Stmt[] = [s_while(w.cond, dl_expand_returns(w.body, cleanup))];
+            var one: Stmt[] = [s_while(w.cond, dl_expand_returns(w.body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtFor(fr) => {
-            var one: Stmt[] = [s_for(fr.var_name, fr.iter, dl_expand_returns(fr.body, cleanup))];
+            var one: Stmt[] = [s_for(fr.var_name, fr.iter, dl_expand_returns(fr.body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
             var one: Stmt[] = [s_match(m.scrutinee, arms)];
@@ -4588,10 +4635,15 @@ pub function hoist_local_funcs_module(mod: Module): Module {
 
 function lower_defers_func(fn: FuncDecl): FuncDecl {
     var empty: Stmt[] = [];
-    var cr: DeferAcc = dl_collect_stmts(fn.body, empty);
+    var emptyf: i32[] = [];
+    var cr: DeferAcc = dl_collect_stmts(fn.body, empty, emptyf);
     if (cr.actions.len() == 0) { return fn; }
-    var cleanup: Stmt[] = dl_cleanup(cr.actions);
-    var expanded: Stmt[] = dl_expand_returns(cr.stmts, cleanup);
+    // cleanup_all = plain defers (every return + falloff); cleanup_err =
+    // errdefers (only on a None/Err return). For a defer-only function
+    // cleanup_err is empty and this is byte-identical to the old lowering.
+    var cleanup: Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 0);
+    var cleanup_err: Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 1);
+    var expanded: Stmt[] = dl_expand_returns(cr.stmts, cleanup, cleanup_err);
     var body: Stmt[] = [];
     // Shared return temp + per-defer flags, all i32, initialised to 0.
     body = body.append(s_var("__defret", "", e_number("0", "", false)));
@@ -4915,7 +4967,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
         },
         StmtDefer(d) => {
             var r: Stmt[] = desugar_ranges_one(d.action);
-            if (r.len() == 1) { return [StmtDefer { action: r[0] }]; }
+            if (r.len() == 1) { return [StmtDefer { action: r[0], on_error: d.on_error }]; }
             return [st];
         },
         _ => { return [st]; }

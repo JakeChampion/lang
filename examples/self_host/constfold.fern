@@ -228,7 +228,7 @@ function fold_unary(op: string, operand: parser.Expr): parser.Expr {
 function fold_stmt(st: parser.Stmt): parser.Stmt {
     match (st) {
         parser.StmtSwitch(_) => { return fold_stmt(parser.desugar_switch_in_stmt(st)); },
-        parser.StmtDefer(d) => { return parser.StmtDefer { action: fold_stmt(d.action) }; },
+        parser.StmtDefer(d) => { return parser.StmtDefer { action: fold_stmt(d.action), on_error: d.on_error }; },
         parser.StmtVar(v) => { return parser.StmtVar { name: v.name, type_name: v.type_name, init: fold_expr(v.init), line: v.line, col: v.col }; },
         parser.StmtReturn(r) => { return parser.StmtReturn { value: fold_expr(r.value), line: r.line, col: r.col }; },
         parser.StmtExpr(x) => { return parser.StmtExpr { value: fold_expr(x.value) }; },

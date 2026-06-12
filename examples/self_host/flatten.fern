@@ -312,7 +312,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
         // Rewrite the deferred action's cross-module references before
         // lower_defers (module_with_builtins) schedules it at the exits.
         parser.StmtDefer(d) => {
-            return parser.StmtDefer { action: rewrite_stmt(d.action, ctx) };
+            return parser.StmtDefer { action: rewrite_stmt(d.action, ctx), on_error: d.on_error };
         },
         _ => { return st; }
     }
