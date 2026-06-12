@@ -23,10 +23,13 @@
 // used) that sanitise the divisor so the hardware op can't fault —
 // x / 0 = 0, x % 0 = x, INT_MIN / -1 = INT_MIN, INT_MIN % -1 = 0.
 //
-// Known gaps (tracked, follow-ups):
-//   - `&&` / `||` lower to `i32.and` / `i32.or` (no short-circuit) —
-//     correct while conditions are side-effect-free (no calls yet).
-//   - function calls, match, for, strings/memory: later slices.
+// Logical `&&` / `||` short-circuit: they lower to a value-producing
+// `(if (result i32) L (then R) (else 0))` / `(... (then 1) (else R))`
+// so the right operand is only evaluated when the left doesn't already
+// decide the result. This keeps guard patterns and calling operands
+// (e.g. `m.has(1) && !m.has(2)`, issue #2652) correct — the bare
+// `i32.and` / `i32.or` of the binop table is only a fallback that this
+// case intercepts first.
 
 import "./parser";
 import "./util";
