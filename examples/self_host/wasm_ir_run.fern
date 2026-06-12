@@ -53,7 +53,7 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod)) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod)) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -63,6 +63,9 @@ function main(): i32 {
         // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
         // in for any string program.
         if (wasm_ir.module_uses_strings(mod) || wasm_ir.module_uses_maps(mod)) { o = o + wasm.strcat_streq_helpers(); }
+        // $__fern_i32_to_str backs i32.to_string() (wasm_helper_symbol maps the
+        // IR call_direct to it).
+        if (wasm_ir.module_uses_i32_to_string(mod)) { o = o + wasm.to_string_helpers(); }
         if (wasm_ir.module_uses_str_cmp(mod)) { o = o + wasm.strcmp_helper(); }
         if (wasm_ir.module_uses_str_slice(mod)) { o = o + wasm.substr_helper(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }

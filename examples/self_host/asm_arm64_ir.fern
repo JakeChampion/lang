@@ -376,6 +376,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // call, caller-clean the args, push the result (helpers return the
             // ptr / count in x0).
             s = s.mark_heap();
+            // i32.to_string()'s decimal helper needs its body emitted (the
+            // stack-ABI __fn___fern_i32_to_string wrapper in asm_arm64.emit_runtime,
+            // gated on this need).
+            if (o.str == "__fern_i32_to_string") { s = s.mark_i32_to_string(); }
             s = s.write("    bl " + asm_ir.ir_helper_symbol(o.str) + "\n");
             if (o.i32_imm > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(o.i32_imm * 16) + "\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");

@@ -264,6 +264,10 @@ function wasm_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "$__fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "$__fern_arr_dec"; }
     if (name == "__fern_rc_underflow_get") { return "$__fern_rc_underflow_count"; }
+    // i32.to_string()'s decimal helper — wasm.fern's to_string_helpers emits it
+    // as $__fern_i32_to_str (param i32 -> i32 box), gated on module_uses_tostring
+    // (an AST walk, so it fires on the IR path too).
+    if (name == "__fern_i32_to_string") { return "$__fern_i32_to_str"; }
     return "$" + name;
 }
 
@@ -306,6 +310,26 @@ pub function module_emits_op(mod: parser.Module, kind: string): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == kind) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_i32_to_string reports whether any function emits the i32.to_string()
+// runtime call (a call_direct to __fern_i32_to_string) — so the heap allocator +
+// $__fern_i32_to_str helper (wasm.to_string_helpers) are emitted, even for an
+// otherwise alloc-free module. (module_emits_op keys on op.kind, not the
+// call_direct symbol, so this needs its own scan.)
+pub function module_uses_i32_to_string(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_i32_to_string") { return true; }
             i = i + 1;
         }
         fi = fi + 1;

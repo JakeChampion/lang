@@ -866,6 +866,23 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "random_bytes") { return true; }
                     return s.is_str_ret_fn(cid.name);
                 },
+                // `X.to_string()` yields a string box (the i32 runtime helper or
+                // the string-identity case); a struct's generated `to_string`
+                // (@derive(Display)) is likewise string-typed. Either way the
+                // result feeds `+` concat / `.len()` as a string.
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "to_string" && c.args.len() == 0) { return true; }
+                    // A string-returning METHOD call `recv.m(...)`. Methods store
+                    // their bare name (`receiver_type` is separate), so str_ret_fns
+                    // records `m` by bare name — same as the free-call lookup above.
+                    // Lets `recv.m().len()` / `recv.m() + x` track as string instead
+                    // of mis-dispatching `.len()` to arr_len. Guarded by a non-empty
+                    // receiver type so only genuine method calls match.
+                    var mrty: string = expr_struct_type(cfa.obj, s);
+                    if (mrty == "") { mrty = expr_recv_prim_type(cfa.obj, s); }
+                    if (mrty != "" && s.is_str_ret_fn(cfa.field)) { return true; }
+                    return false;
+                },
                 _ => { return false; }
             }
             return false;
@@ -1962,6 +1979,23 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var sb: LowerState = lower_expr(fa.obj, s);
                         if (!sb.ok) { return sb; }
                         return sb.emit(ir.op_str_bytes());
+                    }
+                    // Builtin `.to_string()` on a PRIMITIVE receiver — distinct
+                    // from a struct's generated `to_string` (a @derive(Display)
+                    // method), which the struct-method path below dispatches via
+                    // its `<Struct>.to_string` label. A string receiver returns
+                    // unchanged (`"x".to_string() == "x"`); an i32 routes to the
+                    // __fern_i32_to_string runtime helper (decimal-text box). Only
+                    // fires when the receiver is a string or i32 primitive; struct /
+                    // enum / f64 / i64 receivers fall through (expr_recv_prim_type
+                    // returns "" for struct+enum, so those reach the method paths).
+                    if (fa.field == "to_string" && c.args.len() == 0) {
+                        if (expr_is_str(fa.obj, s)) { return lower_expr(fa.obj, s); }
+                        if (expr_recv_prim_type(fa.obj, s) == "i32") {
+                            var t2s: LowerState = lower_expr(fa.obj, s);
+                            if (!t2s.ok) { return t2s; }
+                            return t2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
+                        }
                     }
                     // Struct method call `p.method(args)` — static dispatch on the
                     // receiver's tracked struct type to `call_direct("<Type>.<m>")`

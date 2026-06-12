@@ -75,7 +75,10 @@ pub function array_ret_fns(mod: parser.Module): string[] {
 pub function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
-        || name == "__fern_rc_underflow_get";
+        || name == "__fern_rc_underflow_get"
+        // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
+        // stack-arg body under __fn___fern_i32_to_string).
+        || name == "__fern_i32_to_string";
 }
 
 // ir_helper_symbol maps an IR runtime-helper name to the asm.fern symbol the
@@ -801,6 +804,69 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".size __fern_map_has, .-__fern_map_has\n");
     }
 
+    // __fern_i32_to_string — STACK-arg ABI for the IR path (the i32 value sits
+    // at 8(%rsp), below the call's return address). Loads it into %rdi, then runs
+    // asm.fern's register-ABI body verbatim (%rdi in → 16-byte string box in
+    // %rax). Allocates a 32-byte scratch buffer, writes decimal digits MSB-first
+    // (handling 0 / negative with a leading '-'), then a 16-byte box {data,len}.
+    if (s.has_need("i32_to_string")) {
+        s = s.write("__fn___fern_i32_to_string:\n");
+        s = s.write("    movq 8(%rsp), %rdi\n");      // stack arg -> %rdi
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    movq %rdi, %r13\n");          // save value
+        s = s.write("    movq $32, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r12\n");          // buf ptr
+        s = s.write("    movq %r13, %rax\n");
+        s = s.write("    movq $0, %r10\n");            // sign flag
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jge .Liri2s_pos\n");
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq $1, %r10\n");
+        s = s.write(".Liri2s_pos:\n");
+        s = s.write("    leaq 31(%r12), %rsi\n");      // cursor (writes backwards)
+        s = s.write("    movq $0, %r8\n");             // digit count
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jne .Liri2s_div\n");
+        s = s.write("    movb $48, (%rsi)\n");
+        s = s.write("    decq %rsi\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    jmp .Liri2s_sign\n");
+        s = s.write(".Liri2s_div:\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $10, %rcx\n");
+        s = s.write("    divq %rcx\n");
+        s = s.write("    addq $48, %rdx\n");
+        s = s.write("    movb %dl, (%rsi)\n");
+        s = s.write("    decq %rsi\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jne .Liri2s_div\n");
+        s = s.write(".Liri2s_sign:\n");
+        s = s.write("    cmpq $0, %r10\n");
+        s = s.write("    je .Liri2s_no_neg\n");
+        s = s.write("    movb $45, (%rsi)\n");
+        s = s.write("    decq %rsi\n");
+        s = s.write("    incq %r8\n");
+        s = s.write(".Liri2s_no_neg:\n");
+        s = s.write("    incq %rsi\n");                // first char ptr
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    pushq %r8\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    popq %r8\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    movq %rsi, (%rax)\n");
+        s = s.write("    movq %r8, 8(%rax)\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
+
     return s;
 }
 
@@ -1223,6 +1289,9 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // 8(%rsp)); call, caller-clean the args, push the result. The
             // helpers return the ptr (rc_inc / arr_dec) or the count
             // (underflow_count) in %rax.
+            // __fern_i32_to_string allocates its result box, so it needs the
+            // heap runtime + its own body (gated on this need in emit_ir_runtime).
+            if (o.str == "__fern_i32_to_string") { s = s.need("heap").need("i32_to_string"); }
             s = s.write("    call " + ir_helper_symbol(o.str) + "\n");
             if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
@@ -1372,7 +1441,9 @@ pub function emit_module_ir(mod: parser.Module): string {
     if (module_uses_maps(mod)) { s = s.need("maps"); }
     s = s.close_needs();
     // The freestanding allocator + RC runtime, only when the program allocates.
-    if (module_uses_heap(mod)) { s = emit_ir_runtime(s); }
+    // i32.to_string() allocates its box even in an otherwise heap-free program,
+    // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
+    if (module_uses_heap(mod) || s.has_need("i32_to_string")) { s = emit_ir_runtime(s); }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
