@@ -380,6 +380,15 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"asc-ret", "function make(): i32[] { var a = [10, 20, 30]; return a as i32[]; } function main(): i32 { var x = make(); return x[0] + x[2]; }", 40},
 		{"asc-nested-index", "function main(): i32 { var a = [3, 4]; return (a as i32[])[0] + (a as i32[])[1]; }", 7},
 		{"asc-str-method", "function main(): i32 { return (\"hello\" as string).len(); }", 5},
+		// break / continue inside a `for` loop (#2788): the index advances at
+		// the TOP of the loop, so `continue` (br-to-header) re-runs the advance
+		// and `break` exits. Range-for and array-foreach forms on wasm.
+		{"range-continue", "function main(): i32 { var s = 0; for i in 0..10 { if (i == 3) { continue; } s = s + i; } return s; }", 42},
+		{"range-break", "function main(): i32 { var s = 0; for i in 0..10 { if (i == 7) { break; } s = s + i; } return s; }", 21},
+		{"range-break-continue", "function main(): i32 { var s = 0; for i in 0..10 { if (i == 3) { continue; } if (i == 7) { break; } s = s + i; } return s; }", 18},
+		{"foreach-continue", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 15) { continue; } t = t + x; } return t; }", 60},
+		{"foreach-break", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 20) { break; } t = t + x; } return t; }", 30},
+		{"range-nested-break", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { if (j == 2) { break; } t = t + 1; } } return t; }", 6},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {

@@ -941,41 +941,6 @@ pub function map_binop(op: string): string {
     return "";
 }
 
-// stmts_have_break_continue reports whether any statement in `stmts` (descending
-// into if / while / for / match bodies) is a break or continue. Used to bail a
-// desugared for-loop whose body uses break/continue (conservative: a break in a
-// nested loop also bails the outer for, which is safe — the module just routes
-// to the AST path).
-pub function stmts_have_break_continue(stmts: parser.Stmt[]): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            parser.StmtBreak(_) => { return true; },
-            parser.StmtContinue(_) => { return true; },
-            parser.StmtIf(iff) => {
-                if (stmts_have_break_continue(iff.then_body)) { return true; }
-                if (stmts_have_break_continue(iff.else_body)) { return true; }
-            },
-            parser.StmtWhile(wh) => {
-                if (stmts_have_break_continue(wh.body)) { return true; }
-            },
-            parser.StmtFor(fr) => {
-                if (stmts_have_break_continue(fr.body)) { return true; }
-            },
-            parser.StmtMatch(m) => {
-                var a: i32 = 0;
-                while (a < m.arms.len()) {
-                    if (stmts_have_break_continue(m.arms[a].body)) { return true; }
-                    a = a + 1;
-                }
-            },
-            _ => {}
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
 // for_iter_is_range reports whether a for-loop iter is the synthetic
 // `__range(LOW, HIGH)` call the parser emits for `for i in LOW..HIGH`.
 // Mirrors the checker's for_iter_is_range (which binds the loop var to i32).
@@ -1055,14 +1020,25 @@ pub function lower_range_for(var_name: string, iter: parser.Expr, body: parser.S
     rs = lower_expr(r_hi, rs);
     if (!rs.ok) { return rs; }
     rs = rs.emit(ir.op_store_local(hislot));
-    // loop var i = LOW (user-visible i32 binding)
+    // loop var i = LOW - 1 (user-visible i32 binding). The increment runs at
+    // the TOP of the loop (after the header, before the condition) rather than
+    // the bottom, so a `continue` — which branches to the loop header — re-runs
+    // the increment instead of skipping it (#2788). Starting at LOW-1 means the
+    // first top-advance lands i on LOW, so the body still observes LOW, LOW+1, …
     rs = rs.add_local(var_name);
     var islot: i32 = rs.slot_of(var_name);
     rs = lower_expr(r_lo, rs);
     if (!rs.ok) { return rs; }
+    rs = rs.emit(ir.op_const_i32(1));
+    rs = rs.emit(ir.op_bin("sub", 0, false));   // i = LOW - 1
     rs = rs.emit(ir.op_store_local(islot));
-    rs = rs.emit(ir.op_block(0));   // depth 1 = exit
-    rs = rs.emit(ir.op_loop(0));    // depth 0 = header
+    rs = rs.emit(ir.op_block(0)).enter_loop();  // depth 1 = break/exit target
+    rs = rs.emit(ir.op_loop(0));                // depth 0 = continue/header
+    // advance: i = i + 1 (runs on every header entry, incl. after `continue`).
+    rs = rs.emit(ir.op_load_local(islot));
+    rs = rs.emit(ir.op_const_i32(1));
+    rs = rs.emit(ir.op_bin("add", 0, false));
+    rs = rs.emit(ir.op_store_local(islot));
     // cond: i < hi ; exit when NOT.
     rs = rs.emit(ir.op_load_local(islot));
     rs = rs.emit(ir.op_load_local(hislot));
@@ -1071,14 +1047,9 @@ pub function lower_range_for(var_name: string, iter: parser.Expr, body: parser.S
     rs = rs.emit(ir.op_brif(1));
     rs = lower_block(body, rs);
     if (!rs.ok) { return rs; }
-    // i = i + 1; back-edge.
-    rs = rs.emit(ir.op_load_local(islot));
-    rs = rs.emit(ir.op_const_i32(1));
-    rs = rs.emit(ir.op_bin("add", 0, false));
-    rs = rs.emit(ir.op_store_local(islot));
-    rs = rs.emit(ir.op_br(0));
+    rs = rs.emit(ir.op_br(0));   // back-edge to header (re-advances)
     rs = rs.emit(ir.op_end());
-    return rs.emit(ir.op_end());
+    return rs.emit(ir.op_end()).exit_loop();
 }
 
 // is_cmp_kind reports whether an IR bin-op kind produces an i32 boolean (a
@@ -2629,13 +2600,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             return w8.emit(ir.op_end()).exit_loop();
         },
         parser.StmtFor(fr) => {
-            // break / continue inside a desugared for-loop are NOT supported yet:
-            // `continue` would br to the loop header and skip the implicit index
-            // increment (infinite loop). A for-loop body containing any
-            // break/continue bails the module to the AST path (which handles
-            // for-loop break/continue correctly). while-loop break/continue IS
-            // supported (its increment, if any, is user-written in the body).
-            if (stmts_have_break_continue(fr.body)) { return s.fail(); }
+            // break / continue inside a for-loop ARE supported (#2788): each
+            // counted form below advances its index at the TOP of the loop
+            // (after the header) and calls enter_loop/exit_loop, so a `continue`
+            // br-to-header re-runs the advance instead of skipping it and a
+            // `break` exits the loop's outer block — mirroring the while-loop
+            // shape. (Earlier this whole arm bailed any break/continue body to
+            // the AST path with a bottom-increment shape that `continue` would
+            // skip.)
             // Range form `for i in LOW..HIGH` — the parser encodes the
             // half-open interval as a synthetic `__range(LOW, HIGH)` call.
             // lower_range_for emits the counted loop. Kept in its own function
@@ -2689,7 +2661,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 var idxn: string = "$foridx" + util.i32_to_string(fm.local_names.len());
                 fm = fm.add_local(idxn);
                 var idxslot2: i32 = fm.slot_of(idxn);
-                fm = fm.emit(ir.op_const_i32(0));
+                fm = fm.emit(ir.op_const_i32(0 - 1));   // idx = -1 (advance-at-top, #2788)
                 fm = fm.emit(ir.op_store_local(idxslot2));
                 // k, v bindings (carry string-ness for downstream dispatch)
                 fm = fm.add_local(kname);
@@ -2698,9 +2670,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 fm = fm.add_local(vname);
                 var vslot: i32 = fm.slot_of(vname);
                 if (vty == "string") { fm = fm.mark_str(vslot, true); }
-                // loop: idx < keys.len() ; bind k/v ; body ; idx++ ; back-edge.
-                fm = fm.emit(ir.op_block(0));
+                // loop: idx++ (top) ; idx < keys.len() ; bind k/v ; body ; back-edge.
+                // The increment is at the top so a `continue` (br-to-header)
+                // re-runs it instead of skipping it (#2788).
+                fm = fm.emit(ir.op_block(0)).enter_loop();
                 fm = fm.emit(ir.op_loop(0));
+                fm = fm.emit(ir.op_load_local(idxslot2));
+                fm = fm.emit(ir.op_const_i32(1));
+                fm = fm.emit(ir.op_bin("add", 0, false));
+                fm = fm.emit(ir.op_store_local(idxslot2));
                 fm = fm.emit(ir.op_load_local(idxslot2));
                 fm = fm.emit(ir.op_load_local(ksslot));
                 fm = fm.emit(ir.op_arr_len());
@@ -2717,13 +2695,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 fm = fm.emit(ir.op_store_local(vslot));
                 fm = lower_block(fr.body, fm);
                 if (!fm.ok) { return fm; }
-                fm = fm.emit(ir.op_load_local(idxslot2));
-                fm = fm.emit(ir.op_const_i32(1));
-                fm = fm.emit(ir.op_bin("add", 0, false));
-                fm = fm.emit(ir.op_store_local(idxslot2));
                 fm = fm.emit(ir.op_br(0));
                 fm = fm.emit(ir.op_end());
-                return fm.emit(ir.op_end());
+                return fm.emit(ir.op_end()).exit_loop();
             }
             // `for x in <arr>` over an array LOCAL/PARAM (i32[] or string[]) →
             // a counted loop using existing ops. Other iter forms (calls,
@@ -2753,7 +2727,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var idxname: string = "$foridx" + util.i32_to_string(s.local_names.len());
             var ff: LowerState = s.add_local(idxname);
             var idxslot: i32 = ff.slot_of(idxname);
-            ff = ff.emit(ir.op_const_i32(0));
+            ff = ff.emit(ir.op_const_i32(0 - 1));   // idx = -1 (advance-at-top, #2788)
             ff = ff.emit(ir.op_store_local(idxslot));
             ff = ff.add_local(fr.var_name);
             var xslot: i32 = ff.slot_of(fr.var_name);
@@ -2766,8 +2740,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // via the default 4-byte/slot arr_get like a string element.
             var elem_struct: string = s.struct_type_of_slot(aslot);
             if (elem_struct != "") { ff = ff.mark_struct_type(xslot, elem_struct); }
-            ff = ff.emit(ir.op_block(0));   // depth 1 = exit
-            ff = ff.emit(ir.op_loop(0));    // depth 0 = header
+            ff = ff.emit(ir.op_block(0)).enter_loop();  // depth 1 = break/exit target
+            ff = ff.emit(ir.op_loop(0));                // depth 0 = continue/header
+            // advance: idx = idx + 1 at the top, so a `continue` (br-to-header)
+            // re-runs it instead of skipping it (#2788).
+            ff = ff.emit(ir.op_load_local(idxslot));
+            ff = ff.emit(ir.op_const_i32(1));
+            ff = ff.emit(ir.op_bin("add", 0, false));
+            ff = ff.emit(ir.op_store_local(idxslot));
             // cond: idx < arr.len(); exit when NOT.
             ff = ff.emit(ir.op_load_local(idxslot));
             ff = ff.emit(ir.op_load_local(aslot));
@@ -2783,14 +2763,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             ff = ff.emit(ir.op_store_local(xslot));
             ff = lower_block(fr.body, ff);
             if (!ff.ok) { return ff; }
-            // idx = idx + 1; back-edge.
-            ff = ff.emit(ir.op_load_local(idxslot));
-            ff = ff.emit(ir.op_const_i32(1));
-            ff = ff.emit(ir.op_bin("add", 0, false));
-            ff = ff.emit(ir.op_store_local(idxslot));
-            ff = ff.emit(ir.op_br(0));
+            ff = ff.emit(ir.op_br(0));   // back-edge to header (re-advances)
             ff = ff.emit(ir.op_end());
-            return ff.emit(ir.op_end());
+            return ff.emit(ir.op_end()).exit_loop();
         },
         parser.StmtExpr(es) => {
             // Index-assignment `arr[i] = v` desugars to
