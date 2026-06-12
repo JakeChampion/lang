@@ -520,15 +520,16 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
 }
 
 // for_iter_is_range reports whether a for-loop iter is the synthetic
-// `__range(LOW, HIGH)` call the parser emits for `for i in LOW..HIGH`.
-// The checker uses it to bind the loop var to i32; irlower carries its
-// own copy (different module) to drive the counted-loop lowering.
+// `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
+// for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. The checker uses it
+// to bind the loop var to i32; irlower carries its own copy (different
+// module) to drive the counted-loop lowering (half-open vs closed).
 function for_iter_is_range(iter: parser.Expr): boolean {
     match (iter) {
         parser.ExprCall(c) => {
             if (c.args.len() != 2) { return false; }
             match (c.callee) {
-                parser.ExprIdent(id) => { return id.name == "__range"; },
+                parser.ExprIdent(id) => { return id.name == "__range" || id.name == "__range_incl"; },
                 _ => { return false; }
             }
         },

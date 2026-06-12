@@ -2169,9 +2169,12 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 	// bound once (so `for i in 0..f()` calls f() a single time), and
 	// the loop variable IS the user binding, so `continue` — which
 	// runs the For step — still increments. parseExpr stops at `..`
-	// (not a binary operator), so `expr` is LOW.
-	if p.match(lexer.Punct, "..") {
-		p.advance() // ..
+	// (not a binary operator), so `expr` is LOW. The inclusive form
+	// `LOW..=HIGH` is identical bar the loop condition: `i <= hi`
+	// covers the closed interval [LOW, HIGH].
+	if p.match(lexer.Punct, "..") || p.match(lexer.Punct, "..=") {
+		rangeTok := p.advance() // `..` or `..=`
+		inclusive := rangeTok.Text == "..="
 		prevNS2 := p.noStructLit
 		p.noStructLit = true
 		high, err := p.parseExpr()
@@ -2187,10 +2190,14 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 		hiName := fmt.Sprintf("__range_hi_%d", rid)
 		mkI := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
 		declHi := &ast.Var{P: kw.Pos, Name: hiName, Init: high}
+		cmpOp := "<"
+		if inclusive {
+			cmpOp = "<="
+		}
 		loop := &ast.For{
 			P:    kw.Pos,
 			Init: &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: expr},
-			Cond: &ast.Binary{P: kw.Pos, Op: "<", Left: mkI(nameTok.Text), Right: mkI(hiName)},
+			Cond: &ast.Binary{P: kw.Pos, Op: cmpOp, Left: mkI(nameTok.Text), Right: mkI(hiName)},
 			Step: &ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(nameTok.Text),
 				Value: &ast.Binary{P: kw.Pos, Op: "+", Left: mkI(nameTok.Text), Right: &ast.NumberLit{P: kw.Pos, Value: 1}}}},
 			Body:  body,

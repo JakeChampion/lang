@@ -115,14 +115,15 @@ function is_valid_numeric_suffix(s: string): boolean {
 // the matched literal text, or "" if none matched.
 //
 // `..` (the half-open range operator, `for i in LO..HI`) is in the
-// length-2 set; the length-3 `...` spread is checked first so `...`
-// never mis-lexes as `..` + `.`. A float needs a digit right after
+// length-2 set; the length-3 `...` spread and `..=` (inclusive range,
+// `for i in LO..=HI`) are checked first so `...` / `..=` never mis-lex
+// as `..` + `.` / `..` + `=`. A float needs a digit right after
 // `.` (scan_number's guard), and `.field` / `.0` stay single-dot, so
 // `..` never clashes with field access or fractions.
 function match_multipunct(src: string, i: i32, n: i32): string {
     if (i + 3 <= n) {
         var s3: string = src[i:i + 3];
-        if (s3 == "<<=" || s3 == ">>=" || s3 == "...") { return s3; }
+        if (s3 == "<<=" || s3 == ">>=" || s3 == "..." || s3 == "..=") { return s3; }
     }
     if (i + 2 <= n) {
         var s2: string = src[i:i + 2];

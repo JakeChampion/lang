@@ -1857,6 +1857,82 @@ function parse_loop_stmt(p: Par): StmtResult {
     return StmtResult { par: lb.par, stmt: s_while(e_bool(true), lb.body) };
 }
 
+// parse_for_stmt parses a `for` statement (`p` is positioned at the
+// `for` keyword). Split out of parse_stmt's keyword dispatch so that
+// already-large function stays under the native backend's per-function
+// size limit (oversized functions miscompile — cf. #2720). Three forms:
+// `for (k, v) in m { body }` (map destructuring), `for x in EXPR { body }`
+// (array / range foreach), and the range form `for i in LOW..HIGH` /
+// `for i in LOW..=HIGH` — the latter two encode the interval as a
+// synthetic `__range` / `__range_incl` call (see below).
+function parse_for_stmt(p: Par): StmtResult {
+    // `for VAR in EXPR { body }`. `in` arrives as a plain
+    // TokIdent (not in the lexer's keyword set), so peek
+    // it through peek_ident rather than peek_keyword.
+    p = p.advance();  // consume `for`
+    // `for (k, v) in m { body }` — map destructuring iteration. The
+    // two names are encoded as "k,v" in the for-var; the emitter
+    // detects the comma + a map iter and emits an iterator loop.
+    if (p.peek_punct() == "(") {
+        p = p.advance();
+        var kvk: string = p.peek_ident();
+        if (kvk.len() > 0) { p = p.advance(); }
+        if (p.peek_punct() == ",") { p = p.advance(); }
+        var kvv: string = p.peek_ident();
+        if (kvv.len() > 0) { p = p.advance(); }
+        if (p.peek_punct() == ")") { p = p.advance(); }
+        if (p.peek_ident() == "in") { p = p.advance(); }
+        // Suppress trailing struct-literal parsing — the `{` that
+        // follows the iter opens the loop body, not a struct lit.
+        var kv_saved: boolean = p.no_struct;
+        var kvi: ExprResult = parse_expr(p.with_no_struct(true));
+        p = (kvi.par).with_no_struct(kv_saved);
+        var kvb: BlockResult = parse_block(p);
+        p = kvb.par;
+        return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
+    }
+    var fvar: string = p.peek_ident();
+    if (fvar.len() == 0) {
+        return StmtResult { par: p, stmt: s_unknown("missing for-var name") };
+    }
+    p = p.advance();
+    if (p.peek_ident() != "in") {
+        return StmtResult { par: p, stmt: s_unknown("missing `in` in for") };
+    }
+    p = p.advance();  // consume `in`
+    // Suppress trailing struct-literal parsing on the iter so that
+    // `for x in a {}` reads `a` + an empty block, not `a {}`.
+    var f_saved: boolean = p.no_struct;
+    var fiter = parse_expr(p.with_no_struct(true));
+    p = (fiter.par).with_no_struct(f_saved);
+    var iter_expr: Expr = fiter.expr;
+    // Range form `for IDENT in LOW..HIGH { body }`. parse_expr stops
+    // at `..` (not a binary operator), so `fiter.expr` is LOW; read
+    // `..` + HIGH and encode the half-open interval as a synthetic
+    // `__range(LOW, HIGH)` call — the same parser-internal-builtin
+    // idiom as `__set_index` / `__set_field`. The checker binds the
+    // loop var to i32 and irlower lowers it to a counted loop; the
+    // call shape rides through constfold / substitution / printing
+    // for free (LOW, HIGH are ordinary i32 sub-expressions). The
+    // inclusive form `LOW..=HIGH` emits `__range_incl(LOW, HIGH)`
+    // instead, which irlower lowers with a `<=` (closed-interval)
+    // condition.
+    var range_punct: string = p.peek_punct();
+    if (range_punct == ".." || range_punct == "..=") {
+        p = p.advance();   // consume `..` or `..=`
+        var hi_saved: boolean = p.no_struct;
+        var fhi = parse_expr(p.with_no_struct(true));
+        p = (fhi.par).with_no_struct(hi_saved);
+        var rargs: Expr[] = [fiter.expr, fhi.expr];
+        var range_fn: string = "__range";
+        if (range_punct == "..=") { range_fn = "__range_incl"; }
+        iter_expr = e_call(e_ident(range_fn), rargs);
+    }
+    var fb: BlockResult = parse_block(p);
+    p = fb.par;
+    return StmtResult { par: p, stmt: s_for(fvar, iter_expr, fb.body) };
+}
+
 function parse_stmt(p: Par): StmtResult {
     var kw: string = p.peek_keyword();
     if (kw == "defer") {
@@ -1973,67 +2049,7 @@ function parse_stmt(p: Par): StmtResult {
         return StmtResult { par: p, stmt: s_while(wc.expr, wb.body) };
     }
     if (kw == "loop") { return parse_loop_stmt(p); }
-    if (kw == "for") {
-        // `for VAR in EXPR { body }`. `in` arrives as a plain
-        // TokIdent (not in the lexer's keyword set), so peek
-        // it through peek_ident rather than peek_keyword.
-        p = p.advance();  // consume `for`
-        // `for (k, v) in m { body }` — map destructuring iteration. The
-        // two names are encoded as "k,v" in the for-var; the emitter
-        // detects the comma + a map iter and emits an iterator loop.
-        if (p.peek_punct() == "(") {
-            p = p.advance();
-            var kvk: string = p.peek_ident();
-            if (kvk.len() > 0) { p = p.advance(); }
-            if (p.peek_punct() == ",") { p = p.advance(); }
-            var kvv: string = p.peek_ident();
-            if (kvv.len() > 0) { p = p.advance(); }
-            if (p.peek_punct() == ")") { p = p.advance(); }
-            if (p.peek_ident() == "in") { p = p.advance(); }
-            // Suppress trailing struct-literal parsing — the `{` that
-            // follows the iter opens the loop body, not a struct lit.
-            var kv_saved: boolean = p.no_struct;
-            var kvi: ExprResult = parse_expr(p.with_no_struct(true));
-            p = (kvi.par).with_no_struct(kv_saved);
-            var kvb: BlockResult = parse_block(p);
-            p = kvb.par;
-            return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
-        }
-        var fvar: string = p.peek_ident();
-        if (fvar.len() == 0) {
-            return StmtResult { par: p, stmt: s_unknown("missing for-var name") };
-        }
-        p = p.advance();
-        if (p.peek_ident() != "in") {
-            return StmtResult { par: p, stmt: s_unknown("missing `in` in for") };
-        }
-        p = p.advance();  // consume `in`
-        // Suppress trailing struct-literal parsing on the iter so that
-        // `for x in a {}` reads `a` + an empty block, not `a {}`.
-        var f_saved: boolean = p.no_struct;
-        var fiter = parse_expr(p.with_no_struct(true));
-        p = (fiter.par).with_no_struct(f_saved);
-        var iter_expr: Expr = fiter.expr;
-        // Range form `for IDENT in LOW..HIGH { body }`. parse_expr stops
-        // at `..` (not a binary operator), so `fiter.expr` is LOW; read
-        // `..` + HIGH and encode the half-open interval as a synthetic
-        // `__range(LOW, HIGH)` call — the same parser-internal-builtin
-        // idiom as `__set_index` / `__set_field`. The checker binds the
-        // loop var to i32 and irlower lowers it to a counted loop; the
-        // call shape rides through constfold / substitution / printing
-        // for free (LOW, HIGH are ordinary i32 sub-expressions).
-        if (p.peek_punct() == "..") {
-            p = p.advance();   // consume `..`
-            var hi_saved: boolean = p.no_struct;
-            var fhi = parse_expr(p.with_no_struct(true));
-            p = (fhi.par).with_no_struct(hi_saved);
-            var rargs: Expr[] = [fiter.expr, fhi.expr];
-            iter_expr = e_call(e_ident("__range"), rargs);
-        }
-        var fb: BlockResult = parse_block(p);
-        p = fb.par;
-        return StmtResult { par: p, stmt: s_for(fvar, iter_expr, fb.body) };
-    }
+    if (kw == "for") { return parse_for_stmt(p); }
     // `let` and `var` introduce a binding the same way here — the
     // self-host compiler doesn't track the immutability distinction
     // (the Go checker enforces it), so both parse to the same StmtVar.
