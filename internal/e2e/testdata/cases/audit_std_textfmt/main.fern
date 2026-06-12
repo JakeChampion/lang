@@ -1,0 +1,17 @@
+import "core/int";
+import "std/format";
+import "std/csv";
+
+// Audit fixture: std/csv + std/format helpers across every native backend.
+
+function main(): i32 {
+    var fields: string[] = csv.csv_parse_line("a,b,c");
+    if (fields.len() != 3) { print("FAIL csv-parse"); return 11; }
+    if (fields[0] != "a" || fields[2] != "c") { print("FAIL csv-elem"); return 12; }
+    if (csv.csv_join(["p", "q"]) != "p,q") { print("FAIL csv-join"); return 13; }
+    // a value with a comma is quoted by csv_escape
+    if (csv.csv_escape("x,y").len() <= 3) { print("FAIL csv-escape"); return 14; }
+    if (format.format_bytes(1024).len() == 0) { print("FAIL fmt-bytes"); return 15; }
+    print("OK");
+    return 0;
+}
