@@ -1280,7 +1280,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (decl_is_struct(s.structs, id.name) && decl_field_count(s.structs, id.name) == 0) {
                 return s.emit(ir.op_struct_make(id.name, 0));
             }
-            return s.fail();
+            // A bare identifier that is not a local, not None, and not a
+            // 0-field enum variant is a top-level FUNCTION used as a value (a
+            // function pointer / closure-free function value): emit const_func
+            // carrying its name. The module-level const_funcs_only_known gate
+            // bails the whole module to AST if the name isn't actually a module
+            // function, so a stray unknown ident still falls back rather than
+            // emitting a dangling reference. (Capturing lambdas — ExprLambda —
+            // are a later slice; this handles only named function values.)
+            return s.emit(ir.op_const_func(0, id.name));
         },
         parser.ExprBinary(b) => {
             // Short-circuit `&&` / `||`. When the RIGHT operand is trap-free and
@@ -1515,6 +1523,25 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // length header at base.
             match (c.callee) {
                 parser.ExprIdent(cid) => {
+                    // Indirect call through a function VALUE: `f(args)` where `f`
+                    // names a local/param slot (a "fn"-typed value), not a
+                    // top-level function. A local shadows any same-named function,
+                    // so a resolvable slot means the callee is the value held
+                    // there. Lower the args, push the function value, then
+                    // call_indirect (the backend pops the fn pointer from TOS and
+                    // the args beneath it).
+                    var icslot: i32 = s.slot_of(cid.name);
+                    if (icslot >= 0) {
+                        var ics: LowerState = s;
+                        var ica: i32 = 0;
+                        while (ica < c.args.len()) {
+                            ics = lower_expr(c.args[ica], ics);
+                            if (!ics.ok) { return ics; }
+                            ica = ica + 1;
+                        }
+                        ics = ics.emit(ir.op_load_local(icslot));
+                        return ics.emit(ir.op_call_indirect(c.args.len()));
+                    }
                     // __rc(arr): read the refcount header at base-4 (an RC
                     // observation hook for tests; not a real callee).
                     if (cid.name == "__rc") {

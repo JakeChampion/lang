@@ -723,7 +723,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 // the IR path can't emit it, so such modules fall back to the AST emitter
 // (which handles builtins in emit_expr). The whole module goes one way or the
 // other, so a single builtin call disqualifies the IR path for the module.
-pub function all_eligible(mod: parser.Module): boolean {
+// eligible_core is the target-independent eligibility check: a non-empty module
+// with a `main` where every function is ir_eligible, every direct call targets a
+// known function, and every function-VALUE reference (const_func) names a real
+// module function. It ALLOWS plain function values (const_func / call_indirect) —
+// the wasm backend lowers them (a funcref table). all_eligible adds the
+// register-backend restriction on top (they don't emit the closure ops yet).
+pub function eligible_core(mod: parser.Module): boolean {
     if (mod.funcs.len() == 0) { return false; }
     // emit_module_ir is a WHOLE-PROGRAM emitter: it writes a `_start` that
     // calls `__fn_main` and exits with its return. A module with no `main`
@@ -740,9 +746,54 @@ pub function all_eligible(mod: parser.Module): boolean {
     while (i < mod.funcs.len()) {
         if (!ir_eligible(mod.funcs[i], mod.structs, orf, irf, srtf, trtf)) { return false; }
         if (!calls_only_known(mod.funcs[i], mod)) { return false; }
+        if (!const_funcs_only_known(mod.funcs[i], mod)) { return false; }
         i = i + 1;
     }
     return true;
+}
+
+// all_eligible is the REGISTER-backend (x86-64 / arm64) eligibility: eligible_core
+// plus "no plain function values". The register IR backends don't emit the
+// closure ops (const_func / call_indirect) yet, so a module that uses them falls
+// back to their AST emitter. The wasm backend has no such restriction
+// (wasm_ir.wasm_eligible == eligible_core), so function values lower there.
+pub function all_eligible(mod: parser.Module): boolean {
+    if (!eligible_core(mod)) { return false; }
+    if (module_uses_fn_values(mod)) { return false; }
+    return true;
+}
+
+// const_funcs_only_known reports whether every function-value reference
+// (const_func) in fd names a function defined in the module — the function-value
+// twin of calls_only_known. A const_func to an unknown name can't resolve to a
+// funcref table slot, so such modules fall back to AST.
+function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs));
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        if (r.ops[i].kind == "const_func" && !module_has_func(mod, r.ops[i].str)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// module_uses_fn_values reports whether any function in the module lowers to a
+// function-value op (const_func / call_indirect). Gates the register backends
+// off such modules (they keep the AST path) while wasm lowers them.
+pub function module_uses_fn_values(mod: parser.Module): boolean {
+    var noret: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs));
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "const_func" || r.ops[i].kind == "call_indirect") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
 }
 
 // module_has_func reports whether `name` is a function defined in the module.

@@ -59,6 +59,9 @@ function main(): i32 {
         if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { o = o + wasm.arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
+        // Function-value support: the $fn<N> call_indirect signature types, the
+        // funcref table, and its elem segment (empty for non-closure modules).
+        o = o + wasm_ir.fn_support_section(mod);
         o = o + wasm_ir.emit_functions(mod);
         o = o + "  (func $_start (call $proc_exit (call $main)))\n";
         o = o + "  (export \"_start\" (func $_start)))\n";
