@@ -239,6 +239,13 @@ pub function op_random_bytes(): Op { return op0("random_bytes"); }
 // `random_i32` takes no operands → a single CSPRNG i32. A 4-byte random read
 // reinterpreted as an i32 (cheaper than random_bytes for one small value).
 pub function op_random_i32(): Op { return op0("random_i32"); }
+// `monotonic_ns` / `now_unix_ms` take no operands → an i64 clock reading.
+// monotonic_ns is a monotonically non-decreasing nanosecond counter (elapsed
+// timing); now_unix_ms is wall-clock milliseconds since the Unix epoch. Both
+// reinterpret a `clock_gettime` timespec; the IR backends emit the
+// __fern_monotonic_ns / __fern_now_unix_ms helpers (no allocation).
+pub function op_monotonic_ns(): Op { return op0("monotonic_ns"); }
+pub function op_now_unix_ms(): Op { return op0("now_unix_ms"); }
 // `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
