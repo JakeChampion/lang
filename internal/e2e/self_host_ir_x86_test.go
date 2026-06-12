@@ -119,6 +119,35 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
 		// `loop { }` infinite loop (#2676 loop-form) -> desugars to while(true).
 		{"loop-break", "function main(): i32 { var i = 0; loop { i = i + 1; if (i >= 7) { break; } } return i; }", 7},
+		{"asc-arr-nonempty", "function main(): i32 { var a = [3, 4] as i32[]; return a[0] + a[1]; }", 7},
+		{"asc-arr-empty", "function main(): i32 { var a = [] as i32[]; a = [5, 10]; return a[0] + a[1]; }", 15},
+		{"asc-arr-len", "function main(): i32 { var a = [] as i32[]; return a.len(); }", 0},
+		{"asc-arr-rc", "function main(): i32 { var a = [3, 4] as i32[]; var b = a; return __rc(a); }", 2},
+		{"asc-arr-alias-use", "function main(): i32 { var a = [3, 4] as i32[]; var b = a; return b[0] + b[1] + a.len(); }", 9},
+		// Type ascription `E as T` in NON-binding positions (#2669): the `as`
+		// is identity, lowered as the operand. arg position (the ascripted
+		// array is passed/borrowed), return position (move-on-return off the
+		// ascription), and nested (index of a parenthesised ascription).
+		{"asc-arg", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var arr = [10, 20, 30]; return sum(arr as i32[]); }", 60},
+		{"asc-ret", "function make(): i32[] { var a = [10, 20, 30]; return a as i32[]; } function main(): i32 { var x = make(); return x[0] + x[2]; }", 40},
+		{"asc-nested-index", "function main(): i32 { var a = [3, 4]; return (a as i32[])[0] + (a as i32[])[1]; }", 7},
+		// break / continue inside a `for` loop (#2788): the index advances at the
+		// TOP of the loop, so `continue` (br-to-header) re-runs the advance and
+		// `break` exits. Range-for and array-foreach forms.
+		{"range-continue", "function main(): i32 { var s = 0; for i in 0..10 { if (i == 3) { continue; } s = s + i; } return s; }", 42},
+		{"range-break", "function main(): i32 { var s = 0; for i in 0..10 { if (i == 7) { break; } s = s + i; } return s; }", 21},
+		{"range-break-continue", "function main(): i32 { var s = 0; for i in 0..10 { if (i == 3) { continue; } if (i == 7) { break; } s = s + i; } return s; }", 18},
+		{"range-continue-count", "function main(): i32 { var c = 0; for i in 0..6 { if (i % 2 == 0) { continue; } c = c + 1; } return c; }", 3},
+		{"foreach-continue", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 15) { continue; } t = t + x; } return t; }", 60},
+		{"foreach-break", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 20) { break; } t = t + x; } return t; }", 30},
+		{"foreach-break-continue", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var t = 0; for x in a { if (x == 15) { continue; } if (x == 25) { break; } t = t + x; } return t; }", 35},
+		{"range-nested-break", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { if (j == 2) { break; } t = t + 1; } } return t; }", 6},
+		// `for x in <EXPR>` over a non-ident iterable: array literal and a call
+		// returning an array are snapshotted into a hidden local, then iterated.
+		{"foreach-literal", "function main(): i32 { var s = 0; for x in [1, 2, 3, 4] { s = s + x; } return s; }", 10},
+		{"foreach-call", "function mk(): i32[] { return [10, 20, 30]; } function main(): i32 { var s = 0; for y in mk() { s = s + y; } return s; }", 60},
+		{"foreach-literal-break", "function main(): i32 { var s = 0; for x in [5, 10, 15, 20] { if (x == 15) { break; } s = s + x; } return s; }", 15},
+		{"foreach-call-continue", "function mk(): i32[] { return [1, 2, 3, 4, 5]; } function main(): i32 { var s = 0; for x in mk() { if (x % 2 == 0) { continue; } s = s + x; } return s; }", 9},
 		{"loop-continue", "function main(): i32 { var i = 0; var s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
 		// Direct calls + multi-function programs + recursion (slice 6) -> real
 		// x86 call/ret with the SysV integer-register arg convention.

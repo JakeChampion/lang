@@ -1009,6 +1009,37 @@ func TestRunnerArrayCombinatorsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_structural_verbs_test.fern` exercises the
+// generic structural array verbs added to std/array (#2689):
+// `reverse` / `take` / `drop` / `concat` over an arbitrary `T[]`.
+// Thirteen cases cover the happy path, empty / single-element inputs,
+// the clamping behaviour of take/drop (n <= 0 and n >= len), the
+// `take(n) ++ drop(n) == xs` complement law, and the `.concat()`
+// receiver-method form. These verbs take no callback, so (unlike the
+// combinators) they are also gated through the self-host compiler —
+// see TestSelfHostStdTestE2E.
+func TestRunnerArrayStructuralVerbsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_structural_verbs_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - reverse",
+		"ok 6 - take over length clamps",
+		"ok 8 - drop over length clamps",
+		"ok 10 - take ++ drop complement",
+		"ok 13 - concat method form",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/set_eq_test.fern` exercises the order-
 // independent (multiset) array assertions:
 // `assert_set_eq_i32` / `_string` and `assert_subset_i32` /

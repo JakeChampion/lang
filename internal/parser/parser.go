@@ -623,7 +623,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		if err != nil {
 			return nil, err
 		}
-		mname, err := p.expect(lexer.Ident, "")
+		mname, err := p.expectMemberName()
 		if err != nil {
 			return nil, err
 		}
@@ -904,6 +904,20 @@ func (p *parser) parseResourceDecl() (*ast.ResourceDecl, error) {
 	return &ast.ResourceDecl{P: kw.Pos, Name: nameTok.Text}, nil
 }
 
+// expectMemberName parses a member name (a function/method name, a trait
+// method name, or a field/method after `.`). It accepts a normal Ident
+// and also the handful of reserved words that are usable as member names
+// in these positions without ambiguity — currently just `default`, so
+// `Type.default()` (the `@derive(Default)` constructor) and a hand-written
+// `function default(): Self` both work even though `default` is a switch
+// keyword. The keyword stays reserved everywhere else.
+func (p *parser) expectMemberName() (lexer.Token, error) {
+	if tok, ok := p.accept(lexer.Keyword, "default"); ok {
+		return tok, nil
+	}
+	return p.expect(lexer.Ident, "")
+}
+
 // maybeQualify consumes an optional `.ident` suffix and returns the
 // possibly-qualified name (`mod.Trait`). modload rewrites the qualifier
 // to the imported module's mangled prefix. The leading identifier has
@@ -1031,7 +1045,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		}
 		receiver = &ast.Param{Name: rname.Text, NamePos: rname.Pos, Type: rtype, Own: rOwn}
 	}
-	name, err := p.expect(lexer.Ident, "")
+	name, err := p.expectMemberName()
 	if err != nil {
 		return nil, err
 	}
@@ -1073,7 +1087,18 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own})
+			// Optional default value: `function f(a: i32, b: i32 = 128)`.
+			// The defaultargs pass fills it at call sites that omit the
+			// trailing argument. A defaulted param may not be followed by
+			// a required one (enforced just below).
+			var def ast.Expr
+			if _, ok := p.accept(lexer.Punct, "="); ok {
+				def, err = p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+			}
+			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own, Default: def})
 			if _, ok := p.accept(lexer.Punct, ","); !ok {
 				break
 			}
@@ -1081,6 +1106,16 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	}
 	if _, err := p.expect(lexer.Punct, ")"); err != nil {
 		return nil, err
+	}
+	// A required parameter may not follow a defaulted one — otherwise a
+	// trailing-args fill is ambiguous.
+	seenDefault := false
+	for _, prm := range params {
+		if prm.Default != nil {
+			seenDefault = true
+		} else if seenDefault {
+			return nil, p.errorf(funcNamePos, "required parameter %q cannot follow a parameter with a default value", prm.Name)
+		}
 	}
 
 	var ret ast.Type = ast.VoidType{}
@@ -3398,7 +3433,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: numTok.Text, FieldPos: numTok.Pos}
 				continue
 			}
-			fname, err := p.expect(lexer.Ident, "")
+			fname, err := p.expectMemberName()
 			if err != nil {
 				return nil, err
 			}

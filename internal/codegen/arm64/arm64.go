@@ -2494,6 +2494,18 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov w1, #1")
 	g.emit("stur w1, [x0, #-8]") // rc = 1 (phase 1 of RC rollout)
 	g.emitArrayLenStore("w19", "x0")
+	// Zero the n data bytes — __fern_alloc may return a reused freelist block
+	// with stale bytes, but the interpreter yields a zero-filled `u8[]`, so the
+	// AOT backends must match (issue #2768): read-before-write callers (e.g.
+	// SHA padding) rely on it. x0 (data, return value) is preserved; x2/x3 are
+	// scratch.
+	g.emit("mov x2, x0")  // cursor (keep x0 as the return value)
+	g.emit("mov w3, w19") // count = n
+	g.label(".Lallocu8_zero")
+	g.emit("cbz w3, .Lallocu8_ret")
+	g.emit("strb wzr, [x2], #1")
+	g.emit("sub w3, w3, #1")
+	g.emit("b .Lallocu8_zero")
 	g.label(".Lallocu8_ret")
 	g.emit("ldr x19, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #32")

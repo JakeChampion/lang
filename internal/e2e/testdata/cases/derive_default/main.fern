@@ -1,0 +1,27 @@
+// `@derive(Default)` synthesises a `default()` associated function that
+// builds a type's zero value, called as `Type.default()`. It composes:
+// scalars use their zero literal, nominal fields delegate to their own
+// `default()` (so the struct must itself derive/impl Default), a generic
+// field uses the bound `T.default()`, and an enum defaults to its first
+// variant with payloads defaulted.
+import "core/cmp";
+
+@derive(cmp.Default) struct Inner { n: i32 }
+@derive(cmp.Default) struct Wrap { p: Inner, label: string, flag: boolean, ratio: f64 }
+@derive(cmp.Default) struct Pair[T] { a: T, b: T }
+@derive(cmp.Default) enum Status { Idle, Running(i32), Done(i32, i32) }
+
+function main(): i32 {
+    var w: Wrap = Wrap.default();          // {p:{0}, "", false, 0.0}
+    var pr: Pair[Inner] = Pair.default();  // {a:{0}, b:{0}} via T.default()
+    var s: Status = Status.default();      // Idle (first variant)
+
+    var r: i32 = w.p.n + w.label.len() + pr.a.n + pr.b.n + 5;
+    if (w.flag) { r = r + 100; }           // flag defaults false — skipped
+    match (s) {
+        Idle => { r = r + 1; },            // first variant — taken
+        Running(n) => { r = r + n; },
+        Done(a, b) => { r = r + a + b; }
+    }
+    return r;                               // 5 + 1 = 6
+}

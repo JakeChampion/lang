@@ -86,14 +86,21 @@ pub function __method_Array_product(arr: i32[]): i32 {
     return p;
 }
 
-// `(arr: i32[]) avg()` — integer mean (truncated). None on
-// empty input. Sum-then-divide; sum is carried in i32 so
-// long arrays + large values may overflow before division.
-// For exact arithmetic, callers should pre-sum into i64.
+// `(arr: i32[]) avg()` — integer mean (truncated toward zero).
+// None on empty input. The running sum is accumulated in i64,
+// so a long / large-valued array can't overflow BEFORE the
+// divide the way the i32 `sum()` does (#2687) — the truncated
+// mean of any i32[] always fits back in i32.
 pub function __method_Array_avg(arr: i32[]): Option[i32] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }
-    return Some(arr.sum() / n);
+    var s: i64 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s + (arr[i] as i64);
+        i = i + 1;
+    }
+    return Some((s / (n as i64)) as i32);
 }
 
 // `(arr: i32[]) range()` — max - min, the spread of the
@@ -940,6 +947,55 @@ pub function enumerate[T](xs: T[]): (i32, T)[] {
     return out;
 }
 
+// `reverse(xs)` — fresh `T[]` with the elements in reverse order.
+// Empty → empty. Structural (no element comparison), so it works
+// for any element type, unlike the i32/string-specific reversers.
+pub function reverse[T](xs: T[]): T[] {
+    var out: T[] = [];
+    var i: i32 = xs.len() - 1;
+    while (i >= 0) {
+        out = out.append(xs[i]);
+        i = i - 1;
+    }
+    return out;
+}
+
+// `take(xs, n)` — fresh `T[]` of the first `n` elements (the prefix).
+// Clamped: `n <= 0` → empty, `n >= len` → a full copy. The
+// complement of `drop`: `take(xs, n) ++ drop(xs, n) == xs`.
+pub function take[T](xs: T[], n: i32): T[] {
+    var out: T[] = [];
+    var i: i32 = 0;
+    while (i < n && i < xs.len()) {
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `drop(xs, n)` — fresh `T[]` with the first `n` elements removed
+// (the suffix). Clamped: `n <= 0` → a full copy, `n >= len` → empty.
+pub function drop[T](xs: T[], n: i32): T[] {
+    var out: T[] = [];
+    var i: i32 = n;
+    if (i < 0) { i = 0; }
+    while (i < xs.len()) {
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// `concat(a, b)` — fresh `T[]` of `a`'s elements followed by `b`'s.
+// Neither input is mutated. Empty inputs are fine (`concat([], b)`
+// copies `b`).
+pub function concat[T](a: T[], b: T[]): T[] {
+    var out: T[] = [];
+    for x in a { out = out.append(x); }
+    for y in b { out = out.append(y); }
+    return out;
+}
+
 // ---- Generic array methods --------------------------------------
 //
 // Method forms of the combinators above, so pipelines read
@@ -969,3 +1025,11 @@ pub function (xs: T[]) find(pred: (T) => boolean): Option[T] { return find(xs, p
 
 // `xs.enumerate()` — pair each element with its 0-based index.
 pub function (xs: T[]) enumerate(): (i32, T)[] { return enumerate(xs); }
+
+// `xs.concat(other)` — `xs` followed by `other` (fresh array).
+// (Generic `.reverse()`/`.take()`/`.drop()` receiver methods are
+// deferred: string[]-specific `__method_Array_reverse`/`take`/`drop`
+// already claim those method names, and array method dispatch keys on
+// the name only. Use the free functions `reverse(xs)` / `take(xs, n)`
+// / `drop(xs, n)` for non-string element types until those are unified.)
+pub function (xs: T[]) concat(other: T[]): T[] { return concat(xs, other); }

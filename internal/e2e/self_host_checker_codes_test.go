@@ -198,6 +198,22 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"range-clean", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }\n", nil},
 		{"range-nested-clean", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + i + j; } } return t; }\n", nil},
 		{"range-expr-bounds-clean", "function main(): i32 { var n = 4; var s = 0; for i in 1..n + 1 { s = s + i; } return s; }\n", nil},
+		// Type ascription `e as T` (#2669): a zero-cost annotation. An array /
+		// string ascription draws no diagnostic from EITHER checker — the
+		// self-host only flags E033 when both sides are scalar primitives, and
+		// the Go checker accepts the cast as an upcast assignable to the target.
+		{"asc-arr-clean", "function main(): i32 { var a = [] as i32[]; a = [1, 2]; return a[0] + a[1]; }\n", nil},
+		{"asc-str-clean", "function main(): i32 { var s = \"x\" as string; return s.len(); }\n", nil},
+		// Non-binding-position ascription (#2669) — arg / return / nested — is
+		// also clean from both checkers.
+		{"asc-arg-clean", "function id(a: i32[]): i32 { return a.len(); }\nfunction main(): i32 { var a = [1, 2]; return id(a as i32[]); }\n", nil},
+		{"asc-ret-clean", "function mk(): i32[] { var a = [1, 2]; return a as i32[]; }\nfunction main(): i32 { return mk()[0]; }\n", nil},
+		// break / continue inside `for` loops (#2788) — clean from both checkers.
+		{"for-continue-clean", "function main(): i32 { var s = 0; for i in 0..5 { if (i == 2) { continue; } s = s + i; } return s; }\n", nil},
+		{"for-break-clean", "function main(): i32 { var a = [1, 2, 3]; var s = 0; for x in a { if (x == 3) { break; } s = s + x; } return s; }\n", nil},
+		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
+		{"for-literal-clean", "function main(): i32 { var s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
+		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { var s = 0; for x in mk() { s = s + x; } return s; }\n", nil},
 		{"dup-field", "struct P { x: i32, x: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E007"}},
 		{"dup-param", "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E018"}},
 		{"dup-field-and-param", "struct P { y: i32, y: i32 }\nfunction g(b: i32, b: i32): i32 { return b; }\nfunction main(): i32 { return 0; }\n", []string{"E007", "E018"}},
