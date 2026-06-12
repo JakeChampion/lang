@@ -1,0 +1,16 @@
+import "core/int";
+import "std/uuid";
+
+// Audit fixture: std/uuid v4 shape (length, dash positions, uniqueness)
+// across every native backend.
+
+function main(): i32 {
+    var id: string = uuid.uuid_v4();
+    if (id.len() != 36) { print("FAIL len"); return 11; }
+    if (id[8] != 45 || id[13] != 45 || id[18] != 45 || id[23] != 45) { print("FAIL dashes"); return 12; }
+    if (id[14] != 52) { print("FAIL version"); return 13; } // v4 → '4' at index 14
+    var id2: string = uuid.uuid_v4();
+    if (id == id2) { print("FAIL unique"); return 14; }
+    print("OK");
+    return 0;
+}
