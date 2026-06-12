@@ -450,6 +450,12 @@ function main(): i32 {
         }
     }
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+    // Lower `for i in LO..HI` range-loops to counting while-loops up front so
+    // every downstream consumer — the checker (-check), the interpreter
+    // (-interp), the SSA backend (try_ssa), and the AST emitter fallback —
+    // sees ordinary while/if/break statements. (-fmt returned above on the
+    // original source, so formatting is unaffected.)
+    merged = parser.desugar_ranges_module(merged);
 
     if (mode_scan) { return ssa_scan(merged.funcs, merged.structs); }
 

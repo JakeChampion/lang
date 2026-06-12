@@ -684,6 +684,113 @@ pub function desugar_switches_module(mod: Module): Module {
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_switch_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
+// ---------------------------------------------------------------------------
+// Range-for desugaring.
+//
+// `for i in LO..HI { body }` is parsed (parse_stmt) as a StmtFor whose iter is
+// a binary node `LO .. HI`. The native Go parser desugars the same surface to a
+// C-style `for (var i = LO; i < HI; i = i + 1)`, but the self-host AST has no
+// C-style for / block statement to desugar into at parse time. So we lower it
+// here, after parse, into a counting while-loop built from existing nodes:
+//
+//     var i = LO - 1;
+//     var $hiN = HI;            // HI evaluated once (so `0..f()` calls f once)
+//     while (true) {
+//         i = i + 1;            // increment at the TOP of the loop body so a
+//         if (i >= $hiN) break; // user `continue` (which jumps to the while
+//         <body>                // header) still advances the counter
+//     }
+//
+// Because the output is only while/if/break/var/assign, it lowers through the
+// IR path (irlower's StmtWhile/StmtIf/StmtBreak) AND the legacy AST emitters
+// with no further changes — and break/continue work without bailing. Empty /
+// reversed ranges (`5..5`, `9..3`) run zero iterations. `$hiN` carries a
+// loop-variable-derived `$hi_<var>` name so nested range-loops don't share a
+// slot. (These functions return BARE Stmt[] — never a struct wrapping a fresh
+// array — to avoid the native RC free-list reclaim that corrupts a
+// freshly-built array placed in a struct-literal field; see #2759 and the
+// desugar_switches_module precedent.)
+function desugar_ranges_block(body: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        var r: Stmt[] = desugar_ranges_one(body[i]);
+        var j: i32 = 0;
+        while (j < r.len()) { out = out.append(r[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+function desugar_ranges_one(st: Stmt): Stmt[] {
+    match (st) {
+        StmtFor(fr) => {
+            // Desugar the body first (nested + inner range-loops).
+            var dbody: Stmt[] = desugar_ranges_block(fr.body);
+            match (fr.iter) {
+                ExprBinary(b) => {
+                    if (b.op == "..") {
+                        var hi_name: string = "$hi_" + fr.var_name;
+                        var ivar: Stmt = s_var(fr.var_name, "i32", e_binary("-", b.left, e_number("1", "", false)));
+                        var hivar: Stmt = s_var(hi_name, "i32", b.right);
+                        var incr: Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
+                        var brk: Stmt = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
+                        var wbody: Stmt[] = [incr, brk];
+                        var k: i32 = 0;
+                        while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }
+                        var wh: Stmt = s_while(e_bool(true), wbody);
+                        return [ivar, hivar, wh];
+                    }
+                },
+                _ => {}
+            }
+            return [StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody }];
+        },
+        StmtIf(f) => {
+            return [StmtIf { cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
+        },
+        StmtWhile(w) => {
+            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body) }];
+        },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var a: i32 = 0;
+            while (a < m.arms.len()) {
+                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                a = a + 1;
+            }
+            return [StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin }];
+        },
+        StmtSwitch(sw) => {
+            var cases: SwitchCase[] = [];
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                cases = cases.append(SwitchCase { values: sw.cases[ci].values, body: desugar_ranges_block(sw.cases[ci].body) });
+                ci = ci + 1;
+            }
+            return [StmtSwitch { scrutinee: sw.scrutinee, cases: cases, has_default: sw.has_default, default_body: desugar_ranges_block(sw.default_body), line: sw.line, col: sw.col }];
+        },
+        StmtDefer(d) => {
+            var r: Stmt[] = desugar_ranges_one(d.action);
+            if (r.len() == 1) { return [StmtDefer { action: r[0] }]; }
+            return [st];
+        },
+        _ => { return [st]; }
+    }
+    return [st];
+}
+
+pub function desugar_ranges_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_ranges_block(fd.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
 // Parser state. `toks` is the lexer's output; `pos` is the
 // current cursor into it. We mutate via value-semantics (return
 // fresh Par from each consume()).
@@ -1978,10 +2085,24 @@ function parse_stmt(p: Par): StmtResult {
         // `for x in a {}` reads `a` + an empty block, not `a {}`.
         var f_saved: boolean = p.no_struct;
         var fiter = parse_expr(p.with_no_struct(true));
-        p = (fiter.par).with_no_struct(f_saved);
+        var fp: Par = fiter.par;
+        var fiter_expr: Expr = fiter.expr;
+        // `for i in LO..HI { body }` — half-open integer range. `..` is not a
+        // binary operator (parse_expr stops at it), so the LOW expr arrives
+        // here and the cursor sits on `..`. Encode the range as a binary
+        // node `LO .. HI`; desugar_ranges_module rewrites it (after parse,
+        // before checker/codegen) into a counting while-loop, since the
+        // self-host AST has no C-style for to desugar into at parse time.
+        if (fp.peek_punct() == "..") {
+            fp = fp.advance();  // consume `..`
+            var fhi = parse_expr(fp.with_no_struct(true));
+            fp = fhi.par;
+            fiter_expr = e_binary("..", fiter_expr, fhi.expr);
+        }
+        p = fp.with_no_struct(f_saved);
         var fb: BlockResult = parse_block(p);
         p = fb.par;
-        return StmtResult { par: p, stmt: s_for(fvar, fiter.expr, fb.body) };
+        return StmtResult { par: p, stmt: s_for(fvar, fiter_expr, fb.body) };
     }
     // `let` and `var` introduce a binding the same way here — the
     // self-host compiler doesn't track the immutability distinction
@@ -4764,7 +4885,7 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(hoist_local_funcs_module(desugar_switches_module(mod))))));
+    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(mod)))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),

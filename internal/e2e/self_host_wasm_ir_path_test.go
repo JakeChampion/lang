@@ -215,6 +215,17 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"forin-i32-param", `function total(xs: i32[]): i32 { var s = 0; for v in xs { s = s + v; } return s; } function main(): i32 { var a = [1, 2, 3, 4, 5]; return total(a); }`},
 		{"forin-nested", `function main(): i32 { var xs = [1, 2, 3]; var t = 0; for a in xs { for b in xs { t = t + a * b; } } return t; }`},
 		{"forin-string", `function main(): i32 { var ss: string[] = ["a", "bb", "ccc", "dddd"]; var n = 0; for s in ss { n = n + s.len(); } return n; }`},
+		// Range-for `for i in LO..HI` (desugared to a counting while-loop in
+		// irlower.lift_lambdas → lowers through the IR path's
+		// StmtWhile/StmtIf/StmtBreak).
+		{"range-sum", `function main(): i32 { var t = 0; for i in 0..5 { t = t + i; } return t; }`},
+		{"range-continue", `function main(): i32 { var t = 0; for i in 0..10 { if (i % 2 == 1) { continue; } t = t + i; } return t; }`},
+		{"range-break", `function main(): i32 { var t = 0; for i in 0..100 { if (i == 5) { break; } t = t + i; } return t; }`},
+		{"range-empty", `function main(): i32 { var t = 7; for i in 5..5 { t = t + 1; } return t; }`},
+		{"range-reversed", `function main(): i32 { var t = 3; for i in 9..3 { t = t + 1; } return t; }`},
+		{"range-nested", `function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }`},
+		{"range-call-once", `function hi(): i32 { return 4; } function main(): i32 { var t = 0; for i in 0..hi() { t = t + i; } return t; }`},
+		{"range-var-bound", `function main(): i32 { var n = 6; var t = 0; for i in 1..n { t = t + i; } return t; }`},
 		{"enum-struct-payload", `struct BinExpr { left: i32, right: i32 } enum Expr { Lit(i32), Binary(BinExpr) } function eval(e: Expr): i32 { match (e) { Lit(n) => { return n; }, Binary(b) => { return b.left + b.right; } } return 0; } function main(): i32 { return eval(Lit(7)) + eval(Binary(BinExpr { left: 3, right: 9 })); }`},
 		{"enum-struct-payload-guard", `struct P { x: i32, y: i32 } enum Shape { Rect(P), Dot } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, _ => { return 0; } } return 0; } function main(): i32 { return area(Rect(P { x: 4, y: 5 })); }`},
 		{"enum-struct-payload-nested", `struct Inner { v: i32 } struct Mid { i: Inner } enum E { A(Mid), B } function f(e: E): i32 { match (e) { A(m) => { return m.i.v; }, B => { return 9; } } return 0; } function main(): i32 { return f(A(Mid { i: Inner { v: 42 } })) + f(B); }`},

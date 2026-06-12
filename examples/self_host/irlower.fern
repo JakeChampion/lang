@@ -3969,24 +3969,31 @@ function lift_stmts(stmts: parser.Stmt[], acc: LiftAcc, gfns: string[]): LiftStm
 // whose bodies reference the hoisted __lam_<k> functions, with those functions
 // appended.
 pub function lift_lambdas(mod: parser.Module): parser.Module {
+    // Lower `for i in LO..HI` range-loops to counting while-loops before the
+    // IR path inspects the module: every IR backend's eligibility check and
+    // emit run on lift_lambdas' output (asm_ir / wasm_ir delegate here), so
+    // doing it here is what makes range-for actually reach the IR path
+    // (irlower's StmtWhile/StmtIf/StmtBreak) rather than bailing to the AST
+    // fallback as an unrecognised StmtFor iter.
+    var rmod: parser.Module = parser.desugar_ranges_module(mod);
     var gfns: string[] = [];
     var gi: i32 = 0;
-    while (gi < mod.funcs.len()) {
-        if (mod.funcs[gi].receiver_type.len() == 0) { gfns = gfns.append(mod.funcs[gi].name); }
+    while (gi < rmod.funcs.len()) {
+        if (rmod.funcs[gi].receiver_type.len() == 0) { gfns = gfns.append(rmod.funcs[gi].name); }
         gi = gi + 1;
     }
     var acc: LiftAcc = LiftAcc { funcs: [], counter: 0 };
     var newfuncs: parser.FuncDecl[] = [];
     var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var fd: parser.FuncDecl = mod.funcs[fi];
+    while (fi < rmod.funcs.len()) {
+        var fd: parser.FuncDecl = rmod.funcs[fi];
         var r: LiftStmts = lift_stmts(fd.body, acc, gfns);
         acc = r.acc;
         newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: r.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
         fi = fi + 1;
     }
-    if (acc.counter == 0) { return mod; }
+    if (acc.counter == 0) { return rmod; }
     var li: i32 = 0;
     while (li < acc.funcs.len()) { newfuncs = newfuncs.append(acc.funcs[li]); li = li + 1; }
-    return parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    return parser.Module { funcs: newfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: rmod.top_stmts, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports };
 }
