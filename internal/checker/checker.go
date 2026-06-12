@@ -7033,7 +7033,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					_, isStruct := c.info.Structs[tid.Name]
 					_, isEnum := c.info.Enums[tid.Name]
-					if isStruct || isEnum {
+					// A PRIMITIVE type name can be an associated-call target too
+					// (`i32.default()` -> `__assoc_i32_default`, from `impl Default
+					// for i32`) -- how a monomorphised `T.default()` with `T=i32`
+					// resolves after the type-param rewrite.
+					isPrim := isPrimitiveTypeName(tid.Name)
+					if isStruct || isEnum || isPrim {
 						if mangled, ok := c.info.Methods[tid.Name+"."+fa.Field]; ok {
 							if strings.HasPrefix(mangled, "__assoc_") {
 								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
@@ -8410,16 +8415,47 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 // refineSingleCallTypeArgs is the leaf case of
 // refineCallTypeArgsFromDest — picks up a Call directly.
-func (c *checker) refineSingleCallTypeArgs(call *ast.Call, dst ast.Type) {
-	if len(call.TypeArgs) == 0 {
-		return
+// isPrimitiveTypeName reports whether `name` is a built-in scalar type that
+// can carry associated functions via `impl Trait for <prim>` (hoisted to
+// `__assoc_<prim>_<f>`).
+func isPrimitiveTypeName(name string) bool {
+	switch name {
+	case "i32", "i64", "u32", "u64", "f32", "f64", "string", "boolean":
+		return true
 	}
+	return false
+}
+
+func (c *checker) refineSingleCallTypeArgs(call *ast.Call, dst ast.Type) {
 	id, ok := call.Callee.(*ast.Ident)
 	if !ok {
 		return
 	}
 	fn, isGen := c.info.GenericFuncs[id.Name]
-	if !isGen || len(call.TypeArgs) != len(fn.TypeParams) {
+	if !isGen || len(fn.TypeParams) == 0 {
+		return
+	}
+	// A generic call with NO type args (a receiver-less associated call on a
+	// generic struct — `Box.default()` rewritten to `__assoc_Box_default()` —
+	// has no arguments to pin its type params): infer them entirely from the
+	// destination type so the monomorphiser can instantiate a concrete clone.
+	// Without this the generic `__assoc_…` body keeps its `T` and the
+	// post-monomorph re-check fails with "undefined identifier T".
+	if len(call.TypeArgs) == 0 {
+		sub := make(map[string]ast.Type, len(fn.TypeParams))
+		refineParamSubFromDest(fn.ReturnType, dst, sub)
+		args := make([]ast.Type, len(fn.TypeParams))
+		for i, tp := range fn.TypeParams {
+			v, ok := sub[tp]
+			if !ok || v == nil {
+				return // couldn't infer every param — leave the call untouched
+			}
+			args[i] = v
+		}
+		call.TypeArgs = args
+		return
+	}
+	if len(call.TypeArgs) != len(fn.TypeParams) {
 		return
 	}
 	sub := make(map[string]ast.Type, len(fn.TypeParams))
