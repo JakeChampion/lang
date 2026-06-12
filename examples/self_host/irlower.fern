@@ -2042,6 +2042,23 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pis.ok) { return pis; }
                         return pis.emit(ir.op_print_int());
                     }
+                    // Built-in `write(s)` / `print(s)` — write a string's bytes to
+                    // stdout. `print` appends a newline (Fern's print == println):
+                    // it desugars to `print_str(s + "\n")` via the existing str_concat
+                    // op, so a single print_str op + helper serves both. The arg is a
+                    // string (the checker guarantees it for these builtins).
+                    if ((cid.name == "write" || cid.name == "print_str") && c.args.len() == 1) {
+                        var wss: LowerState = lower_expr(c.args[0], s);
+                        if (!wss.ok) { return wss; }
+                        return wss.emit(ir.op_print_str());
+                    }
+                    if (cid.name == "print" && c.args.len() == 1) {
+                        var prs: LowerState = lower_expr(c.args[0], s);
+                        if (!prs.ok) { return prs; }
+                        prs = prs.emit(ir.op_const_str("\n"));
+                        prs = prs.emit(ir.op_str_concat());
+                        return prs.emit(ir.op_print_str());
+                    }
                     // Built-in `len(x)` — the free-function spelling of `.len()`:
                     // a string reads the box's length field (str_len), an array
                     // the header (arr_len). Mirrors the `.len()` method dispatch

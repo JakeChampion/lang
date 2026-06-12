@@ -757,6 +757,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // stack: n -> write n's decimal text to stdout (no newline). The helper
             // returns void, so push a dummy i32 for the statement-level drop.
             out = out + "    call $__fern_print_int\n    i32.const 0\n";
+        } else if (o.kind == "print_str") {
+            // stack: strblock ptr -> write its bytes to stdout (no newline). The
+            // helper returns void, so push a dummy i32 for the statement-level drop.
+            out = out + "    call $__fern_print_str\n    i32.const 0\n";
         } else if (o.kind == "map_set") {
             // stack: map, k, v -> push vis (0 = i32 value) -> map_set -> map.
             out = out + "    i32.const 0\n    call $__fern_map_set\n";

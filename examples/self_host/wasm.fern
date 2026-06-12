@@ -6301,6 +6301,18 @@ pub function print_int_helper(buf: i32): string {
     return o;
 }
 
+// print_str_helper emits the `$__fern_print_str` runtime: given a string-block
+// pointer `[len@0][bytes@4]`, set the iovec (buf = ptr+4, len = load(ptr)) in the
+// low-24 scratch (memory 0/4, nwritten at 8) and fd_write it to stdout (fd 1).
+pub function print_str_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_print_str (param $p i32)\n";
+    o = o + "    (i32.store (i32.const 0) (i32.add (local.get $p) (i32.const 4)))\n";
+    o = o + "    (i32.store (i32.const 4) (i32.load (local.get $p)))\n";
+    o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
+    return o;
+}
+
 // stdout_shim_helpers emits the component-io $fd_write shim: a $fd_write
 // function (same signature as the preview1 import) that writes to stdout
 // through the preview2 stream interface. The stdout handle from get-stdout
@@ -10681,8 +10693,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         mod = lm;
         var ir_out: string = "(module\n";
         ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
-        // print_int writes via WASI fd_write — import it only when the module prints.
-        if (wasm_ir.module_emits_op(mod, "print_int")) {
+        // print_int / print_str write via WASI fd_write — import it only when the
+        // module prints.
+        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str")) {
             ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
@@ -10723,6 +10736,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_emits_op(mod, "print_int")) {
             ir_out = ir_out + print_int_helper(wasm_ir.str_offset(sv, sv.len()));
         }
+        if (wasm_ir.module_emits_op(mod, "print_str")) { ir_out = ir_out + print_str_helper(); }
         // Function-value support (the $fn<N> types, funcref table + elem segment);
         // empty for non-closure modules so their output is byte-unchanged.
         ir_out = ir_out + wasm_ir.fn_support_section(mod);

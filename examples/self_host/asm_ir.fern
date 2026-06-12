@@ -351,6 +351,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
+    // __fern_print_str: %rdi = string box {data@0, len@8} → write(1, data, len).
+    // Transcribed verbatim from asm.fern so the IR path's print_str calls the
+    // identical body. Gated on the str_print need the op handler marked.
+    if (s.has_need("str_print")) {
+        s = s.write("__fern_print_str:\n");
+        s = s.write("    movq (%rdi), %rsi\n");
+        s = s.write("    movq 8(%rdi), %rdx\n");
+        s = s.write("    movq $1, %rdi\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    ret\n");
+    }
     // String helpers — register-arg ABI (%rdi = box A, %rsi = box B), transcribed
     // verbatim from asm.fern's emit_runtime so the IR path's str_concat / str_eq
     // call the identical bodies. Gated on the needs the op handlers marked.
@@ -1284,6 +1296,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // symbol). Push the syscall return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_print_int\n    pushq %rax\n");
             s = s.need("print_int");
+        } else if (o.kind == "print_str") {
+            // [strbox] -> write its bytes to stdout (the AST path's __fern_print_str).
+            // Push the syscall return so the statement-level drop balances.
+            s = s.write("    popq %rdi\n    call __fern_print_str\n    pushq %rax\n");
+            s = s.need("str_print");
         } else if (o.kind == "map_set") {
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");

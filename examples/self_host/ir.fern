@@ -271,6 +271,11 @@ pub function op_map_len(): Op { return op0("map_len"); }
 // Lowers to a call into each backend's __fern_print_int runtime helper — the same
 // helper + symbol the AST path emits, so behaviour is identical.
 pub function op_print_int(): Op { return op0("print_int"); }
+// `print_str` pops a string value and writes its bytes to stdout (no newline),
+// pushing a dummy result so a statement-level drop balances. `print(s)` desugars
+// to `print_str(s + "\n")` (str_concat with a "\n" literal); `write(s)` is a bare
+// print_str. Lowers to each backend's __fern_print_str helper.
+pub function op_print_str(): Op { return op0("print_str"); }
 // `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
 // hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
 // built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
