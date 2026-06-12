@@ -70,9 +70,11 @@ const (
 	sysExitGroup = 231
 	sysGetrandom = 318
 	// clock_gettime(2): x86-64 syscall 228.
-	// Used by `__fern_now_unix_ms` for the wall-clock-now
-	// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
+	// Used by `__fern_now_unix_ms` / `__fern_monotonic_ns` for the
+	// clock-now surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
 	sysClockGettime = 228
+	// nanosleep(2): x86-64 syscall 35. Used by `__fern_sleep_ms`.
+	sysNanosleep = 35
 )
 
 // Options tunes the emit. Currently empty; reserved for the
@@ -282,6 +284,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
 	}
+	if g.usesMonotonicNs {
+		g.emitMonotonicNsRuntime()
+	}
+	if g.usesSleepMs {
+		g.emitSleepMsRuntime()
+	}
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
 		g.emitTcpAcceptRuntime()
@@ -405,6 +413,14 @@ type generator struct {
 	// `tv_sec * 1000 + tv_nsec / 1_000_000` in rax as i64.
 	// Backs `time.instant_now()` on x86_64 Linux.
 	usesNowUnixMs       bool
+	// usesMonotonicNs pulls in `__fern_monotonic_ns()` — monotonic
+	// nanoseconds via `clock_gettime(CLOCK_MONOTONIC, &ts)` (#228),
+	// returning `tv_sec * 1e9 + tv_nsec` in rax as i64.
+	usesMonotonicNs bool
+	// usesSleepMs pulls in `__fern_sleep_ms(ms)` — best-effort sleep
+	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
+	// returns immediately. Void.
+	usesSleepMs         bool
 	usesTcp             bool
 	usesEnv             bool
 	usesArgs            bool
@@ -623,6 +639,10 @@ func (g *generator) recordUse(target string) {
 		}
 	case "now_unix_ms":
 		g.usesNowUnixMs = true
+	case "monotonic_ns":
+		g.usesMonotonicNs = true
+	case "sleep_ms":
+		g.usesSleepMs = true
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
 		g.usesTcp = true
 		// tcp_recv allocates a string buffer for the read.
@@ -1655,6 +1675,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_strbuf_take"
 		case "now_unix_ms":
 			target = "__fern_now_unix_ms"
+		case "monotonic_ns":
+			target = "__fern_monotonic_ns"
+		case "sleep_ms":
+			target = "__fern_sleep_ms"
 		case "tcp_listen":
 			target = "__fern_tcp_listen"
 		case "tcp_accept":
@@ -4520,6 +4544,77 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_now_unix_ms, .-__fern_now_unix_ms")
+}
+
+// emitMonotonicNsRuntime emits `__fern_monotonic_ns()` —
+// monotonic nanoseconds via x86_64
+// `clock_gettime(CLOCK_MONOTONIC, &ts)` (syscall 228). The
+// kernel writes `struct timespec { i64 tv_sec; i64 tv_nsec }`;
+// we return `tv_sec * 1e9 + tv_nsec` in rax. The monotonic
+// clock counts from an unspecified fixed reference, so only
+// the DELTA between two readings is meaningful — exactly what
+// benchmark timing wants (NTP-jump-immune, unlike now_unix_ms).
+//
+// Stack frame mirrors now_unix_ms: sub rsp,24 = 16 timespec +
+// 8 alignment. Errno ignored (we control clock id + buffer).
+func (g *generator) emitMonotonicNsRuntime() {
+	g.line("")
+	g.line(".globl __fern_monotonic_ns")
+	g.line(".type __fern_monotonic_ns, @function")
+	g.label("__fern_monotonic_ns")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 24")  // 16 timespec + 8 alignment
+	g.emit("mov edi, 1")   // CLOCK_MONOTONIC = 1
+	g.emit("mov rsi, rsp") // &timespec
+	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
+	g.emit("syscall")
+	g.emit("mov rax, [rsp]")                 // rax = tv_sec
+	g.emit("imul rax, rax, 1000000000")      // sec * 1e9
+	g.emit("add rax, [rsp + 8]")             // + tv_nsec
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_monotonic_ns, .-__fern_monotonic_ns")
+}
+
+// emitSleepMsRuntime emits `__fern_sleep_ms(ms)` — pause for
+// `ms` milliseconds (System V arg 1 in rdi, an i64). ms <= 0
+// returns immediately. Splits ms into a `struct timespec
+// { tv_sec = ms / 1000; tv_nsec = (ms % 1000) * 1e6 }` on the
+// stack and calls `nanosleep(&req, NULL)` (syscall 35). Void —
+// the operand stack push is gated off by callReturnsVoid.
+//
+// Stack frame: sub rsp,32 = 16 timespec + 16 alignment/pad.
+// Errno / early-wake remainder ignored (best-effort sleep —
+// matches the self-host __fern_sleep_ms and the interpreter).
+func (g *generator) emitSleepMsRuntime() {
+	g.line("")
+	g.line(".globl __fern_sleep_ms")
+	g.line(".type __fern_sleep_ms, @function")
+	g.label("__fern_sleep_ms")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")
+	g.emit("cmp rdi, 0")
+	g.emit("jle .Lsleep_ms_done")
+	g.emit("mov rax, rdi")
+	g.emit("xor edx, edx")     // clear high for div
+	g.emit("mov rcx, 1000")
+	g.emit("div rcx")          // rax = ms/1000 (sec), rdx = ms%1000 (rem)
+	g.emit("mov [rsp], rax")   // tv_sec
+	g.emit("mov rax, 1000000")
+	g.emit("imul rax, rdx")    // rem * 1e6 = tv_nsec
+	g.emit("mov [rsp + 8], rax")
+	g.emit("mov rdi, rsp")     // &req
+	g.emit("xor esi, esi")     // rem = NULL
+	g.emit(fmt.Sprintf("mov eax, %d", sysNanosleep))
+	g.emit("syscall")
+	g.label(".Lsleep_ms_done")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_sleep_ms, .-__fern_sleep_ms")
 }
 
 // emitPutcharRuntime emits `__fern_putchar(c)` — write a
