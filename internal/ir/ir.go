@@ -7261,34 +7261,16 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 			}
 		}
 	}
-	// Record the type of every synthetic slot the lowering pass
-	// conjured beyond the user-visible params + locals — ArrayLit
-	// / StructLit / Switch / closure helpers each added entries to
-	// the locals map. Most are i32 (heap pointers or integer tags);
-	// match-arm bindings of float-typed payloads register a
-	// FloatType in scratchType so wasm declares the local as f32.
-	//
-	// Use the standalone nextSlot counter (rather than
-	// `len(b.locals)`) so two match arms that share a binding
-	// name don't fool the count by overwriting the same map
-	// entry — both still consume distinct slot indices.
-	scratchBase := int32(len(fn.Params) + len(info.Locals[fn]))
-	scratchCount := int(b.nextSlot - scratchBase)
-	if scratchCount < 0 {
-		scratchCount = 0
-	}
-	out.ScratchTypes = make([]ast.Type, scratchCount)
-	for i := range out.ScratchTypes {
-		if t, ok := b.scratchType[scratchBase+int32(i)]; ok && t != nil {
-			out.ScratchTypes[i] = t
-		} else {
-			out.ScratchTypes[i] = ast.NumberType{}
-		}
-	}
 	// If the body falls off the end, emit an implicit return so the
 	// downstream consumer doesn't have to check. Run any
 	// registered defers first — same shape as the explicit
 	// Return path.
+	//
+	// This MUST run before ScratchTypes is sized below: its
+	// emitRcDecLocalsAtExit can allocate fresh scratch slots (e.g. the
+	// tag stash of an enum-param exit-drop on a fall-off path), and a
+	// slot allocated after the count is taken would be referenced but
+	// never declared — an out-of-bounds local on wasm (#2828).
 	if needsImplicitReturn(out.Ops) {
 		if err := b.emitDeferCleanup(); err != nil {
 			return nil, err
@@ -7328,6 +7310,32 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 				b.emitRcDecLocalsAtExit()
 				b.emit(Op{Kind: OpReturn})
 			}
+		}
+	}
+	// Record the type of every synthetic slot the lowering pass
+	// conjured beyond the user-visible params + locals — ArrayLit
+	// / StructLit / Switch / closure helpers each added entries to
+	// the locals map. Most are i32 (heap pointers or integer tags);
+	// match-arm bindings of float-typed payloads register a
+	// FloatType in scratchType so wasm declares the local as f32.
+	//
+	// Use the standalone nextSlot counter (rather than
+	// `len(b.locals)`) so two match arms that share a binding
+	// name don't fool the count by overwriting the same map
+	// entry — both still consume distinct slot indices. Sized AFTER
+	// the implicit-return emission above, which can allocate the last
+	// scratch slot (the enum-param fall-off drop's tag stash, #2828).
+	scratchBase := int32(len(fn.Params) + len(info.Locals[fn]))
+	scratchCount := int(b.nextSlot - scratchBase)
+	if scratchCount < 0 {
+		scratchCount = 0
+	}
+	out.ScratchTypes = make([]ast.Type, scratchCount)
+	for i := range out.ScratchTypes {
+		if t, ok := b.scratchType[scratchBase+int32(i)]; ok && t != nil {
+			out.ScratchTypes[i] = t
+		} else {
+			out.ScratchTypes[i] = ast.NumberType{}
 		}
 	}
 	return out, nil
