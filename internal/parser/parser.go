@@ -661,10 +661,11 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
 		}
-		if len(params) == 0 || params[0].Name != "self" {
-			return nil, p.errorf(mkw.Pos,
-				"trait method %q must take `self: Self` as its first parameter", mname.Text)
-		}
+		// A method whose first parameter isn't `self` is an *associated
+		// function* (`Type.f(args)`, no receiver) — typically a
+		// constructor returning `Self`. Ordinary methods still require a
+		// leading `self`.
+		assoc := len(params) == 0 || params[0].Name != "self"
 		var ret ast.Type = ast.VoidType{}
 		if _, ok := p.accept(lexer.Punct, ":"); ok {
 			t, err := p.parseType()
@@ -677,7 +678,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 			return nil, err
 		}
 		td.Methods = append(td.Methods, ast.TraitMethod{
-			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret,
+			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, Assoc: assoc,
 		})
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
@@ -741,22 +742,33 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			return nil, nil, p.errorf(fn.P,
 				"impl method %q must not declare a receiver clause; its first parameter is `self: Self`", fn.Name)
 		}
-		if len(fn.Params) == 0 || fn.Params[0].Name != "self" {
-			return nil, nil, p.errorf(fn.P,
-				"impl method %q must take `self: Self` as its first parameter", fn.Name)
-		}
+		// A receiver-less impl method is an *associated function*: no
+		// `self`, called as `Type.f(args)`. Substitute Self across the
+		// signature and stamp AssocType so the checker hoists it to
+		// `__assoc_<Type>_<name>` and resolves type-qualified call sites.
+		assoc := len(fn.Params) == 0 || fn.Params[0].Name != "self"
 		// Substitute Self -> the concrete impl type across the whole
-		// signature, then peel `self` off as the receiver so the
-		// checker's receiver-hoist mangles it to
+		// signature, then (for an ordinary method) peel `self` off as the
+		// receiver so the checker's receiver-hoist mangles it to
 		// __method_<Type>_<name> exactly like a hand-written method.
 		for i := range fn.Params {
 			fn.Params[i].Type = ast.SubstSelf(fn.Params[i].Type, implType)
 		}
 		fn.ReturnType = ast.SubstSelf(fn.ReturnType, implType)
-		recv := fn.Params[0]
-		recv.Type = implType
-		fn.Receiver = &recv
-		fn.Params = fn.Params[1:]
+		if assoc {
+			if st, ok := implType.(ast.StructType); ok {
+				fn.AssocType = st.Name
+			} else if et, ok := implType.(ast.EnumType); ok {
+				fn.AssocType = et.Name
+			} else {
+				fn.AssocType = implType.String()
+			}
+		} else {
+			recv := fn.Params[0]
+			recv.Type = implType
+			fn.Receiver = &recv
+			fn.Params = fn.Params[1:]
+		}
 		// A parametric impl makes every method generic over the impl's
 		// type params: the receiver type (`Box[T]`), the other params,
 		// and the body all reference `T`, so the method must carry the

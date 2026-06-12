@@ -1763,7 +1763,29 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// prepended to the parameter list, so codegen never has to know
 	// about methods.
 	for _, fn := range prog.Funcs {
-		if fn.Receiver != nil {
+		if fn.AssocType != "" {
+			// Associated function (`impl … for T { function f(): Self }`):
+			// no receiver, called as `T.f(args)`. Hoist to a flat
+			// `__assoc_<T>_<f>` and register under the `T.f` key so the
+			// Call-case resolves `T.f(args)` (a FieldAccess on a *type*
+			// name) to it with no receiver argument. Stamp MethodRecv /
+			// MethodSimpleName so the monomorph re-check re-registers it
+			// from the `else if fn.MethodRecv != ""` branch below after
+			// Name has been rewritten. Then fall through to the common
+			// FuncSig / GenericFuncs registration.
+			typeName := fn.AssocType
+			methodKey := typeName + "." + fn.Name
+			if _, dup := c.info.Methods[methodKey]; dup {
+				c.errfCode(fn.P, "E006", "associated function %q on %s redeclared", fn.Name, typeName)
+				continue
+			}
+			fn.MethodRecv = typeName
+			fn.MethodSimpleName = fn.Name
+			fn.Name = "__assoc_" + typeName + "_" + fn.Name
+			fn.AssocType = ""
+			c.info.Methods[methodKey] = fn.Name
+			c.info.MethodSources[fn.Name] = fn.SourceModule
+		} else if fn.Receiver != nil {
 			var typeName string
 			switch rt := fn.Receiver.Type.(type) {
 			case ast.StructType:
@@ -1961,7 +1983,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		// Every trait method must be present with a matching signature.
 		conforms := true
 		for _, m := range td.Methods {
-			mangled := "__method_" + typeName + "_" + m.Name
+			// Associated trait methods (no `self`) hoist to `__assoc_…`;
+			// ordinary methods to `__method_…`. The expected signature is
+			// built from m.Params directly either way — an assoc method has
+			// no leading `self`, and its hoisted form has no receiver, so
+			// they align without a prepended receiver slot.
+			prefix := "__method_"
+			if m.Assoc {
+				prefix = "__assoc_"
+			}
+			mangled := prefix + typeName + "_" + m.Name
 			sig, ok := c.info.FuncSigs[mangled]
 			if !ok {
 				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
@@ -6717,6 +6748,35 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// form. Only fires when the target is a known enum name —
 		// every other FieldAccess (struct field, method call) flows
 		// down the usual path.
+		// Associated-function call: `Point.origin(args)` — a FieldAccess
+		// whose target is a known struct/enum TYPE name (not shadowed by a
+		// value) and whose field is a registered associated function
+		// (`__assoc_<T>_<f>`). Rewrite the callee to the flat assoc name so
+		// the ordinary function-call path handles it with no receiver
+		// prepended. Checked before the qualified-variant rewrite below,
+		// which would otherwise claim every `Enum.x(...)` shape.
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+			if tid, ok := fa.Target.(*ast.Ident); ok {
+				if _, shadowed := s.lookup(tid.Name); !shadowed {
+					_, isStruct := c.info.Structs[tid.Name]
+					_, isEnum := c.info.Enums[tid.Name]
+					if isStruct || isEnum {
+						if mangled, ok := c.info.Methods[tid.Name+"."+fa.Field]; ok {
+							if strings.HasPrefix(mangled, "__assoc_") {
+								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
+							} else {
+								// A type-qualified call onto a method that
+								// takes a `self` receiver — the user meant
+								// `value.m()`, not `Type.m()`.
+								c.errfCode(n.P, "E043", "%s.%s is a method; call it on a value (`v.%s(...)`), not on the type — only associated functions (no `self`) use `%s.%s(...)`",
+									demangle(tid.Name), fa.Field, fa.Field, demangle(tid.Name), fa.Field)
+								return nil
+							}
+						}
+					}
+				}
+			}
+		}
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
 				if _, isEnum := c.info.Enums[tid.Name]; isEnum {

@@ -1452,8 +1452,12 @@ impl[A] T for Box[A] { function [B] (self: Self) f(): void {} }`); err == nil {
 // Error cases: trait method without a `self` first param, and `impl`
 // missing the `for` clause.
 func TestTraitImplParseErrors(t *testing.T) {
-	if _, err := Parse(`trait T { function f(x: i32): i32; }`); err == nil {
-		t.Error("trait method without `self` first param should be a parse error")
+	// A trait method without a leading `self` is now an associated
+	// function (e.g. a `Type.new()` constructor), not a parse error.
+	if prog, err := Parse(`trait T { function f(x: i32): i32; }`); err != nil {
+		t.Errorf("receiver-less trait method (associated function) should parse: %v", err)
+	} else if m := prog.Traits[0].Methods[0]; !m.Assoc {
+		t.Error("receiver-less trait method should be marked Assoc")
 	}
 	if _, err := Parse(`impl T Point { }`); err == nil {
 		t.Error("`impl T Point` without `for` should be a parse error")
