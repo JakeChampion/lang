@@ -18,6 +18,42 @@ This document captures the design so the epic can be implemented as a
 sequence of **atomically-landable** slices without re-deriving the
 machinery each time.
 
+## Which IR? (`irlower` vs `ssa.fern`)
+
+The self-host has **two** IR layers, mirroring the two the native
+compiler has:
+
+- **`ir.fern` / `irlower.fern`** — the stack IR, mirroring native's
+  `internal/ir`. This is "the layer where Perceus reference counting
+  lives" (ir.fern header) and the one CLAUDE.md's goal 1 (widen the IR
+  subset until the AST fallback is gone) and goal 2 (port Perceus to the
+  self-host) both target. **This plan is for this path.**
+- **`ssa.fern`** — mirrors native's downstream optimiser
+  `internal/ssa`; a different, higher layer. Per
+  `docs/SELFHOST-SSA-ALWAYS.md` it is the *default* lowering path for
+  x86-64/arm64 in the unified driver (`fern.fern try_ssa`), and it has
+  **already implemented closures** (Phase 2e), floats, generics — its
+  `-ssa-scan` reports 100% per-function coverage, blocked only by the
+  no-GC memory wall (which the Perceus track unblocks).
+
+These are parallel efforts at the same end (retire the AST emitters).
+Closures-on-`irlower` is therefore **not** made redundant by SSA already
+having them — they are different layers — and the SSA implementation is a
+ready-made **blueprint** for this port:
+
+- `ssa.collect_lambdas` (lambda lifting: hoist `ExprLambda` to top-level
+  `FuncDecl`s with a synthetic `__env` param) is directly reusable as
+  the model for Slice 2's `closureconv.fern`.
+- `ssa_wasm.fern`'s closure backend (Phase 2e) already solved wasm's
+  strictly-typed `call_indirect`: an `SFunc.takes_env` flag, a function
+  table whose slot holds each function's *closure-callable* form (the
+  function itself if it takes `__env`, else an **env-dropping wrapper**),
+  and a `$clos<arity>` type per arity. `wasm_ir` should mirror this
+  exactly — note this means even the env-box ABI can be uniform if
+  plain functions are wrapped rather than given a separate no-env
+  `$fn<N>` type. (Slice 1 below keeps the simpler no-env path; revisit
+  if uniformity with Slice 3 proves cheaper.)
+
 ## Hard constraints (why slices can't be tiny)
 
 1. **One shared frontend, all-or-nothing eligibility.** All three
