@@ -42,6 +42,10 @@ function main(): i32 {
         // wasi random_get import (issue #2747) — must precede the function
         // section. Emitted when the module uses random_bytes / random_i32.
         if (wasm_ir.module_uses_random(mod)) { o = o + wasm.random_get_import(); }
+        // print_int writes via WASI fd_write — import it only when the module prints.
+        if (wasm_ir.module_emits_op(mod, "print_int")) {
+            o = o + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+        }
         o = o + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
         // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -77,6 +81,9 @@ function main(): i32 {
         // random_i32 is heap-free. The import is emitted above.
         if (wasm_ir.module_emits_op(mod, "random_bytes")) { o = o + wasm.random_bytes_ir_func(); }
         if (wasm_ir.module_emits_op(mod, "random_i32")) { o = o + wasm.random_i32_func(); }
+        // print_int's $__fern_print_int: digit buffer in the 16-byte scratch past
+        // the string blocks (the `+16` in fl_base_for); iovec in the low-24 scratch.
+        if (wasm_ir.module_emits_op(mod, "print_int")) { o = o + wasm.print_int_helper(wasm_ir.str_offset(sv, sv.len())); }
         if (wasm_ir.module_emits_op(mod, "str_bytes")) { o = o + wasm.str_bytes_func(); }
         // Function-value support: the $fn<N> call_indirect signature types, the
         // funcref table, and its elem segment (empty for non-closure modules).

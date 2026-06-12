@@ -288,6 +288,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // str_eq/arr_push/heap deps (close_needs in asm_arm64_ir_run expands).
             s = s.need("maps");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_map_new\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "print_int") {
+            // [n] -> write n's decimal text to stdout (the AST path's helper +
+            // symbol). Push x0 (the write return) so the statement-level drop balances.
+            s = s.need("print_int");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_print_int\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "map_set") {
             // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind).
             s = s.need("maps");

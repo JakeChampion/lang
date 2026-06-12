@@ -1998,6 +1998,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (eptag == "f64") { return se.emit(ir.op_opt_make_w(1, 64, false)); }
                         return se.emit(ir.op_opt_make(1));
                     }
+                    // Built-in `print_int(n)` — write n's decimal text to stdout
+                    // (no newline). Lowers the i32 arg then op_print_int, which each
+                    // backend emits as a call into the same __fern_print_int runtime
+                    // helper the AST path uses. A reserved builtin name (like
+                    // map_new / Some / len), so it never shadows a user function.
+                    if (cid.name == "print_int" && c.args.len() == 1) {
+                        var pis: LowerState = lower_expr(c.args[0], s);
+                        if (!pis.ok) { return pis; }
+                        return pis.emit(ir.op_print_int());
+                    }
                     // Built-in `len(x)` — the free-function spelling of `.len()`:
                     // a string reads the box's length field (str_len), an array
                     // the header (arr_len). Mirrors the `.len()` method dispatch

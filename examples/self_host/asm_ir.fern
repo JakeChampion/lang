@@ -301,6 +301,56 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
     s = s.write(".Larrdec_ret:\n");
     s = s.write("    ret\n");
+    // __fern_print_int: the i32 in %rdi → decimal text in a stack buffer → stdout
+    // (sys_write, fd 1, no newline). Transcribed verbatim from asm.fern's
+    // emit_runtime so the IR path's print_int calls the identical body. Gated on
+    // the need the print_int op handler marked.
+    if (s.has_need("print_int")) {
+        s = s.write("__fern_print_int:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    subq $32, %rsp\n");
+        s = s.write("    movq %rdi, %rax\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jge .Lpi_pos\n");
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq $1, %r10\n");
+        s = s.write(".Lpi_pos:\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jne .Lpi_loop_start\n");
+        s = s.write("    movb $48, -1(%rbp)\n");
+        s = s.write("    leaq -1(%rbp), %rsi\n");
+        s = s.write("    movq $1, %rdx\n");
+        s = s.write("    jmp .Lpi_write\n");
+        s = s.write(".Lpi_loop_start:\n");
+        s = s.write("    leaq -1(%rbp), %rsi\n");
+        s = s.write("    movq $0, %r8\n");
+        s = s.write(".Lpi_div:\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $10, %rcx\n");
+        s = s.write("    divq %rcx\n");
+        s = s.write("    addq $48, %rdx\n");
+        s = s.write("    movb %dl, (%rsi)\n");
+        s = s.write("    decq %rsi\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jne .Lpi_div\n");
+        s = s.write("    cmpq $0, %r10\n");
+        s = s.write("    je .Lpi_no_neg\n");
+        s = s.write("    movb $45, (%rsi)\n");
+        s = s.write("    decq %rsi\n");
+        s = s.write("    incq %r8\n");
+        s = s.write(".Lpi_no_neg:\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    movq %r8, %rdx\n");
+        s = s.write(".Lpi_write:\n");
+        s = s.write("    movq $1, %rdi\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
     // String helpers — register-arg ABI (%rdi = box A, %rsi = box B), transcribed
     // verbatim from asm.fern's emit_runtime so the IR path's str_concat / str_eq
     // call the identical bodies. Gated on the needs the op handlers marked.
@@ -1229,6 +1279,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
         } else if (o.kind == "map_new") {
             s = s.write("    popq %rdi\n    call __fern_map_new\n    pushq %rax\n");
+        } else if (o.kind == "print_int") {
+            // [n] -> write n's decimal text to stdout (the AST path's helper +
+            // symbol). Push the syscall return so the statement-level drop balances.
+            s = s.write("    popq %rdi\n    call __fern_print_int\n    pushq %rax\n");
+            s = s.need("print_int");
         } else if (o.kind == "map_set") {
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
@@ -1444,7 +1499,7 @@ pub function emit_module_ir(mod: parser.Module): string {
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (module_uses_heap(mod) || s.has_need("i32_to_string")) { s = emit_ir_runtime(s); }
+    if (module_uses_heap(mod) || s.has_need("i32_to_string") || s.has_need("print_int")) { s = emit_ir_runtime(s); }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
