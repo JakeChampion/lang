@@ -1083,6 +1083,28 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             var tyname: string = p.peek_ident();
             if (tyname.len() == 0) { tyname = p.peek_keyword(); }
             if (tyname.len() > 0) { p = p.advance(); }
+            // Capture an array `[]` or generic `[...]` suffix on the cast
+            // target so `e as i32[]` / `e as Option[i32]` parse as a single
+            // ascription instead of leaving the brackets to be mis-read as a
+            // postfix index. Only the `[]` array marker is folded into the op
+            // name (it distinguishes an array ascription from the numeric
+            // `as i32` conversion); generic args are consumed but dropped —
+            // the base name already names the ascription and the cast lowers
+            // as a zero-cost identity regardless of the type argument.
+            if (p.peek_punct() == "[") {
+                p = p.advance();   // `[`
+                if (p.peek_punct() == "]") {
+                    p = p.advance();   // `]`
+                    tyname = tyname + "[]";
+                } else {
+                    var depth: i32 = 1;
+                    while (depth > 0 && !p.at_end()) {
+                        if (p.peek_punct() == "[") { depth = depth + 1; }
+                        else if (p.peek_punct() == "]") { depth = depth - 1; }
+                        p = p.advance();
+                    }
+                }
+            }
             base = e_unary_at("as_" + tyname, base, asline, ascol);
         } else if (p.peek_punct() == "?") {
             // `expr?` try operator. Desugar to the unary op `try_`

@@ -119,6 +119,11 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
 		// `loop { }` infinite loop (#2676 loop-form) -> desugars to while(true).
 		{"loop-break", "function main(): i32 { var i = 0; loop { i = i + 1; if (i >= 7) { break; } } return i; }", 7},
+		{"asc-arr-nonempty", "function main(): i32 { var a = [3, 4] as i32[]; return a[0] + a[1]; }", 7},
+		{"asc-arr-empty", "function main(): i32 { var a = [] as i32[]; a = [5, 10]; return a[0] + a[1]; }", 15},
+		{"asc-arr-len", "function main(): i32 { var a = [] as i32[]; return a.len(); }", 0},
+		{"asc-arr-rc", "function main(): i32 { var a = [3, 4] as i32[]; var b = a; return __rc(a); }", 2},
+		{"asc-arr-alias-use", "function main(): i32 { var a = [3, 4] as i32[]; var b = a; return b[0] + b[1] + a.len(); }", 9},
 		{"loop-continue", "function main(): i32 { var i = 0; var s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
 		// Direct calls + multi-function programs + recursion (slice 6) -> real
 		// x86 call/ret with the SysV integer-register arg convention.

@@ -968,6 +968,44 @@ pub function for_iter_is_range(iter: parser.Expr): boolean {
     }
 }
 
+// is_numeric_cast_op reports whether an `as_<T>` unary op is a numeric
+// CONVERSION (truncate / sign-extend / float-round) rather than a
+// zero-cost type ascription. The conversions change the runtime value;
+// everything else (`as i32[]`, `as string`, `as Option`) is an ascription.
+pub function is_numeric_cast_op(op: string): boolean {
+    return op == "as_i32" || op == "as_u32" || op == "as_i64" || op == "as_u64"
+        || op == "as_f64" || op == "as_f32" || op == "as_float";
+}
+
+// ascription_target returns the target type name of an ascription cast
+// `E as T` (init = the `as_<T>` unary), or "" if `init` isn't an ascription.
+// A numeric conversion (`as i32`, `as f64`, …) returns "" — it is a real
+// value conversion, not an identity ascription.
+pub function ascription_target(init: parser.Expr): string {
+    match (init) {
+        parser.ExprUnary(u) => {
+            if (u.op.len() > 3 && u.op[0:3] == "as_" && !is_numeric_cast_op(u.op)) {
+                return u.op[3:u.op.len()];
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+}
+
+// ascription_rebind rewrites `var x = E as T` to the equivalent annotated
+// binding `var x: T = E` (the `as` ascription is identity). Caller guards
+// with `ascription_target(v.init) != ""`, so v.init is always an ascription
+// unary here; the `_` arm returns v unchanged for exhaustiveness.
+pub function ascription_rebind(v: parser.StmtVar): parser.Stmt {
+    match (v.init) {
+        parser.ExprUnary(au) => {
+            return parser.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col };
+        },
+        _ => { return v; }
+    }
+}
+
 // lower_range_for lowers `for i in LOW..HIGH { body }` (iter = the synthetic
 // `__range(LOW, HIGH)` call) to a counted loop over the half-open interval:
 // HIGH is bound once into a hidden local (so `for i in 0..f()` calls f()
@@ -1998,6 +2036,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     match (st) {
         parser.StmtVar(v) => {
+            // Type ascription `var x = E as T` (#2669): the `as` is a zero-cost
+            // annotation, so this is `var x: T = E`. ascription_rebind returns
+            // that rewritten binding (operand as init, T as the annotation) so
+            // the existing array / string / struct slot-marking + RC accounting
+            // run off the real value — leaving the slot untyped dropped the
+            // alias-inc and broke `__rc`. Kept out of line so this huge arm
+            // doesn't grow (oversized functions miscompile — cf. #2720).
+            if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
             // Binding a scalar-array struct field (`var y = h.items`) aliases the
             // array — which the AST path retains but the leak-only IR path can't;
             // bail to AST to preserve that RC behaviour.

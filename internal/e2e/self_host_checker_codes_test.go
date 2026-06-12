@@ -198,6 +198,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"range-clean", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }\n", nil},
 		{"range-nested-clean", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + i + j; } } return t; }\n", nil},
 		{"range-expr-bounds-clean", "function main(): i32 { var n = 4; var s = 0; for i in 1..n + 1 { s = s + i; } return s; }\n", nil},
+		// Type ascription `e as T` (#2669): a zero-cost annotation. An array /
+		// string ascription draws no diagnostic from EITHER checker — the
+		// self-host only flags E033 when both sides are scalar primitives, and
+		// the Go checker accepts the cast as an upcast assignable to the target.
+		{"asc-arr-clean", "function main(): i32 { var a = [] as i32[]; a = [1, 2]; return a[0] + a[1]; }\n", nil},
+		{"asc-str-clean", "function main(): i32 { var s = \"x\" as string; return s.len(); }\n", nil},
 		{"dup-field", "struct P { x: i32, x: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E007"}},
 		{"dup-param", "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E018"}},
 		{"dup-field-and-param", "struct P { y: i32, y: i32 }\nfunction g(b: i32, b: i32): i32 { return b; }\nfunction main(): i32 { return 0; }\n", []string{"E007", "E018"}},
