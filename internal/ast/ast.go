@@ -1423,9 +1423,20 @@ type Return struct {
 // per-exit cleanup block only runs the deferred expression
 // when the local is set. That makes a defer reached inside a
 // conditional a no-op when the conditional didn't fire.
+//
+// When OnError is set the statement is an `errdefer`: the
+// cleanup runs only on an ERROR exit — the `?` operator
+// propagating a None/Err, or a `return` whose value is a
+// failure variant (None / Err) of an Option/Result-returning
+// function. A plain success return or fall-off the end does
+// NOT run it. (`errdefer` is Zig's rollback primitive: undo a
+// partially-built value when init fails partway.) Everything
+// else about the node — the active-flag machinery, LIFO order,
+// the conditional-reached no-op — is identical to `defer`.
 type Defer struct {
-	P    Position
-	Expr Expr
+	P       Position
+	Expr    Expr
+	OnError bool
 }
 
 type Var struct {

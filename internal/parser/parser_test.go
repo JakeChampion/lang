@@ -22,6 +22,35 @@ func TestEmptyFunction(t *testing.T) {
 	}
 }
 
+// `defer EXPR;` and `errdefer EXPR;` both parse to *ast.Defer; the
+// `errdefer` form sets OnError so the IR / interp restrict its cleanup
+// to error exits.
+func TestParseDeferAndErrDefer(t *testing.T) {
+	prog, err := Parse(`function f(): Result[i32, i32] {
+		defer a();
+		errdefer b();
+		return Ok(0);
+	}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	d0, ok := stmts[0].(*ast.Defer)
+	if !ok {
+		t.Fatalf("stmt 0: expected *ast.Defer, got %T", stmts[0])
+	}
+	if d0.OnError {
+		t.Errorf("`defer` should have OnError=false")
+	}
+	d1, ok := stmts[1].(*ast.Defer)
+	if !ok {
+		t.Fatalf("stmt 1: expected *ast.Defer, got %T", stmts[1])
+	}
+	if !d1.OnError {
+		t.Errorf("`errdefer` should have OnError=true")
+	}
+}
+
 // A type-name keyword that's also a stdlib module basename
 // (`string`, `i32`, …) parses as a module qualifier in expression
 // position when followed by `.` — `string.repeat_char(...)`. Without

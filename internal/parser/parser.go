@@ -1765,7 +1765,7 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseBreakContinue(false)
 		case "return":
 			return p.parseReturn()
-		case "defer":
+		case "defer", "errdefer":
 			return p.parseDefer()
 		case "var":
 			return p.parseVar()
@@ -2816,12 +2816,14 @@ func (p *parser) parseReturn() (ast.Stmt, error) {
 	return &ast.Return{P: kw.Pos, Value: val}, nil
 }
 
-// parseDefer parses `defer EXPR;`. The IR collects every Defer
-// statement in the function body and emits the deferred
-// expressions in LIFO order before each return + at the end of
-// the function. Conditional defers (registered inside a branch
-// that didn't run at runtime) are skipped via per-defer
-// "active" flags the IR builder synthesises.
+// parseDefer parses `defer EXPR;` and `errdefer EXPR;`. The IR
+// collects every Defer statement in the function body and emits
+// the deferred expressions in LIFO order before each return + at
+// the end of the function. Conditional defers (registered inside
+// a branch that didn't run at runtime) are skipped via per-defer
+// "active" flags the IR builder synthesises. An `errdefer` sets
+// `OnError`, which restricts its cleanup to the error-exit paths
+// (see ast.Defer.OnError).
 func (p *parser) parseDefer() (ast.Stmt, error) {
 	kw := p.advance()
 	expr, err := p.parseExpr()
@@ -2831,7 +2833,7 @@ func (p *parser) parseDefer() (ast.Stmt, error) {
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
 	}
-	return &ast.Defer{P: kw.Pos, Expr: expr}, nil
+	return &ast.Defer{P: kw.Pos, Expr: expr, OnError: kw.Text == "errdefer"}, nil
 }
 
 func (p *parser) parseVar() (ast.Stmt, error) {
