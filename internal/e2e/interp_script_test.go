@@ -257,6 +257,45 @@ function main(): i32 {
 	}
 }
 
+// Random / byte builtins on the interpreter (issue #2747). The
+// interp historically lacked `random_i32` entirely (`undefined
+// function "random_i32"`); this locks in the fix and asserts
+// cross-backend agreement on the shapes the native + wasm
+// backends already support:
+//
+//   - random_i32() is callable and varies across draws.
+//   - random_bytes(n).len() == n even when the random payload
+//     contains embedded NUL bytes (the interp String is length-
+//     prefixed, not NUL-terminated).
+//   - s.as_bytes().len() / indexing match the source string.
+func TestInterpScriptRandomAndBytes(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+function main(): i32 {
+    // random_i32 is live and varying.
+    var a: i32 = random_i32();
+    var b: i32 = random_i32();
+    if (a == b) { return 1; }
+    // random_bytes length is exact regardless of NUL bytes.
+    if (random_bytes(8).len() != 8) { return 2; }
+    if (random_bytes(0).len() != 0) { return 3; }
+    // as_bytes view length + byte values match the source.
+    var bs: [u8] = "ABC".as_bytes();
+    if (bs.len() != 3) { return 4; }
+    if ((bs[0] as i32) != 65) { return 5; }
+    if ((bs[2] as i32) != 67) { return 6; }
+    return 0;
+}`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
 // A program that explicitly imports a stdlib module whose
 // transitive imports include `core/int` (or imports `core/int`
 // directly) hits the modload mangling path: the function name

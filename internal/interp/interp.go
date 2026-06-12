@@ -496,6 +496,7 @@ func New() *Interp {
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
+	i.Builtins["random_i32"] = &Builtin{Fn: builtinRandomI32}
 	// `f32_bits(x)` / `f32_from_bits(n)` — reinterpret-cast pair.
 	// The checker exposes them for raw-IEEE manipulation in user
 	// code (Float-to-byte buffer encoders, NaN bit-pattern tests).
@@ -723,6 +724,24 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("random_bytes: %v", err)
 	}
 	return String(buf), nil
+}
+
+// builtinRandomI32 returns a single cryptographic-quality random
+// i32 from `crypto/rand`. Mirrors the AOT backends'
+// `getrandom(2)` / WASI `random_get` behaviour (read 4 bytes,
+// reinterpret as a little-endian signed i32). Use when a single
+// small random value is needed without the heap-allocation
+// overhead of random_bytes.
+func builtinRandomI32(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("random_i32: expected 0 args, got %d", len(args))
+	}
+	var buf [4]byte
+	if _, err := cryptorand.Read(buf[:]); err != nil {
+		return nil, fmt.Errorf("random_i32: %v", err)
+	}
+	v := uint32(buf[0]) | uint32(buf[1])<<8 | uint32(buf[2])<<16 | uint32(buf[3])<<24
+	return Number(int64(int32(v))), nil
 }
 
 // builtinF32Bits reinterprets a 32-bit float's bit pattern as
