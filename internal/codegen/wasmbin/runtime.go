@@ -1199,9 +1199,10 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		// (n) → i32 — allocates a length-prefixed u8[] of
 		// length n. Layout: 4-byte i32 length prefix at
 		// [base - 4], then n bytes of payload starting at
-		// base. Returns the data pointer (base). The bump
-		// allocator zeroes fresh pages, so the payload starts
-		// out zero.
+		// base. Returns the data pointer (base). The payload is
+		// explicitly zero-filled (a reused freelist block may
+		// carry stale bytes) so it matches the interpreter's
+		// zero-initialised u8[] — issue #2768.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildAllocU8Body,
@@ -3481,6 +3482,14 @@ func buildAllocU8Body(helperIdxs map[string]uint32) []byte {
 	body = numeric.InstI32Sub(body)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
+	// Zero the n payload bytes via memory.fill($base, 0, n). __fern_alloc may
+	// reuse a freelist block carrying stale bytes; the interpreter returns a
+	// zero-filled `u8[]`, so this backend must too (issue #2768) — read-before-
+	// write callers (e.g. SHA padding) depend on it.
+	body = inst.InstLocalGet(body, 1) // dst = $base
+	body = inst.InstI32Const(body, 0) // value 0
+	body = inst.InstLocalGet(body, 0) // n
+	body = memory.InstMemoryFill(body)
 	// return $base
 	body = inst.InstLocalGet(body, 1)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)

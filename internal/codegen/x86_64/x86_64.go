@@ -5139,6 +5139,19 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov dword ptr [rax - 12], ebx") // cap = n (Phase 2-prep)
 	g.emit("mov dword ptr [rax - 8], 1")    // rc = 1 (phase 1 of RC rollout)
 	g.emitArrayLenStore("ebx", "rax")
+	// Zero the n data bytes. __fern_alloc may hand back a reused freelist
+	// block carrying stale bytes; the interpreter returns a zero-filled
+	// `u8[]`, so the AOT backends must too (issue #2768) — code that reads
+	// before writing (e.g. SHA padding) depends on it. `rep stosb` from the
+	// data pointer; save/restore rax since it's both the cursor seed and the
+	// return value.
+	g.emit("mov rdx, rax") // save data ptr (return value)
+	g.emit("mov rdi, rax")
+	g.emit("mov ecx, ebx") // count = n
+	g.emit("xor eax, eax") // store byte 0
+	g.emit("cld")
+	g.emit("rep stosb")
+	g.emit("mov rax, rdx") // restore data ptr
 	g.label(".Lallocu8_ret")
 	g.emit("add rsp, 8")
 	g.emit("pop rbx")
