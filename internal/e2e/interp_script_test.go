@@ -296,6 +296,22 @@ function main(): i32 {
 	}
 }
 
+// std/crypto (#2681): SHA-256 + HMAC-SHA256 against standard
+// known-answer vectors on the interpreter. (x86-64 + wasm have their
+// own crypto tests; arm64 is skipped pending the #2768 freelist bug.)
+func TestInterpScriptCrypto(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(cryptoVectorsProgram)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0 (failed crypto vector)\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
 // std/uuid (#2682): uuid_v4 / uuid_v7 generation, built on the
 // cross-backend random_bytes byte source (#2747). Asserts the
 // canonical 36-char 8-4-4-4-12 shape, the version + variant
