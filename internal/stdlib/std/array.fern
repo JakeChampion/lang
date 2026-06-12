@@ -86,14 +86,21 @@ pub function __method_Array_product(arr: i32[]): i32 {
     return p;
 }
 
-// `(arr: i32[]) avg()` — integer mean (truncated). None on
-// empty input. Sum-then-divide; sum is carried in i32 so
-// long arrays + large values may overflow before division.
-// For exact arithmetic, callers should pre-sum into i64.
+// `(arr: i32[]) avg()` — integer mean (truncated toward zero).
+// None on empty input. The running sum is accumulated in i64,
+// so a long / large-valued array can't overflow BEFORE the
+// divide the way the i32 `sum()` does (#2687) — the truncated
+// mean of any i32[] always fits back in i32.
 pub function __method_Array_avg(arr: i32[]): Option[i32] {
     var n: i32 = arr.len();
     if (n == 0) { return None; }
-    return Some(arr.sum() / n);
+    var s: i64 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s + (arr[i] as i64);
+        i = i + 1;
+    }
+    return Some((s / (n as i64)) as i32);
 }
 
 // `(arr: i32[]) range()` — max - min, the spread of the
