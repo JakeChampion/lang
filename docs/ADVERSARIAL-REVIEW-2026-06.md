@@ -1,5 +1,11 @@
 # Adversarial codebase review — 2026-06
 
+> **Status:** 16 of 17 findings are fixed (each with a regression test). The one
+> remaining open finding, **M1** (Map copy-on-write interp divergence), is
+> tracked in GitHub as [#2851](https://github.com/JakeChampion/lang/issues/2851)
+> (design in `INTERP-MAP-COW-PLAN.md`). The fixed findings below are retained as
+> bug-fix history.
+
 A whole-codebase adversarial review of the Fern compiler. The goal was
 to **break the code**: find real correctness bugs, type-system
 soundness holes, backend-parity divergences, and reference-oracle

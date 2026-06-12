@@ -1,5 +1,9 @@
 # Porting Perceus RC to the self-hosted compiler
 
+> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857).
+> This doc is a living progress log — verify the latest slice before picking up
+> an item.
+
 Status: **design + implementation tracker** (started 2026-06-07).
 Goal: bring the native compiler's Perceus reference-counting +
 compile-time memory optimisation to the self-hosted Fern compiler
