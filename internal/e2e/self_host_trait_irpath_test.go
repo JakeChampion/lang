@@ -31,9 +31,12 @@ import (
 //     generic — and the string-building parametric impl) all lower through the
 //     IR path. The i32 helper is __fern_i32_to_string (a stack-ABI body on the
 //     register backends; $__fern_i32_to_str on wasm).
-//   - `dyn Trait` and enum methods called directly on a variant construction
-//     (`Has(5).eq(…)`, which needs the variant->enum map) still fall back to the
-//     AST emitter — the next slices.
+//   - Enum methods called DIRECTLY on a variant construction (`Has(5).eq(…)`)
+//     or a unit variant (`Nil.eq(…)`) now lower through the IR path too: the
+//     parser records each variant's owning enum on its desugared StructDecl
+//     (`enum_owner`), and irlower's `expr_enum_type` recovers it to dispatch
+//     `<Enum>.<method>` with the fresh variant as the receiver.
+//   - `dyn Trait` still falls back to the AST emitter — a later slice.
 var traitIRPath = map[string]string{
 	"trait-impl-method":                          "ir",
 	"trait-impl-arg":                             "ir",
@@ -52,8 +55,8 @@ var traitIRPath = map[string]string{
 	"trait-derive-struct-display-nested":         "ir",
 	"trait-enum-method":                          "ir",
 	"trait-derive-enum-display":                  "ir",
-	"trait-derive-enum-eq":                       "ast",
-	"trait-derive-enum-ord":                      "ast",
+	"trait-derive-enum-eq":                       "ir",
+	"trait-derive-enum-ord":                      "ir",
 	"trait-generic-struct-derive-display-i32":    "ir",
 	"trait-generic-struct-derive-display-string": "ir",
 	"trait-generic-struct-derive-display-both":   "ir",
