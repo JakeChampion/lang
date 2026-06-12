@@ -29,7 +29,7 @@ import "./irlower";
 // because the IR path only fires when the WHOLE module is eligible
 // (all_eligible), so every function — caller and callee — uses irlower's
 // array layout; nothing crosses an IR/AST boundary.
-pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[], opt_ret_fns: string[], i64_ret_fns: string[], struct_ret_fns: string[], tuple_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[]): boolean {
+pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[], opt_ret_fns: string[], i64_ret_fns: string[], struct_ret_fns: string[], tuple_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[]): boolean {
     // Methods (receiver functions) are lowered too — lower_func binds the
     // receiver as slot 0 and bails for non-scalar-struct receivers.
     var noret: string[] = [];
@@ -40,7 +40,7 @@ pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[], opt_
     // change op selection, not whether a function lowers — so they stay empty.)
     // fn_param_sigs IS threaded: it decides whether a bare function-name arg
     // lowers to const_func (ok) or falls through to a bail, so it affects ok.
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, noret, noret, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, noret, noret, noret, fn_param_sigs, closure_fns);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, noret, noret, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, noret, noret, noret, fn_param_sigs, closure_fns, const_fns);
     if (!r.ok) { return false; }
     return true;
 }
@@ -98,7 +98,7 @@ function module_uses_maps(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
@@ -114,7 +114,7 @@ function module_uses_heap(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             // arr_make (array literal) is the allocating op now; `alloc` is
@@ -832,9 +832,10 @@ pub function eligible_core(mod: parser.Module): boolean {
     var trtf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
     var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var csf: string[] = irlower.const_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!ir_eligible(mod.funcs[i], mod.structs, orf, irf, srtf, trtf, fps, cfs)) { return false; }
+        if (!ir_eligible(mod.funcs[i], mod.structs, orf, irf, srtf, trtf, fps, cfs, csf)) { return false; }
         if (!calls_only_known(mod.funcs[i], mod)) { return false; }
         if (!const_funcs_only_known(mod.funcs[i], mod)) { return false; }
         i = i + 1;
@@ -857,7 +858,7 @@ pub function all_eligible(mod: parser.Module): boolean {
 // funcref table slot, so such modules fall back to AST.
 function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs));
     var i: i32 = 0;
     while (i < r.ops.len()) {
         if (r.ops[i].kind == "const_func" && !module_has_func(mod, r.ops[i].str)) { return false; }
@@ -885,7 +886,7 @@ function module_has_func(mod: parser.Module, name: string): boolean {
 // function or an IR runtime helper (not a builtin).
 function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs));
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -941,7 +942,7 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs), irlower.strarr_ret_fns_of(s.funcs), irlower.opt_ret_fns_of(s.funcs), irlower.i64_ret_fns_of(s.funcs), irlower.tuple_ret_fns_of(s.funcs), irlower.struct_ret_fns_of(s.funcs, s.struct_decls), irlower.f64_ret_fns_of(s.funcs), irlower.f64arr_ret_fns_of(s.funcs), irlower.i64arr_ret_fns_of(s.funcs), irlower.fn_param_sigs_of(s.funcs), irlower.closure_ret_fns_of(s.funcs));
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs), irlower.strarr_ret_fns_of(s.funcs), irlower.opt_ret_fns_of(s.funcs), irlower.i64_ret_fns_of(s.funcs), irlower.tuple_ret_fns_of(s.funcs), irlower.struct_ret_fns_of(s.funcs, s.struct_decls), irlower.f64_ret_fns_of(s.funcs), irlower.f64arr_ret_fns_of(s.funcs), irlower.i64arr_ret_fns_of(s.funcs), irlower.fn_param_sigs_of(s.funcs), irlower.closure_ret_fns_of(s.funcs), irlower.const_fns_of(s.funcs));
 
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
     // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
