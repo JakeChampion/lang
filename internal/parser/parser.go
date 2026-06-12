@@ -1680,14 +1680,38 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 	if t.Kind == lexer.Punct && t.Text == "{" {
 		return p.parseBlock()
 	}
+	// Labeled loop: `IDENT : (while|loop|for) …`. The label names the
+	// loop so a nested `break IDENT` / `continue IDENT` can target it.
+	// `:` after a bare identifier only occurs here (object/map literals
+	// and slices live in expression position), so the three-token
+	// lookahead is unambiguous.
+	if t.Kind == lexer.Ident && p.i+2 < len(p.tokens) {
+		c, n := p.tokens[p.i+1], p.tokens[p.i+2]
+		if c.Kind == lexer.Punct && c.Text == ":" && n.Kind == lexer.Keyword &&
+			(n.Text == "while" || n.Text == "loop" || n.Text == "for") {
+			label := t.Text
+			p.advance() // IDENT
+			p.advance() // :
+			switch n.Text {
+			case "while":
+				return p.parseWhile(label)
+			case "loop":
+				return p.parseLoop(label)
+			default:
+				return p.parseFor(label)
+			}
+		}
+	}
 	if t.Kind == lexer.Keyword {
 		switch t.Text {
 		case "if":
 			return p.parseIf()
 		case "while":
-			return p.parseWhile()
+			return p.parseWhile("")
+		case "loop":
+			return p.parseLoop("")
 		case "for":
-			return p.parseFor()
+			return p.parseFor("")
 		case "break":
 			return p.parseBreakContinue(true)
 		case "continue":
@@ -1809,7 +1833,7 @@ func (p *parser) parseIf() (ast.Stmt, error) {
 	return &ast.If{P: kw.Pos, Cond: cond, Then: then, Else: els}, nil
 }
 
-func (p *parser) parseWhile() (ast.Stmt, error) {
+func (p *parser) parseWhile(label string) (ast.Stmt, error) {
 	kw := p.advance()
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
@@ -1825,7 +1849,21 @@ func (p *parser) parseWhile() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ast.While{P: kw.Pos, Cond: cond, Body: body}, nil
+	return &ast.While{P: kw.Pos, Cond: cond, Body: body, Label: label}, nil
+}
+
+// parseLoop handles the `loop { ... }` canonical infinite loop. It
+// desugars to `while (true) { ... }` — a While with a literal-true
+// Cond — so every backend, the IR lowering, and the interpreter handle
+// it with no new machinery; `break` / `continue` (and their labeled
+// forms) work as in any while loop.
+func (p *parser) parseLoop(label string) (ast.Stmt, error) {
+	kw := p.advance()
+	body, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.While{P: kw.Pos, Cond: &ast.BoolLit{P: kw.Pos, Value: true}, Body: body, Label: label}, nil
 }
 
 // parseLambda parses `function (params): R { body }` in
@@ -1948,7 +1986,7 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 //     C-style loop with synthetic length / index slots, so the
 //     rest of the pipeline (checker, IR, codegen) never has to
 //     know foreach exists.
-func (p *parser) parseFor() (ast.Stmt, error) {
+func (p *parser) parseFor(label string) (ast.Stmt, error) {
 	kw := p.advance()
 
 	// Foreach shape: `for IDENT in expr body`. Detect by looking at
@@ -1957,7 +1995,7 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 	// match on text rather than kind.
 	if p.match(lexer.Ident, "") && p.i+1 < len(p.tokens) {
 		if next := p.tokens[p.i+1]; next.Kind == lexer.Ident && next.Text == "in" {
-			return p.parseForEach(kw)
+			return p.parseForEach(kw, label)
 		}
 	}
 
@@ -1973,7 +2011,7 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 			t3.Kind == lexer.Ident &&
 			t4.Kind == lexer.Punct && t4.Text == ")" &&
 			t5.Kind == lexer.Ident && t5.Text == "in" {
-			return p.parseForEachMapTuple(kw)
+			return p.parseForEachMapTuple(kw, label)
 		}
 	}
 
@@ -2026,7 +2064,7 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 		return nil, err
 	}
 
-	return &ast.For{P: kw.Pos, Init: init, Cond: cond, Step: step, Body: body}, nil
+	return &ast.For{P: kw.Pos, Init: init, Cond: cond, Step: step, Body: body, Label: label}, nil
 }
 
 // foreachCounter gives each desugared foreach loop's synthetic vars
@@ -2066,7 +2104,7 @@ func (p *parser) nextForeachID() int {
 // Works for both arrays (any element type) and strings (each
 // element a number = byte). The IDENT's type is inferred from the
 // indexed expression by the checker.
-func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
+func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 	nameTok := p.advance() // IDENT
 	p.advance()            // `in`
 	// Suppress trailing struct-literal parsing while reading the
@@ -2108,7 +2146,8 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 			Cond: &ast.Binary{P: kw.Pos, Op: "<", Left: mkI(nameTok.Text), Right: mkI(hiName)},
 			Step: &ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(nameTok.Text),
 				Value: &ast.Binary{P: kw.Pos, Op: "+", Left: mkI(nameTok.Text), Right: &ast.NumberLit{P: kw.Pos, Value: 1}}}},
-			Body: body,
+			Body:  body,
+			Label: label,
 		}
 		return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{declHi, loop}}, nil
 	}
@@ -2181,8 +2220,9 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 			Left:  mkIdent(idxName),
 			Right: mkIdent(lenName),
 		},
-		Step: stepStmt,
-		Body: innerBlock,
+		Step:  stepStmt,
+		Body:  innerBlock,
+		Label: label,
 	}
 
 	return &ast.Block{
@@ -2212,7 +2252,7 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 //
 // Like the array foreach, K / V are inferred from the iterator's
 // method return types — no annotation needed at the loop site.
-func (p *parser) parseForEachMapTuple(kw lexer.Token) (ast.Stmt, error) {
+func (p *parser) parseForEachMapTuple(kw lexer.Token, label string) (ast.Stmt, error) {
 	p.advance() // `(`
 	keyTok := p.advance()
 	p.advance() // `,`
@@ -2264,10 +2304,11 @@ func (p *parser) parseForEachMapTuple(kw lexer.Token) (ast.Stmt, error) {
 	innerBlock := &ast.Block{P: kw.Pos, Stmts: innerStmts}
 
 	forLoop := &ast.For{
-		P:    kw.Pos,
-		Cond: callOnIter("has_next"),
-		Step: stepStmt,
-		Body: innerBlock,
+		P:     kw.Pos,
+		Cond:  callOnIter("has_next"),
+		Step:  stepStmt,
+		Body:  innerBlock,
+		Label: label,
 	}
 
 	return &ast.Block{
@@ -2696,13 +2737,20 @@ func (p *parser) parseCaseBody() (*ast.Block, error) {
 
 func (p *parser) parseBreakContinue(isBreak bool) (ast.Stmt, error) {
 	kw := p.advance()
+	// Optional loop label: `break outer;` / `continue outer;`. A bare
+	// identifier before the `;` names an enclosing labeled loop.
+	label := ""
+	if t := p.peek(); t.Kind == lexer.Ident {
+		label = t.Text
+		p.advance()
+	}
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
 	}
 	if isBreak {
-		return &ast.Break{P: kw.Pos}, nil
+		return &ast.Break{P: kw.Pos, Label: label}, nil
 	}
-	return &ast.Continue{P: kw.Pos}, nil
+	return &ast.Continue{P: kw.Pos, Label: label}, nil
 }
 
 func (p *parser) parseReturn() (ast.Stmt, error) {

@@ -3059,6 +3059,26 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 	return fmt.Errorf("ir: emitPairFormPushValue: unrecognised shape %T (eligibility check / emitter out of sync)", e)
 }
 
+// loopFrame records one enclosing loop's label and its break/continue
+// target depths, so a labeled `break`/`continue` can resolve past
+// intervening loops and switches.
+type loopFrame struct {
+	label  string
+	breakD int32
+	contD  int32
+}
+
+// findLoopFrame returns the innermost enclosing loop frame whose label
+// matches, or nil if none does.
+func (b *builder) findLoopFrame(label string) *loopFrame {
+	for i := len(b.loopFrames) - 1; i >= 0; i-- {
+		if b.loopFrames[i].label == label {
+			return &b.loopFrames[i]
+		}
+	}
+	return nil
+}
+
 // builder is the per-function lowering state.
 type builder struct {
 	info *checker.Info
@@ -3195,6 +3215,14 @@ type builder struct {
 	// depth M, `br (M - stored)` lands at the right scope.
 	breakStack []int32
 	contStack  []int32
+	// loopFrames mirrors the loop (while/for) nesting — one entry per
+	// enclosing loop, innermost last — carrying each loop's label (empty
+	// when unlabeled) and its break/continue target depths. A labeled
+	// `break`/`continue` resolves by scanning this for the named loop.
+	// Switch pushes breakStack but NOT a loopFrame, so an unlabeled
+	// break in a switch still targets the switch, while `break label`
+	// reaches past it to the loop.
+	loopFrames []loopFrame
 	// curPos is the source position of the AST node currently being
 	// lowered. emit() stamps it onto every op so backends can drive
 	// per-statement DWARF / .loc directives.
@@ -8291,9 +8319,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.brTo(breakD, true)
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, loopD)
+		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD})
 		if err := b.stmt(n.Body); err != nil {
 			return err
 		}
+		b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.contStack = b.contStack[:len(b.contStack)-1]
 		b.brTo(loopD, false) // unconditional back-edge
@@ -8322,9 +8352,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		contD := b.depth
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, contD)
+		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: contD})
 		if err := b.stmt(n.Body); err != nil {
 			return err
 		}
+		b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.contStack = b.contStack[:len(b.contStack)-1]
 		b.closeScope() // close continue-block
@@ -8337,11 +8369,27 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.closeScope() // close loop
 		b.closeScope() // close break-block
 	case *ast.Break:
+		if n.Label != "" {
+			fr := b.findLoopFrame(n.Label)
+			if fr == nil {
+				return fmt.Errorf("ir: break label %q not found (compiler bug — should be checker-rejected)", n.Label)
+			}
+			b.brTo(fr.breakD, false)
+			break
+		}
 		if len(b.breakStack) == 0 {
 			return fmt.Errorf("ir: break outside of a loop (compiler bug — should be checker-rejected)")
 		}
 		b.brTo(b.breakStack[len(b.breakStack)-1], false)
 	case *ast.Continue:
+		if n.Label != "" {
+			fr := b.findLoopFrame(n.Label)
+			if fr == nil {
+				return fmt.Errorf("ir: continue label %q not found (compiler bug — should be checker-rejected)", n.Label)
+			}
+			b.brTo(fr.contD, false)
+			break
+		}
 		if len(b.contStack) == 0 {
 			return fmt.Errorf("ir: continue outside of a loop (compiler bug — should be checker-rejected)")
 		}

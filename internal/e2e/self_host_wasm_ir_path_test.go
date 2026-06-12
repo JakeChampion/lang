@@ -362,6 +362,10 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"range-hi-expr", "function main(): i32 { var n = 4; var s = 0; for i in 1..n + 1 { s = s + i; } return s; }", 10},
 		{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
 		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
+		// `loop { }` infinite loop (#2676 loop-form): desugars to while(true)
+		// and rides the existing StmtWhile IR lowering on wasm.
+		{"loop-break", "function main(): i32 { var i = 0; loop { i = i + 1; if (i >= 7) { break; } } return i; }", 7},
+		{"loop-continue", "function main(): i32 { var i = 0; var s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {

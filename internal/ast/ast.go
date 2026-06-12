@@ -1380,6 +1380,11 @@ type While struct {
 	P    Position
 	Cond Expr
 	Body Stmt
+	// Label is the optional loop label (`outer: while (...) { ... }`),
+	// empty when unlabeled. A labeled `break`/`continue` names it to
+	// target this loop from a nested one. `loop { ... }` desugars to a
+	// While with a `true` Cond, carrying its label here.
+	Label string
 }
 
 // For preserves the C/JS-style three-part for loop so that `continue`
@@ -1390,13 +1395,19 @@ type For struct {
 	Cond Expr // required
 	Step Stmt // may be nil
 	Body Stmt
+	// Label is the optional loop label (see While.Label).
+	Label string
 }
 
+// Break / Continue carry an optional Label naming an enclosing labeled
+// loop to target; empty means the innermost loop (the existing behaviour).
 type Break struct {
-	P Position
+	P     Position
+	Label string
 }
 type Continue struct {
-	P Position
+	P     Position
+	Label string
 }
 
 type Return struct {

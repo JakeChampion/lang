@@ -1939,6 +1939,15 @@ function parse_stmt(p: Par): StmtResult {
         p = wb.par;
         return StmtResult { par: p, stmt: s_while(wc.expr, wb.body) };
     }
+    if (kw == "loop") {
+        // `loop { body }` is the canonical infinite loop — desugar to
+        // `while (true) { body }` so it rides the existing StmtWhile IR
+        // lowering (block/loop/br_if) with no new node or emitter arm.
+        p = p.advance();
+        var lb: BlockResult = parse_block(p);
+        p = lb.par;
+        return StmtResult { par: p, stmt: s_while(e_bool(true), lb.body) };
+    }
     if (kw == "for") {
         // `for VAR in EXPR { body }`. `in` arrives as a plain
         // TokIdent (not in the lexer's keyword set), so peek
