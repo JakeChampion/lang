@@ -1669,6 +1669,15 @@ type FuncDecl struct {
 	// empty for non-methods. See docs/TRAITS.md.
 	MethodRecv       string
 	MethodSimpleName string
+	// AssocType, when non-empty, marks this as an associated function
+	// of that (mangled) type name — a receiver-less `impl` method like
+	// `function origin(): Self` in `impl … for Point`. Receiver stays
+	// nil; the checker hoists it to `__assoc_<AssocType>_<Name>` and
+	// resolves `Point.origin()` call sites (a FieldAccess on a type
+	// name) to that flat name with no receiver argument. `Self` in the
+	// signature is substituted to the impl type at parse time, exactly
+	// like an ordinary impl method.
+	AssocType string
 	// IsLocal is true for functions declared as a statement inside
 	// another function's body. Closure conversion at codegen time
 	// hoists these to top-level entries and rewrites captured-var
@@ -1905,14 +1914,18 @@ type TraitDecl struct {
 	SourceModule string
 }
 
-// TraitMethod is one signature in a TraitDecl. Params[0] is always
-// `self: Self` (ast.SelfType{}); the remaining params + Result use
-// SelfType wherever the source wrote `Self`.
+// TraitMethod is one signature in a TraitDecl. For an ordinary method
+// Params[0] is `self: Self` (ast.SelfType{}); the remaining params +
+// Result use SelfType wherever the source wrote `Self`. An *associated
+// function* (`Assoc` true) has no `self` receiver — it's called as
+// `Type.f(args)` rather than `value.f(args)` and typically constructs a
+// `Self` (e.g. `function default(): Self`).
 type TraitMethod struct {
 	P      Position
 	Name   string
 	Params []Param
 	Result Type
+	Assoc  bool
 }
 
 // ImplDecl is a top-level `impl Trait for Type { <function>… }`. The

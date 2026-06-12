@@ -2473,6 +2473,67 @@ function main(): i32 { return 0; }`
 	}
 }
 
+// Associated functions: a trait method with no `self` receiver
+// (`function f(): Self`) is called as `Type.f(args)` rather than
+// `value.f(args)` — the constructor / static-method shape. The impl
+// provides it; `Self` resolves to the impl type.
+func TestAssociatedFunctions(t *testing.T) {
+	ok := []string{
+		// Zero-arg constructor on a struct.
+		`trait Zero { function zero(): Self; }
+struct Point { x: i32, y: i32 }
+impl Zero for Point { function zero(): Self { return Point { x: 0, y: 0 }; } }
+function main(): i32 { var p: Point = Point.zero(); return p.x + p.y; }`,
+		// Constructor with arguments.
+		`trait Ctor { function make(a: i32, b: i32): Self; }
+struct Point { x: i32, y: i32 }
+impl Ctor for Point { function make(a: i32, b: i32): Self { return Point { x: a, y: b }; } }
+function main(): i32 { var p: Point = Point.make(3, 4); return p.x + p.y; }`,
+		// Associated function on an enum.
+		`trait Empty { function empty(): Self; }
+enum Opt { Nothing, Just(i32) }
+impl Empty for Opt { function empty(): Self { return Nothing; } }
+function main(): i32 { var o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }`,
+		// Result chains directly: `T.f().field`.
+		`trait Zero { function zero(): Self; }
+struct P { x: i32 }
+impl Zero for P { function zero(): Self { return P { x: 9 }; } }
+function main(): i32 { return P.zero().x; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("associated function should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	bad := []struct{ src, want string }{
+		// Calling a `self`-taking method as `Type.method()`.
+		{`struct Point { x: i32 }
+function (p: Point) getx(): i32 { return p.x; }
+function main(): i32 { return Point.getx(); }`, "is a method; call it on a value"},
+		// An impl missing the trait's associated function.
+		{`trait Zero { function zero(): Self; }
+struct Point { x: i32 }
+impl Zero for Point { }
+function main(): i32 { return 0; }`, "missing method"},
+		// Associated-function signature mismatch.
+		{`trait Ctor { function make(a: i32): Self; }
+struct Point { x: i32 }
+impl Ctor for Point { function make(a: string): Self { return Point { x: 0 }; } }
+function main(): i32 { return 0; }`, "wrong signature"},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected error containing %q, got nil\nsrc: %s", c.want, c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 // `dyn Trait` (runtime trait objects): a concrete impl-ing type coerces
 // to `dyn Trait`, a trait method dispatches dynamically, and the
 // negative cases (non-impl coercion, object-unsafe trait, unknown

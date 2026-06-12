@@ -1,0 +1,28 @@
+// Associated functions: a trait method with no `self` receiver is called
+// as `Type.f(args)` — the constructor / static-method shape. `Self`
+// resolves to the impl type. Works for structs and enums, with or
+// without arguments, and the result chains directly (`Type.f().field`).
+import "core/int";
+
+trait Ctor { function make(a: i32, b: i32): Self; }
+trait Zero { function zero(): Self; }
+trait Empty { function empty(): Self; }
+
+struct Point { x: i32, y: i32 }
+impl Ctor for Point { function make(a: i32, b: i32): Self { return Point { x: a, y: b }; } }
+impl Zero for Point { function zero(): Self { return Point { x: 0, y: 0 }; } }
+
+enum Opt { Nothing, Just(i32) }
+impl Empty for Opt { function empty(): Self { return Nothing; } }
+
+function main(): i32 {
+    var p: Point = Point.make(3, 4);          // {3,4}
+    var z: Point = Point.zero();              // {0,0}
+    var base: i32 = p.x + p.y + z.x + z.y;    // 7
+    base = base + Point.make(10, 0).x;        // + 10 = 17 (chained)
+    var o: Opt = Opt.empty();
+    match (o) {
+        Nothing => { return base; },          // 17
+        Just(n) => { return base + n; }
+    }
+}
