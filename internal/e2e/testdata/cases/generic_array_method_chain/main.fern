@@ -1,0 +1,20 @@
+// Method forms of the array combinators (std/array) — chain left to
+// right instead of the inside-out free-function form. Enabled by
+// element-polymorphic method receivers (#2692).
+import "std/array";
+import "std/option";
+
+function inc(x: i32): i32 { return x + 1; }
+function pos(x: i32): boolean { return x > 0; }
+function add(a: i32, b: i32): i32 { return a + b; }
+
+function main(): i32 {
+    var a: i32[] = [1, 0 - 2, 3, 0 - 4];
+    var r: i32 = 0;
+    r = r + a.map(inc).fold(0, add);                 // [2,-1,4,-3] sum = 2
+    r = r + a.filter(pos).len();                     // [1,3] -> 2  => 4
+    if (a.any(pos) && !a.all(pos)) { r = r + 10; }   // 14
+    r = r + a.find(pos).unwrap_or(0);                // first pos = 1 => 15
+    r = r + a.enumerate().len();                     // 4 => 19
+    return r;                                         // 19
+}
