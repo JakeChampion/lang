@@ -1077,7 +1077,8 @@ struct IntSet { m: Map[i32, i32] }
 function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
 function (s: IntSet) len(): i32 { return s.m.len(); }
 function main(): i32 {
-    var s: IntSet = IntSet { m: map_new(4) };
+    var m0: Map[i32, i32] = map_new(4);
+    var s: IntSet = IntSet { m: m0 };
     s = s.insert(10);
     s = s.insert(20);
     s = s.insert(10);
@@ -1089,24 +1090,29 @@ struct IntSet { m: Map[i32, i32] }
 function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
 function (s: IntSet) len(): i32 { return s.m.len(); }
 function main(): i32 {
-    var s: IntSet = IntSet { m: map_new(4) };
+    var m0: Map[i32, i32] = map_new(4);
+    var s: IntSet = IntSet { m: m0 };
     s = s.insert(10);
     return s.len();
 }`, 1},
-		{"insert-then-without", `
+		// `.cleared()` (the value-returning clear) also lowers to a COW
+		// mutator (__method_Map_clear) and returns a bare Map, so it can
+		// initialise the field directly — exercising the clone on the clear
+		// path. insert 10/20 (len 2), then clear → len 0.
+		{"insert-then-cleared", `
 import "core/map";
 struct IntSet { m: Map[i32, i32] }
 function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
-function (s: IntSet) remove(x: i32): IntSet { return IntSet { m: s.m.without(x) }; }
+function (s: IntSet) wipe(): IntSet { return IntSet { m: s.m.cleared() }; }
 function (s: IntSet) len(): i32 { return s.m.len(); }
 function main(): i32 {
-    var s: IntSet = IntSet { m: map_new(4) };
+    var m0: Map[i32, i32] = map_new(4);
+    var s: IntSet = IntSet { m: m0 };
     s = s.insert(10);
     s = s.insert(20);
-    s = s.insert(30);
-    s = s.remove(20);
+    s = s.wipe();
     return s.len();
-}`, 2},
+}`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
