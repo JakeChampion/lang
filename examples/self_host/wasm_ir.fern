@@ -381,6 +381,13 @@ pub function should_use_ir(mod: parser.Module): boolean {
     return asmcore.new_state().use_ir && wasm_eligible(mod);
 }
 
+// lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
+// the wasm dispatch sites can hoist no-capture lambda arguments before the
+// eligibility check + emit. A lambda-free module is returned unchanged.
+pub function lift_lambdas(mod: parser.Module): parser.Module {
+    return irlower.lift_lambdas(mod);
+}
+
 // fn_value_table collects the module's address-taken functions (the targets of
 // const_func ops) in first-seen, deduped order. The position of a name here is
 // its funcref-table slot index — both the const_func `i32.const <idx>` and the
