@@ -372,6 +372,14 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"asc-arr-empty", "function main(): i32 { var a = [] as i32[]; a = [5, 10]; return a[0] + a[1]; }", 15},
 		{"asc-arr-len", "function main(): i32 { var a = [] as i32[]; return a.len(); }", 0},
 		{"asc-str-len", "function main(): i32 { var s = \"hello\" as string; return s.len(); }", 5},
+		// Non-binding-position ascription (#2669): identity-lowered as the
+		// operand. arg position (array borrowed into the callee), return
+		// position (move-on-return off the ascription), nested array index,
+		// and a method call on a parenthesised string ascription.
+		{"asc-arg", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var arr = [10, 20, 30]; return sum(arr as i32[]); }", 60},
+		{"asc-ret", "function make(): i32[] { var a = [10, 20, 30]; return a as i32[]; } function main(): i32 { var x = make(); return x[0] + x[2]; }", 40},
+		{"asc-nested-index", "function main(): i32 { var a = [3, 4]; return (a as i32[])[0] + (a as i32[])[1]; }", 7},
+		{"asc-str-method", "function main(): i32 { return (\"hello\" as string).len(); }", 5},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {

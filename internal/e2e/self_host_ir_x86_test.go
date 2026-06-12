@@ -124,6 +124,13 @@ func TestSelfHostIRx86Run(t *testing.T) {
 		{"asc-arr-len", "function main(): i32 { var a = [] as i32[]; return a.len(); }", 0},
 		{"asc-arr-rc", "function main(): i32 { var a = [3, 4] as i32[]; var b = a; return __rc(a); }", 2},
 		{"asc-arr-alias-use", "function main(): i32 { var a = [3, 4] as i32[]; var b = a; return b[0] + b[1] + a.len(); }", 9},
+		// Type ascription `E as T` in NON-binding positions (#2669): the `as`
+		// is identity, lowered as the operand. arg position (the ascripted
+		// array is passed/borrowed), return position (move-on-return off the
+		// ascription), and nested (index of a parenthesised ascription).
+		{"asc-arg", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var arr = [10, 20, 30]; return sum(arr as i32[]); }", 60},
+		{"asc-ret", "function make(): i32[] { var a = [10, 20, 30]; return a as i32[]; } function main(): i32 { var x = make(); return x[0] + x[2]; }", 40},
+		{"asc-nested-index", "function main(): i32 { var a = [3, 4]; return (a as i32[])[0] + (a as i32[])[1]; }", 7},
 		{"loop-continue", "function main(): i32 { var i = 0; var s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
 		// Direct calls + multi-function programs + recursion (slice 6) -> real
 		// x86 call/ret with the SysV integer-register arg convention.

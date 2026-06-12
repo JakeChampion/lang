@@ -1681,6 +1681,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (!sn.ok) { return sn; }
                 return sn.emit(ir.op_int_wrap(u.op == "as_u32"));
             }
+            // `E as T` type ascription (#2669) in a non-binding position
+            // (return / argument / nested expr): the `as` is a zero-cost
+            // identity annotation, so the value of `E as T` is exactly the
+            // value of `E`. The binding form `var x = E as T` is intercepted
+            // earlier in lower_stmt (rewritten to a `var x: T = E` rebind, so
+            // the slot keeps its typed alias-inc); here there is no slot store,
+            // so lowering the operand directly is RC-sound — it yields the same
+            // value with the same ownership `E` alone would. Numeric
+            // conversions (as_i32 / as_f64 / …) are handled above and keep
+            // their value-converting path; an unsupported operand (e.g. a bare
+            // `None` to an Option target) makes lower_expr bail, and the caller
+            // falls back to the AST path.
+            if (u.op.len() > 3 && u.op[0:3] == "as_" && !is_numeric_cast_op(u.op)) {
+                return lower_expr(u.operand, s);
+            }
             return s.fail();
         },
         parser.ExprArray(arr) => {
