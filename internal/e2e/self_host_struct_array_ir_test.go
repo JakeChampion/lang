@@ -38,6 +38,19 @@ var structArrayIRCases = []struct {
 	// Index with a variable subscript inside a loop accumulating a field. 1+2+3 = 6.
 	{"var-index-loop",
 		`struct P { v: i32 } function main(): i32 { var ps: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; var t: i32 = 0; var i: i32 = 0; while (i < ps.len()) { t = t + ps[i].v; i = i + 1; } return t; }`, 6},
+	// INFERRED element type: the same forms WITHOUT the `: P[]` annotation. The
+	// element struct type is recovered from the literal's first element, so
+	// `ps[i].field` / `for x in ps` resolve instead of bailing to the AST path.
+	{"inferred-index-field",
+		`struct P { v: i32 } function main(): i32 { var ps = [P { v: 3 }, P { v: 4 }]; return ps[0].v + ps[1].v; }`, 7},
+	{"inferred-for-elem-field",
+		`struct P { v: i32 } function main(): i32 { var ps = [P { v: 3 }, P { v: 4 }]; var t: i32 = 0; for x in ps { t = t + x.v; } return t; }`, 7},
+	{"inferred-for-elem-method",
+		`struct P { v: i32 } function (p: P) get(): i32 { return p.v; } function main(): i32 { var ps = [P { v: 3 }, P { v: 4 }]; var t: i32 = 0; for x in ps { t = t + x.get(); } return t; }`, 7},
+	{"inferred-index-multifield",
+		`struct P { a: i32, b: i32 } function main(): i32 { var ps = [P { a: 10, b: 20 }, P { a: 30, b: 40 }]; return ps[0].a + ps[1].b; }`, 50},
+	{"inferred-var-index-loop",
+		`struct P { v: i32 } function main(): i32 { var ps = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; var t: i32 = 0; var i: i32 = 0; while (i < ps.len()) { t = t + ps[i].v; i = i + 1; } return t; }`, 6},
 }
 
 // TestSelfHostStructArrayIRX86_64 compiles each case through the self-hosted
