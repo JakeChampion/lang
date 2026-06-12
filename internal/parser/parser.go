@@ -1087,7 +1087,18 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own})
+			// Optional default value: `function f(a: i32, b: i32 = 128)`.
+			// The defaultargs pass fills it at call sites that omit the
+			// trailing argument. A defaulted param may not be followed by
+			// a required one (enforced just below).
+			var def ast.Expr
+			if _, ok := p.accept(lexer.Punct, "="); ok {
+				def, err = p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+			}
+			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own, Default: def})
 			if _, ok := p.accept(lexer.Punct, ","); !ok {
 				break
 			}
@@ -1095,6 +1106,16 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	}
 	if _, err := p.expect(lexer.Punct, ")"); err != nil {
 		return nil, err
+	}
+	// A required parameter may not follow a defaulted one — otherwise a
+	// trailing-args fill is ambiguous.
+	seenDefault := false
+	for _, prm := range params {
+		if prm.Default != nil {
+			seenDefault = true
+		} else if seenDefault {
+			return nil, p.errorf(funcNamePos, "required parameter %q cannot follow a parameter with a default value", prm.Name)
+		}
 	}
 
 	var ret ast.Type = ast.VoidType{}

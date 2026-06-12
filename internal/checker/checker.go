@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/defaultargs"
 	"github.com/jakechampion/lang/internal/diag"
 )
 
@@ -619,6 +620,10 @@ func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	// Fill omitted trailing arguments from default parameter values before any
+	// type-checking, so the rest of the checker (and every later pass) sees a
+	// complete positional call. Idempotent — safe across LSP re-checks.
+	defaultargs.Fill(prog)
 	return checkImpl(ctx, prog)
 }
 

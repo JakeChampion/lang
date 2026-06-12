@@ -1609,6 +1609,15 @@ type Param struct {
 	// checkOwnedParams); the runtime ownership transfer + reuse it unlocks are
 	// later slices. Always false for struct fields / borrowed params.
 	Own bool
+	// Default is the default value for an optional parameter —
+	// `function listen(port: i32, backlog: i32 = 128)`. nil for a
+	// required parameter (the common case) and for struct fields /
+	// receivers. The `internal/defaultargs` pass fills it in at call
+	// sites that omit the trailing argument, so the checker and every
+	// later pass see a complete positional call. A parameter with a
+	// Default may not be followed by a required (Default == nil)
+	// parameter — the parser rejects that.
+	Default Expr
 }
 
 type FuncDecl struct {
