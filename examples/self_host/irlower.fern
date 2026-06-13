@@ -442,6 +442,25 @@ pub function fn_value_arg_name(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// lower_call_arg lowers one call argument with the shared argument rules,
+// keyed by the callee label `key` (a bare name for a free call, "<Type>.<method>"
+// for a method). A bare function-name at a "fn"-typed param position is a
+// function VALUE — const_func, not a call — which is exactly what distinguishes
+// a fn value from a `const` reference (both are bare idents naming a zero-arg-
+// shaped function); without this a fn-value method argument falls through to the
+// bare-ident const path and is mis-lowered as a call. An i64-param arg widens
+// via lower_i64; everything else lowers normally. The free-call site inlines the
+// same three cases; the method-dispatch loops call here so they pick up the
+// fn-value rule too.
+function lower_call_arg(arg: parser.Expr, key: string, idx: i32, s: LowerState): LowerState {
+    var fvn: string = fn_value_arg_name(arg, s);
+    if (fvn.len() > 0 && s.callee_param_is_fn(key, idx)) {
+        return s.emit(ir.op_const_func(0, fvn));
+    }
+    if (s.param_is_i64(key, idx)) { return lower_i64(arg, s); }
+    return lower_expr(arg, s);
+}
+
 // elem_type_tag computes the type tag of an expression for tuple-element typing:
 // "string" for a string, a struct type name for a struct, "i64"/"f64" for an
 // 8-byte scalar, else "i32" (scalar). The 8-byte tags drive the wasm tuple's
@@ -3081,8 +3100,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                 var asf: LowerState = s;
                                 var afi: i32 = 0;
                                 while (afi < c.args.len()) {
-                                    if (asf.param_is_i64(tid.name + "." + fa.field, afi)) { asf = lower_i64(c.args[afi], asf); }
-                                    else { asf = lower_expr(c.args[afi], asf); }
+                                    asf = lower_call_arg(c.args[afi], tid.name + "." + fa.field, afi, asf);
                                     if (!asf.ok) { return asf; }
                                     afi = afi + 1;
                                 }
@@ -3142,12 +3160,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sm.ok) { return sm; }
                         var ai: i32 = 0;
                         while (ai < c.args.len()) {
-                            // An i64 method param: the arg is an 8-byte i64 value,
-                            // lowered via lower_i64 (param_is_i64 keyed by the
-                            // method's "<Type>.<method>" label). f64 args ride
-                            // lower_expr like any f64 value.
-                            if (sm.param_is_i64(disp_ty + "." + fa.field, ai)) { sm = lower_i64(c.args[ai], sm); }
-                            else { sm = lower_expr(c.args[ai], sm); }
+                            // An i64 method param widens via lower_i64; a bare
+                            // function-name at a "fn"-typed param is a fn VALUE
+                            // (const_func), not a call — shared in lower_call_arg
+                            // (keyed by the method's "<Type>.<method>" label).
+                            sm = lower_call_arg(c.args[ai], disp_ty + "." + fa.field, ai, sm);
                             if (!sm.ok) { return sm; }
                             ai = ai + 1;
                         }
@@ -3165,8 +3182,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!em.ok) { return em; }
                         var eai: i32 = 0;
                         while (eai < c.args.len()) {
-                            if (em.param_is_i64(ety + "." + fa.field, eai)) { em = lower_i64(c.args[eai], em); }
-                            else { em = lower_expr(c.args[eai], em); }
+                            em = lower_call_arg(c.args[eai], ety + "." + fa.field, eai, em);
                             if (!em.ok) { return em; }
                             eai = eai + 1;
                         }
@@ -3186,8 +3202,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pm.ok) { return pm; }
                         var pai: i32 = 0;
                         while (pai < c.args.len()) {
-                            if (pm.param_is_i64(pty + "." + fa.field, pai)) { pm = lower_i64(c.args[pai], pm); }
-                            else { pm = lower_expr(c.args[pai], pm); }
+                            pm = lower_call_arg(c.args[pai], pty + "." + fa.field, pai, pm);
                             if (!pm.ok) { return pm; }
                             pai = pai + 1;
                         }
