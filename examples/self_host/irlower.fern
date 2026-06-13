@@ -1213,7 +1213,7 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // `s.to_upper()` / `s.to_lower()` on a string receiver yield a
                     // fresh string (op_str_to_upper / _to_lower), so the result
                     // feeds `.len()` / concat as a string.
-                    if ((cfa.field == "to_upper" || cfa.field == "to_lower") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
+                    if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "trim") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     // `s.repeat(n)` on a string receiver yields a fresh string.
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     // A string-returning METHOD call `recv.m(...)`. Methods store
@@ -1990,15 +1990,15 @@ pub function str_free_call_field(name: string): string {
 // ends_with / index_of / contains. The caller checks arity (str_method_argc) +
 // that the receiver is a string before dispatching to lower_str_method.
 pub function is_str_builtin_method(field: string): boolean {
-    return field == "to_upper" || field == "to_lower" || field == "repeat"
-        || field == "split" || field == "starts_with" || field == "ends_with"
-        || field == "index_of" || field == "contains";
+    return field == "to_upper" || field == "to_lower" || field == "trim"
+        || field == "repeat" || field == "split" || field == "starts_with"
+        || field == "ends_with" || field == "index_of" || field == "contains";
 }
 
 // str_method_argc gives the argument count of a string builtin method: the case
 // transforms are 0-arg; everything else (split + predicates) is 1-arg.
 pub function str_method_argc(field: string): i32 {
-    if (field == "to_upper" || field == "to_lower") { return 0; }
+    if (field == "to_upper" || field == "to_lower" || field == "trim") { return 0; }
     return 1;
 }
 
@@ -2013,6 +2013,7 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     if (!p.ok) { return p; }
     if (field == "to_upper") { return p.emit(ir.op_str_to_upper()); }
     if (field == "to_lower") { return p.emit(ir.op_str_to_lower()); }
+    if (field == "trim") { return p.emit(ir.op_str_trim()); }
     p = lower_expr(args[0], p);
     if (!p.ok) { return p; }
     if (field == "repeat") { return p.emit(ir.op_str_repeat()); }
