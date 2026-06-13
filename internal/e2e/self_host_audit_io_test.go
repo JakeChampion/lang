@@ -13,8 +13,11 @@ import (
 // (docs/FEATURE-AUDIT.md); the native arm is the `audit_io_builtins`
 // fixture (all four native backends).
 //
-// `putchar` is held out — the self-host compiler emits `call __fn_putchar`
-// with no runtime, so the program fails to link (#2839).
+// `putchar` is fixed on the self-host IR path (#2839 — the x86-64 / arm64 /
+// wasm IR backends emit the `__fern_putchar` runtime; guarded by
+// self_host_putchar_{,arm64_,wasm_}ir_test.go). It stays held out HERE because
+// this audit uses the legacy AST driver (asm_run / asm.fern), which still
+// doesn't lower putchar — an AST-only gap that goal 1 leaves to the IR path.
 var auditIOCases = []struct {
 	name string
 	src  string
