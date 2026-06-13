@@ -3812,11 +3812,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // enum name in local_struct_type too, so `a.method()` dispatches to
             // `<Enum>.<method>` (enum-receiver methods).
             else if (struct_ty == "" && is_enum_like_name(v.type_name, se.structs)) { struct_ty = v.type_name; }
-            // A struct-ARRAY annotation (`var ps: P[]`) carries the ELEMENT
-            // struct type (the slot is is_arr, so it reads as the element type
-            // for `ps[i]` / `for x in ps`, not the slot's own type).
+            // A struct- or enum-ARRAY annotation (`var ps: P[]` / `var cs: C[]`)
+            // carries the ELEMENT type (the slot is is_arr, so it reads as the
+            // element type for `ps[i]` / `for x in ps`, not the slot's own type).
+            // An enum element type lets `cs[i].method()` dispatch to
+            // `<Enum>.<method>` (the array-element analog of #2947, #2954 item 2).
             else if (struct_ty == "" && is_array_type_name(v.type_name)
-                     && decl_is_struct(se.structs, v.type_name[0 : v.type_name.len() - 2])) {
+                     && (decl_is_struct(se.structs, v.type_name[0 : v.type_name.len() - 2])
+                         || is_enum_like_name(v.type_name[0 : v.type_name.len() - 2], se.structs))) {
                 struct_ty = v.type_name[0 : v.type_name.len() - 2];
             }
             // A struct-array LITERAL without annotation (`var ps = [P { .. }, ..]`):
@@ -3829,6 +3832,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         if (arrl.elements.len() > 0) {
                             var est: string = expr_struct_type(arrl.elements[0], se);
                             if (est != "" && decl_is_struct(se.structs, est)) { struct_ty = est; }
+                            else {
+                                // An enum-array literal (`var a = [R, G]`): the
+                                // element type is the variants' enum owner, so
+                                // `a[i].method()` dispatches to `<Enum>.<method>`
+                                // (#2954 item 2).
+                                var eet: string = expr_enum_type(arrl.elements[0], se);
+                                if (eet != "") { struct_ty = eet; }
+                            }
                         }
                     },
                     _ => {}
