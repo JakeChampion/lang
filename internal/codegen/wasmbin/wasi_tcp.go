@@ -385,6 +385,14 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 //	6: $strbuf   — fresh heap buffer holding the read bytes
 func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
+	// The returned (data, len) is an owned string reclaimed by the two-word
+	// __fern_str_dec, which reads the rc at data-8 and the payload size at
+	// data-4 — present only when the buffer comes from __fern_alloc_rc1. A plain
+	// __fern_alloc buffer has no header, so the drop reads garbage and recycles a
+	// still-live cell (the #2817 heap-corruption class; arm64 tcp_recv had the
+	// identical bug). The 12-byte retptr scratch below is not a string, so it
+	// stays on plain alloc.
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 
 	var body []byte
@@ -429,9 +437,9 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 5)
 
-	// $strbuf = alloc($n); memory.copy(strbuf, list_ptr, n).
+	// $strbuf = alloc_rc1($n); memory.copy(strbuf, list_ptr, n).
 	body = inst.InstLocalGet(body, 5)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 6)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
