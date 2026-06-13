@@ -134,7 +134,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"hex-or", "function main(): i32 { return (0x40 | 0x01) & 255; }"},
 		// Int→int casts (op_int_cast). Non-overflowing where they'd differ from
 		// native, so the AST path agrees — masking matches asm.fern's as_<ty>.
-		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},        // 300 & 255 = 44
+		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"}, // 300 & 255 = 44
 		{"cast-u16-mask", "function main(): i32 { return ((70000 as u16) as i32) & 255; }"},
 		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"}, // 200 -> -56 -> &255 = 200
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return ((x as u8) as i32); }"},
@@ -364,6 +364,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-forkv-keys", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }`},
 		{"map-forkv-pair", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }`},
 		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
+		// `.set` is the PUBLIC map mutator (the existing cases above use the
+		// internal `.insert`); it lowers through the IR path identically (#2926).
+		{"map-set-i32-len", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.set(1, 100); m = m.set(2, 200); m = m.set(3, 300); return m.len(); }`},
+		{"map-set-i32-getor", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.set(7, 42); m = m.set(9, 13); return m.get_or(7, 0) + m.get_or(9, 0); }`},
+		{"map-set-str-getor", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.set("a", 1); m = m.set("bb", 2); return m.get_or("bb", 0) + m.len(); }`},
+		{"map-set-overwrite", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.set(7, 40); m = m.set(7, 42); return m.get_or(7, 0) + m.len(); }`},
+		{"map-set-chained", `function main(): i32 { var m: Map[string, i32] = map_new(8).set("x", 5).set("y", 7); return m.get_or("y", 0) + m.len(); }`},
+		{"map-set-keyword-literal", `function main(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`},
+		{"map-set-has", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.set("k", 9); var r = 0; if (m.has("k")) { r = r + 1; } if (m.has("z")) { r = r + 10; } return r; }`},
 		// m.without(k) -> (Map, existed). The destructured map re-marks so later
 		// ops on it work; both AST and IR share __fern_map_delete (#2926).
 		{"map-without-len", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var (m2, e) = m.without(1); return m2.len(); }`},
