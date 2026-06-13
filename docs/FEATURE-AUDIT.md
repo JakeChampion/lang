@@ -117,7 +117,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `if` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `while` loop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `for(init; cond; step)` loop | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | **self-host: unsupported → segfault, [#2820](https://github.com/JakeChampion/lang/issues/2820)** |
-| `for x in arr` / `for x in "str"` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | array ✅; **`for x in <string>` self-host wrong, [#2822](https://github.com/JakeChampion/lang/issues/2822)** |
+| `for x in arr` / `for x in "str"` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | array ✅; `for x in <string>` self-host IR path iterates bytes — literal / local / slice / string-returning call+method ([#2822](https://github.com/JakeChampion/lang/issues/2822), #2834 + the eligibility-probe `str_ret_fns` fix) |
 | inclusive / half-open ranges `for i in a..=b` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `0..4` half-open, `0..=5` inclusive |
 | `switch` statement (comma cases, default) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | multi-value case + default |
 | `break` / `continue` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | S ok in while/foreach; broken inside C-for ([#2820](https://github.com/JakeChampion/lang/issues/2820)) |
