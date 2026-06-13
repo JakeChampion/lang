@@ -20,15 +20,26 @@ import (
 // call site `Box.default()` → `Box__Inner.default()` from the binding's
 // annotation (a receiver-less constructor has no args to infer from).
 //
-// Scope: type params instantiated with a leaf-safe STRUCT. A primitive param
-// (`Box[i32]`) needs primitive `Default` impls, and an enum-typed field isn't
-// leaf-safe in the IR struct model — both orthogonal, left as follow-ups. The
-// inline `trait Default` keeps the program valid for the native compiler too.
+// Scope: type params instantiated with a leaf-safe STRUCT or a PRIMITIVE. A
+// primitive param (`Box[i32]`) needs a primitive `Default` impl in scope for
+// the native compiler (#2864); the self-host substitutes the primitive's zero
+// LITERAL for `T.default()` directly. An enum-typed field isn't leaf-safe in
+// the IR struct model — left as a follow-up. The inline `trait Default` (+
+// primitive impl, where needed) keeps each program valid for both compilers.
 var genericDefaultIRCases = []struct {
 	name     string
 	src      string
 	expected int
 }{
+	// Primitive type params: the self-host emits the zero literal for the
+	// defaulted field; the native compiler dispatches through the primitive
+	// `Default` impl. Both yield the same result.
+	{"box-i32",
+		`trait Default { function default(): Self; } impl Default for i32 { function default(): i32 { return 0; } } @derive(Default) struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box.default(); return b.v + 7; }`, 7},
+	{"box-string",
+		`trait Default { function default(): Self; } impl Default for string { function default(): string { return ""; } } @derive(Default) struct Box[T] { v: T, k: i32 } function main(): i32 { var b: Box[string] = Box.default(); return b.v.len() + b.k + 4; }`, 4},
+	{"box-boolean",
+		`trait Default { function default(): Self; } impl Default for boolean { function default(): boolean { return false; } } @derive(Default) struct Box[T] { v: T, k: i32 } function main(): i32 { var b: Box[boolean] = Box.default(); if (b.v) { return 1; } return b.k + 8; }`, 8},
 	// Box[Inner]: the type param defaults to a nested struct's own default. 5.
 	{"box-inner",
 		`trait Default { function default(): Self; } @derive(Default) struct Inner { n: i32 } @derive(Default) struct Box[T] { v: T } function main(): i32 { var b: Box[Inner] = Box.default(); return b.v.n + 5; }`, 5},

@@ -3611,6 +3611,28 @@ function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
         },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: subst_expr(fa.obj, tparams, cts), field: fa.field, line: fa.line, col: fa.col }; },
         ExprCall(c) => {
+            // A defaulted generic field `T.default()` where `T` substitutes to a
+            // PRIMITIVE has no associated impl to dispatch to in the IR path —
+            // emit the primitive's zero literal directly (i32→0, string→"",
+            // boolean→false, f64→0.0), exactly as the concrete struct-default
+            // path does for a scalar field. This lets a generic `@derive(Default)`
+            // over a primitive (`Box[i32].default()`) lower through the IR path
+            // (the native compiler resolves the same `T.default()` via the
+            // primitive `Default` impl — see #2864).
+            match (c.callee) {
+                ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        ExprIdent(oid) => {
+                            if (cfa.field == "default" && c.args.len() == 0) {
+                                var pk: i32 = tp_index(oid.name, tparams);
+                                if (pk >= 0 && dv_is_scalar(cts[pk])) { return dv_default_expr(cts[pk]); }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             var na: Expr[] = [];
             var ci: i32 = 0;
             while (ci < c.args.len()) { na = na.append(subst_expr(c.args[ci], tparams, cts)); ci = ci + 1; }
