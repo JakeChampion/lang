@@ -202,13 +202,13 @@ per-function bugs in the audit log.
 | `std/i64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host pending |
 | `std/u32` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | max — `audit_std_path_numeric`; self-host pending |
 | `std/u64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | clamp — `audit_std_path_numeric`; self-host pending |
-| `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host pending |
+| `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host: f64 intrinsics (floor/ceil/sqrt/abs/round/trunc) ✅ via the IR path (`TestSelfHostFloatIntrinsicsIR`) |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
-| `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host pending |
-| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host pending |
+| `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host: `format_bytes` logic ✅ via the IR path (`TestSelfHostFormatBytesIR`, `i32.to_string` builtin); `format`/`format_duration_ms` pending |
+| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host: `csv_parse_line` ✅ via the IR path (`TestSelfHostCsvParseLineIR`); escape/join pending (need `index_of`/`replace` inlining) |
 | `std/log` | | | | | | ⬜ | |
 | `std/io` | | | | | | ⬜ | |
 | `std/io_buffered` | | | | | | ⬜ | |
@@ -217,13 +217,13 @@ per-function bugs in the audit log.
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` |
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
-| `std/url` | ✅ | ✅ | 🐛 | ✅ | | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption**, [#2817](https://github.com/JakeChampion/lang/issues/2817) (audit log 2026-06-09) |
+| `std/url` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes` now uses `__fern_alloc_rc1`) |
 | `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test`; `@derive(Json)` incl. **array fields** (`T[]`) — native all backends (`derive_json` fixture), self-host i32/string/struct arrays via the IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766); `TestSelfHostJsonArrayIR`) |
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
 | `std/stream` | | | | | | ⬜ | |
-| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host pending |
+| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host: pure-i32 helpers (is_leap_year/days_in_month) ✅ via the IR path (`TestSelfHostTimeIR`); Date/Instant methods (structs/Option) pending |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | | | | | | ⬜ | |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
@@ -546,7 +546,7 @@ the foreach lowering across `irlower.fern` / the AST backends). Re-add each held
 **Also:** opened [#2817](https://github.com/JakeChampion/lang/issues/2817) for
 the arm64 `std/url` heap-corruption bug below (reconfirmed reproducing today).
 
-### 2026-06-09 — 🐛 arm64 heap-corruption in the RcFree freelist drop/reuse path (OPEN, top priority — now [#2817](https://github.com/JakeChampion/lang/issues/2817))
+### 2026-06-09 — 🐛 arm64 heap-corruption in the RcFree freelist drop/reuse path (FIXED 2026-06-13 — [#2817](https://github.com/JakeChampion/lang/issues/2817))
 
 **Found by:** `prop_url_roundtrip` property fixture — `url_decode(url_encode(s)) == s`
 over 300 deterministic random inputs (full 0..255 byte range, lengths 0..47).
@@ -580,20 +580,37 @@ reads the result — driven cumulatively over several LCG-generated inputs.
 `internal/e2e/testdata/cases/prop_url_roundtrip/main.fern` reproduces it directly
 on arm64 (drop the `backends` sidecar to see the arm64 leg fail).
 
-**Status / mitigation:** `prop_url_roundtrip` is restricted to
-`interp x86_64 wasm` (via its `backends` sidecar) so CI stays green and the 3
-good backends are still guarded. **Next step:** trace the arm64 drop/reuse
-call-site for the slice + `string_from_bytes` + concat pattern and fix the
-recycled-while-live cell. Until fixed, `std/url` is unsafe on arm64 under heavy
-allocation churn — and the same class of bug may lurk in other modules, so it is
-the highest-priority follow-up.
+**Status: FIXED (2026-06-13).** `prop_url_roundtrip` now runs on **all four
+backends** (arm64 re-added to its `backends` sidecar).
+
+**Actual root cause** (the earlier "instruction-selection / liveness" narrowing
+was on the wrong layer — the *helpers* were the problem after all): on the
+two-word string ABI (arm64-`TwoWordOverride`), `string_from_bytes` allocated its
+heap buffer with **plain `__fern_alloc`** instead of `__fern_alloc_rc1`
+(`internal/codegen/arm64/arm64.go`, the `UseTwoWordStrings` branch). A plain
+buffer carries **no rc header** (no live rc at `data-8`, no payload size at
+`data-4`). When the resulting string was later dropped by `__fern_str_dec`
+— which reads the rc at `data-8` and, at rc==1, `box_free`s using the size at
+`data-4` — it read **garbage**: either `rc_dec`'d a neighbouring cell's bytes
+(the single-bit `0x90→0x80` corruption) or `box_free`'d a wrong-sized block that
+overlapped a still-live cell, recycling it through the freelist. It only
+surfaced under the *mixed* slice + `string_from_bytes` churn because the
+interleaved `__str_slice` (rc-headered) allocations left a `1` in the word just
+below a `string_from_bytes` buffer, steering `__fern_str_dec` down the
+`box_free` path. `__str_slice` and `__fern_strcat` already used
+`__fern_alloc_rc1` on this path, and the wasm two-word backend's
+`string_from_bytes` always did — arm64's was the lone outlier.
+
+**Fix:** one line — `string_from_bytes` (two-word path) now allocates via
+`__fern_alloc_rc1`, matching `__str_slice` / `__fern_strcat` and the wasm
+mirror. Guarded by `prop_url_roundtrip` running on arm64 again.
 
 ### 2026-06-09 — first property-test batch (base64, hex, url, sort, string)
 
 Added five property fixtures under `internal/e2e/testdata/cases/prop_*`:
 
 - `prop_codec_roundtrip` — `base64` + `hex` decode∘encode round-trip. ✅ all 4 backends.
-- `prop_url_roundtrip` — `url` decode∘encode round-trip. ✅ interp/x86-64/wasm; 🐛 arm64 (above).
+- `prop_url_roundtrip` — `url` decode∘encode round-trip. ✅ all 4 backends (the arm64 `string_from_bytes` rc-header bug above is fixed).
 - `prop_sort_i32` — `sort_i32_asc` ordering + permutation (per-value histogram) +
   idempotence. ✅ all 4 backends.
 - `prop_string_involution` — `reverse_bytes` involution, `to_lower`/`to_upper`

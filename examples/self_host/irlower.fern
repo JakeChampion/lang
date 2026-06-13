@@ -1060,9 +1060,18 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprIdent(id) => { return s.is_strarr_slot(s.slot_of(id.name)); },
         parser.ExprCall(c) => {
-            // A call to a string[]-returning user function (strarr_ret_fns).
+            // A call to a string[]-returning user function (strarr_ret_fns), the
+            // `str_split(s, sep)` builtin (string→string[]), or the `s.split(sep)`
+            // method form — all yield a string[] whose elements are string boxes.
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_strarr_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "str_split" && c.args.len() == 2) { return true; }
+                    return s.is_strarr_ret_fn(cid.name);
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
+                    return false;
+                },
                 _ => { return false; }
             }
             return false;
@@ -1125,12 +1134,18 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => {
                     // `__alloc_u8(n)` yields a fresh n-element byte array.
                     if (cid.name == "__alloc_u8") { return true; }
+                    // `str_split(s, sep)` yields a fresh string[] (op_str_split).
+                    if (cid.name == "str_split" && c.args.len() == 2) { return true; }
                     return s.is_arr_ret_fn(cid.name);
                 },
                 // `s.bytes()` / `s.as_bytes()` on a string receiver yields a
-                // fresh u8[] (op_str_bytes) — an rc-tracked array source.
+                // fresh u8[] (op_str_bytes), and `s.split(sep)` a fresh string[]
+                // (op_str_split) — both rc-tracked array sources.
                 parser.ExprFieldAccess(cfa) => {
                     if ((cfa.field == "bytes" || cfa.field == "as_bytes") && c.args.len() == 0) {
+                        return expr_is_str(cfa.obj, s);
+                    }
+                    if (cfa.field == "split" && c.args.len() == 1) {
                         return expr_is_str(cfa.obj, s);
                     }
                     return false;
@@ -1867,6 +1882,47 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
     }
 }
 
+// str_free_call_field maps a two-arg string builtin FREE-function name to the
+// method `field` lower_str_method expects (`str_split`→`split`, etc.), or "" if
+// the name isn't one. Lets the free-call and method-call forms share one lowerer.
+pub function str_free_call_field(name: string): string {
+    if (name == "str_split") { return "split"; }
+    if (name == "str_starts_with") { return "starts_with"; }
+    if (name == "str_ends_with") { return "ends_with"; }
+    if (name == "str_index_of") { return "index_of"; }
+    return "";
+}
+
+// is_str_builtin_method reports whether `field` names a one-arg string builtin
+// method the IR path lowers directly (split → string[]; starts_with / ends_with
+// / index_of / contains → scalar). The caller also checks arity + that the
+// receiver is a string before dispatching to lower_str_method.
+pub function is_str_builtin_method(field: string): boolean {
+    return field == "split" || field == "starts_with" || field == "ends_with"
+        || field == "index_of" || field == "contains";
+}
+
+// lower_str_method lowers a one-arg string builtin method `recv.<field>(arg)`:
+// it lowers [recv, arg] then emits the field's op. `split` yields a string[]
+// (op_str_split); the search predicates are scalar (op_str_starts_with /
+// _ends_with / _index_of), and `contains` is `index_of(...) >= 0`. Kept out of
+// lower_expr's giant FieldAccess arm to stay under the self-host backend's
+// oversized-function threshold (#2720).
+pub function lower_str_method(field: string, recv: parser.Expr, arg: parser.Expr, s: LowerState): LowerState {
+    var p: LowerState = lower_expr(recv, s);
+    if (!p.ok) { return p; }
+    p = lower_expr(arg, p);
+    if (!p.ok) { return p; }
+    if (field == "split") { return p.emit(ir.op_str_split()); }
+    if (field == "starts_with") { return p.emit(ir.op_str_starts_with()); }
+    if (field == "ends_with") { return p.emit(ir.op_str_ends_with()); }
+    if (field == "index_of") { return p.emit(ir.op_str_index_of()); }
+    // contains: index_of(sub) >= 0
+    p = p.emit(ir.op_str_index_of());
+    p = p.emit(ir.op_const_i32(0));
+    return p.emit(ir.op_bin("ge_s", 0, false));
+}
+
 // lower_expr emits ops that leave the value of `e` on the operand stack.
 pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
     if (!s.ok) { return s; }
@@ -2580,6 +2636,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (lstr) { return ls.emit(ir.op_str_len()); }
                         return ls.emit(ir.op_arr_len());
                     }
+                    // String builtin free calls — `str_split(s, sep)` and the
+                    // predicates `str_starts_with` / `str_ends_with` /
+                    // `str_index_of(s, x)` — are the same ops as the `.split` /
+                    // `.starts_with` / … method forms, so they route through
+                    // lower_str_method (field = the name minus its `str_` prefix).
+                    var sfreef: string = str_free_call_field(cid.name);
+                    if (sfreef != "" && c.args.len() == 2) {
+                        return lower_str_method(sfreef, c.args[0], c.args[1], s);
+                    }
                     // No arity cap: the call ABI is fully stack-based on every
                     // backend (x86-64/arm64 push the args on the runtime stack and
                     // the callee reads param[i] from a fixed frame offset; wasm
@@ -2751,6 +2816,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var sb: LowerState = lower_expr(fa.obj, s);
                         if (!sb.ok) { return sb; }
                         return sb.emit(ir.op_str_bytes());
+                    }
+                    // One-arg string builtin methods on a string receiver:
+                    // `s.split(sep)` (→ string[]) and the scalar search predicates
+                    // `starts_with` / `ends_with` / `index_of` / `contains`. The
+                    // per-field emission lives in lower_str_method, kept out of line
+                    // so this already-enormous lower_expr arm doesn't grow past the
+                    // self-host backend's oversized-function miscompile threshold
+                    // (#2720 — folding it in here crashed the stage-2 self-compile).
+                    if (is_str_builtin_method(fa.field) && c.args.len() == 1 && expr_is_str(fa.obj, s)) {
+                        return lower_str_method(fa.field, fa.obj, c.args[0], s);
                     }
                     // Builtin `.to_string()` on a PRIMITIVE receiver — distinct
                     // from a struct's generated `to_string` (a @derive(Display)
@@ -3156,12 +3231,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             // `__alloc_u8(n)` yields a fresh owned byte array (a
                             // move, like an arr-returning call).
                             if (fid.name == "__alloc_u8") { is_arr = true; }
+                            // `str_split(s, sep)` yields a fresh owned string[] — a
+                            // move, track as array (is_strarr comes from expr_is_strarr).
+                            else if (fid.name == "str_split" && cc.args.len() == 2) { is_arr = true; }
                             else if (se.is_arr_ret_fn(fid.name)) { is_arr = true; }
                         },
                         // `var b = s.bytes()` / `= s.as_bytes()`: op_str_bytes
                         // returns a fresh owned u8[] (rc=1) — a move, track as array.
+                        // `var parts = s.split(sep)`: op_str_split likewise returns a
+                        // fresh owned string[].
                         parser.ExprFieldAccess(cfa) => {
                             if ((cfa.field == "bytes" || cfa.field == "as_bytes") && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
+                            else if (cfa.field == "split" && cc.args.len() == 1 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                         },
                         _ => {}
                     }

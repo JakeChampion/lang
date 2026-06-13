@@ -339,6 +339,41 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"derive-debug-enum", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len() + Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`},
 		// Method call -> out of the IR subset; falls back to AST under -ir.
 		{"method-falls-back", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
+		// string.split(sep) -> string[] (op_str_split). The wasm IR path emits the
+		// narrow str_split_helper ($__fern_str_split + a private $__fern_arr_push)
+		// plus substr_helper; the AST path uses the full strcat_helpers bundle's
+		// $__fern_str_split — segment counts / element lengths must match.
+		{"split-count", `function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`},
+		{"split-first-len", `function main(): i32 { var p = "foo,bar,baz".split(","); return p[0].len(); }`},
+		{"split-elem-lens", `function main(): i32 { var p = "a,bb,ccc".split(","); return p[0].len() + p[1].len() + p[2].len(); }`},
+		{"split-multichar-sep", `function main(): i32 { var p = "axxbxxc".split("xx"); return p.len() * 10 + p[2].len(); }`},
+		{"split-no-match", `function main(): i32 { var p = "abc".split(","); return p.len() * 10 + p[0].len(); }`},
+		{"split-empty-sep", `function main(): i32 { var p = "abc".split(""); return p.len() * 10 + p[0].len(); }`},
+		{"split-trailing-sep", `function main(): i32 { var p = "a,b,".split(","); return p.len(); }`},
+		{"split-loop-sum", `function main(): i32 { var p = "a,bb,ccc,dddd".split(","); var s = 0; var i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
+		{"split-forin", `function main(): i32 { var s = 0; for part in "x,yy,zzz".split(",") { s = s + part.len(); } return s; }`},
+		{"split-param", `function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
+		{"split-freecall", `function main(): i32 { var p = str_split("a,b,c", ","); return p.len(); }`},
+		{"split-direct-index", `function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
+		// Scalar string search predicates → i32/boolean (op_str_starts_with /
+		// _ends_with / _index_of; contains = index_of >= 0). The wasm IR path
+		// emits the narrow str_predicate_helpers; the AST path gets them from the
+		// strcat_helpers bundle — results must agree.
+		{"starts-with-true", `function main(): i32 { var s = "hello"; if (s.starts_with("he")) { return 7; } return 0; }`},
+		{"starts-with-false", `function main(): i32 { var s = "hello"; if (s.starts_with("lo")) { return 7; } return 9; }`},
+		{"ends-with-true", `function main(): i32 { var s = "hello"; if (s.ends_with("lo")) { return 7; } return 0; }`},
+		{"ends-with-false", `function main(): i32 { var s = "hello"; if (s.ends_with("he")) { return 7; } return 9; }`},
+		{"index-of-hit", `function main(): i32 { var s = "abcdef"; return s.index_of("cd"); }`},
+		{"index-of-miss", `function main(): i32 { var s = "abcdef"; var r = s.index_of("zz"); if (r < 0) { return 42; } return 0; }`},
+		{"index-of-empty", `function main(): i32 { var s = "abc"; return s.index_of("") + 50; }`},
+		{"contains-true", `function main(): i32 { var s = "hello world"; if (s.contains("o w")) { return 7; } return 0; }`},
+		{"contains-false", `function main(): i32 { var s = "hello"; if (s.contains("xyz")) { return 7; } return 9; }`},
+		{"predicate-param", `function pre(s: string, p: string): i32 { if (s.starts_with(p)) { return 1; } return 0; } function main(): i32 { return pre("foobar", "foo") * 10 + pre("foobar", "bar"); }`},
+		// NB: the str_starts_with / str_index_of FREE-function builtins exist on the
+		// x86-64 AST path but not the wasm AST path, so they can't ride this wasm
+		// differential gate — the method forms above cover the IR predicate ops, and
+		// the free-call forms are validated on x86-64 (TestSelfHostAsmIRPath +
+		// TestSelfHostStrSplitIRPathX86_64).
 	}
 
 	for _, tc := range cases {

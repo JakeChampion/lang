@@ -157,7 +157,11 @@ func TestSelfHostFixpoint(t *testing.T) {
 	}
 }
 
-// buildBin assembles+links asm into dir/name and returns its path.
+// buildBin assembles+links asm into dir/name and returns its path. The
+// (asm → static binary) link is content-addressed and cached process-
+// wide (see self_host_buildcache_test.go): identical asm links once and
+// later callers get a copy of the cached binary. The dir/name.s source
+// is still written for callers/diagnostics that read it.
 func buildBin(t *testing.T, gcc, dir, name, asm string) string {
 	t.Helper()
 	asmPath := filepath.Join(dir, name+".s")
@@ -165,8 +169,6 @@ func buildBin(t *testing.T, gcc, dir, name, asm string) string {
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write %s asm: %v", name, err)
 	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc %s: %v\n%s", name, err, out)
-	}
+	copyExecutable(t, cachedLink(t, gcc, asm), binPath)
 	return binPath
 }

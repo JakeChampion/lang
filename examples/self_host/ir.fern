@@ -286,6 +286,20 @@ pub function op_now_ns(): Op { return op0("now_ns"); }
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
 // array (correct, just not zero-copy; mirrors the AST path).
 pub function op_str_bytes(): Op { return op0("str_bytes"); }
+// `str_starts_with` / `str_ends_with` pop [s, p] → i32 1/0 (whether `s` begins
+// / ends with `p`; empty `p` → 1). `str_index_of` pops [s, sub] → the first
+// byte index of `sub` in `s`, or -1 (empty `sub` → 0). All three are scalar,
+// allocation-free string predicates backed by the __fern_str_* search runtime;
+// `s.contains(sub)` lowers as `str_index_of(...) >= 0` (no dedicated op).
+pub function op_str_starts_with(): Op { return op0("str_starts_with"); }
+pub function op_str_ends_with(): Op { return op0("str_ends_with"); }
+pub function op_str_index_of(): Op { return op0("str_index_of"); }
+// `str_split` pops [haystack, sep] → a fresh string[] of the segments of
+// `haystack` split on `sep`. An empty separator yields a single-element
+// `[haystack]`. Backs both the `s.split(sep)` method and the `str_split(s, sep)`
+// free call. The result array is RC-tracked; the segment string boxes leak
+// (mirrors the AST path's __fern_str_split).
+pub function op_str_split(): Op { return op0("str_split"); }
 
 // Built-in Option / Result ops. The value is a heap box [tag@0, payload@8]
 // (Some/Ok = tag 0, None/Err = tag 1) — distinct from user enums/structs, which

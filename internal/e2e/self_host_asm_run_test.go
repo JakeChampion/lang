@@ -2701,6 +2701,13 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case only pipes source through the already-built
+			// driver, gcc-assembles, and runs — no recompile of the
+			// 35k-line self-host driver — so the cases are independent
+			// and cheap. Run them in parallel to spread the dozens of
+			// gcc+exec cycles across the runner's cores (this test was
+			// a ~50s CI long pole serially).
+			t.Parallel()
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
 				cmd = exec.Command(driverBin)
@@ -2748,6 +2755,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 	// silently emitting a box pointer. The driver should exit non-zero and
 	// print an E002 diagnostic; no asm is produced.
 	t.Run("rejects-option-as-i32", func(t *testing.T) {
+		t.Parallel()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
 			cmd = exec.Command(driverBin)
