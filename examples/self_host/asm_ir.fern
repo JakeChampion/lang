@@ -1603,6 +1603,10 @@ function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "rem_s" && width == 64) { return "    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
     if (kind == "div_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n"; }
     if (kind == "rem_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
+    // Unsigned 64-bit div/rem (u64, #2904): zero RDX, divq (no sign-extend). The
+    // operands are full 64-bit u64 values, so no movslq truncation.
+    if (kind == "div_u") { return "    xorl %edx, %edx\n    divq %rcx\n"; }
+    if (kind == "rem_u") { return "    xorl %edx, %edx\n    divq %rcx\n    movq %rdx, %rax\n"; }
     if (kind == "and") { return "    andq %rcx, %rax\n"; }
     if (kind == "or") { return "    orq %rcx, %rax\n"; }
     if (kind == "xor") { return "    xorq %rcx, %rax\n"; }
@@ -1615,6 +1619,12 @@ function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "le_s") { return "    cmpq %rcx, %rax\n    setle %al\n    movzbq %al, %rax\n"; }
     if (kind == "gt_s") { return "    cmpq %rcx, %rax\n    setg %al\n    movzbq %al, %rax\n"; }
     if (kind == "ge_s") { return "    cmpq %rcx, %rax\n    setge %al\n    movzbq %al, %rax\n"; }
+    // Unsigned 64-bit compares (u64, #2904): same cmpq, but the below/above
+    // setcc family reads CF instead of SF/OF — correct once bit 63 is set.
+    if (kind == "lt_u") { return "    cmpq %rcx, %rax\n    setb %al\n    movzbq %al, %rax\n"; }
+    if (kind == "le_u") { return "    cmpq %rcx, %rax\n    setbe %al\n    movzbq %al, %rax\n"; }
+    if (kind == "gt_u") { return "    cmpq %rcx, %rax\n    seta %al\n    movzbq %al, %rax\n"; }
+    if (kind == "ge_u") { return "    cmpq %rcx, %rax\n    setae %al\n    movzbq %al, %rax\n"; }
     return "    # ir: unsupported bin " + kind + "\n";
 }
 

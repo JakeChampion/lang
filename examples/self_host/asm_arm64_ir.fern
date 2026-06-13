@@ -59,6 +59,9 @@ function ir_bin_asm(kind: string): string {
     if (kind == "mul") { return "    mul x0, x0, x1\n"; }
     if (kind == "div_s") { return "    sdiv x0, x0, x1\n"; }
     if (kind == "rem_s") { return "    sdiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
+    // Unsigned 64-bit div/rem (u64, #2904): udiv instead of sdiv.
+    if (kind == "div_u") { return "    udiv x0, x0, x1\n"; }
+    if (kind == "rem_u") { return "    udiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
     if (kind == "and") { return "    and x0, x0, x1\n"; }
     if (kind == "or") { return "    orr x0, x0, x1\n"; }
     if (kind == "xor") { return "    eor x0, x0, x1\n"; }
@@ -71,6 +74,12 @@ function ir_bin_asm(kind: string): string {
     if (kind == "le_s") { return "    cmp x0, x1\n    cset x0, le\n"; }
     if (kind == "gt_s") { return "    cmp x0, x1\n    cset x0, gt\n"; }
     if (kind == "ge_s") { return "    cmp x0, x1\n    cset x0, ge\n"; }
+    // Unsigned 64-bit compares (u64, #2904): the lo/ls/hi/hs condition codes
+    // read CF instead of the signed N/V flags — correct once bit 63 is set.
+    if (kind == "lt_u") { return "    cmp x0, x1\n    cset x0, lo\n"; }
+    if (kind == "le_u") { return "    cmp x0, x1\n    cset x0, ls\n"; }
+    if (kind == "gt_u") { return "    cmp x0, x1\n    cset x0, hi\n"; }
+    if (kind == "ge_u") { return "    cmp x0, x1\n    cset x0, hs\n"; }
     return "    // ir: unsupported bin " + kind + "\n";
 }
 
