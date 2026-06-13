@@ -7844,14 +7844,15 @@ pub function str_predicate_helpers(): string {
     return o;
 }
 
-// str_split_helper emits the IR-path string→string[] runtime: a narrow
-// $__fern_arr_push (the i32 4-byte-slot append — the full arr_helpers bundle is
-// AST-path-only) plus $__fern_str_split, which builds the result array via push
-// and slices each segment via $__fern_substr (the IR runtime emits substr_helper
-// alongside this). Depends only on $__fern_str_box / $__fern_arr_box from the
-// heap runtime (module_allocates). The split body is transcribed verbatim from
-// the strcat_helpers bundle's $__fern_str_split.
-pub function str_split_helper(): string {
+// arr_push_helper emits the IR-path array append runtime: $__fern_arr_push
+// appends a 4-byte slot (i32 OR a pointer — strings are one word on wasm32)
+// to an array, growing the backing box (doubling cap) when full. It is the
+// helper the IR `.append` (op "arr_push") lowers to, and $__fern_str_split
+// builds its result array with it. The full AST-path arr_helpers bundle is
+// not on the IR path, so this narrow helper stands alone there; emit it once
+// (the IR runtime gates on arr_push OR str_split). Depends only on
+// $__fern_arr_box from the heap runtime (module_allocates).
+pub function arr_push_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_push (param $a i32) (param $v i32) (result i32)\n";
     o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32)\n";
@@ -7874,6 +7875,21 @@ pub function str_split_helper(): string {
     o = o + "      (br $c)))\n";
     o = o + "    (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $len) (i32.const 4))) (local.get $v))\n";
     o = o + "    (local.get $na))\n";
+    return o;
+}
+
+// str_split_helper emits the IR-path string→string[] runtime: a private
+// $__fern_arr_push (via arr_push_helper) plus $__fern_str_split, which builds
+// the result array with that push and slices each segment via $__fern_substr
+// (the IR runtime emits substr_helper alongside this). It is SELF-CONTAINED so
+// callers need only gate on str_split; a program that ALSO uses `.append` must
+// therefore emit the standalone arr_push_helper only when str_split is absent
+// (otherwise $__fern_arr_push would be defined twice). Depends only on
+// $__fern_str_box / $__fern_arr_box from the heap runtime (module_allocates).
+// The split body is transcribed verbatim from the strcat_helpers bundle's
+// $__fern_str_split.
+pub function str_split_helper(): string {
+    var o: string = arr_push_helper();
     o = o + "  (func $__fern_str_split (param $s i32) (param $sep i32) (result i32)\n";
     o = o + "    (local $sl i32) (local $sepl i32) (local $i i32) (local $start i32) (local $arr i32) (local $piece i32) (local $j i32) (local $match i32)\n";
     o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
@@ -10856,9 +10872,15 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // $__fern_substr backs str_slice AND str_split (the split helper slices
         // each segment), so emit it for either — but only ONCE.
         if (wasm_ir.module_uses_str_slice(mod) || wasm_ir.module_emits_op(mod, "str_split")) { ir_out = ir_out + substr_helper(); }
-        // $__fern_str_split (+ its private $__fern_arr_push); the AST path's full
-        // arr_helpers/strcat bundle is not on the IR path, so split pulls in this
-        // narrow helper instead.
+        // $__fern_arr_push backs the IR `.append` (op "arr_push"). The AST
+        // path's full arr_helpers bundle is not on the IR path, so emit this
+        // narrow helper here — but ONLY when str_split is absent, because
+        // str_split_helper (below) is self-contained and emits its own copy;
+        // emitting both would define $__fern_arr_push twice.
+        if (wasm_ir.module_emits_op(mod, "arr_push") && !wasm_ir.module_emits_op(mod, "str_split")) {
+            ir_out = ir_out + arr_push_helper();
+        }
+        // $__fern_str_split (bundles its own $__fern_arr_push via arr_push_helper).
         if (wasm_ir.module_emits_op(mod, "str_split")) { ir_out = ir_out + str_split_helper(); }
         // Scalar string search predicates (starts_with / ends_with / index_of /
         // contains) — self-contained, emitted only when used.
