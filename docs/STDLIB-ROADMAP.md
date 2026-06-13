@@ -231,16 +231,24 @@ JSON strings with escapes, CLI input) is fragile.
 **Notes**: Needs a `Char` type (or `i32` codepoint alias) +
 a UTF-8 decode runtime function.
 
-### 7. Map convenience methods · small · ☐
+### 7. Map convenience methods · small · ☑
 
-**Surface**: `Map.update(k, default, fn(V) V)`,
-`Map.get_or_insert(k, default)`, `Map.merge(other)`,
-`Map.entries()` → `(K, V)[]`, `Map.from_entries(...)`.
+**Surface**: `Map.update(k, init, fn(V) V)`,
+`Map.get_or_insert(k, default)`, `Map.merge(other)` / `extend`,
+`Map.entries()` → `(K, V)[]`, `map.from(pairs)`,
+`Map.contains_value(v)`.
 
 **Why**: The single insert-or-modify pattern (counters,
 group_by) currently takes 4 lines.
 
 **Inspiration**: Elixir Map, Gleam dict, Rust entry API.
+
+**Status**: all shipped in `internal/stdlib/core/map.fern` (#2685).
+`entries` / `merge` / `extend` / `from` / `get_or_insert` landed
+first; `update` (one-pass insert-or-modify) and `contains_value`
+complete the set. Covered by `internal/e2e/map_verbs_test.go`
+(interp + wasm) and `examples/tests/map_verbs_test.fern` (the
+pure-Fern runner). `from_entries` is spelled `map.from(pairs)`.
 
 ### 8. Path manipulation (string-level) · small · ☑ (partial)
 
@@ -273,7 +281,7 @@ already exist (Fern's `print` is the println variant — appends
 a newline). `copy(reader, writer)` deferred — needs a real
 Reader/Writer plumbing decision.
 
-### 10. Generic `sort_by(cmp)` + `sort_key(fn)` · medium · ☐
+### 10. Generic `sort_by(cmp)` + `sort_key(fn)` · medium · ☑ (sort_by done)
 
 **Surface**: `sort_by[T](xs: T[], cmp: fn(T, T) i32)`,
 `sort_key[T, K](xs, fn(T) K)` where `K` is `Ord`.
@@ -283,8 +291,10 @@ the common case.
 
 **Inspiration**: Go `sort.Slice`, Rust `sort_by`.
 
-**Notes**: Needs generic comparator dispatch; later
-deprecates `sort_i32_asc/desc` once `Ord` traits land.
+**Notes**: `sort_by[T](xs, cmp)` (comparator-driven, stable
+insertion sort) shipped in `std/array.fern` (#2689), free +
+receiver-method forms. `sort_key` still pending generic `Ord`
+dispatch; later deprecates `sort_i32_asc/desc` once `Ord` lands.
 
 ### 11. Time primitives · medium · ☐
 

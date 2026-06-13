@@ -268,6 +268,10 @@ pub function (s: EmitState) mark_str_split(): EmitState {
     return s.need("heap").need("str_split");
 }
 
+pub function (s: EmitState) mark_str_case(): EmitState {
+    return s.need("heap").need("str_case");
+}
+
 pub function (s: EmitState) mark_str_reverse(): EmitState {
     return s.need("heap").need("str_reverse");
 }
@@ -398,6 +402,21 @@ pub function is_enum_recv(name: string, s: EmitState): boolean {
     if (name == "string" || name == "bool" || name == "boolean") { return false; }
     if (name == "f64" || name == "f32" || name == "float") { return false; }
     return true;
+}
+
+// recv_is_array reports whether a method receiver type spelling is an ARRAY
+// (`T[]`, `i32[]`, …). Such a method (e.g. std/json's element-poly
+// `(xs: T[]) to_json[T: Json]()`) is NOT a concrete struct/enum dispatch
+// candidate — a value's runtime shape pointer never names an array method —
+// so the runtime shape-dispatch in the AST backends must skip it. Without this
+// the array `to_json`, whose base receiver name `T` (a type parameter) passes
+// is_enum_recv's permissive default, would be picked as the enum fallback for
+// EVERY `.to_json()` call and corrupt non-array receivers (#2766). Distinct
+// from a generic struct receiver like `Box[T]`, which ends in `]` but not `[]`.
+pub function recv_is_array(rt: string): boolean {
+    var n: i32 = rt.len();
+    if (n < 2) { return false; }
+    return rt[n - 2 : n] == "[]";
 }
 
 pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {

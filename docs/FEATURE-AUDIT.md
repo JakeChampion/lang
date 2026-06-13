@@ -217,8 +217,8 @@ per-function bugs in the audit log.
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` |
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
-| `std/url` | ✅ | ✅ | 🐛 | ✅ | | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption**, [#2817](https://github.com/JakeChampion/lang/issues/2817) (audit log 2026-06-09) |
-| `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test` |
+| `std/url` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes` now uses `__fern_alloc_rc1`) |
+| `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test`; `@derive(Json)` incl. **array fields** (`T[]`) — native all backends (`derive_json` fixture), self-host i32/string/struct arrays via the IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766); `TestSelfHostJsonArrayIR`) |
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
@@ -246,6 +246,32 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — `@derive(Json)` array fields via the self-host IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766))
+
+Added the element-polymorphic array serialiser `pub function (xs: T[])
+to_json[T: Json](): string` to `std/json`, so a `T[]` (and a `T[]` struct
+field) renders as a JSON array. The native compiler already supported it via
+monomorphisation (#2774); this closes the **self-host** side.
+
+The self-host emits generic bodies by **erasure**, so the single emitted
+`(xs: T[]) to_json()` body bakes in the i32 element dispatch and can't
+serialise a string/struct array. Fixed by special-casing the **call site**
+in `irlower` (`lower_array_to_json` / `to_json_loop_stmt`): `arr.to_json()`
+on a known array receiver desugars to an inline `[e0,e1,…]` loop whose
+per-element `arr[i].to_json()` lowers where the element type is in hand,
+dispatching to the right impl (i32 / string / a derived struct's `to_json`).
+The split into two functions keeps each small (oversized functions miscompile
+on the native backend — #2720).
+
+- **Native (all four backends):** the `derive_json` fixture gains a struct
+  with `i32[]` / `string[]` fields plus a bare-array check.
+- **Self-host (x86-64 IR + wasm IR):** `TestSelfHostJsonArrayIR` covers
+  i32 / string / `@derive(Json)`-struct / empty arrays, pinned to the `"ir"`
+  path via `asm_pathprobe_run`. Stage-2 fixpoint stays byte-identical.
+
+Remaining: nested arrays (`i32[][]`) and map objects (the element-array case
+isn't detected at `arr[i]`); separate follow-ups.
 
 ### 2026-06-12 — 🐛 self-host miscompiles std/crypto SHA-256 ([#2861](https://github.com/JakeChampion/lang/issues/2861))
 
@@ -520,7 +546,7 @@ the foreach lowering across `irlower.fern` / the AST backends). Re-add each held
 **Also:** opened [#2817](https://github.com/JakeChampion/lang/issues/2817) for
 the arm64 `std/url` heap-corruption bug below (reconfirmed reproducing today).
 
-### 2026-06-09 — 🐛 arm64 heap-corruption in the RcFree freelist drop/reuse path (OPEN, top priority — now [#2817](https://github.com/JakeChampion/lang/issues/2817))
+### 2026-06-09 — 🐛 arm64 heap-corruption in the RcFree freelist drop/reuse path (FIXED 2026-06-13 — [#2817](https://github.com/JakeChampion/lang/issues/2817))
 
 **Found by:** `prop_url_roundtrip` property fixture — `url_decode(url_encode(s)) == s`
 over 300 deterministic random inputs (full 0..255 byte range, lengths 0..47).
@@ -554,20 +580,37 @@ reads the result — driven cumulatively over several LCG-generated inputs.
 `internal/e2e/testdata/cases/prop_url_roundtrip/main.fern` reproduces it directly
 on arm64 (drop the `backends` sidecar to see the arm64 leg fail).
 
-**Status / mitigation:** `prop_url_roundtrip` is restricted to
-`interp x86_64 wasm` (via its `backends` sidecar) so CI stays green and the 3
-good backends are still guarded. **Next step:** trace the arm64 drop/reuse
-call-site for the slice + `string_from_bytes` + concat pattern and fix the
-recycled-while-live cell. Until fixed, `std/url` is unsafe on arm64 under heavy
-allocation churn — and the same class of bug may lurk in other modules, so it is
-the highest-priority follow-up.
+**Status: FIXED (2026-06-13).** `prop_url_roundtrip` now runs on **all four
+backends** (arm64 re-added to its `backends` sidecar).
+
+**Actual root cause** (the earlier "instruction-selection / liveness" narrowing
+was on the wrong layer — the *helpers* were the problem after all): on the
+two-word string ABI (arm64-`TwoWordOverride`), `string_from_bytes` allocated its
+heap buffer with **plain `__fern_alloc`** instead of `__fern_alloc_rc1`
+(`internal/codegen/arm64/arm64.go`, the `UseTwoWordStrings` branch). A plain
+buffer carries **no rc header** (no live rc at `data-8`, no payload size at
+`data-4`). When the resulting string was later dropped by `__fern_str_dec`
+— which reads the rc at `data-8` and, at rc==1, `box_free`s using the size at
+`data-4` — it read **garbage**: either `rc_dec`'d a neighbouring cell's bytes
+(the single-bit `0x90→0x80` corruption) or `box_free`'d a wrong-sized block that
+overlapped a still-live cell, recycling it through the freelist. It only
+surfaced under the *mixed* slice + `string_from_bytes` churn because the
+interleaved `__str_slice` (rc-headered) allocations left a `1` in the word just
+below a `string_from_bytes` buffer, steering `__fern_str_dec` down the
+`box_free` path. `__str_slice` and `__fern_strcat` already used
+`__fern_alloc_rc1` on this path, and the wasm two-word backend's
+`string_from_bytes` always did — arm64's was the lone outlier.
+
+**Fix:** one line — `string_from_bytes` (two-word path) now allocates via
+`__fern_alloc_rc1`, matching `__str_slice` / `__fern_strcat` and the wasm
+mirror. Guarded by `prop_url_roundtrip` running on arm64 again.
 
 ### 2026-06-09 — first property-test batch (base64, hex, url, sort, string)
 
 Added five property fixtures under `internal/e2e/testdata/cases/prop_*`:
 
 - `prop_codec_roundtrip` — `base64` + `hex` decode∘encode round-trip. ✅ all 4 backends.
-- `prop_url_roundtrip` — `url` decode∘encode round-trip. ✅ interp/x86-64/wasm; 🐛 arm64 (above).
+- `prop_url_roundtrip` — `url` decode∘encode round-trip. ✅ all 4 backends (the arm64 `string_from_bytes` rc-header bug above is fixed).
 - `prop_sort_i32` — `sort_i32_asc` ordering + permutation (per-value histogram) +
   idempotence. ✅ all 4 backends.
 - `prop_string_involution` — `reverse_bytes` involution, `to_lower`/`to_upper`

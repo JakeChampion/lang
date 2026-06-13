@@ -138,8 +138,10 @@ function module_uses_heap(mod: parser.Module): boolean {
             // random_bytes allocates the byte buffer + string box; str_bytes
             // allocates the result u8[] (both via __fern_alloc / __fern_arr_box).
             if (r.ops[i].kind == "random_bytes" || r.ops[i].kind == "str_bytes") { return true; }
-            // str_split allocates the result string[] + each segment box.
+            // str_split allocates the result string[] + each segment box;
+            // to_upper / to_lower allocate the fresh cased string box.
             if (r.ops[i].kind == "str_split") { return true; }
+            if (r.ops[i].kind == "str_to_upper" || r.ops[i].kind == "str_to_lower") { return true; }
             // alloc_u8 / arr_push / str_from_bytes all allocate (via
             // __fern_alloc / __fern_arr_box) — pull in the heap runtime even for a
             // program whose ONLY allocation is `__alloc_u8(n)` (no array literal).
@@ -256,6 +258,44 @@ function emit_ir_str_search(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lir_idx_no:\n");
     s = s.write("    movq $-1, %rax\n");
     s = s.write("    ret\n");
+    return s;
+}
+
+// emit_ir_str_case appends the ASCII case transforms (__fern_str_to_upper /
+// _to_lower), transcribed verbatim from asm.fern. Each allocates a fresh char
+// buffer (len bytes, min 1) + 16-byte box and copies `s` case-flipping ASCII
+// letters. Heap-dependent (calls __fern_alloc), so the heap runtime is already
+// present (module_uses_heap covers str_to_upper/_lower); gated on the str_case
+// need. Its own function — see emit_ir_str_search re #2720.
+function emit_ir_str_case(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_str_to_upper:\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
+    s = s.write("    pushq %r12\n    pushq %r13\n    pushq %r14\n");
+    s = s.write("    movq (%rdi), %r12\n    movq 8(%rdi), %r13\n");
+    s = s.write("    movq %r13, %rdi\n    cmpq $0, %rdi\n    jne .Lir_upper_alloc\n    movq $1, %rdi\n");
+    s = s.write(".Lir_upper_alloc:\n    call __fern_alloc\n");
+    s = s.write("    movq %rax, %r14\n    movq %r12, %rsi\n    movq %r14, %rdi\n    movq %r13, %rcx\n");
+    s = s.write("    cmpq $0, %rcx\n    je .Lir_upper_box\n");
+    s = s.write(".Lir_upper_loop:\n    movzbq (%rsi), %rax\n");
+    s = s.write("    cmpq $97, %rax\n    jl .Lir_upper_skip\n    cmpq $122, %rax\n    jg .Lir_upper_skip\n    subq $32, %rax\n");
+    s = s.write(".Lir_upper_skip:\n    movb %al, (%rdi)\n    incq %rsi\n    incq %rdi\n    decq %rcx\n    jne .Lir_upper_loop\n");
+    s = s.write(".Lir_upper_box:\n    movq $16, %rdi\n    call __fern_alloc\n");
+    s = s.write("    movq %r14, (%rax)\n    movq %r13, 8(%rax)\n");
+    s = s.write("    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
+    s = s.write("__fern_str_to_lower:\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
+    s = s.write("    pushq %r12\n    pushq %r13\n    pushq %r14\n");
+    s = s.write("    movq (%rdi), %r12\n    movq 8(%rdi), %r13\n");
+    s = s.write("    movq %r13, %rdi\n    cmpq $0, %rdi\n    jne .Lir_lower_alloc\n    movq $1, %rdi\n");
+    s = s.write(".Lir_lower_alloc:\n    call __fern_alloc\n");
+    s = s.write("    movq %rax, %r14\n    movq %r12, %rsi\n    movq %r14, %rdi\n    movq %r13, %rcx\n");
+    s = s.write("    cmpq $0, %rcx\n    je .Lir_lower_box\n");
+    s = s.write(".Lir_lower_loop:\n    movzbq (%rsi), %rax\n");
+    s = s.write("    cmpq $65, %rax\n    jl .Lir_lower_skip\n    cmpq $90, %rax\n    jg .Lir_lower_skip\n    addq $32, %rax\n");
+    s = s.write(".Lir_lower_skip:\n    movb %al, (%rdi)\n    incq %rsi\n    incq %rdi\n    decq %rcx\n    jne .Lir_lower_loop\n");
+    s = s.write(".Lir_lower_box:\n    movq $16, %rdi\n    call __fern_alloc\n");
+    s = s.write("    movq %r14, (%rax)\n    movq %r13, 8(%rax)\n");
+    s = s.write("    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
     return s;
 }
 
@@ -399,7 +439,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
     s = s.write("    .align 8\n");
-    s = s.write("__fern_heap: .skip 1073741824\n");
+    s = s.write("__fern_heap: .skip 1879048192\n");   // 1.75 GiB (matches asm.fern's AST heap; zero-page .bss; 0x70000000 fits the signed imm32 bounds-check addq)
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
@@ -437,7 +477,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq %rax, %rdi\n");
     s = s.write("    pushq %rcx\n");
     s = s.write("    leaq __fern_heap(%rip), %rcx\n");
-    s = s.write("    addq $1073741824, %rcx\n");
+    s = s.write("    addq $1879048192, %rcx\n");
     s = s.write("    cmpq %rcx, %rdi\n");
     s = s.write("    popq %rcx\n");
     s = s.write("    ja .Lalloc_oom\n");
@@ -1596,7 +1636,8 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 // oversized-function miscompile threshold (#2720).
 function is_str_op_kind(k: string): boolean {
     return k == "str_len" || k == "str_index" || k == "str_slice"
-        || k == "str_bytes" || k == "str_split" || k == "str_starts_with"
+        || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
+        || k == "str_to_lower" || k == "str_starts_with"
         || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
         || k == "str_eq" || k == "str_cmp";
 }
@@ -1638,6 +1679,14 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // __fern_str_split(%rdi=haystack, %rsi=sep) -> fresh string[] in %rax.
         s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_split\n    pushq %rax\n");
         return s.mark_str_split();
+    }
+    if (o.kind == "str_to_upper" || o.kind == "str_to_lower") {
+        // operand stack [s box]; __fern_str_to_upper/_lower(%rdi=s) -> fresh
+        // cased string box in %rax (emit_ir_str_case provides the bodies).
+        var cfn: string = "__fern_str_to_upper";
+        if (o.kind == "str_to_lower") { cfn = "__fern_str_to_lower"; }
+        s = s.write("    popq %rdi\n    call " + cfn + "\n    pushq %rax\n");
+        return s.mark_str_case();
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
         // operand stack [s box, p box] (p on top); __fern_str_<pred>(%rdi=s,
@@ -2207,6 +2256,9 @@ pub function emit_module_ir(mod: parser.Module): string {
     // — kept OUT of emit_ir_runtime, whose size is near the self-host's
     // oversized-function miscompile threshold (#2720).
     if (s.has_need("str_search")) { s = emit_ir_str_search(s); }
+    // ASCII case transforms (to_upper / to_lower) — heap-dependent, so the heap
+    // runtime is already present; emitted on their own str_case need.
+    if (s.has_need("str_case")) { s = emit_ir_str_case(s); }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }

@@ -996,6 +996,73 @@ pub function concat[T](a: T[], b: T[]): T[] {
     return out;
 }
 
+// `zip(a, b)` — pair up elements positionally into a fresh `(T, U)[]`,
+// truncated to the shorter input (the usual zip-stops-at-shortest rule).
+// Structural (no callback / comparison), so it works for any element
+// types. `zip([1,2,3], ["a","b"])` → `[(1,"a"), (2,"b")]`.
+pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
+    var out: (T, U)[] = [];
+    var n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.append((a[i], b[i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+// `flat_map(xs, f)` — map each element to a `U[]` and concatenate the
+// results into one flat `U[]` (`map` then flatten). `f`'s return is the
+// array `U[]` (pointer-shaped), so it rides the same indirect-call path
+// as `map`/`filter`. `flat_map([1,2], dup)` with `dup(x) = [x, x]` →
+// `[1,1,2,2]`.
+pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
+    var out: U[] = [];
+    for x in xs {
+        for y in f(x) { out = out.append(y); }
+    }
+    return out;
+}
+
+// `reduce(xs, f)` — left fold with no explicit seed: the first element
+// is the initial accumulator and `f` combines it with each remaining
+// element. `None` for an empty array (there is no value to start from) —
+// the difference from `fold`, which always has its `init`. `reduce([3,1,2], max2)`
+// → `Some(3)`.
+pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
+    if (xs.len() == 0) { return None; }
+    var acc: T = xs[0];
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        acc = f(acc, xs[i]);
+        i = i + 1;
+    }
+    return Some(acc);
+}
+
+// `sort_by(xs, cmp)` — fresh `T[]` sorted by the comparator `cmp`, where
+// `cmp(a, b)` returns negative if `a` should sort before `b`, positive if
+// after, zero if equal (the Ordering-as-i32 convention shared with
+// `core/cmp`). Stable insertion sort (equal elements keep their input
+// order); O(n²), matching the other simple stdlib sorts. The comparator
+// form is what lets ANY element type be sorted without a built-in `Ord`
+// — `sort_by(people, function (a: Person, b: Person): i32 { return a.age - b.age; })`.
+pub function sort_by[T](xs: T[], cmp: (T, T) => i32): T[] {
+    var out: T[] = [];
+    for x in xs {
+        out = out.append(x);
+        var i: i32 = out.len() - 1;
+        while (i > 0 && cmp(out[i - 1], out[i]) > 0) {
+            var tmp: T = out[i - 1];
+            out = out.with(i - 1, out[i]);
+            out = out.with(i, tmp);
+            i = i - 1;
+        }
+    }
+    return out;
+}
+
 // ---- Generic array methods --------------------------------------
 //
 // Method forms of the combinators above, so pipelines read
@@ -1033,3 +1100,15 @@ pub function (xs: T[]) enumerate(): (i32, T)[] { return enumerate(xs); }
 // the name only. Use the free functions `reverse(xs)` / `take(xs, n)`
 // / `drop(xs, n)` for non-string element types until those are unified.)
 pub function (xs: T[]) concat(other: T[]): T[] { return concat(xs, other); }
+
+// `xs.zip(other)` — positional pairing, truncated to the shorter input.
+pub function (xs: T[]) zip[U](other: U[]): (T, U)[] { return zip(xs, other); }
+
+// `xs.flat_map(f)` — map to `U[]` per element, then flatten.
+pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] { return flat_map(xs, f); }
+
+// `xs.reduce(f)` — seedless left fold; `None` on an empty array.
+pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] { return reduce(xs, f); }
+
+// `xs.sort_by(cmp)` — comparator-driven stable sort (fresh array).
+pub function (xs: T[]) sort_by(cmp: (T, T) => i32): T[] { return sort_by(xs, cmp); }

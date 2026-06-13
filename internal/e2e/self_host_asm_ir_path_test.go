@@ -465,6 +465,18 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"predicate-param", `function pre(s: string, p: string): i32 { if (s.starts_with(p)) { return 1; } return 0; } function main(): i32 { return pre("foobar", "foo") * 10 + pre("foobar", "bar"); }`},
 		{"predicate-freecall", `function main(): i32 { if (str_starts_with("hello", "he")) { return str_index_of("hello", "ll"); } return 0; }`},
 		{"predicate-on-literal", `function main(): i32 { if ("abcdef".contains("cde")) { return "abcdef".index_of("d"); } return 0; }`},
+		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
+		// AST path emits __fern_str_to_upper/_lower (str_search runtime); the IR
+		// path emits its own emit_ir_str_case bodies — lengths/bytes must match.
+		{"to-upper-len", `function main(): i32 { var s = "Hello"; return s.to_upper().len(); }`},
+		{"to-upper-byte", `function main(): i32 { var s = "abc"; var u = s.to_upper(); return u[0]; }`},
+		{"to-lower-byte", `function main(): i32 { var s = "ABC"; var l = s.to_lower(); return l[2]; }`},
+		{"to-upper-mixed", `function main(): i32 { var u = "aB9z".to_upper(); return u[0] + u[1] + u[2] + u[3]; }`},
+		{"to-lower-mixed", `function main(): i32 { var l = "Ab9Z".to_lower(); return l[0] + l[1] + l[2] + l[3]; }`},
+		{"to-upper-empty", `function main(): i32 { return "".to_upper().len() + 5; }`},
+		{"case-roundtrip", `function main(): i32 { var s = "Hello"; if (s.to_upper().to_lower() == "hello") { return 7; } return 0; }`},
+		{"case-param", `function up(s: string): i32 { return s.to_upper()[0]; } function main(): i32 { return up("xyz"); }`},
+		{"case-on-literal", `function main(): i32 { return "Mixed".to_lower().len(); }`},
 	}
 
 	for _, tc := range cases {

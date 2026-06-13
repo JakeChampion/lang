@@ -2134,6 +2134,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         // fallback below (the variant value's shape won't
         // match any struct arm).
         if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
+                && !asmcore.recv_is_array(fd_m.receiver_type)
                 && asmcore.is_struct_decl_name(util.base_type_name(fd_m.receiver_type), s)) {
             var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, util.base_type_name(fd_m.receiver_type));
             s = arm_lit.state;
@@ -2162,6 +2163,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     while (efi < s.funcs.len()) {
         var efd: parser.FuncDecl = s.funcs[efi];
         if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
+                && !asmcore.recv_is_array(efd.receiver_type)
                 && asmcore.is_enum_recv(util.base_type_name(efd.receiver_type), s)) {
             enum_recv = util.base_type_name(efd.receiver_type);
         }
@@ -5174,7 +5176,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // each `__fern_alloc(size)` call. No deallocation — fine
     // for the small validation programs that exercise structs.
     if (s.has_need("heap")) {
-        var heap_size: string = "1073741824";   // 1 GiB
+        var heap_size: string = "1879048192";   // 1.75 GiB
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
@@ -5189,7 +5191,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    .align 8\n");
         s = s.write("__fern_freelist: .skip 524288\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost)
+        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1.75 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost); 1 GiB was within ~tens of source lines of exhaustion as the bundle grew (alloc OOM exits 137)
         s = s.write("    .section .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, @function\n");
