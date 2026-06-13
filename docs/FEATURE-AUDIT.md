@@ -223,7 +223,7 @@ per-function bugs in the audit log.
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
 | `std/stream` | | | | | | ⬜ | |
-| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`); Instant/Zoned i64-field RFC-3339 methods pending |
+| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | | | | | | ⬜ | |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
@@ -246,6 +246,24 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — std/time RFC-3339 (`format_rfc3339` / `instant_parse_rfc3339`) via the self-host IR path (x86-64 + wasm)
+
+Extended the std/time self-host coverage to the RFC-3339 surface, which adds an
+**i64 struct field** (`Instant.sec`). `TestSelfHostTimeRfc3339IR` runs
+`format_rfc3339` (Instant → string) and `instant_parse_rfc3339` (string →
+`Option[Instant]`) through the x86-64 and wasm IR drivers, **oracle-checked
+against the interpreter** and pinned to the `"ir"` path. New ground vs the
+earlier std/time coverage: i64 arithmetic (mul/div/mod + `as i64` / `as i32`
+casts) over a struct field, an **i64-carrying struct constructor**, and
+`Some(Instant{ sec: <i64>, nsec })`. Cases cover parse (hour/seconds/fraction,
+too-short, bad-separator), format (whole-second len 20, fractional len 30), and
+a parse→format round-trip. Verified empirically to route `"ir"` with the
+emitted code matching the interpreter — coverage-only, no compiler change. The
+structs are named `Civil` / `Moment` (`Date` / `Instant` are reserved, E010)
+and `int.int_to_string` is `.to_string()` (`import "std/i32"` for the oracle).
+Remaining std/time surface (Zoned / Span / Duration calendar arithmetic) is the
+next self-host target.
 
 ### 2026-06-13 — std/time `date_parse_iso` (`Option`-returning) via the self-host IR path (x86-64 + wasm)
 
