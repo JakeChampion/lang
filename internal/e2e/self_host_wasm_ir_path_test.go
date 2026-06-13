@@ -378,6 +378,14 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"to-upper-mixed", `function main(): i32 { var u = "aB9z".to_upper(); return u[0] + u[1] + u[2] + u[3]; }`},
 		{"case-roundtrip", `function main(): i32 { var s = "Hello"; if (s.to_upper().to_lower() == "hello") { return 7; } return 0; }`},
 		{"case-param", `function up(s: string): i32 { return s.to_upper()[0]; } function main(): i32 { return up("xyz"); }`},
+		// String repeat → fresh string (op_str_repeat). The wasm IR path emits the
+		// narrow str_repeat_helper; the AST path gets $__fern_str_repeat from
+		// strcat_helpers — must agree.
+		{"repeat-len", `function main(): i32 { return "ab".repeat(3).len(); }`},
+		{"repeat-byte", `function main(): i32 { var r = "xy".repeat(4); return r[0] + r[7]; }`},
+		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
+		{"repeat-zero", `function main(): i32 { return "hello".repeat(0).len() + 9; }`},
+		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
 		// NB: the str_starts_with / str_index_of FREE-function builtins exist on the
 		// x86-64 AST path but not the wasm AST path, so they can't ride this wasm
 		// differential gate — the method forms above cover the IR predicate ops, and

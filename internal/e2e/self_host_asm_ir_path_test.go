@@ -477,6 +477,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"case-roundtrip", `function main(): i32 { var s = "Hello"; if (s.to_upper().to_lower() == "hello") { return 7; } return 0; }`},
 		{"case-param", `function up(s: string): i32 { return s.to_upper()[0]; } function main(): i32 { return up("xyz"); }`},
 		{"case-on-literal", `function main(): i32 { return "Mixed".to_lower().len(); }`},
+		// String repeat → fresh string (op_str_repeat). AST path emits
+		// __fern_str_repeat (str_search runtime); IR path emits emit_ir_str_repeat.
+		{"repeat-len", `function main(): i32 { return "ab".repeat(3).len(); }`},
+		{"repeat-byte", `function main(): i32 { var r = "xy".repeat(4); return r[0] + r[7]; }`},
+		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
+		{"repeat-zero", `function main(): i32 { return "hello".repeat(0).len() + 9; }`},
+		{"repeat-var", `function main(): i32 { var s = "ab"; var n = 5; return s.repeat(n).len(); }`},
+		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
+		{"repeat-concat", `function main(): i32 { var r = "a".repeat(3) + "b".repeat(2); return r.len(); }`},
 	}
 
 	for _, tc := range cases {
