@@ -2877,6 +2877,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mgo.ok) { return mgo; }
                             return mgo.emit(ir.op_map_get_or(mkk2));
                         }
+                        if (fa.field == "without" && c.args.len() == 1) {
+                            // Functional delete: `m.without(k)` -> the map with k
+                            // removed (reuses __fern_map_delete, like the AST path).
+                            var mdel: LowerState = lower_expr(fa.obj, s);
+                            if (!mdel.ok) { return mdel; }
+                            mdel = lower_expr(c.args[0], mdel);
+                            if (!mdel.ok) { return mdel; }
+                            return mdel.emit(ir.op_map_delete(mkk2));
+                        }
                         if (fa.field == "keys" && c.args.len() == 0) {
                             var mks: LowerState = lower_expr(fa.obj, s);
                             if (!mks.ok) { return mks; }
@@ -3316,6 +3325,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 parser.ExprFieldAccess(dfa) => {
                                     var drty: string = expr_struct_type(dfa.obj, s);
                                     if (drty != "") { dtag = csv_nth(s.tuple_ret_type(drty + "." + dfa.field), dk); }
+                                    else if (dfa.field == "without") {
+                                        // `m.without(k)` yields (Map[K,V], boolean):
+                                        // element 0 is the receiver's map type, 1 is
+                                        // the existed flag. Tag elem 0 with the map
+                                        // type so the bound local re-marks as a map
+                                        // (else `m2.len()` etc. miscompile) (#2926).
+                                        var dwmt: string = "";
+                                        match (dfa.obj) {
+                                            parser.ExprIdent(dwid) => { dwmt = s.map_type_of(s.slot_of(dwid.name)); },
+                                            _ => {}
+                                        }
+                                        if (dwmt != "") {
+                                            if (dk == 0) { dtag = dwmt; } else { dtag = "boolean"; }
+                                        }
+                                    }
                                 },
                                 _ => {}
                             }
@@ -3334,6 +3358,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
                     else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
                     else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
+                    else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
                     else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
                     dk = dk + 1;
                 }
