@@ -215,17 +215,29 @@ function wasm_binop_w(kind: string, width: i32): string {
     // wasm.fern's AST path; emitted by divrem_helpers (module_uses_divrem).
     if (kind == "div_s") { return "call $__fern_idiv64"; }
     if (kind == "rem_s") { return "call $__fern_irem64"; }
+    // Unsigned 64-bit div/rem (u64, #2904): wasm's native i64.div_u/rem_u (they
+    // trap only on divide-by-zero — the signed INT64_MIN/-1 overflow that the
+    // $__fern_*64 helpers neutralise can't arise unsigned).
+    if (kind == "div_u") { return "i64.div_u"; }
+    if (kind == "rem_u") { return "i64.rem_u"; }
     if (kind == "and") { return "i64.and"; }
     if (kind == "or") { return "i64.or"; }
     if (kind == "xor") { return "i64.xor"; }
     if (kind == "shl") { return "i64.shl"; }
     if (kind == "shr_s") { return "i64.shr_s"; }
+    if (kind == "shr_u") { return "i64.shr_u"; }
     if (kind == "eq") { return "i64.eq"; }
     if (kind == "ne") { return "i64.ne"; }
     if (kind == "lt_s") { return "i64.lt_s"; }
     if (kind == "le_s") { return "i64.le_s"; }
     if (kind == "gt_s") { return "i64.gt_s"; }
     if (kind == "ge_s") { return "i64.ge_s"; }
+    // Unsigned 64-bit compares (u64, #2904) — push an i32 bool like the signed
+    // forms, but read the value as unsigned.
+    if (kind == "lt_u") { return "i64.lt_u"; }
+    if (kind == "le_u") { return "i64.le_u"; }
+    if (kind == "gt_u") { return "i64.gt_u"; }
+    if (kind == "ge_u") { return "i64.ge_u"; }
     // f64 arithmetic / comparison (op_fbin carries width 64). wasm's f64
     // compares are natively NaN-correct (return 0 for unordered) and yield i32.
     if (kind == "fadd") { return "f64.add"; }
@@ -558,7 +570,9 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         else { out = out + " (param i32)"; }
         p = p + 1;
     }
-    if (fd.ret_type == "i64") { out = out + " (result i64)\n"; }
+    // u64 returns ride the i64 result type (8-byte; only signedness of the
+    // value's own ops differs, handled at the producing expression) (#2904).
+    if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + " (result i64)\n"; }
     else if (fd.ret_type == "f64") { out = out + " (result f64)\n"; }
     else { out = out + " (result i32)\n"; }
     // body locals + 4 scratch locals. A body local in r.i64_slots is declared
@@ -968,7 +982,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
                 if (funcs[df0].name == o.str && funcs[df0].receiver_type.len() > 0
                         && irlower.decl_is_struct(structs, util.base_type_name(funcs[df0].receiver_type))) {
                     if (nimpl == 0) {
-                        if (funcs[df0].ret_type == "i64") { drt = "i64"; }
+                        if (funcs[df0].ret_type == "i64" || funcs[df0].ret_type == "u64") { drt = "i64"; }
                         else if (funcs[df0].ret_type == "f64") { drt = "f64"; }
                     }
                     nimpl = nimpl + 1;
@@ -1015,7 +1029,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     // type-match the declared result when the implicit end pops it (wasm's
     // stack-polymorphic typing accepts an underflow, not a wrong-typed top), so
     // the default's type tracks the result: i64 / f64 / i32.
-    if (fd.ret_type == "i64") { out = out + "    i64.const 0)\n"; }
+    if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + "    i64.const 0)\n"; }
     else if (fd.ret_type == "f64") { out = out + "    f64.const 0)\n"; }
     else { out = out + "    i32.const 0)\n"; }
     return out;
