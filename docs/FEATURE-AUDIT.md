@@ -207,7 +207,7 @@ per-function bugs in the audit log.
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
-| `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host: `format_bytes` logic ✅ via the IR path (`TestSelfHostFormatBytesIR`, `i32.to_string` builtin); `format`/`format_duration_ms` pending |
+| `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host: `format_bytes` logic ✅ via the IR path (`TestSelfHostFormatBytesIR`), and `format(fmt, args)` `{}`-substitution ✅ via the IR path on x86-64 + wasm, oracle-checked (`TestSelfHostFormatStringIR`); `format_duration_ms` pending |
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host: `csv_parse_line` ✅ via the IR path (`TestSelfHostCsvParseLineIR`); escape/join pending (need `index_of`/`replace` inlining) |
 | `std/log` | | | | | | ⬜ | |
 | `std/io` | | | | | | ⬜ | |
@@ -246,6 +246,16 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — std/format `format(fmt, args)` via the self-host IR path (x86-64 + wasm)
+
+Closed the remaining `format` "self-host pending" gap (after `format_bytes`):
+`TestSelfHostFormatStringIR` runs the inlined `{}`-placeholder substitution
+through the self-hosted x86-64 and wasm IR drivers, **oracle-checked against the
+interpreter** (return value = rendered length, kept ≤126), pinned to the `"ir"`
+path. Exercises string `.len()` / byte index / single-char slice / concat and
+`string[]` index+`.len()` in a while loop — all already lower on the IR path, so
+no compiler change. (`format_duration_ms` remains pending.)
 
 ### 2026-06-13 — 🔧 self-host wasm IR: large i64/u64 literal emitted as i32.const ([#2928](https://github.com/JakeChampion/lang/issues/2928))
 
