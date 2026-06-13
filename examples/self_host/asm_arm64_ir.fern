@@ -91,7 +91,8 @@ function is_str_op_kind(k: string): boolean {
     return k == "str_len" || k == "str_index" || k == "str_slice"
         || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
         || k == "str_to_lower" || k == "str_repeat" || k == "str_trim"
-        || k == "str_reverse" || k == "str_replace" || k == "str_starts_with"
+        || k == "str_reverse" || k == "str_replace" || k == "str_chars"
+        || k == "str_starts_with"
         || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
         || k == "str_eq" || k == "str_cmp";
 }
@@ -176,6 +177,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_str_search();
         s = s.mark_heap();
         return s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_replace\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_chars") {
+        // operand stack [s box]; __fern_str_chars(x0=s) -> fresh string[] in x0.
+        // asm_arm64.emit_runtime emits the body gated on the str_chars need (it
+        // allocates), which mark_str_chars sets along with heap.
+        s = s.mark_str_chars();
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_chars\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
         // operand stack [s, p] (p top); __fern_str_<pred>(x0=s, x1=p) -> 0/1

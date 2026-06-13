@@ -535,6 +535,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`},
 		{"replace-multichar", `function main(): i32 { return "axxbxxc".replace("xx", "-").len(); }`},
 		{"replace-param", `function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foobar"); }`},
+		// String chars -> string[] of 1-char strings (op_str_chars; result is_arr +
+		// is_strarr like split). AST emits __fern_str_chars; IR emits emit_ir_str_chars.
+		{"chars-len", `function main(): i32 { return "abcde".chars().len(); }`},
+		{"chars-elem-len", `function main(): i32 { return "abc".chars()[1].len(); }`},
+		{"chars-elem-byte", `function main(): i32 { return "abc".chars()[1][0]; }`},
+		{"chars-empty", `function main(): i32 { return "".chars().len() + 4; }`},
+		{"chars-forin", `function main(): i32 { var n = 0; for c in "hello".chars() { n = n + c.len(); } return n; }`},
+		{"chars-loop-sum", `function main(): i32 { var cs = "abc".chars(); var s = 0; var i = 0; while (i < cs.len()) { s = s + cs[i][0]; i = i + 1; } return s % 200; }`},
+		{"chars-param", `function nc(s: string): i32 { return s.chars().len(); } function main(): i32 { return nc("xyzw"); }`},
 	}
 
 	for _, tc := range cases {

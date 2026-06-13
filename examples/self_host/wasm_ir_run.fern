@@ -91,6 +91,8 @@ function main(): i32 {
         if (wasm_ir.module_uses_str_reverse(mod)) { o = o + wasm.str_reverse_helper(); }
         // String replace — self-contained, emitted only when used (IR-only on wasm).
         if (wasm_ir.module_uses_str_replace(mod)) { o = o + wasm.str_replace_helper(); }
+        // String chars — self-contained, emitted only when used (IR-only on wasm).
+        if (wasm_ir.module_uses_str_chars(mod)) { o = o + wasm.str_chars_helper(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { o = o + wasm.arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
