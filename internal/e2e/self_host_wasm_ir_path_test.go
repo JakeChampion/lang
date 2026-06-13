@@ -511,6 +511,14 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"rangei-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..=side() { c = c + 1; } return c; }", 5},
 		{"rangei-nested", "function main(): i32 { var t = 0; for i in 0..=2 { for j in 0..=2 { t = t + 1; } } return t; }", 9},
 		{"rangei-continue", "function main(): i32 { var s = 0; for i in 0..=10 { if (i == 3) { continue; } s = s + i; } return s; }", 52},
+		// Multi-payload variant binds: a `Pt(x, y)` arm binds EVERY payload
+		// field (struct_get at successive indices), not just the first. The
+		// legacy AST emitter binds only field 0, so these ride the IR-only
+		// gate against the native interp's value.
+		{"match-multi-bind", `enum P { Pt(i32, i32), Origin } function f(p: P): i32 { match (p) { Pt(x, y) => { return x * y; }, Origin => { return 0; } } return 0; } function main(): i32 { return f(Pt(6, 7)); }`, 42},
+		{"match-multi-bind-three", `enum T { Tri(i32, i32, i32), Empty } function f(t: T): i32 { match (t) { Tri(a, b, c) => { return a + b * c; }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Tri(1, 2, 3)); }`, 7},
+		{"match-multi-bind-mixed", `enum M { Kv(string, i32), None2 } function f(m: M): i32 { match (m) { Kv(k, v) => { return k.len() + v; }, None2 => { return 0; } } return 0; } function main(): i32 { return f(Kv("hello", 5)); }`, 10},
+		{"match-multi-bind-skip", `enum P { Pt(i32, i32), Origin } function f(p: P): i32 { match (p) { Pt(_, y) => { return y; }, Origin => { return 0; } } return 0; } function main(): i32 { return f(Pt(6, 7)); }`, 7},
 		{"rangei-break", "function main(): i32 { var s = 0; for i in 0..=10 { if (i == 7) { break; } s = s + i; } return s; }", 21},
 		// `loop { }` infinite loop (#2676 loop-form): desugars to while(true)
 		// and rides the existing StmtWhile IR lowering on wasm.
