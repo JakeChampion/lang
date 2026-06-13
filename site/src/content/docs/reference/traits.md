@@ -109,6 +109,42 @@ common traits so you rarely declare your own from scratch:
 The built-in primitives already implement them, so generic code bounded
 on `cmp.*` works for `i32`, `string`, and friends out of the box.
 
+## Deriving traits — `@derive`
+
+For the mechanical traits, writing the `impl` by hand is busywork — the
+body is determined entirely by the fields. The `@derive(...)` attribute
+on a `struct` or `enum` synthesises it for you:
+
+```fern
+import "core/cmp";
+
+@derive(cmp.Eq, cmp.Hash)
+struct Point { x: i32, y: i32 }
+
+@derive(cmp.Display, cmp.Default)
+enum Status { Idle, Running(i32), Done(i32, i32) }
+```
+
+The derivable traits are **`Eq`, `Ord`, `Hash`, `Display`, `Debug`,
+`Default`, and `Json`**. Each composes structurally:
+
+- **`Eq` / `Ord` / `Hash`** fold field-by-field (and, for enums, over the
+  variant tag then its payload), so a type is comparable/hashable as soon
+  as its fields are.
+- **`Display`** renders `Name { field: value, … }` (for an enum,
+  `Variant(payload)`); **`Debug`** is the same but quotes strings, for an
+  unambiguous diagnostic dump.
+- **`Default`** builds a zero value — scalars use their zero literal,
+  nested types delegate to their own `default()`, and an enum defaults to
+  its first variant. It's an error to derive `Default` for a type with a
+  field that has no default (e.g. a payload-carrying first variant);
+  implement it by hand in that case.
+
+A derived impl is an ordinary impl — it satisfies bounds (`[T: cmp.Eq]`)
+and is callable (`p.hash()`, `Status.default()`) exactly like a
+hand-written one. Mix and match: derive the boring traits and
+hand-write the interesting one.
+
 ## Coherence (the orphan rule)
 
 An `impl Trait for Type` is only legal in the module that defines the
