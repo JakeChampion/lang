@@ -94,6 +94,11 @@ func TestSelfHostStage2FixedPoint(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// mmc1 / mmc2 are already built; each case just runs both
+			// stage binaries over an input and diffs the asm, so the
+			// cases are independent. Parallelize to spread the per-case
+			// subprocess compiles across the runner's cores.
+			t.Parallel()
 			asm1, err := exec.Command(mmc1, tc.args...).Output()
 			if err != nil {
 				t.Fatalf("mmc1: %v", err)
