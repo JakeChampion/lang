@@ -3829,6 +3829,19 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         if (arrl.elements.len() > 0) {
                             var est: string = expr_struct_type(arrl.elements[0], se);
                             if (est != "" && decl_is_struct(se.structs, est)) { struct_ty = est; }
+                            // An ENUM-variant array literal (`var a = [R, G]` for
+                            // `enum C { R, G }`): the elements are variant values,
+                            // not structs, so expr_struct_type is "". Recover the
+                            // ENUM element type from the first element's variant
+                            // (bare unit variant or `Has(x)` construction), keyed
+                            // the same as the scalar enum-local convention below —
+                            // so `a[i].method()` / `for x in a` / `match (a[i])`
+                            // dispatch to `<Enum>.<method>` / variant arms instead
+                            // of bailing the module to AST.
+                            else {
+                                var eest: string = expr_enum_type(arrl.elements[0], se);
+                                if (eest != "") { struct_ty = eest; }
+                            }
                         }
                     },
                     _ => {}
