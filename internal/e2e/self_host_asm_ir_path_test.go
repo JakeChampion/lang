@@ -445,6 +445,26 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"split-param", `function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
 		{"split-freecall", `function main(): i32 { var p = str_split("a,b,c", ","); return p.len(); }`},
 		{"split-then-index-direct", `function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
+		// Scalar string search predicates → i32/boolean (op_str_starts_with /
+		// _ends_with / _index_of; contains = index_of >= 0). Allocation-free; the
+		// AST path emits the __fern_str_* search runtime under the str_search need,
+		// and the IR path emits the transcribed bodies — results must match.
+		{"starts-with-true", `function main(): i32 { var s = "hello"; if (s.starts_with("he")) { return 7; } return 0; }`},
+		{"starts-with-false", `function main(): i32 { var s = "hello"; if (s.starts_with("lo")) { return 7; } return 9; }`},
+		{"starts-with-empty", `function main(): i32 { var s = "hi"; if (s.starts_with("")) { return 3; } return 0; }`},
+		{"starts-with-longer", `function main(): i32 { var s = "hi"; if (s.starts_with("hill")) { return 1; } return 5; }`},
+		{"ends-with-true", `function main(): i32 { var s = "hello"; if (s.ends_with("lo")) { return 7; } return 0; }`},
+		{"ends-with-false", `function main(): i32 { var s = "hello"; if (s.ends_with("he")) { return 7; } return 9; }`},
+		{"ends-with-empty", `function main(): i32 { var s = "hi"; if (s.ends_with("")) { return 4; } return 0; }`},
+		{"index-of-hit", `function main(): i32 { var s = "abcdef"; return s.index_of("cd"); }`},
+		{"index-of-zero", `function main(): i32 { var s = "abcdef"; return s.index_of("ab") + 100; }`},
+		{"index-of-miss", `function main(): i32 { var s = "abcdef"; var r = s.index_of("zz"); if (r < 0) { return 42; } return 0; }`},
+		{"index-of-empty", `function main(): i32 { var s = "abc"; return s.index_of("") + 50; }`},
+		{"contains-true", `function main(): i32 { var s = "hello world"; if (s.contains("o w")) { return 7; } return 0; }`},
+		{"contains-false", `function main(): i32 { var s = "hello"; if (s.contains("xyz")) { return 7; } return 9; }`},
+		{"predicate-param", `function pre(s: string, p: string): i32 { if (s.starts_with(p)) { return 1; } return 0; } function main(): i32 { return pre("foobar", "foo") * 10 + pre("foobar", "bar"); }`},
+		{"predicate-freecall", `function main(): i32 { if (str_starts_with("hello", "he")) { return str_index_of("hello", "ll"); } return 0; }`},
+		{"predicate-on-literal", `function main(): i32 { if ("abcdef".contains("cde")) { return "abcdef".index_of("d"); } return 0; }`},
 	}
 
 	for _, tc := range cases {
