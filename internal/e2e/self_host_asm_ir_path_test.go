@@ -506,6 +506,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"reverse-empty", `function main(): i32 { return "".reverse().len() + 4; }`},
 		{"reverse-twice", `function main(): i32 { if ("hello".reverse().reverse() == "hello") { return 7; } return 0; }`},
 		{"reverse-param", `function rev(s: string): i32 { return s.reverse()[0]; } function main(): i32 { return rev("xyz"); }`},
+		// String replace -> fresh string with every occurrence of old swapped for
+		// new (op_str_replace). AST path emits __fern_str_replace; IR path emits
+		// emit_ir_str_replace -- same content/length.
+		{"replace-len", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`},
+		{"replace-grow", `function main(): i32 { return "aaa".replace("a", "bb").len(); }`},
+		{"replace-shrink", `function main(): i32 { return "axbxc".replace("x", "").len(); }`},
+		{"replace-byte", `function main(): i32 { var r = "hello".replace("l", "L"); return r[2] + r[3]; }`},
+		{"replace-nomatch", `function main(): i32 { return "abc".replace("z", "Q").len(); }`},
+		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`},
+		{"replace-multichar", `function main(): i32 { return "axxbxxc".replace("xx", "-").len(); }`},
+		{"replace-param", `function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foobar"); }`},
 	}
 
 	for _, tc := range cases {

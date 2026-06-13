@@ -284,6 +284,10 @@ pub function (s: EmitState) mark_str_reverse(): EmitState {
     return s.need("heap").need("str_reverse");
 }
 
+pub function (s: EmitState) mark_str_replace(): EmitState {
+    return s.need("heap").need("str_replace");
+}
+
 pub function (s: EmitState) mark_i32_pow(): EmitState {
     return s.need("i32_pow");
 }
