@@ -2303,6 +2303,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             var ek: string = kind;
             var left_u32: boolean = expr_is_u32(b.left, s);
             if (b.op == ">>" && left_u32) { ek = "shr_u"; }
+            // A u32 compare must be UNSIGNED: on a 32-bit backend (wasm i32) a
+            // signed compare is wrong once bit 31 is set. lt_s -> lt_u, etc.;
+            // eq/ne pass through unchanged. The register backends are unaffected
+            // (u32 values are zero-extended in 64-bit registers, so the unsigned
+            // 64-bit compare agrees with the signed one there) — this is the u32
+            // analog of the u64 unsigned-compare selection above (#2917 / #2904).
+            if (is_cmp_kind(kind) && (left_u32 || expr_is_u32(b.right, s))) { ek = to_unsigned_kind(kind); }
             var res: LowerState = s2.emit(ir.op_bin(ek, 0, false));
             var res_u32: boolean = left_u32 || expr_is_u32(b.right, s);
             if (res_u32 && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
