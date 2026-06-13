@@ -209,6 +209,26 @@ function emit_ir_now_unix_ms(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_now_ns appends the __fern_now_ns() helper — wall-clock nanoseconds via
+// clock_gettime(CLOCK_REALTIME) → tv_sec*1e9 + tv_nsec (the nanosecond twin of
+// now_unix_ms). Allocation-free, gated on the now_ns need like the siblings.
+function emit_ir_now_ns(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_now_ns:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $16, %rsp\n");          // timespec
+    s = s.write("    movq $0, %rdi\n");           // CLOCK_REALTIME
+    s = s.write("    movq %rsp, %rsi\n");         // &timespec
+    s = s.write("    movq $228, %rax\n");         // clock_gettime
+    s = s.write("    syscall\n");
+    s = s.write("    movq (%rsp), %rax\n");       // tv_sec
+    s = s.write("    imulq $1000000000, %rax, %rax\n"); // sec * 1e9
+    s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_ir_sleep_ms appends the __fern_sleep_ms(%rdi = ms) helper, transcribed
 // verbatim from asm.fern's emit_runtime: split ms into a timespec
 // {sec=ms/1000, nsec=(ms%1000)*1e6} on the stack and nanosleep (syscall 35);
@@ -1439,6 +1459,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // no operands; __fern_now_unix_ms() -> i64 in %rax.
             s = s.write("    call __fern_now_unix_ms\n    pushq %rax\n");
             s = s.need("now_unix_ms");
+        } else if (o.kind == "now_ns") {
+            // no operands; __fern_now_ns() -> i64 in %rax.
+            s = s.write("    call __fern_now_ns\n    pushq %rax\n");
+            s = s.need("now_ns");
         } else if (o.kind == "str_bytes") {
             // operand stack [str box]; __fern_str_bytes(%rdi=box) -> fresh u8[] in %rax.
             s = s.write("    popq %rdi\n    call __fern_str_bytes\n    pushq %rax\n");
@@ -1802,6 +1826,7 @@ pub function emit_module_ir(mod: parser.Module): string {
     // runtime (a clock-only program is heap-free), like random_i32.
     if (s.has_need("monotonic_ns")) { s = emit_ir_monotonic_ns(s); }
     if (s.has_need("now_unix_ms")) { s = emit_ir_now_unix_ms(s); }
+    if (s.has_need("now_ns")) { s = emit_ir_now_ns(s); }
     if (s.has_need("sleep_ms")) { s = emit_ir_sleep_ms(s); }
     return strbuf_take();
 }

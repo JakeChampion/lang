@@ -420,6 +420,14 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    pushq %rax\n");
         return CallOut { state: s, done: true };
     }
+    // now_ns() — wall-clock nanoseconds since the Unix epoch
+    // (clock_gettime(CLOCK_REALTIME)). The i64 nanosecond twin of
+    // now_unix_ms. Returns an i64 in %rax; no heap.
+    if (name == "now_ns" && c.args.len() == 0) {
+        s = s.write("    call __fern_now_ns\n");
+        s = s.write("    pushq %rax\n");
+        return CallOut { state: s, done: true };
+    }
     // sleep_ms(n) — pause for `n` ms (no-op if n <= 0).
     // Returns void; we push 0 so the stack-machine invariant
     // holds.
@@ -4022,6 +4030,21 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    subq $16, %rsp\n");          // timespec
     s = s.write("    movq $1, %rdi\n");           // CLOCK_MONOTONIC
+    s = s.write("    movq %rsp, %rsi\n");         // &timespec
+    s = s.write("    movq $228, %rax\n");         // clock_gettime
+    s = s.write("    syscall\n");
+    s = s.write("    movq (%rsp), %rax\n");       // tv_sec
+    s = s.write("    imulq $1000000000, %rax, %rax\n"); // sec * 1e9
+    s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
+    // now_ns: CLOCK_REALTIME=0 → tv_sec*1e9 + tv_nsec (the
+    // nanosecond-resolution twin of now_unix_ms).
+    s = s.write("__fern_now_ns:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $16, %rsp\n");          // timespec
+    s = s.write("    movq $0, %rdi\n");           // CLOCK_REALTIME
     s = s.write("    movq %rsp, %rsi\n");         // &timespec
     s = s.write("    movq $228, %rax\n");         // clock_gettime
     s = s.write("    syscall\n");

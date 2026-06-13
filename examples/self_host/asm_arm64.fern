@@ -429,6 +429,14 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    str x0, [sp, #-16]!\n");
         return CallOut { state: s, done: true };
     }
+    // now_ns() — wall-clock nanoseconds since the Unix epoch
+    // (clock_gettime(CLOCK_REALTIME)). The i64 nanosecond twin of
+    // now_unix_ms. Returns an i64 in x0; no heap.
+    if (name == "now_ns" && c.args.len() == 0) {
+        s = s.write("    bl __fern_now_ns\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return CallOut { state: s, done: true };
+    }
     // sleep_ms / remove_file / f{32,64}_bits / f{32,64}_from_bits —
     // see asm.fern for the rationale; the same shape ports cleanly.
     if (name == "sleep_ms" && c.args.len() == 1) {
@@ -3749,6 +3757,39 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
+    // now_ns: CLOCK_REALTIME=0 → tv_sec*1e9 + tv_nsec (the
+    // nanosecond-resolution twin of now_unix_ms). Same frame as
+    // now_unix_ms; Darwin uses gettimeofday scaled to ns.
+    s = s.write("__fern_now_ns:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    sub sp, sp, #16\n");        // time buffer
+    if (darwin) {
+        s = s.write("    mov x0, sp\n");             // &timeval
+        s = s.write("    mov x1, #0\n");             // tz = NULL
+        s = s.write("    mov x16, #116\n");          // gettimeofday
+        s = s.write("    svc #0x80\n");
+        s = s.write("    ldr x9, [sp]\n");           // tv_sec
+        s = s.write("    ldr x10, =1000000000\n");
+        s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
+        s = s.write("    ldr w11, [sp, #8]\n");      // tv_usec (i32)
+        s = s.write("    mov x12, #1000\n");
+        s = s.write("    mul x11, x11, x12\n");      // usec * 1000 = ns
+        s = s.write("    add x0, x9, x11\n");
+    } else {
+        s = s.write("    mov x0, #0\n");             // CLOCK_REALTIME
+        s = s.write("    mov x1, sp\n");             // &timespec
+        s = s.write("    mov x8, #113\n");           // clock_gettime
+        s = s.write("    svc #0\n");
+        s = s.write("    ldr x9, [sp]\n");           // tv_sec
+        s = s.write("    ldr x10, =1000000000\n");
+        s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
+        s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
+        s = s.write("    add x0, x9, x11\n");
+    }
+    s = s.write("    mov sp, x29\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
     // __fern_sleep_ms(x0 = ms) — nanosleep wrapper, no heap. Same
     // shape as the x86 mirror but arm64 syscall numbers: nanosleep=101.
     s = s.write(".globl __fern_sleep_ms\n");

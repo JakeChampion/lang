@@ -246,6 +246,9 @@ pub function op_random_i32(): Op { return op0("random_i32"); }
 // __fern_monotonic_ns / __fern_now_unix_ms helpers (no allocation).
 pub function op_monotonic_ns(): Op { return op0("monotonic_ns"); }
 pub function op_now_unix_ms(): Op { return op0("now_unix_ms"); }
+// `now_ns` — wall-clock nanoseconds since the Unix epoch (the i64 nanosecond
+// twin of now_unix_ms); 0-arg, allocation-free. Lowers to __fern_now_ns.
+pub function op_now_ns(): Op { return op0("now_ns"); }
 // `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
