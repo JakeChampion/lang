@@ -22,14 +22,11 @@ import (
 // existing array-pointer capture is by-reference.
 //
 // Expected values are the Go REFERENCE INTERPRETER's (`fern -interp`), which
-// defines the semantics (scalar captures mutable by-ref). They are hardcoded,
-// not taken from compileAndRunX86_64, because the native COMPILED backend
-// (internal/closureconv) has the SAME by-value bug — `fern -target x86-64 --run`
-// on the write-only repro returns 8, not 49 (a separate native-compiled bug,
-// filed separately; the interpreter is correct).
-// So the self-host IR path is now MORE correct than native-compiled here, and a
-// compiled oracle would assert the bug. Read-only captures stay by-value (not
-// boxed) — the read-only case guards that that path is unchanged.
+// defines the semantics (scalar captures mutable by-ref). The native COMPILED
+// backend had the SAME by-value bug (#2896) but is now fixed too
+// (closureconv.BoxMutatedScalarCaptures — see TestNativeMutScalarCapture), so
+// the compiled backends agree on these values. Read-only captures stay
+// by-value (not boxed) — the read-only case guards that that path is unchanged.
 func TestSelfHostMutCaptureIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
