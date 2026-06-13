@@ -90,6 +90,7 @@ export default defineConfig({
           label: "Standard library",
           items: [{ autogenerate: { directory: "stdlib" } }],
         },
+        { label: "Contributing", link: "/contributing/" },
         {
           label: "Playground",
           // Bare `/playground/` — Starlight prepends `base` to

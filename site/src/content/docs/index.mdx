@@ -113,6 +113,65 @@ function main(): i32 {
 The [CLI tutorial](tutorial/cli-tool/) builds this out into a full tool
 with flags and multiple files.
 
+## A quick tour
+
+A taste of the type system. Enums are tagged unions, and `match` is
+exhaustive — forget a variant and the build fails, not production. Try
+adding a `Triangle` to `Shape` below and watch the checker point at the
+`area` function.
+
+<FernPlayground
+  code={`enum Shape {
+    Circle(i32),          // radius
+    Rectangle(i32, i32),  // width, height
+}
+
+function area(s: Shape): i32 {
+    match (s) {
+        Circle(r)       => { return 3 * r * r; },
+        Rectangle(w, h) => { return w * h; },
+    }
+}
+
+function main(): i32 {
+    print(area(Circle(5)).to_string());        // 75
+    print(area(Rectangle(3, 4)).to_string());  // 12
+    return 0;
+}`}
+/>
+
+Generics are monomorphised (no runtime cost), and a **trait bound**
+constrains a type parameter to types that implement a trait — here, any
+orderable, printable value:
+
+```fern
+import "core/cmp";
+
+function max[T: cmp.Ord + cmp.Display](a: T, b: T): T {
+    if (a.cmp(b) >= 0) { return a; }
+    return b;
+}
+
+function main(): i32 {
+    print(max(3, 9).to_string());   // 9
+    print(max("apple", "pear"));    // pear
+    return 0;
+}
+```
+
+Errors are values, not exceptions. `Result` and `Option` are built in,
+and the `?` operator threads a failure up without ceremony:
+
+```fern
+function double(s: string): Result[i32, ParseError] {
+    var n: i32 = parse_int(s)?;   // returns early on Err
+    return Ok(n * 2);
+}
+```
+
+See the [Reference](reference/syntax/) for the full story — or keep
+scrolling.
+
 ## Why Fern?
 
 - **No surprises at the type boundary.** There's no untyped `int` and no
