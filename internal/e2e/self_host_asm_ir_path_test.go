@@ -323,6 +323,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"enum-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 0; } } return 0; } function main(): i32 { var e = A(9); return e.v(); }`},
 		{"enum-method-args", `enum Op2 { Add, Mul } function (o: Op2) ap(a: i32, b: i32): i32 { match (o) { Add => { return a + b; }, Mul => { return a * b; } } return 0; } function main(): i32 { var o = Add; var p = Mul; return o.ap(5, 7) * 100 + p.ap(5, 7); }`},
 		{"enum-method-from-ctor", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 5; } } return 0; } function main(): i32 { var e = A(30); return e.v() + B.v(); }`},
+		// Method call on a bound ENUM-typed match payload — `Node(l, r) =>
+		// l.sum() + r.sum()` dispatches `<Enum>.<method>` because the payload
+		// slot is typed with its enum name. Recursive enum (binary tree) +
+		// single recursive payload.
+		{"enum-method-recursive-tree", `enum Tree { Leaf(i32), Node(Tree, Tree) } function (t: Tree) sum(): i32 { match (t) { Leaf(n) => { return n; }, Node(l, r) => { return l.sum() + r.sum(); } } return 0; } function main(): i32 { return Node(Leaf(3), Node(Leaf(4), Leaf(5))).sum(); }`},
+		{"enum-method-recursive-single", `enum Box { Wrap(Box), Base(i32) } function (b: Box) v(): i32 { match (b) { Base(n) => { return n; }, Wrap(inner) => { return inner.v(); } } return 0; } function main(): i32 { return Wrap(Wrap(Base(7))).v(); }`},
 		// Enum-ARRAY element method calls `a[i].method()` — the element slot is
 		// typed with the enum, so dispatch resolves to `<Enum>.<method>` (#2954 item 2).
 		{"enum-array-method-annot", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { var a: C[] = [R, G]; return a[1].k(); }`},
