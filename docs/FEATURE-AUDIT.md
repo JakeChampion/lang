@@ -215,8 +215,8 @@ per-function bugs in the audit log.
 | `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
 | `std/base64` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range |
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` |
-| `std/crypto` | ✅ | ✅ | ✅ | ✅ | 🐛 | 🐛 | SHA-256 vectors ✅ native (`audit_std_crypto`); **self-host miscompiles the digest, [#2861](https://github.com/JakeChampion/lang/issues/2861)** |
-| `std/uuid` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host pending |
+| `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
+| `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
 | `std/url` | ✅ | ✅ | 🐛 | ✅ | | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption**, [#2817](https://github.com/JakeChampion/lang/issues/2817) (audit log 2026-06-09) |
 | `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test` |
 | `std/http` | | | | | | ⬜ | |
