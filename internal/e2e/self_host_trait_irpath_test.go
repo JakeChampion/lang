@@ -59,6 +59,8 @@ var traitIRPath = map[string]string{
 	"trait-derive-struct-ord":                    "ir",
 	"trait-derive-struct-display-nested":         "ir",
 	"trait-enum-method":                          "ir",
+	"trait-enum-method-unannot-local":            "ir",
+	"trait-enum-method-unannot-payloadless":      "ir",
 	"trait-derive-enum-display":                  "ir",
 	"trait-derive-enum-eq":                       "ir",
 	"trait-derive-enum-ord":                      "ir",
