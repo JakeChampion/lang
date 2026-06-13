@@ -81,6 +81,33 @@ var watHelperDeps = map[string][]string{
 // result via `int_to_string`) where the call is generated
 // outside the AST and tree-shake would otherwise drop the
 // callee.
+// mapKeyedTop maps a Map method's mangled name to the top-level core/map
+// `_keyed` runtime op the IR routes user struct/enum-key maps to (#2671).
+// Enqueuing the top op is enough — the reachability walk then pulls its
+// transitive deps (__map_cow_inplace / __map_grow_keyed / __map_lookup_keyed
+// / …) from its body. Restricted to the ops the IR currently routes; get /
+// delete join when their IR routing lands.
+var mapKeyedTop = map[string]string{
+	"__method_Map_set":    "__map_set_keyed",
+	"__method_Map_has":    "__map_has_keyed",
+	"__method_Map_get_or": "__map_get_or_keyed",
+}
+
+// nominalKeyName returns the key type's name when a Map op's K type arg is a
+// user struct or enum (the #2671 user-key case), else ("", false).
+func nominalKeyName(targs []ast.Type) (string, bool) {
+	if len(targs) < 1 {
+		return "", false
+	}
+	switch k := targs[0].(type) {
+	case ast.StructType:
+		return k.Name, true
+	case ast.EnumType:
+		return k.Name, true
+	}
+	return "", false
+}
+
 func Run(prog *ast.Program, extras ...string) {
 	if len(prog.Funcs) == 0 {
 		return
@@ -257,6 +284,22 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		walkExpr(x.Callee, byName, enqueue)
 		for _, a := range x.Args {
 			walkExpr(a, byName, enqueue)
+		}
+		// #2671: a Map op on a user struct/enum key (set/has/get_or) is
+		// lowered by the IR to core/map's `_keyed` variants, supplying the
+		// key type's derived hash/eq via OpConstFunc — references injected
+		// AFTER this AST pass, so no source reference exists for the walker
+		// to follow. Keep the keyed runtime entry + __method_<K>_hash/eq
+		// alive. Type-aware (only nominal keys), so scalar/string-key maps
+		// — and the bootstrap — aren't bloated with the keyed ops.
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			if top, isKeyed := mapKeyedTop[id.Name]; isKeyed {
+				if kn, ok := nominalKeyName(x.TypeArgs); ok {
+					enqueue(top)
+					enqueue("__method_" + kn + "_hash")
+					enqueue("__method_" + kn + "_eq")
+				}
+			}
 		}
 	case *ast.Binary:
 		walkExpr(x.Left, byName, enqueue)
