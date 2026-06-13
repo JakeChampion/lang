@@ -11894,6 +11894,99 @@ func floatOp(s string) (OpKind, bool) {
 	return 0, false
 }
 
+// userKeyTypeName reports the key type's name when K is a user struct or enum
+// (the #2671 user-key-map case), so the IR can route the op to core/map's
+// _keyed ops with that type's derived hash/eq function values. Builtin generics
+// (Map/Option/Result) live in info.Structs/Enums too, but never reach here as a
+// Map key (they aren't `@derive(Hash,Eq)`-eligible and the checker rejects them
+// as keys), so the bare membership test is sufficient.
+func (b *builder) userKeyTypeName(targs []ast.Type) (string, bool) {
+	if len(targs) < 1 {
+		return "", false
+	}
+	switch k := targs[0].(type) {
+	case ast.StructType:
+		if _, ok := b.info.Structs[k.Name]; ok {
+			return k.Name, true
+		}
+	case ast.EnumType:
+		if _, ok := b.info.Enums[k.Name]; ok {
+			return k.Name, true
+		}
+	}
+	return "", false
+}
+
+// emitUserKeyMapCall lowers a Map[K, V] op for a user struct/enum key K to the
+// core/map `_keyed` runtime ops, supplying __method_<K>_hash (usize -> i32) and
+// __method_<K>_eq (usize, usize -> boolean) as trailing function-value args; the
+// key flows as a struct pointer (no boxing). Returns (true, nil) when handled.
+//
+// First cut (#2671 slice 2): set / has / get_or with a V that needs neither
+// cell-boxing (wide scalar / wasm string) nor map-value rc-retain (array /
+// drop-bearing struct) — i.e. mapValKindTag <= 1 (i32-scalar or a non-reclaimed
+// pointer such as a native string). get / delete and the retained/boxed V
+// shapes return (false, nil); the checker restricts user-key maps to this
+// supported surface so the fall-through never silently mis-hashes.
+func (b *builder) emitUserKeyMapCall(n *ast.Call, method, kName string) (bool, error) {
+	if len(n.TypeArgs) >= 2 {
+		v := n.TypeArgs[1]
+		if isWideScalar(v) || isStringForBoxing(v, b.ptrW) {
+			return false, nil
+		}
+		if mapValKindTag(v, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) > 1 {
+			return false, nil
+		}
+	}
+	hashSym := "__method_" + kName + "_hash"
+	eqSym := "__method_" + kName + "_eq"
+	pushFns := func() {
+		b.emit(Op{Kind: OpConstFunc, Str: hashSym})
+		b.emit(Op{Kind: OpConstFunc, Str: eqSym})
+	}
+	emitArgs := func(nArgs int) error {
+		for i := 0; i < nArgs; i++ {
+			if err := b.expr(n.Args[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	switch method {
+	case "__method_Map_set": // (m, k, v, hashf, eqf) -> map
+		if len(n.Args) != 3 {
+			return false, nil
+		}
+		if err := emitArgs(3); err != nil {
+			return true, err
+		}
+		pushFns()
+		b.emit(Op{Kind: OpCallDirect, Str: "__map_set_keyed", I32: 5})
+		return true, nil
+	case "__method_Map_has": // (m, k, hashf, eqf) -> boolean
+		if len(n.Args) != 2 {
+			return false, nil
+		}
+		if err := emitArgs(2); err != nil {
+			return true, err
+		}
+		pushFns()
+		b.emit(Op{Kind: OpCallDirect, Str: "__map_has_keyed", I32: 4})
+		return true, nil
+	case "__method_Map_get_or": // (m, k, fallback, hashf, eqf) -> V
+		if len(n.Args) != 3 {
+			return false, nil
+		}
+		if err := emitArgs(3); err != nil {
+			return true, err
+		}
+		pushFns()
+		b.emit(Op{Kind: OpCallDirect, Str: "__map_get_or_keyed", I32: 5})
+		return true, nil
+	}
+	return false, nil
+}
+
 // mapKeyKindTag returns the runtime tag for the Map[K, V]
 // instantiation's key type:
 //
@@ -12516,6 +12609,14 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emitOwnedSlotDrop(lenTempSlot, b.scratchType[lenTempSlot])
 		}
 		return nil
+	}
+	// #2671 slice 2: user struct/enum key — route to the _keyed map ops,
+	// passing the key type's derived hash/eq as function values. Keys ride as
+	// struct pointers (no boxing); the scalar/string paths below stay untouched.
+	if kName, ok := b.userKeyTypeName(n.TypeArgs); ok {
+		if handled, err := b.emitUserKeyMapCall(n, id.Name, kName); err != nil || handled {
+			return err
+		}
 	}
 	// Map call-site boxing. Two axes:
 	//
