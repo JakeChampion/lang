@@ -435,6 +435,48 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    bl __fn_" + asmcore.sanitize_label(o.str) + "\n");
             if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "dyn_dispatch") {
+            // `dyn Trait` method call. Receiver (arg0) + args are in argc
+            // consecutive locals from base_slot. Read the receiver's shape
+            // pointer (x1) and dispatch to the matching `<Type>.<method>` — a
+            // compare-branch chain over every module method named o.str with a
+            // struct receiver, mirroring asm_arm64.fern. Each matched arm pushes
+            // the argc locals (arg0/receiver on top, the arm64 ABI) and calls.
+            var dbase: i32 = o.i32_imm;
+            var dargc: i32 = o.width;
+            s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
+            s = s.write("    ldr x1, [x0]\n");
+            var dend: string = lp + "dynend" + util.i32_to_string(i);
+            var dfi: i32 = 0;
+            var darmn: i32 = 0;
+            while (dfi < s.funcs.len()) {
+                var dfd: parser.FuncDecl = s.funcs[dfi];
+                if (dfd.name == o.str && dfd.receiver_type.len() > 0
+                        && asmcore.is_struct_decl_name(util.base_type_name(dfd.receiver_type), s)) {
+                    var dbn: string = util.base_type_name(dfd.receiver_type);
+                    var dlit: asmcore.StringLitOut = asmcore.add_string_lit(s, dbn);
+                    s = dlit.state;
+                    var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+                    s = s.write("    adrp x2, .S" + util.i32_to_string(dlit.idx) + "\n");
+                    s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(dlit.idx) + "\n");
+                    s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
+                    var dk: i32 = dargc - 1;
+                    while (dk >= 0) {
+                        s = fr_ldr(s, "x0", 0 - 8 * (dbase + dk + 1));
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        dk = dk - 1;
+                    }
+                    s = s.write("    bl __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
+                    s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    b " + dend + "\n");
+                    s = s.write(dnext + ":\n");
+                    darmn = darmn + 1;
+                }
+                dfi = dfi + 1;
+            }
+            s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");   // fallback (unreachable)
+            s = s.write(dend + ":\n");
         } else if (o.kind == "const_func") {
             // A function VALUE is the function's code address (adrp/add of its
             // label) — push it. No funcref table (the address is the value);

@@ -394,6 +394,16 @@ pub function op_variant_is(name: string): Op {
 pub function op_call_direct(callee: string, argc: i32): Op {
     return Op { kind: "call_direct", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
 }
+// op_dyn_dispatch is a `dyn Trait` method call. The receiver (arg 0) + args
+// have been spilled into argc CONSECUTIVE local slots starting at `base_slot`
+// (so every backend can reload them per dispatch arm — wasm can't index a deep
+// operand-stack slot). The backend reads the receiver's runtime shape pointer
+// and dispatches to the matching `<ConcreteType>.<method>` — a compare-branch
+// chain over the trait's impl types, mirroring the AST emitter. `str` is the
+// method name; `i32_imm` is base_slot; `width` is argc (1 + nargs).
+pub function op_dyn_dispatch(method: string, base_slot: i32, argc: i32): Op {
+    return Op { kind: "dyn_dispatch", i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: method };
+}
 pub function op_call_indirect(argc: i32): Op {
     return Op { kind: "call_indirect", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }

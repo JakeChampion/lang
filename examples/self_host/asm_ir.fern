@@ -1529,6 +1529,47 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    call __fn_" + asmcore.sanitize_label(o.str) + "\n");
             if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
+        } else if (o.kind == "dyn_dispatch") {
+            // `dyn Trait` method call. Receiver (arg0) + args are spilled in argc
+            // consecutive locals from base_slot. Read the receiver's shape pointer
+            // and dispatch to the matching `<Type>.<method>` — a compare-branch
+            // chain over every module method named o.str with a struct receiver,
+            // mirroring asm.fern's dyn dispatch. Each matched arm pushes the argc
+            // locals (arg0/receiver on top, asm.fern's ABI) and calls.
+            var dbase: i32 = o.i32_imm;
+            var dargc: i32 = o.width;
+            s = s.write("    movq " + util.i32_to_string(0 - 8 * (dbase + 1)) + "(%rbp), %rax\n");
+            s = s.write("    movq (%rax), %rcx\n");
+            var dend: string = lp + "dynend" + util.i32_to_string(i);
+            var dfi: i32 = 0;
+            var darmn: i32 = 0;
+            while (dfi < s.funcs.len()) {
+                var dfd: parser.FuncDecl = s.funcs[dfi];
+                if (dfd.name == o.str && dfd.receiver_type.len() > 0
+                        && asmcore.is_struct_decl_name(util.base_type_name(dfd.receiver_type), s)) {
+                    var dbn: string = util.base_type_name(dfd.receiver_type);
+                    var dlit: asmcore.StringLitOut = asmcore.add_string_lit(s, dbn);
+                    s = dlit.state;
+                    var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+                    s = s.write("    leaq .S" + util.i32_to_string(dlit.idx) + "(%rip), %rdx\n");
+                    s = s.write("    cmpq %rdx, %rcx\n");
+                    s = s.write("    jne " + dnext + "\n");
+                    var dk: i32 = dargc - 1;
+                    while (dk >= 0) {
+                        s = s.write("    pushq " + util.i32_to_string(0 - 8 * (dbase + dk + 1)) + "(%rbp)\n");
+                        dk = dk - 1;
+                    }
+                    s = s.write("    call __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
+                    s = s.write("    addq $" + util.i32_to_string(dargc * 8) + ", %rsp\n");
+                    s = s.write("    pushq %rax\n");
+                    s = s.write("    jmp " + dend + "\n");
+                    s = s.write(dnext + ":\n");
+                    darmn = darmn + 1;
+                }
+                dfi = dfi + 1;
+            }
+            s = s.write("    pushq $0\n");   // fallback (unreachable for a valid dyn value)
+            s = s.write(dend + ":\n");
         } else if (o.kind == "const_func") {
             // A function VALUE is the function's code address — push it. Register
             // backends need no funcref table (unlike wasm's table index): the

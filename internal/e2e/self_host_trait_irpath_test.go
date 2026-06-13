@@ -36,7 +36,12 @@ import (
 //     parser records each variant's owning enum on its desugared StructDecl
 //     (`enum_owner`), and irlower's `expr_enum_type` recovers it to dispatch
 //     `<Enum>.<method>` with the fresh variant as the receiver.
-//   - `dyn Trait` still falls back to the AST emitter — a later slice.
+//   - `dyn Trait` method dispatch now lowers through the IR path: a
+//     `dyn Trait` / `dyn Trait[]` param/loop-var carries the coarse
+//     "dyn <Trait>" type, and a `x.method()` call emits op_dyn_dispatch — the
+//     backend reads the receiver's runtime shape pointer and dispatches to the
+//     matching `<ConcreteType>.<method>` via a compare-branch chain over the
+//     trait's impl types (mirroring the AST emitter).
 var traitIRPath = map[string]string{
 	"trait-impl-method":                          "ir",
 	"trait-impl-arg":                             "ir",
@@ -48,7 +53,7 @@ var traitIRPath = map[string]string{
 	"trait-bounded-generic-array-elem":           "ir",
 	"trait-bounded-generic-two-params":           "ir",
 	"trait-parametric-impl-struct-elem":          "ir",
-	"trait-dyn-object-heterogeneous":             "ast",
+	"trait-dyn-object-heterogeneous":             "ir",
 	"trait-struct-array-loop-method":             "ir",
 	"trait-derive-struct-eq":                     "ir",
 	"trait-derive-struct-ord":                    "ir",
