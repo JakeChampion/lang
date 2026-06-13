@@ -1,0 +1,57 @@
+package e2e
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// strSplitIRCases are string.split(sep) / str_split(s, sep) programs that must
+// route through the self-hosted x86-64 IR path (asm_ir.emit_module_ir) rather
+// than the legacy AST emitter. Before op_str_split, a `.split(sep)` dispatched
+// as `call_direct("string.split")` — an unknown callee that calls_only_known
+// rejected, kicking the whole module to the AST fallback. Now split lowers to
+// the dedicated op, so these stay on the IR path. This is the eligibility proof
+// that pairs with the AST-vs-IR differential cases in TestSelfHostAsmIRPath
+// (split-*), which prove the chosen path computes the right answer.
+var strSplitIRCases = []struct {
+	name string
+	src  string
+}{
+	{"split-method-bind", `function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`},
+	{"split-index", `function main(): i32 { var p = "foo,bar".split(","); return p[1].len(); }`},
+	{"split-multichar", `function main(): i32 { var p = "axxb".split("xx"); return p.len(); }`},
+	{"split-empty-sep", `function main(): i32 { var p = "abc".split(""); return p.len(); }`},
+	{"split-loop", `function main(): i32 { var p = "a,bb,ccc".split(","); var s = 0; var i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
+	{"split-forin", `function main(): i32 { var s = 0; for part in "x,yy".split(",") { s = s + part.len(); } return s; }`},
+	{"split-param", `function nf(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nf("a,b,c"); }`},
+	{"split-freecall", `function main(): i32 { var p = str_split("a,b,c", ","); return p.len(); }`},
+	{"split-direct-index", `function main(): i32 { return "one,two,three".split(",")[2].len(); }`},
+}
+
+// TestSelfHostStrSplitIRPathX86_64 asserts each split program routes through the
+// "ir" path via the asm_pathprobe_run driver (the same observability gate the
+// trait IR-path test uses — runs the production module_with_builtins →
+// lift_lambdas → all_eligible pipeline and prints "ir"/"ast", no assembly).
+func TestSelfHostStrSplitIRPathX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_pathprobe_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_pathprobe_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_pathprobe_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_pathprobe_run.fern: %v", err)
+	}
+	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+
+	for _, tc := range strSplitIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
+			if out != "ir" {
+				t.Errorf("%s routed through %q path, want \"ir\"", tc.name, out)
+			}
+		})
+	}
+}

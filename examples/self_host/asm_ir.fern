@@ -138,6 +138,8 @@ function module_uses_heap(mod: parser.Module): boolean {
             // random_bytes allocates the byte buffer + string box; str_bytes
             // allocates the result u8[] (both via __fern_alloc / __fern_arr_box).
             if (r.ops[i].kind == "random_bytes" || r.ops[i].kind == "str_bytes") { return true; }
+            // str_split allocates the result string[] + each segment box.
+            if (r.ops[i].kind == "str_split") { return true; }
             // alloc_u8 / arr_push / str_from_bytes all allocate (via
             // __fern_alloc / __fern_arr_box) — pull in the heap runtime even for a
             // program whose ONLY allocation is `__alloc_u8(n)` (no array literal).
@@ -806,6 +808,153 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %r14\n");
         s = s.write("    popq %r13\n");
         s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
+    }
+    // __fern_str_split (transcribed verbatim from asm.fern): %rdi = haystack box,
+    // %rsi = sep box → a fresh string[] of the segments of haystack split on sep.
+    // Empty sep → [haystack]. Two-pass: count separators, then walk + slice.
+    // Depends only on __fern_arr_box / __fern_alloc (always in emit_ir_runtime).
+    if (s.has_need("str_split")) {
+        s = s.write("__fern_str_split:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    subq $48, %rsp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq %rdi, -8(%rbp)\n");
+        s = s.write("    movq %rsi, -16(%rbp)\n");
+        s = s.write("    movq $0, -24(%rbp)\n");
+        s = s.write("    movq 8(%rsi), %rax\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jz .Lir_split_single\n");
+        s = s.write("    movq (%rdi), %r12\n");
+        s = s.write("    movq 8(%rdi), %r13\n");
+        s = s.write("    movq (%rsi), %r14\n");
+        s = s.write("    movq 8(%rsi), %r15\n");
+        s = s.write("    movq $0, %rbx\n");
+        s = s.write(".Lir_split_cl:\n");
+        s = s.write("    movq %rbx, %rax\n");
+        s = s.write("    addq %r15, %rax\n");
+        s = s.write("    cmpq %r13, %rax\n");
+        s = s.write("    jg .Lir_split_count_done\n");
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lir_split_clm:\n");
+        s = s.write("    cmpq %r15, %rcx\n");
+        s = s.write("    je .Lir_split_match\n");
+        s = s.write("    movq %r12, %rdx\n");
+        s = s.write("    addq %rbx, %rdx\n");
+        s = s.write("    addq %rcx, %rdx\n");
+        s = s.write("    movzbq (%rdx), %rax\n");
+        s = s.write("    movq %r14, %rdx\n");
+        s = s.write("    addq %rcx, %rdx\n");
+        s = s.write("    movzbq (%rdx), %rdx\n");
+        s = s.write("    cmpq %rdx, %rax\n");
+        s = s.write("    jne .Lir_split_clnomatch\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lir_split_clm\n");
+        s = s.write(".Lir_split_match:\n");
+        s = s.write("    incq -24(%rbp)\n");
+        s = s.write("    addq %r15, %rbx\n");
+        s = s.write("    jmp .Lir_split_cl\n");
+        s = s.write(".Lir_split_clnomatch:\n");
+        s = s.write("    incq %rbx\n");
+        s = s.write("    jmp .Lir_split_cl\n");
+        s = s.write(".Lir_split_count_done:\n");
+        s = s.write("    movq -24(%rbp), %rdi\n");
+        s = s.write("    incq %rdi\n");
+        s = s.write("    call __fern_arr_box\n");
+        s = s.write("    movq %rax, -32(%rbp)\n");
+        s = s.write("    movq $0, -40(%rbp)\n");
+        s = s.write("    movq $0, -48(%rbp)\n");
+        s = s.write("    movq -8(%rbp), %rax\n");
+        s = s.write("    movq (%rax), %r12\n");
+        s = s.write("    movq 8(%rax), %r13\n");
+        s = s.write("    movq -16(%rbp), %rax\n");
+        s = s.write("    movq (%rax), %r14\n");
+        s = s.write("    movq 8(%rax), %r15\n");
+        s = s.write("    movq $0, %rbx\n");
+        s = s.write(".Lir_split_walk:\n");
+        s = s.write("    movq %rbx, %rax\n");
+        s = s.write("    addq %r15, %rax\n");
+        s = s.write("    cmpq %r13, %rax\n");
+        s = s.write("    jg .Lir_split_tail\n");
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lir_split_chk:\n");
+        s = s.write("    cmpq %r15, %rcx\n");
+        s = s.write("    je .Lir_split_segend\n");
+        s = s.write("    movq %r12, %rdx\n");
+        s = s.write("    addq %rbx, %rdx\n");
+        s = s.write("    addq %rcx, %rdx\n");
+        s = s.write("    movzbq (%rdx), %rax\n");
+        s = s.write("    movq %r14, %rdx\n");
+        s = s.write("    addq %rcx, %rdx\n");
+        s = s.write("    movzbq (%rdx), %rdx\n");
+        s = s.write("    cmpq %rdx, %rax\n");
+        s = s.write("    jne .Lir_split_chknomatch\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lir_split_chk\n");
+        s = s.write(".Lir_split_segend:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq -8(%rbp), %rcx\n");
+        s = s.write("    movq (%rcx), %rcx\n");
+        s = s.write("    addq -48(%rbp), %rcx\n");
+        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    movq %rbx, %rcx\n");
+        s = s.write("    subq -48(%rbp), %rcx\n");
+        s = s.write("    movq %rcx, 8(%rax)\n");
+        s = s.write("    movq -32(%rbp), %rdi\n");
+        s = s.write("    movq -40(%rbp), %rdx\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    movq %rax, (%rdi,%rdx,8)\n");
+        s = s.write("    incq -40(%rbp)\n");
+        s = s.write("    addq %r15, %rbx\n");
+        s = s.write("    movq %rbx, -48(%rbp)\n");
+        s = s.write("    jmp .Lir_split_walk\n");
+        s = s.write(".Lir_split_chknomatch:\n");
+        s = s.write("    incq %rbx\n");
+        s = s.write("    jmp .Lir_split_walk\n");
+        s = s.write(".Lir_split_tail:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq -8(%rbp), %rcx\n");
+        s = s.write("    movq (%rcx), %rcx\n");
+        s = s.write("    addq -48(%rbp), %rcx\n");
+        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    movq %r13, %rcx\n");
+        s = s.write("    subq -48(%rbp), %rcx\n");
+        s = s.write("    movq %rcx, 8(%rax)\n");
+        s = s.write("    movq -32(%rbp), %rdi\n");
+        s = s.write("    movq -40(%rbp), %rdx\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    movq %rax, (%rdi,%rdx,8)\n");
+        s = s.write("    movq -32(%rbp), %rax\n");
+        s = s.write("    jmp .Lir_split_exit\n");
+        s = s.write(".Lir_split_single:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, -32(%rbp)\n");
+        s = s.write("    movq $1, (%rax)\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq -8(%rbp), %rcx\n");
+        s = s.write("    movq (%rcx), %rdx\n");
+        s = s.write("    movq %rdx, (%rax)\n");
+        s = s.write("    movq 8(%rcx), %rdx\n");
+        s = s.write("    movq %rdx, 8(%rax)\n");
+        s = s.write("    movq -32(%rbp), %rdi\n");
+        s = s.write("    movq %rax, 8(%rdi)\n");
+        s = s.write("    movq %rdi, %rax\n");
+        s = s.write(".Lir_split_exit:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
@@ -1549,6 +1698,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // operand stack [str box]; __fern_str_bytes(%rdi=box) -> fresh u8[] in %rax.
             s = s.write("    popq %rdi\n    call __fern_str_bytes\n    pushq %rax\n");
             s = s.mark_str_bytes();
+        } else if (o.kind == "str_split") {
+            // operand stack [haystack box, sep box] (sep on top);
+            // __fern_str_split(%rdi=haystack, %rsi=sep) -> fresh string[] in %rax.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_split\n    pushq %rax\n");
+            s = s.mark_str_split();
         } else if (o.kind == "str_concat") {
             // operand stack: [box A, box B] (B on top). __fern_str_concat takes
             // %rdi = A, %rsi = B and returns the fresh box in %rax.

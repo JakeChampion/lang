@@ -285,6 +285,9 @@ pub function module_allocates(mod: parser.Module): boolean {
             // random_bytes builds a string block (via $__fern_str_box); str_bytes
             // builds a u8[] (via $__fern_arr_box). Both need the heap runtime.
             if (k == "random_bytes" || k == "str_bytes") { return true; }
+            // str_split builds the result string[] (via $__fern_arr_box) + each
+            // segment box (via $__fern_str_box).
+            if (k == "str_split") { return true; }
             // alloc_u8 / arr_push / str_from_bytes all allocate via $__fern_arr_box
             // / $__fern_string_from_bytes, so a program whose only allocation is
             // one of these still needs the heap runtime.
@@ -739,6 +742,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_bytes") {
             // stack: s -> $__fern_str_bytes(s) -> fresh u8[] block.
             out = out + "    call $__fern_str_bytes\n";
+        } else if (o.kind == "str_split") {
+            // stack: haystack, sep -> $__fern_str_split(haystack, sep) -> fresh
+            // string[] block. The helper (str_split_helper in wasm.fern, emitted
+            // when module_uses_str_split) builds the result via $__fern_arr_push +
+            // $__fern_substr.
+            out = out + "    call $__fern_str_split\n";
         } else if (o.kind == "str_concat") {
             // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
             out = out + "    call $__fern_strcat\n";

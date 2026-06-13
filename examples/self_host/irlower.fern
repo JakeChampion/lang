@@ -1060,9 +1060,18 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprIdent(id) => { return s.is_strarr_slot(s.slot_of(id.name)); },
         parser.ExprCall(c) => {
-            // A call to a string[]-returning user function (strarr_ret_fns).
+            // A call to a string[]-returning user function (strarr_ret_fns), the
+            // `str_split(s, sep)` builtin (string→string[]), or the `s.split(sep)`
+            // method form — all yield a string[] whose elements are string boxes.
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_strarr_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "str_split" && c.args.len() == 2) { return true; }
+                    return s.is_strarr_ret_fn(cid.name);
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
+                    return false;
+                },
                 _ => { return false; }
             }
             return false;
@@ -1125,12 +1134,18 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => {
                     // `__alloc_u8(n)` yields a fresh n-element byte array.
                     if (cid.name == "__alloc_u8") { return true; }
+                    // `str_split(s, sep)` yields a fresh string[] (op_str_split).
+                    if (cid.name == "str_split" && c.args.len() == 2) { return true; }
                     return s.is_arr_ret_fn(cid.name);
                 },
                 // `s.bytes()` / `s.as_bytes()` on a string receiver yields a
-                // fresh u8[] (op_str_bytes) — an rc-tracked array source.
+                // fresh u8[] (op_str_bytes), and `s.split(sep)` a fresh string[]
+                // (op_str_split) — both rc-tracked array sources.
                 parser.ExprFieldAccess(cfa) => {
                     if ((cfa.field == "bytes" || cfa.field == "as_bytes") && c.args.len() == 0) {
+                        return expr_is_str(cfa.obj, s);
+                    }
+                    if (cfa.field == "split" && c.args.len() == 1) {
                         return expr_is_str(cfa.obj, s);
                     }
                     return false;
@@ -2505,6 +2520,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (lstr) { return ls.emit(ir.op_str_len()); }
                         return ls.emit(ir.op_arr_len());
                     }
+                    // `str_split(s, sep)` free call — the same string→string[] op as
+                    // the `s.split(sep)` method form (op_str_split). Result is an
+                    // RC-tracked string[]; see expr_is_strarr / expr_is_arr_src.
+                    if (cid.name == "str_split" && c.args.len() == 2) {
+                        var ssp: LowerState = lower_expr(c.args[0], s);
+                        if (!ssp.ok) { return ssp; }
+                        ssp = lower_expr(c.args[1], ssp);
+                        if (!ssp.ok) { return ssp; }
+                        return ssp.emit(ir.op_str_split());
+                    }
                     // No arity cap: the call ABI is fully stack-based on every
                     // backend (x86-64/arm64 push the args on the runtime stack and
                     // the callee reads param[i] from a fixed frame offset; wasm
@@ -2663,6 +2688,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var sb: LowerState = lower_expr(fa.obj, s);
                         if (!sb.ok) { return sb; }
                         return sb.emit(ir.op_str_bytes());
+                    }
+                    // `s.split(sep)` on a string receiver → a fresh string[] of
+                    // segments (op_str_split). The result is an RC-tracked array
+                    // whose elements are string boxes (leak-only), so the binding
+                    // site marks the slot is_arr + is_strarr (see expr_is_strarr /
+                    // expr_is_arr_src, which recognise the split call too).
+                    if (fa.field == "split" && c.args.len() == 1 && expr_is_str(fa.obj, s)) {
+                        var spl: LowerState = lower_expr(fa.obj, s);
+                        if (!spl.ok) { return spl; }
+                        spl = lower_expr(c.args[0], spl);
+                        if (!spl.ok) { return spl; }
+                        return spl.emit(ir.op_str_split());
                     }
                     // Builtin `.to_string()` on a PRIMITIVE receiver — distinct
                     // from a struct's generated `to_string` (a @derive(Display)
@@ -3068,12 +3105,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             // `__alloc_u8(n)` yields a fresh owned byte array (a
                             // move, like an arr-returning call).
                             if (fid.name == "__alloc_u8") { is_arr = true; }
+                            // `str_split(s, sep)` yields a fresh owned string[] — a
+                            // move, track as array (is_strarr comes from expr_is_strarr).
+                            else if (fid.name == "str_split" && cc.args.len() == 2) { is_arr = true; }
                             else if (se.is_arr_ret_fn(fid.name)) { is_arr = true; }
                         },
                         // `var b = s.bytes()` / `= s.as_bytes()`: op_str_bytes
                         // returns a fresh owned u8[] (rc=1) — a move, track as array.
+                        // `var parts = s.split(sep)`: op_str_split likewise returns a
+                        // fresh owned string[].
                         parser.ExprFieldAccess(cfa) => {
                             if ((cfa.field == "bytes" || cfa.field == "as_bytes") && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
+                            else if (cfa.field == "split" && cc.args.len() == 1 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                         },
                         _ => {}
                     }

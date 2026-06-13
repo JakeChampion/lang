@@ -292,6 +292,14 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // operand stack [str box]; __fern_str_bytes(x0=box) -> fresh u8[] in x0.
             s = s.mark_str_bytes();
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_str_bytes\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "str_split") {
+            // operand stack [haystack box, sep box] (sep top); __fern_str_split(
+            // x0=haystack, x1=sep) -> fresh string[] in x0. asm_arm64.emit_runtime
+            // emits the helper inside its str_search-need block (the arm64 AST path
+            // gates __fern_str_split on str_search), so set both needs here.
+            s = s.mark_str_search();
+            s = s.mark_heap();
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_split\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "str_concat") {
             // operand stack [A, B] (B on top); __fern_str_concat(x0=A, x1=B) -> x0.
             s = s.mark_heap();

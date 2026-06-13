@@ -339,6 +339,22 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"derive-debug-enum", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len() + Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`},
 		// Method call -> out of the IR subset; falls back to AST under -ir.
 		{"method-falls-back", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }"},
+		// string.split(sep) -> string[] (op_str_split). The wasm IR path emits the
+		// narrow str_split_helper ($__fern_str_split + a private $__fern_arr_push)
+		// plus substr_helper; the AST path uses the full strcat_helpers bundle's
+		// $__fern_str_split — segment counts / element lengths must match.
+		{"split-count", `function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`},
+		{"split-first-len", `function main(): i32 { var p = "foo,bar,baz".split(","); return p[0].len(); }`},
+		{"split-elem-lens", `function main(): i32 { var p = "a,bb,ccc".split(","); return p[0].len() + p[1].len() + p[2].len(); }`},
+		{"split-multichar-sep", `function main(): i32 { var p = "axxbxxc".split("xx"); return p.len() * 10 + p[2].len(); }`},
+		{"split-no-match", `function main(): i32 { var p = "abc".split(","); return p.len() * 10 + p[0].len(); }`},
+		{"split-empty-sep", `function main(): i32 { var p = "abc".split(""); return p.len() * 10 + p[0].len(); }`},
+		{"split-trailing-sep", `function main(): i32 { var p = "a,b,".split(","); return p.len(); }`},
+		{"split-loop-sum", `function main(): i32 { var p = "a,bb,ccc,dddd".split(","); var s = 0; var i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
+		{"split-forin", `function main(): i32 { var s = 0; for part in "x,yy,zzz".split(",") { s = s + part.len(); } return s; }`},
+		{"split-param", `function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
+		{"split-freecall", `function main(): i32 { var p = str_split("a,b,c", ","); return p.len(); }`},
+		{"split-direct-index", `function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
 	}
 
 	for _, tc := range cases {
