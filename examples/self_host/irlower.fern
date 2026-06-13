@@ -1807,6 +1807,47 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
     }
 }
 
+// str_free_call_field maps a two-arg string builtin FREE-function name to the
+// method `field` lower_str_method expects (`str_split`→`split`, etc.), or "" if
+// the name isn't one. Lets the free-call and method-call forms share one lowerer.
+pub function str_free_call_field(name: string): string {
+    if (name == "str_split") { return "split"; }
+    if (name == "str_starts_with") { return "starts_with"; }
+    if (name == "str_ends_with") { return "ends_with"; }
+    if (name == "str_index_of") { return "index_of"; }
+    return "";
+}
+
+// is_str_builtin_method reports whether `field` names a one-arg string builtin
+// method the IR path lowers directly (split → string[]; starts_with / ends_with
+// / index_of / contains → scalar). The caller also checks arity + that the
+// receiver is a string before dispatching to lower_str_method.
+pub function is_str_builtin_method(field: string): boolean {
+    return field == "split" || field == "starts_with" || field == "ends_with"
+        || field == "index_of" || field == "contains";
+}
+
+// lower_str_method lowers a one-arg string builtin method `recv.<field>(arg)`:
+// it lowers [recv, arg] then emits the field's op. `split` yields a string[]
+// (op_str_split); the search predicates are scalar (op_str_starts_with /
+// _ends_with / _index_of), and `contains` is `index_of(...) >= 0`. Kept out of
+// lower_expr's giant FieldAccess arm to stay under the self-host backend's
+// oversized-function threshold (#2720).
+pub function lower_str_method(field: string, recv: parser.Expr, arg: parser.Expr, s: LowerState): LowerState {
+    var p: LowerState = lower_expr(recv, s);
+    if (!p.ok) { return p; }
+    p = lower_expr(arg, p);
+    if (!p.ok) { return p; }
+    if (field == "split") { return p.emit(ir.op_str_split()); }
+    if (field == "starts_with") { return p.emit(ir.op_str_starts_with()); }
+    if (field == "ends_with") { return p.emit(ir.op_str_ends_with()); }
+    if (field == "index_of") { return p.emit(ir.op_str_index_of()); }
+    // contains: index_of(sub) >= 0
+    p = p.emit(ir.op_str_index_of());
+    p = p.emit(ir.op_const_i32(0));
+    return p.emit(ir.op_bin("ge_s", 0, false));
+}
+
 // lower_expr emits ops that leave the value of `e` on the operand stack.
 pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
     if (!s.ok) { return s; }
@@ -2520,15 +2561,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (lstr) { return ls.emit(ir.op_str_len()); }
                         return ls.emit(ir.op_arr_len());
                     }
-                    // `str_split(s, sep)` free call — the same string→string[] op as
-                    // the `s.split(sep)` method form (op_str_split). Result is an
-                    // RC-tracked string[]; see expr_is_strarr / expr_is_arr_src.
-                    if (cid.name == "str_split" && c.args.len() == 2) {
-                        var ssp: LowerState = lower_expr(c.args[0], s);
-                        if (!ssp.ok) { return ssp; }
-                        ssp = lower_expr(c.args[1], ssp);
-                        if (!ssp.ok) { return ssp; }
-                        return ssp.emit(ir.op_str_split());
+                    // String builtin free calls — `str_split(s, sep)` and the
+                    // predicates `str_starts_with` / `str_ends_with` /
+                    // `str_index_of(s, x)` — are the same ops as the `.split` /
+                    // `.starts_with` / … method forms, so they route through
+                    // lower_str_method (field = the name minus its `str_` prefix).
+                    var sfreef: string = str_free_call_field(cid.name);
+                    if (sfreef != "" && c.args.len() == 2) {
+                        return lower_str_method(sfreef, c.args[0], c.args[1], s);
                     }
                     // No arity cap: the call ABI is fully stack-based on every
                     // backend (x86-64/arm64 push the args on the runtime stack and
@@ -2689,17 +2729,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sb.ok) { return sb; }
                         return sb.emit(ir.op_str_bytes());
                     }
-                    // `s.split(sep)` on a string receiver → a fresh string[] of
-                    // segments (op_str_split). The result is an RC-tracked array
-                    // whose elements are string boxes (leak-only), so the binding
-                    // site marks the slot is_arr + is_strarr (see expr_is_strarr /
-                    // expr_is_arr_src, which recognise the split call too).
-                    if (fa.field == "split" && c.args.len() == 1 && expr_is_str(fa.obj, s)) {
-                        var spl: LowerState = lower_expr(fa.obj, s);
-                        if (!spl.ok) { return spl; }
-                        spl = lower_expr(c.args[0], spl);
-                        if (!spl.ok) { return spl; }
-                        return spl.emit(ir.op_str_split());
+                    // One-arg string builtin methods on a string receiver:
+                    // `s.split(sep)` (→ string[]) and the scalar search predicates
+                    // `starts_with` / `ends_with` / `index_of` / `contains`. The
+                    // per-field emission lives in lower_str_method, kept out of line
+                    // so this already-enormous lower_expr arm doesn't grow past the
+                    // self-host backend's oversized-function miscompile threshold
+                    // (#2720 — folding it in here crashed the stage-2 self-compile).
+                    if (is_str_builtin_method(fa.field) && c.args.len() == 1 && expr_is_str(fa.obj, s)) {
+                        return lower_str_method(fa.field, fa.obj, c.args[0], s);
                     }
                     // Builtin `.to_string()` on a PRIMITIVE receiver — distinct
                     // from a struct's generated `to_string` (a @derive(Display)

@@ -77,6 +77,9 @@ function main(): i32 {
         if (wasm_ir.module_uses_str_slice(mod) || wasm_ir.module_emits_op(mod, "str_split")) { o = o + wasm.substr_helper(); }
         // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
         if (wasm_ir.module_emits_op(mod, "str_split")) { o = o + wasm.str_split_helper(); }
+        // Scalar string search predicates (starts_with / ends_with / index_of /
+        // contains) — self-contained, emitted only when used.
+        if (wasm_ir.module_uses_str_predicate(mod)) { o = o + wasm.str_predicate_helpers(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { o = o + wasm.arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
