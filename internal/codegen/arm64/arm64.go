@@ -258,6 +258,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 				g.usesNowUnixMs = true
 			case "monotonic_ns":
 				g.usesMonotonicNs = true
+			case "now_ns":
+				g.usesNowNs = true
 			case "sleep_ms":
 				g.usesSleepMs = true
 			}
@@ -420,6 +422,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesMonotonicNs {
 		g.emitMonotonicNsRuntime()
+	}
+	if g.usesNowNs {
+		g.emitNowNsRuntime()
 	}
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
@@ -3591,6 +3596,55 @@ func (g *generator) emitMonotonicNsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitNowNsRuntime emits `__fern_now_ns()` — wall-clock
+// nanoseconds since the Unix epoch in x0 as i64. On Linux:
+// `clock_gettime(CLOCK_REALTIME, &ts)` (asm-generic syscall 113)
+// → `tv_sec * 1e9 + tv_nsec`. On Darwin (no clock_gettime
+// syscall): `gettimeofday` (BSD 116) fills `struct timeval
+// { i64 tv_sec @0; i32 tv_usec @8 }`, scaled to ns as
+// `tv_sec * 1e9 + tv_usec * 1000`. The nanosecond-resolution twin
+// of now_unix_ms (same realtime clock); errno ignored (fixed
+// clock id + stack buffer we control).
+func (g *generator) emitNowNsRuntime() {
+	g.line("")
+	g.line(".global __fern_now_ns")
+	g.typeDirective("__fern_now_ns")
+	g.label("__fern_now_ns")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	if g.darwin {
+		g.emit("add x0, sp, #16") // timeval buffer
+		g.emit("mov x1, #0")      // tz = NULL
+		g.emit("mov x16, #%d", darGettimeofday)
+		g.emit("svc #0x80")
+		g.emit("ldr x9, [sp, #16]") // tv_sec (i64)
+		g.emit("ldr x10, =1000000000")
+		g.emit("mul x9, x9, x10")    // sec * 1e9
+		g.emit("ldr w11, [sp, #24]") // tv_usec (i32, 0..1e6)
+		g.emit("mov x12, #1000")
+		g.emit("mul x11, x11, x12") // usec * 1000 = ns
+		g.emit("add x0, x9, x11")   // result
+		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ret")
+		g.sizeDirective("__fern_now_ns")
+		g.line(".ltorg")
+		return
+	}
+	g.emit("add x1, sp, #16") // &timespec
+	g.emit("mov x0, #0")      // CLOCK_REALTIME
+	g.emit("mov x8, #%d", sysClockGettime)
+	g.emit("svc #0")
+	g.emit("ldr x9, [sp, #16]") // tv_sec (i64)
+	g.emit("ldr x10, =1000000000")
+	g.emit("mul x9, x9, x10")    // sec * 1e9
+	g.emit("ldr x11, [sp, #24]") // tv_nsec (i64, 0..1e9)
+	g.emit("add x0, x9, x11")    // result
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_now_ns")
+	g.line(".ltorg")
+}
+
 // emitSleepMsRuntime emits `__fern_sleep_ms(ms)` — pause for
 // `ms` milliseconds (arg in x0, i64). ms <= 0 returns at once.
 // Splits ms into a timespec `{ tv_sec = ms/1000; tv_nsec =
@@ -5873,6 +5927,11 @@ type generator struct {
 	// Linux (returns `tv_sec * 1e9 + tv_nsec` in x0), or the
 	// CNTVCT_EL0/CNTFRQ_EL0 architectural counter on Darwin.
 	usesMonotonicNs bool
+	// usesNowNs pulls in `__fern_now_ns()` — wall-clock nanoseconds since
+	// the Unix epoch via `clock_gettime(CLOCK_REALTIME, &ts)` (#113) on
+	// Linux (returns `tv_sec * 1e9 + tv_nsec` in x0), or `gettimeofday`
+	// (BSD 116) scaled to ns on Darwin. The nanosecond twin of now_unix_ms.
+	usesNowNs bool
 	// usesSleepMs pulls in `__fern_sleep_ms(ms)` — best-effort sleep
 	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#101) on
 	// Linux, or `select(0,…,&timeout)` (BSD 93) on Darwin; ms <= 0
@@ -8288,6 +8347,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// in x0; backs benchmark/elapsed timing.
 			target = "__fern_monotonic_ns"
 			g.usesMonotonicNs = true
+		case "now_ns":
+			// now_ns(): wall-clock nanoseconds since the Unix epoch
+			// via clock_gettime(CLOCK_REALTIME, ...) (Linux) or
+			// gettimeofday scaled to ns (Darwin). Returns i64 in x0.
+			target = "__fern_now_ns"
+			g.usesNowNs = true
 		case "sleep_ms":
 			// sleep_ms(ms): best-effort sleep via nanosleep (Linux)
 			// or select (Darwin). Void.

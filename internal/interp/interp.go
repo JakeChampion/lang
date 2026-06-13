@@ -540,6 +540,7 @@ func New() *Interp {
 	// right trade for the migration: tests run under
 	// `fern -interp` regardless of which backend they exercise.
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
+	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
@@ -1385,6 +1386,17 @@ func builtinNowUnixMS(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("now_unix_ms: expected 0 args, got %d", len(args))
 	}
 	return Number(time.Now().UnixMilli()), nil
+}
+
+// builtinNowNS returns wall-clock nanoseconds since 1970-01-01
+// UTC — the nanosecond-resolution twin of now_unix_ms (same
+// realtime clock). NTP-adjustable; use `monotonic_ns` for
+// timing. Wraps `time.Now().UnixNano()`.
+func builtinNowNS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("now_ns: expected 0 args, got %d", len(args))
+	}
+	return Number(time.Now().UnixNano()), nil
 }
 
 // builtinMonotonicNS returns nanoseconds from a monotonic
