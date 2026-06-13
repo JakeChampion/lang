@@ -6250,10 +6250,40 @@ function lambda_captures(lam: parser.ExprLambda, gfns: string[]): string[] {
     return caps;
 }
 
+// lit_init_type infers a capture's type from a literal-shaped initializer:
+// scalar literals (i32 / string / boolean — float declines, matching the old
+// scalar behaviour), array literals (element type from the first element, so
+// `[1,2,3]` is `i32[]` and `["a"]` is `string[]`), and struct literals (their
+// named type). "" when it can't infer — the caller then declines the lift,
+// leaving the closure on the AST path. Pure AST analysis: the inferred type
+// only labels the lifted function's capture PARAM, so an unannotated
+// array/struct capture flows exactly like the already-supported annotated /
+// param-typed array capture (passed by value as an ordinary argument — no env
+// box, no RC). Keeps cap_type small (#2720 oversized-function guard).
+function lit_init_type(e: parser.Expr): string {
+    match (e) {
+        parser.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
+        parser.ExprString(_) => { return "string"; },
+        parser.ExprBool(_) => { return "boolean"; },
+        parser.ExprArray(a) => {
+            if (a.elements.len() == 0) { return ""; }
+            var et: string = lit_init_type(a.elements[0]);
+            if (et.len() == 0) { return ""; }
+            return et + "[]";
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.type_name.len() == 0) { return ""; }
+            return sl.type_name;
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // cap_type resolves a captured variable's type from the enclosing function: a
-// param type, an annotated `var c: T`, or a literal-initialised `var c = <lit>`.
-// "" when it can't (the caller then declines the lift). Mirrors
-// ssa.resolve_capture_type.
+// param type, an annotated `var c: T`, or a literal-initialised `var c = <lit>`
+// (scalar, array, or struct literal — see lit_init_type). "" when it can't (the
+// caller then declines the lift). Mirrors ssa.resolve_capture_type.
 function cap_type(name: string, fd: parser.FuncDecl): string {
     var pi: i32 = 0;
     while (pi < fd.params.len()) {
@@ -6266,12 +6296,7 @@ function cap_type(name: string, fd: parser.FuncDecl): string {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     if (v.type_name.len() > 0) { return v.type_name; }
-                    match (v.init) {
-                        parser.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
-                        parser.ExprString(_) => { return "string"; },
-                        parser.ExprBool(_) => { return "boolean"; },
-                        _ => { return ""; }
-                    }
+                    return lit_init_type(v.init);
                 }
             },
             _ => { }
