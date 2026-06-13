@@ -132,6 +132,39 @@ pub function assert_eq[T: Display + Eq](actual: T, expected: T): Option[string] 
 }
 ```
 
+## 3a. Display spine: `print` / `write` / `eprint` (#2696)
+
+`Display` is the language's stringification spine: a type implements it by
+providing `to_string(self: Self): string`. The output builtins route
+through it, so any `Display` value can be printed directly — no
+stringify-first dance:
+
+```fern
+import "std/i32";
+import "core/cmp";
+
+@derive(cmp.Display)
+struct Point { x: i32, y: i32 }
+
+function main(): i32 {
+    var p: Point = Point { x: 1, y: 2 };
+    print(42);   // was: print((42).to_string())
+    print(p);    // was: print(p.to_string())  →  "Point { x: 1, y: 2 }"
+    return 0;
+}
+```
+
+`print(x)` / `write(x)` / `eprint(x)` accept any `T` whose type carries a
+`to_string(): string` in scope — a `@derive(Display)` / `impl Display`
+type, a scalar with its stdlib `to_string` imported, or a bounded generic
+`T: Display`. A plain `string` argument is passed through unchanged; a
+non-string argument is rewritten by the checker to `arg.to_string()` (the
+same desugar f-strings use), so the value stringifies through the trait
+before reaching the string-only runtime helper. A type with no `to_string`
+in scope is rejected with a `Display`-specific diagnostic. This is a
+checker-stage rewrite only — the formatter still renders the source
+`print(x)` form, and every backend sees an ordinary `print(string)` call.
+
 ## 4. Dispatch model
 
 **Static, by monomorphisation. No vtables, no runtime lookup.**

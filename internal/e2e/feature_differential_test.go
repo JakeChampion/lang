@@ -545,6 +545,52 @@ function main(): i32 {
     print(m.get_or(3, -1).to_string());
     return 0;
 }`},
+		// ---- Display spine (#2696): print/write/eprint take any T: Display ----
+		// `print(x)` auto-stringifies through Display instead of forcing
+		// `print(x.to_string())`. The desugared `.to_string()` call must
+		// lower identically on every backend, so the rendered scalars must
+		// agree with the interp oracle.
+		{"display_print_scalars", `import "std/i32";
+import "std/i64";
+import "core/cmp";
+function main(): i32 {
+    var a: i32 = 42;
+    var b: i64 = 9000000000;
+    var ok: boolean = true;
+    print(a);
+    print(b);
+    print(ok);
+    write("x=");
+    print(a);
+    return 0;
+}`},
+		// A `@derive(Display)` struct passed straight to `print` renders via
+		// the synthesised `to_string`, same bytes on every backend.
+		{"display_print_struct", `import "std/i32";
+import "core/cmp";
+@derive(cmp.Display)
+struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var p: Point = Point { x: 1, y: 2 };
+    print(p);
+    return 0;
+}`},
+		// (Bounded-generic `T: Display` forwarded to `print` is covered by
+		// the checker test TestCheckPrintDisplayGeneric — this differential
+		// oracle doesn't run the monomorphiser, so a generic case is skipped
+		// here.)
+		// A derived enum routed through print renders its variant form.
+		{"display_print_enum", `import "std/i32";
+import "core/cmp";
+@derive(cmp.Display)
+enum Shape { Circle(i32), Empty }
+function main(): i32 {
+    var c: Shape = Circle(5);
+    var e: Shape = Empty;
+    print(c);
+    print(e);
+    return 0;
+}`},
 	}
 	for _, c := range cases {
 		c := c
