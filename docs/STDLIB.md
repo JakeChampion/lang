@@ -764,6 +764,18 @@ the `Map.set` / `get_or` / `has` / `delete` / `iter` / `len` /
 User code calls those methods; the IR rewrites the dispatch to
 the `_impl` functions here at codegen time.
 
+**Cost note — `keys()` / `values()` allocate.** Each call builds a
+*fresh* array snapshot of the column (retaining/inc-ref'ing every
+element), so calling either inside a loop — or re-evaluating
+`for k in m.keys()` per iteration — re-snapshots every time. For the
+common "visit every entry" case prefer **`for (k, v) in m`**, which
+desugars to the `MapIter` cursor (`m.iter()` / `has_next()` / `key()` /
+`value()` / `advance()`) and walks entries in insertion order **without
+per-iteration allocation**. Reach for `keys()` / `values()` only when
+you genuinely need a materialised `K[]` / `V[]` (to sort, index, or
+retain past the map's lifetime). A snapshot-free `entries()`-style
+protocol for the general case is tracked in #2686.
+
 22 internal functions:
 
 - Layout: `__map_pow2_ceil`, `__map_hash`

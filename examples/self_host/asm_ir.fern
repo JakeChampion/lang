@@ -142,6 +142,7 @@ function module_uses_heap(mod: parser.Module): boolean {
             // to_upper / to_lower allocate the fresh cased string box.
             if (r.ops[i].kind == "str_split") { return true; }
             if (r.ops[i].kind == "str_to_upper" || r.ops[i].kind == "str_to_lower") { return true; }
+            if (r.ops[i].kind == "str_repeat") { return true; }
             // alloc_u8 / arr_push / str_from_bytes all allocate (via
             // __fern_alloc / __fern_arr_box) — pull in the heap runtime even for a
             // program whose ONLY allocation is `__alloc_u8(n)` (no array literal).
@@ -296,6 +297,36 @@ function emit_ir_str_case(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lir_lower_box:\n    movq $16, %rdi\n    call __fern_alloc\n");
     s = s.write("    movq %r14, (%rax)\n    movq %r13, 8(%rax)\n");
     s = s.write("    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
+    return s;
+}
+
+// emit_ir_str_repeat appends __fern_str_repeat (s, n) — n copies of `s` in a
+// fresh buffer + box, transcribed verbatim from asm.fern. n <= 0 → empty box.
+// Heap-dependent (calls __fern_alloc), gated on the str_repeat need. Its own
+// function — see emit_ir_str_search re #2720.
+function emit_ir_str_repeat(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_str_repeat:\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
+    s = s.write("    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
+    s = s.write("    movq (%rdi), %r12\n    movq 8(%rdi), %r13\n    movq %rsi, %r14\n");
+    s = s.write("    cmpq $0, %r14\n    jg .Lir_rep_compute\n");
+    s = s.write("    movq $0, %r13\n    movq $0, %r14\n");
+    s = s.write(".Lir_rep_compute:\n");
+    s = s.write("    movq %r13, %rax\n    imulq %r14, %rax\n    movq %rax, %r15\n");
+    s = s.write("    movq %r15, %rdi\n    cmpq $0, %rdi\n    jne .Lir_rep_alloc\n    movq $1, %rdi\n");
+    s = s.write(".Lir_rep_alloc:\n    call __fern_alloc\n");
+    s = s.write("    movq %rax, %rdi\n    movq %rax, %r8\n");
+    s = s.write("    cmpq $0, %r14\n    je .Lir_rep_box\n");
+    s = s.write(".Lir_rep_outer:\n");
+    s = s.write("    movq %r12, %rsi\n    movq %r13, %rcx\n    cmpq $0, %rcx\n    je .Lir_rep_next\n");
+    s = s.write(".Lir_rep_inner:\n");
+    s = s.write("    movzbq (%rsi), %rax\n    movb %al, (%rdi)\n");
+    s = s.write("    incq %rsi\n    incq %rdi\n    decq %rcx\n    jne .Lir_rep_inner\n");
+    s = s.write(".Lir_rep_next:\n    decq %r14\n    cmpq $0, %r14\n    jne .Lir_rep_outer\n");
+    s = s.write(".Lir_rep_box:\n");
+    s = s.write("    movq %r8, %r12\n    movq $16, %rdi\n    call __fern_alloc\n");
+    s = s.write("    movq %r12, (%rax)\n    movq %r15, 8(%rax)\n");
+    s = s.write("    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
     return s;
 }
 
@@ -1603,6 +1634,10 @@ function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "rem_s" && width == 64) { return "    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
     if (kind == "div_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n"; }
     if (kind == "rem_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
+    // Unsigned 64-bit div/rem (u64, #2904): zero RDX, divq (no sign-extend). The
+    // operands are full 64-bit u64 values, so no movslq truncation.
+    if (kind == "div_u") { return "    xorl %edx, %edx\n    divq %rcx\n"; }
+    if (kind == "rem_u") { return "    xorl %edx, %edx\n    divq %rcx\n    movq %rdx, %rax\n"; }
     if (kind == "and") { return "    andq %rcx, %rax\n"; }
     if (kind == "or") { return "    orq %rcx, %rax\n"; }
     if (kind == "xor") { return "    xorq %rcx, %rax\n"; }
@@ -1615,6 +1650,12 @@ function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "le_s") { return "    cmpq %rcx, %rax\n    setle %al\n    movzbq %al, %rax\n"; }
     if (kind == "gt_s") { return "    cmpq %rcx, %rax\n    setg %al\n    movzbq %al, %rax\n"; }
     if (kind == "ge_s") { return "    cmpq %rcx, %rax\n    setge %al\n    movzbq %al, %rax\n"; }
+    // Unsigned 64-bit compares (u64, #2904): same cmpq, but the below/above
+    // setcc family reads CF instead of SF/OF — correct once bit 63 is set.
+    if (kind == "lt_u") { return "    cmpq %rcx, %rax\n    setb %al\n    movzbq %al, %rax\n"; }
+    if (kind == "le_u") { return "    cmpq %rcx, %rax\n    setbe %al\n    movzbq %al, %rax\n"; }
+    if (kind == "gt_u") { return "    cmpq %rcx, %rax\n    seta %al\n    movzbq %al, %rax\n"; }
+    if (kind == "ge_u") { return "    cmpq %rcx, %rax\n    setae %al\n    movzbq %al, %rax\n"; }
     return "    # ir: unsupported bin " + kind + "\n";
 }
 
@@ -1637,7 +1678,7 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 function is_str_op_kind(k: string): boolean {
     return k == "str_len" || k == "str_index" || k == "str_slice"
         || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
-        || k == "str_to_lower" || k == "str_starts_with"
+        || k == "str_to_lower" || k == "str_repeat" || k == "str_starts_with"
         || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
         || k == "str_eq" || k == "str_cmp";
 }
@@ -1687,6 +1728,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         if (o.kind == "str_to_lower") { cfn = "__fern_str_to_lower"; }
         s = s.write("    popq %rdi\n    call " + cfn + "\n    pushq %rax\n");
         return s.mark_str_case();
+    }
+    if (o.kind == "str_repeat") {
+        // operand stack [s box, n] (n on top); __fern_str_repeat(%rdi=s, %rsi=n)
+        // -> fresh string box in %rax (emit_ir_str_repeat provides the body).
+        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_repeat\n    pushq %rax\n");
+        return s.mark_str_repeat();
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
         // operand stack [s box, p box] (p on top); __fern_str_<pred>(%rdi=s,
@@ -2259,6 +2306,8 @@ pub function emit_module_ir(mod: parser.Module): string {
     // ASCII case transforms (to_upper / to_lower) — heap-dependent, so the heap
     // runtime is already present; emitted on their own str_case need.
     if (s.has_need("str_case")) { s = emit_ir_str_case(s); }
+    // String repeat — heap-dependent, gated on its str_repeat need.
+    if (s.has_need("str_repeat")) { s = emit_ir_str_repeat(s); }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
