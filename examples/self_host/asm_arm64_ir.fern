@@ -64,6 +64,7 @@ function ir_bin_asm(kind: string): string {
     if (kind == "xor") { return "    eor x0, x0, x1\n"; }
     if (kind == "shl") { return "    lsl x0, x0, x1\n"; }
     if (kind == "shr_s") { return "    asr x0, x0, x1\n"; }
+    if (kind == "shr_u") { return "    lsr x0, x0, x1\n"; }
     if (kind == "eq") { return "    cmp x0, x1\n    cset x0, eq\n"; }
     if (kind == "ne") { return "    cmp x0, x1\n    cset x0, ne\n"; }
     if (kind == "lt_s") { return "    cmp x0, x1\n    cset x0, lt\n"; }
@@ -143,6 +144,33 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             if (o.unsigned) { s = s.write("    mov w0, w0\n"); }
             else { s = s.write("    sxtw x0, w0\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "u32_wrap") {
+            // Reduce to the u32 range (writing w0 zeroes x0's upper 32) — wraps a
+            // u32 arith result at 2^32 on this 64-bit-register backend.
+            s = s.write("    ldr x0, [sp], #16\n    mov w0, w0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "int_cast") {
+            // `x as <ty>` int→int width mask/extend — matches asm_arm64's as_<ty>.
+            s = s.write("    ldr x0, [sp], #16\n");
+            if (o.str == "u8") { s = s.write("    and x0, x0, #255\n"); }
+            else if (o.str == "u16") { s = s.write("    and x0, x0, #65535\n"); }
+            else if (o.str == "u32") { s = s.write("    mov w0, w0\n"); }
+            else if (o.str == "i8") { s = s.write("    sxtb x0, w0\n"); }
+            else if (o.str == "i16") { s = s.write("    sxth x0, w0\n"); }
+            else if (o.str == "i32") { s = s.write("    sxtw x0, w0\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "arr_push") {
+            // [arr, val] -> grown array. __fern_arr_push(x0=arr, x1=val) -> x0.
+            s = s.mark_arr_push();
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_push\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "alloc_u8") {
+            // [n] -> fresh n-element array. __fern_alloc_u8(x0=n) -> x0 (in heap
+            // block of asm_arm64.emit_runtime).
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_alloc_u8\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "str_from_bytes") {
+            // [arr] -> string box. __fern_string_from_bytes(x0=arr) -> x0.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_string_from_bytes\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "load_local") {
             s = fr_ldr(s, "x0", 0 - 8 * (o.i32_imm + 1));
             s = s.write("    str x0, [sp, #-16]!\n");

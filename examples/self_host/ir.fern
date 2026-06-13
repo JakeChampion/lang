@@ -203,6 +203,28 @@ pub function op_arr_get_i64(): Op { return Op { kind: "arr_get", i32_imm: 0, i64
 pub function op_arr_set_i64(): Op { return Op { kind: "arr_set", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 pub function op_arr_len(): Op { return op0("arr_len"); }
 pub function op_arr_rc(): Op { return op0("arr_rc"); }
+// `arr_push` pops [arr, val] → a (possibly grown) array with `val` appended via
+// __fern_arr_push (the helper the AST `.append` and the map runtime use).
+// Lowered from a reassign-self `a = a.append(v)`; the result re-binds the slot.
+pub function op_arr_push(): Op { return op0("arr_push"); }
+// `alloc_u8` pops [n] → a fresh n-element array (8-byte slots, len = n) via
+// __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin). Contents are NOT
+// zeroed (a reused freelist block keeps stale bytes — callers zero explicitly).
+pub function op_alloc_u8(): Op { return op0("alloc_u8"); }
+// `str_from_bytes` pops [arr] → a fresh string box packing each slot's low byte
+// via __fern_string_from_bytes (the `string_from_bytes(arr)` builtin).
+pub function op_str_from_bytes(): Op { return op0("str_from_bytes"); }
+// `int_cast` masks / extends a 32-bit integer to a narrower int type's range:
+// `as u8` (and 255), `as u16` (and 65535), `as i8`/`as i16` (sign-extend),
+// `as i32` (sign-extend low 32 — movslq), `as u32` (zero-extend low 32 — movl).
+// The target type name rides `str`. Mirrors asm.fern's `as_<ty>` int→int masking.
+pub function op_int_cast(ty: string): Op { return Op { kind: "int_cast", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty }; }
+// `u32_wrap` reduces a value on the operand stack to its u32 range (zero-extend
+// low 32 bits). Emitted after a u32 arithmetic op (add/sub/mul/shl) on the
+// 64-bit REGISTER backends so u32 semantics wrap at 2^32 like native (and like
+// wasm's native 32-bit i32 ops); on wasm it is a no-op (the value is already a
+// 32-bit i32). This is what makes u32-heavy code (std/crypto's SHA-256) correct.
+pub function op_u32_wrap(): Op { return op0("u32_wrap"); }
 
 // high-level string ops — layout-agnostic, like the array ops. The IR carries
 // string SEMANTICS (length read, concat, equality); each backend selects its

@@ -96,6 +96,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
 		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},
 		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
+		// Int→int casts (op_int_cast) — i32.and / extend8_s / extend16_s; u32/i32
+		// are identity (the i32 bit pattern is the result).
+		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},
+		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"},
+		{"cast-chain", "function main(): i32 { var x: i32 = 65; return (x as u8) as i32; }"},
 		{"compare", "function main(): i32 { return 5 < 10; }"},
 		{"unary-not", "function main(): i32 { return !(5 > 10); }"},
 		{"if-taken", "function main(): i32 { var x = 1; if (5 < 10) { x = 7; } return x; }"},

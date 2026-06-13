@@ -40,7 +40,9 @@ pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[], str_
     // whether `for b in greet()` (a string-returning-call iterable) types as a
     // string and lowers via the byte-foreach path, or falls to the array
     // snapshot path and bails (#2822). strarr/arr stay empty (emit-only — they
-    // change op selection, not whether a function lowers).
+    // change op selection, not whether a function lowers; a reassign-self
+    // `w = w.with(...)` stays eligible because a `var w: T[]` binding marks the
+    // slot an array from its DECLARED type, not from the array-return registry).
     // fn_param_sigs IS threaded: it decides whether a bare function-name arg
     // lowers to const_func (ok) or falls through to a bail, so it affects ok.
     var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, str_ret_fns, noret, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, noret, noret, noret, fn_param_sigs, closure_fns);
@@ -137,6 +139,10 @@ function module_uses_heap(mod: parser.Module): boolean {
             // random_bytes allocates the byte buffer + string box; str_bytes
             // allocates the result u8[] (both via __fern_alloc / __fern_arr_box).
             if (r.ops[i].kind == "random_bytes" || r.ops[i].kind == "str_bytes") { return true; }
+            // alloc_u8 / arr_push / str_from_bytes all allocate (via
+            // __fern_alloc / __fern_arr_box) — pull in the heap runtime even for a
+            // program whose ONLY allocation is `__alloc_u8(n)` (no array literal).
+            if (r.ops[i].kind == "alloc_u8" || r.ops[i].kind == "arr_push" || r.ops[i].kind == "str_from_bytes") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -804,9 +810,50 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // Map runtime (transcribed from asm.fern) — only for map-using modules, so a
-    // non-map heap program doesn't pull in map_set's __fern_str_eq dependency.
-    if (s.has_need("maps")) {
+    // __fern_string_from_bytes — `string_from_bytes(arr)` packs each 8-byte
+    // slot's low byte into a fresh string box [data@0, len@8]. Transcribed
+    // verbatim from asm.fern so the IR path is a byte-compatible drop-in.
+    if (s.has_need("str_from_bytes")) {
+        s = s.write(".globl __fern_string_from_bytes\n");
+        s = s.write(".type __fern_string_from_bytes, @function\n");
+        s = s.write("__fern_string_from_bytes:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq (%rbx), %r12\n");      // len
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    call __fern_alloc\n");       // len-byte buffer
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq $0, %r14\n");
+        s = s.write(".Lir_sfb_loop:\n");
+        s = s.write("    cmpq %r12, %r14\n");
+        s = s.write("    jge .Lir_sfb_done\n");
+        s = s.write("    movq %r14, %rax\n");
+        s = s.write("    incq %rax\n");
+        s = s.write("    movq (%rbx,%rax,8), %rcx\n"); // slot (i+1)*8
+        s = s.write("    movb %cl, (%r13,%r14,1)\n");  // low byte
+        s = s.write("    incq %r14\n");
+        s = s.write("    jmp .Lir_sfb_loop\n");
+        s = s.write(".Lir_sfb_done:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");       // data@0
+        s = s.write("    movq %r12, 8(%rax)\n");      // len@8
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_string_from_bytes, .-__fern_string_from_bytes\n");
+    }
+    // __fern_alloc_u8 — the `__alloc_u8(n)` byte-buffer builtin (std/crypto et
+    // al.) and the map runtime use it. Gated on its own need OR maps.
+    if (s.has_need("alloc_u8") || s.has_need("maps")) {
     // __fern_alloc_u8 (transcribed from asm.fern for the IR map path).
     s = s.write(".globl __fern_alloc_u8\n");
     s = s.write(".type __fern_alloc_u8, @function\n");
@@ -821,7 +868,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_alloc_u8, .-__fern_alloc_u8\n");
+    }
 
+    // __fern_arr_push — `a = a.append(v)` and the map runtime. Gated on its own
+    // need OR maps.
+    if (s.has_need("arr_push") || s.has_need("maps")) {
     // __fern_arr_push (transcribed from asm.fern for the IR map path).
     s = s.write("__fern_arr_push:\n");
     s = s.write("    pushq %rbp\n");
@@ -877,7 +928,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %r12\n");
     s = s.write("    leave\n");
     s = s.write("    ret\n");
+    }
 
+    // Map runtime (transcribed from asm.fern) — only for map-using modules, so a
+    // non-map heap program doesn't pull in map_set's __fern_str_eq dependency.
+    if (s.has_need("maps")) {
     // __fern_map_new (transcribed from asm.fern for the IR map path).
     s = s.write(".globl __fern_map_new\n");
     s = s.write(".type __fern_map_new, @function\n");
@@ -1264,6 +1319,7 @@ function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "xor") { return "    xorq %rcx, %rax\n"; }
     if (kind == "shl") { return "    shlq %cl, %rax\n"; }
     if (kind == "shr_s") { return "    sarq %cl, %rax\n"; }
+    if (kind == "shr_u") { return "    shrq %cl, %rax\n"; }
     if (kind == "eq") { return "    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n"; }
     if (kind == "ne") { return "    cmpq %rcx, %rax\n    setne %al\n    movzbq %al, %rax\n"; }
     if (kind == "lt_s") { return "    cmpq %rcx, %rax\n    setl %al\n    movzbq %al, %rax\n"; }
@@ -1357,6 +1413,32 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             if (o.unsigned) { s = s.write("    movl %eax, %eax\n"); }
             else { s = s.write("    movslq %eax, %rax\n"); }
             s = s.write("    pushq %rax\n");
+        } else if (o.kind == "u32_wrap") {
+            // Reduce to the u32 range (zero-extend low 32) — wraps a u32 arith
+            // result at 2^32 on this 64-bit-register backend.
+            s = s.write("    popq %rax\n    movl %eax, %eax\n    pushq %rax\n");
+        } else if (o.kind == "int_cast") {
+            // `x as <ty>` int→int width mask/extend — byte-identical to asm.fern.
+            s = s.write("    popq %rax\n");
+            if (o.str == "u8") { s = s.write("    andq $255, %rax\n"); }
+            else if (o.str == "u16") { s = s.write("    andq $65535, %rax\n"); }
+            else if (o.str == "u32") { s = s.write("    movl %eax, %eax\n"); }
+            else if (o.str == "i8") { s = s.write("    movsbq %al, %rax\n"); }
+            else if (o.str == "i16") { s = s.write("    movswq %ax, %rax\n"); }
+            else if (o.str == "i32") { s = s.write("    movslq %eax, %rax\n"); }
+            s = s.write("    pushq %rax\n");
+        } else if (o.kind == "arr_push") {
+            // [arr, val] -> grown array. __fern_arr_push(%rdi=arr, %rsi=val).
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push\n    pushq %rax\n");
+            s = s.mark_arr_push();
+        } else if (o.kind == "alloc_u8") {
+            // [n] -> fresh n-element array. __fern_alloc_u8(%rdi=n).
+            s = s.write("    popq %rdi\n    call __fern_alloc_u8\n    pushq %rax\n");
+            s = s.need("heap").need("alloc_u8");
+        } else if (o.kind == "str_from_bytes") {
+            // [arr] -> string box packing each slot's low byte.
+            s = s.write("    popq %rdi\n    call __fern_string_from_bytes\n    pushq %rax\n");
+            s = s.need("heap").need("str_from_bytes");
         } else if (o.kind == "load_local") {
             s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
         } else if (o.kind == "store_local") {
