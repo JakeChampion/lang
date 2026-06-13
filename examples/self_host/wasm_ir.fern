@@ -504,19 +504,18 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // so a clock module also stays on the wasm AST path; x86 / arm64 lower it
     // via the IR. sleep_ms likewise has no wasm runtime (a WASI poll-based sleep
     // is the deferred #2843 item), so a sleep module stays off the wasm IR path.
-    // `m.without(k)` (map_delete) returns a [map, existed] tuple on the register
-    // backends, but wasm's $__fern_map_delete returns just the box — a different
-    // ABI the IR tuple-destructure path doesn't model, so a delete module stays on
-    // the wasm AST path (which handles wasm's box-return form). x86 / arm64 lower
-    // it via the IR (#2926). Wasm IR map-delete support is a deferred follow-up.
+    // `m.without(k)` (map_delete) now lowers via the IR: wasm's
+    // $__fern_map_delete returns a [map, existed] tuple box (the wasm tuple ABI,
+    // element i at offset i*4) matching the register backends, so the IR
+    // tuple-destructure reads it correctly (#2933 — previously it returned just
+    // the box, a different ABI, so a delete module was pinned to the AST path).
     return asm_ir.eligible_core(mod)
         && !module_emits_op(mod, "read_int")
         && !module_emits_op(mod, "read_line")
         && !module_emits_op(mod, "monotonic_ns")
         && !module_emits_op(mod, "now_unix_ms")
         && !module_emits_op(mod, "now_ns")
-        && !module_emits_op(mod, "sleep_ms")
-        && !module_emits_op(mod, "map_delete");
+        && !module_emits_op(mod, "sleep_ms");
 }
 
 // should_use_ir: the use_ir default is on AND the module is wasm-eligible — the
@@ -964,6 +963,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    call $__fern_map_get\n";
         } else if (o.kind == "map_has") {
             out = out + "    call $__fern_map_has\n";
+        } else if (o.kind == "map_delete") {
+            // stack: map, k -> $__fern_map_delete -> [map, existed] tuple box
+            // (the wasm helper reads the keykind from the box, so the op's
+            // keykind imm — used by the register backends — is unneeded here).
+            // The tuple-destructure that consumes `.without`'s result reads
+            // element i at offset i*4, matching $__fern_map_delete's box. #2933.
+            out = out + "    call $__fern_map_delete\n";
         } else if (o.kind == "map_get_or") {
             // stack: map, k, default -> $__fern_map_get_or -> value.
             out = out + "    call $__fern_map_get_or\n";
