@@ -68,19 +68,47 @@ func main() {
 
 type module struct {
 	name     string // bare module name, e.g. "string"
+	prefix   string // module namespace: "std" or "core"
 	fileName string // file basename without extension, used in the sidebar
 	prog     *ast.Program
 	src      string
 }
 
 // collectModules iterates the embedded stdlib filesystem for
-// std/*.fern files, parses each, and returns the loaded list. We
-// skip `_test_*` files (per-test stubs) and files whose parser
-// rejects their content — those would surface as bigger errors in
-// the regular build.
+// std/*.fern and core/*.fern files, parses each, and returns the
+// loaded list. We skip `_test_*` files (per-test stubs) and files
+// whose parser rejects their content — those would surface as bigger
+// errors in the regular build.
 func collectModules() ([]module, error) {
 	var out []module
-	err := fs.WalkDir(stdlib.FS(), "std", func(path string, d fs.DirEntry, err error) error {
+	// Both namespaces are real import roots (`import "std/io"`,
+	// `import "core/map"`), so both deserve reference pages.
+	for _, root := range []string{"std", "core"} {
+		mods, err := collectFrom(root)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, mods...)
+	}
+	// Guard against a std/core filename clash silently clobbering a
+	// page on write — surface it loudly instead.
+	seen := map[string]string{}
+	for _, m := range out {
+		if prev, ok := seen[m.fileName]; ok {
+			return nil, fmt.Errorf("ferndoc: module page name %q collides (%s and %s/%s)",
+				m.fileName, prev, m.prefix, m.name)
+		}
+		seen[m.fileName] = m.prefix + "/" + m.name
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].fileName < out[j].fileName })
+	return out, nil
+}
+
+// collectFrom walks a single embedded namespace dir (`std` or
+// `core`) and returns its parseable, non-test modules.
+func collectFrom(root string) ([]module, error) {
+	var out []module
+	err := fs.WalkDir(stdlib.FS(), root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -110,6 +138,7 @@ func collectModules() ([]module, error) {
 		modName := strings.TrimSuffix(base, ".fern")
 		out = append(out, module{
 			name:     modName,
+			prefix:   root,
 			fileName: modName,
 			prog:     prog,
 			src:      src,
@@ -119,14 +148,14 @@ func collectModules() ([]module, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out, nil
 }
 
 func renderModule(m module) (string, error) {
 	var b strings.Builder
-	frontMatter(&b, m.name, "Standard library reference for std/"+m.name+".")
-	b.WriteString(fmt.Sprintf("# `std/%s`\n\n", m.name))
+	modPath := m.prefix + "/" + m.name
+	frontMatter(&b, modPath, "Standard library reference for "+modPath+".")
+	b.WriteString(fmt.Sprintf("# `%s`\n\n", modPath))
 	// Top-of-file doc: any comment(s) at line 1 that don't
 	// immediately precede a decl. Treat as the module's overview.
 	if intro := moduleIntro(m); intro != "" {
@@ -192,6 +221,18 @@ func renderModule(m module) (string, error) {
 			},
 		})
 	}
+	for _, td := range m.prog.Traits {
+		if td == nil || !td.Public {
+			continue
+		}
+		td := td
+		decls = append(decls, decl{
+			pos: td.P,
+			render: func(b *strings.Builder) {
+				renderTrait(b, td, cw)
+			},
+		})
+	}
 	sort.Slice(decls, func(i, j int) bool {
 		if decls[i].pos.Line != decls[j].pos.Line {
 			return decls[i].pos.Line < decls[j].pos.Line
@@ -199,18 +240,19 @@ func renderModule(m module) (string, error) {
 		return decls[i].pos.Col < decls[j].pos.Col
 	})
 
-	if len(decls) == 0 {
+	if len(decls) == 0 && len(m.prog.Impls) == 0 {
 		return "", nil // skip empty modules
 	}
 	for _, d := range decls {
 		d.render(&b)
 	}
+	renderImpls(&b, m.prog.Impls)
 	return b.String(), nil
 }
 
-func frontMatter(b *strings.Builder, name, description string) {
+func frontMatter(b *strings.Builder, title, description string) {
 	b.WriteString("---\n")
-	b.WriteString("title: std/" + name + "\n")
+	b.WriteString("title: " + title + "\n")
 	b.WriteString("description: " + description + "\n")
 	b.WriteString("---\n\n")
 }
@@ -281,6 +323,11 @@ func firstDeclLineNum(prog *ast.Program) int {
 	for _, cd := range prog.Consts {
 		if cd != nil {
 			consider(cd.P.Line)
+		}
+	}
+	for _, td := range prog.Traits {
+		if td != nil {
+			consider(td.P.Line)
 		}
 	}
 	return min
@@ -442,6 +489,81 @@ func renderEnum(b *strings.Builder, ed *ast.EnumDecl, cw *commentWalker) {
 		b.WriteString(doc)
 		b.WriteString("\n\n")
 	}
+}
+
+func renderTrait(b *strings.Builder, td *ast.TraitDecl, cw *commentWalker) {
+	doc := cw.take(td.P.Line)
+	b.WriteString("## `trait ")
+	b.WriteString(td.Name)
+	b.WriteString("`\n\n")
+	b.WriteString("```fern\n")
+	b.WriteString("pub trait ")
+	b.WriteString(td.Name)
+	b.WriteString(" {\n")
+	for _, m := range td.Methods {
+		// An ordinary method carries `self: Self` as Params[0]; an
+		// associated function (Assoc) has no self. Render the params
+		// verbatim so both shapes read correctly.
+		b.WriteString("    function ")
+		b.WriteString(m.Name)
+		b.WriteString("(")
+		for i, p := range m.Params {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(p.Name)
+			b.WriteString(": ")
+			b.WriteString(typeStr(p.Type))
+		}
+		b.WriteString("): ")
+		b.WriteString(typeStr(m.Result))
+		b.WriteString(";\n")
+	}
+	b.WriteString("}\n```\n\n")
+	if doc != "" {
+		b.WriteString(doc)
+		b.WriteString("\n\n")
+	}
+}
+
+// renderImpls emits a compact summary of every `impl Trait for Type`
+// in the module, grouped by trait (in first-seen order). A per-impl
+// section would be unreadably repetitive — core/cmp alone has ~30
+// primitive impls — so a Trait → types table conveys the same
+// information at a glance.
+func renderImpls(b *strings.Builder, impls []*ast.ImplDecl) {
+	var order []string
+	byTrait := map[string][]string{}
+	for _, id := range impls {
+		if id == nil {
+			continue
+		}
+		if _, ok := byTrait[id.Trait]; !ok {
+			order = append(order, id.Trait)
+		}
+		byTrait[id.Trait] = append(byTrait[id.Trait], typeStr(id.Type))
+	}
+	if len(order) == 0 {
+		return
+	}
+	b.WriteString("## Implementations\n\n")
+	b.WriteString("| Trait | Implementing types |\n")
+	b.WriteString("| ----- | ------------------ |\n")
+	for _, tr := range order {
+		b.WriteString("| `")
+		b.WriteString(tr)
+		b.WriteString("` | ")
+		for i, t := range byTrait[tr] {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString("`")
+			b.WriteString(t)
+			b.WriteString("`")
+		}
+		b.WriteString(" |\n")
+	}
+	b.WriteString("\n")
 }
 
 func renderConst(b *strings.Builder, cd *ast.ConstDecl, cw *commentWalker) {
