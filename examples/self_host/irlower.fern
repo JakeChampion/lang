@@ -3327,6 +3327,10 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                             _ => {}
                         }
                     }
+                    // `x.method()` where x's method returns Option/Result —
+                    // key by "<Type>.<method>".
+                    var mrty: string = expr_struct_type(scfa.obj, s);
+                    if (mrty != "") { return s.opt_ret_type(mrty + "." + scfa.field); }
                     return "";
                 },
                 _ => { return ""; }
@@ -3875,6 +3879,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprCall(ic) => {
                     match (ic.callee) {
                         parser.ExprIdent(icid) => { opt_ty = se.opt_ret_type(icid.name); },
+                        parser.ExprFieldAccess(ifa) => {
+                            // `var o = x.get()` where x's method returns
+                            // Option/Result — key by "<Type>.<method>" so a
+                            // later `match (o)` recovers the payload type.
+                            var irty: string = expr_struct_type(ifa.obj, se);
+                            if (irty != "") { opt_ty = se.opt_ret_type(irty + "." + ifa.field); }
+                        },
                         _ => {}
                     }
                 },
@@ -4605,6 +4616,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                                         },
                                                         _ => {}
                                                     }
+                                                }
+                                                // `x.method()` where x's method returns Option/Result —
+                                                // key by "<Type>.<method>".
+                                                if (srt == "") {
+                                                    var mrty: string = expr_struct_type(scfa.obj, ms);
+                                                    if (mrty != "") { srt = ms.opt_ret_type(mrty + "." + scfa.field); }
                                                 }
                                             },
                                             _ => {}
@@ -5480,7 +5497,13 @@ pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
         if (rt.len() >= 8 && (rt[0:7] == "Option[" || rt[0:7] == "Result[")) {
-            out = out.append(funcs[k].name + "|" + rt);
+            // Methods are keyed by the qualified "<BaseType>.<method>" (see
+            // i64arr_ret_fns_of) so a `match (x.get())` on a struct-method's
+            // Option/Result result recovers its payload type; free functions
+            // stay keyed by bare name.
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key + "|" + rt);
         }
         k = k + 1;
     }
