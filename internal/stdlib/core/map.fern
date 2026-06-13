@@ -496,6 +496,14 @@ pub function __map_column(m: usize, kvOffset: i32, destStride: i32): usize {
     return arr + hdr;
 }
 
+// __map_keys_impl / __map_values_impl back `m.keys()` / `m.values()`.
+// COST: each call ALLOCATES a fresh length-prefixed array snapshot of the
+// column and retains every element — O(n) time + memory PER CALL. Calling
+// either in a loop (or re-evaluating `for k in m.keys()`) re-snapshots each
+// time. For the common "visit every entry" case use `for (k, v) in m`, which
+// rides the MapIter cursor (__map_iter_impl) with NO per-iteration allocation.
+// Use keys()/values() only when a materialised K[]/V[] is actually needed
+// (sort / index / outlive the map). #2688; snapshot-free general protocol: #2686.
 pub function __map_keys_impl(m: usize): usize {
     var buf: usize = __load_ptr(m);
     var keyKind: i32 = __load_i32(buf + 8);
