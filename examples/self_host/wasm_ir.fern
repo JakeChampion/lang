@@ -200,6 +200,13 @@ function wasm_binop(kind: string): string {
     if (kind == "le_s") { return "i32.le_s"; }
     if (kind == "gt_s") { return "i32.gt_s"; }
     if (kind == "ge_s") { return "i32.ge_s"; }
+    // Unsigned u32 compares (#2917): a u32 >= 2^31 is a signed-negative i32, so
+    // lt_s/gt_s give wrong answers — irlower remaps the kind via to_unsigned_kind
+    // (the same mechanism u64 uses). Mirrors the i64.*_u forms in wasm_binop_w.
+    if (kind == "lt_u") { return "i32.lt_u"; }
+    if (kind == "le_u") { return "i32.le_u"; }
+    if (kind == "gt_u") { return "i32.gt_u"; }
+    if (kind == "ge_u") { return "i32.ge_u"; }
     return ";; ir: unsupported bin " + kind + "\n";
 }
 

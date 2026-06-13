@@ -2303,9 +2303,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // code (the SHA-256 schedule / __rotr) kept stray high bits.
             var ek: string = kind;
             var left_u32: boolean = expr_is_u32(b.left, s);
+            var right_u32: boolean = expr_is_u32(b.right, s);
             if (b.op == ">>" && left_u32) { ek = "shr_u"; }
+            // u32 ORDERING compares need the UNSIGNED IR kind (lt_u/le_u/gt_u/
+            // ge_u): a u32 value ≥ 2^31 is signed-negative in a 32-bit slot, so a
+            // signed compare gives the wrong answer on wasm. Remap via the same
+            // to_unsigned_kind path u64 uses (#2904); the wasm backend then emits
+            // i32.*_u and asm_ir emits setb/seta — both correct for a u32. eq/ne
+            // are sign-agnostic and pass through. (#2917)
+            if ((left_u32 || right_u32) && (kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s")) {
+                ek = to_unsigned_kind(kind);
+            }
             var res: LowerState = s2.emit(ir.op_bin(ek, 0, false));
-            var res_u32: boolean = left_u32 || expr_is_u32(b.right, s);
+            var res_u32: boolean = left_u32 || right_u32;
             if (res_u32 && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
                 res = res.emit(ir.op_u32_wrap());
             }
