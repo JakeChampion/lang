@@ -287,6 +287,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMonotonicNs {
 		g.emitMonotonicNsRuntime()
 	}
+	if g.usesNowNs {
+		g.emitNowNsRuntime()
+	}
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
 	}
@@ -417,6 +420,11 @@ type generator struct {
 	// nanoseconds via `clock_gettime(CLOCK_MONOTONIC, &ts)` (#228),
 	// returning `tv_sec * 1e9 + tv_nsec` in rax as i64.
 	usesMonotonicNs bool
+	// usesNowNs pulls in `__fern_now_ns()` — wall-clock nanoseconds since
+	// the Unix epoch via `clock_gettime(CLOCK_REALTIME, &ts)` (#228),
+	// returning `tv_sec * 1e9 + tv_nsec` in rax as i64. The nanosecond
+	// counterpart of `now_unix_ms`.
+	usesNowNs bool
 	// usesSleepMs pulls in `__fern_sleep_ms(ms)` — best-effort sleep
 	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
 	// returns immediately. Void.
@@ -641,6 +649,8 @@ func (g *generator) recordUse(target string) {
 		g.usesNowUnixMs = true
 	case "monotonic_ns":
 		g.usesMonotonicNs = true
+	case "now_ns":
+		g.usesNowNs = true
 	case "sleep_ms":
 		g.usesSleepMs = true
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
@@ -1677,6 +1687,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_now_unix_ms"
 		case "monotonic_ns":
 			target = "__fern_monotonic_ns"
+		case "now_ns":
+			target = "__fern_now_ns"
 		case "sleep_ms":
 			target = "__fern_sleep_ms"
 		case "tcp_listen":
@@ -4576,6 +4588,34 @@ func (g *generator) emitMonotonicNsRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_monotonic_ns, .-__fern_monotonic_ns")
+}
+
+// emitNowNsRuntime emits `__fern_now_ns()` — wall-clock
+// nanoseconds since the Unix epoch via x86_64
+// `clock_gettime(CLOCK_REALTIME, &ts)` (syscall 228); returns
+// `tv_sec * 1e9 + tv_nsec` in rax. The nanosecond-resolution
+// twin of now_unix_ms (same realtime clock). Stack frame +
+// errno handling identical to monotonic_ns; only the clock id
+// (CLOCK_REALTIME = 0) differs.
+func (g *generator) emitNowNsRuntime() {
+	g.line("")
+	g.line(".globl __fern_now_ns")
+	g.line(".type __fern_now_ns, @function")
+	g.label("__fern_now_ns")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 24")  // 16 timespec + 8 alignment
+	g.emit("xor edi, edi") // CLOCK_REALTIME = 0
+	g.emit("mov rsi, rsp") // &timespec
+	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
+	g.emit("syscall")
+	g.emit("mov rax, [rsp]")            // rax = tv_sec
+	g.emit("imul rax, rax, 1000000000") // sec * 1e9
+	g.emit("add rax, [rsp + 8]")        // + tv_nsec
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_now_ns, .-__fern_now_ns")
 }
 
 // emitSleepMsRuntime emits `__fern_sleep_ms(ms)` — pause for
