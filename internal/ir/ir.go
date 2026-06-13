@@ -1602,6 +1602,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// store's value. Runs before closureconv so the closure
 	// pass sees post-rename names everywhere.
 	shadowrename.Rename(prog, info)
+	// Box captured-and-mutated scalar locals into 1-element array cells so a
+	// closure's write to a captured outer i32/bool/f64 is shared by reference
+	// (the interpreter's closures-as-counters semantics; #2896). Runs after
+	// shadowrename (names are unique, so a closure's reference to a boxed name
+	// is unambiguous) and before closureconv (which then captures the cell
+	// pointer by reference). No-op for functions without such a capture.
+	closureconv.BoxMutatedScalarCaptures(prog, info)
 	if err := closureconv.ConvertWith(prog, info, ptrW); err != nil {
 		return nil, err
 	}
