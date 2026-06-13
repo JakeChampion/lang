@@ -373,6 +373,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-set-chained", `function main(): i32 { var m: Map[string, i32] = map_new(8).set("x", 5).set("y", 7); return m.get_or("y", 0) + m.len(); }`},
 		{"map-set-keyword-literal", `function main(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`},
 		{"map-set-has", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.set("k", 9); var r = 0; if (m.has("k")) { r = r + 1; } if (m.has("z")) { r = r + 10; } return r; }`},
+		// m.without(k) -> (Map, existed). The destructured map re-marks so later
+		// ops on it work; both AST and IR share __fern_map_delete (#2926).
+		{"map-without-len", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var (m2, e) = m.without(1); return m2.len(); }`},
+		{"map-without-existed", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var (m2, e) = m.without(1); if (e) { return 1; } return 0; }`},
+		{"map-without-miss", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var (m2, e) = m.without(99); if (e) { return 1; } return m2.len() + 5; }`},
+		{"map-without-survivor", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var (m2, e) = m.without(1); return m2.get_or(2, 0); }`},
+		{"map-without-removed-gone", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var (m2, e) = m.without(1); if (m2.has(1)) { return 9; } return 0; }`},
+		{"map-without-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("a", 1); m = m.insert("b", 2); var (m2, e) = m.without("a"); return m2.len() + m2.get_or("b", 0); }`},
+		{"map-without-then-insert", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("a", 1); var (m2, e) = m.without("a"); m2 = m2.insert("c", 5); return m2.get_or("c", 0); }`},
 		{"i64-cmp", `function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`},
 		{"i64-add", `function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`},
 		{"i64-mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`},
@@ -515,6 +524,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"reverse-empty", `function main(): i32 { return "".reverse().len() + 4; }`},
 		{"reverse-twice", `function main(): i32 { if ("hello".reverse().reverse() == "hello") { return 7; } return 0; }`},
 		{"reverse-param", `function rev(s: string): i32 { return s.reverse()[0]; } function main(): i32 { return rev("xyz"); }`},
+		// String replace -> fresh string with every occurrence of old swapped for
+		// new (op_str_replace). AST path emits __fern_str_replace; IR path emits
+		// emit_ir_str_replace -- same content/length.
+		{"replace-len", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`},
+		{"replace-grow", `function main(): i32 { return "aaa".replace("a", "bb").len(); }`},
+		{"replace-shrink", `function main(): i32 { return "axbxc".replace("x", "").len(); }`},
+		{"replace-byte", `function main(): i32 { var r = "hello".replace("l", "L"); return r[2] + r[3]; }`},
+		{"replace-nomatch", `function main(): i32 { return "abc".replace("z", "Q").len(); }`},
+		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`},
+		{"replace-multichar", `function main(): i32 { return "axxbxxc".replace("xx", "-").len(); }`},
+		{"replace-param", `function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foobar"); }`},
 	}
 
 	for _, tc := range cases {

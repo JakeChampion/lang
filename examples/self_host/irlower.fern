@@ -1216,6 +1216,7 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "trim" || cfa.field == "reverse") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     // `s.repeat(n)` on a string receiver yields a fresh string.
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
+                    if (cfa.field == "replace" && c.args.len() == 2 && expr_is_str(cfa.obj, s)) { return true; }
                     // A string-returning METHOD call `recv.m(...)`. Methods store
                     // their bare name (`receiver_type` is separate), so str_ret_fns
                     // records `m` by bare name — same as the free-call lookup above.
@@ -1991,7 +1992,8 @@ pub function str_free_call_field(name: string): string {
 // that the receiver is a string before dispatching to lower_str_method.
 pub function is_str_builtin_method(field: string): boolean {
     return field == "to_upper" || field == "to_lower" || field == "trim"
-        || field == "reverse" || field == "repeat" || field == "split"
+        || field == "reverse" || field == "repeat" || field == "replace"
+        || field == "split"
         || field == "starts_with" || field == "ends_with" || field == "index_of"
         || field == "contains";
 }
@@ -2000,6 +2002,7 @@ pub function is_str_builtin_method(field: string): boolean {
 // transforms are 0-arg; everything else (split + predicates) is 1-arg.
 pub function str_method_argc(field: string): i32 {
     if (field == "to_upper" || field == "to_lower" || field == "trim" || field == "reverse") { return 0; }
+    if (field == "replace") { return 2; }
     return 1;
 }
 
@@ -2018,6 +2021,11 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     if (field == "reverse") { return p.emit(ir.op_str_reverse()); }
     p = lower_expr(args[0], p);
     if (!p.ok) { return p; }
+    if (field == "replace") {
+        p = lower_expr(args[1], p);
+        if (!p.ok) { return p; }
+        return p.emit(ir.op_str_replace());
+    }
     if (field == "repeat") { return p.emit(ir.op_str_repeat()); }
     if (field == "split") { return p.emit(ir.op_str_split()); }
     if (field == "starts_with") { return p.emit(ir.op_str_starts_with()); }
@@ -2266,8 +2274,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (fk == "") { return s.fail(); }
                 var fl: LowerState = lower_expr(b.left, s);
                 if (!fl.ok) { return fl; }
+                // An i32 operand mixed with an f64 (e.g. `3.5 + 2`) must be
+                // widened to f64 first — otherwise op_fbin sees an i32 on the
+                // stack and the wasm module fails to validate (f64.add expects
+                // two f64s). i32_to_f64 is f64.convert_i32_s. Only a 32-bit
+                // non-f64 operand is converted; an i64 in f64 context is left
+                // alone (unsupported, bails like before).
+                if (!expr_is_f64(b.left, s) && infer_expr_width(b.left, s) != 64) {
+                    fl = fl.emit(ir.op_i32_to_f64());
+                }
                 var fr: LowerState = lower_expr(b.right, fl);
                 if (!fr.ok) { return fr; }
+                if (!expr_is_f64(b.right, s) && infer_expr_width(b.right, s) != 64) {
+                    fr = fr.emit(ir.op_i32_to_f64());
+                }
                 return fr.emit(ir.op_fbin(fk));
             }
             var kind: string = map_binop(b.op);
@@ -2857,6 +2877,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mgo.ok) { return mgo; }
                             return mgo.emit(ir.op_map_get_or(mkk2));
                         }
+                        if (fa.field == "without" && c.args.len() == 1) {
+                            // Functional delete: `m.without(k)` -> the map with k
+                            // removed (reuses __fern_map_delete, like the AST path).
+                            var mdel: LowerState = lower_expr(fa.obj, s);
+                            if (!mdel.ok) { return mdel; }
+                            mdel = lower_expr(c.args[0], mdel);
+                            if (!mdel.ok) { return mdel; }
+                            return mdel.emit(ir.op_map_delete(mkk2));
+                        }
                         if (fa.field == "keys" && c.args.len() == 0) {
                             var mks: LowerState = lower_expr(fa.obj, s);
                             if (!mks.ok) { return mks; }
@@ -3296,6 +3325,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 parser.ExprFieldAccess(dfa) => {
                                     var drty: string = expr_struct_type(dfa.obj, s);
                                     if (drty != "") { dtag = csv_nth(s.tuple_ret_type(drty + "." + dfa.field), dk); }
+                                    else if (dfa.field == "without") {
+                                        // `m.without(k)` yields (Map[K,V], boolean):
+                                        // element 0 is the receiver's map type, 1 is
+                                        // the existed flag. Tag elem 0 with the map
+                                        // type so the bound local re-marks as a map
+                                        // (else `m2.len()` etc. miscompile) (#2926).
+                                        var dwmt: string = "";
+                                        match (dfa.obj) {
+                                            parser.ExprIdent(dwid) => { dwmt = s.map_type_of(s.slot_of(dwid.name)); },
+                                            _ => {}
+                                        }
+                                        if (dwmt != "") {
+                                            if (dk == 0) { dtag = dwmt; } else { dtag = "boolean"; }
+                                        }
+                                    }
                                 },
                                 _ => {}
                             }
@@ -3314,6 +3358,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
                     else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
                     else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
+                    else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
                     else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
                     dk = dk + 1;
                 }

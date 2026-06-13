@@ -443,6 +443,14 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"reverse-first", `function main(): i32 { var r = "abc".reverse(); return r[0]; }`, 99},
 		{"reverse-last", `function main(): i32 { var r = "abc".reverse(); return r[2]; }`, 97},
 		{"reverse-twice", `function main(): i32 { if ("hello".reverse().reverse() == "hello") { return 7; } return 0; }`, 7},
+		// String replace (op_str_replace) -> fresh string. wasm AST has no replace,
+		// so IR-only (dedicated str_replace_helper).
+		{"replace-len", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`, 5},
+		{"replace-grow", `function main(): i32 { return "aaa".replace("a", "bb").len(); }`, 6},
+		{"replace-shrink", `function main(): i32 { return "axbxc".replace("x", "").len(); }`, 3},
+		{"replace-byte", `function main(): i32 { var r = "hello".replace("l", "L"); return r[2]; }`, 76},
+		{"replace-nomatch", `function main(): i32 { return "abc".replace("z", "Q").len(); }`, 3},
+		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`, 3},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
 		// AST wasm path has no range desugar, so this rides the IR-only gate:
 		// the parser emits __range(LOW, HIGH) and irlower lowers a counted loop

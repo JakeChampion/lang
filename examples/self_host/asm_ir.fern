@@ -145,6 +145,7 @@ function module_uses_heap(mod: parser.Module): boolean {
             if (r.ops[i].kind == "str_repeat") { return true; }
             if (r.ops[i].kind == "str_trim") { return true; }
             if (r.ops[i].kind == "str_reverse") { return true; }
+            if (r.ops[i].kind == "str_replace") { return true; }
             // alloc_u8 / arr_push / str_from_bytes all allocate (via
             // __fern_alloc / __fern_arr_box) — pull in the heap runtime even for a
             // program whose ONLY allocation is `__alloc_u8(n)` (no array literal).
@@ -392,6 +393,68 @@ function emit_ir_str_reverse(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
     s = s.write("    movq %r14, (%rax)\n    movq %r13, 8(%rax)\n");
     s = s.write("    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
+    return s;
+}
+
+// emit_ir_str_replace appends __fern_str_replace(haystack, old, new) — every
+// non-overlapping occurrence of `old` replaced by `new` (empty `old` / no match
+// → haystack unchanged). Two-pass: count, alloc exact, walk+copy. Transcribed
+// verbatim from asm.fern. Heap-dependent, gated on the str_replace need. Its own
+// function — see emit_ir_str_search re #2720.
+function emit_ir_str_replace(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_str_replace:\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    subq $32, %rsp\n");
+    s = s.write("    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
+    s = s.write("    movq %rdi, -8(%rbp)\n    movq %rsi, -16(%rbp)\n    movq %rdx, -24(%rbp)\n    movq $0, -32(%rbp)\n");
+    s = s.write("    movq 8(%rsi), %r14\n    testq %r14, %r14\n    jnz .Lir_repl_count\n");
+    s = s.write("    movq %rdi, %rax\n    jmp .Lir_repl_exit\n");
+    s = s.write(".Lir_repl_count:\n");
+    s = s.write("    movq (%rdi), %r12\n    movq 8(%rdi), %r13\n    movq (%rsi), %rbx\n    movq $0, %r15\n");
+    s = s.write(".Lir_repl_cl:\n");
+    s = s.write("    movq %r15, %rax\n    addq %r14, %rax\n    cmpq %r13, %rax\n    jg .Lir_repl_count_done\n");
+    s = s.write("    movq $0, %r10\n");
+    s = s.write(".Lir_repl_clm:\n");
+    s = s.write("    cmpq %r14, %r10\n    je .Lir_repl_match\n");
+    s = s.write("    movq %r12, %r11\n    addq %r15, %r11\n    addq %r10, %r11\n    movzbq (%r11), %rax\n");
+    s = s.write("    movq %rbx, %r11\n    addq %r10, %r11\n    movzbq (%r11), %r11\n");
+    s = s.write("    cmpq %r11, %rax\n    jne .Lir_repl_clnomatch\n    incq %r10\n    jmp .Lir_repl_clm\n");
+    s = s.write(".Lir_repl_match:\n");
+    s = s.write("    incq -32(%rbp)\n    addq %r14, %r15\n    jmp .Lir_repl_cl\n");
+    s = s.write(".Lir_repl_clnomatch:\n");
+    s = s.write("    incq %r15\n    jmp .Lir_repl_cl\n");
+    s = s.write(".Lir_repl_count_done:\n");
+    s = s.write("    movq -32(%rbp), %rax\n    testq %rax, %rax\n    jnz .Lir_repl_build\n");
+    s = s.write("    movq -8(%rbp), %rax\n    jmp .Lir_repl_exit\n");
+    s = s.write(".Lir_repl_build:\n");
+    s = s.write("    movq -24(%rbp), %rax\n    movq 8(%rax), %rax\n    subq %r14, %rax\n    imulq -32(%rbp), %rax\n    addq %r13, %rax\n    movq %rax, %r15\n");
+    s = s.write("    cmpq $0, %rax\n    jne .Lir_repl_alloc\n    movq $1, %rax\n");
+    s = s.write(".Lir_repl_alloc:\n");
+    s = s.write("    movq %rax, %rdi\n    call __fern_alloc\n    movq %rax, %rbx\n");
+    s = s.write("    movq -8(%rbp), %rax\n    movq (%rax), %r12\n    movq $0, %r10\n    movq %rbx, %r11\n");
+    s = s.write(".Lir_repl_walk:\n");
+    s = s.write("    movq %r10, %rax\n    addq %r14, %rax\n    cmpq %r13, %rax\n    jg .Lir_repl_tail\n");
+    s = s.write("    movq $0, %rcx\n");
+    s = s.write(".Lir_repl_chk:\n");
+    s = s.write("    cmpq %r14, %rcx\n    je .Lir_repl_writenew\n");
+    s = s.write("    movq %r12, %rsi\n    addq %r10, %rsi\n    addq %rcx, %rsi\n    movzbq (%rsi), %rdx\n");
+    s = s.write("    movq -16(%rbp), %rsi\n    movq (%rsi), %rsi\n    addq %rcx, %rsi\n    movzbq (%rsi), %rsi\n");
+    s = s.write("    cmpq %rsi, %rdx\n    jne .Lir_repl_chknomatch\n    incq %rcx\n    jmp .Lir_repl_chk\n");
+    s = s.write(".Lir_repl_writenew:\n");
+    s = s.write("    movq -24(%rbp), %rsi\n    movq (%rsi), %rsi\n    movq -24(%rbp), %rcx\n    movq 8(%rcx), %rcx\n");
+    s = s.write("    testq %rcx, %rcx\n    jz .Lir_repl_advance\n");
+    s = s.write(".Lir_repl_wn_loop:\n");
+    s = s.write("    movzbq (%rsi), %rdx\n    movb %dl, (%r11)\n    incq %rsi\n    incq %r11\n    decq %rcx\n    jnz .Lir_repl_wn_loop\n");
+    s = s.write(".Lir_repl_advance:\n");
+    s = s.write("    addq %r14, %r10\n    jmp .Lir_repl_walk\n");
+    s = s.write(".Lir_repl_chknomatch:\n");
+    s = s.write("    movq %r12, %rsi\n    addq %r10, %rsi\n    movzbq (%rsi), %rax\n    movb %al, (%r11)\n    incq %r10\n    incq %r11\n    jmp .Lir_repl_walk\n");
+    s = s.write(".Lir_repl_tail:\n");
+    s = s.write("    cmpq %r13, %r10\n    je .Lir_repl_box\n");
+    s = s.write("    movq %r12, %rsi\n    addq %r10, %rsi\n    movzbq (%rsi), %rax\n    movb %al, (%r11)\n    incq %r10\n    incq %r11\n    jmp .Lir_repl_tail\n");
+    s = s.write(".Lir_repl_box:\n");
+    s = s.write("    movq $16, %rdi\n    call __fern_alloc\n    movq %rbx, (%rax)\n    movq %r15, 8(%rax)\n");
+    s = s.write(".Lir_repl_exit:\n");
+    s = s.write("    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    leave\n    ret\n");
     return s;
 }
 
@@ -1530,6 +1593,107 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_has, .-__fern_map_has\n");
+    // __fern_map_delete (transcribed from asm.fern) — `m.without(k)`. Mutates the
+    // parallel keys[]/values[] in place (order-preserving left-shift over the hit
+    // slot, both lengths decremented) and returns a 2-slot tuple [mapbox, existed].
+    s = s.write(".globl __fern_map_delete\n");
+    s = s.write(".type __fern_map_delete, @function\n");
+    s = s.write("__fern_map_delete:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    pushq %r14\n");
+    s = s.write("    pushq %r15\n");
+    s = s.write("    movq %rdi, %r12\n");
+    s = s.write("    movq %rsi, %r13\n");
+    s = s.write("    movq %rdx, %r14\n");
+    s = s.write("    movq (%r12), %r15\n");
+    s = s.write("    movq $0, %rbx\n");
+    s = s.write("    testq %r14, %r14\n");
+    s = s.write("    jnz .Lmd_loop_i32\n");
+    s = s.write(".Lmd_loop:\n");
+    s = s.write("    movq (%r15), %rax\n");
+    s = s.write("    cmpq %rax, %rbx\n");
+    s = s.write("    jge .Lmd_notfound\n");
+    s = s.write("    movq %rbx, %rax\n");
+    s = s.write("    incq %rax\n");
+    s = s.write("    movq (%r15,%rax,8), %rdi\n");
+    s = s.write("    movq %r13, %rsi\n");
+    s = s.write("    call __fern_str_eq\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jnz .Lmd_found\n");
+    s = s.write("    incq %rbx\n");
+    s = s.write("    jmp .Lmd_loop\n");
+    s = s.write(".Lmd_loop_i32:\n");
+    s = s.write("    movq (%r15), %rax\n");
+    s = s.write("    cmpq %rax, %rbx\n");
+    s = s.write("    jge .Lmd_notfound\n");
+    s = s.write("    movq %rbx, %rax\n");
+    s = s.write("    incq %rax\n");
+    s = s.write("    movq (%r15,%rax,8), %rax\n");
+    s = s.write("    cmpq %r13, %rax\n");
+    s = s.write("    je .Lmd_found\n");
+    s = s.write("    incq %rbx\n");
+    s = s.write("    jmp .Lmd_loop_i32\n");
+    s = s.write(".Lmd_found:\n");
+    s = s.write("    movq (%r12), %r15\n");
+    s = s.write("    movq (%r15), %r14\n");
+    s = s.write("    movq %rbx, %rcx\n");
+    s = s.write(".Lmd_kshift:\n");
+    s = s.write("    movq %r14, %rax\n");
+    s = s.write("    decq %rax\n");
+    s = s.write("    cmpq %rax, %rcx\n");
+    s = s.write("    jge .Lmd_kdone\n");
+    s = s.write("    movq %rcx, %rax\n");
+    s = s.write("    addq $2, %rax\n");
+    s = s.write("    movq (%r15,%rax,8), %rdx\n");
+    s = s.write("    movq %rcx, %rax\n");
+    s = s.write("    incq %rax\n");
+    s = s.write("    movq %rdx, (%r15,%rax,8)\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    jmp .Lmd_kshift\n");
+    s = s.write(".Lmd_kdone:\n");
+    s = s.write("    movq %r14, %rax\n");
+    s = s.write("    decq %rax\n");
+    s = s.write("    movq %rax, (%r15)\n");
+    s = s.write("    movq 8(%r12), %r15\n");
+    s = s.write("    movq %rbx, %rcx\n");
+    s = s.write(".Lmd_vshift:\n");
+    s = s.write("    movq %r14, %rax\n");
+    s = s.write("    decq %rax\n");
+    s = s.write("    cmpq %rax, %rcx\n");
+    s = s.write("    jge .Lmd_vdone\n");
+    s = s.write("    movq %rcx, %rax\n");
+    s = s.write("    addq $2, %rax\n");
+    s = s.write("    movq (%r15,%rax,8), %rdx\n");
+    s = s.write("    movq %rcx, %rax\n");
+    s = s.write("    incq %rax\n");
+    s = s.write("    movq %rdx, (%r15,%rax,8)\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    jmp .Lmd_vshift\n");
+    s = s.write(".Lmd_vdone:\n");
+    s = s.write("    movq %r14, %rax\n");
+    s = s.write("    decq %rax\n");
+    s = s.write("    movq %rax, (%r15)\n");
+    s = s.write("    movq $1, %r13\n");
+    s = s.write("    jmp .Lmd_build\n");
+    s = s.write(".Lmd_notfound:\n");
+    s = s.write("    movq $0, %r13\n");
+    s = s.write(".Lmd_build:\n");
+    s = s.write("    movq $16, %rdi\n");
+    s = s.write("    call __fern_alloc\n");
+    s = s.write("    movq %r12, (%rax)\n");
+    s = s.write("    movq %r13, 8(%rax)\n");
+    s = s.write("    popq %r15\n");
+    s = s.write("    popq %r14\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_map_delete, .-__fern_map_delete\n");
     }
 
     // __fern_i32_to_string — STACK-arg ABI for the IR path (the i32 value sits
@@ -1744,8 +1908,9 @@ function is_str_op_kind(k: string): boolean {
     return k == "str_len" || k == "str_index" || k == "str_slice"
         || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
         || k == "str_to_lower" || k == "str_repeat" || k == "str_trim"
-        || k == "str_reverse" || k == "str_starts_with" || k == "str_ends_with"
-        || k == "str_index_of" || k == "str_concat" || k == "str_eq" || k == "str_cmp";
+        || k == "str_reverse" || k == "str_replace" || k == "str_starts_with"
+        || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
+        || k == "str_eq" || k == "str_cmp";
 }
 
 // emit_str_op emits one string operand-stack op (the bodies factored out of
@@ -1811,6 +1976,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // string box in %rax (emit_ir_str_reverse provides the body).
         s = s.write("    popq %rdi\n    call __fern_str_reverse\n    pushq %rax\n");
         return s.mark_str_reverse();
+    }
+    if (o.kind == "str_replace") {
+        // operand stack [haystack, old, new] (new on top); __fern_str_replace(
+        // %rdi=haystack, %rsi=old, %rdx=new) -> fresh string box in %rax
+        // (emit_ir_str_replace provides the body).
+        s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_str_replace\n    pushq %rax\n");
+        return s.mark_str_replace();
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
         // operand stack [s box, p box] (p on top); __fern_str_<pred>(%rdi=s,
@@ -2123,6 +2295,9 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    popq %rsi\n    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    pushq %rax\n");
         } else if (o.kind == "map_has") {
             s = s.write("    popq %rsi\n    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_has\n    pushq %rax\n");
+        } else if (o.kind == "map_delete") {
+            // [map, key] -> __fern_map_delete(rdi=map, rsi=key, rdx=keykind) -> map.
+            s = s.write("    popq %rsi\n    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_delete\n    pushq %rax\n");
         } else if (o.kind == "map_get_or") {
             // [map, k, default] -> __fern_map_get, then Some payload or default.
             var golbl: string = lp + "go" + util.i32_to_string(i);
@@ -2389,6 +2564,8 @@ pub function emit_module_ir(mod: parser.Module): string {
     if (s.has_need("str_trim")) { s = emit_ir_str_trim(s); }
     // String reverse — heap-dependent, gated on its str_reverse need.
     if (s.has_need("str_reverse")) { s = emit_ir_str_reverse(s); }
+    // String replace — heap-dependent, gated on its str_replace need.
+    if (s.has_need("str_replace")) { s = emit_ir_str_replace(s); }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
