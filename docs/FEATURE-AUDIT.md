@@ -199,8 +199,8 @@ per-function bugs in the audit log.
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
 | `std/i32` (~80 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | representative set (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum) — `audit_std_numeric`; self-host via array bundle |
-| `std/i64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host pending |
-| `std/u32` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | max — `audit_std_path_numeric`; self-host pending |
+| `std/i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host abs/min/max/clamp via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) |
+| `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | max — `audit_std_path_numeric`; self-host unsigned min/max via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`); wasm IR unsigned-compare gap tracked in [#2917](https://github.com/JakeChampion/lang/issues/2917) |
 | `std/u64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | clamp — `audit_std_path_numeric`; self-host: u64 unsigned compare / `>>` / `/` / `%` now correct via the IR path ([#2904](https://github.com/JakeChampion/lang/issues/2904); `TestSelfHostU64UnsignedIR`) — the i64-domain analog of the u32 wrapping fix |
 | `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host: f64 intrinsics (floor/ceil/sqrt/abs/round/trunc) ✅ via the IR path (`TestSelfHostFloatIntrinsicsIR`) |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
@@ -246,6 +246,24 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — std/i64 + std/u32 numeric methods via the self-host x86-64 IR path
+
+Added `TestSelfHostNumericMethodsIRX86_64`: self-contained programs exercising
+the i64 (`abs`/`min`/`max`/`clamp`) and u32 (unsigned `min`/`max`) method logic
+that std/i64 / std/u32 wrap, run through the self-hosted x86-64 IR driver and
+**oracle-checked against the interpreter** (not hardcoded — cf. #2908), with the
+routing pinned to the `"ir"` path. The u32 case uses a value above 2^31 so a
+signed compare would give the wrong answer, confirming the IR path selects the
+unsigned form. Promotes the std/i64 / std/u32 **S** column to ✅ (x86 IR).
+
+Two gaps surfaced (both held out of this test, x86-IR-only for now):
+- **wasm IR lowers u32/u64 comparisons as SIGNED** — the same unsigned cases
+  return the signed-compare answer on `wasm_ir`, where the x86 path (#2904) is
+  correct. A real backend bug ([#2917](https://github.com/JakeChampion/lang/issues/2917)).
+- A **>2^63 u64 value built by addition** (`(9e18 as u64)+(9e18 as u64)`) routes
+  to the AST emitter on x86 rather than the IR path — an IR-eligibility gap, so
+  u64 unsigned coverage stays pending.
 
 ### 2026-06-13 — `@derive(Json)` array fields via the self-host IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766))
 
