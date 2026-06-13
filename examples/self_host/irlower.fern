@@ -2274,8 +2274,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (fk == "") { return s.fail(); }
                 var fl: LowerState = lower_expr(b.left, s);
                 if (!fl.ok) { return fl; }
+                // An i32 operand mixed with an f64 (e.g. `3.5 + 2`) must be
+                // widened to f64 first — otherwise op_fbin sees an i32 on the
+                // stack and the wasm module fails to validate (f64.add expects
+                // two f64s). i32_to_f64 is f64.convert_i32_s. Only a 32-bit
+                // non-f64 operand is converted; an i64 in f64 context is left
+                // alone (unsupported, bails like before).
+                if (!expr_is_f64(b.left, s) && infer_expr_width(b.left, s) != 64) {
+                    fl = fl.emit(ir.op_i32_to_f64());
+                }
                 var fr: LowerState = lower_expr(b.right, fl);
                 if (!fr.ok) { return fr; }
+                if (!expr_is_f64(b.right, s) && infer_expr_width(b.right, s) != 64) {
+                    fr = fr.emit(ir.op_i32_to_f64());
+                }
                 return fr.emit(ir.op_fbin(fk));
             }
             var kind: string = map_binop(b.op);
