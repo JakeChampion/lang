@@ -265,6 +265,10 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"enum-arr-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 7; } } return 0; } function main(): i32 { var a = [A(40), B]; return a[0].v() + a[1].v(); }`},
 		{"enum-arr-forin", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { var a = [R, G, G]; var s = 0; for x in a { s = s + x.k(); } return s; }`},
 		{"enum-arr-match", `enum C { R, G } function main(): i32 { var a = [R, G]; match (a[1]) { R => { return 10; }, G => { return 20; } } return 0; }`},
+		// A struct with an enum-ARRAY field is leak-safe (construction + `.len()`
+		// + element index/match lower).
+		{"struct-enumarr-len", `enum C { R, G } struct Box { items: C[] } function main(): i32 { var b = Box { items: [R, G] }; return b.items.len(); }`},
+		{"struct-enumarr-index-match", `enum C { R, G } struct Box { items: C[] } function main(): i32 { var b = Box { items: [R, G, R] }; match (b.items[1]) { R => { return 1; }, G => { return 2; } } return 0; }`},
 		{"enum-strarr-payload-len", `enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(Words(["a", "bb", "ccc"])) * 10 + f(None); }`},
 		{"enum-strarr-payload-forin", `enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { var n = 0; for s in w { n = n + s.len(); } return n; }, None => { return 0; } } return 0; } function main(): i32 { return f(Words(["a", "bb", "ccc"])); }`},
 		{"struct-strarr-field-len", `struct Doc { lines: string[] } function nl(d: Doc): i32 { return d.lines.len(); } function main(): i32 { var d = Doc { lines: ["x", "y", "z"] }; return nl(d); }`},
