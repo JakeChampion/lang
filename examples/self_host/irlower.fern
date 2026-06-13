@@ -550,6 +550,16 @@ pub function is_leaksafe_array_field(t: string): boolean {
     return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]";
 }
 
+// is_map_type_name reports whether `t` is a Map[K, V] type. Maps are leak-only
+// on the IR path (the exit sweep tracks local_is_arr, not local_map_type — a map
+// box is never freed), so a Map-typed struct field leaks with the struct like a
+// string / Option / tuple / enum field: no RC, no aliasing bail. Reading the
+// field into a `var m: Map[K, V] = c.m` local re-marks the map type from the
+// annotation, so the map's get/insert/has/... dispatch keeps working.
+pub function is_map_type_name(t: string): boolean {
+    return t.len() >= 5 && t[0:4] == "Map[";
+}
+
 // is_scalar_arr_field_access reports whether `e` reads a scalar-array struct
 // field (`v.items` where items: i32[]). Such an array lives inside the struct
 // (which leaks), so binding/returning/assigning it would create an alias the
@@ -672,7 +682,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -2987,6 +2997,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             sb = sb.mark_i64arr(slot, is_i64arr);
             sb = sb.mark_struct_type(slot, struct_ty);
             sb = sb.mark_opt_type(slot, opt_ty);
+            // A `var m: Map[K, V] = <expr>` annotation records the slot's full
+            // Map type so a later `m.get/insert/has/...` dispatches as a map op.
+            // The `= map_new(n)` form is handled by the early-return path above;
+            // this catches the other map-typed inits, e.g. binding a map struct
+            // field (`var m: Map[K, V] = c.m`).
+            if (is_map_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
             // Record tuple element type tags for `var t = (e0, e1, ...)` so a
             // later `t.N` recovers each element's type.
             match (v.init) {
