@@ -1887,8 +1887,16 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (!sx.ok) { return sx; }
                 return sx.emit(ir.op_bin("sub", 64, false));
             }
-            // `n as i64` / `n as u64`: widen an i32 operand to i64.
+            // `n as i64` / `n as u64`: widen an i32 operand to i64 — OR, when the
+            // operand is an f64, truncate it toward zero to i64 (f64_to_i64).
+            // Without the f64 case, op_int_extend would mis-extend the f64's bit
+            // pattern as if it were an i32.
             if (u.op == "as_i64" || u.op == "as_u64") {
+                if (expr_is_f64(u.operand, s)) {
+                    var fw: LowerState = lower_expr(u.operand, s);
+                    if (!fw.ok) { return fw; }
+                    return fw.emit(ir.op_f64_to_i64());
+                }
                 var sw: LowerState = lower_expr(u.operand, s);
                 if (!sw.ok) { return sw; }
                 return sw.emit(ir.op_int_extend(u.op == "as_u64"));

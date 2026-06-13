@@ -663,6 +663,8 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    f64.convert_i32_s\n";
         } else if (o.kind == "f64_to_i32") {
             out = out + "    i32.trunc_f64_s\n";
+        } else if (o.kind == "f64_to_i64") {
+            out = out + "    i64.trunc_f64_s\n";
         } else if (o.kind == "int_extend") {
             // i32 -> i64: distinct wasm types, so an explicit widen.
             if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }
