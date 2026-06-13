@@ -565,6 +565,26 @@ pub function is_struct_array_field_type(structs: parser.StructDecl[], t: string)
     return decl_is_struct(structs, t[0 : n - 2]);
 }
 
+// is_leaksafe_payload reports whether a payload type is a leak-safe scalar/string.
+function is_leaksafe_payload(p: string): boolean {
+    return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64";
+}
+
+// is_leaksafe_opt_field: an Option[T] / Result[T, E] field whose payload type(s)
+// are leak-safe scalars/strings. Options/Results are leak-only on the IR path (the
+// exit sweep never frees them), so such a field needs no RC / aliasing bail — it
+// leaks with the struct, like a string field. Struct / nested-generic payloads are
+// deferred (they would need payload-type recovery through the field).
+pub function is_leaksafe_opt_field(t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 9) { return false; }
+    if (t[0:7] == "Option[") { return is_leaksafe_payload(opt_payload_type(t, "Some")); }
+    if (t[0:7] == "Result[") {
+        return is_leaksafe_payload(opt_payload_type(t, "Ok")) && is_leaksafe_payload(opt_payload_type(t, "Err"));
+    }
+    return false;
+}
+
 pub function is_scalar_arr_field_access(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprFieldAccess(fa) => {
@@ -600,7 +620,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || is_leaksafe_array_field(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -3400,6 +3420,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                         }
                                     },
                                     parser.ExprIdent(sid) => { srt = ms.opt_type_of_slot(ms.slot_of(sid.name)); },
+                                    // `match (p.opt)` where `opt` is an Option/Result
+                                    // struct field — recover its type from the field.
+                                    parser.ExprFieldAccess(sfa) => {
+                                        var foty: string = expr_struct_type(sfa.obj, ms);
+                                        if (foty != "") {
+                                            var fft: string = decl_field_type(ms.structs, foty, sfa.field);
+                                            if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { srt = fft; }
+                                        }
+                                    },
                                     _ => {}
                                 }
                                 if (srt == "") { return s.fail(); }
