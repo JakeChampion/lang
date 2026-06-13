@@ -223,7 +223,7 @@ per-function bugs in the audit log.
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
 | `std/stream` | | | | | | ⬜ | |
-| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host pending |
+| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host: pure-i32 helpers (is_leap_year/days_in_month) ✅ via the IR path (`TestSelfHostTimeIR`); Date/Instant methods (structs/Option) pending |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | | | | | | ⬜ | |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
