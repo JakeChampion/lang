@@ -2560,7 +2560,16 @@ func (g *generator) emitStringFromBytesRuntime() {
 		g.emit("b .Lsfb2w_ret")
 		g.label(".Lsfb2w_alloc")
 		g.emit("mov w0, w20")
-		g.emit("bl __fern_alloc")          // x0 = dst
+		// Allocate via the rc-headered allocator (rc=1 at data-8,
+		// payload size at data-4) — exactly like __str_slice /
+		// __fern_strcat on this two-word path. A plain __fern_alloc
+		// buffer has no rc header, so a later __fern_str_dec (which
+		// reads rc at data-8 and the free size at data-4) reads
+		// garbage: rc_dec'ing a neighbouring cell's bytes or
+		// box_free'ing a wrong-sized block overlapping a still-live
+		// cell — the arm64-only heap-corruption under url_decode/
+		// url_encode allocation churn (#2817).
+		g.emit("bl __fern_alloc_rc1")      // x0 = dst (= base+8)
 		g.emit("mov x2, x20")              // n
 		g.emit("mov x1, x19")              // src = bs
 		g.emit("stp x0, xzr, [sp, #-16]!") // save dst on stack
