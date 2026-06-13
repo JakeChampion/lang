@@ -401,6 +401,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-enum-first", `enum C { A, B, X } function main(): i32 { var c: C = A; var y = match (c) { A => 1, B => 2, X => 3 }; return y; }`},
 		{"matchexpr-enum-in-binary", `enum C { A, B } function main(): i32 { var c: C = A; return match (c) { A => 5, B => 6 } + 100; }`},
 		{"matchexpr-enum-return-arg", `enum C { Red, Green, Blue } function pick(c: C): i32 { return match (c) { Red => 1, Green => 2, Blue => 3 }; } function main(): i32 { return pick(Green) * 10; }`},
+		// Option/Result match-EXPRESSION with an i32 PAYLOAD binding (`Some(n) => n`):
+		// admitted because the bound payload is i32, so the temp stays i32-wide.
+		{"matchexpr-opt-unwrap", `function main(): i32 { var o: Option[i32] = Some(7); var y = match (o) { Some(n) => n, None => 0 }; return y; }`},
+		{"matchexpr-opt-none", `function main(): i32 { var o: Option[i32] = None; var y = match (o) { Some(n) => n, None => 42 }; return y; }`},
+		{"matchexpr-opt-expr", `function main(): i32 { var o: Option[i32] = Some(5); return match (o) { Some(n) => n * 2 + 1, None => 0 } + 100; }`},
+		{"matchexpr-result-bind", `function main(): i32 { var r: Result[i32, i32] = Err(3); var y = match (r) { Ok(n) => n, Err(e) => e * 10 }; return y; }`},
 		{"i64-cmp", `function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`},
 		{"i64-add", `function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`},
 		{"i64-mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`},
