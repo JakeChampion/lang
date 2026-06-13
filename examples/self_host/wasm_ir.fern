@@ -434,6 +434,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "read_line")
         && !module_emits_op(mod, "monotonic_ns")
         && !module_emits_op(mod, "now_unix_ms")
+        && !module_emits_op(mod, "now_ns")
         && !module_emits_op(mod, "sleep_ms");
 }
 

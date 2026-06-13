@@ -22,6 +22,7 @@ var clockIRCases = []struct {
 }{
 	{"monotonic", `function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b >= a) { return 7; } return 1; }`, "__fern_monotonic_ns"},
 	{"now_unix", `function main(): i32 { var a: i64 = now_unix_ms(); var b: i64 = now_unix_ms(); if (b >= a) { return 7; } return 1; }`, "__fern_now_unix_ms"},
+	{"now_ns", `function main(): i32 { var a: i64 = now_ns(); var b: i64 = now_ns(); if (b >= a) { return 7; } return 1; }`, "__fern_now_ns"},
 }
 
 // TestSelfHostClockIRX86_64 proves each case (a) routes through the IR path

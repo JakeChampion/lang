@@ -253,6 +253,9 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // no operands; __fern_now_unix_ms() -> i64 in x0. Unconditional
             // helper (asm_arm64.emit_runtime), same as monotonic_ns.
             s = s.write("    bl __fern_now_unix_ms\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "now_ns") {
+            // no operands; __fern_now_ns() -> i64 in x0. Unconditional helper.
+            s = s.write("    bl __fern_now_ns\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "str_bytes") {
             // operand stack [str box]; __fern_str_bytes(x0=box) -> fresh u8[] in x0.
             s = s.mark_str_bytes();
