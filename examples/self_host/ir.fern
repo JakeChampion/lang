@@ -309,6 +309,9 @@ pub function op_str_reverse(): Op { return op0("str_reverse"); }
 // (non-overlapping) occurrence of `old` in `haystack` replaced by `new`. An
 // empty `old`, or no match, returns `haystack` unchanged. Leak-only.
 pub function op_str_replace(): Op { return op0("str_replace"); }
+// `str_chars` pops [s] → a fresh string[] whose i-th element is the 1-char
+// string s[i:i+1]. Result is is_arr + is_strarr (like str_split). Leak-only.
+pub function op_str_chars(): Op { return op0("str_chars"); }
 pub function op_str_starts_with(): Op { return op0("str_starts_with"); }
 pub function op_str_ends_with(): Op { return op0("str_ends_with"); }
 pub function op_str_index_of(): Op { return op0("str_index_of"); }
