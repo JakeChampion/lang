@@ -118,6 +118,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"parens", "function main(): i32 { return (1 + 2) * 3; }"},
 		{"locals", "function main(): i32 { var x = 2 + 3 * 4; var y = x - 5; return y * 2; }"},
 		{"reassign", "function main(): i32 { var x = 5; x = x + 3; return x; }"},
+		// Top-level `const` references — a bare ident naming a zero-arg fn lowers
+		// to a call (the const's value), no longer bailing to AST (#2954).
+		{"const-ref", "const LIMIT: i32 = 100; function main(): i32 { return LIMIT + 1; }"},
+		{"const-loop-bound", "const N: i32 = 5; function main(): i32 { var s = 0; var i = 0; while (i < N) { s = s + i; i = i + 1; } return s; }"},
+		{"const-two", "const A: i32 = 40; const B: i32 = 2; function main(): i32 { return A + B; }"},
 		{"modulo", "function main(): i32 { return 23 % 5; }"},
 		{"division", "function main(): i32 { return 84 / 2; }"},
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},

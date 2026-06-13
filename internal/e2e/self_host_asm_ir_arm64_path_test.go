@@ -83,6 +83,9 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"arith", "function main(): i32 { return 2 + 3 * 4; }"},
 		{"locals", "function main(): i32 { var x = 2 + 3 * 4; var y = x - 5; return y * 2; }"},
 		{"reassign", "function main(): i32 { var x = 5; x = x + 3; return x; }"},
+		// Top-level `const` references lower to a call (the const's value) (#2954).
+		{"const-ref", "const LIMIT: i32 = 100; function main(): i32 { return LIMIT + 1; }"},
+		{"const-loop-bound", "const N: i32 = 5; function main(): i32 { var s = 0; var i = 0; while (i < N) { s = s + i; i = i + 1; } return s; }"},
 		{"modulo", "function main(): i32 { return 23 % 5; }"},
 		{"division", "function main(): i32 { return 84 / 2; }"},
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},

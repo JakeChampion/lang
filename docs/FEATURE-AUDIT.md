@@ -138,7 +138,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Tail-call optimisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | depth 5000 self-recursion, no overflow |
 | Modules / imports (`import "./path";`) | | | | | | ⬜ | |
 | Visibility (`pub`) | | | | | | ⬜ | front-end only |
-| Top-level `const` (folded) | | | | | | ⬜ | |
+| Top-level `const` (folded) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | desugars to a zero-arg fn; a bare ref is a call. Self-host: native + AST path, and now the **IR path** too (a bare const ident lowers to `call_direct(name, 0)`, [#2954](https://github.com/JakeChampion/lang/issues/2954); `TestSelfHostAsmIRPath/const-*`) |
 | `len(x)` / `.len()` builtin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | string / array / map |
 
 ## B. Built-in functions (checker-registered)
