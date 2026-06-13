@@ -1895,13 +1895,20 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (!sx.ok) { return sx; }
                 return sx.emit(ir.op_bin("sub", 64, false));
             }
-            // `n as i64` / `n as u64`: widen an i32 operand to i64. A numeric
-            // LITERAL operand is already a 64-bit value, so emit it as an i64
-            // const directly — lowering it via the 32-bit lower_expr would make
-            // it an `i32.const`, which truncates and, for a literal above the
-            // i32 range, is invalid on wasm (`i32.const 9000000000000000000`).
-            // #2928.
+            // `n as i64` / `n as u64`. Three operand cases:
+            //  - an f64 operand: truncate toward zero to i64 (f64_to_i64);
+            //    op_int_extend would mis-extend the f64's bit pattern as i32.
+            //  - a non-float numeric LITERAL: already a 64-bit value, so emit an
+            //    i64 const directly — lowering via the 32-bit lower_expr would
+            //    make it an `i32.const`, truncating (and invalid on wasm for a
+            //    literal above the i32 range). #2928.
+            //  - otherwise: widen the i32 operand to i64.
             if (u.op == "as_i64" || u.op == "as_u64") {
+                if (expr_is_f64(u.operand, s)) {
+                    var fw: LowerState = lower_expr(u.operand, s);
+                    if (!fw.ok) { return fw; }
+                    return fw.emit(ir.op_f64_to_i64());
+                }
                 match (u.operand) {
                     parser.ExprNumber(n) => { if (!n.is_float) { return s.emit(ir.op_const_i64_text(n.text)); } },
                     _ => {}
