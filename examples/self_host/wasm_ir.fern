@@ -286,8 +286,10 @@ pub function module_allocates(mod: parser.Module): boolean {
             // builds a u8[] (via $__fern_arr_box). Both need the heap runtime.
             if (k == "random_bytes" || k == "str_bytes") { return true; }
             // str_split builds the result string[] (via $__fern_arr_box) + each
-            // segment box (via $__fern_str_box).
+            // segment box (via $__fern_str_box); to_upper/to_lower build the fresh
+            // cased block (via $__fern_str_box).
             if (k == "str_split") { return true; }
+            if (k == "str_to_upper" || k == "str_to_lower") { return true; }
             // alloc_u8 / arr_push / str_from_bytes all allocate via $__fern_arr_box
             // / $__fern_string_from_bytes, so a program whose only allocation is
             // one of these still needs the heap runtime.
@@ -325,6 +327,12 @@ pub function module_uses_str_predicate(mod: parser.Module): boolean {
     return module_emits_op(mod, "str_starts_with")
         || module_emits_op(mod, "str_ends_with")
         || module_emits_op(mod, "str_index_of");
+}
+
+// module_uses_str_case reports whether any function emits an ASCII case-transform
+// op (to_upper / to_lower), so wasm.str_case_helpers is emitted for the IR path.
+pub function module_uses_str_case(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_to_upper") || module_emits_op(mod, "str_to_lower");
 }
 
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
@@ -757,6 +765,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // when module_uses_str_split) builds the result via $__fern_arr_push +
             // $__fern_substr.
             out = out + "    call $__fern_str_split\n";
+        } else if (o.kind == "str_to_upper") {
+            // stack: s -> $__fern_str_upper(s) -> fresh upper-cased block
+            // (str_case_helpers, gated on module_uses_str_case).
+            out = out + "    call $__fern_str_upper\n";
+        } else if (o.kind == "str_to_lower") {
+            out = out + "    call $__fern_str_lower\n";
         } else if (o.kind == "str_starts_with") {
             // stack: s, p -> $__fern_str_startswith(s, p) -> 0/1. Self-contained
             // predicate emitted by str_predicate_helpers (module_emits_op gate).

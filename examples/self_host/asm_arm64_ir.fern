@@ -80,7 +80,8 @@ function ir_bin_asm(kind: string): string {
 // oversized-function miscompile threshold (#2720).
 function is_str_op_kind(k: string): boolean {
     return k == "str_len" || k == "str_index" || k == "str_slice"
-        || k == "str_bytes" || k == "str_split" || k == "str_starts_with"
+        || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
+        || k == "str_to_lower" || k == "str_starts_with"
         || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
         || k == "str_eq" || k == "str_cmp";
 }
@@ -123,6 +124,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_str_search();
         s = s.mark_heap();
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_split\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_to_upper" || o.kind == "str_to_lower") {
+        // operand stack [s box]; __fern_str_to_upper/_lower(x0=s) -> fresh cased
+        // string box in x0. asm_arm64.emit_runtime emits the bodies in its
+        // str_search block (they allocate), so set str_search + heap.
+        var cfn: string = "__fern_str_to_upper";
+        if (o.kind == "str_to_lower") { cfn = "__fern_str_to_lower"; }
+        s = s.mark_str_search();
+        s = s.mark_heap();
+        return s.write("    ldr x0, [sp], #16\n    bl " + cfn + "\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
         // operand stack [s, p] (p top); __fern_str_<pred>(x0=s, x1=p) -> 0/1

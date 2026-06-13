@@ -7844,6 +7844,45 @@ pub function str_predicate_helpers(): string {
     return o;
 }
 
+// str_case_helpers emits the IR-path ASCII case transforms — $__fern_str_upper /
+// _lower, transcribed verbatim from the strcat_helpers bundle. Each allocates a
+// fresh block via $__fern_str_box and copies `s` case-flipping ASCII letters; no
+// other deps, so they're self-contained. Gated on module_uses_str_case. (The wasm
+// runtime symbols are $__fern_str_upper / _lower, distinct from the register
+// backends' __fern_str_to_upper / _to_lower.)
+pub function str_case_helpers(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_str_upper (param $s i32) (result i32)\n";
+    o = o + "    (local $l i32) (local $p i32) (local $i i32) (local $ch i32)\n";
+    o = o + "    (local.set $l (i32.load (local.get $s)))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $l))))\n";
+    o = o + "    (i32.store (local.get $p) (local.get $l))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $l)))\n";
+    o = o + "      (local.set $ch (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97)) (i32.le_u (local.get $ch) (i32.const 122))) (then (local.set $ch (i32.sub (local.get $ch) (i32.const 32)))))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $p) (i32.const 4)) (local.get $i)) (local.get $ch))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $p))\n";
+    o = o + "  (func $__fern_str_lower (param $s i32) (result i32)\n";
+    o = o + "    (local $l i32) (local $p i32) (local $i i32) (local $ch i32)\n";
+    o = o + "    (local.set $l (i32.load (local.get $s)))\n";
+    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $l))))\n";
+    o = o + "    (i32.store (local.get $p) (local.get $l))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $dl (loop $cl\n";
+    o = o + "      (br_if $dl (i32.ge_u (local.get $i) (local.get $l)))\n";
+    o = o + "      (local.set $ch (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 65)) (i32.le_u (local.get $ch) (i32.const 90))) (then (local.set $ch (i32.add (local.get $ch) (i32.const 32)))))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $p) (i32.const 4)) (local.get $i)) (local.get $ch))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $cl)))\n";
+    o = o + "    (local.get $p))\n";
+    return o;
+}
+
 // str_split_helper emits the IR-path string→string[] runtime: a narrow
 // $__fern_arr_push (the i32 4-byte-slot append — the full arr_helpers bundle is
 // AST-path-only) plus $__fern_str_split, which builds the result array via push
@@ -10863,6 +10902,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // Scalar string search predicates (starts_with / ends_with / index_of /
         // contains) — self-contained, emitted only when used.
         if (wasm_ir.module_uses_str_predicate(mod)) { ir_out = ir_out + str_predicate_helpers(); }
+        // ASCII case transforms (to_upper / to_lower) — self-contained, emitted
+        // only when used.
+        if (wasm_ir.module_uses_str_case(mod)) { ir_out = ir_out + str_case_helpers(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { ir_out = ir_out + arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { ir_out = ir_out + arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { ir_out = ir_out + map_helpers(); }

@@ -1188,6 +1188,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                 // result feeds `+` concat / `.len()` as a string.
                 parser.ExprFieldAccess(cfa) => {
                     if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return true; }
+                    // `s.to_upper()` / `s.to_lower()` on a string receiver yield a
+                    // fresh string (op_str_to_upper / _to_lower), so the result
+                    // feeds `.len()` / concat as a string.
+                    if ((cfa.field == "to_upper" || cfa.field == "to_lower") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     // A string-returning METHOD call `recv.m(...)`. Methods store
                     // their bare name (`receiver_type` is separate), so str_ret_fns
                     // records `m` by bare name — same as the free-call lookup above.
@@ -1893,25 +1897,36 @@ pub function str_free_call_field(name: string): string {
     return "";
 }
 
-// is_str_builtin_method reports whether `field` names a one-arg string builtin
-// method the IR path lowers directly (split → string[]; starts_with / ends_with
-// / index_of / contains → scalar). The caller also checks arity + that the
-// receiver is a string before dispatching to lower_str_method.
+// is_str_builtin_method reports whether `field` names a string builtin method the
+// IR path lowers directly: the 0-arg transforms `to_upper` / `to_lower` (→ fresh
+// string), `split` (→ string[]), and the scalar predicates starts_with /
+// ends_with / index_of / contains. The caller checks arity (str_method_argc) +
+// that the receiver is a string before dispatching to lower_str_method.
 pub function is_str_builtin_method(field: string): boolean {
-    return field == "split" || field == "starts_with" || field == "ends_with"
+    return field == "to_upper" || field == "to_lower" || field == "split"
+        || field == "starts_with" || field == "ends_with"
         || field == "index_of" || field == "contains";
 }
 
-// lower_str_method lowers a one-arg string builtin method `recv.<field>(arg)`:
-// it lowers [recv, arg] then emits the field's op. `split` yields a string[]
-// (op_str_split); the search predicates are scalar (op_str_starts_with /
-// _ends_with / _index_of), and `contains` is `index_of(...) >= 0`. Kept out of
-// lower_expr's giant FieldAccess arm to stay under the self-host backend's
+// str_method_argc gives the argument count of a string builtin method: the case
+// transforms are 0-arg; everything else (split + predicates) is 1-arg.
+pub function str_method_argc(field: string): i32 {
+    if (field == "to_upper" || field == "to_lower") { return 0; }
+    return 1;
+}
+
+// lower_str_method lowers a string builtin method `recv.<field>(args…)`: it
+// lowers the receiver, then (for the 1-arg forms) the argument, then emits the
+// field's op. `to_upper` / `to_lower` → a fresh cased string; `split` → string[];
+// the search predicates → scalar (`contains` is `index_of(...) >= 0`). Kept out
+// of lower_expr's giant FieldAccess arm to stay under the self-host backend's
 // oversized-function threshold (#2720).
-pub function lower_str_method(field: string, recv: parser.Expr, arg: parser.Expr, s: LowerState): LowerState {
+pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Expr[], s: LowerState): LowerState {
     var p: LowerState = lower_expr(recv, s);
     if (!p.ok) { return p; }
-    p = lower_expr(arg, p);
+    if (field == "to_upper") { return p.emit(ir.op_str_to_upper()); }
+    if (field == "to_lower") { return p.emit(ir.op_str_to_lower()); }
+    p = lower_expr(args[0], p);
     if (!p.ok) { return p; }
     if (field == "split") { return p.emit(ir.op_str_split()); }
     if (field == "starts_with") { return p.emit(ir.op_str_starts_with()); }
@@ -2643,7 +2658,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // lower_str_method (field = the name minus its `str_` prefix).
                     var sfreef: string = str_free_call_field(cid.name);
                     if (sfreef != "" && c.args.len() == 2) {
-                        return lower_str_method(sfreef, c.args[0], c.args[1], s);
+                        return lower_str_method(sfreef, c.args[0], [c.args[1]], s);
                     }
                     // No arity cap: the call ABI is fully stack-based on every
                     // backend (x86-64/arm64 push the args on the runtime stack and
@@ -2817,15 +2832,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sb.ok) { return sb; }
                         return sb.emit(ir.op_str_bytes());
                     }
-                    // One-arg string builtin methods on a string receiver:
-                    // `s.split(sep)` (→ string[]) and the scalar search predicates
+                    // String builtin methods on a string receiver: the 0-arg
+                    // transforms `to_upper` / `to_lower` (→ fresh string),
+                    // `s.split(sep)` (→ string[]), and the scalar predicates
                     // `starts_with` / `ends_with` / `index_of` / `contains`. The
                     // per-field emission lives in lower_str_method, kept out of line
                     // so this already-enormous lower_expr arm doesn't grow past the
                     // self-host backend's oversized-function miscompile threshold
                     // (#2720 — folding it in here crashed the stage-2 self-compile).
-                    if (is_str_builtin_method(fa.field) && c.args.len() == 1 && expr_is_str(fa.obj, s)) {
-                        return lower_str_method(fa.field, fa.obj, c.args[0], s);
+                    if (is_str_builtin_method(fa.field) && c.args.len() == str_method_argc(fa.field) && expr_is_str(fa.obj, s)) {
+                        return lower_str_method(fa.field, fa.obj, c.args, s);
                     }
                     // Builtin `.to_string()` on a PRIMITIVE receiver — distinct
                     // from a struct's generated `to_string` (a @derive(Display)
