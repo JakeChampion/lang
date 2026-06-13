@@ -430,6 +430,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"trim-none", `function main(): i32 { return "abc".trim().len(); }`, 3},
 		{"trim-all-ws", `function main(): i32 { return "    ".trim().len() + 5; }`, 5},
 		{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  padded  "); }`, 6},
+		// String reverse (op_str_reverse) → fresh reversed string. wasm's AST path
+		// has no reverse, so these ride the IR-only gate (dedicated copying
+		// str_reverse_helper).
+		{"reverse-len", `function main(): i32 { return "hello".reverse().len(); }`, 5},
+		{"reverse-first", `function main(): i32 { var r = "abc".reverse(); return r[0]; }`, 99},
+		{"reverse-last", `function main(): i32 { var r = "abc".reverse(); return r[2]; }`, 97},
+		{"reverse-twice", `function main(): i32 { if ("hello".reverse().reverse() == "hello") { return 7; } return 0; }`, 7},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
 		// AST wasm path has no range desugar, so this rides the IR-only gate:
 		// the parser emits __range(LOW, HIGH) and irlower lowers a counted loop
