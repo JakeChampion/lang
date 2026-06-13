@@ -6015,6 +6015,150 @@ function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[]): HoistResul
     return HoistResult { func: none, ok: false };
 }
 
+// ---- mutable scalar captures (boxing, #2850) ---------------------------
+//
+// A closure that WRITES a captured outer scalar (`var x = 0; f = fn(){ x = x+1 }`)
+// must share the write with the enclosing scope (scalar captures are mutable
+// by-reference — the closures-as-counters feature). The IR path captures by
+// VALUE (the env box holds the capture's value), so the write is lost. Fix:
+// before lifting, rewrite each captured-AND-mutated i32/boolean local into a
+// 1-element array CELL, so the existing array-pointer capture is by-reference:
+//   var x = E         ->  var x: i32[] = [E]
+//   <read x>          ->  x[0]
+//   x = v             ->  x = x.with(0, v)        (in-place arr_set on the cell)
+// The lambda then captures the cell pointer (cap_type sees `i32[]`,
+// try_lift_binding passes the pointer); its in-place `.with` mutates the shared
+// cell. Only i32/boolean captures box (i32[] cell); f64 / non-scalar are left.
+
+// box_rewrite_expr rewrites every READ of a boxed var `x` to `x[0]`, recursing
+// all expression forms (including into lambda bodies). The decl name and assign
+// target are handled by box_rewrite_stmt, not here.
+function box_rewrite_expr(e: parser.Expr, boxed: string[]): parser.Expr {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (util.index_of_str(boxed, id.name) >= 0) {
+                return parser.ExprIndex { array: parser.ExprIdent { name: id.name, line: id.line, col: id.col }, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: id.line, col: id.col } };
+            }
+            return e;
+        },
+        parser.ExprBinary(b) => { return parser.ExprBinary { op: b.op, left: box_rewrite_expr(b.left, boxed), right: box_rewrite_expr(b.right, boxed), line: b.line, col: b.col }; },
+        parser.ExprUnary(u) => { return parser.ExprUnary { op: u.op, operand: box_rewrite_expr(u.operand, boxed), line: u.line, col: u.col }; },
+        parser.ExprCall(c) => {
+            var nargs: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { nargs = nargs.append(box_rewrite_expr(c.args[i], boxed)); i = i + 1; }
+            return parser.ExprCall { callee: box_rewrite_expr(c.callee, boxed), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        parser.ExprArray(a) => {
+            var ne: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { ne = ne.append(box_rewrite_expr(a.elements[i], boxed)); i = i + 1; }
+            return parser.ExprArray { elements: ne };
+        },
+        parser.ExprTuple(t) => {
+            var ne: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { ne = ne.append(box_rewrite_expr(t.elements[i], boxed)); i = i + 1; }
+            return parser.ExprTuple { elements: ne };
+        },
+        parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed), index: box_rewrite_expr(x.index, boxed) }; },
+        parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed), start: box_rewrite_expr(sl.start, boxed), end: box_rewrite_expr(sl.end, boxed) }; },
+        parser.ExprStructLit(sl) => {
+            var nv: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { nv = nv.append(box_rewrite_expr(sl.field_values[i], boxed)); i = i + 1; }
+            var nbase: parser.Expr = sl.base;
+            if (sl.has_base) { nbase = box_rewrite_expr(sl.base, boxed); }
+            return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
+        },
+        parser.ExprFieldAccess(fa) => { return parser.ExprFieldAccess { obj: box_rewrite_expr(fa.obj, boxed), field: fa.field, line: fa.line, col: fa.col }; },
+        parser.ExprLambda(lm) => { return parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: box_rewrite_stmts(lm.body, boxed) }; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// box_rewrite_stmt rewrites one statement: a boxed var's decl wraps its init in
+// a cell, a boxed assign becomes an in-place `.with`, everything else recurses.
+function box_rewrite_stmt(st: parser.Stmt, boxed: string[]): parser.Stmt {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (util.index_of_str(boxed, v.name) >= 0) {
+                var cell: parser.Expr = parser.ExprArray { elements: [box_rewrite_expr(v.init, boxed)] };
+                return parser.StmtVar { name: v.name, type_name: "i32[]", init: cell, line: v.line, col: v.col };
+            }
+            return parser.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed), line: v.line, col: v.col };
+        },
+        parser.StmtAssign(a) => {
+            if (util.index_of_str(boxed, a.target) >= 0) {
+                // x = v  ->  x = x.with(0, v)   (receiver stays the raw cell ident)
+                var recv: parser.Expr = parser.ExprIdent { name: a.target, line: a.target_line, col: a.target_col };
+                var wcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col }, args: [parser.ExprNumber { text: "0", suffix: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed)], line: a.line, col: a.col, type_argc: 0 };
+                return parser.StmtAssign { target: a.target, value: wcall, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+            }
+            return parser.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+        },
+        parser.StmtReturn(r) => { return parser.StmtReturn { value: box_rewrite_expr(r.value, boxed), line: r.line, col: r.col }; },
+        parser.StmtExpr(e) => { return parser.StmtExpr { value: box_rewrite_expr(e.value, boxed) }; },
+        parser.StmtIf(f) => { return parser.StmtIf { cond: box_rewrite_expr(f.cond, boxed), then_body: box_rewrite_stmts(f.then_body, boxed), else_body: box_rewrite_stmts(f.else_body, boxed) }; },
+        parser.StmtWhile(w) => { return parser.StmtWhile { cond: box_rewrite_expr(w.cond, boxed), body: box_rewrite_stmts(w.body, boxed) }; },
+        parser.StmtFor(fr) => { return parser.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed), body: box_rewrite_stmts(fr.body, boxed) }; },
+        parser.StmtMatch(m) => {
+            var na: parser.MatchArm[] = [];
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                na = na.append(parser.MatchArm { pattern: arm.pattern, body: box_rewrite_stmts(arm.body, boxed), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                ai = ai + 1;
+            }
+            return parser.StmtMatch { scrutinee: box_rewrite_expr(m.scrutinee, boxed), arms: na, line: m.line, col: m.col, origin: m.origin };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+
+function box_rewrite_stmts(stmts: parser.Stmt[], boxed: string[]): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { out = out.append(box_rewrite_stmt(stmts[i], boxed)); i = i + 1; }
+    return out;
+}
+
+// box_mutated_scalar_captures finds `fd`'s i32/boolean locals that are captured
+// by a lambda AND written inside that lambda, and boxes them (see the block
+// comment above). Returns `fd` unchanged when none qualify (lambda-free and
+// read-only-capture functions stay byte-identical).
+function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[]): parser.FuncDecl {
+    var boxed: string[] = [];
+    var i: i32 = 0;
+    while (i < fd.body.len()) {
+        var lam_ok: boolean = false;
+        var lam: parser.ExprLambda = parser.ExprLambda { params: [], ret_type: "", body: [] };
+        match (fd.body[i]) {
+            parser.StmtVar(v) => { match (v.init) { parser.ExprLambda(l) => { lam = l; lam_ok = true; }, _ => {} } },
+            parser.StmtReturn(r) => { match (r.value) { parser.ExprLambda(l) => { lam = l; lam_ok = true; }, _ => {} } },
+            _ => {}
+        }
+        if (lam_ok) {
+            var caps: string[] = lambda_captures(lam, gfns);
+            var wtargets: string[] = body_assign_targets(lam.body);
+            var ci: i32 = 0;
+            while (ci < caps.len()) {
+                var cn: string = caps[ci];
+                var ct: string = cap_type(cn, fd);
+                if ((ct == "i32" || ct == "boolean") && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
+                    boxed = boxed.append(cn);
+                }
+                ci = ci + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (boxed.len() == 0) { return fd; }
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: box_rewrite_stmts(fd.body, boxed), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count };
+}
+
 // lift_lambdas is the module pre-pass. Returns the module unchanged when no
 // lambda was lifted (keeping lambda-free modules byte-identical), else a module
 // whose bodies reference the hoisted __lam_<k> functions, with those functions
@@ -6035,6 +6179,11 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[fi];
+        // 0. Box captured-and-mutated scalar locals into 1-element array cells so
+        // a closure's write to a captured outer scalar is shared by reference
+        // (#2850). Must run BEFORE the closure lifts so they see the boxed cell
+        // (an `i32[]` capture passed by pointer) instead of a by-value scalar.
+        fd = box_mutated_scalar_captures(fd, gfns);
         // 1. Capturing lambdas bound to a local + only directly called: param-lift.
         var cbody: parser.Stmt[] = fd.body;
         var more: boolean = true;

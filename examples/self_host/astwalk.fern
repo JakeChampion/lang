@@ -111,7 +111,17 @@ pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
             }
             return acc;
         },
-        parser.StmtAssign(a) => { return collect_idents_expr(a.value, acc); },
+        parser.StmtAssign(a) => {
+            // Collect the value's reads AND the assign target: a lambda that
+            // WRITES a captured outer scalar without reading it (`x = 42`) still
+            // captures `x`, so the free-var collector must see write-only targets
+            // (#2850 / SH-057). `wasm`'s collector already did this. The target is
+            // a bare name (index / field assigns desugar to __set_index /
+            // __set_field calls carried in `value`). Duplicates are fine — capture
+            // lists dedup.
+            acc = collect_idents_expr(a.value, acc);
+            return acc.append(a.target);
+        },
         parser.StmtMatch(m) => {
             acc = collect_idents_expr(m.scrutinee, acc);
             var ai: i32 = 0;
