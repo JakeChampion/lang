@@ -29,18 +29,21 @@ import "./irlower";
 // because the IR path only fires when the WHOLE module is eligible
 // (all_eligible), so every function — caller and callee — uses irlower's
 // array layout; nothing crosses an IR/AST boundary.
-pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[], opt_ret_fns: string[], i64_ret_fns: string[], struct_ret_fns: string[], tuple_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[]): boolean {
+pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[], str_ret_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], struct_ret_fns: string[], tuple_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[]): boolean {
     // Methods (receiver functions) are lowered too — lower_func binds the
     // receiver as slot 0 and bails for non-scalar-struct receivers.
     var noret: string[] = [];
     // struct_ret_fns and tuple_ret_fns BOTH affect ok/bail: a caller's `p.x` on
     // a struct-returning-call result (or a struct element destructured from a
     // tuple-returning call) bails unless p is struct-typed, so the eligibility
-    // probe threads the real registries. (str/strarr/arr are emit-only — they
-    // change op selection, not whether a function lowers — so they stay empty.)
+    // probe threads the real registries. str_ret_fns is threaded too: it decides
+    // whether `for b in greet()` (a string-returning-call iterable) types as a
+    // string and lowers via the byte-foreach path, or falls to the array
+    // snapshot path and bails (#2822). strarr/arr stay empty (emit-only — they
+    // change op selection, not whether a function lowers).
     // fn_param_sigs IS threaded: it decides whether a bare function-name arg
     // lowers to const_func (ok) or falls through to a bail, so it affects ok.
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, noret, noret, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, noret, noret, noret, fn_param_sigs, closure_fns);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, str_ret_fns, noret, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, noret, noret, noret, fn_param_sigs, closure_fns);
     if (!r.ok) { return false; }
     return true;
 }
@@ -1176,9 +1179,10 @@ pub function eligible_core(mod: parser.Module): boolean {
     var trtf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
     var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!ir_eligible(mod.funcs[i], mod.structs, orf, irf, srtf, trtf, fps, cfs)) { return false; }
+        if (!ir_eligible(mod.funcs[i], mod.structs, srf, orf, irf, srtf, trtf, fps, cfs)) { return false; }
         if (!calls_only_known(mod.funcs[i], mod)) { return false; }
         if (!const_funcs_only_known(mod.funcs[i], mod)) { return false; }
         i = i + 1;
