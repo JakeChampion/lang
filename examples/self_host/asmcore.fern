@@ -260,6 +260,10 @@ pub function (s: EmitState) mark_str_chars(): EmitState {
     return s.need("heap").need("str_chars");
 }
 
+pub function (s: EmitState) mark_str_lines(): EmitState {
+    return s.need("heap").need("str_lines");
+}
+
 pub function (s: EmitState) mark_str_bytes(): EmitState {
     return s.need("heap").need("str_bytes");
 }

@@ -56,6 +56,9 @@ var strSplitIRCases = []struct {
 	// String chars (op_str_chars) -- likewise IR-eligible.
 	{"chars", `function main(): i32 { return "abc".chars().len(); }`},
 	{"chars-forin", `function main(): i32 { var n = 0; for c in "hi".chars() { n = n + 1; } return n; }`},
+	// String lines (op_str_lines) -- likewise IR-eligible.
+	{"lines", `function main(): i32 { return "a\nb\nc".lines().len(); }`},
+	{"lines-forin", `function main(): i32 { var n = 0; for ln in "x\ny".lines() { n = n + 1; } return n; }`},
 }
 
 // TestSelfHostStrSplitIRPathX86_64 asserts each split program routes through the

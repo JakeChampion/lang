@@ -555,6 +555,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"chars-forin", `function main(): i32 { var n = 0; for c in "hello".chars() { n = n + c.len(); } return n; }`},
 		{"chars-loop-sum", `function main(): i32 { var cs = "abc".chars(); var s = 0; var i = 0; while (i < cs.len()) { s = s + cs[i][0]; i = i + 1; } return s % 200; }`},
 		{"chars-param", `function nc(s: string): i32 { return s.chars().len(); } function main(): i32 { return nc("xyzw"); }`},
+		// String lines -> string[] split on \n with trailing-empty drop (op_str_lines;
+		// result is_arr + is_strarr). AST inlines lines; IR emits emit_ir_str_lines.
+		{"lines-3", `function main(): i32 { return "a\nb\nc".lines().len(); }`},
+		{"lines-trailing-nl", `function main(): i32 { return "a\nb\nc\n".lines().len(); }`},
+		{"lines-none", `function main(): i32 { return "hello".lines().len(); }`},
+		{"lines-empty", `function main(): i32 { return "".lines().len() + 4; }`},
+		{"lines-just-nl", `function main(): i32 { return "\n".lines().len() + 5; }`},
+		{"lines-elem", `function main(): i32 { var ls = "ab\ncd".lines(); return ls[1].len() * 10 + ls[1][0]; }`},
+		{"lines-forin", `function main(): i32 { var n = 0; for ln in "a\nbb\nccc".lines() { n = n + ln.len(); } return n; }`},
 	}
 
 	for _, tc := range cases {

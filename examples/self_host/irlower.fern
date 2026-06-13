@@ -1093,6 +1093,7 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprFieldAccess(cfa) => {
                     if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "chars" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
+                    if (cfa.field == "lines" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     return false;
                 },
                 _ => { return false; }
@@ -1172,6 +1173,9 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                         return expr_is_str(cfa.obj, s);
                     }
                     if (cfa.field == "chars" && c.args.len() == 0) {
+                        return expr_is_str(cfa.obj, s);
+                    }
+                    if (cfa.field == "lines" && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
                     }
                     return false;
@@ -2006,7 +2010,7 @@ pub function str_free_call_field(name: string): string {
 pub function is_str_builtin_method(field: string): boolean {
     return field == "to_upper" || field == "to_lower" || field == "trim"
         || field == "reverse" || field == "repeat" || field == "replace"
-        || field == "chars"
+        || field == "chars" || field == "lines"
         || field == "split"
         || field == "starts_with" || field == "ends_with" || field == "index_of"
         || field == "contains";
@@ -2015,7 +2019,7 @@ pub function is_str_builtin_method(field: string): boolean {
 // str_method_argc gives the argument count of a string builtin method: the case
 // transforms are 0-arg; everything else (split + predicates) is 1-arg.
 pub function str_method_argc(field: string): i32 {
-    if (field == "to_upper" || field == "to_lower" || field == "trim" || field == "reverse" || field == "chars") { return 0; }
+    if (field == "to_upper" || field == "to_lower" || field == "trim" || field == "reverse" || field == "chars" || field == "lines") { return 0; }
     if (field == "replace") { return 2; }
     return 1;
 }
@@ -2034,6 +2038,7 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     if (field == "trim") { return p.emit(ir.op_str_trim()); }
     if (field == "reverse") { return p.emit(ir.op_str_reverse()); }
     if (field == "chars") { return p.emit(ir.op_str_chars()); }
+    if (field == "lines") { return p.emit(ir.op_str_lines()); }
     p = lower_expr(args[0], p);
     if (!p.ok) { return p; }
     if (field == "replace") {
@@ -3534,6 +3539,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             if ((cfa.field == "bytes" || cfa.field == "as_bytes") && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                             else if (cfa.field == "split" && cc.args.len() == 1 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                             else if (cfa.field == "chars" && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
+                            else if (cfa.field == "lines" && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                         },
                         _ => {}
                     }
