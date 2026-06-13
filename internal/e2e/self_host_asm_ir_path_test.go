@@ -393,6 +393,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"ifexpr-nested-in-binary", `function main(): i32 { var a = 3; return (if (a > 0) { 5 } else { 6 }) + (if (a > 10) { 1 } else { 2 }); }`},
 		{"ifexpr-as-arg", `function add1(v: i32): i32 { return v + 1; } function main(): i32 { var x = 5; return add1(if (x > 3) { 10 } else { 20 }); }`},
 		{"matchexpr-literal", `function main(): i32 { var n = 2; var y = match (n) { 1 => 10, 2 => 20, _ => 0 }; return y; }`},
+		// ENUM match-EXPRESSION in value position: the same IIFE inlining, with a
+		// StmtMatch body lowered through the full variant dispatch (arms'
+		// `return E` rewritten to a temp store). Unit-variant arms with an i32
+		// result (#2938 follow-up); payload-binding arms still bail to AST.
+		{"matchexpr-enum-unit", `enum C { A, B, X } function main(): i32 { var c: C = X; var y = match (c) { A => 1, B => 2, X => 3 }; return y; }`},
+		{"matchexpr-enum-first", `enum C { A, B, X } function main(): i32 { var c: C = A; var y = match (c) { A => 1, B => 2, X => 3 }; return y; }`},
+		{"matchexpr-enum-in-binary", `enum C { A, B } function main(): i32 { var c: C = A; return match (c) { A => 5, B => 6 } + 100; }`},
+		{"matchexpr-enum-return-arg", `enum C { Red, Green, Blue } function pick(c: C): i32 { return match (c) { Red => 1, Green => 2, Blue => 3 }; } function main(): i32 { return pick(Green) * 10; }`},
 		{"i64-cmp", `function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`},
 		{"i64-add", `function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`},
 		{"i64-mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`},
