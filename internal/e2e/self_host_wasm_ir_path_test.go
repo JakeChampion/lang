@@ -378,6 +378,14 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"to-upper-mixed", `function main(): i32 { var u = "aB9z".to_upper(); return u[0] + u[1] + u[2] + u[3]; }`},
 		{"case-roundtrip", `function main(): i32 { var s = "Hello"; if (s.to_upper().to_lower() == "hello") { return 7; } return 0; }`},
 		{"case-param", `function up(s: string): i32 { return s.to_upper()[0]; } function main(): i32 { return up("xyz"); }`},
+		// String repeat → fresh string (op_str_repeat). The wasm IR path emits the
+		// narrow str_repeat_helper; the AST path gets $__fern_str_repeat from
+		// strcat_helpers — must agree.
+		{"repeat-len", `function main(): i32 { return "ab".repeat(3).len(); }`},
+		{"repeat-byte", `function main(): i32 { var r = "xy".repeat(4); return r[0] + r[7]; }`},
+		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
+		{"repeat-zero", `function main(): i32 { return "hello".repeat(0).len() + 9; }`},
+		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
 		// NB: the str_starts_with / str_index_of FREE-function builtins exist on the
 		// x86-64 AST path but not the wasm AST path, so they can't ride this wasm
 		// differential gate — the method forms above cover the IR predicate ops, and
@@ -412,6 +420,16 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); if (b.len() != 3) { return 20; } if (b[0] != 65) { return 21; } if (b[2] != 67) { return 22; } return 5; }`, 5},
 		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); if (b[0] != 65) { return 20; } if (b[1] != 66) { return 21; } return 6; }`, 6},
 		{"uuid-v4", uuidV4Program, 0},
+		// String trim (op_str_trim) → fresh whitespace-stripped string. wasm's AST
+		// path has no trim, so it can't ride the differential gate — the wasm IR
+		// path emits the dedicated str_trim_helper (a copying trim, since wasm
+		// strings are inline). Assert the trimmed length / first byte directly.
+		{"trim-both", `function main(): i32 { return "  hi  ".trim().len(); }`, 2},
+		{"trim-byte", `function main(): i32 { var t = "  hi".trim(); return t[0]; }`, 104},
+		{"trim-tabs-nl", `function main(): i32 { return "\t\n ab \r\n".trim().len(); }`, 2},
+		{"trim-none", `function main(): i32 { return "abc".trim().len(); }`, 3},
+		{"trim-all-ws", `function main(): i32 { return "    ".trim().len() + 5; }`, 5},
+		{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  padded  "); }`, 6},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
 		// AST wasm path has no range desugar, so this rides the IR-only gate:
 		// the parser emits __range(LOW, HIGH) and irlower lowers a counted loop

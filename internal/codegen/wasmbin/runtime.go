@@ -370,8 +370,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_tcp_recv":
 					// (conn, max) → (data, len) — heap-form
 					// string with the bytes read. Empty on
-					// stream-error / EOF.
+					// stream-error / EOF. The result string is
+					// rc-headered (alloc_rc1) so __fern_str_dec
+					// reclaims it correctly (#2817 class); the
+					// retptr scratch uses plain alloc.
 					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_tcp_recv")
 				case "__fern_tcp_send":
 					// (conn, data) → i32 — bytes sent, -1 on

@@ -2863,11 +2863,16 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("mov x19, x0")    // stash value src ptr
 	g.emit("mov x20, x2")    // stash value len
 	if twoWord {
-		// Heap-form: alloc exactly value-len bytes (no
-		// length prefix).
+		// Heap-form via the rc-headered allocator (rc=1 at data-8,
+		// payload size at data-4): the returned Some(string) is an
+		// owned rc string dropped via __fern_str_dec, which reads
+		// that header. A plain __fern_alloc buffer has none, so the
+		// drop reads garbage and corrupts the heap — the same arm64
+		// two-word bug as string_from_bytes (#2817). Length lives in
+		// the box len@16 word, so no length prefix is needed.
 		g.emit("mov x0, x2")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x22, x0") // x22 = data ptr
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x22, x0") // x22 = data ptr (= base+8)
 		g.emit("mov x0, x22")
 		g.emit("mov x1, x19")
 		g.emit("mov x2, x20")
@@ -3043,10 +3048,12 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("mov x20, x1") // x20 = max
 	if twoWord {
 		// Two-word heap form: alloc max bytes (no prefix /
-		// NUL); return (data, len) in (x0, x1).
+		// NUL); return (data, len) in (x0, x1). rc-headered alloc (rc=1
+		// @data-8, size @data-4) so __fern_str_dec reclaims the owned string
+		// correctly; plain __fern_alloc corrupts the heap (#2817 class).
 		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x21, x0") // x21 = dst
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0") // x21 = dst (= base+8)
 		g.emit("mov x0, x19")
 		g.emit("mov x1, x21")
 		g.emit("mov x2, x20")
@@ -4205,11 +4212,15 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("b .Lrl_ret")
 	g.label(".Lrl_some")
 	if twoWord {
-		// Two-word heap form: alloc exactly x20 bytes (no
-		// length prefix, no trailing NUL).
+		// Two-word heap form via the rc-headered allocator (rc=1 at
+		// data-8, payload size at data-4): the returned Some(string)
+		// is dropped via __fern_str_dec, which reads that header. A
+		// plain __fern_alloc buffer has none — same arm64 two-word
+		// heap-corruption as string_from_bytes (#2817). Length lives
+		// in the box len@16 word, so no length prefix is needed.
 		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x21, x0") // x21 = data ptr
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
 		// memcpy(x21, x19, x20).
 		g.emit("mov x0, x21")
 		g.emit("mov x1, x19")
@@ -4778,8 +4789,11 @@ func (g *generator) emitReadFileRuntime2W() {
 	// Allocate exactly st_size bytes for the result string
 	// data — no length prefix (two-word ABI).
 	g.emit("mov x0, x23")
-	g.emit("bl __fern_alloc")
-	g.emit("mov x22, x0") // x22 = data ptr
+	// rc-headered alloc (rc=1 @data-8, size @data-4) so the owned Ok(string)
+	// this returns is reclaimed correctly by __fern_str_dec; a plain
+	// __fern_alloc buffer has no header and corrupts the heap (#2817 class).
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x22, x0") // x22 = data ptr (= base+8)
 	// Read loop.
 	g.emit("mov x24, #0")
 	g.label(".Lrf2w_loop")
@@ -5235,10 +5249,12 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("b .Lrrl_ret")
 	g.label(".Lrrl_some")
 	if twoWord {
-		// Heap-form alloc: just x20 bytes (no prefix / NUL).
+		// Heap-form alloc via the rc-headered allocator (rc=1 @data-8, size
+		// @data-4) so the owned Some(string) is reclaimed correctly by
+		// __fern_str_dec; plain __fern_alloc corrupts the heap (#2817 class).
 		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x21, x0")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0") // = base+8
 		g.emit("mov x0, x21")
 		g.emit("mov x1, x19")
 		g.emit("mov x2, x20")
@@ -5295,10 +5311,12 @@ func (g *generator) emitReaderWriterRuntime() {
 	if twoWord {
 		// Two-word heap form: alloc exactly n bytes (no
 		// prefix). Actual bytes read tracked in the Some
-		// box's len field.
+		// box's len field. rc-headered alloc (rc=1 @data-8, size @data-4) so
+		// the owned Some(string) is reclaimed correctly by __fern_str_dec;
+		// plain __fern_alloc corrupts the heap (#2817 class).
 		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x21, x0")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0") // = base+8
 		g.emit("mov w0, w19")
 		g.emit("mov x1, x21")
 		g.emit("mov x2, x20")
