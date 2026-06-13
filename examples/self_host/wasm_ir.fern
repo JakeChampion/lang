@@ -55,11 +55,10 @@ pub function heap_base(): i32 { return 40 + 65536 * 4; }
 // deduped) from the lowered IR. Both the caller's data-section emission and the
 // per-function const_str offset lookup walk this same list, so offsets agree.
 pub function str_values(mod: parser.Module): string[] {
-    var noret: string[] = [];
     var vals: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "const_str") {
@@ -113,10 +112,9 @@ pub function heap_base_for(mod: parser.Module): i32 {
 // module_uses_strings reports whether any function uses a string op (literal,
 // len, concat, eq) — gates the data section + strcat/streq helper emission.
 pub function module_uses_strings(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
@@ -133,10 +131,9 @@ pub function module_uses_strings(mod: parser.Module): boolean {
 // ordering < <= > >=). Such modules need the FULL string-helper bundle, which
 // includes $__fern_strcmp (the narrow strcat_streq bundle omits it).
 pub function module_uses_str_cmp(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "str_cmp") { return true; }
@@ -150,10 +147,9 @@ pub function module_uses_str_cmp(mod: parser.Module): boolean {
 // module_uses_str_slice reports whether any function uses `s[start:end]` (the
 // str_slice op), gating emission of the $__fern_substr copy helper.
 pub function module_uses_maps(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
@@ -166,10 +162,9 @@ pub function module_uses_maps(mod: parser.Module): boolean {
 }
 
 pub function module_uses_str_slice(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "str_slice") { return true; }
@@ -275,10 +270,9 @@ function wasm_helper_symbol(name: string): string {
 // module_allocates reports whether any function uses an array/alloc op (so the
 // heap + RC runtime needs emitting).
 pub function module_allocates(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
@@ -308,10 +302,9 @@ pub function module_allocates(mod: parser.Module): boolean {
 // module_emits_op reports whether any lowered function emits an op of `kind` —
 // the shared scanner the random/byte-source helper gates use (issue #2747).
 pub function module_emits_op(mod: parser.Module, kind: string): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == kind) { return true; }
@@ -328,10 +321,9 @@ pub function module_emits_op(mod: parser.Module, kind: string): boolean {
 // otherwise alloc-free module. (module_emits_op keys on op.kind, not the
 // call_direct symbol, so this needs its own scan.)
 pub function module_uses_i32_to_string(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_i32_to_string") { return true; }
@@ -351,10 +343,9 @@ pub function module_uses_random(mod: parser.Module): boolean {
 // module_uses_divrem reports whether any function uses i32 div/rem (so the
 // non-trapping $__fern_idiv / $__fern_irem helpers need emitting).
 pub function module_uses_divrem(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") { return true; }
@@ -370,10 +361,9 @@ pub function module_uses_divrem(mod: parser.Module): boolean {
 // module_uses_arr_slice reports whether any function emits a 4-byte-element
 // arr_slice op (width 32), so the $__fern_arr_slice helper needs emitting.
 pub function module_uses_arr_slice(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "arr_slice" && r.ops[i].width != 64) { return true; }
@@ -388,10 +378,9 @@ pub function module_uses_arr_slice(mod: parser.Module): boolean {
 // emitting. Distinct from module_uses_arr_slice so a program slicing only one
 // element width pulls in only the helper it calls.
 pub function module_uses_arr_slice8(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "arr_slice" && r.ops[i].width == 64) { return true; }
@@ -403,10 +392,9 @@ pub function module_uses_arr_slice8(mod: parser.Module): boolean {
 }
 
 pub function module_uses_i64_divrem(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if ((r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") && r.ops[i].width == 64) { return true; }
@@ -462,11 +450,10 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // its funcref-table slot index — both the const_func `i32.const <idx>` and the
 // elem segment in fn_support_section index into this list, so they agree.
 pub function fn_value_table(mod: parser.Module): string[] {
-    var noret: string[] = [];
     var out: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "const_func" && util.index_of_str(out, r.ops[i].str) < 0) {
@@ -483,11 +470,10 @@ pub function fn_value_table(mod: parser.Module): string[] {
 // ops across the module (deduped), so fn_support_section declares one
 // `$fn<argc>` signature type per arity actually dispatched.
 function indirect_arities(mod: parser.Module): i32[] {
-    var noret: string[] = [];
     var out: i32[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
         var i: i32 = 0;
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "call_indirect" && !slot_in_list(out, r.ops[i].i32_imm)) {
@@ -533,9 +519,8 @@ pub function fn_support_section(mod: parser.Module): string {
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
-function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[]): string {
-    var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, str_ret, strarr_ret, opt_ret, i64_ret, tuple_ret, struct_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns);
+function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], arr_ret: string[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[]): string {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, opt_ret, i64_ret, tuple_ret, struct_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns);
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -1034,10 +1019,11 @@ pub function emit_functions(mod: parser.Module): string {
     var ft: string[] = fn_value_table(mod);
     var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
     var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var arf: string[] = asm_ir.array_ret_fns(mod);
     var out: string = "";
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, srf, sarf, orf, irf, trf, srtf, frf, farf, iarf, ft, fps, cfs, mod.funcs);
+        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, arf, srf, sarf, orf, irf, trf, srtf, frf, farf, iarf, ft, fps, cfs, mod.funcs);
         fi = fi + 1;
     }
     return out;
