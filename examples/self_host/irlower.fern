@@ -688,6 +688,18 @@ pub function is_struct_array_field_type(structs: parser.StructDecl[], t: string)
     return decl_is_struct(structs, t[0 : n - 2]);
 }
 
+// is_enum_array_field_type: a `C[]` where C is a (nominal) enum (array-of-enum
+// field). Like the array-of-struct field it is admitted to the IR path in leak
+// mode (the array + its enum boxes leak with the struct) and bailed in the
+// alias-creating positions (bind / return / assign), so the leak-only IR never
+// creates a dangling second owner.
+pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 3) { return false; }
+    if (t[n - 2 : n] != "[]") { return false; }
+    return is_enum_like_name(t[0 : n - 2], structs);
+}
+
 // is_leaksafe_payload reports whether a payload type is a leak-safe scalar/string.
 function is_leaksafe_payload(p: string): boolean {
     return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64";
@@ -763,7 +775,7 @@ pub function is_scalar_arr_field_access(e: parser.Expr, s: LowerState): boolean 
             // is bailed in the alias-creating positions (bind/return/assign): the
             // leak-only IR can't retain the second reference, and the field's array
             // is the struct's sole-owned value.
-            return is_leaksafe_array_field(ft) || is_struct_array_field_type(s.structs, ft);
+            return is_leaksafe_array_field(ft) || is_struct_array_field_type(s.structs, ft) || is_enum_array_field_type(s.structs, ft);
         },
         _ => { return false; }
     }
@@ -816,6 +828,13 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 if (t.len() >= 3 && t[t.len() - 2 : t.len()] == "[]") {
                     var elt: string = t[0 : t.len() - 2];
                     if (decl_is_struct(structs, elt) && decl_is_leaksafe_d(structs, elt, depth + 1)) {
+                        fi = fi + 1;
+                        continue;
+                    }
+                    // An array-of-ENUM field `C[]` — enum boxes leak with the
+                    // struct like the struct-element arrays above (and the
+                    // nominal-enum field case), so admit it in leak mode.
+                    if (is_enum_like_name(elt, structs)) {
                         fi = fi + 1;
                         continue;
                     }
