@@ -90,9 +90,9 @@ function ir_bin_asm(kind: string): string {
 function is_str_op_kind(k: string): boolean {
     return k == "str_len" || k == "str_index" || k == "str_slice"
         || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
-        || k == "str_to_lower" || k == "str_repeat" || k == "str_starts_with"
-        || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
-        || k == "str_eq" || k == "str_cmp";
+        || k == "str_to_lower" || k == "str_repeat" || k == "str_trim"
+        || k == "str_starts_with" || k == "str_ends_with" || k == "str_index_of"
+        || k == "str_concat" || k == "str_eq" || k == "str_cmp";
 }
 
 // emit_str_op emits one string operand-stack op (the bodies factored out of
@@ -151,6 +151,14 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_str_search();
         s = s.mark_heap();
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_repeat\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_trim") {
+        // operand stack [s box]; __fern_str_trim(x0=s) -> fresh string box in x0.
+        // asm_arm64.emit_runtime emits the body in its str_search block (it
+        // allocates), so set str_search + heap.
+        s = s.mark_str_search();
+        s = s.mark_heap();
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_trim\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
         // operand stack [s, p] (p top); __fern_str_<pred>(x0=s, x1=p) -> 0/1

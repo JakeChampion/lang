@@ -276,6 +276,10 @@ pub function (s: EmitState) mark_str_repeat(): EmitState {
     return s.need("heap").need("str_repeat");
 }
 
+pub function (s: EmitState) mark_str_trim(): EmitState {
+    return s.need("heap").need("str_trim");
+}
+
 pub function (s: EmitState) mark_str_reverse(): EmitState {
     return s.need("heap").need("str_reverse");
 }

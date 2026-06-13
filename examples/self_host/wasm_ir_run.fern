@@ -85,6 +85,8 @@ function main(): i32 {
         if (wasm_ir.module_uses_str_case(mod)) { o = o + wasm.str_case_helpers(); }
         // String repeat — self-contained, emitted only when used.
         if (wasm_ir.module_uses_str_repeat(mod)) { o = o + wasm.str_repeat_helper(); }
+        // String trim — self-contained, emitted only when used (IR-only on wasm).
+        if (wasm_ir.module_uses_str_trim(mod)) { o = o + wasm.str_trim_helper(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { o = o + wasm.arr_slice8_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }

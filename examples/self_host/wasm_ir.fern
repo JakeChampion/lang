@@ -303,6 +303,7 @@ pub function module_allocates(mod: parser.Module): boolean {
             if (k == "str_split") { return true; }
             if (k == "str_to_upper" || k == "str_to_lower") { return true; }
             if (k == "str_repeat") { return true; }
+            if (k == "str_trim") { return true; }
             // alloc_u8 / arr_push / str_from_bytes all allocate via $__fern_arr_box
             // / $__fern_string_from_bytes, so a program whose only allocation is
             // one of these still needs the heap runtime.
@@ -352,6 +353,13 @@ pub function module_uses_str_case(mod: parser.Module): boolean {
 // wasm.str_repeat_helper is emitted for the IR path.
 pub function module_uses_str_repeat(mod: parser.Module): boolean {
     return module_emits_op(mod, "str_repeat");
+}
+
+// module_uses_str_trim reports whether any function emits the str_trim op, so
+// wasm.str_trim_helper is emitted for the IR path. (wasm's AST path has no trim,
+// so this is IR-only — no AST counterpart to differential-test against.)
+pub function module_uses_str_trim(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_trim");
 }
 
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
@@ -795,6 +803,9 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_repeat") {
             // stack: s, n -> $__fern_str_repeat(s, n) -> fresh block (n copies of s).
             out = out + "    call $__fern_str_repeat\n";
+        } else if (o.kind == "str_trim") {
+            // stack: s -> $__fern_str_trim(s) -> fresh block (whitespace stripped).
+            out = out + "    call $__fern_str_trim\n";
         } else if (o.kind == "str_starts_with") {
             // stack: s, p -> $__fern_str_startswith(s, p) -> 0/1. Self-contained
             // predicate emitted by str_predicate_helpers (module_emits_op gate).
