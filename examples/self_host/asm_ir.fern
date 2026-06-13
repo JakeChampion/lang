@@ -282,7 +282,7 @@ function emit_ir_sleep_ms(s: asmcore.EmitState): asmcore.EmitState {
 // emit_module_ir), so there is no symbol clash. Keep in sync with asm.fern.
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // .bss: heap bump pointer, the over-release detector, the size-classed
-    // freelist (65536 classes * 8 bytes), and a 1 GiB zero-page heap.
+    // freelist (65536 classes * 8 bytes), and a 1.5 GiB zero-page heap.
     s = s.write("    .section .bss\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_heap_ptr: .quad 0\n");
@@ -291,7 +291,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
     s = s.write("    .align 8\n");
-    s = s.write("__fern_heap: .skip 1073741824\n");
+    s = s.write("__fern_heap: .skip 1610612736\n");
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
@@ -329,7 +329,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq %rax, %rdi\n");
     s = s.write("    pushq %rcx\n");
     s = s.write("    leaq __fern_heap(%rip), %rcx\n");
-    s = s.write("    addq $1073741824, %rcx\n");
+    s = s.write("    addq $1610612736, %rcx\n");
     s = s.write("    cmpq %rcx, %rdi\n");
     s = s.write("    popq %rcx\n");
     s = s.write("    ja .Lalloc_oom\n");
