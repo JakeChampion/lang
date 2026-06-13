@@ -313,6 +313,7 @@ pub function module_allocates(mod: parser.Module): boolean {
             if (k == "str_trim") { return true; }
             if (k == "str_reverse") { return true; }
             if (k == "str_replace") { return true; }
+            if (k == "str_chars") { return true; }
             // alloc_u8 / arr_push / str_from_bytes all allocate via $__fern_arr_box
             // / $__fern_string_from_bytes, so a program whose only allocation is
             // one of these still needs the heap runtime.
@@ -381,6 +382,12 @@ pub function module_uses_str_reverse(mod: parser.Module): boolean {
 // so wasm.str_replace_helper is emitted for the IR path. (IR-only, like trim.)
 pub function module_uses_str_replace(mod: parser.Module): boolean {
     return module_emits_op(mod, "str_replace");
+}
+
+// module_uses_str_chars reports whether any function emits the str_chars op, so
+// wasm.str_chars_helper is emitted for the IR path. (IR-only, like trim.)
+pub function module_uses_str_chars(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_chars");
 }
 
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
@@ -839,6 +846,9 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_replace") {
             // stack: h, old, new -> $__fern_str_replace(...) -> fresh block.
             out = out + "    call $__fern_str_replace\n";
+        } else if (o.kind == "str_chars") {
+            // stack: s -> $__fern_str_chars(s) -> fresh string[] of 1-char blocks.
+            out = out + "    call $__fern_str_chars\n";
         } else if (o.kind == "str_starts_with") {
             // stack: s, p -> $__fern_str_startswith(s, p) -> 0/1. Self-contained
             // predicate emitted by str_predicate_helpers (module_emits_op gate).
