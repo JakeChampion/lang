@@ -264,6 +264,10 @@ pub function (s: EmitState) mark_str_bytes(): EmitState {
     return s.need("heap").need("str_bytes");
 }
 
+pub function (s: EmitState) mark_str_split(): EmitState {
+    return s.need("heap").need("str_split");
+}
+
 pub function (s: EmitState) mark_str_reverse(): EmitState {
     return s.need("heap").need("str_reverse");
 }

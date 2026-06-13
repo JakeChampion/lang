@@ -428,6 +428,23 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"as-bytes-vals", `function main(): i32 { var b: i32[] = "ABC".as_bytes(); return b[0] + b[1] + b[2]; }`},
 		{"bytes-vals", `function main(): i32 { var b: i32[] = "AB".bytes(); return b[0] + b[1]; }`},
 		{"as-bytes-heap", `function main(): i32 { var b: i32[] = "ABCDEFGHIJ".as_bytes(); return b.len() + b[9]; }`},
+		// string.split(sep) → string[] (op_str_split). The AST path emits
+		// __fern_str_split inside emit_runtime (gated on the str_search need that
+		// the split dispatch sets), and the IR path emits its own transcribed
+		// __fern_str_split — so the segment count / element lengths must match.
+		{"split-count", `function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`},
+		{"split-first-len", `function main(): i32 { var p = "foo,bar,baz".split(","); return p[0].len(); }`},
+		{"split-elem-lens", `function main(): i32 { var p = "a,bb,ccc".split(","); return p[0].len() + p[1].len() + p[2].len(); }`},
+		{"split-multichar-sep", `function main(): i32 { var p = "axxbxxc".split("xx"); return p.len() * 10 + p[2].len(); }`},
+		{"split-no-match", `function main(): i32 { var p = "abc".split(","); return p.len() * 10 + p[0].len(); }`},
+		{"split-empty-sep", `function main(): i32 { var p = "abc".split(""); return p.len() * 10 + p[0].len(); }`},
+		{"split-trailing-sep", `function main(): i32 { var p = "a,b,".split(","); return p.len(); }`},
+		{"split-leading-sep", `function main(): i32 { var p = ",a,b".split(","); return p.len() * 10 + p[0].len(); }`},
+		{"split-loop-sum", `function main(): i32 { var p = "a,bb,ccc,dddd".split(","); var s = 0; var i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
+		{"split-forin", `function main(): i32 { var s = 0; for part in "x,yy,zzz".split(",") { s = s + part.len(); } return s; }`},
+		{"split-param", `function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
+		{"split-freecall", `function main(): i32 { var p = str_split("a,b,c", ","); return p.len(); }`},
+		{"split-then-index-direct", `function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
 	}
 
 	for _, tc := range cases {
