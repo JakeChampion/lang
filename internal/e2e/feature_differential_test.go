@@ -155,6 +155,18 @@ function main(): i32 {
     print((p2.x + p2.y).to_string());
     return 0;
 }`},
+		// `for x in b.items { … }` — iterating a struct's array field. The
+		// field-access iter must NOT be mis-parsed as a `b.items { … }`
+		// qualified struct literal (the trailing `{` opens the loop body).
+		{"struct_field_array_foreach", `import "std/i32";
+struct Bag { items: i32[] }
+function main(): i32 {
+    var b: Bag = Bag{ items: [10, 20, 30] };
+    var sum: i32 = 0;
+    for x in b.items { sum = sum + x; }
+    print(sum.to_string());
+    return 0;
+}`},
 
 		// ---- enums + match ----
 		{"enum_match", `import "std/i32";

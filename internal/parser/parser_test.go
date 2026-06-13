@@ -251,6 +251,40 @@ func TestForEachOverArrayDesugars(t *testing.T) {
 	}
 }
 
+// `for x in b.items { body }` — the iterator is a struct field access, so the
+// trailing `{` opens the loop body, NOT a `b.items { … }` qualified struct
+// literal. Regression for the struct-lit clash: a `.field` postfix followed by
+// `{` was parsed as a qualified struct literal even in a `noStructLit` (for /
+// if / while header) position, mis-reading the body brace.
+func TestForEachOverStructFieldDesugars(t *testing.T) {
+	prog, err := Parse(`struct Bag { items: i32[] }
+	function f(): i32 {
+		var b = Bag { items: [1, 2, 3] };
+		var sum: i32 = 0;
+		for x in b.items {
+			sum = sum + x;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := prog.Funcs[0].Body.Stmts
+	blk, ok := body[2].(*ast.Block)
+	if !ok {
+		t.Fatalf("foreach over a struct field should desugar to Block, got %T", body[2])
+	}
+	// The iter (first synthetic var) binds the field access `b.items`, not a
+	// struct literal.
+	iterVar, ok := blk.Stmts[0].(*ast.Var)
+	if !ok {
+		t.Fatalf("first inner stmt should bind the iter, got %T", blk.Stmts[0])
+	}
+	if _, ok := iterVar.Init.(*ast.FieldAccess); !ok {
+		t.Fatalf("foreach iter should be a FieldAccess (b.items), got %T", iterVar.Init)
+	}
+}
+
 // `for i in LOW..HIGH { body }` desugars to a Block of `{ var
 // __range_hi = HIGH; for (var i = LOW; i < __range_hi; i = i + 1)
 // { body } }` — HIGH bound once, a For (not While) so `continue`
