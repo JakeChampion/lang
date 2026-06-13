@@ -283,9 +283,19 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    mirroring the backend-parity cadence).
 3. **Slice 3: self-host parity (x86-64 + arm64 — shipped).** `dyn Trait`
    parses in the self-host and dispatches over its existing shape-pointer
-   path; struct/enum concrete types work end-to-end (see §4.3). Remaining:
-   the wasm self-host backend, and the strict object-safety / coercion
-   checks in `checker.fern` (only needed once the Go checker retires).
+   path; struct/enum concrete types work end-to-end (see §4.3).
+3a. **Slice 3a: self-host IR path (#2868 — shipped).** `dyn Trait` method
+   calls now lower through the stack-IR path too (not just the legacy
+   AST→asm emitter), so a `dyn` program is IR-eligible. `irlower` emits a
+   runtime shape-dispatch chain — `variant_is` over the trait's impl types,
+   calling the matching `<Type>.<method>` — built from `block`/`br` like the
+   `match` lowering. dyn-ness rides `local_struct_type` as `"dyn <trait>"`
+   through params, `dyn []` array elements, and `for`-loop vars; the impl set
+   comes from a precomputed `impl_methods` registry (`<Type>.<method>`
+   labels). Covers x86-64 + wasm; method args supported, value flows via a
+   result slot (scalar / pointer returns). Remaining: the strict
+   object-safety / coercion checks in `checker.fern` (only needed once the Go
+   checker retires); i64/f64-returning dyn methods.
 4. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast/
    downcast, `dyn` in struct fields with the fat-pointer layout.
 
@@ -304,3 +314,5 @@ Per the engineering bar (tests at the layer each change touches):
 - Full suite (incl. WASM e2e + self-host gates) stays green; the
   interpreter-only scope means no differential (interp-vs-compiled) test
   exercises `dyn` until slice 2.
+
+<!-- IR-path dyn dispatch landed via #2868 (slice 3a). -->

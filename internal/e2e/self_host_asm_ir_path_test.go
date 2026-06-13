@@ -379,6 +379,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"enum-unit", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }`},
 		{"enum-three", `enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }`},
 		{"enum-wildcard", `enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }`},
+		// `dyn Trait` runtime method dispatch (#2868): irlower emits a variant_is
+		// shape-dispatch chain over the trait's impl types. The AST and IR paths
+		// must agree. Covers a dyn param + direct call, a `for x in dyn T[]` loop
+		// over a heterogeneous array literal, and a dyn method taking an argument.
+		{"dyn-param-direct", `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function f(s: dyn Shape): i32 { return s.area(); } function main(): i32 { var c: dyn Shape = Rect { w: 3, h: 4 }; return f(c); }`},
+		{"dyn-foreach-hetero", `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function sum(xs: dyn Shape[]): i32 { var t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }]; return sum(xs); }`},
+		{"dyn-method-with-arg", `trait Scale { function scaled(self: Self, k: i32): i32; } struct A { v: i32 } struct B { v: i32 } impl Scale for A { function scaled(self: Self, k: i32): i32 { return self.v * k; } } impl Scale for B { function scaled(self: Self, k: i32): i32 { return self.v + k; } } function go(s: dyn Scale): i32 { return s.scaled(10); } function main(): i32 { var a: dyn Scale = A { v: 4 }; var b: dyn Scale = B { v: 4 }; return go(a) + go(b); }`},
 		// `@derive(Debug)` (#2708) — the self-host synthesizes a type-directed
 		// `to_debug` (numbers → to_string, strings → quoted, nominal → to_debug),
 		// matching the native structural output. The AST and IR paths must agree
