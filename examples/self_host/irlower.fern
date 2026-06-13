@@ -2233,8 +2233,25 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // zero-arg function whose bare reference is a call) or a function
             // VALUE (a function pointer) is type-directed: ONLY a "fn"-typed
             // argument position makes it a value, handled at the ExprCall arg
-            // site below. In every other position it is a const reference, which
-            // is not in the IR subset — bail to AST (which calls the const).
+            // site below. In every other position it is a const reference — call
+            // it directly.
+            //
+            // We only lower the i32-width case here: op_call_direct's result is
+            // an i32 (4-byte) value, which is exactly right for an i32 / boolean
+            // / u32 const. A const whose return type is wider or pointer-shaped
+            // (i64/u64, f64, string, an array, Option/Result, a struct or tuple,
+            // a closure) is recognised downstream only from the ExprCall *shape*
+            // (a known callee name in i64_ret_fns / str_ret_fns / …), never from
+            // a bare ident, so emitting a raw call would mis-track its width.
+            // Those bail to AST as before.
+            if (!s.is_i64_ret_fn(id.name) && !s.is_f64_ret_fn(id.name)
+                && !s.is_str_ret_fn(id.name) && !s.is_arr_ret_fn(id.name)
+                && !s.is_strarr_ret_fn(id.name) && !s.is_f64arr_ret_fn(id.name)
+                && !s.is_i64arr_ret_fn(id.name) && s.opt_ret_type(id.name) == ""
+                && s.struct_ret_type(id.name) == "" && s.tuple_ret_type(id.name) == ""
+                && util.index_of_str(s.closure_fns, id.name) < 0) {
+                return s.emit(ir.op_call_direct(id.name, 0));
+            }
             return s.fail();
         },
         parser.ExprBinary(b) => {

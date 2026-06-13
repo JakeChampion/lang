@@ -101,6 +101,16 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},
 		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"},
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return (x as u8) as i32; }"},
+		// Top-level `const` references (i32-width) now lower through the IR path
+		// as op_call_direct(name, 0) rather than bailing to AST; wider consts
+		// still bail. The differential asserts IR == AST.
+		{"const-ref", "const LIMIT: i32 = 100; function main(): i32 { return LIMIT + 1; }"},
+		{"const-bare", "const ANSWER: i32 = 42; function main(): i32 { return ANSWER; }"},
+		{"const-in-expr", "const A: i32 = 7; const B: i32 = 5; function main(): i32 { return A * B - 2; }"},
+		{"const-in-if", "const THRESH: i32 = 10; function main(): i32 { var x = 12; if (x > THRESH) { return THRESH; } return x; }"},
+		{"const-in-loop", "const N: i32 = 5; function main(): i32 { var s = 0; var i = 0; while (i < N) { s = s + i; i = i + 1; } return s; }"},
+		{"const-bool", "const ON: boolean = true; function main(): i32 { if (ON) { return 3; } return 0; }"},
+		{"const-untyped", "const STEP = 4; function main(): i32 { return STEP * 3; }"},
 		{"compare", "function main(): i32 { return 5 < 10; }"},
 		{"unary-not", "function main(): i32 { return !(5 > 10); }"},
 		{"if-taken", "function main(): i32 { var x = 1; if (5 < 10) { x = 7; } return x; }"},

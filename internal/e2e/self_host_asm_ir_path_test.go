@@ -138,6 +138,18 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"cast-u16-mask", "function main(): i32 { return ((70000 as u16) as i32) & 255; }"},
 		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"}, // 200 -> -56 -> &255 = 200
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return ((x as u8) as i32); }"},
+		// Top-level `const` references. A const desugars to a zero-arg function
+		// whose bare name is a call; the IR path now lowers an i32-width const
+		// reference as op_call_direct(name, 0) instead of bailing to AST, so a
+		// program that mentions a const routes through the IR backend (matching
+		// the AST path's result). Wider consts (i64/f64/string/…) still bail.
+		{"const-ref", "const LIMIT: i32 = 100; function main(): i32 { return LIMIT + 1; }"},
+		{"const-bare", "const ANSWER: i32 = 42; function main(): i32 { return ANSWER; }"},
+		{"const-in-expr", "const A: i32 = 7; const B: i32 = 5; function main(): i32 { return A * B - 2; }"},
+		{"const-in-if", "const THRESH: i32 = 10; function main(): i32 { var x = 12; if (x > THRESH) { return THRESH; } return x; }"},
+		{"const-in-loop", "const N: i32 = 5; function main(): i32 { var s = 0; var i = 0; while (i < N) { s = s + i; i = i + 1; } return s; }"},
+		{"const-bool", "const ON: boolean = true; function main(): i32 { if (ON) { return 3; } return 0; }"},
+		{"const-untyped", "const STEP = 4; function main(): i32 { return STEP * 3; }"},
 		// Array builder methods: .with (reassign-self -> in-place arr_set) and
 		// .append (-> __fern_arr_push), plus __alloc_u8 / string_from_bytes. These
 		// don't overflow u32, so IR matches the AST path.
