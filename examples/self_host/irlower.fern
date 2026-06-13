@@ -550,12 +550,32 @@ pub function is_leaksafe_array_field(t: string): boolean {
 // regressing that RC behaviour, those alias-creating uses bail to the AST
 // emitter; only direct reads (`v.items[i]`, `v.items.len()`) stay in the IR
 // (neither path retains there).
+// is_struct_array_field_type: a `X[]` where X is a leaf-safe struct (array-of-
+// struct field). Admitted to the IR path (construction + `f[i].field` read) but
+// NOT deep-dropped yet — the array and its struct elements leak with the struct (a
+// recursive-drop follow-up); aliasing it (bind / return / assign) bails, like the
+// scalar-array fields, so the leak-only IR never creates a dangling second owner.
+pub function is_struct_array_field_type(structs: parser.StructDecl[], t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 3) { return false; }
+    if (t[n - 2 : n] != "[]") { return false; }
+    // Element leaf-safety is guaranteed by the leaksafe gate (decl_is_leaksafe_d,
+    // depth-bounded) before any struct admitting this field reaches the IR path, so
+    // this only needs to recognise the struct-array shape (no recursion → no cycle).
+    return decl_is_struct(structs, t[0 : n - 2]);
+}
+
 pub function is_scalar_arr_field_access(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprFieldAccess(fa) => {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
-            return is_leaksafe_array_field(decl_field_type(s.structs, oty, fa.field));
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            // Any owned array field — scalar (i32[]/f64[]/i64[]) or struct (P[]) —
+            // is bailed in the alias-creating positions (bind/return/assign): the
+            // leak-only IR can't retain the second reference, and the field's array
+            // is the struct's sole-owned value.
+            return is_leaksafe_array_field(ft) || is_struct_array_field_type(s.structs, ft);
         },
         _ => { return false; }
     }
@@ -588,6 +608,18 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 if (decl_is_struct(structs, t) && decl_is_leaksafe_d(structs, t, depth + 1)) {
                     fi = fi + 1;
                     continue;
+                }
+                // An array-of-struct field `X[]` (X a leak-safe struct): admitted
+                // in leak mode (the array + its elements leak with the struct; a
+                // recursive-drop follow-up frees them). The element's leaf-safety
+                // rides the SAME depth-bounded recursion so a cyclic `X[]` graph
+                // hits the cap and bails to AST.
+                if (t.len() >= 3 && t[t.len() - 2 : t.len()] == "[]") {
+                    var elt: string = t[0 : t.len() - 2];
+                    if (decl_is_struct(structs, elt) && decl_is_leaksafe_d(structs, elt, depth + 1)) {
+                        fi = fi + 1;
+                        continue;
+                    }
                 }
                 return false;
             }
@@ -730,6 +762,18 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                 parser.ExprIdent(aid) => {
                     var asl: i32 = s.slot_of(aid.name);
                     if (s.is_arr_slot(asl)) { return s.struct_type_of_slot(asl); }
+                },
+                // `p.items[i]` where p's field `items` is a P[] struct-array field
+                // → the element struct type P (so `p.items[i].field` resolves).
+                parser.ExprFieldAccess(fa) => {
+                    var oty: string = expr_struct_type(fa.obj, s);
+                    if (oty != "") {
+                        var ft: string = decl_field_type(s.structs, oty, fa.field);
+                        if (ft.len() >= 3 && ft[ft.len() - 2 : ft.len()] == "[]") {
+                            var elt: string = ft[0 : ft.len() - 2];
+                            if (decl_is_struct(s.structs, elt)) { return elt; }
+                        }
+                    }
                 },
                 _ => {}
             }
@@ -1613,7 +1657,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // exit-sweep, so it leaks with the struct (no dangling). An
                     // aliased array (an ident / call) would be swept + freed while
                     // the struct still references it → bail to the AST path.
-                    if (is_leaksafe_array_field(decl_field_type(s.structs, slit.type_name, slit.field_names[found]))) {
+                    var cfft: string = decl_field_type(s.structs, slit.type_name, slit.field_names[found]);
+                    if (is_leaksafe_array_field(cfft) || is_struct_array_field_type(s.structs, cfft)) {
                         match (slit.field_values[found]) {
                             parser.ExprArray(_) => {},
                             _ => { return s.fail(); }
@@ -3202,10 +3247,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 var fsty: string = expr_struct_type(c.args[0], s);
                                 if (fsty == "") { return s.fail(); }
                                 if (!decl_is_leaksafe(s.structs, fsty)) { return s.fail(); }
-                                // Mutating an array field would orphan the old
-                                // array (leak) and need a retain on the new one —
-                                // deferred; bail to AST.
-                                if (is_leaksafe_array_field(decl_field_type(s.structs, fsty, fname))) { return s.fail(); }
+                                // Mutating an array field (scalar or struct-array)
+                                // would orphan the old array (leak) and need a retain
+                                // on the new one — and could alias it — so bail to AST.
+                                var fmft: string = decl_field_type(s.structs, fsty, fname);
+                                if (is_leaksafe_array_field(fmft) || is_struct_array_field_type(s.structs, fmft)) { return s.fail(); }
                                 var fidx: i32 = s.field_index_in(fsty, fname);
                                 if (fidx < 0) { return s.fail(); }
                                 var sf: LowerState = lower_expr(c.args[0], s);
