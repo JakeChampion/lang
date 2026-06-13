@@ -47,6 +47,9 @@ var strSplitIRCases = []struct {
 	// String trim (op_str_trim) — likewise IR-eligible.
 	{"trim", `function main(): i32 { return "  hi  ".trim().len(); }`},
 	{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  x  "); }`},
+	// String reverse (op_str_reverse) — likewise IR-eligible.
+	{"reverse", `function main(): i32 { return "hello".reverse().len(); }`},
+	{"reverse-first", `function main(): i32 { return "abc".reverse()[0]; }`},
 }
 
 // TestSelfHostStrSplitIRPathX86_64 asserts each split program routes through the

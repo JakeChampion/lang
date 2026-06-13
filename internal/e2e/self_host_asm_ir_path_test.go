@@ -506,6 +506,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"trim-empty", `function main(): i32 { return "".trim().len() + 7; }`},
 		{"trim-leading", `function main(): i32 { var t = "   xy".trim(); return t.len() * 10 + t[0]; }`},
 		{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  padded  "); }`},
+		// String reverse → fresh string with bytes reversed (op_str_reverse). AST
+		// path emits __fern_str_reverse (str_reverse runtime); IR path emits
+		// emit_ir_str_reverse — same content/length.
+		{"reverse-len", `function main(): i32 { return "hello".reverse().len(); }`},
+		{"reverse-first", `function main(): i32 { var r = "abc".reverse(); return r[0]; }`},
+		{"reverse-last", `function main(): i32 { var r = "abc".reverse(); return r[2]; }`},
+		{"reverse-empty", `function main(): i32 { return "".reverse().len() + 4; }`},
+		{"reverse-twice", `function main(): i32 { if ("hello".reverse().reverse() == "hello") { return 7; } return 0; }`},
+		{"reverse-param", `function rev(s: string): i32 { return s.reverse()[0]; } function main(): i32 { return rev("xyz"); }`},
 	}
 
 	for _, tc := range cases {
