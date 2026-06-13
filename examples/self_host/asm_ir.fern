@@ -29,18 +29,31 @@ import "./irlower";
 // because the IR path only fires when the WHOLE module is eligible
 // (all_eligible), so every function — caller and callee — uses irlower's
 // array layout; nothing crosses an IR/AST boundary.
-pub function ir_eligible(fd: parser.FuncDecl, structs: parser.StructDecl[], opt_ret_fns: string[], i64_ret_fns: string[], struct_ret_fns: string[], tuple_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[]): boolean {
-    // Methods (receiver functions) are lowered too — lower_func binds the
-    // receiver as slot 0 and bails for non-scalar-struct receivers.
+pub function ir_eligible(fd: parser.FuncDecl, mod: parser.Module): boolean {
+    // NARROW eligibility (the wasm gate). Lowers fd with EMPTY array registries —
+    // the historical behaviour. The array registries are withheld so an
+    // array-returning-call result (`var a = mk()` / `for x in mk()`) is NOT
+    // tracked as an array here, keeping such modules off the IR path on backends
+    // whose array lowering can't yet handle the move-on-return foreach (the wasm
+    // linear-memory backend miscompiles `for x in mk()` — register backends do
+    // not, see ir_eligible_wide).
     var noret: string[] = [];
-    // struct_ret_fns and tuple_ret_fns BOTH affect ok/bail: a caller's `p.x` on
-    // a struct-returning-call result (or a struct element destructured from a
-    // tuple-returning call) bails unless p is struct-typed, so the eligibility
-    // probe threads the real registries. (str/strarr/arr are emit-only — they
-    // change op selection, not whether a function lowers — so they stay empty.)
-    // fn_param_sigs IS threaded: it decides whether a bare function-name arg
-    // lowers to const_func (ok) or falls through to a bail, so it affects ok.
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, noret, noret, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, noret, noret, noret, fn_param_sigs, closure_fns);
+    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), noret, noret, noret, irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
+    if (!r.ok) { return false; }
+    return true;
+}
+
+// ir_eligible_wide is the REGISTER-backend eligibility probe: it lowers fd with
+// the SAME registries emit_function_via_ir uses, so "eligible" means exactly
+// "lowers". Threading the array registries matters for ok/bail, not just op
+// selection: `var a = mk()` (an array-returning call) is tracked as an array
+// only when `mk` is in arr_ret_fns, and a later `for x in a` bails when its slot
+// isn't array-typed. The narrow ir_eligible withholds them (under-approximating)
+// so the wasm backend, which can't yet lower the array-call foreach, stays on
+// AST; the register backends CAN, so they use this wide probe and admit those
+// modules to the IR path.
+pub function ir_eligible_wide(fd: parser.FuncDecl, mod: parser.Module): boolean {
+    var r: irlower.LowerResult = irlower.lower_func(fd, array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs));
     if (!r.ok) { return false; }
     return true;
 }
@@ -1170,15 +1183,9 @@ pub function eligible_core(mod: parser.Module): boolean {
     // would emit a dangling reference. Such modules stay on the AST emitter,
     // which handles the no-main case (top-level stmts + fallback exit).
     if (!asmcore.has_main(mod)) { return false; }
-    var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
-    var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
-    var trtf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!ir_eligible(mod.funcs[i], mod.structs, orf, irf, srtf, trtf, fps, cfs)) { return false; }
+        if (!ir_eligible(mod.funcs[i], mod)) { return false; }
         if (!calls_only_known(mod.funcs[i], mod)) { return false; }
         if (!const_funcs_only_known(mod.funcs[i], mod)) { return false; }
         i = i + 1;
@@ -1192,7 +1199,20 @@ pub function eligible_core(mod: parser.Module): boolean {
 // the function's code address (no table needed). (Capturing lambdas are a later
 // slice and still bail via lower_func.)
 pub function all_eligible(mod: parser.Module): boolean {
-    return eligible_core(mod);
+    if (mod.funcs.len() == 0) { return false; }
+    if (!asmcore.has_main(mod)) { return false; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        // Register backends use the WIDE probe (real array registries), so a
+        // for-in over an array-returning call lowers to the IR path instead of
+        // bailing to AST. wasm stays on the narrow eligible_core (above) until its
+        // backend handles the array-call foreach.
+        if (!ir_eligible_wide(mod.funcs[i], mod)) { return false; }
+        if (!calls_only_known(mod.funcs[i], mod)) { return false; }
+        if (!const_funcs_only_known(mod.funcs[i], mod)) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 // const_funcs_only_known reports whether every function-value reference
