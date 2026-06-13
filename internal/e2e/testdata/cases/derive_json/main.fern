@@ -18,6 +18,9 @@ struct Wrap { who: User, tag: string }
 @derive(json.Json)
 struct Measure { value: f64, unit: string }
 
+@derive(json.Json)
+struct Bag { items: i32[], names: string[] }
+
 function check(got: string, want: string, code: i32): i32 {
     if (got == want) { return 0; }
     return code;
@@ -43,6 +46,15 @@ function main(): i32 {
     // Floats serialise as their decimal form (valid JSON numbers).
     var d: Measure = Measure { value: 3.14, unit: "m" };
     r = check(d.to_json(), "{\"value\":3.14,\"unit\":\"m\"}", 7);
+    if (r != 0) { return r; }
+    // Array fields: a `T[]` whose element type is `Json` renders as a JSON
+    // array. Scalar + string elements both compose through the element's impl.
+    var bag: Bag = Bag { items: [1, 2, 3], names: ["a", "b"] };
+    r = check(bag.to_json(), "{\"items\":[1,2,3],\"names\":[\"a\",\"b\"]}", 8);
+    if (r != 0) { return r; }
+    // A bare array also serialises directly via the element-poly array to_json.
+    var nums: i32[] = [10, 20];
+    r = check(nums.to_json(), "[10,20]", 9);
     if (r != 0) { return r; }
     return 42;
 }

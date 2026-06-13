@@ -2134,6 +2134,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         // fallback below (the variant value's shape won't
         // match any struct arm).
         if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
+                && !asmcore.recv_is_array(fd_m.receiver_type)
                 && asmcore.is_struct_decl_name(util.base_type_name(fd_m.receiver_type), s)) {
             var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, util.base_type_name(fd_m.receiver_type));
             s = arm_lit.state;
@@ -2162,6 +2163,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     while (efi < s.funcs.len()) {
         var efd: parser.FuncDecl = s.funcs[efi];
         if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
+                && !asmcore.recv_is_array(efd.receiver_type)
                 && asmcore.is_enum_recv(util.base_type_name(efd.receiver_type), s)) {
             enum_recv = util.base_type_name(efd.receiver_type);
         }

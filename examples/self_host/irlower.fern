@@ -1403,6 +1403,81 @@ pub function lower_foreach_snapshot(var_name: string, iter: parser.Expr, body: p
     return lower_stmt(nf, s2);
 }
 
+// lower_array_to_json lowers `arr.to_json()` (the element-poly array serialiser
+// `(xs: T[]) to_json[T: Json]()` from std/json) as an INLINE loop, so the
+// per-element `arr[i].to_json()` is lowered where the element type is statically
+// known and dispatches to the right impl. Desugars to:
+//   var $tjout = "[";
+//   var $tji = 0;
+//   while ($tji < arr.len()) {
+//       if ($tji > 0) { $tjout = $tjout + ","; }
+//       $tjout = $tjout + arr[$tji].to_json();
+//       $tji = $tji + 1;
+//   }
+//   $tjout + "]"          // result expression left on the stack
+// A non-ident receiver is snapshotted into a hidden local first (evaluated
+// once; ident receivers are loaded per use, which is free). The generic body
+// `__fn_T__to_json` is still emitted but dead — call sites all route here. #2766.
+// to_json_loop_stmt builds the synthetic `while ($i < aref.len()) { if ($i>0)
+// {out=out+","} out = out + aref[$i].to_json(); $i=$i+1 }` driving the array
+// serialiser. Split out of lower_array_to_json so neither function is oversized
+// — large functions miscompile on the native backend (cf. #2720).
+function to_json_loop_stmt(on: string, inm: string, aref: parser.Expr): parser.Stmt {
+    var oref: parser.Expr = parser.ExprIdent { name: on, line: 0, col: 0 };
+    var iref: parser.Expr = parser.ExprIdent { name: inm, line: 0, col: 0 };
+    var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
+    var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
+    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: aref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var cond: parser.Expr = parser.ExprBinary { op: "<", left: iref, right: lenc, line: 0, col: 0 };
+    var igt: parser.Expr = parser.ExprBinary { op: ">", left: iref, right: zero, line: 0, col: 0 };
+    var addcomma: parser.Stmt = parser.StmtAssign { target: on, value: parser.ExprBinary { op: "+", left: oref, right: parser.ExprString { value: ",", line: 0, col: 0 }, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
+    var noelse: parser.Stmt[] = [];
+    var comma_then: parser.Stmt[] = [addcomma];
+    var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: comma_then, else_body: noelse };
+    var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref };
+    var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var appendj: parser.Stmt = parser.StmtAssign { target: on, value: parser.ExprBinary { op: "+", left: oref, right: elemj, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
+    var inc: parser.Stmt = parser.StmtAssign { target: inm, value: parser.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
+    var body: parser.Stmt[] = [ifc, appendj, inc];
+    return parser.StmtWhile { cond: cond, body: body };
+}
+
+pub function lower_array_to_json(arr: parser.Expr, s: LowerState): LowerState {
+    var n: i32 = s.local_names.len();
+    var on: string = "$tjout" + util.i32_to_string(n);
+    var inm: string = "$tji" + util.i32_to_string(n);
+    var s2: LowerState = s;
+    var aref: parser.Expr = arr;
+    // Snapshot a non-ident receiver so `.len()` and each `arr[i]` reference the
+    // same once-evaluated value (an ident is just a local load, so reuse it).
+    var is_ident: boolean = false;
+    match (arr) {
+        parser.ExprIdent(_) => { is_ident = true; },
+        _ => {}
+    }
+    if (!is_ident) {
+        var an: string = "$tjarr" + util.i32_to_string(n);
+        var snap: parser.Stmt = parser.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0 };
+        s2 = lower_stmt(snap, s);
+        if (!s2.ok) { return s2; }
+        aref = parser.ExprIdent { name: an, line: 0, col: 0 };
+    }
+    // var $tjout = "[";
+    var dout: parser.Stmt = parser.StmtVar { name: on, type_name: "", init: parser.ExprString { value: "[", line: 0, col: 0 }, line: 0, col: 0 };
+    s2 = lower_stmt(dout, s2);
+    if (!s2.ok) { return s2; }
+    // var $tji = 0;
+    var di: parser.Stmt = parser.StmtVar { name: inm, type_name: "", init: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0 };
+    s2 = lower_stmt(di, s2);
+    if (!s2.ok) { return s2; }
+    // the serialising loop (built in a helper to keep this function small)
+    s2 = lower_stmt(to_json_loop_stmt(on, inm, aref), s2);
+    if (!s2.ok) { return s2; }
+    // result expression: $tjout + "]"
+    var result: parser.Expr = parser.ExprBinary { op: "+", left: parser.ExprIdent { name: on, line: 0, col: 0 }, right: parser.ExprString { value: "]", line: 0, col: 0 }, line: 0, col: 0 };
+    return lower_expr(result, s2);
+}
+
 // lower_string_foreach lowers `for b in STR` (iterate a string's bytes). The
 // array foreach assumes an array layout — length @0, elements @ base+idx*8+8 —
 // but a string is { data_ptr @0, len @8 } with byte elements, so the array
@@ -2718,6 +2793,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sl.ok) { return sl; }
                         if (str_recv) { return sl.emit(ir.op_str_len()); }
                         return sl.emit(ir.op_arr_len());
+                    }
+                    // `arr.to_json()` on an ARRAY receiver — the element-poly
+                    // `(xs: T[]) to_json[T: Json]()` serialiser from std/json.
+                    // The self-host emits the generic body ONCE by erasure, so it
+                    // can't dispatch the per-element `xs[i].to_json()` on `T`
+                    // (it bakes in the i32 impl). But at THIS call site the array's
+                    // element type is known, so desugar to an inline loop that
+                    // builds `[e0,e1,…]` where each `arr[i].to_json()` lowers with
+                    // the element type in hand — dispatching to the right impl
+                    // (i32 / string / a derived struct's `to_json`). #2766.
+                    if (fa.field == "to_json" && c.args.len() == 0
+                        && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s))) {
+                        return lower_array_to_json(fa.obj, s);
                     }
                     // `s.bytes()` / `s.as_bytes()` on a string receiver → a fresh
                     // u8[] (one i32 slot per byte). The self-host slot-array model
