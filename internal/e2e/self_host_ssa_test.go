@@ -215,11 +215,16 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		// correctly on all backends — see the TestSelfHostSSAEmit* suites; it's
 		// omitted here because this driver's i32 SSA *interpreter* doesn't model
 		// the heap-copy spread, only the native/wasm emitters do.)
-		// Still outside the subset → build_func bails (200). (Floats and struct
-		// spread now build through SSA; build_func still declines a `match` on
-		// non-variant patterns, so an int-literal match is the out-of-subset
-		// case here.)
-		{"literal-match-bails", "function main(): i32 { var n = 2; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }", 200},
+		// A `match` on a non-enum (int-literal) scrutinee now lowers through
+		// SSA: the parser desugars it to an if/else-if chain (the same shape
+		// `switch` produces), so it rides the existing if / `==` lowering and
+		// the round-trip evaluator computes its value directly.
+		{"literal-match", "function main(): i32 { var n = 2; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }", 20},
+		// Still outside the subset → build_func bails (200). (Floats, struct
+		// spread, and int-literal match now build through SSA; an enum match —
+		// whose variant values the i32 round-trip evaluator can't model — is the
+		// out-of-subset case here.)
+		{"enum-match-bails", "enum Color { Red, Green } function main(): i32 { var c: Color = Green; match (c) { Red => { return 1; }, Green => { return 2; }, _ => { return 0; } } }", 200},
 	}
 
 	run := func(t *testing.T, src string, args ...string) int {
