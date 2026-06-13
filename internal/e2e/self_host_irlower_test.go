@@ -168,12 +168,15 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 	// emits `return`.
 	t.Run("dump", func(t *testing.T) {
 		const src = "function main(): i32 { var x = 2 + 3; return x * 10; }"
-		const want = "const_i32 2\n" +
-			"const_i32 3\n" +
+		// Integer literals lower to const_i32_text (source text spliced into the
+		// immediate), so hex literals and the full u32 range survive — see
+		// op_const_i32_text / the IR backends.
+		const want = "const_i32_text 2\n" +
+			"const_i32_text 3\n" +
 			"add\n" +
 			"store_local 0\n" +
 			"load_local 0\n" +
-			"const_i32 10\n" +
+			"const_i32_text 10\n" +
 			"mul\n" +
 			"return\n"
 		cmd := exec.Command(bin, "-dump")
