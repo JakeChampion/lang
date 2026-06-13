@@ -3361,15 +3361,32 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): 
 // arms must have NO payload binding (a unit variant, `_`, or `true`/`false`)
 // and an i32 result. A payload-binding arm (`Some(n) => n`) or an f64 / string
 // / i64 result bails to the AST emitter (#2938 follow-up).
+// iife_payload_is_i32 reports whether a payload-binding match arm binds an i32
+// — an Option/Result Some/Ok/Err payload (resolved from the scrutinee's tracked
+// opt type), or a user-enum variant whose single payload field (`__ev`) is i32.
+// Keeps the inlined match-expression's i32 result temp the right width; a
+// non-i32 (or unresolvable) payload bails the whole match-expression to AST.
+function iife_payload_is_i32(pv: parser.PatVariant, opt_srt: string, s: LowerState): boolean {
+    if (opt_srt != "") { return opt_payload_type(opt_srt, pv.type_name) == "i32"; }
+    // User-enum variant: strip any `Enum.` qualifier, then read its payload field.
+    var vname: string = pv.type_name;
+    var vld: i32 = 0;
+    while (vld < pv.type_name.len()) {
+        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()]; }
+        vld = vld + 1;
+    }
+    if (!decl_is_struct(s.structs, vname)) { return false; }
+    return decl_field_type(s.structs, vname, "__ev") == "i32";
+}
+
 function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
     var tslot: i32 = ts.slot_of(tmp);
     // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
-    // payload is i32, so the i32 temp stays the right width. That needs the
-    // scrutinee's Option/Result type, which is tracked for a local/param
-    // scrutinee; anything else (a call, a user-enum payload) keeps the
-    // no-payload-binding restriction and bails to the AST emitter.
+    // payload is i32, so the i32 temp stays the right width. An Option/Result
+    // scrutinee's type is tracked for a local/param; a user-enum payload is read
+    // from the variant's `__ev` field. A non-i32 (or unresolvable) payload bails.
     var opt_srt: string = "";
     match (m.scrutinee) {
         parser.ExprIdent(sid) => { opt_srt = ts.opt_type_of_slot(ts.slot_of(sid.name)); },
@@ -3383,10 +3400,9 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
             parser.PatVariant(pv) => {
                 if (pv.extra_bindings.len() > 0) { return s.fail(); }
                 if (pv.binding.len() > 0 && pv.binding != "_") {
-                    // Single payload binding: require an i32 payload from a known
-                    // Option/Result scrutinee (the statement-match path binds it).
-                    if (opt_srt == "") { return s.fail(); }
-                    if (opt_payload_type(opt_srt, pv.type_name) != "i32") { return s.fail(); }
+                    // Single payload binding: require an i32 payload (Option/Result
+                    // or a user-enum variant), so `tmp = n` is an i32 store.
+                    if (!iife_payload_is_i32(pv, opt_srt, ts)) { return s.fail(); }
                 }
             },
             _ => {}
