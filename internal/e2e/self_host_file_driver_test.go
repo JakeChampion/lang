@@ -6,11 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostFileDriverX86_64 exercises asm_file_run.fern — the
@@ -156,22 +151,11 @@ func TestSelfHostFileDriverX86_64(t *testing.T) {
 
 // buildSelfHostBin loads a self-host driver .fern (by file name in dir),
 // compiles it with the Go x86-64 backend, and links it into dir/out.
+// The source→asm compile is cached process-wide by source-set hash
+// (see self_host_buildcache_test.go), so building the same driver in a
+// later test reuses the emitted asm instead of recompiling 35k lines.
 func buildSelfHostBin(t *testing.T, gcc, dir, fernName, out string) string {
 	t.Helper()
-	prog, _, err := modload.Load(filepath.Join(dir, fernName))
-	if err != nil {
-		t.Fatalf("modload %s: %v", fernName, err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold %s: %v", fernName, err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check %s: %v", fernName, err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit %s: %v", fernName, err)
-	}
+	asm := cachedSelfHostAsm(t, dir, fernName)
 	return buildBin(t, gcc, dir, out, asm)
 }
