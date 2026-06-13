@@ -2808,7 +2808,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (mrslot >= 0 && s.map_type_of(mrslot) != "") {
                         var mtype: string = s.map_type_of(mrslot);
                         var mkk2: i32 = map_key_kind_of(mtype);
-                        if (fa.field == "insert" && c.args.len() == 2) {
+                        if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
                             var mset: LowerState = lower_expr(fa.obj, s);
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[0], mset);
@@ -2866,7 +2866,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // (map_new vs map_new_i32 at the chain's base). Read methods on
                     // a map-literal expression aren't needed — the literal binds to
                     // a typed local, and reads go through the map-local path above.
-                    if (fa.field == "insert" && c.args.len() == 2) {
+                    if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
                         var emk: i32 = expr_map_kind(fa.obj, s);
                         if (emk >= 0) {
                             var emset: LowerState = lower_expr(fa.obj, s);
