@@ -3264,13 +3264,29 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
     var tslot: i32 = ts.slot_of(tmp);
+    // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
+    // payload is i32, so the i32 temp stays the right width. That needs the
+    // scrutinee's Option/Result type, which is tracked for a local/param
+    // scrutinee; anything else (a call, a user-enum payload) keeps the
+    // no-payload-binding restriction and bails to the AST emitter.
+    var opt_srt: string = "";
+    match (m.scrutinee) {
+        parser.ExprIdent(sid) => { opt_srt = ts.opt_type_of_slot(ts.slot_of(sid.name)); },
+        _ => {}
+    }
     var newarms: parser.MatchArm[] = [];
     var i: i32 = 0;
     while (i < m.arms.len()) {
         var arm: parser.MatchArm = m.arms[i];
         match (arm.pattern) {
             parser.PatVariant(pv) => {
-                if (pv.binding.len() > 0 || pv.extra_bindings.len() > 0) { return s.fail(); }
+                if (pv.extra_bindings.len() > 0) { return s.fail(); }
+                if (pv.binding.len() > 0 && pv.binding != "_") {
+                    // Single payload binding: require an i32 payload from a known
+                    // Option/Result scrutinee (the statement-match path binds it).
+                    if (opt_srt == "") { return s.fail(); }
+                    if (opt_payload_type(opt_srt, pv.type_name) != "i32") { return s.fail(); }
+                }
             },
             _ => {}
         }
