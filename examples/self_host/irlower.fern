@@ -3902,9 +3902,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // variant via its enum_owner — so `c.method()` dispatches to
             // `<Enum>.<method>`. Without this the slot stays untyped and the
             // enum-receiver method call bails the whole module to AST (#2947).
-            // Placed at the END of the chain so it never pre-empts the struct /
-            // struct-array branches above (expr_enum_type is "" for those).
-            else if (struct_ty == "") {
+            // A standalone `if` (NOT chained off the struct-array-literal `else
+            // if (struct_ty == "")` above, which is entered for ANY untyped init
+            // and would otherwise swallow this clause for a non-array enum init —
+            // e.g. `var e = A(9)`): it runs whenever the slot is still untyped,
+            // and expr_enum_type is "" for the struct / struct-array branches, so
+            // it never pre-empts them.
+            if (struct_ty == "") {
                 var enum_init: string = expr_enum_type(v.init, se);
                 if (enum_init != "") { struct_ty = enum_init; }
             }
