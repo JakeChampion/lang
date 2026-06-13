@@ -202,13 +202,13 @@ per-function bugs in the audit log.
 | `std/i64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host pending |
 | `std/u32` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | max — `audit_std_path_numeric`; self-host pending |
 | `std/u64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | clamp — `audit_std_path_numeric`; self-host pending |
-| `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host pending |
+| `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host: f64 intrinsics (floor/ceil/sqrt/abs/round/trunc) ✅ via the IR path (`TestSelfHostFloatIntrinsicsIR`) |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
-| `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host pending |
-| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host pending |
+| `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host: `format_bytes` logic ✅ via the IR path (`TestSelfHostFormatBytesIR`, `i32.to_string` builtin); `format`/`format_duration_ms` pending |
+| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host: `csv_parse_line` ✅ via the IR path (`TestSelfHostCsvParseLineIR`); escape/join pending (need `index_of`/`replace` inlining) |
 | `std/log` | | | | | | ⬜ | |
 | `std/io` | | | | | | ⬜ | |
 | `std/io_buffered` | | | | | | ⬜ | |
