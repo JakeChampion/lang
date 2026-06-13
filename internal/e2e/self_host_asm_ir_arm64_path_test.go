@@ -87,6 +87,13 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"division", "function main(): i32 { return 84 / 2; }"},
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},
 		{"shift", "function main(): i32 { return 1 << 4; }"},
+		// Hex literals: lowered via op_const_i32_text (source text spliced into
+		// the literal pool `ldr x0, =TEXT`), where the IR path previously zeroed
+		// every `0x..` via a decimal-only parse. Exit codes are mod 256 —
+		// shifts/masks expose the high bits.
+		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
+		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},
+		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
 		{"compare", "function main(): i32 { return 5 < 10; }"},
 		{"if-else", "function main(): i32 { var x = 0; if (2 < 1) { x = 3; } else { x = 9; } return x; }"},
 		{"nested-if", "function main(): i32 { var x = 5; if (x > 0) { if (x > 3) { x = 100; } else { x = 50; } } return x; }"},
