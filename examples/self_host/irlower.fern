@@ -4654,7 +4654,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // case — so it reads via op_opt_payload and binds as
                                 // a struct slot (its type tagged below for `p.field`).
                                 var ptag_is_struct: boolean = decl_is_struct(ms.structs, ptag) && decl_is_leaksafe(ms.structs, ptag);
-                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct) { return s.fail(); }
+                                // An ENUM payload (`Some(c)` where c: Color, or an
+                                // Ok/Err enum) is likewise stored by pointer at
+                                // offset 8 — read via op_opt_payload and bound with
+                                // its enum name so `match (c)` / `c.method()` resolve.
+                                var ptag_is_enum: boolean = is_enum_like_name(ptag, ms.structs);
+                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum) { return s.fail(); }
                             }
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -4685,7 +4690,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // `p.field` resolves. It is BORROWED from the enum box
                                 // (not a fresh `var p = P{...}`), so it is never in
                                 // reclaimable_names — correctly left to leak, no double-free.
-                                else if (decl_is_struct(ms.structs, ptag) && decl_is_leaksafe(ms.structs, ptag)) { ms = ms.mark_struct_type(pbslot, ptag); }
+                                else if ((decl_is_struct(ms.structs, ptag) && decl_is_leaksafe(ms.structs, ptag)) || is_enum_like_name(ptag, ms.structs)) { ms = ms.mark_struct_type(pbslot, ptag); }
                             }
                             if (arm.has_guard) {
                                 ms = lower_expr(arm.guard, ms);
