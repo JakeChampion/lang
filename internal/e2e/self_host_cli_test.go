@@ -203,11 +203,11 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// A program outside the SSA subset falls back to the AST emitter
 		// transparently: the default output is byte-identical to the -no-ssa
 		// (AST) output, so the default never emits wrong code for programs SSA
-		// can't yet lower. A `match` on int-literal patterns is one such
-		// construct build_func still declines (floats and struct spread now
-		// lower through SSA).
+		// can't yet lower. An `enum` match is one such construct build_func
+		// still declines (floats, struct spread, and int-literal match — the
+		// latter desugared to if/else by the parser — now lower through SSA).
 		srcPath := filepath.Join(dir, "fallback.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var n = 2; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("enum Color { Red, Green } function main(): i32 { var c: Color = Green; match (c) { Red => { return 1; }, Green => { return 2; }, _ => { return 0; } } }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		def, code1 := runDriver(t, srcPath)

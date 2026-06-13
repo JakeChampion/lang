@@ -2430,46 +2430,93 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		if err != nil {
 			return result{}, err
 		}
-		ev, ok := tag.(*Enum)
-		if !ok {
-			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
-		}
-		for _, arm := range x.Arms {
-			if arm.IsWildcard || arm.VariantName == ev.VariantName {
-				armEnv := newEnv(e)
-				if !arm.IsWildcard {
-					for j, name := range arm.Bindings {
-						if j < len(ev.Payloads) {
-							armEnv.declare(name, ev.Payloads[j])
+		if ev, ok := tag.(*Enum); ok {
+			for _, arm := range x.Arms {
+				if arm.IsWildcard || arm.VariantName == ev.VariantName {
+					armEnv := newEnv(e)
+					if !arm.IsWildcard {
+						for j, name := range arm.Bindings {
+							if j < len(ev.Payloads) {
+								armEnv.declare(name, ev.Payloads[j])
+							}
 						}
 					}
-				}
-				// Guard runs with bindings in scope; on false,
-				// fall through to the next arm.
-				if arm.Guard != nil {
-					gv, err := i.evalExpr(arm.Guard, armEnv)
+					// Guard runs with bindings in scope; on false,
+					// fall through to the next arm.
+					if arm.Guard != nil {
+						gv, err := i.evalExpr(arm.Guard, armEnv)
+						if err != nil {
+							return result{}, err
+						}
+						gb, ok := gv.(Bool)
+						if !ok {
+							return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+						}
+						if !bool(gb) {
+							continue
+						}
+					}
+					r, err := i.execBlock(arm.Body, armEnv)
 					if err != nil {
 						return result{}, err
 					}
-					gb, ok := gv.(Bool)
-					if !ok {
-						return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
+						return r, nil
 					}
-					if !bool(gb) {
-						continue
-					}
+					return result{flow: flowNormal}, nil
 				}
-				r, err := i.execBlock(arm.Body, armEnv)
+			}
+			return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
+		}
+		// Non-enum scrutinee (i32 / string / bool): literal-pattern
+		// match, mirroring the compiled backend's emitLiteralMatch.
+		// Each arm is a literal (dispatched by `==`) or the `_`
+		// fall-through; the checker (E035/E030) guarantees an
+		// unguarded `_` arm exists, so a match is always found. Any
+		// other value type reaching here is a type error the checker
+		// should have caught — keep the diagnostic.
+		switch tag.(type) {
+		case Number, Bool, String:
+		default:
+			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
+		}
+		for _, arm := range x.Arms {
+			if !arm.IsWildcard {
+				if arm.Literal == nil {
+					continue
+				}
+				lv, err := i.evalExpr(arm.Literal, e)
 				if err != nil {
 					return result{}, err
 				}
-				if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
-					return r, nil
+				if !valuesEqual(tag, lv) {
+					continue
 				}
-				return result{flow: flowNormal}, nil
 			}
+			armEnv := newEnv(e)
+			if arm.Guard != nil {
+				gv, err := i.evalExpr(arm.Guard, armEnv)
+				if err != nil {
+					return result{}, err
+				}
+				gb, ok := gv.(Bool)
+				if !ok {
+					return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+				}
+				if !bool(gb) {
+					continue
+				}
+			}
+			r, err := i.execBlock(arm.Body, armEnv)
+			if err != nil {
+				return result{}, err
+			}
+			if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
+				return r, nil
+			}
+			return result{flow: flowNormal}, nil
 		}
-		return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
+		return result{flow: flowNormal}, nil
 	case *ast.Defer:
 		// Push onto the enclosing call's defer frame. The frame
 		// is unwound LIFO at function exit by callFunc /
@@ -2836,22 +2883,60 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		ev, ok := tag.(*Enum)
-		if !ok {
+		if ev, ok := tag.(*Enum); ok {
+			for _, arm := range x.Arms {
+				if !arm.IsWildcard && arm.VariantName != ev.VariantName {
+					continue
+				}
+				armEnv := newEnv(env)
+				if !arm.IsWildcard {
+					for j, name := range arm.Bindings {
+						if j < len(ev.Payloads) {
+							armEnv.declare(name, ev.Payloads[j])
+						}
+					}
+				}
+				if arm.Guard != nil {
+					gv, err := i.evalExpr(arm.Guard, armEnv)
+					if err != nil {
+						return nil, err
+					}
+					gb, ok := gv.(Bool)
+					if !ok {
+						return nil, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					}
+					if !bool(gb) {
+						continue
+					}
+				}
+				return i.evalExpr(arm.Body, armEnv)
+			}
+			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
+		}
+		// Non-enum scrutinee (i32 / string / bool): literal-pattern
+		// match expression, mirroring emitLiteralMatchExpr. Each arm
+		// dispatches via `==` against its literal, or the `_`
+		// fall-through. Any other value type is a type error the
+		// checker should have caught — keep the diagnostic.
+		switch tag.(type) {
+		case Number, Bool, String:
+		default:
 			return nil, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}
 		for _, arm := range x.Arms {
-			if !arm.IsWildcard && arm.VariantName != ev.VariantName {
-				continue
-			}
-			armEnv := newEnv(env)
 			if !arm.IsWildcard {
-				for j, name := range arm.Bindings {
-					if j < len(ev.Payloads) {
-						armEnv.declare(name, ev.Payloads[j])
-					}
+				if arm.Literal == nil {
+					continue
+				}
+				lv, err := i.evalExpr(arm.Literal, env)
+				if err != nil {
+					return nil, err
+				}
+				if !valuesEqual(tag, lv) {
+					continue
 				}
 			}
+			armEnv := newEnv(env)
 			if arm.Guard != nil {
 				gv, err := i.evalExpr(arm.Guard, armEnv)
 				if err != nil {
@@ -2867,7 +2952,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			}
 			return i.evalExpr(arm.Body, armEnv)
 		}
-		return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
+		return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no literal arm matched)")
 	case *ast.TryOp:
 		// `expr?` desugars to:
 		//   match (expr) {
