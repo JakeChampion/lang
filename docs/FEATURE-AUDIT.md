@@ -223,7 +223,7 @@ per-function bugs in the audit log.
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
 | `std/stream` | | | | | | ⬜ | |
-| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host: pure-i32 helpers (is_leap_year/days_in_month) ✅ via the IR path (`TestSelfHostTimeIR`); Date/Instant methods (structs/Option) pending |
+| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods); Instant/Zoned RFC-3339 `Option` methods pending |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | | | | | | ⬜ | |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
@@ -246,6 +246,23 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — std/time Date civil-date methods via the self-host IR path (x86-64 + wasm)
+
+Widened the std/time self-host coverage from the pure-i32 helpers to the
+**Date struct methods**. `TestSelfHostTimeDateIR` runs Howard Hinnant's
+`days_from_civil` / `civil_from_days` plus the Date receiver methods
+(`is_valid` / `add_days` / `days_since` / `weekday` / `day_of_year` /
+`format_iso`) through the x86-64 and wasm IR drivers, **oracle-checked against
+the interpreter** and pinned to the `"ir"` path. This is the first self-host IR
+coverage to exercise, over a 3-i32 struct: struct construction + field access,
+a **struct-returning** function (`civil_from_days`), receiver methods on a
+struct, and `.to_string()` + string concat (`format_iso`) — all already lower,
+so no compiler change. The struct is named `Civil` (the built-in `Date` name is
+reserved, E010) and `int.int_to_string` is written `.to_string()`;
+`import "std/i32"` lets the interpreter oracle resolve it while the self-host
+driver treats it as a builtin and keeps the IR path. Instant/Zoned RFC-3339
+`Option`-returning methods remain pending.
 
 ### 2026-06-13 — std/csv `csv_escape` / `csv_join` via the self-host IR path (x86-64 + wasm)
 
