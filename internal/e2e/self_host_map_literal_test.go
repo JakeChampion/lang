@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,27 @@ func TestSelfHostMapLiteralX86_64(t *testing.T) {
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+
+	// Path probe: a `Map { … }` literal now routes through the IR path (the
+	// chained map_new().insert()… expression lowers via expr_map_kind), not the
+	// AST fallback. Exit-code correctness alone wouldn't prove this — the AST
+	// path produced the same values — so assert the routing directly.
+	probeSrc, err := os.ReadFile("../../examples/self_host/asm_pathprobe_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_pathprobe_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_pathprobe_run.fern"), probeSrc, 0o644); err != nil {
+		t.Fatalf("write asm_pathprobe_run.fern: %v", err)
+	}
+	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "probe")
+	for _, tc := range mapLiteralCases {
+		t.Run("routes-ir/"+tc.name, func(t *testing.T) {
+			out := runCapture(t, gcc, runner, probeBin, []byte(tc.src))
+			if got := strings.TrimSpace(string(out)); got != "ir" {
+				t.Errorf("%s: path probe = %q, want \"ir\" (map literal bailed to the AST path)", tc.name, got)
 			}
 		})
 	}
