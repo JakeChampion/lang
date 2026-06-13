@@ -2242,11 +2242,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // A bare identifier that is not a local naming a ZERO-ARG,
             // receiver-less function (a `const`, desugared to such a function) is
             // a CALL to it — its value. Mirrors asm.fern's ExprIdent rule
-            // (zero-arg receiver-less -> call). A function VALUE (a pointer) is
-            // only for functions WITH params, recognised at the "fn"-typed
-            // ExprCall arg site; such a bare ref here still bails (#2954).
+            // (zero-arg receiver-less -> call).
             if (s.is_const_fn(id.name)) { return s.emit(ir.op_call_direct(id.name, 0)); }
-            return s.fail();
+            // A bare ident naming a module function WITH params is a function
+            // VALUE — a plain (capture-free) function pointer (`var f = dbl;
+            // f(21)`, `return namedfn`). Emit const_func; const_funcs_only_known
+            // bails the module if the name isn't a known function, so an
+            // unknown / non-function ident (which the checker would already have
+            // rejected) never miscompiles. Mirrors asm.fern's ExprIdent rule
+            // (zero-arg receiver-less -> call; >0-arg -> boxed fn-value). A call
+            // through the resulting fn-value local rides the existing
+            // call_indirect path (the same one a "fn"-typed param uses).
+            return s.emit(ir.op_const_func(0, id.name));
         },
         parser.ExprBinary(b) => {
             // Short-circuit `&&` / `||`. When the RIGHT operand is trap-free and
