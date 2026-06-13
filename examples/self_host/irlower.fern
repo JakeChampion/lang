@@ -5576,7 +5576,13 @@ struct ClosureLift { body: parser.Stmt[], acc: LiftAcc, changed: boolean }
 // every guard holds, else the inputs unchanged.
 function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: parser.ExprLambda, fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], assigns: string[]): ClosureLift {
     var caps: string[] = lambda_captures(lam, gfns);
-    if (caps.len() == 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
+    // A capture-FREE lambda binding (`var f = function(x){…}; f(a)`) is lifted
+    // the same way, with no capture args — `f(a)` becomes a direct call to the
+    // hoisted `__lam_N(a)`. (Previously declined here, so it fell through to the
+    // first-class-closure lowering, which emits const_func(<fn>$clo) with no
+    // such hoisted body and bailed the module to the AST emitter.) The
+    // fname-not-used-as-a-value guard below still applies, so a lambda that
+    // escapes (passed/returned/reassigned) declines and keeps the box path.
     if (util.index_of_str(assigns, fname) >= 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
     var ctypes: string[] = [];
     var ci: i32 = 0;
@@ -5624,10 +5630,14 @@ function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc
             parser.StmtVar(v) => {
                 match (v.init) {
                     parser.ExprLambda(lam) => {
-                        if (!lambda_has_no_captures(lam, gfns)) {
-                            var lifted: ClosureLift = try_lift_binding(body, i, v.name, lam, fd, acc, gfns, assigns);
-                            if (lifted.changed) { return lifted; }
-                        }
+                        // Both capturing and capture-free lambda bindings lift to
+                        // a hoisted top-level function + direct call sites (the
+                        // capture-free case carries no capture args). try_lift_
+                        // binding declines (keeping the closure-box / AST path) if
+                        // the binding escapes — used as a value, returned, or
+                        // reassigned — rather than only called.
+                        var lifted: ClosureLift = try_lift_binding(body, i, v.name, lam, fd, acc, gfns, assigns);
+                        if (lifted.changed) { return lifted; }
                     },
                     _ => { }
                 }

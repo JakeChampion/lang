@@ -60,4 +60,28 @@ func TestSelfHostLambdaReachesIR(t *testing.T) {
 	if strings.Contains(out, "release_JNull") {
 		t.Errorf("lambda program fell back to the AST backend (AST tagged-value runtime present)")
 	}
+
+	// A capture-free lambda BOUND TO A LOCAL and called directly must also
+	// reach the IR path: the lift hoists it to __lam_<k> and rewrites `f(a)` to
+	// a direct call, rather than bailing to the AST closure box. (Before, only
+	// lambdas in argument position were lifted.)
+	src2 := `function main(): i32 { var f = function(x: i32): i32 { return x * 2; }; return f(21); }`
+	var cmd2 *exec.Cmd
+	if len(runner) == 0 {
+		cmd2 = exec.Command(driverBin, "-ir")
+	} else {
+		cmd2 = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+	}
+	cmd2.Stdin = bytes.NewReader([]byte(src2))
+	wat2, err := cmd2.Output()
+	if err != nil || len(wat2) == 0 {
+		t.Fatalf("driver failed (local-bound lambda): %v", err)
+	}
+	out2 := string(wat2)
+	if !strings.Contains(out2, "__lam_0") {
+		t.Errorf("local-bound lambda did not reach the IR path: emitted WAT has no __lam_0 (lifted fn)\n%s", out2)
+	}
+	if strings.Contains(out2, "release_JNull") {
+		t.Errorf("local-bound lambda fell back to the AST backend (AST tagged-value runtime present)")
+	}
 }
