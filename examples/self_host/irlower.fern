@@ -681,6 +681,17 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                     fi = fi + 1;
                     continue;
                 }
+                // A nominal-enum field (Color, Expr, …) is leak-only on the IR
+                // path — the exit sweep never frees an enum box — so it leaks
+                // with the struct like a string / Option / tuple field: no RC, no
+                // aliasing bail. is_enum_like_name can over-match a bare nominal
+                // that is not really an enum, but the only consequence is an AST
+                // fallback at the construction / match site (never a miscompile),
+                // and the stage-2 fixpoint guards byte-stability.
+                if (is_enum_like_name(t, structs)) {
+                    fi = fi + 1;
+                    continue;
+                }
                 // An array-of-struct field `X[]` (X a leak-safe struct): admitted
                 // in leak mode (the array + its elements leak with the struct; a
                 // recursive-drop follow-up frees them). The element's leaf-safety
