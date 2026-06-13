@@ -3151,6 +3151,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     }
                     return s.fail();
                 },
+                // Inline 0-arg IIFE — the shape parse_if_chain emits for an
+                // if-EXPRESSION in value position: `(function(): i32 { if (c) {
+                // return E1; } else { return E2; } })()`. Lower it INLINE (no
+                // closure box / function call) as a value-producing void `if`
+                // that stores each branch's result into a temp (#2938). Bails to
+                // AST for anything other than the i32 if-expression shape.
+                parser.ExprLambda(lam) => {
+                    return lower_iife(c, lam, s);
+                },
                 _ => { return s.fail(); }
             }
             return s.fail();
@@ -3172,6 +3181,85 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 ci = ci + 1;
             }
             return cs.emit(ir.op_arr_make(caps.len() + 1, 32));
+        },
+        _ => { return s.fail(); }
+    }
+    return s.fail();
+}
+
+// lower_iife lowers the 0-arg IIFE the if-expression desugar (parse_if_chain)
+// emits — `(function(): i32 { if (c) { return E1; } else { return E2; } })()`
+// — INLINE, with no closure box or function call: a value-producing void `if`
+// whose branches store their result into a fresh temp local, then a load of
+// that temp leaves the if-expression's value on the rt-stack (the same
+// temp-local-through-a-void-block shape the `&&`/`||` short-circuit uses). The
+// lambda's inner `return E` becomes `store tmp = E`. Restricted to exactly
+// what the desugar produces for an i32 if-expression: 0 params, 0 args, a body
+// that is a single StmtIf with an else, and i32-valued branches. Any other
+// shape — a match-expression IIFE (StmtMatch body), an f64 / string / i64
+// result, or a multi-statement body that isn't a value tail — bails to the AST
+// emitter, exactly as before (#2938).
+function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): LowerState {
+    if (c.args.len() != 0) { return s.fail(); }
+    if (lam.params.len() != 0) { return s.fail(); }
+    if (lam.body.len() != 1) { return s.fail(); }
+    match (lam.body[0]) {
+        parser.StmtIf(iff) => {
+            var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
+            var ts: LowerState = s.add_local(tmp);
+            var tslot: i32 = ts.slot_of(tmp);
+            var rs: LowerState = lower_value_if(iff, tslot, ts);
+            if (!rs.ok) { return rs; }
+            return rs.emit(ir.op_load_local(tslot));
+        },
+        _ => { return s.fail(); }
+    }
+    return s.fail();
+}
+
+// lower_value_if lowers an if-expression's desugared StmtIf as a void `if` that
+// STORES each branch's value into tslot (instead of returning it from the
+// enclosing function). Both branches are value tails (lower_value_tail); the
+// else is required (an if-expression always has one).
+function lower_value_if(iff: parser.StmtIf, tslot: i32, s: LowerState): LowerState {
+    if (iff.else_body.len() == 0) { return s.fail(); }
+    var cs: LowerState = lower_expr(iff.cond, s);
+    if (!cs.ok) { return cs; }
+    cs = cs.emit(ir.op_if(0));
+    cs = lower_value_tail(iff.then_body, tslot, cs);
+    if (!cs.ok) { return cs; }
+    cs = cs.emit(ir.op_else());
+    cs = lower_value_tail(iff.else_body, tslot, cs);
+    if (!cs.ok) { return cs; }
+    return cs.emit(ir.op_end());
+}
+
+// lower_value_tail lowers an if-expression branch whose last statement produces
+// the value: any leading statements lower normally, then the terminal
+// `return E` becomes `store tslot = E`, or a nested `else if` recurses through
+// lower_value_if. Only an i32 result inlines into the i32 temp — an f64 /
+// string / i64-width value bails so it stays on the AST path.
+function lower_value_tail(body: parser.Stmt[], tslot: i32, s: LowerState): LowerState {
+    if (body.len() == 0) { return s.fail(); }
+    var cs: LowerState = s;
+    var i: i32 = 0;
+    while (i < body.len() - 1) {
+        cs = lower_stmt(body[i], cs);
+        if (!cs.ok) { return cs; }
+        i = i + 1;
+    }
+    var last: parser.Stmt = body[body.len() - 1];
+    match (last) {
+        parser.StmtReturn(r) => {
+            if (expr_is_f64(r.value, cs)) { return s.fail(); }
+            if (expr_is_str(r.value, cs)) { return s.fail(); }
+            if (infer_expr_width(r.value, cs) == 64) { return s.fail(); }
+            cs = lower_expr(r.value, cs);
+            if (!cs.ok) { return cs; }
+            return cs.emit(ir.op_store_local(tslot));
+        },
+        parser.StmtIf(nested) => {
+            return lower_value_if(nested, tslot, cs);
         },
         _ => { return s.fail(); }
     }
