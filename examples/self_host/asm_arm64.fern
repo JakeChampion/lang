@@ -8135,6 +8135,47 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
+    // __fern_str_lines: x0 = source string box. Splits on '\n' then drops a
+    // trailing empty segment when s is empty or ends with '\n' (so "a\nb\n" is
+    // 2 lines). Builds a "\n" delim box (two allocs, no static data) and calls
+    // __fern_str_split, then decrements the result array's len by the trim flag.
+    // IR-path only (the AST path inlines lines); gated on the str_lines need.
+    if (s.has_need("str_lines")) {
+        s = s.write("__fern_str_lines:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    ldr x1, [x0, #8]\n");
+        s = s.write("    mov x20, #1\n");
+        s = s.write("    cbz x1, .Llines_box\n");
+        s = s.write("    ldr x2, [x0]\n");
+        s = s.write("    sub x1, x1, #1\n");
+        s = s.write("    ldrb w3, [x2, x1]\n");
+        s = s.write("    cmp w3, #10\n");
+        s = s.write("    cset x20, eq\n");
+        s = s.write(".Llines_box:\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov w1, #10\n");
+        s = s.write("    strb w1, [x0]\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    ldr x1, [sp], #16\n");
+        s = s.write("    str x1, [x0]\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    bl __fern_str_split\n");
+        s = s.write("    ldr x1, [x0]\n");
+        s = s.write("    sub x1, x1, x20\n");
+        s = s.write("    str x1, [x0]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
     // __fern_arr_i32_product: x0 = i32-array ptr. Returns
     // x0 = product of all elements (1 if empty — matches the
     // empty-product mathematical identity). Leaf — no frame.

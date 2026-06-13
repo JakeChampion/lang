@@ -458,6 +458,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"chars-elem-byte", `function main(): i32 { return "abc".chars()[1][0]; }`, 98},
 		{"chars-empty", `function main(): i32 { return "".chars().len() + 4; }`, 4},
 		{"chars-forin", `function main(): i32 { var n = 0; for c in "hello".chars() { n = n + c.len(); } return n; }`, 5},
+		// String lines (op_str_lines) -> string[]. wasm AST has no lines, so IR-only.
+		{"lines-3", `function main(): i32 { return "a\nb\nc".lines().len(); }`, 3},
+		{"lines-trailing-nl", `function main(): i32 { return "a\nb\nc\n".lines().len(); }`, 3},
+		{"lines-none", `function main(): i32 { return "hello".lines().len(); }`, 1},
+		{"lines-empty", `function main(): i32 { return "".lines().len() + 4; }`, 4},
+		{"lines-elem", `function main(): i32 { var ls = "ab\ncd".lines(); return ls[1][0]; }`, 99},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
 		// AST wasm path has no range desugar, so this rides the IR-only gate:
 		// the parser emits __range(LOW, HIGH) and irlower lowers a counted loop
