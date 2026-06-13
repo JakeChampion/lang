@@ -3475,7 +3475,12 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// modload rewrites `mod.Foo` to `mod__Foo` before the
 			// checker runs, so the StructLit.TypeName carries the
 			// dotted form temporarily.
-			if id, ok := expr.(*ast.Ident); ok && p.match(lexer.Punct, "{") {
+			// Suppressed in `noStructLit` positions (a for-iter / if- /
+			// while-condition), where the trailing `{` opens the loop or
+			// branch body, not a struct literal — so `for x in b.items {`
+			// reads `b.items` as a field access, not `b.items { … }`.
+			// Mirrors the bare-`Ident { … }` guard below.
+			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
 				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
 			}
 			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos}
