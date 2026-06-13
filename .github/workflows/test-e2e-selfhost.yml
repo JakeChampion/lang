@@ -13,7 +13,7 @@ name: Test e2e self-host
 # native toolchain rather than skipping for lack of qemu /
 # cross-gcc.
 #
-# SHARDED by test name. There are ~350 TestSelfHost* functions and
+# SHARDED by test name. There are ~450 TestSelfHost* functions and
 # many build a full self-host driver (compiling the ~35k-line
 # self-host compiler through the production backend, then linking),
 # so the unsharded job was the CI long pole (~9.5 min on x86, where
@@ -21,9 +21,9 @@ name: Test e2e self-host
 # claims `index % N == shard` over the sorted `go test -list` output,
 # so the set splits ~evenly and new tests are picked up
 # automatically. Crossed with the per-arch matrix this gives 2×N
-# parallel jobs, each ~1 min, vs the previous single ~9.5 min job.
-# `go test -list` builds the test binary once; the gotestsum run
-# reuses that cached build.
+# parallel jobs, each well under a minute, vs the previous single
+# ~9.5 min job. `go test -list` builds the test binary once; the
+# gotestsum run reuses that cached build.
 
 on:
   pull_request:
@@ -37,10 +37,10 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Eight shards keeps the slowest shard (~1 min) well under the
+        # Sixteen shards keeps the slowest shard (~30s) well under the
         # other e2e workflows. Bump N (here and in NSHARD below) if the
         # suite grows enough to push a shard past ~90s.
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 10
@@ -49,10 +49,10 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - name: go test (self-host shard ${{ matrix.shard }}/8)
+      - name: go test (self-host shard ${{ matrix.shard }}/16)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "8"
+          NSHARD: "16"
         run: |
           set -euo pipefail
           # Sorted list of every TestSelfHost* function, partitioned
@@ -69,5 +69,5 @@ jobs:
           # Anchored alternation: ^(A|B|C)$ matches each top-level test
           # exactly (and runs all of its subtests).
           PAT="^($(IFS='|'; echo "${SEL[*]}"))\$"
-          echo "shard $SHARD/$NSHARD: ${#SEL[@]} tests"
+          echo "shard $SHARD/$NSHARD: ${#SEL[@]} tests: ${SEL[*]}"
           gotestsum --format pkgname-and-test-fails -- -run "$PAT" ./internal/e2e/

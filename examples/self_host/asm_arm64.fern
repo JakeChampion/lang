@@ -4786,7 +4786,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.has_need("heap")) {
-        var heap_size: string = "1610612736";   // 1.5 GiB
+        var heap_size: string = "1879048192";   // 1.75 GiB
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
@@ -4802,7 +4802,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // __fern_arr_dec, popped by __fern_alloc before bumping.
         s = s.write("__fern_freelist: .skip 524288\n");
         s = s.write("    .align 3\n");
-        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1.5 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
+        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1.75 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss); 1 GiB was nearly exhausted as the bundle grew
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, %function\n");

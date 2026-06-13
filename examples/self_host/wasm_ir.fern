@@ -318,6 +318,15 @@ pub function module_emits_op(mod: parser.Module, kind: string): boolean {
     return false;
 }
 
+// module_uses_str_predicate reports whether any function emits a scalar string
+// search predicate op (starts_with / ends_with / index_of, the latter also
+// backing `contains`), so wasm.str_predicate_helpers is emitted for the IR path.
+pub function module_uses_str_predicate(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_starts_with")
+        || module_emits_op(mod, "str_ends_with")
+        || module_emits_op(mod, "str_index_of");
+}
+
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
 // runtime call (a call_direct to __fern_i32_to_string) — so the heap allocator +
 // $__fern_i32_to_str helper (wasm.to_string_helpers) are emitted, even for an
@@ -748,6 +757,15 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // when module_uses_str_split) builds the result via $__fern_arr_push +
             // $__fern_substr.
             out = out + "    call $__fern_str_split\n";
+        } else if (o.kind == "str_starts_with") {
+            // stack: s, p -> $__fern_str_startswith(s, p) -> 0/1. Self-contained
+            // predicate emitted by str_predicate_helpers (module_emits_op gate).
+            out = out + "    call $__fern_str_startswith\n";
+        } else if (o.kind == "str_ends_with") {
+            out = out + "    call $__fern_str_endswith\n";
+        } else if (o.kind == "str_index_of") {
+            // -> first index, or -1.
+            out = out + "    call $__fern_str_indexof\n";
         } else if (o.kind == "str_concat") {
             // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
             out = out + "    call $__fern_strcat\n";
