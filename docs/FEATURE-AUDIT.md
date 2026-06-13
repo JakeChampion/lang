@@ -223,7 +223,7 @@ per-function bugs in the audit log.
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
 | `std/stream` | | | | | | ⬜ | |
-| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods); Instant/Zoned RFC-3339 `Option` methods pending |
+| `std/time` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`); Instant/Zoned i64-field RFC-3339 methods pending |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | | | | | | ⬜ | |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
@@ -246,6 +246,21 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — std/time `date_parse_iso` (`Option`-returning) via the self-host IR path (x86-64 + wasm)
+
+Extended the std/time self-host coverage to the `Option`-returning parser.
+`TestSelfHostTimeParseIR` runs `date_parse_iso` (verbatim, struct renamed
+`Civil`) through the x86-64 and wasm IR drivers, **oracle-checked against the
+interpreter** and pinned to the `"ir"` path. A function returning
+`Option[Civil]` constructs `Some(Civil{...})` / `None`, and `main`
+discriminates the result with a **payload-binding `match`** that reads the
+struct's fields — `Option` construction + payload-binding match + struct field
+access, all already lower (no compiler change; built on the user-enum
+payload-binding match lowering from #2957). Valid, wrong-length,
+wrong-separator, and non-digit inputs are all covered. Remaining std/time
+self-host gap: the Instant/Zoned RFC-3339 methods (i64 `sec`/`nsec` struct
+fields).
 
 ### 2026-06-13 — std/time Date civil-date methods via the self-host IR path (x86-64 + wasm)
 
