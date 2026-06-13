@@ -208,7 +208,7 @@ per-function bugs in the audit log.
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
 | `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host pending |
-| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host pending |
+| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host: `csv_parse_line` ✅ via the IR path (`TestSelfHostCsvParseLineIR`); escape/join pending (need `index_of`/`replace` inlining) |
 | `std/log` | | | | | | ⬜ | |
 | `std/io` | | | | | | ⬜ | |
 | `std/io_buffered` | | | | | | ⬜ | |
