@@ -296,6 +296,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"opt-bind-local", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n + 100); } return None; } function f(n: i32): i32 { var r = g(n); match (r) { Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(5); }`},
 		{"opt-bind-local-strerr", `function chk(n: i32): Result[i32, string] { if (n > 0) { return Ok(n); } return Err("oops"); } function f(n: i32): i32 { var r = chk(n); match (r) { Ok(x) => { return x; }, Err(e) => { return e.len(); } } return 0; } function main(): i32 { return f(7) * 10 + f(0); }`},
 		{"opt-bind-param", `function f(o: Option[i32]): i32 { match (o) { Some(x) => { return x * 2; }, None => { return 0; } } return 0; } function main(): i32 { return f(Some(21)) + f(None); }`},
+		// Enum-receiver method calls `c.method()` — an unannotated enum-value local
+		// (`var c = Green`) dispatches to `<Enum>.<method>` (#2947).
+		{"enum-method-payloadless", `enum Color { Red, Green } function (c: Color) code(): i32 { match (c) { Red => { return 1; }, Green => { return 2; } } return 0; } function main(): i32 { var c = Green; return c.code(); }`},
+		{"enum-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 0; } } return 0; } function main(): i32 { var e = A(9); return e.v(); }`},
+		{"enum-method-args", `enum Op2 { Add, Mul } function (o: Op2) ap(a: i32, b: i32): i32 { match (o) { Add => { return a + b; }, Mul => { return a * b; } } return 0; } function main(): i32 { var o = Add; var p = Mul; return o.ap(5, 7) * 100 + p.ap(5, 7); }`},
+		{"enum-method-from-ctor", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 5; } } return 0; } function main(): i32 { var e = A(30); return e.v() + B.v(); }`},
 		{"struct-field-nested", `struct Point { x: i32, y: i32 } struct Box { p: Point } function bx(b: Box): i32 { return b.p.x + b.p.y; } function main(): i32 { var b = Box { p: Point { x: 30, y: 12 } }; return bx(b); }`},
 		{"struct-field-deep", `struct Inner { v: i32 } struct Mid { inner: Inner, n: i32 } struct Outer { mid: Mid } function f(o: Outer): i32 { return o.mid.inner.v + o.mid.n; } function main(): i32 { var o = Outer { mid: Mid { inner: Inner { v: 100 }, n: 5 } }; return f(o); }`},
 		{"struct-field-bind", `struct Point { x: i32, y: i32 } struct Box { p: Point, tag: i32 } function main(): i32 { var b = Box { p: Point { x: 7, y: 8 }, tag: 3 }; var pp = b.p; return pp.x * pp.y + b.tag; }`},

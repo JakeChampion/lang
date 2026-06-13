@@ -3120,6 +3120,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return dm.emit(ir.op_dyn_dispatch(fa.field, dbase, dargc));
                     }
                     if (rty != "") {
+                        // A receiver whose tracked type is an enum VARIANT (a
+                        // struct with an enum_owner — e.g. a local `var c = Green`
+                        // typed "Green") dispatches its methods under the ENUM
+                        // name: methods are declared on the enum (`function (c:
+                        // Color) m()`), keyed "<Enum>.<m>", never the variant. So
+                        // redirect variant -> enum_owner; otherwise the call_direct
+                        // names "<Variant>.<m>", which module_has_func can't find,
+                        // bailing the module to AST (#2947).
+                        var disp_ty: string = rty;
+                        var rvo: string = variant_enum_owner(s.structs, rty);
+                        if (rvo != "") { disp_ty = rvo; }
                         // No arity cap (see the free-call note above): the
                         // receiver lowers as arg 0 and the rest follow on the
                         // stack, count-agnostic on every backend.
@@ -3131,12 +3142,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // lowered via lower_i64 (param_is_i64 keyed by the
                             // method's "<Type>.<method>" label). f64 args ride
                             // lower_expr like any f64 value.
-                            if (sm.param_is_i64(rty + "." + fa.field, ai)) { sm = lower_i64(c.args[ai], sm); }
+                            if (sm.param_is_i64(disp_ty + "." + fa.field, ai)) { sm = lower_i64(c.args[ai], sm); }
                             else { sm = lower_expr(c.args[ai], sm); }
                             if (!sm.ok) { return sm; }
                             ai = ai + 1;
                         }
-                        return sm.emit(ir.op_call_direct(rty + "." + fa.field, 1 + c.args.len()));
+                        return sm.emit(ir.op_call_direct(disp_ty + "." + fa.field, 1 + c.args.len()));
                     }
                     // Enum method called directly on a FRESH variant construction
                     // (`Has(5).eq(other)`) or a bare unit variant (`A.method()`).
@@ -3687,6 +3698,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     },
                     _ => {}
                 }
+            }
+            // LAST resort: an UNANNOTATED binding to an enum VALUE (`var c = Green`,
+            // `var e = A(9)`) records the slot's ENUM type — recovered from the
+            // variant via its enum_owner — so `c.method()` dispatches to
+            // `<Enum>.<method>`. Without this the slot stays untyped and the
+            // enum-receiver method call bails the whole module to AST (#2947).
+            // Placed at the END of the chain so it never pre-empts the struct /
+            // struct-array branches above (expr_enum_type is "" for those).
+            else if (struct_ty == "") {
+                var enum_init: string = expr_enum_type(v.init, se);
+                if (enum_init != "") { struct_ty = enum_init; }
             }
             // string[] tracking (element typing for a[i]); the annotation is
             // authoritative too. The array itself is already is_arr (RC-tracked).
