@@ -341,6 +341,10 @@ pub function op_map_len(): Op { return op0("map_len"); }
 // Lowers to a call into each backend's __fern_print_int runtime helper — the same
 // helper + symbol the AST path emits, so behaviour is identical.
 pub function op_print_int(): Op { return op0("print_int"); }
+// `print_i64` is the i64 companion of `print_int`: it pops an i64 (not i32)
+// and writes its decimal text via the wider $__fern_print_int64 helper. The
+// lowering picks it over print_int when the argument is i64-typed.
+pub function op_print_i64(): Op { return op0("print_i64"); }
 // `print_str` pops a string value and writes its bytes to stdout (no newline),
 // pushing a dummy result so a statement-level drop balances. `print(s)` desugars
 // to `print_str(s + "\n")` (str_concat with a "\n" literal); `write(s)` is a bare

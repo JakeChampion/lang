@@ -2674,6 +2674,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // helper the AST path uses. A reserved builtin name (like
                     // map_new / Some / len), so it never shadows a user function.
                     if (cid.name == "print_int" && c.args.len() == 1) {
+                        // An i64 argument must keep its full 64 bits: lower it via
+                        // lower_i64 and print through the wider op (op_print_i64 →
+                        // $__fern_print_int64), mirroring the AST path's print_int64
+                        // dispatch. Passing an i64 to the i32 $__fern_print_int would
+                        // be a wasm type mismatch (invalid module).
+                        if (infer_expr_width(c.args[0], s) == 64) {
+                            var pi64: LowerState = lower_i64(c.args[0], s);
+                            if (!pi64.ok) { return pi64; }
+                            return pi64.emit(ir.op_print_i64());
+                        }
                         var pis: LowerState = lower_expr(c.args[0], s);
                         if (!pis.ok) { return pis; }
                         return pis.emit(ir.op_print_int());

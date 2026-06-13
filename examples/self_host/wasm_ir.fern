@@ -887,6 +887,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // stack: n -> write n's decimal text to stdout (no newline). The helper
             // returns void, so push a dummy i32 for the statement-level drop.
             out = out + "    call $__fern_print_int\n    i32.const 0\n";
+        } else if (o.kind == "print_i64") {
+            // stack: n(i64) -> write n's decimal text to stdout (no newline) via the
+            // i64 helper. Void return, so push a dummy i32 for the statement drop.
+            out = out + "    call $__fern_print_int64\n    i32.const 0\n";
         } else if (o.kind == "print_str") {
             // stack: strblock ptr -> write its bytes to stdout (no newline). The
             // helper returns void, so push a dummy i32 for the statement-level drop.

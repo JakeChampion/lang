@@ -10961,7 +10961,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
         // print_int / print_str / eprint_str / putchar write via WASI fd_write
         // — import it only when the module writes to stdout or stderr.
-        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar")) {
+        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_i64") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar")) {
             ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
         // random_bytes / random_i32 fill a CSPRNG buffer via the wasi random_get
@@ -11035,6 +11035,12 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // 0/4/8), which the data section starts above (str_offset base 24).
         if (wasm_ir.module_emits_op(mod, "print_int")) {
             ir_out = ir_out + print_int_helper(wasm_ir.str_offset(sv, sv.len()));
+        }
+        // $__fern_print_int64 for print_int(i64): a 24-byte scratch buffer 16 bytes
+        // past print_int's (matching the AST path's tab.next + 16 offset) so the two
+        // never clobber when a module prints both widths.
+        if (wasm_ir.module_emits_op(mod, "print_i64")) {
+            ir_out = ir_out + print_int64_helper(wasm_ir.str_offset(sv, sv.len()) + 16);
         }
         if (wasm_ir.module_emits_op(mod, "print_str")) { ir_out = ir_out + print_str_helper(); }
         if (wasm_ir.module_emits_op(mod, "eprint_str")) { ir_out = ir_out + eprint_str_helper(); }
