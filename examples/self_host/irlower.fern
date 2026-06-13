@@ -1216,6 +1216,7 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "trim" || cfa.field == "reverse") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     // `s.repeat(n)` on a string receiver yields a fresh string.
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
+                    if (cfa.field == "replace" && c.args.len() == 2 && expr_is_str(cfa.obj, s)) { return true; }
                     // A string-returning METHOD call `recv.m(...)`. Methods store
                     // their bare name (`receiver_type` is separate), so str_ret_fns
                     // records `m` by bare name — same as the free-call lookup above.
@@ -1991,7 +1992,8 @@ pub function str_free_call_field(name: string): string {
 // that the receiver is a string before dispatching to lower_str_method.
 pub function is_str_builtin_method(field: string): boolean {
     return field == "to_upper" || field == "to_lower" || field == "trim"
-        || field == "reverse" || field == "repeat" || field == "split"
+        || field == "reverse" || field == "repeat" || field == "replace"
+        || field == "split"
         || field == "starts_with" || field == "ends_with" || field == "index_of"
         || field == "contains";
 }
@@ -2000,6 +2002,7 @@ pub function is_str_builtin_method(field: string): boolean {
 // transforms are 0-arg; everything else (split + predicates) is 1-arg.
 pub function str_method_argc(field: string): i32 {
     if (field == "to_upper" || field == "to_lower" || field == "trim" || field == "reverse") { return 0; }
+    if (field == "replace") { return 2; }
     return 1;
 }
 
@@ -2018,6 +2021,11 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     if (field == "reverse") { return p.emit(ir.op_str_reverse()); }
     p = lower_expr(args[0], p);
     if (!p.ok) { return p; }
+    if (field == "replace") {
+        p = lower_expr(args[1], p);
+        if (!p.ok) { return p; }
+        return p.emit(ir.op_str_replace());
+    }
     if (field == "repeat") { return p.emit(ir.op_str_repeat()); }
     if (field == "split") { return p.emit(ir.op_str_split()); }
     if (field == "starts_with") { return p.emit(ir.op_str_starts_with()); }
