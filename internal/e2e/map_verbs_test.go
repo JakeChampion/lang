@@ -7,9 +7,10 @@ import (
 )
 
 // mapVerbsProgram exercises the higher-level Map verbs added to core/map
-// (#2685): entries / merge / extend / from / get_or_insert, over both i32 and
-// string keys, including the get_or_insert word-count use case. main returns 0
-// iff every check holds.
+// (#2685): entries / merge / extend / from / get_or_insert / update /
+// contains_value, over both i32 and string keys, including the word-count use
+// case (via both get_or_insert and the one-pass update). main returns 0 iff
+// every check holds.
 //
 // These verbs use Option (get) + tuples + generic map ops, which the self-host
 // compiler can't lower yet, so they are covered on the native compiler
@@ -54,6 +55,24 @@ function main(): i32 {
         counts = rc.0.insert(w, rc.1 + 1);
     }
     if (counts.get_or("a", 0) != 3 || counts.get_or("b", 0) != 2 || counts.get_or("c", 0) != 1) { return 9; }
+
+    // update: word-count in one pass (insert-or-modify), absent key seeds from init.
+    var uc: Map[string, i32] = map_new(8);
+    for w2 in words {
+        uc = uc.update(w2, 0, function (c: i32): i32 { return c + 1; });
+    }
+    if (uc.get_or("a", 0) != 3 || uc.get_or("b", 0) != 2 || uc.get_or("c", 0) != 1) { return 10; }
+    // update on an i32 map, present and absent paths.
+    var nm: Map[i32, i32] = map_new(4);
+    nm = nm.update(1, 100, function (v: i32): i32 { return v + 1; }); // absent -> init 100 + 1
+    nm = nm.update(1, 100, function (v: i32): i32 { return v + 1; }); // present 101 -> 102
+    if (nm.get_or(1, 0) != 102) { return 11; }
+
+    // contains_value: value membership (the value counterpart of has()).
+    if (!uc.contains_value(3) || !uc.contains_value(1)) { return 12; }
+    if (uc.contains_value(99)) { return 13; }
+    var im: Map[i32, i32] = map.from([(1, 10), (2, 20)]);
+    if (!im.contains_value(20) || im.contains_value(7)) { return 14; }
     return 0;
 }
 `

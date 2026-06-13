@@ -822,3 +822,26 @@ pub function (m: Map[K, V]) get_or_insert(k: K, fallback: V): (Map[K, V], V) {
         }
     }
 }
+
+// `m.update(k, init, fn)` — insert-or-modify in a single pass, the
+// counting/grouping shape of Roc's `Dict.update`. The slot's current value
+// (or `init` when `k` is absent) is fed through `fn`, and the result is
+// stored under `k`. Returns the fresh map (map ops yield a new value). The
+// classic word-count loop collapses to:
+//
+//     for w in words { counts = counts.update(w, 0, function (c: i32): i32 { return c + 1; }); }
+pub function (m: Map[K, V]) update(k: K, init: V, fn: (V) => V): Map[K, V] {
+    var cur: V = m.get_or(k, init);
+    return m.insert(k, fn(cur));
+}
+
+// `m.contains_value(target)` — true iff some key maps to `target`. The value
+// counterpart of `has` (which tests keys). Linear scan over the value column;
+// `target` is compared with `==`, so V must be an equatable type (i32 /
+// string — the value types the map supports). Empty map → false.
+pub function (m: Map[K, V]) contains_value(target: V): boolean {
+    for v in m.values() {
+        if (v == target) { return true; }
+    }
+    return false;
+}

@@ -1,8 +1,9 @@
 import "core/map";
 import "std/test";
 // examples/tests/map_verbs_test.fern — higher-level Map verbs added
-// to core/map (#2685): `entries`, `merge` / `extend`, `from`, and
-// `get_or_insert`. Covered over both i32 and string keys.
+// to core/map (#2685): `entries`, `merge` / `extend`, `from`,
+// `get_or_insert`, `update`, and `contains_value`. Covered over both
+// i32 and string keys.
 //
 // These verbs use Option (`get`) + tuples + generic map ops, which the
 // self-host compiler can't lower yet (Option/tuple IR is a pending
@@ -100,6 +101,40 @@ function test_get_or_insert_word_count(): Option[string] {
     return test.assert_eq(counts.get_or("c", 0), 1);
 }
 
+function test_update_word_count(): Option[string] {
+    // The one-pass shape of the word-count loop: insert-or-modify per word.
+    var counts: Map[string, i32] = map_new(8);
+    var words: string[] = ["a", "b", "a", "c", "a", "b"];
+    for w in words {
+        counts = counts.update(w, 0, function (c: i32): i32 { return c + 1; });
+    }
+    if (counts.get_or("a", 0) != 3) { return test.fail("count(a) should be 3"); }
+    if (counts.get_or("b", 0) != 2) { return test.fail("count(b) should be 2"); }
+    return test.assert_eq(counts.get_or("c", 0), 1);
+}
+
+function test_update_present_and_absent(): Option[string] {
+    var m: Map[i32, i32] = map_new(4);
+    // absent: seed from init (100), then apply fn -> 101.
+    m = m.update(1, 100, function (v: i32): i32 { return v + 1; });
+    if (m.get_or(1, 0) != 101) { return test.fail("absent update should seed from init"); }
+    // present: 101 -> 102.
+    m = m.update(1, 100, function (v: i32): i32 { return v + 1; });
+    return test.assert_eq(m.get_or(1, 0), 102);
+}
+
+function test_contains_value(): Option[string] {
+    var m: Map[string, i32] = map.from([("a", 10), ("b", 20)]);
+    if (!m.contains_value(20)) { return test.fail("20 should be present as a value"); }
+    if (m.contains_value(99)) { return test.fail("99 should not be a value"); }
+    return test.assert_eq(m.contains_value(10), true);
+}
+
+function test_contains_value_empty(): Option[string] {
+    var m: Map[i32, i32] = map_new(4);
+    return test.assert_eq(m.contains_value(0), false);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("map verbs");
     r = r.it("entries sum k+v",            test_entries_sum());
@@ -114,5 +149,9 @@ function main(): i32 {
     r = r.it("get_or_insert present",      test_get_or_insert_present());
     r = r.it("get_or_insert absent",       test_get_or_insert_absent());
     r = r.it("get_or_insert word count",   test_get_or_insert_word_count());
+    r = r.it("update word count",          test_update_word_count());
+    r = r.it("update present and absent",   test_update_present_and_absent());
+    r = r.it("contains_value",             test_contains_value());
+    r = r.it("contains_value empty",       test_contains_value_empty());
     return r.finish();
 }
