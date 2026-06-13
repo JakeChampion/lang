@@ -10964,6 +10964,11 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_i64") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar")) {
             ir_out = ir_out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
+        // random_bytes / random_i32 fill a CSPRNG buffer via the wasi random_get
+        // import — emit it only when the module draws randomness.
+        if (wasm_ir.module_uses_random(mod)) {
+            ir_out = ir_out + random_get_import();
+        }
         ir_out = ir_out + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. wasm_ir
         // supplies the distinct values + offsets; the byte encoding reuses this
@@ -10990,6 +10995,11 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // $__fern_i32_to_str backs i32.to_string() (wasm_helper_symbol maps the
         // IR call_direct("__fern_i32_to_string") to it).
         if (wasm_ir.module_uses_i32_to_string(mod)) { ir_out = ir_out + to_string_helpers(); }
+        // $__fern_random_bytes (a `[len][bytes]` string block — needs $__fern_str_box
+        // from the heap runtime, which module_allocates pulls in for random_bytes)
+        // and $__fern_random_i32 (fills the low scratch). Each gated on its own op.
+        if (wasm_ir.module_emits_op(mod, "random_bytes")) { ir_out = ir_out + random_bytes_ir_func(); }
+        if (wasm_ir.module_emits_op(mod, "random_i32")) { ir_out = ir_out + random_i32_func(); }
         if (wasm_ir.module_uses_str_cmp(mod)) { ir_out = ir_out + strcmp_helper(); }
         // $__fern_substr backs str_slice AND str_split (the split helper slices
         // each segment), so emit it for either — but only ONCE.
