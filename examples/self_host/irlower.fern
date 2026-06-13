@@ -2388,6 +2388,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return res;
         },
         parser.ExprUnary(u) => {
+            // Try-operator `inner?` (parser desugar: unary "try_"). Unwrap the
+            // Some/Ok payload as the expression's value, or early-return the
+            // None/Err box from the enclosing Option/Result-returning function.
+            if (u.op == "try_") { return lower_try(u.operand, s); }
             if (u.op == "-") {
                 if (expr_is_f64(u.operand, s)) {
                     // -x  ==  0.0 - x  (float negate).
@@ -3225,6 +3229,92 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
         _ => { return s.fail(); }
     }
     return s.fail();
+}
+
+// lower_try lowers the try-operator `inner?` (parser desugar: unary "try_").
+// `inner` evaluates to an Option[T] / Result[T, E] box; `?` unwraps the success
+// payload (Some/Ok) as the expression's value, or early-returns the failure box
+// from the enclosing (Option/Result-returning) function. The self-host runtime
+// leaks (no rc / defer / errdefer), so the failure path is simply: Option ->
+// return a fresh None (payloadless tag box); Result -> forward the source Err
+// box unchanged (its tag=Err + E payload already satisfy the enclosing return,
+// checker-verified). Mirrors the native ir.go `*ast.TryOp` lowering minus the
+// cleanup the leak-only path doesn't need. Gated to scalar i32 / boolean
+// payloads for now: those need no extra slot-typing at the `var x = inner?`
+// binding (x defaults to a width-32 i32 slot), so a string / i64 / f64 /
+// composite payload bails to AST until the success value's slot typing is
+// threaded. Out of line so the ExprUnary arm stays small (#2720 guard).
+function lower_try(inner: parser.Expr, s: LowerState): LowerState {
+    var ot: string = try_opt_type(inner, s);
+    if (ot.len() < 8) { return s.fail(); }
+    var is_result: boolean = ot[0:7] == "Result[";
+    var is_option: boolean = ot[0:7] == "Option[";
+    if (!is_result && !is_option) { return s.fail(); }
+    // Success payload type — only scalar i32 / boolean inline here.
+    var pt: string = opt_payload_type(ot, "Ok");
+    if (pt != "i32" && pt != "boolean") { return s.fail(); }
+    // Evaluate inner into a fresh temp slot (the box pointer).
+    var tmp: string = "$try" + util.i32_to_string(s.local_names.len());
+    var ts: LowerState = s.add_local(tmp);
+    var tslot: i32 = ts.slot_of(tmp);
+    ts = lower_expr(inner, ts);
+    if (!ts.ok) { return ts; }
+    ts = ts.emit(ir.op_store_local(tslot));
+    // if (tag == failure) { early-return the failure box }
+    ts = ts.emit(ir.op_load_local(tslot));
+    ts = ts.emit(ir.op_opt_tag());
+    ts = ts.emit(ir.op_const_i32(1));            // failure variant idx = 1 (both Option + Result)
+    ts = ts.emit(ir.op_bin("eq", 0, false));
+    ts = ts.emit(ir.op_if(0));
+    if (is_result) {
+        ts = ts.emit(ir.op_load_local(tslot));   // forward the source Err box
+    } else {
+        ts = ts.emit(ir.op_opt_none());          // fresh None
+    }
+    ts = ts.emit(ir.op_return());
+    ts = ts.emit(ir.op_end());
+    // Success path: load the payload (offset abstracted by op_opt_payload).
+    ts = ts.emit(ir.op_load_local(tslot));
+    return ts.emit(ir.op_opt_payload());
+}
+
+// try_opt_type recovers the Option/Result type spelling of a try-operator's
+// inner expression, mirroring the match-scrutinee resolution: a direct-call
+// `f()` via opt_ret_fns, a map `.get()` (Option[V]), a local/param via its
+// tracked Option/Result type, or an Option/Result struct field. "" when it
+// can't (lower_try then bails to AST).
+function try_opt_type(inner: parser.Expr, s: LowerState): string {
+    match (inner) {
+        parser.ExprCall(scl) => {
+            match (scl.callee) {
+                parser.ExprIdent(scid) => { return s.opt_ret_type(scid.name); },
+                parser.ExprFieldAccess(scfa) => {
+                    if (scfa.field == "get") {
+                        match (scfa.obj) {
+                            parser.ExprIdent(mapid) => {
+                                var vt: string = map_value_of(s.map_type_of(s.slot_of(mapid.name)));
+                                if (vt != "") { return "Option[" + vt + "]"; }
+                            },
+                            _ => {}
+                        }
+                    }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        parser.ExprIdent(sid) => { return s.opt_type_of_slot(s.slot_of(sid.name)); },
+        parser.ExprFieldAccess(sfa) => {
+            var foty: string = expr_struct_type(sfa.obj, s);
+            if (foty != "") {
+                var fft: string = decl_field_type(s.structs, foty, sfa.field);
+                if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { return fft; }
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
 }
 
 // lower_iife lowers the 0-arg IIFE the if-expression desugar (parse_if_chain)
