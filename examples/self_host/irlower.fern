@@ -1092,6 +1092,7 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                 },
                 parser.ExprFieldAccess(cfa) => {
                     if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
+                    if (cfa.field == "chars" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     return false;
                 },
                 _ => { return false; }
@@ -1168,6 +1169,9 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                         return expr_is_str(cfa.obj, s);
                     }
                     if (cfa.field == "split" && c.args.len() == 1) {
+                        return expr_is_str(cfa.obj, s);
+                    }
+                    if (cfa.field == "chars" && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
                     }
                     return false;
@@ -1887,15 +1891,23 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (!sx.ok) { return sx; }
                 return sx.emit(ir.op_bin("sub", 64, false));
             }
-            // `n as i64` / `n as u64`: widen an i32 operand to i64 — OR, when the
-            // operand is an f64, truncate it toward zero to i64 (f64_to_i64).
-            // Without the f64 case, op_int_extend would mis-extend the f64's bit
-            // pattern as if it were an i32.
+            // `n as i64` / `n as u64`. Three operand cases:
+            //  - an f64 operand: truncate toward zero to i64 (f64_to_i64);
+            //    op_int_extend would mis-extend the f64's bit pattern as i32.
+            //  - a non-float numeric LITERAL: already a 64-bit value, so emit an
+            //    i64 const directly — lowering via the 32-bit lower_expr would
+            //    make it an `i32.const`, truncating (and invalid on wasm for a
+            //    literal above the i32 range). #2928.
+            //  - otherwise: widen the i32 operand to i64.
             if (u.op == "as_i64" || u.op == "as_u64") {
                 if (expr_is_f64(u.operand, s)) {
                     var fw: LowerState = lower_expr(u.operand, s);
                     if (!fw.ok) { return fw; }
                     return fw.emit(ir.op_f64_to_i64());
+                }
+                match (u.operand) {
+                    parser.ExprNumber(n) => { if (!n.is_float) { return s.emit(ir.op_const_i64_text(n.text)); } },
+                    _ => {}
                 }
                 var sw: LowerState = lower_expr(u.operand, s);
                 if (!sw.ok) { return sw; }
@@ -2001,6 +2013,7 @@ pub function str_free_call_field(name: string): string {
 pub function is_str_builtin_method(field: string): boolean {
     return field == "to_upper" || field == "to_lower" || field == "trim"
         || field == "reverse" || field == "repeat" || field == "replace"
+        || field == "chars"
         || field == "split"
         || field == "starts_with" || field == "ends_with" || field == "index_of"
         || field == "contains";
@@ -2009,7 +2022,7 @@ pub function is_str_builtin_method(field: string): boolean {
 // str_method_argc gives the argument count of a string builtin method: the case
 // transforms are 0-arg; everything else (split + predicates) is 1-arg.
 pub function str_method_argc(field: string): i32 {
-    if (field == "to_upper" || field == "to_lower" || field == "trim" || field == "reverse") { return 0; }
+    if (field == "to_upper" || field == "to_lower" || field == "trim" || field == "reverse" || field == "chars") { return 0; }
     if (field == "replace") { return 2; }
     return 1;
 }
@@ -2027,6 +2040,7 @@ pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Exp
     if (field == "to_lower") { return p.emit(ir.op_str_to_lower()); }
     if (field == "trim") { return p.emit(ir.op_str_trim()); }
     if (field == "reverse") { return p.emit(ir.op_str_reverse()); }
+    if (field == "chars") { return p.emit(ir.op_str_chars()); }
     p = lower_expr(args[0], p);
     if (!p.ok) { return p; }
     if (field == "replace") {
@@ -2848,7 +2862,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (mrslot >= 0 && s.map_type_of(mrslot) != "") {
                         var mtype: string = s.map_type_of(mrslot);
                         var mkk2: i32 = map_key_kind_of(mtype);
-                        if (fa.field == "insert" && c.args.len() == 2) {
+                        if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
                             var mset: LowerState = lower_expr(fa.obj, s);
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[0], mset);
@@ -2885,6 +2899,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mgo.ok) { return mgo; }
                             return mgo.emit(ir.op_map_get_or(mkk2));
                         }
+                        if (fa.field == "without" && c.args.len() == 1) {
+                            // Functional delete: `m.without(k)` -> the map with k
+                            // removed (reuses __fern_map_delete, like the AST path).
+                            var mdel: LowerState = lower_expr(fa.obj, s);
+                            if (!mdel.ok) { return mdel; }
+                            mdel = lower_expr(c.args[0], mdel);
+                            if (!mdel.ok) { return mdel; }
+                            return mdel.emit(ir.op_map_delete(mkk2));
+                        }
                         if (fa.field == "keys" && c.args.len() == 0) {
                             var mks: LowerState = lower_expr(fa.obj, s);
                             if (!mks.ok) { return mks; }
@@ -2906,7 +2929,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // (map_new vs map_new_i32 at the chain's base). Read methods on
                     // a map-literal expression aren't needed — the literal binds to
                     // a typed local, and reads go through the map-local path above.
-                    if (fa.field == "insert" && c.args.len() == 2) {
+                    if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
                         var emk: i32 = expr_map_kind(fa.obj, s);
                         if (emk >= 0) {
                             var emset: LowerState = lower_expr(fa.obj, s);
@@ -3135,6 +3158,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     }
                     return s.fail();
                 },
+                // Inline 0-arg IIFE — the shape parse_if_chain emits for an
+                // if-EXPRESSION in value position: `(function(): i32 { if (c) {
+                // return E1; } else { return E2; } })()`. Lower it INLINE (no
+                // closure box / function call) as a value-producing void `if`
+                // that stores each branch's result into a temp (#2938). Bails to
+                // AST for anything other than the i32 if-expression shape.
+                parser.ExprLambda(lam) => {
+                    return lower_iife(c, lam, s);
+                },
                 _ => { return s.fail(); }
             }
             return s.fail();
@@ -3156,6 +3188,85 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 ci = ci + 1;
             }
             return cs.emit(ir.op_arr_make(caps.len() + 1, 32));
+        },
+        _ => { return s.fail(); }
+    }
+    return s.fail();
+}
+
+// lower_iife lowers the 0-arg IIFE the if-expression desugar (parse_if_chain)
+// emits — `(function(): i32 { if (c) { return E1; } else { return E2; } })()`
+// — INLINE, with no closure box or function call: a value-producing void `if`
+// whose branches store their result into a fresh temp local, then a load of
+// that temp leaves the if-expression's value on the rt-stack (the same
+// temp-local-through-a-void-block shape the `&&`/`||` short-circuit uses). The
+// lambda's inner `return E` becomes `store tmp = E`. Restricted to exactly
+// what the desugar produces for an i32 if-expression: 0 params, 0 args, a body
+// that is a single StmtIf with an else, and i32-valued branches. Any other
+// shape — a match-expression IIFE (StmtMatch body), an f64 / string / i64
+// result, or a multi-statement body that isn't a value tail — bails to the AST
+// emitter, exactly as before (#2938).
+function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): LowerState {
+    if (c.args.len() != 0) { return s.fail(); }
+    if (lam.params.len() != 0) { return s.fail(); }
+    if (lam.body.len() != 1) { return s.fail(); }
+    match (lam.body[0]) {
+        parser.StmtIf(iff) => {
+            var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
+            var ts: LowerState = s.add_local(tmp);
+            var tslot: i32 = ts.slot_of(tmp);
+            var rs: LowerState = lower_value_if(iff, tslot, ts);
+            if (!rs.ok) { return rs; }
+            return rs.emit(ir.op_load_local(tslot));
+        },
+        _ => { return s.fail(); }
+    }
+    return s.fail();
+}
+
+// lower_value_if lowers an if-expression's desugared StmtIf as a void `if` that
+// STORES each branch's value into tslot (instead of returning it from the
+// enclosing function). Both branches are value tails (lower_value_tail); the
+// else is required (an if-expression always has one).
+function lower_value_if(iff: parser.StmtIf, tslot: i32, s: LowerState): LowerState {
+    if (iff.else_body.len() == 0) { return s.fail(); }
+    var cs: LowerState = lower_expr(iff.cond, s);
+    if (!cs.ok) { return cs; }
+    cs = cs.emit(ir.op_if(0));
+    cs = lower_value_tail(iff.then_body, tslot, cs);
+    if (!cs.ok) { return cs; }
+    cs = cs.emit(ir.op_else());
+    cs = lower_value_tail(iff.else_body, tslot, cs);
+    if (!cs.ok) { return cs; }
+    return cs.emit(ir.op_end());
+}
+
+// lower_value_tail lowers an if-expression branch whose last statement produces
+// the value: any leading statements lower normally, then the terminal
+// `return E` becomes `store tslot = E`, or a nested `else if` recurses through
+// lower_value_if. Only an i32 result inlines into the i32 temp — an f64 /
+// string / i64-width value bails so it stays on the AST path.
+function lower_value_tail(body: parser.Stmt[], tslot: i32, s: LowerState): LowerState {
+    if (body.len() == 0) { return s.fail(); }
+    var cs: LowerState = s;
+    var i: i32 = 0;
+    while (i < body.len() - 1) {
+        cs = lower_stmt(body[i], cs);
+        if (!cs.ok) { return cs; }
+        i = i + 1;
+    }
+    var last: parser.Stmt = body[body.len() - 1];
+    match (last) {
+        parser.StmtReturn(r) => {
+            if (expr_is_f64(r.value, cs)) { return s.fail(); }
+            if (expr_is_str(r.value, cs)) { return s.fail(); }
+            if (infer_expr_width(r.value, cs) == 64) { return s.fail(); }
+            cs = lower_expr(r.value, cs);
+            if (!cs.ok) { return cs; }
+            return cs.emit(ir.op_store_local(tslot));
+        },
+        parser.StmtIf(nested) => {
+            return lower_value_if(nested, tslot, cs);
         },
         _ => { return s.fail(); }
     }
@@ -3324,6 +3435,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 parser.ExprFieldAccess(dfa) => {
                                     var drty: string = expr_struct_type(dfa.obj, s);
                                     if (drty != "") { dtag = csv_nth(s.tuple_ret_type(drty + "." + dfa.field), dk); }
+                                    else if (dfa.field == "without") {
+                                        // `m.without(k)` yields (Map[K,V], boolean):
+                                        // element 0 is the receiver's map type, 1 is
+                                        // the existed flag. Tag elem 0 with the map
+                                        // type so the bound local re-marks as a map
+                                        // (else `m2.len()` etc. miscompile) (#2926).
+                                        var dwmt: string = "";
+                                        match (dfa.obj) {
+                                            parser.ExprIdent(dwid) => { dwmt = s.map_type_of(s.slot_of(dwid.name)); },
+                                            _ => {}
+                                        }
+                                        if (dwmt != "") {
+                                            if (dk == 0) { dtag = dwmt; } else { dtag = "boolean"; }
+                                        }
+                                    }
                                 },
                                 _ => {}
                             }
@@ -3342,6 +3468,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
                     else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
                     else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
+                    else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
                     else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
                     dk = dk + 1;
                 }
@@ -3413,6 +3540,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         parser.ExprFieldAccess(cfa) => {
                             if ((cfa.field == "bytes" || cfa.field == "as_bytes") && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                             else if (cfa.field == "split" && cc.args.len() == 1 && expr_is_str(cfa.obj, se)) { is_arr = true; }
+                            else if (cfa.field == "chars" && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                         },
                         _ => {}
                     }

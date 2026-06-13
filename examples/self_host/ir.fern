@@ -314,6 +314,9 @@ pub function op_str_reverse(): Op { return op0("str_reverse"); }
 // (non-overlapping) occurrence of `old` in `haystack` replaced by `new`. An
 // empty `old`, or no match, returns `haystack` unchanged. Leak-only.
 pub function op_str_replace(): Op { return op0("str_replace"); }
+// `str_chars` pops [s] → a fresh string[] whose i-th element is the 1-char
+// string s[i:i+1]. Result is is_arr + is_strarr (like str_split). Leak-only.
+pub function op_str_chars(): Op { return op0("str_chars"); }
 pub function op_str_starts_with(): Op { return op0("str_starts_with"); }
 pub function op_str_ends_with(): Op { return op0("str_ends_with"); }
 pub function op_str_index_of(): Op { return op0("str_index_of"); }
@@ -397,6 +400,10 @@ pub function op_map_get(keykind: i32): Op { return Op { kind: "map_get", i32_imm
 pub function op_map_has(keykind: i32): Op { return Op { kind: "map_has", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 // `map_get_or` pops [map, key, default] → the value at key, or default on a miss.
 pub function op_map_get_or(keykind: i32): Op { return Op { kind: "map_get_or", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// `map_delete` pops [map, key] → the map with that key removed (Fern's functional
+// `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
+// Key kind in i32_imm.
+pub function op_map_delete(keykind: i32): Op { return Op { kind: "map_delete", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 // `map_keys` / `map_values` pop [map] → the array of live keys / values. On the
 // parallel-array backends (x86-64 / arm64) this is the map's internal keys[] /
 // values[] pointer (box @0 / @8); on wasm it snapshots the hash map into a fresh
@@ -561,6 +568,7 @@ pub function render_op(o: Op): string {
     if (o.kind == "map_get") { return "map_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "map_has") { return "map_has " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "map_get_or") { return "map_get_or " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_delete") { return "map_delete " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "map_keys") { return "map_keys"; }
     if (o.kind == "map_values") { return "map_values"; }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }

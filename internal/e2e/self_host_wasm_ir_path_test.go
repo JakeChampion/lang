@@ -291,6 +291,20 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"map-forkv-keys", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }`},
 		{"map-forkv-pair", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }`},
 		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
+		// `.set` (the public map mutator) lowers through the wasm IR path the
+		// same as the internal `.insert` (#2926).
+		{"map-set-i32-len", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.set(1, 100); m = m.set(2, 200); m = m.set(3, 300); return m.len(); }`},
+		{"map-set-str-getor", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.set("a", 1); m = m.set("bb", 2); return m.get_or("bb", 0) + m.len(); }`},
+		{"map-set-chained", `function main(): i32 { var m: Map[string, i32] = map_new(8).set("x", 5).set("y", 7); return m.get_or("y", 0) + m.len(); }`},
+		{"map-set-keyword-literal", `function main(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`},
+		// if-EXPRESSION in value position (#2938): inlined as a value-producing
+		// void `if` on the wasm IR path (`if` + temp local), no IIFE/closure.
+		{"ifexpr-var", `function main(): i32 { var x = 5; var y = if (x > 3) { 10 } else { 20 }; return y; }`},
+		{"ifexpr-return", `function main(): i32 { var x = 5; return if (x > 3) { 10 } else { 20 }; }`},
+		{"ifexpr-else-if", `function main(): i32 { var x = 2; var y = if (x == 1) { 10 } else if (x == 2) { 20 } else { 30 }; return y; }`},
+		{"ifexpr-capture-expr", `function main(): i32 { var n = 7; var y = if (n > 5) { n + 1 } else { 0 }; return y; }`},
+		{"ifexpr-nested-in-binary", `function main(): i32 { var a = 3; return (if (a > 0) { 5 } else { 6 }) + (if (a > 10) { 1 } else { 2 }); }`},
+		{"matchexpr-literal", `function main(): i32 { var n = 2; var y = match (n) { 1 => 10, 2 => 20, _ => 0 }; return y; }`},
 		{"i64-cmp", `function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`},
 		{"i64-add", `function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`},
 		{"i64-mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`},
@@ -445,6 +459,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"replace-byte", `function main(): i32 { var r = "hello".replace("l", "L"); return r[2]; }`, 76},
 		{"replace-nomatch", `function main(): i32 { return "abc".replace("z", "Q").len(); }`, 3},
 		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`, 3},
+		// String chars (op_str_chars) -> string[] of 1-char blocks. wasm AST has no
+		// chars, so IR-only (dedicated str_chars_helper, copying).
+		{"chars-len", `function main(): i32 { return "abcde".chars().len(); }`, 5},
+		{"chars-elem-len", `function main(): i32 { return "abc".chars()[1].len(); }`, 1},
+		{"chars-elem-byte", `function main(): i32 { return "abc".chars()[1][0]; }`, 98},
+		{"chars-empty", `function main(): i32 { return "".chars().len() + 4; }`, 4},
+		{"chars-forin", `function main(): i32 { var n = 0; for c in "hello".chars() { n = n + c.len(); } return n; }`, 5},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
 		// AST wasm path has no range desugar, so this rides the IR-only gate:
 		// the parser emits __range(LOW, HIGH) and irlower lowers a counted loop

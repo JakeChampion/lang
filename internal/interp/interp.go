@@ -2545,6 +2545,47 @@ func valuesEqual(a, b Value) bool {
 	case String:
 		bx, ok := b.(String)
 		return ok && ax == bx
+	case Float:
+		bx, ok := b.(Float)
+		return ok && ax.V == bx.V && ax.Width == bx.Width
+	case Array:
+		// Tuples are represented as Array, so this also covers tuple keys.
+		// Element-wise by value — the recursion bottoms out on scalars
+		// (Fern forbids reference cycles via E048/E049/E057, so no infinite
+		// descent).
+		bx, ok := b.(Array)
+		if !ok || len(ax) != len(bx) {
+			return false
+		}
+		for i := range ax {
+			if !valuesEqual(ax[i], bx[i]) {
+				return false
+			}
+		}
+		return true
+	case *Struct:
+		bx, ok := b.(*Struct)
+		if !ok || ax.TypeName != bx.TypeName || len(ax.Fields) != len(bx.Fields) {
+			return false
+		}
+		for k, v := range ax.Fields {
+			bv, ok := bx.Fields[k]
+			if !ok || !valuesEqual(v, bv) {
+				return false
+			}
+		}
+		return true
+	case *Enum:
+		bx, ok := b.(*Enum)
+		if !ok || ax.EnumName != bx.EnumName || ax.Index != bx.Index || len(ax.Payloads) != len(bx.Payloads) {
+			return false
+		}
+		for i := range ax.Payloads {
+			if !valuesEqual(ax.Payloads[i], bx.Payloads[i]) {
+				return false
+			}
+		}
+		return true
 	}
 	return a == b
 }

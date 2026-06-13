@@ -134,7 +134,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"hex-or", "function main(): i32 { return (0x40 | 0x01) & 255; }"},
 		// Int→int casts (op_int_cast). Non-overflowing where they'd differ from
 		// native, so the AST path agrees — masking matches asm.fern's as_<ty>.
-		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},        // 300 & 255 = 44
+		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"}, // 300 & 255 = 44
 		{"cast-u16-mask", "function main(): i32 { return ((70000 as u16) as i32) & 255; }"},
 		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"}, // 200 -> -56 -> &255 = 200
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return ((x as u8) as i32); }"},
@@ -364,6 +364,35 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-forkv-keys", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }`},
 		{"map-forkv-pair", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }`},
 		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
+		// `.set` is the PUBLIC map mutator (the existing cases above use the
+		// internal `.insert`); it lowers through the IR path identically (#2926).
+		{"map-set-i32-len", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.set(1, 100); m = m.set(2, 200); m = m.set(3, 300); return m.len(); }`},
+		{"map-set-i32-getor", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.set(7, 42); m = m.set(9, 13); return m.get_or(7, 0) + m.get_or(9, 0); }`},
+		{"map-set-str-getor", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.set("a", 1); m = m.set("bb", 2); return m.get_or("bb", 0) + m.len(); }`},
+		{"map-set-overwrite", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.set(7, 40); m = m.set(7, 42); return m.get_or(7, 0) + m.len(); }`},
+		{"map-set-chained", `function main(): i32 { var m: Map[string, i32] = map_new(8).set("x", 5).set("y", 7); return m.get_or("y", 0) + m.len(); }`},
+		{"map-set-keyword-literal", `function main(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`},
+		{"map-set-has", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.set("k", 9); var r = 0; if (m.has("k")) { r = r + 1; } if (m.has("z")) { r = r + 10; } return r; }`},
+		// m.without(k) -> (Map, existed). The destructured map re-marks so later
+		// ops on it work; both AST and IR share __fern_map_delete (#2926).
+		{"map-without-len", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var (m2, e) = m.without(1); return m2.len(); }`},
+		{"map-without-existed", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var (m2, e) = m.without(1); if (e) { return 1; } return 0; }`},
+		{"map-without-miss", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var (m2, e) = m.without(99); if (e) { return 1; } return m2.len() + 5; }`},
+		{"map-without-survivor", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var (m2, e) = m.without(1); return m2.get_or(2, 0); }`},
+		{"map-without-removed-gone", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var (m2, e) = m.without(1); if (m2.has(1)) { return 9; } return 0; }`},
+		{"map-without-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("a", 1); m = m.insert("b", 2); var (m2, e) = m.without("a"); return m2.len() + m2.get_or("b", 0); }`},
+		{"map-without-then-insert", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("a", 1); var (m2, e) = m.without("a"); m2 = m2.insert("c", 5); return m2.get_or("c", 0); }`},
+		// if-EXPRESSION in value position (#2938): the parser desugars it to a
+		// 0-arg IIFE that the IR path now inlines as a value-producing void `if`
+		// (a temp local per branch); previously the whole module bailed to AST.
+		{"ifexpr-var", `function main(): i32 { var x = 5; var y = if (x > 3) { 10 } else { 20 }; return y; }`},
+		{"ifexpr-else", `function main(): i32 { var x = 2; var y = if (x > 3) { 10 } else { 20 }; return y; }`},
+		{"ifexpr-return", `function main(): i32 { var x = 5; return if (x > 3) { 10 } else { 20 }; }`},
+		{"ifexpr-else-if", `function main(): i32 { var x = 2; var y = if (x == 1) { 10 } else if (x == 2) { 20 } else { 30 }; return y; }`},
+		{"ifexpr-capture-expr", `function main(): i32 { var n = 7; var y = if (n > 5) { n + 1 } else { 0 }; return y; }`},
+		{"ifexpr-nested-in-binary", `function main(): i32 { var a = 3; return (if (a > 0) { 5 } else { 6 }) + (if (a > 10) { 1 } else { 2 }); }`},
+		{"ifexpr-as-arg", `function add1(v: i32): i32 { return v + 1; } function main(): i32 { var x = 5; return add1(if (x > 3) { 10 } else { 20 }); }`},
+		{"matchexpr-literal", `function main(): i32 { var n = 2; var y = match (n) { 1 => 10, 2 => 20, _ => 0 }; return y; }`},
 		{"i64-cmp", `function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`},
 		{"i64-add", `function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`},
 		{"i64-mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`},
@@ -517,6 +546,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`},
 		{"replace-multichar", `function main(): i32 { return "axxbxxc".replace("xx", "-").len(); }`},
 		{"replace-param", `function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foobar"); }`},
+		// String chars -> string[] of 1-char strings (op_str_chars; result is_arr +
+		// is_strarr like split). AST emits __fern_str_chars; IR emits emit_ir_str_chars.
+		{"chars-len", `function main(): i32 { return "abcde".chars().len(); }`},
+		{"chars-elem-len", `function main(): i32 { return "abc".chars()[1].len(); }`},
+		{"chars-elem-byte", `function main(): i32 { return "abc".chars()[1][0]; }`},
+		{"chars-empty", `function main(): i32 { return "".chars().len() + 4; }`},
+		{"chars-forin", `function main(): i32 { var n = 0; for c in "hello".chars() { n = n + c.len(); } return n; }`},
+		{"chars-loop-sum", `function main(): i32 { var cs = "abc".chars(); var s = 0; var i = 0; while (i < cs.len()) { s = s + cs[i][0]; i = i + 1; } return s % 200; }`},
+		{"chars-param", `function nc(s: string): i32 { return s.chars().len(); } function main(): i32 { return nc("xyzw"); }`},
 	}
 
 	for _, tc := range cases {
