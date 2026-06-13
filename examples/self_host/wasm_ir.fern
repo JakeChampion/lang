@@ -198,6 +198,7 @@ function wasm_binop(kind: string): string {
     if (kind == "xor") { return "i32.xor"; }
     if (kind == "shl") { return "i32.shl"; }
     if (kind == "shr_s") { return "i32.shr_s"; }
+    if (kind == "shr_u") { return "i32.shr_u"; }
     if (kind == "eq") { return "i32.eq"; }
     if (kind == "ne") { return "i32.ne"; }
     if (kind == "lt_s") { return "i32.lt_s"; }
@@ -290,6 +291,10 @@ pub function module_allocates(mod: parser.Module): boolean {
             // random_bytes builds a string block (via $__fern_str_box); str_bytes
             // builds a u8[] (via $__fern_arr_box). Both need the heap runtime.
             if (k == "random_bytes" || k == "str_bytes") { return true; }
+            // alloc_u8 / arr_push / str_from_bytes all allocate via $__fern_arr_box
+            // / $__fern_string_from_bytes, so a program whose only allocation is
+            // one of these still needs the heap runtime.
+            if (k == "alloc_u8" || k == "arr_push" || k == "str_from_bytes") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -610,6 +615,35 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "int_wrap") {
             // i64 -> i32: drop the high 32 bits.
             out = out + "    i32.wrap_i64\n";
+        } else if (o.kind == "u32_wrap") {
+            // No-op: wasm i32 ops are natively 32-bit (already wrap at 2^32), so
+            // a u32 arithmetic result needs no extra mask here (unlike the 64-bit
+            // register backends). The op exists so the IR is backend-uniform.
+        } else if (o.kind == "int_cast") {
+            // `x as <ty>` int→int width mask/extend. u32/i32 are identity (the
+            // i32 value's bit pattern is already the result); the narrowing /
+            // sign-extending casts use and / extend8_s / extend16_s.
+            if (o.str == "u8") { out = out + "    i32.const 255\n    i32.and\n"; }
+            else if (o.str == "u16") { out = out + "    i32.const 65535\n    i32.and\n"; }
+            else if (o.str == "i8") { out = out + "    i32.extend8_s\n"; }
+            else if (o.str == "i16") { out = out + "    i32.extend16_s\n"; }
+            // u32 / i32: no-op (value already a 32-bit i32).
+        } else if (o.kind == "arr_push") {
+            // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array.
+            out = out + "    call $__fern_arr_push\n";
+        } else if (o.kind == "str_from_bytes") {
+            // stack: arr -> $__fern_string_from_bytes(arr) -> string block.
+            out = out + "    call $__fern_string_from_bytes\n";
+        } else if (o.kind == "alloc_u8") {
+            // stack: n -> a fresh n-element array. wasm has no $__fern_alloc_u8;
+            // synthesize via $__fern_arr_box(n*4) + the [len@0, cap@4] header
+            // (matching arr_make). Contents are not zeroed (callers zero
+            // explicitly), like the register backends' __fern_alloc_u8.
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
         } else if (o.kind == "load_local") {
             out = out + "    local.get " + util.i32_to_string(o.i32_imm) + "\n";
         } else if (o.kind == "store_local") {

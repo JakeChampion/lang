@@ -132,6 +132,23 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
 		{"hex-local", "function main(): i32 { var x = 0x100; return (x + 5) & 255; }"},
 		{"hex-or", "function main(): i32 { return (0x40 | 0x01) & 255; }"},
+		// Int→int casts (op_int_cast). Non-overflowing where they'd differ from
+		// native, so the AST path agrees — masking matches asm.fern's as_<ty>.
+		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},        // 300 & 255 = 44
+		{"cast-u16-mask", "function main(): i32 { return ((70000 as u16) as i32) & 255; }"},
+		{"cast-i8-sext", "function main(): i32 { return ((200 as i8) as i32) & 255; }"}, // 200 -> -56 -> &255 = 200
+		{"cast-chain", "function main(): i32 { var x: i32 = 65; return ((x as u8) as i32); }"},
+		// Array builder methods: .with (reassign-self -> in-place arr_set) and
+		// .append (-> __fern_arr_push), plus __alloc_u8 / string_from_bytes. These
+		// don't overflow u32, so IR matches the AST path.
+		{"with-reassign", "function main(): i32 { var a = [10, 20, 30]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }"},
+		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
+		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
+		// NB: __alloc_u8 / string_from_bytes programs are NOT differential cases —
+		// the standalone asm_ir_run AST fallback references __fern_alloc_u8 without
+		// emitting it (a legacy-driver gap), so the AST side won't link. The IR
+		// path compiles them correctly; they're validated against the native
+		// compiler in TestSelfHostU32WrapIR (alloc-u8 / str-from-bytes).
 		{"compare", "function main(): i32 { return 5 < 10; }"},
 		{"unary-not", "function main(): i32 { return !(5 > 10); }"},
 		{"if-taken", "function main(): i32 { var x = 1; if (5 < 10) { x = 7; } return x; }"},
