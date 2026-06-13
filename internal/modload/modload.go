@@ -1555,6 +1555,18 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 			r.rewriteType(&t.Params[i])
 		}
 		r.rewriteType(&t.Result)
+	case ast.DynTraitType:
+		// `dyn mod.Trait` — mangle the trait name the same way bounds and
+		// impls do, so the dyn type's Trait field lines up with the
+		// mangled TraitDecl.Name in Info.Traits. Without this a qualified
+		// `dyn cmp.Display` keeps its dotted name and fails the
+		// `unknown trait` check in validateDynTraitTypes. DynTraitType
+		// carries no position; the public-visibility check reports at the
+		// zero position, which is acceptable for the rare non-pub case.
+		newTrait := r.rewriteTraitNameAt(t.Trait, ast.Position{})
+		if newTrait != t.Trait {
+			*slot = ast.DynTraitType{Trait: newTrait}
+		}
 	}
 }
 
