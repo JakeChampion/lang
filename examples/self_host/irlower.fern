@@ -2303,6 +2303,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             var ek: string = kind;
             var left_u32: boolean = expr_is_u32(b.left, s);
             if (b.op == ">>" && left_u32) { ek = "shr_u"; }
+            // A u32 COMPARE selects the UNSIGNED op so a value with bit 31 set
+            // (>= 2^31) orders correctly. On the 64-bit register backends a u32
+            // is zero-extended into a 64-bit slot, so a signed 64-bit compare
+            // already happens to agree — but wasm compares natively at 32 bits,
+            // where signed `lt_s` mis-orders a high-bit u32 (#2917). Emitting the
+            // `_u` kind fixes wasm and is a no-op for x86/arm64 (unsigned vs
+            // signed agree on the always-positive zero-extended value).
+            else if (is_cmp_kind(kind) && (left_u32 || expr_is_u32(b.right, s))) { ek = to_unsigned_kind(kind); }
             var res: LowerState = s2.emit(ir.op_bin(ek, 0, false));
             var res_u32: boolean = left_u32 || expr_is_u32(b.right, s);
             if (res_u32 && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {

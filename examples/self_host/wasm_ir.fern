@@ -200,6 +200,14 @@ function wasm_binop(kind: string): string {
     if (kind == "le_s") { return "i32.le_s"; }
     if (kind == "gt_s") { return "i32.gt_s"; }
     if (kind == "ge_s") { return "i32.ge_s"; }
+    // Unsigned 32-bit compares (u32, #2917): wasm compares natively at 32 bits,
+    // so a u32 with bit 31 set must use the unsigned ops to order correctly
+    // (the register backends get away with a signed 64-bit compare on the
+    // zero-extended value, but wasm does not).
+    if (kind == "lt_u") { return "i32.lt_u"; }
+    if (kind == "le_u") { return "i32.le_u"; }
+    if (kind == "gt_u") { return "i32.gt_u"; }
+    if (kind == "ge_u") { return "i32.ge_u"; }
     return ";; ir: unsupported bin " + kind + "\n";
 }
 

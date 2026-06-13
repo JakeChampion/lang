@@ -199,8 +199,8 @@ per-function bugs in the audit log.
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
 | `std/i32` (~80 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | representative set (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum) — `audit_std_numeric`; self-host via array bundle |
-| `std/i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host abs/min/max/clamp via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) |
-| `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | max — `audit_std_path_numeric`; self-host unsigned min/max via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`); wasm IR unsigned-compare gap tracked in [#2917](https://github.com/JakeChampion/lang/issues/2917) |
+| `std/i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host abs/min/max/clamp via the IR path, x86-64 + wasm (`TestSelfHostNumericMethodsIR`) |
+| `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | max — `audit_std_path_numeric`; self-host unsigned min/max via the IR path, x86-64 + wasm (`TestSelfHostNumericMethodsIR`); wasm signed-compare bug fixed ([#2917](https://github.com/JakeChampion/lang/issues/2917)) |
 | `std/u64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | clamp — `audit_std_path_numeric`; self-host: u64 unsigned compare / `>>` / `/` / `%` now correct via the IR path ([#2904](https://github.com/JakeChampion/lang/issues/2904); `TestSelfHostU64UnsignedIR`) — the i64-domain analog of the u32 wrapping fix |
 | `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host: f64 intrinsics (floor/ceil/sqrt/abs/round/trunc) ✅ via the IR path (`TestSelfHostFloatIntrinsicsIR`) |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
@@ -246,6 +246,27 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — 🔧 self-host wasm IR: u32 comparisons lowered as SIGNED ([#2917](https://github.com/JakeChampion/lang/issues/2917))
+
+Fixed the wasm-IR signed-compare bug surfaced by the numeric coverage above.
+`irlower`'s 32-bit binary-op path converted only `>>` to its unsigned form for
+a u32 operand; a u32 **compare** kept the signed kind (`lt_s`/…). The register
+backends got away with it — a u32 is zero-extended into a 64-bit slot, so a
+signed 64-bit compare of an always-positive value agrees — but wasm compares
+natively at 32 bits, where a u32 with bit 31 set reads negative and mis-orders.
+
+Fix: `irlower` now emits the unsigned compare kind (`to_unsigned_kind`) when a
+u32 operand is involved (mirroring the existing u64 path), and `wasm_ir`'s
+i32 op map gains `i32.lt_u`/`le_u`/`gt_u`/`ge_u`. x86 (`setb`/`seta`) and arm64
+(`cset lo`/`hi`) already mapped the `_u` kinds, so they're unchanged
+(unsigned == signed on the zero-extended value). `TestSelfHostNumericMethodsIR`
+now runs the u32 / u64 cases on **both** the x86-64 and wasm IR backends,
+oracle-checked. Stage-2 fixpoint stays byte-identical.
+
+Separately surfaced and filed: a large `i64`/`u64` **literal** (>2^31) is
+emitted as `i32.const` on wasm IR ([#2928](https://github.com/JakeChampion/lang/issues/2928))
+— the u64 test case builds its >2^63 value with shifts to avoid it.
 
 ### 2026-06-13 — std/i64 + std/u32 numeric methods via the self-host x86-64 IR path
 
