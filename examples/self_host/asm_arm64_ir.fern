@@ -331,6 +331,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // __fern_putchar, reused via the putchar need). Push x0 for the drop.
             s = s.need("putchar");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_putchar\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "sleep_ms") {
+            // [ms] -> nanosleep(ms) (asm_arm64.emit_runtime emits __fern_sleep_ms
+            // unconditionally, so no need is set). Push x0 for the drop.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_sleep_ms\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "map_set") {
             // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind).
             s = s.need("maps");
