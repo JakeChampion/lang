@@ -3425,6 +3425,74 @@ func (c *checker) methodImplementsTrait(typeName, methodName string) bool {
 	return false
 }
 
+// displayDispatchTypeName maps a concrete value type to the receiver name
+// `to_string` (and other trait methods) dispatch under — mirroring the
+// scalar/struct/enum mapping in the method-call path. Returns "" for types
+// that can't carry a `to_string` (void, tuples, raw arrays, …).
+func displayDispatchTypeName(t ast.Type) string {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name
+	case ast.EnumType:
+		return x.Name
+	case ast.StringType:
+		return "string"
+	case ast.BoolType:
+		return "boolean"
+	case ast.NumberType:
+		switch {
+		case x.NormalWidth() == 64 && x.IsSigned():
+			return "i64"
+		case x.NormalWidth() == 64 && !x.IsSigned():
+			return "u64"
+		case !x.IsSigned():
+			return "u32"
+		default:
+			return "i32"
+		}
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return "f64"
+		}
+		return "f32"
+	}
+	return ""
+}
+
+// typeImplementsDisplay reports whether a value of type t can be rendered via
+// the Display spine — i.e. `t.to_string(): string` resolves in the current
+// context. Drives the auto-`.to_string()` rewrite for `print` / `write` /
+// `eprint` (issue #2696): a bounded type parameter (`T: Display`), a
+// `dyn Display`-style trait object, or a concrete struct/enum/scalar with a
+// visible (or trait-impl) `to_string` method all qualify.
+func (c *checker) typeImplementsDisplay(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.ParamType:
+		_, _, found := c.resolveTraitMethodForParam(x.Name, "to_string")
+		return found
+	case ast.DynTraitType:
+		td, ok := c.info.Traits[x.Trait]
+		if !ok {
+			return false
+		}
+		for _, m := range td.Methods {
+			if m.Name == "to_string" {
+				return true
+			}
+		}
+		return false
+	}
+	tn := displayDispatchTypeName(t)
+	if tn == "" {
+		return false
+	}
+	mangled, ok := c.info.Methods[tn+".to_string"]
+	if !ok {
+		return false
+	}
+	return c.methodVisibleHere(mangled) || c.methodImplementsTrait(tn, "to_string")
+}
+
 type checker struct {
 	info        *Info
 	errors      []error
@@ -7015,6 +7083,43 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// for return-position inference (#2668).
 		callExpected := c.expectedType
 		c.expectedType = nil
+		// Display spine (#2696): `print` / `write` / `eprint` accept any
+		// `T: Display`, not just `string`. When the sole argument isn't
+		// already a string, rewrite it to `arg.to_string()` (the same
+		// desugar f-strings use) so the value is stringified through the
+		// Display trait before it reaches the string-only runtime helper.
+		// This removes the stringify-first dance (`print(x.to_string())`)
+		// at every call site. Wrong arg counts fall through to the normal
+		// path, which reports the arity error.
+		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 {
+			switch id.Name {
+			case "print", "write", "eprint":
+				at := c.checkExpr(n.Args[0], s)
+				at = postSettleType(n.Args[0], at)
+				if at == nil {
+					return ast.VoidType{}
+				}
+				if _, isStr := at.(ast.StringType); isStr {
+					return ast.VoidType{}
+				}
+				if !c.typeImplementsDisplay(at) {
+					c.errfCode(n.Args[0].Pos(), "E038",
+						"argument 1 to %s: %s does not implement `Display` (no `to_string(): string` in scope) — add `@derive(Display)`, `impl Display for %s`, or import the module that provides it",
+						id.Name, at, at)
+					return ast.VoidType{}
+				}
+				n.Args[0] = &ast.Call{
+					P: n.Args[0].Pos(),
+					Callee: &ast.FieldAccess{
+						P:      n.Args[0].Pos(),
+						Target: n.Args[0],
+						Field:  "to_string",
+					},
+				}
+				_ = c.checkExpr(n.Args[0], s)
+				return ast.VoidType{}
+			}
+		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "map_new" {
 			c.needCoreMap(n.P)
 		}

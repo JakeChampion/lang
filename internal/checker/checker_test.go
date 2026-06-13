@@ -2953,3 +2953,63 @@ func TestNamedArgs(t *testing.T) {
 		}
 	}
 }
+
+// Display spine (#2696): `print` / `write` / `eprint` accept any value whose
+// type carries a `to_string(): string` (the Display spine), not just string.
+// A non-string argument is rewritten to `arg.to_string()` so it stringifies
+// through the trait before reaching the string-only runtime helper.
+func TestCheckPrintDisplayAccepted(t *testing.T) {
+	// Concrete struct with an inline Display-shaped impl.
+	srcStruct := `trait Display { function to_string(self: Self): string; }
+struct Point { x: i32, y: i32 }
+impl Display for Point { function to_string(self: Self): string { return "p"; } }
+function main(): i32 {
+    var p: Point = Point { x: 1, y: 2 };
+    print(p);
+    write(p);
+    eprint(p);
+    return 0;
+}`
+	if err := checkSource(t, srcStruct); err != nil {
+		t.Errorf("print(struct: Display) should typecheck: %v", err)
+	}
+	// A plain string argument still type-checks unchanged.
+	srcStr := `function main(): i32 { print("hi"); write("x"); eprint("y"); return 0; }`
+	if err := checkSource(t, srcStr); err != nil {
+		t.Errorf("print(string) should still typecheck: %v", err)
+	}
+}
+
+// A bounded generic `T: Display` may forward its parameter straight to
+// `print`; the trait bound supplies the `to_string` the rewrite needs.
+func TestCheckPrintDisplayGeneric(t *testing.T) {
+	src := `trait Display { function to_string(self: Self): string; }
+function show[T: Display](v: T): void { print(v); }
+struct Point { x: i32 }
+impl Display for Point { function to_string(self: Self): string { return "p"; } }
+function main(): i32 { show(Point { x: 1 }); return 0; }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("print(v: T) under T: Display should typecheck: %v", err)
+	}
+}
+
+// A value whose type has no `to_string` is rejected with a Display-specific
+// diagnostic, and an unbounded generic parameter is rejected the same way
+// (no trait bound supplies the method).
+func TestCheckPrintNonDisplayRejected(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{`struct Point { x: i32 }
+function main(): i32 { var p: Point = Point { x: 1 }; print(p); return 0; }`,
+			"does not implement `Display`"},
+		{`trait Display { function to_string(self: Self): string; }
+function show[T](v: T): void { print(v); }
+function main(): i32 { return 0; }`,
+			"does not implement `Display`"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: want error containing %q, got %v", c.src, c.want, err)
+		}
+	}
+}
