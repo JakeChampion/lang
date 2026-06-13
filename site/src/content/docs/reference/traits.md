@@ -95,8 +95,8 @@ printable value.
 
 ## The `core/cmp` foundation
 
-The standard library's [`core/cmp`][cmp] module defines the common traits
-so you rarely declare your own from scratch:
+The standard library's [`core/cmp`](../../stdlib/cmp/) module defines the
+common traits so you rarely declare your own from scratch:
 
 | Trait     | Method                                  | Meaning                  |
 | --------- | --------------------------------------- | ------------------------ |
@@ -135,9 +135,7 @@ variants and `match` on it.
 ## See also
 
 - [Type system](../types/) — generics, unions, `Option` / `Result`.
-- [`core/cmp`][cmp] — the source for the trait set above.
+- [`core/cmp`](../../stdlib/cmp/) — the reference for the trait set above.
 - The full design of record lives in [`docs/TRAITS.md`][traits].
-
-[cmp]: https://github.com/JakeChampion/lang/blob/main/internal/stdlib/core/cmp.fern
 [traits]: https://github.com/JakeChampion/lang/blob/main/docs/TRAITS.md
 [dyn]: https://github.com/JakeChampion/lang/blob/main/docs/DYN-TRAITS.md
