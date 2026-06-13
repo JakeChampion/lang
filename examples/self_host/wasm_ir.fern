@@ -476,13 +476,19 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // so a clock module also stays on the wasm AST path; x86 / arm64 lower it
     // via the IR. sleep_ms likewise has no wasm runtime (a WASI poll-based sleep
     // is the deferred #2843 item), so a sleep module stays off the wasm IR path.
+    // `m.without(k)` (map_delete) returns a [map, existed] tuple on the register
+    // backends, but wasm's $__fern_map_delete returns just the box — a different
+    // ABI the IR tuple-destructure path doesn't model, so a delete module stays on
+    // the wasm AST path (which handles wasm's box-return form). x86 / arm64 lower
+    // it via the IR (#2926). Wasm IR map-delete support is a deferred follow-up.
     return asm_ir.eligible_core(mod)
         && !module_emits_op(mod, "read_int")
         && !module_emits_op(mod, "read_line")
         && !module_emits_op(mod, "monotonic_ns")
         && !module_emits_op(mod, "now_unix_ms")
         && !module_emits_op(mod, "now_ns")
-        && !module_emits_op(mod, "sleep_ms");
+        && !module_emits_op(mod, "sleep_ms")
+        && !module_emits_op(mod, "map_delete");
 }
 
 // should_use_ir: the use_ir default is on AND the module is wasm-eligible — the
