@@ -177,7 +177,7 @@ pub function module_uses_str_slice(mod: parser.Module): boolean {
 
 // wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
 // values never appear in the i32 subset, so every op is the i32.* form.
-function wasm_binop(kind: string): string {
+function wasm_binop(kind: string, unsigned: boolean): string {
     if (kind == "add") { return "i32.add"; }
     if (kind == "sub") { return "i32.sub"; }
     if (kind == "mul") { return "i32.mul"; }
@@ -196,18 +196,20 @@ function wasm_binop(kind: string): string {
     if (kind == "shr_u") { return "i32.shr_u"; }
     if (kind == "eq") { return "i32.eq"; }
     if (kind == "ne") { return "i32.ne"; }
-    if (kind == "lt_s") { return "i32.lt_s"; }
-    if (kind == "le_s") { return "i32.le_s"; }
-    if (kind == "gt_s") { return "i32.gt_s"; }
-    if (kind == "ge_s") { return "i32.ge_s"; }
+    // Ordering compares pick the unsigned wasm opcode for u32 operands (#2917):
+    // a u32 ≥ 2^31 is a signed-negative i32, so lt_s/gt_s give wrong answers.
+    if (kind == "lt_s") { if (unsigned) { return "i32.lt_u"; } return "i32.lt_s"; }
+    if (kind == "le_s") { if (unsigned) { return "i32.le_u"; } return "i32.le_s"; }
+    if (kind == "gt_s") { if (unsigned) { return "i32.gt_u"; } return "i32.gt_s"; }
+    if (kind == "ge_s") { if (unsigned) { return "i32.ge_u"; } return "i32.ge_s"; }
     return ";; ir: unsupported bin " + kind + "\n";
 }
 
 // wasm_binop_w selects the i64 instruction variant when the operand width is 64
 // (i64 div/rem is bailed in irlower, so no i64 div/rem helper is needed). A
 // comparison still pushes an i32 result — only the operands are i64.
-function wasm_binop_w(kind: string, width: i32): string {
-    if (width != 64) { return wasm_binop(kind); }
+function wasm_binop_w(kind: string, width: i32, unsigned: boolean): string {
+    if (width != 64) { return wasm_binop(kind, unsigned); }
     if (kind == "add") { return "i64.add"; }
     if (kind == "sub") { return "i64.sub"; }
     if (kind == "mul") { return "i64.mul"; }
@@ -222,10 +224,10 @@ function wasm_binop_w(kind: string, width: i32): string {
     if (kind == "shr_s") { return "i64.shr_s"; }
     if (kind == "eq") { return "i64.eq"; }
     if (kind == "ne") { return "i64.ne"; }
-    if (kind == "lt_s") { return "i64.lt_s"; }
-    if (kind == "le_s") { return "i64.le_s"; }
-    if (kind == "gt_s") { return "i64.gt_s"; }
-    if (kind == "ge_s") { return "i64.ge_s"; }
+    if (kind == "lt_s") { if (unsigned) { return "i64.lt_u"; } return "i64.lt_s"; }
+    if (kind == "le_s") { if (unsigned) { return "i64.le_u"; } return "i64.le_s"; }
+    if (kind == "gt_s") { if (unsigned) { return "i64.gt_u"; } return "i64.gt_s"; }
+    if (kind == "ge_s") { if (unsigned) { return "i64.ge_u"; } return "i64.ge_s"; }
     // f64 arithmetic / comparison (op_fbin carries width 64). wasm's f64
     // compares are natively NaN-correct (return 0 for unordered) and yield i32.
     if (kind == "fadd") { return "f64.add"; }
@@ -1020,7 +1022,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // signature `$fn<argc>` (all-i32 params/result this slice).
             out = out + "    call_indirect (type $fn" + util.i32_to_string(o.i32_imm) + ")\n";
         } else {
-            out = out + "    " + wasm_binop_w(o.kind, o.width) + "\n";
+            out = out + "    " + wasm_binop_w(o.kind, o.width, o.unsigned) + "\n";
         }
         i = i + 1;
     }
