@@ -682,6 +682,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "f64_to_i32") {
             // f64 -> signed i32, truncating toward zero (fcvtzs).
             s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "f64_to_i64") {
+            // f64 -> signed i64, truncating toward zero. fcvtzs x0, d0 already
+            // produces the full 64-bit result, so it is the same instruction as
+            // f64_to_i32 (which only keeps the low 32 bits).
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "fadd" || o.kind == "fsub" || o.kind == "fmul" || o.kind == "fdiv") {
             // f64 arithmetic: pop rhs (x0) / lhs (x1) into d0/d1, op, push.
             s = s.write("    ldr x0, [sp], #16\n    ldr x1, [sp], #16\n    fmov d0, x0\n    fmov d1, x1\n");
