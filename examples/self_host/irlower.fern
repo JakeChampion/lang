@@ -2113,6 +2113,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pcs.ok) { return pcs; }
                         return pcs.emit(ir.op_putchar());
                     }
+                    // Built-in `sleep_ms(ms)` — pause for `ms` milliseconds
+                    // (no-op if ms <= 0). Lowers the i32 arg then op_sleep_ms,
+                    // which the x86-64 / arm64 backends emit as a call into the
+                    // __fern_sleep_ms nanosleep helper. A reserved builtin, so it
+                    // never shadows a user function (#2843 — self-host IR path).
+                    if (cid.name == "sleep_ms" && c.args.len() == 1) {
+                        var sms: LowerState = lower_expr(c.args[0], s);
+                        if (!sms.ok) { return sms; }
+                        return sms.emit(ir.op_sleep_ms());
+                    }
                     // Built-in `write(s)` / `print(s)` — write a string's bytes to
                     // stdout. `print` appends a newline (Fern's print == println):
                     // it desugars to `print_str(s + "\n")` via the existing str_concat

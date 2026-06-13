@@ -427,12 +427,14 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // The clock builtins (monotonic_ns / now_unix_ms) are not yet lowered on the
     // wasm IR path either (they need a WASI clock import rather than a syscall),
     // so a clock module also stays on the wasm AST path; x86 / arm64 lower it
-    // via the IR.
+    // via the IR. sleep_ms likewise has no wasm runtime (a WASI poll-based sleep
+    // is the deferred #2843 item), so a sleep module stays off the wasm IR path.
     return asm_ir.eligible_core(mod)
         && !module_emits_op(mod, "read_int")
         && !module_emits_op(mod, "read_line")
         && !module_emits_op(mod, "monotonic_ns")
-        && !module_emits_op(mod, "now_unix_ms");
+        && !module_emits_op(mod, "now_unix_ms")
+        && !module_emits_op(mod, "sleep_ms");
 }
 
 // should_use_ir: the use_ir default is on AND the module is wasm-eligible — the

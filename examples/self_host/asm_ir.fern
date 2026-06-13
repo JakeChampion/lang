@@ -209,6 +209,37 @@ function emit_ir_now_unix_ms(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_sleep_ms appends the __fern_sleep_ms(%rdi = ms) helper, transcribed
+// verbatim from asm.fern's emit_runtime: split ms into a timespec
+// {sec=ms/1000, nsec=(ms%1000)*1e6} on the stack and nanosleep (syscall 35);
+// ms <= 0 returns immediately. Allocation-free, so emitted independently of the
+// heap runtime (gated on the sleep_ms need), like the clock helpers.
+function emit_ir_sleep_ms(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_sleep_ms:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $32, %rsp\n");
+    s = s.write("    cmpq $0, %rdi\n");
+    s = s.write("    jle .Lir_sm_done\n");
+    s = s.write("    movq %rdi, %rax\n");
+    s = s.write("    movq $0, %rdx\n");
+    s = s.write("    movq $1000, %rcx\n");
+    s = s.write("    divq %rcx\n");
+    s = s.write("    movq %rax, (%rsp)\n");
+    s = s.write("    movq $1000000, %rax\n");
+    s = s.write("    imulq %rdx, %rax\n");
+    s = s.write("    movq %rax, 8(%rsp)\n");
+    s = s.write("    movq %rsp, %rdi\n");
+    s = s.write("    movq $0, %rsi\n");
+    s = s.write("    movq $35, %rax\n");
+    s = s.write("    syscall\n");
+    s = s.write(".Lir_sm_done:\n");
+    s = s.write("    addq $32, %rsp\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_ir_runtime appends the array/RC/heap runtime the IR path needs, using
 // asm.fern's OWN array layout + helper bodies (transcribed verbatim from
 // asm.fern's emit_runtime) so the IR path is a byte-compatible DROP-IN: the
@@ -1498,6 +1529,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // syscall return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_putchar\n    pushq %rax\n");
             s = s.need("putchar");
+        } else if (o.kind == "sleep_ms") {
+            // [ms] -> nanosleep(ms). Push the syscall return so the
+            // statement-level drop balances (sleep_ms is void).
+            s = s.write("    popq %rdi\n    call __fern_sleep_ms\n    pushq %rax\n");
+            s = s.need("sleep_ms");
         } else if (o.kind == "map_set") {
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
@@ -1725,5 +1761,6 @@ pub function emit_module_ir(mod: parser.Module): string {
     // runtime (a clock-only program is heap-free), like random_i32.
     if (s.has_need("monotonic_ns")) { s = emit_ir_monotonic_ns(s); }
     if (s.has_need("now_unix_ms")) { s = emit_ir_now_unix_ms(s); }
+    if (s.has_need("sleep_ms")) { s = emit_ir_sleep_ms(s); }
     return strbuf_take();
 }
