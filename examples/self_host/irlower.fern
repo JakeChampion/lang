@@ -3224,9 +3224,56 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): 
             if (!rs.ok) { return rs; }
             return rs.emit(ir.op_load_local(tslot));
         },
+        // match-EXPRESSION in value position (parse_match_expr emits the same
+        // IIFE shape with a StmtMatch body). Inline it by rewriting each arm's
+        // `return E` to `tmp = E` and lowering the resulting statement-match
+        // (the full variant dispatch), then loading tmp — see lower_iife_match.
+        parser.StmtMatch(mm) => {
+            return lower_iife_match(mm, s);
+        },
         _ => { return s.fail(); }
     }
     return s.fail();
+}
+
+// lower_iife_match inlines an enum / bool match-EXPRESSION in value position.
+// It rewrites every arm's single `return E` into `tmp = E` and lowers the
+// rewritten statement-match through the existing variant-dispatch path, then
+// loads tmp. Conservatively scoped so the i32 temp is always the right width:
+// arms must have NO payload binding (a unit variant, `_`, or `true`/`false`)
+// and an i32 result. A payload-binding arm (`Some(n) => n`) or an f64 / string
+// / i64 result bails to the AST emitter (#2938 follow-up).
+function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
+    var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
+    var ts: LowerState = s.add_local(tmp);
+    var tslot: i32 = ts.slot_of(tmp);
+    var newarms: parser.MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < m.arms.len()) {
+        var arm: parser.MatchArm = m.arms[i];
+        match (arm.pattern) {
+            parser.PatVariant(pv) => {
+                if (pv.binding.len() > 0 || pv.extra_bindings.len() > 0) { return s.fail(); }
+            },
+            _ => {}
+        }
+        if (arm.body.len() != 1) { return s.fail(); }
+        match (arm.body[0]) {
+            parser.StmtReturn(r) => {
+                if (expr_is_f64(r.value, ts)) { return s.fail(); }
+                if (expr_is_str(r.value, ts)) { return s.fail(); }
+                if (infer_expr_width(r.value, ts) == 64) { return s.fail(); }
+                var nbody: parser.Stmt[] = [parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 }];
+                newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+            },
+            _ => { return s.fail(); }
+        }
+        i = i + 1;
+    }
+    var newmatch: parser.Stmt = parser.StmtMatch { scrutinee: m.scrutinee, arms: newarms, line: m.line, col: m.col, origin: m.origin };
+    var ls: LowerState = lower_stmt(newmatch, ts);
+    if (!ls.ok) { return ls; }
+    return ls.emit(ir.op_load_local(tslot));
 }
 
 // lower_value_if lowers an if-expression's desugared StmtIf as a void `if` that
