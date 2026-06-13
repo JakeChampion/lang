@@ -2361,6 +2361,32 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // `__fn_<Type>.<m>` label). calls_only_known verifies the method
                     // exists, else the module bails to AST.
                     var rty: string = expr_struct_type(fa.obj, s);
+                    // `dyn Trait` method call: the receiver's concrete type is
+                    // known only at runtime. Spill the receiver (arg 0) + args
+                    // into argc consecutive temp locals, then op_dyn_dispatch —
+                    // the backend reads the receiver's shape pointer (from its
+                    // local) and dispatches to `<ConcreteType>.<method>`,
+                    // reloading the argc locals per arm. Spilling to locals (vs
+                    // leaving them on the stack) lets wasm — which can't index a
+                    // deep operand-stack slot — reload them.
+                    if (rty.len() > 4 && rty[0:4] == "dyn ") {
+                        var dbase: i32 = s.local_names.len();
+                        var dargc: i32 = 1 + c.args.len();
+                        var dm: LowerState = s;
+                        var dti: i32 = 0;
+                        while (dti < dargc) { dm = dm.add_local("$dyn" + util.i32_to_string(dbase) + "_" + util.i32_to_string(dti)); dti = dti + 1; }
+                        dm = lower_expr(fa.obj, dm);
+                        if (!dm.ok) { return dm; }
+                        dm = dm.emit(ir.op_store_local(dbase));
+                        var dai: i32 = 0;
+                        while (dai < c.args.len()) {
+                            dm = lower_expr(c.args[dai], dm);
+                            if (!dm.ok) { return dm; }
+                            dm = dm.emit(ir.op_store_local(dbase + 1 + dai));
+                            dai = dai + 1;
+                        }
+                        return dm.emit(ir.op_dyn_dispatch(fa.field, dbase, dargc));
+                    }
                     if (rty != "") {
                         // No arity cap (see the free-call note above): the
                         // receiver lowers as arg 0 and the rest follow on the
@@ -4034,6 +4060,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         else if (is_array_type_name(fn.params[i].type_name)
                  && decl_is_struct(structs, fn.params[i].type_name[0 : fn.params[i].type_name.len() - 2])) {
             pty = fn.params[i].type_name[0 : fn.params[i].type_name.len() - 2];
+        }
+        // A `dyn Trait` param (or the element of a `dyn Trait[]` param) carries
+        // the coarse `"dyn <Trait>"` type so `param.method()` / `for x in param`
+        // dispatches dynamically by the receiver's runtime shape pointer.
+        else if (fn.params[i].type_name.len() > 4 && fn.params[i].type_name[0:4] == "dyn ") {
+            if (is_array_type_name(fn.params[i].type_name)) { pty = fn.params[i].type_name[0 : fn.params[i].type_name.len() - 2]; }
+            else { pty = fn.params[i].type_name; }
         }
         structty = structty.append(pty);
         // An Option[T]/Result[T,E] param is opt-tracked so `match (param)` can

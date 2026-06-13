@@ -525,7 +525,7 @@ pub function fn_support_section(mod: parser.Module): string {
 // are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
-function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[]): string {
+function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[]): string {
     var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func(fd, noret, structs, str_ret, strarr_ret, opt_ret, i64_ret, tuple_ret, struct_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns);
     var arrtmp: i32 = r.n_locals;
@@ -899,6 +899,48 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    call " + wasm_helper_symbol(o.str) + "\n";
         } else if (o.kind == "call_direct") {
             out = out + "    call $" + o.str + "\n";
+        } else if (o.kind == "dyn_dispatch") {
+            // `dyn Trait` method call. Receiver (arg0) + args are in argc
+            // consecutive locals from base_slot. Read the receiver's type id
+            // (i32.load @0) and dispatch via a nested if/else chain over every
+            // module method named o.str with a struct receiver, each arm
+            // reloading the argc locals and calling. Mirrors the register
+            // backends' compare-branch chain; the result flows as the if result.
+            var dbase: i32 = o.i32_imm;
+            var dargc: i32 = o.width;
+            var drt: string = "i32";
+            var nimpl: i32 = 0;
+            var df0: i32 = 0;
+            while (df0 < funcs.len()) {
+                if (funcs[df0].name == o.str && funcs[df0].receiver_type.len() > 0
+                        && irlower.decl_is_struct(structs, util.base_type_name(funcs[df0].receiver_type))) {
+                    if (nimpl == 0) {
+                        if (funcs[df0].ret_type == "i64") { drt = "i64"; }
+                        else if (funcs[df0].ret_type == "f64") { drt = "f64"; }
+                    }
+                    nimpl = nimpl + 1;
+                }
+                df0 = df0 + 1;
+            }
+            var dfi: i32 = 0;
+            while (dfi < funcs.len()) {
+                if (funcs[dfi].name == o.str && funcs[dfi].receiver_type.len() > 0
+                        && irlower.decl_is_struct(structs, util.base_type_name(funcs[dfi].receiver_type))) {
+                    var dbn: string = util.base_type_name(funcs[dfi].receiver_type);
+                    out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, dbn)) + "\n    i32.eq\n";
+                    out = out + "    if (result " + drt + ")\n";
+                    var dk: i32 = 0;
+                    while (dk < dargc) { out = out + "    local.get " + util.i32_to_string(dbase + dk) + "\n"; dk = dk + 1; }
+                    out = out + "    call $" + dbn + "." + funcs[dfi].name + "\n";
+                    out = out + "    else\n";
+                }
+                dfi = dfi + 1;
+            }
+            if (drt == "i64") { out = out + "    i64.const 0\n"; }
+            else if (drt == "f64") { out = out + "    f64.const 0\n"; }
+            else { out = out + "    i32.const 0\n"; }
+            var de: i32 = 0;
+            while (de < nimpl) { out = out + "    end\n"; de = de + 1; }
         } else if (o.kind == "const_func") {
             // A function VALUE is its slot index in the module's funcref table
             // (fn_table). The table is built over the address-taken functions in
@@ -954,7 +996,7 @@ pub function emit_functions(mod: parser.Module): string {
     var out: string = "";
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, srf, sarf, orf, irf, trf, srtf, frf, farf, iarf, ft, fps, cfs);
+        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, srf, sarf, orf, irf, trf, srtf, frf, farf, iarf, ft, fps, cfs, mod.funcs);
         fi = fi + 1;
     }
     return out;
