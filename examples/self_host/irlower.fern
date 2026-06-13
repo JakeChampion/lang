@@ -3160,6 +3160,28 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         }
                         return dm.emit(ir.op_dyn_dispatch(fa.field, dbase, dargc));
                     }
+                    // A function-VALUE struct field call `h.f(args)` — `f` is a
+                    // "fn"-typed field (a plain fn pointer stored at construction,
+                    // e.g. `H { f: dbl }`), NOT a method. Lower the args, then the
+                    // field access (struct_get → the fn pointer on TOS), and
+                    // call_indirect — the same shape a fn-value local uses. Without
+                    // this the `<Type>.method` dispatch below names a nonexistent
+                    // "H.f" and the module bails to AST.
+                    if (rty != "" && decl_field_type(s.structs, rty, fa.field) == "fn") {
+                        var ffidx: i32 = s.field_index_in(rty, fa.field);
+                        if (ffidx < 0) { return s.fail(); }
+                        var ffs: LowerState = s;
+                        var ffi: i32 = 0;
+                        while (ffi < c.args.len()) {
+                            ffs = lower_expr(c.args[ffi], ffs);
+                            if (!ffs.ok) { return ffs; }
+                            ffi = ffi + 1;
+                        }
+                        ffs = lower_expr(fa.obj, ffs);
+                        if (!ffs.ok) { return ffs; }
+                        ffs = ffs.emit(ir.op_struct_get(ffidx, struct_field_width(s.structs, rty, ffidx)));
+                        return ffs.emit(ir.op_call_indirect(c.args.len()));
+                    }
                     if (rty != "") {
                         // A receiver whose tracked type is an enum VARIANT (a
                         // struct with an enum_owner — e.g. a local `var c = Green`
