@@ -583,6 +583,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         var o: ir.Op = r.ops[i];
         if (o.kind == "const_i32") {
             out = out + "    i32.const " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "const_i32_text") {
+            // Integer literal source text — the wasm text parser handles the base
+            // (hex `0x..`) and the full i32/u32 immediate range.
+            out = out + "    i32.const " + o.str + "\n";
         } else if (o.kind == "const_i64") {
             // 64-bit immediate (source text). load_local / store_local on i64
             // slots use the same local.get/local.set — the local's declared i64

@@ -127,6 +127,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         if (o.kind == "const_i32") {
             // ldr x0, =N uses a literal pool — any 64-bit value, like asm_arm64.
             s = s.write("    ldr x0, =" + util.i32_to_string(o.i32_imm) + "\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "const_i32_text") {
+            // Integer literal source text via the literal pool — the assembler
+            // parses the base / range (hex `0x..`, full u32), like asm_arm64.
+            s = s.write("    ldr x0, =" + o.str + "\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "const_i64") {
             // 64-bit immediate (source text) via the literal pool — same form as
             // const_i32. i64 add/sub/mul/cmp/bitwise reuse the 64-bit x-register

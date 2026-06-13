@@ -89,6 +89,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"division", "function main(): i32 { return 84 / 2; }"},
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},
 		{"shift", "function main(): i32 { return 1 << 4; }"},
+		// Hex literals: lowered via op_const_i32_text (source text spliced into
+		// `i32.const`), where the IR path previously zeroed every `0x..` via a
+		// decimal-only parse. Exit codes are mod 256 — shifts/masks expose the
+		// high bits.
+		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
+		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},
+		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
 		{"compare", "function main(): i32 { return 5 < 10; }"},
 		{"unary-not", "function main(): i32 { return !(5 > 10); }"},
 		{"if-taken", "function main(): i32 { var x = 1; if (5 < 10) { x = 7; } return x; }"},

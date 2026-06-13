@@ -1545,7 +1545,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // the source text via `.double` / `f64.const`); an integer literal is
             // a 32-bit const.
             if (n.is_float) { return s.emit(ir.op_const_f64_text(n.text)); }
-            return s.emit(ir.op_const_i32(util.digits_to_i32(n.text)));
+            // Splice the literal TEXT (handles hex `0x..` and the full u32 range,
+            // like the AST path); a Fern-side decimal parse zeroes a hex literal
+            // and can't represent values >= 0x80000000 as a signed i32.
+            return s.emit(ir.op_const_i32_text(n.text));
         },
         parser.ExprBool(b) => {
             var v: i32 = 0;
@@ -4589,6 +4592,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
     while (pc < ops.len()) {
         var o: ir.Op = ops[pc];
         if (o.kind == "const_i32") { stack = stack.with(sp, o.i32_imm); sp = sp + 1; pc = pc + 1; }
+        else if (o.kind == "const_i32_text") { stack = stack.with(sp, util.lit_to_i32(o.str)); sp = sp + 1; pc = pc + 1; }
         else if (o.kind == "load_local") { stack = stack.with(sp, locals[o.i32_imm]); sp = sp + 1; pc = pc + 1; }
         else if (o.kind == "store_local") { sp = sp - 1; locals = locals.with(o.i32_imm, stack[sp]); pc = pc + 1; }
         else if (o.kind == "not") { stack = stack.with(sp - 1, bool_not(stack[sp - 1])); pc = pc + 1; }

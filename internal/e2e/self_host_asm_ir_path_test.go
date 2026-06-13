@@ -122,6 +122,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"division", "function main(): i32 { return 84 / 2; }"},
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},
 		{"shift", "function main(): i32 { return 1 << 4; }"},
+		// Hex literals: the IR path used to lower these via a decimal-only
+		// parser (digits_to_i32), so every `0x..` constant became 0. Now the
+		// literal TEXT is spliced like the AST path (op_const_i32_text), so the
+		// assembler parses the base. Exit codes are mod 256, so these probe the
+		// low byte through shifts/masks where the high bits matter.
+		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
+		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},
+		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
+		{"hex-local", "function main(): i32 { var x = 0x100; return (x + 5) & 255; }"},
+		{"hex-or", "function main(): i32 { return (0x40 | 0x01) & 255; }"},
 		{"compare", "function main(): i32 { return 5 < 10; }"},
 		{"unary-not", "function main(): i32 { return !(5 > 10); }"},
 		{"if-taken", "function main(): i32 { var x = 1; if (5 < 10) { x = 7; } return x; }"},

@@ -81,6 +81,16 @@ function op0(kind: string): Op {
 pub function op_const_i32(v: i32): Op {
     return Op { kind: "const_i32", i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
+// op_const_i32_text carries an integer literal's SOURCE TEXT (in `str`) so the
+// backends splice it straight into a 32-bit immediate (`movq $TEXT` /
+// `ldr x0, =TEXT` / `i32.const TEXT`) without a Fern-side parse — exactly as the
+// AST backends do for `ExprNumber`. This is how HEX literals (`0x61626380`) and
+// full-u32-range values (`0xffffffff`) load correctly: the assembler / wasm
+// text parser handles the base and the unsigned range, where the IR's prior
+// `util.digits_to_i32` (decimal-only) zeroed every hex literal.
+pub function op_const_i32_text(t: string): Op {
+    return Op { kind: "const_i32_text", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
+}
 pub function op_const_i64(v: i64): Op {
     return Op { kind: "const_i64", i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
@@ -438,6 +448,7 @@ pub function op_return(): Op { return op0("return"); }
 // fields an opcode uses are shown.
 pub function render_op(o: Op): string {
     if (o.kind == "const_i32") { return "const_i32 " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "const_i32_text") { return "const_i32_text " + o.str; }
     if (o.kind == "const_i64") { return "const_i64 " + o.str; }
     if (o.kind == "int_extend") { return "int_extend"; }
     if (o.kind == "int_wrap") { return "int_wrap"; }

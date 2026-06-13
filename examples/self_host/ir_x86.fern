@@ -58,6 +58,11 @@ function emit_op(o: ir.Op, exitlabel: string): string {
     if (o.kind == "const_i32") {
         return "    pushq $" + util.i32_to_string(o.i32_imm) + "\n";
     }
+    if (o.kind == "const_i32_text") {
+        // Integer literal source text spliced into the immediate (hex / full
+        // u32 range), like the AST path; the assembler parses base + range.
+        return "    pushq $" + o.str + "\n";
+    }
     if (o.kind == "load_local") {
         return "    movl " + loc(o.i32_imm) + ", %eax\n    pushq %rax\n";
     }
