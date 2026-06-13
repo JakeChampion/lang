@@ -446,6 +446,42 @@ pub function (s: LowerState) map_type_of(i: i32): string {
     return s.local_map_type[i];
 }
 
+// expr_map_kind reports a map EXPRESSION's key kind — 1 for i32 keys, 0 for
+// string keys, -1 if `e` is not a map. Unlike map_type_of (which only types a
+// map LOCAL slot), this recognises the chained map-construction expressions a
+// `Map { k: v, … }` literal desugars to: `map_new[_i32](n).insert(k0,v0)
+// .insert(k1,v1)…`. `map_new` fixes the key kind (string), `map_new_i32` (i32),
+// and an `.insert` / `.set` / `.delete` mutator returns the same map — so the
+// kind propagates up the chain. Lets `.insert` on a map-typed call result lower
+// through the IR (#2884 follow-up: Map literals), not just on a bare local.
+pub function expr_map_kind(e: parser.Expr, s: LowerState): i32 {
+    match (e) {
+        parser.ExprIdent(id) => {
+            var mt: string = s.map_type_of(s.slot_of(id.name));
+            if (mt != "") { return map_key_kind_of(mt); }
+            return 0 - 1;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "map_new" && c.args.len() == 1) { return 0; }
+                    if (cid.name == "map_new_i32" && c.args.len() == 1) { return 1; }
+                    return 0 - 1;
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "insert" || cfa.field == "set" || cfa.field == "delete") {
+                        return expr_map_kind(cfa.obj, s);
+                    }
+                    return 0 - 1;
+                },
+                _ => { return 0 - 1; }
+            }
+        },
+        _ => { return 0 - 1; }
+    }
+    return 0 - 1;
+}
+
 pub function (s: LowerState) mark_i64(i: i32, v: boolean): LowerState {
     return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64.with(i, v), local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_u32: s.local_is_u32, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
@@ -2555,6 +2591,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             return mvs.emit(ir.op_map_values());
                         }
                         return s.fail();
+                    }
+                    // `.insert(k, v)` on a map-typed EXPRESSION (not a local) — the
+                    // chained construction a `Map { k: v, … }` literal desugars to:
+                    // `map_new[_i32](n).insert(k0,v0).insert(k1,v1)…`. The receiver
+                    // lowers (recursively, so the inner inserts lower the same way)
+                    // to a map on the stack; op_map_set consumes [map, key, value]
+                    // and returns the map. The key kind comes from expr_map_kind
+                    // (map_new vs map_new_i32 at the chain's base). Read methods on
+                    // a map-literal expression aren't needed — the literal binds to
+                    // a typed local, and reads go through the map-local path above.
+                    if (fa.field == "insert" && c.args.len() == 2) {
+                        var emk: i32 = expr_map_kind(fa.obj, s);
+                        if (emk >= 0) {
+                            var emset: LowerState = lower_expr(fa.obj, s);
+                            if (!emset.ok) { return emset; }
+                            emset = lower_expr(c.args[0], emset);
+                            if (!emset.ok) { return emset; }
+                            emset = lower_expr(c.args[1], emset);
+                            if (!emset.ok) { return emset; }
+                            return emset.emit(ir.op_map_set(emk));
+                        }
                     }
                     // Qualified payload-variant construction `Enum.Variant(args)`
                     // — the same value as the bare `Variant(args)` (both build the
