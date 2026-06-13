@@ -4753,7 +4753,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // string payload (`Word(string)`) as a string; a
                                 // struct payload (`Binary(BinExpr)`) with its struct
                                 // type so `p.field` resolves (the compiler's own AST
-                                // shape — enums of structs); an i64 / f64 payload so
+                                // shape — enums of structs); an ENUM payload
+                                // (`Node(Tree, Tree)`) with its enum name so a method
+                                // call on the bound value (`l.sum()`) dispatches to
+                                // `<Enum>.<method>` (enum-receiver, mirroring the
+                                // `var a: Enum` marking); an i64 / f64 payload so
                                 // later uses route through lower_i64 / the float ops.
                                 if (ev_ty == "string") {
                                     ms = ms.mark_str(bslot, true);
@@ -4761,7 +4765,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     ms = ms.mark_i64(bslot, true);
                                 } else if (ev_ty == "f64") {
                                     ms = ms.mark_f64(bslot, true);
-                                } else if (decl_is_struct(ms.structs, ev_ty)) {
+                                } else if (decl_is_struct(ms.structs, ev_ty) || is_enum_like_name(ev_ty, ms.structs)) {
                                     ms = ms.mark_struct_type(bslot, ev_ty);
                                 } else if (is_scalar_array_type(ev_ty)) {
                                     ms = ms.mark_arr(bslot, true);
