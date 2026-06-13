@@ -354,6 +354,13 @@ pub function csv_nth(enc: string, n: i32): string {
 pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string {
     match (e) {
         parser.ExprIdent(id) => { return s.tuple_elem_tag(s.slot_of(id.name), n); },
+        // `p.t.N` where `t` is a tuple struct field — element n's tag from the
+        // field's tuple type string.
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            return tuple_type_elem_tag(decl_field_type(s.structs, oty, fa.field), n);
+        },
         _ => { return ""; }
     }
     return "";
@@ -585,6 +592,51 @@ pub function is_leaksafe_opt_field(t: string): boolean {
     return false;
 }
 
+// tuple_type_elem_tag parses a tuple type string "(t0, t1, …)" → element n's tag
+// (top-level-comma split, so nested brackets don't confuse it), or "" if not a
+// tuple / n is out of range.
+pub function tuple_type_elem_tag(t: string, n: i32): string {
+    var len: i32 = t.len();
+    if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return ""; }
+    var inner: string = t[1 : len - 1];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var idx: i32 = 0;
+    var i: i32 = 0;
+    while (i <= inner.len()) {
+        if (i == inner.len() || (depth == 0 && inner[i] == 44)) {   // end, or top-level ','
+            if (idx == n) { return trim_spaces(inner[start : i]); }
+            idx = idx + 1;
+            start = i + 1;
+        } else {
+            var ch: i32 = inner[i];
+            if (ch == 91 || ch == 40) { depth = depth + 1; }       // '[' '('
+            else if (ch == 93 || ch == 41) { depth = depth - 1; }  // ']' ')'
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// is_leaksafe_tuple_field: a tuple field "(t0, …)" whose elements are all leak-safe
+// scalars/strings. Tuples are leak-only on the IR path (the exit sweep never frees
+// them), so such a field leaks with the struct — no RC, no aliasing bail. Struct /
+// nested-tuple / array elements are deferred.
+pub function is_leaksafe_tuple_field(t: string): boolean {
+    var len: i32 = t.len();
+    if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return false; }
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < 64) {
+        var tag: string = tuple_type_elem_tag(t, i);
+        if (tag == "") { return any; }
+        if (!is_leaksafe_payload(tag)) { return false; }
+        any = true;
+        i = i + 1;
+    }
+    return any;
+}
+
 pub function is_scalar_arr_field_access(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprFieldAccess(fa) => {
@@ -620,7 +672,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t)) {
                     fi = fi + 1;
                     continue;
                 }
