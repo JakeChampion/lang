@@ -218,7 +218,7 @@ per-function bugs in the audit log.
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
 | `std/url` | ✅ | ✅ | 🐛 | ✅ | | 🐛 | `prop_url_roundtrip` — **arm64 heap-corruption**, [#2817](https://github.com/JakeChampion/lang/issues/2817) (audit log 2026-06-09) |
-| `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test` |
+| `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test`; `@derive(Json)` incl. **array fields** (`T[]`) — native all backends (`derive_json` fixture), self-host i32/string/struct arrays via the IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766); `TestSelfHostJsonArrayIR`) |
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
@@ -246,6 +246,32 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — `@derive(Json)` array fields via the self-host IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766))
+
+Added the element-polymorphic array serialiser `pub function (xs: T[])
+to_json[T: Json](): string` to `std/json`, so a `T[]` (and a `T[]` struct
+field) renders as a JSON array. The native compiler already supported it via
+monomorphisation (#2774); this closes the **self-host** side.
+
+The self-host emits generic bodies by **erasure**, so the single emitted
+`(xs: T[]) to_json()` body bakes in the i32 element dispatch and can't
+serialise a string/struct array. Fixed by special-casing the **call site**
+in `irlower` (`lower_array_to_json` / `to_json_loop_stmt`): `arr.to_json()`
+on a known array receiver desugars to an inline `[e0,e1,…]` loop whose
+per-element `arr[i].to_json()` lowers where the element type is in hand,
+dispatching to the right impl (i32 / string / a derived struct's `to_json`).
+The split into two functions keeps each small (oversized functions miscompile
+on the native backend — #2720).
+
+- **Native (all four backends):** the `derive_json` fixture gains a struct
+  with `i32[]` / `string[]` fields plus a bare-array check.
+- **Self-host (x86-64 IR + wasm IR):** `TestSelfHostJsonArrayIR` covers
+  i32 / string / `@derive(Json)`-struct / empty arrays, pinned to the `"ir"`
+  path via `asm_pathprobe_run`. Stage-2 fixpoint stays byte-identical.
+
+Remaining: nested arrays (`i32[][]`) and map objects (the element-array case
+isn't detected at `arr[i]`); separate follow-ups.
 
 ### 2026-06-12 — 🐛 self-host miscompiles std/crypto SHA-256 ([#2861](https://github.com/JakeChampion/lang/issues/2861))
 

@@ -656,9 +656,9 @@ pub function json_is_null(v: JsonValue): boolean {
 //   var body: string = User { id: 7, name: "Glóin", admin: true }.to_json();
 //   // {"id":7,"name":"Glóin","admin":true}
 //
-// Floats are leaves too (decimal `to_string`). Arrays / maps aren't yet
-// — a follow-up adds the generic `(xs: T[]) to_json[T: Json]()` array
-// serialiser (blocked on a monomorph gap, #2766) and map objects.
+// Floats are leaves too (decimal `to_string`). Arrays serialise via the
+// generic `(xs: T[]) to_json[T: Json]()` below (#2766); map objects are a
+// remaining follow-up.
 pub trait Json {
     function to_json(self: Self): string;
 }
@@ -696,4 +696,24 @@ impl Json for string {
     function to_json(self: Self): string {
         return "\"" + __json_escape(self) + "\"";
     }
+}
+
+// Array serialiser: a `T[]` whose element type is `Json` renders as a JSON
+// array `[e0,e1,…]`. Element-polymorphic + method-level bounded, so it works
+// for arrays of scalars, strings, and `@derive(Json)` structs/enums. On the
+// native compiler the monomorphiser substitutes `T` and re-checks the clone;
+// `xs[i].to_json()` then dispatches to the element type's impl (the
+// cross-module trait-method visibility this relies on landed in #2774). On
+// the self-hosted compiler the call site is intercepted (the IR/AST emit
+// special-cases `arr.to_json()` on a known array element type) so the erased
+// generic body never has to dispatch on `T`.
+pub function (xs: T[]) to_json[T: Json](): string {
+    var out: string = "[";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + xs[i].to_json();
+        i = i + 1;
+    }
+    return out + "]";
 }
