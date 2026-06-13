@@ -247,6 +247,19 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-13 — 🔧 self-host wasm IR: large i64/u64 literal emitted as i32.const ([#2928](https://github.com/JakeChampion/lang/issues/2928))
+
+`n as i64` / `n as u64` widens its operand by lowering it through the 32-bit
+`lower_expr` and appending `int_extend` — but a numeric LITERAL operand is
+already a 64-bit value, so this made it an `i32.const`. For a literal above the
+i32 range that's invalid WAT (`i32.const 9000000000000000000` is rejected by
+wasm); x86/arm64 happened to tolerate the truncation differently. Fix: the
+`as_i64` / `as_u64` lowering now emits `const_i64_text` directly for a numeric
+literal operand (skipping the i32 lowering + extend). Guarded by
+`TestSelfHostLargeIntLiteralIR` (x86-64 + wasm, oracle-checked: a u64 modulo, an
+i64 round-trip that a 32-bit truncation would fail, and a large-literal unsigned
+compare). Stage-2 fixpoint stays byte-identical.
+
 ### 2026-06-13 — std/i64 + std/u32 numeric methods via the self-host x86-64 IR path
 
 Added `TestSelfHostNumericMethodsIRX86_64`: self-contained programs exercising
