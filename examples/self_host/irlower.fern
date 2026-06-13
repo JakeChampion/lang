@@ -4676,7 +4676,6 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             mi = mi + 1;
                             continue;
                         }
-                        if (pv.extra_bindings.len() > 0) { return s.fail(); }
                         // Qualified variant pattern `Enum.Variant` / `mod.Variant`
                         // -> the bare variant name (the parser desugars an enum's
                         // variants to structs named by the bare variant). The
@@ -4699,38 +4698,55 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         ms = ms.emit(ir.op_variant_is(vname));
                         ms = ms.emit(ir.op_bin("not", 0, false));   // 1 if NOT this variant
                         ms = ms.emit(ir.op_brif(0));                // -> skip arm on mismatch
-                        if (has_bind) {
-                            ms = ms.add_local(pv.binding);
-                            var bslot: i32 = ms.slot_of(pv.binding);
-                            // Read the payload (field 0) at its width: an i64
-                            // payload uses struct_get_i64 (i64.load), an f64 one
-                            // struct_get width 64 (f64.load), else the i32 read.
-                            var ev_ty: string = decl_field_type(ms.structs, vname, "__ev");
-                            ms = ms.emit(ir.op_load_local(scrut_slot));
-                            if (ev_ty == "i64") { ms = ms.emit(ir.op_struct_get_i64(0)); }
-                            else if (ev_ty == "f64") { ms = ms.emit(ir.op_struct_get(0, 64)); }
-                            else { ms = ms.emit(ir.op_struct_get(0, 0)); }
-                            ms = ms.emit(ir.op_store_local(bslot));
-                            // Type the bound payload for downstream dispatch: a
-                            // string payload (`Word(string)`) as a string; a
-                            // struct payload (`Binary(BinExpr)`) with its struct
-                            // type so `p.field` resolves (the compiler's own AST
-                            // shape — enums of structs); an i64 / f64 payload so
-                            // later uses route through lower_i64 / the float ops.
-                            if (ev_ty == "string") {
-                                ms = ms.mark_str(bslot, true);
-                            } else if (ev_ty == "i64") {
-                                ms = ms.mark_i64(bslot, true);
-                            } else if (ev_ty == "f64") {
-                                ms = ms.mark_f64(bslot, true);
-                            } else if (decl_is_struct(ms.structs, ev_ty)) {
-                                ms = ms.mark_struct_type(bslot, ev_ty);
-                            } else if (is_scalar_array_type(ev_ty)) {
-                                ms = ms.mark_arr(bslot, true);
-                            } else if (ev_ty == "string[]") {
-                                ms = ms.mark_arr(bslot, true);
-                                ms = ms.mark_strarr(bslot, true);
+                        // Bind each payload field. Field 0 -> pv.binding, field k>=1
+                        // -> pv.extra_bindings[k-1] (a multi-payload variant
+                        // `Pt(x, y)` desugars to struct fields __ev, __ev1, …). Each
+                        // reads via struct_get at its field index — offset
+                        // (idx+1)*8, past the shape ptr — at the field's width, and
+                        // types the bound name from the variant struct's field type
+                        // so downstream dispatch routes correctly. A `_` / empty
+                        // binding skips that field.
+                        var nbinds: i32 = 1 + pv.extra_bindings.len();
+                        var bidx: i32 = 0;
+                        while (bidx < nbinds) {
+                            var bname: string = pv.binding;
+                            if (bidx > 0) { bname = pv.extra_bindings[bidx - 1]; }
+                            if (bname.len() > 0 && bname != "_") {
+                                var fname: string = "__ev";
+                                if (bidx > 0) { fname = "__ev" + util.i32_to_string(bidx); }
+                                var ev_ty: string = decl_field_type(ms.structs, vname, fname);
+                                ms = ms.add_local(bname);
+                                var bslot: i32 = ms.slot_of(bname);
+                                // Read the payload at its width: an i64 payload uses
+                                // struct_get_i64 (i64.load), an f64 one struct_get
+                                // width 64 (f64.load), else the i32 read.
+                                ms = ms.emit(ir.op_load_local(scrut_slot));
+                                if (ev_ty == "i64") { ms = ms.emit(ir.op_struct_get_i64(bidx)); }
+                                else if (ev_ty == "f64") { ms = ms.emit(ir.op_struct_get(bidx, 64)); }
+                                else { ms = ms.emit(ir.op_struct_get(bidx, 0)); }
+                                ms = ms.emit(ir.op_store_local(bslot));
+                                // Type the bound payload for downstream dispatch: a
+                                // string payload (`Word(string)`) as a string; a
+                                // struct payload (`Binary(BinExpr)`) with its struct
+                                // type so `p.field` resolves (the compiler's own AST
+                                // shape — enums of structs); an i64 / f64 payload so
+                                // later uses route through lower_i64 / the float ops.
+                                if (ev_ty == "string") {
+                                    ms = ms.mark_str(bslot, true);
+                                } else if (ev_ty == "i64") {
+                                    ms = ms.mark_i64(bslot, true);
+                                } else if (ev_ty == "f64") {
+                                    ms = ms.mark_f64(bslot, true);
+                                } else if (decl_is_struct(ms.structs, ev_ty)) {
+                                    ms = ms.mark_struct_type(bslot, ev_ty);
+                                } else if (is_scalar_array_type(ev_ty)) {
+                                    ms = ms.mark_arr(bslot, true);
+                                } else if (ev_ty == "string[]") {
+                                    ms = ms.mark_arr(bslot, true);
+                                    ms = ms.mark_strarr(bslot, true);
+                                }
                             }
+                            bidx = bidx + 1;
                         }
                         // Guard: `Variant(x) if <cond> =>` runs the body only when
                         // the guard is true; the binding is in scope, so the guard
