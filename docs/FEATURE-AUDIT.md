@@ -207,7 +207,7 @@ per-function bugs in the audit log.
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
-| `std/format` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | `format_bytes` — `audit_std_textfmt`; self-host: `format_bytes` logic ✅ via the IR path (`TestSelfHostFormatBytesIR`), and `format(fmt, args)` `{}`-substitution ✅ via the IR path on x86-64 + wasm, oracle-checked (`TestSelfHostFormatStringIR`); `format_duration_ms` pending |
+| `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), and `format_duration_ms` (`TestSelfHostFormatDurationIR`) — the last two oracle-checked against the interpreter; native via `audit_std_textfmt` |
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host: `csv_parse_line` ✅ via the IR path (`TestSelfHostCsvParseLineIR`); escape/join pending (need `index_of`/`replace` inlining) |
 | `std/log` | | | | | | ⬜ | |
 | `std/io` | | | | | | ⬜ | |
@@ -246,6 +246,18 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — std/format `format_duration_ms` via the self-host IR path (x86-64 + wasm)
+
+Closed the last `std/format` "self-host pending" piece (after `format_bytes` +
+`format`). `TestSelfHostFormatDurationIR` runs the inlined duration formatter
+(h/m/s/ms if-ladder over integer div/sub/mul + `i32.to_string()` + concat +
+`.len()`, with `ms.abs()` inlined as a free helper) through the x86-64 and wasm
+IR drivers, **oracle-checked against the interpreter**, pinned to the `"ir"`
+path. `import "std/i32"` is included so the native interpreter can resolve
+`.to_string()` (a self-host builtin; a std/i32 method natively) — the self-host
+driver treats it as a builtin and still takes the IR path. No compiler change;
+the `std/format` row is now fully ✅ on self-host.
 
 ### 2026-06-13 — std/format `format(fmt, args)` via the self-host IR path (x86-64 + wasm)
 
