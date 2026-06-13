@@ -2,7 +2,7 @@
 title: Error handling
 description: Option, Result, the ? operator, and exhaustive match — errors as values.
 sidebar:
-  order: 3
+  order: 4
 ---
 
 Fern has no exceptions and no `panic`-as-control-flow. Fallible

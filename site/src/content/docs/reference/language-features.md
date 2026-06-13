@@ -2,7 +2,7 @@
 title: Language features
 description: The distinctive constructs — defer, let-else, the pipe operator, f-strings, loop, and use.
 sidebar:
-  order: 4
+  order: 5
 ---
 
 Beyond the basics covered in the [tutorial](../../tutorial/install/), Fern
@@ -129,6 +129,7 @@ flattened form has no allocation overhead versus hand-written nesting.
 ## See also
 
 - [Error handling](../error-handling/) — `Option`, `Result`, and `?`.
+- [Traits](../traits/) — shared behaviour and bounded generics.
 - [Syntax overview](../syntax/) — keywords, precedence, block forms.
 - [Literate programming](../tooling/#literate-programming) — write
   programs as Markdown documents.
