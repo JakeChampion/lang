@@ -369,6 +369,23 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"contains-true", `function main(): i32 { var s = "hello world"; if (s.contains("o w")) { return 7; } return 0; }`},
 		{"contains-false", `function main(): i32 { var s = "hello"; if (s.contains("xyz")) { return 7; } return 9; }`},
 		{"predicate-param", `function pre(s: string, p: string): i32 { if (s.starts_with(p)) { return 1; } return 0; } function main(): i32 { return pre("foobar", "foo") * 10 + pre("foobar", "bar"); }`},
+		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
+		// wasm IR path emits the narrow str_case_helpers ($__fern_str_upper /
+		// _lower); the AST path gets them from strcat_helpers — must agree.
+		{"to-upper-len", `function main(): i32 { var s = "Hello"; return s.to_upper().len(); }`},
+		{"to-upper-byte", `function main(): i32 { var s = "abc"; var u = s.to_upper(); return u[0]; }`},
+		{"to-lower-byte", `function main(): i32 { var s = "ABC"; var l = s.to_lower(); return l[2]; }`},
+		{"to-upper-mixed", `function main(): i32 { var u = "aB9z".to_upper(); return u[0] + u[1] + u[2] + u[3]; }`},
+		{"case-roundtrip", `function main(): i32 { var s = "Hello"; if (s.to_upper().to_lower() == "hello") { return 7; } return 0; }`},
+		{"case-param", `function up(s: string): i32 { return s.to_upper()[0]; } function main(): i32 { return up("xyz"); }`},
+		// String repeat → fresh string (op_str_repeat). The wasm IR path emits the
+		// narrow str_repeat_helper; the AST path gets $__fern_str_repeat from
+		// strcat_helpers — must agree.
+		{"repeat-len", `function main(): i32 { return "ab".repeat(3).len(); }`},
+		{"repeat-byte", `function main(): i32 { var r = "xy".repeat(4); return r[0] + r[7]; }`},
+		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
+		{"repeat-zero", `function main(): i32 { return "hello".repeat(0).len() + 9; }`},
+		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
 		// NB: the str_starts_with / str_index_of FREE-function builtins exist on the
 		// x86-64 AST path but not the wasm AST path, so they can't ride this wasm
 		// differential gate — the method forms above cover the IR predicate ops, and

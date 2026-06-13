@@ -2863,11 +2863,16 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("mov x19, x0")    // stash value src ptr
 	g.emit("mov x20, x2")    // stash value len
 	if twoWord {
-		// Heap-form: alloc exactly value-len bytes (no
-		// length prefix).
+		// Heap-form via the rc-headered allocator (rc=1 at data-8,
+		// payload size at data-4): the returned Some(string) is an
+		// owned rc string dropped via __fern_str_dec, which reads
+		// that header. A plain __fern_alloc buffer has none, so the
+		// drop reads garbage and corrupts the heap — the same arm64
+		// two-word bug as string_from_bytes (#2817). Length lives in
+		// the box len@16 word, so no length prefix is needed.
 		g.emit("mov x0, x2")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x22, x0") // x22 = data ptr
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x22, x0") // x22 = data ptr (= base+8)
 		g.emit("mov x0, x22")
 		g.emit("mov x1, x19")
 		g.emit("mov x2, x20")
@@ -4205,11 +4210,15 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("b .Lrl_ret")
 	g.label(".Lrl_some")
 	if twoWord {
-		// Two-word heap form: alloc exactly x20 bytes (no
-		// length prefix, no trailing NUL).
+		// Two-word heap form via the rc-headered allocator (rc=1 at
+		// data-8, payload size at data-4): the returned Some(string)
+		// is dropped via __fern_str_dec, which reads that header. A
+		// plain __fern_alloc buffer has none — same arm64 two-word
+		// heap-corruption as string_from_bytes (#2817). Length lives
+		// in the box len@16 word, so no length prefix is needed.
 		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x21, x0") // x21 = data ptr
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
 		// memcpy(x21, x19, x20).
 		g.emit("mov x0, x21")
 		g.emit("mov x1, x19")

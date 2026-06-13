@@ -505,6 +505,65 @@ func TestInterpMatchWildcard(t *testing.T) {
 	}
 }
 
+// match on a NON-enum scrutinee (i32 / string / bool) dispatches
+// each arm by `==` against its literal, with `_` as the
+// fall-through — the same semantics the compiled backends produce
+// via emitLiteralMatch. The interpreter previously rejected this
+// ("match scrutinee is interp.Number, expected enum value"),
+// diverging from the compiled backends; this pins the fix in both
+// statement and expression position, including guards.
+func TestInterpMatchLiteralNonEnum(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want Number
+	}{
+		{"i32-stmt-first", `function main(): i32 {
+			var n: i32 = 1;
+			match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } }
+			return 0;
+		}`, 10},
+		{"i32-stmt-default", `function main(): i32 {
+			var n: i32 = 9;
+			match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 7; } }
+			return 0;
+		}`, 7},
+		{"string-stmt", `function main(): i32 {
+			var s: string = "b";
+			match (s) { "a" => { return 1; }, "b" => { return 7; }, _ => { return 0; } }
+			return 0;
+		}`, 7},
+		{"bool-stmt", `function main(): i32 {
+			var b: boolean = true;
+			match (b) { true => { return 42; }, false => { return 1; }, _ => { return 0; } }
+			return 0;
+		}`, 42},
+		{"expr-form", `function main(): i32 {
+			var n: i32 = 3;
+			var r: i32 = match (n) { 1 => 10, 3 => 30, _ => 0 };
+			return r;
+		}`, 30},
+		{"guard", `function main(): i32 {
+			var n: i32 = 5;
+			var r: i32 = match (n) { 1 => 1, 5 when n > 3 => 99, _ => 0 };
+			return r;
+		}`, 99},
+		{"guard-falls-through", `function main(): i32 {
+			var n: i32 = 5;
+			var r: i32 = match (n) { 1 => 1, 5 when n > 100 => 99, _ => 8 };
+			return r;
+		}`, 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, _ := evalProgram(t, tc.src)
+			if n, ok := v.(Number); !ok || n != tc.want {
+				t.Errorf("got %v, want %d", v, tc.want)
+			}
+		})
+	}
+}
+
 // End-to-end test of the TCP socket builtins through the
 // interpreter — uses Go's net package to spin up a local
 // server, accept one connection, echo the bytes, and close.

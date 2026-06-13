@@ -291,6 +291,14 @@ pub function op_str_bytes(): Op { return op0("str_bytes"); }
 // byte index of `sub` in `s`, or -1 (empty `sub` → 0). All three are scalar,
 // allocation-free string predicates backed by the __fern_str_* search runtime;
 // `s.contains(sub)` lowers as `str_index_of(...) >= 0` (no dedicated op).
+// `str_to_upper` / `str_to_lower` pop [s] → a fresh string box that is `s` with
+// each ASCII letter cased up / down (non-letters copied verbatim). They allocate
+// the new char buffer + box, so they pull in the heap runtime; leak-only (no RC).
+pub function op_str_to_upper(): Op { return op0("str_to_upper"); }
+pub function op_str_to_lower(): Op { return op0("str_to_lower"); }
+// `str_repeat` pops [s, n] → a fresh string box holding `s` concatenated `n`
+// times (n <= 0 → empty). Allocates the n*len buffer + box; leak-only.
+pub function op_str_repeat(): Op { return op0("str_repeat"); }
 pub function op_str_starts_with(): Op { return op0("str_starts_with"); }
 pub function op_str_ends_with(): Op { return op0("str_ends_with"); }
 pub function op_str_index_of(): Op { return op0("str_index_of"); }

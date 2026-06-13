@@ -788,6 +788,21 @@ function (p: Par) peek_ident(): string {
     }
     return "";
 }
+// peek_is_literal reports whether the cursor sits on a number or
+// string literal token. Used by the match-arm parser to recognise a
+// literal-pattern arm (`0 => …`, `"yes" => …`) — a match on a
+// non-enum (i32 / string) scrutinee — and desugar the whole match to
+// an if/else-if chain (see build_literal_match), mirroring the native
+// compiler's emitLiteralMatch.
+function (p: Par) peek_is_literal(): boolean {
+    var t: lexer.Token = p.peek();
+    match (t) {
+        lexer.TokNumber(x) => { return true; },
+        lexer.TokString(x) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
 
 // peek_member_name returns the identifier at the cursor, OR a reserved
 // keyword that is nonetheless allowed in MEMBER position — currently only
@@ -1448,6 +1463,43 @@ function if_expr_rt(e: Expr): string {
     }
 }
 
+// LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
+// a literal to compare against (`lit`, dispatched via `==`) or the `_`
+// catch-all (`is_wild`), plus an optional guard and the arm body. The
+// match-arm parsers (parse_match_stmt / parse_match_expr) collect these
+// only when the first arm is a literal, then hand them to
+// build_literal_match instead of emitting a StmtMatch.
+struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[] }
+
+// build_literal_match lowers a match on a non-enum scrutinee to a nested
+// if/else-if chain — the same shape desugar_switch produces, and what
+// the native compiler's emitLiteralMatch emits. The chain is built
+// backwards: the `_` arm's body is the base else; each literal arm wraps
+// it as `if (scrut == lit) { body } else { rest }` (a guard folds in as
+// `scrut == lit && guard`). The caller only routes here when at least
+// one literal arm exists, so the result is always an if statement.
+function build_literal_match(scrut: Expr, arms: LitArm[]): Stmt {
+    var else_body: Stmt[] = [];
+    var i: i32 = arms.len() - 1;
+    while (i >= 0) {
+        var a: LitArm = arms[i];
+        if (a.is_wild) {
+            if (a.has_guard) {
+                else_body = [s_if(a.guard, a.body, else_body)];
+            } else {
+                else_body = a.body;
+            }
+        } else {
+            var cond: Expr = e_binary("==", scrut, a.lit);
+            if (a.has_guard) { cond = e_binary("&&", cond, a.guard); }
+            else_body = [s_if(cond, a.body, else_body)];
+        }
+        i = i - 1;
+    }
+    if (else_body.len() == 0) { return s_unknown("empty literal match"); }
+    return else_body[0];
+}
+
 // parse_if_chain parses `if (c) { E1 } else { E2 }` (and `else if`
 // chains, via recursion through the else arm) into a StmtIf whose arms
 // `return` the branch expressions. parse_primary wraps the result in an
@@ -1500,10 +1552,50 @@ function parse_match_expr(p: Par): IfChain {
     var sr: ExprResult = parse_expr(p);
     p = sr.par;
     if (p.peek_punct() == ")") { p = p.advance(); }
-    var arms: MatchArm[] = [];
     var rt: string = "i32";
-    var first: boolean = true;
     if (p.peek_punct() == "{") { p = p.advance(); }
+    // A literal at the FIRST arm's pattern position marks a match on a
+    // non-enum (i32 / string) scrutinee: parse every arm as a literal /
+    // `_` and desugar to an if/else-if chain (build_literal_match). The
+    // decision is made once, up front, so the common enum/variant match
+    // takes the normal StmtMatch path below with no extra allocation.
+    if (p.peek_is_literal()) {
+        var lit_arms: LitArm[] = [];
+        var lfirst: boolean = true;
+        while (p.peek_punct() != "}" && !p.at_end()) {
+            var llit: Expr = e_bool(true);
+            var lwild: boolean = false;
+            if (p.peek_is_literal()) {
+                var lle: ExprResult = parse_expr(p);
+                p = lle.par;
+                llit = lle.expr;
+            } else {
+                var lpr: PatternResult = parse_pattern(p);
+                p = lpr.par;
+                lwild = true;
+            }
+            var lguard: Expr = e_bool(true);
+            var lhas_guard: boolean = false;
+            if (p.peek_keyword() == "when") {
+                p = p.advance();
+                var lgr: ExprResult = parse_expr(p);
+                p = lgr.par;
+                lguard = lgr.expr;
+                lhas_guard = true;
+            }
+            if (p.peek_punct() == "=>") { p = p.advance(); }
+            var ler: ExprResult = parse_expr(p);
+            p = ler.par;
+            if (lfirst) { rt = if_expr_rt(ler.expr); lfirst = false; }
+            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: [s_return(ler.expr)] });
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+        if (p.peek_punct() == "}") { p = p.advance(); }
+        return IfChain { par: p, stmt: build_literal_match(sr.expr, lit_arms), rt: rt };
+    }
+    var arms: MatchArm[] = [];
+    var first: boolean = true;
     while (p.peek_punct() != "}" && !p.at_end()) {
         var aline: i32 = p.peek_line();
         var acol: i32 = p.peek_col();
@@ -1691,6 +1783,44 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, empty_arms, mkline, mkcol) };
     }
     p = p.advance();
+    // A literal at the FIRST arm's pattern position marks a match on a
+    // non-enum (i32 / string) scrutinee: parse every arm as a literal /
+    // `_` and desugar to an if/else-if chain (build_literal_match). The
+    // decision is made once, up front, so the common enum/variant match
+    // takes the normal StmtMatch path below with no extra allocation.
+    if (p.peek_is_literal()) {
+        var lit_arms: LitArm[] = [];
+        while (p.peek_punct() != "}" && !p.at_end()) {
+            var llit: Expr = e_bool(true);
+            var lwild: boolean = false;
+            if (p.peek_is_literal()) {
+                var lle: ExprResult = parse_expr(p);
+                p = lle.par;
+                llit = lle.expr;
+            } else {
+                var lpr: PatternResult = parse_pattern(p);
+                p = lpr.par;
+                lwild = true;
+            }
+            var lguard: Expr = e_bool(true);
+            var lhas_guard: boolean = false;
+            if (p.peek_keyword() == "when") {
+                p = p.advance();
+                var lgr: ExprResult = parse_expr(p);
+                p = lgr.par;
+                lguard = lgr.expr;
+                lhas_guard = true;
+            }
+            if (p.peek_punct() == "=>") { p = p.advance(); }
+            var lbb: BlockResult = parse_block(p);
+            p = lbb.par;
+            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb.body });
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+        if (p.peek_punct() == "}") { p = p.advance(); }
+        return MatchStmtResult { par: p, stmt: build_literal_match(sr.expr, lit_arms) };
+    }
     var arms: MatchArm[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
         // E026 / E028 are reported at the arm (Go's `arm.P`), which is the

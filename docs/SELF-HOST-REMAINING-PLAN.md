@@ -348,6 +348,26 @@ planned order:
 - ✅ **`switch` / `case`** — desugars in the parser to a nested
   if/else-if chain (multi-value cases OR their `==` comparisons; no
   fall-through) (`self_host_switch_test.go`).
+- ✅ **`match` on a non-enum scrutinee** — `match (n) { 1 => …,
+  "yes" => …, _ => … }` on an i32 / string value. The self-host's
+  `Pattern` grammar is variant-only, so the match-arm parsers
+  (`parse_match_stmt` / `parse_match_expr`) now recognise a literal at
+  the pattern position (`peek_is_literal`) and, when any arm is a
+  literal, desugar the whole match to an if/else-if chain
+  (`build_literal_match`) — the same shape `switch` and the native
+  `emitLiteralMatch` produce. A guard folds in as `scrut == lit &&
+  guard`; the `_` arm becomes the final else. Lives entirely in the
+  parser (no new AST node, no `Pattern`-union ripple), so every backend
+  — including the IR path — inherits it; this also widened the SSA
+  emit subset (an int-literal match now lowers through SSA instead of
+  falling back to the AST emitter). The native **interpreter** had the
+  matching gap (it rejected non-enum scrutinees as "expected enum
+  value" while the compiled backends already lowered them) — fixed in
+  `internal/interp` so the reference oracle agrees with codegen
+  (`self_host_match_literal_ir_test.go`,
+  `TestInterpMatchLiteralNonEnum`). Diagnostic note: a variant pattern
+  on a non-enum scrutinee still parses as a variant and draws E035, as
+  before.
 - ✅ **i32-keyed maps** — `Map[i32, V]` tags as `mapI:<V>`; the
   dispatch passes a key-kind flag and the runtime takes an integer
   (`==`) key-compare path instead of `__fern_str_eq`

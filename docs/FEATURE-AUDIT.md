@@ -200,8 +200,8 @@ per-function bugs in the audit log.
 |--------|---|---|---|---|---|--------|-------|
 | `std/i32` (~80 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | representative set (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum) — `audit_std_numeric`; self-host via array bundle |
 | `std/i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host abs/min/max/clamp via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) |
-| `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | max — `audit_std_path_numeric`; self-host unsigned min/max via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`); **wasm IR lowers u32/u64 compares as SIGNED** ([#2917](https://github.com/JakeChampion/lang/issues/2917)) |
-| `std/u64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | clamp — `audit_std_path_numeric`; self-host pending (>2^63 value built by addition isn't IR-eligible on x86 yet; wasm IR signed-compare) |
+| `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | max — `audit_std_path_numeric`; self-host unsigned min/max via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`); wasm IR unsigned-compare gap tracked in [#2917](https://github.com/JakeChampion/lang/issues/2917) |
+| `std/u64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | clamp — `audit_std_path_numeric`; self-host: u64 unsigned compare / `>>` / `/` / `%` now correct via the IR path ([#2904](https://github.com/JakeChampion/lang/issues/2904); `TestSelfHostU64UnsignedIR`) — the i64-domain analog of the u32 wrapping fix |
 | `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host: f64 intrinsics (floor/ceil/sqrt/abs/round/trunc) ✅ via the IR path (`TestSelfHostFloatIntrinsicsIR`) |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
