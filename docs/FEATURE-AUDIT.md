@@ -208,7 +208,7 @@ per-function bugs in the audit log.
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
 | `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), and `format_duration_ms` (`TestSelfHostFormatDurationIR`) — the last two oracle-checked against the interpreter; native via `audit_std_textfmt` |
-| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | parse_line/join/escape — `audit_std_textfmt`; self-host: `csv_parse_line` ✅ via the IR path (`TestSelfHostCsvParseLineIR`); escape/join pending (need `index_of`/`replace` inlining) |
+| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`) + `csv_escape`/`csv_join` (`TestSelfHostCsvEscapeIR`, oracle-checked — `index_of`/`replace` lower as `op_str_index_of`/`op_str_replace`) |
 | `std/log` | | | | | | ⬜ | |
 | `std/io` | | | | | | ⬜ | |
 | `std/io_buffered` | | | | | | ⬜ | |
@@ -246,6 +246,20 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-13 — std/csv `csv_escape` / `csv_join` via the self-host IR path (x86-64 + wasm)
+
+Closed the last `std/csv` "self-host pending" piece (after `csv_parse_line`).
+`TestSelfHostCsvEscapeIR` runs the inlined RFC-4180 field escaper + joiner
+(`s.index_of(",")`/`"\""`/`"\n"`/`"\r"` guards, `s.replace("\"", "\"\"")`, and a
+`string[]` join loop with concat) through the x86-64 and wasm IR drivers,
+**oracle-checked against the interpreter**, pinned to the `"ir"` path. The string
+`.index_of()` / `.replace()` methods lower as builtins (`op_str_index_of` /
+`op_str_replace`), so the program is fully IR-eligible. `import "std/string"` is
+included so the native interpreter can resolve those receiver methods; the
+self-host single-program driver ignores the import and treats them as builtins,
+still taking the IR path. No compiler change; the `std/csv` row is now fully ✅
+on self-host.
 
 ### 2026-06-13 — std/format `format_duration_ms` via the self-host IR path (x86-64 + wasm)
 
