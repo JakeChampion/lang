@@ -1563,6 +1563,12 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
             if (oty == "") { return false; }
             return decl_field_type(s.structs, oty, fa.field) == "f64[]";
         },
+        // Direct index of a slice expression `a[lo:hi][i]`: an f64[] slice is
+        // itself an f64[], so recurse into the sliced array — mirroring
+        // expr_is_f64arr's ExprSlice case. Without this the index defaulted to
+        // the 4-byte i32 path, so on wasm `a[lo:hi][i]` loaded at a 4-byte
+        // stride instead of f64's 8-byte stride (#2908).
+        parser.ExprSlice(sl) => { return expr_is_f64arr(sl.array, s); },
         _ => { return false; }
     }
     return false;
@@ -1593,6 +1599,11 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
             if (oty == "") { return false; }
             return decl_field_type(s.structs, oty, fa.field) == "i64[]";
         },
+        // Direct index of a slice expression `a[lo:hi][i]`: an i64[] slice is
+        // itself an i64[], so recurse into the sliced array — mirroring
+        // expr_is_i64arr's ExprSlice case (the same latent stride gap #2908
+        // fixed for f64[]).
+        parser.ExprSlice(sl) => { return expr_is_i64arr(sl.array, s); },
         _ => { return false; }
     }
     return false;
