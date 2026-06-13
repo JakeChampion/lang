@@ -125,7 +125,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Blocks + expression statements | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | bare nested block `{}` — self-host gap fixed ([#2821](https://github.com/JakeChampion/lang/issues/2821) / #2831), re-enabled as guard |
 | `struct` decl + literal + field access | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | + functional update `T { ...old, f: v }` |
 | Struct field immutability + functional update | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | fields immutable (E048); self-host `fern` CLI now gates the compile path too ([#2825](https://github.com/JakeChampion/lang/issues/2825) fixed) |
-| Methods (receiver clause) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Methods (receiver clause) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | struct + enum receivers; enum-receiver method calls (`c.method()`) now lower through the self-host IR path ([#2947](https://github.com/JakeChampion/lang/issues/2947)) |
 | `enum` sum types + payloads | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. unit variants; wasm owned-model RC caveat [#2828](https://github.com/JakeChampion/lang/issues/2828) |
 | `match` (exhaustiveness checked) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | payload binding, comma-separated arms |
 | `match` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
