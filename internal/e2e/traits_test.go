@@ -574,6 +574,52 @@ function main(): i32 {
 	}
 }
 
+// A `dyn` type may name a *module-qualified* imported trait
+// (`dyn cmp.Display`), not just a locally-declared one. Before the
+// modload fix, the qualified trait name in the `dyn` type kept its
+// dotted form and never matched the mangled `cmp__Display` key in
+// Info.Traits, so it failed with "unknown trait". A heterogeneous
+// `dyn cmp.Display[]` of scalars dispatches `to_string()` by runtime
+// type on the interpreter.
+func TestInterpDynTraitQualifiedTraitName(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := `import "std/i32";
+import "std/string";
+import "core/cmp";
+function render(args: dyn cmp.Display[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < args.len()) {
+        out = out + args[i].to_string();
+        if (i + 1 < args.len()) { out = out + ", "; }
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    var xs: dyn cmp.Display[] = [42, "hi", true];
+    print(render(xs));
+    return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("interp exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "42, hi, true" {
+		t.Errorf("dyn cmp.Display dispatch = %q, want %q", got, "42, hi, true")
+	}
+}
+
 // Parametric impl: `impl[T: Bound] Trait for Box[T]` makes a single
 // blanket impl cover every instantiation. The method bodies dispatch
 // on the bound (`self.v.to_string()` where `self.v: T`), and the
