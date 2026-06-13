@@ -2,7 +2,7 @@
 title: Tooling
 description: Compiler flags, formatter, language server, editor extensions.
 sidebar:
-  order: 5
+  order: 6
 ---
 
 ## Compiler — `fern`

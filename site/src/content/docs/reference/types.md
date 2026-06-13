@@ -47,6 +47,9 @@ Generic calls infer `T` from the argument types when possible. The
 compiler monomorphises every distinct instantiation before codegen,
 so there's no runtime cost.
 
+A type parameter can carry a **trait bound** (`[T: Display]`) to
+constrain it to types implementing a trait — see [Traits](../traits/).
+
 ## Union types
 
 A union is a closed sum over struct types:
