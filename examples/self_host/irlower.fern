@@ -4788,6 +4788,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 }
                             }
                         },
+                        // `var o = if (c) { Some(7) } else { None }` — an
+                        // if-/match-EXPRESSION desugars to a 0-arg IIFE
+                        // (ExprCall{callee: ExprLambda}). Recover o's Option type
+                        // from the first branch's returned Some(...) via
+                        // some_opt_type, so a later `match (o)` lowers (lower_iife
+                        // already lowers the Option-valued if-expression itself).
+                        parser.ExprLambda(ilam) => {
+                            if (ilam.body.len() > 0) { opt_ty = some_opt_type(iife_first_return_expr(ilam.body[0]), se); }
+                        },
                         _ => {}
                     }
                 },
