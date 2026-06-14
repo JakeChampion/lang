@@ -279,8 +279,17 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    interpreter. Tests at every layer.
 2. **Slice 2: compiled-backend vtables.** Fat-pointer representation +
    per-(trait,type) vtable emission + coercion boxing + indirect-call
-   lowering on arm64, then x86-64, then wasm (one backend per PR,
-   mirroring the backend-parity cadence).
+   lowering, delivered foundation-first then one backend per PR:
+   - **2a (landed): vtable-collection scaffolding.** `ir.VtableDecl` /
+     `VtableMethod` + `Program.Vtables`, and `collectVtables` — one table
+     per (trait, concrete-type) where the trait is used in a `dyn` type
+     and the type implements it, slots in trait declaration order. Wired
+     into `LowerWith` (nil today: the reject gate still returns first for
+     `dyn` programs). Unit-tested in `internal/ir/vtable_test.go`. No
+     behaviour change; it's the static data every backend will emit.
+   - **2b–2d: per-backend codegen + coercion boxing + dispatch**, lifting
+     the reject gate per target (x86-64, then arm64, then wasm). Each adds
+     the per-coercion-site boxing marker the backend consumes.
 3. **Slice 3: self-host parity (x86-64 + arm64 — shipped).** `dyn Trait`
    parses in the self-host and dispatches over its existing shape-pointer
    path; struct/enum concrete types work end-to-end (see §4.3). Remaining:
