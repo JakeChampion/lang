@@ -877,6 +877,15 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                         fi = fi + 1;
                         continue;
                     }
+                    // An array-of-ARRAY field `T[][]` whose element `T[]` is
+                    // itself a leaf-safe array (scalar / struct / enum array):
+                    // the whole nested structure leaks with the struct. Covers
+                    // the common 2-D field; deeper nesting (an element that ends
+                    // in `[]` but isn't a recognised leaf-safe array) still bails.
+                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt)) {
+                        fi = fi + 1;
+                        continue;
+                    }
                 }
                 return false;
             }
