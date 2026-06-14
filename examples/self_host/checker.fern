@@ -3256,7 +3256,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             var i: i32 = 0;
             while (i < t.elements.len()) { out = append_diags(out, call_diags(t.elements[i], s)); i = i + 1; }
         },
-        parser.ExprIndex(ix) => { out = append_diags(call_diags(ix.array, s), call_diags(ix.index, s)); },
+        parser.ExprIndex(ix) => {
+            out = append_diags(call_diags(ix.array, s), call_diags(ix.index, s));
+            // E034: an array / string index must be an i32. Mirrors the Go
+            // checker's Index case (index type != i32 -> E034 at the index
+            // position). A missing / unknown index type is skipped (no cascade).
+            var ixt: Type = check_expr(ix.index, s);
+            if (!is_unknown(ixt) && !type_eq(ixt, t_i32())) {
+                out = out.append(dg_at("E034", "index must be an integer, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
+            }
+        },
         parser.ExprSlice(s2) => {
             out = append_diags(call_diags(s2.array, s), append_diags(call_diags(s2.start, s), call_diags(s2.end, s)));
             // E037: a present slice bound must be i32. A missing bound
