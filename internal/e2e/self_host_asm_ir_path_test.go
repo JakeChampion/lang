@@ -555,6 +555,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"match-expr-arr-elem0", `function main(): i32 { var a = [Some(5)]; return match (a[0]) { Some(v) => v, None => 0 }; }`},
 		{"match-expr-arr-elem-idx", `function main(): i32 { var a = [Some(3), Some(8)]; var i = 1; return match (a[i]) { Some(v) => v, None => 0 }; }`},
 		{"match-expr-arr-field-elem", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(4), None] }; return match (b.xs[0]) { Some(v) => v, None => 0 }; }`},
+		// An unannotated Option bound from an if-/match-EXPRESSION (which desugars to
+		// an IIFE): the StmtVar opt-type inference now recovers o's Option type from
+		// the first branch's Some(...) via iife_first_return_expr, so the later
+		// match (o) lowers (#3124).
+		{"ifexpr-opt-bind-some", `function main(): i32 { var x = 5; var o = if (x > 3) { Some(7) } else { None }; match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
+		{"ifexpr-opt-bind-none", `function main(): i32 { var x = 1; var o = if (x > 3) { Some(7) } else { None }; match (o) { Some(v) => { return v; }, None => { return 42; } } return 9; }`},
+		{"matchexpr-opt-bind", `function main(): i32 { var e = 2; var o = match (e) { 1 => Some(10), _ => Some(20) }; match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
