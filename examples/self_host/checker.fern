@@ -3157,6 +3157,12 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                     if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !type_assignable(at, sig.param_types[ai], s.unions)) {
                                         out = out.append(dg_at("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
                                     }
+                                    // E034: a composite-array literal argument's
+                                    // elements checked against the parameter's
+                                    // declared element type (the array as a whole
+                                    // is assignable, so the E038 above stays
+                                    // silent — this catches a bad element).
+                                    out = append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));
                                     ai = ai + 1;
                                 }
                             }
@@ -3217,6 +3223,9 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                         if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
                                             out = out.append(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                                         }
+                                        // E034: composite-array method argument
+                                        // elements vs the parameter element type.
+                                        out = append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
                                         mi = mi + 1;
                                     }
                                 }
@@ -3635,15 +3644,29 @@ function e055_diag(e: parser.Expr, s: Scope): Diag[] {
 // StmtReturn{…}]`, ubiquitous in this very compiler — stays clean. Mirrors
 // the Go checker, which checks each element against the expected element
 // type and reports at the offending element.
-function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope): Diag[] {
-    var out: Diag[] = [];
-    if (type_name.len() == 0) { return out; }
-    var declared: Type = type_from_name_with_structs_unions(type_name, s.structs, s.unions);
-    var elem_ty: Type = t_unknown("not an array");
-    match (declared) {
-        TypeArray(ad) => { elem_ty = ad.elem; },
-        _ => { return out; }
+// array_elem_type_of returns t's array element type, or `unknown` when t
+// isn't an array — the "expected element" feeding array_elem_check.
+function array_elem_type_of(t: Type): Type {
+    match (t) {
+        TypeArray(ad) => { return ad.elem; },
+        _ => { return t_unknown("not an array"); }
     }
+    return t_unknown("not an array");
+}
+
+// array_elem_check is the position-independent core of the typed
+// composite-array E034: given the EXPECTED element type and an expression
+// that may be an array literal, flag (E034) every element not assignable
+// to it. Scoped to COMPOSITE element types — primitive-element arrays are
+// covered by the first-element-anchored E034 in call_diags, so they're
+// skipped here to avoid a duplicate. Uses the union-widening
+// type_assignable, so a heterogeneous-but-widening literal (a `Stmt[]` of
+// distinct variant structs) stays clean. Reused from every position where
+// the expected element type is statically known: a `: T[]` var binding, a
+// `T[]`-returning function's `return`, an assignment to a `T[]` variable,
+// and a `T[]` call argument.
+function array_elem_check(elem_ty: Type, init: parser.Expr, s: Scope): Diag[] {
+    var out: Diag[] = [];
     if (is_unknown(elem_ty) || is_primitive_type(elem_ty)) { return out; }
     match (init) {
         parser.ExprArray(arr) => {
@@ -3659,6 +3682,12 @@ function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope):
         _ => { }
     }
     return out;
+}
+
+function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope): Diag[] {
+    if (type_name.len() == 0) { return []; }
+    var declared: Type = type_from_name_with_structs_unions(type_name, s.structs, s.unions);
+    return array_elem_check(array_elem_type_of(declared), init, s);
 }
 
 function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
@@ -3692,12 +3721,23 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                 out = append_diags(out, call_diags(v.init, vsc));
                 out = append_diags(out, typed_array_elem_diags(v.type_name, v.init, vsc));
             },
-            parser.StmtReturn(r) => { out = append_diags(out, call_diags(r.value, cur)); },
+            parser.StmtReturn(r) => {
+                out = append_diags(out, call_diags(r.value, cur));
+                // E034: a composite-array `return` value's elements checked
+                // against the function's declared element type (top-level
+                // stmts carry an unknown ret_type sentinel and are skipped).
+                out = append_diags(out, array_elem_check(array_elem_type_of(cur.ret_type), r.value, cur));
+            },
             parser.StmtExpr(x) => {
                 out = append_diags(out, call_diags(x.value, cur));
                 out = append_diags(out, e055_diag(x.value, cur));
             },
-            parser.StmtAssign(a) => { out = append_diags(out, call_diags(a.value, cur)); },
+            parser.StmtAssign(a) => {
+                out = append_diags(out, call_diags(a.value, cur));
+                // E034: reassigning a composite-array literal — its elements
+                // checked against the target variable's declared element type.
+                out = append_diags(out, array_elem_check(array_elem_type_of(cur.lookup(a.target)), a.value, cur));
+            },
             parser.StmtIf(f) => {
                 out = append_diags(out, call_diags(f.cond, cur));
                 out = append_diags(out, stmts_call_diags(f.then_body, cur));
