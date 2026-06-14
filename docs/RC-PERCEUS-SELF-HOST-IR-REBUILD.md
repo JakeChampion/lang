@@ -1136,3 +1136,27 @@ field added to every `EmitState` constructor in `asmcore.fern`) and threaded int
 full fixpoint) drops in for free. Gate on the arm64 stage-2 self-compile, which is
 the specific test that catches this — it passes on x86 but not arm64 because the
 arm64 self-source is larger.
+
+### Landed (2026-06-14): inter-procedural widening via a per-module emit-path registry
+
+Executed the plan above. Added `borrowable_params_interproc(funcs)` (the single
+forward pass with a growing registry + `borrowable_key`) alongside the unchanged
+conservative `borrowable_params_of`. The ~15 inspection passes keep calling the
+cheap conservative `borrowable_params_of` inline (no edits, no recomputation cost
+change, and — as argued — no property-check flips). Only the three emit drivers
+compute `borrowable_params_interproc(mod.funcs)` ONCE before their per-function
+loop and thread it through `emit_function_via_ir` (`asm_ir` / `asm_arm64_ir`, new
+last param) / `emit_function_ir` (`wasm_ir`, new last param) into `lower_func`.
+`lower_module` (debug-only driver) keeps the conservative registry.
+
+Result: the arm64 stage-2 self-compile passes (201 s, was exit 137), and the
+transitive `inner`-before-`outer` forwarding now reclaims its array on the emit
+path (dec 3 → 4) with value + detector sound; the escape chain `wrap → idf` stays
+rejected. Full gate green (`TestSelfHostAsmRunX86_64` auto-routes to IR, x86 + arm64
+fixpoint/stage-2, `TestSelfHostStdTestE2E`, RC suites, targeted
+`TestSelfHostRcPreciseDropX86IR` with transitive-reclaim + escape-chain cases).
+
+Still order-dependent (only earlier-defined callees propagate). Full convergence
+(later-defined / mutually recursive callees, arbitrary depth) is now a cheap
+follow-up: the registry is already off the per-function path, so iterating
+`borrowable_params_interproc` to a fixpoint costs only a few module-level passes.

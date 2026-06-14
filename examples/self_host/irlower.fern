@@ -7289,6 +7289,49 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
     }
     return out;
 }
+// borrowable_key is the registry key for a function's borrowability entry: the
+// bare name for a free function, "<Type>.<method>" for a receiver method.
+function borrowable_key(fn: parser.FuncDecl): string {
+    if (fn.receiver_type.len() > 0) { return util.base_type_name(fn.receiver_type) + "." + fn.name; }
+    return fn.name;
+}
+// borrowable_params_interproc is the inter-procedural widening of
+// borrowable_params_of: a SINGLE forward pass with a GROWING registry, so when the
+// pass reaches function i, `reg` already holds the borrowable entries of funcs
+// 0..i-1 and a param that forwards to an EARLIER-defined borrowable callee is
+// itself recognised as a borrow (capturing the common "helper defined before its
+// user" forwarding, e.g. `inner` before `outer`). Forwarding to a later-defined /
+// mutually recursive callee degrades to the conservative answer — a SOUND
+// under-approximation.
+//
+// COST: the growing registry makes the escape walker short-circuit less, so this
+// is materially heavier than the empty-registry conservative pass — recomputing it
+// once per lowered function OOMs the arm64 self-compile (measured). It is therefore
+// used ONLY on the emit path, computed ONCE per module before the per-function emit
+// loop and threaded through `emit_function_via_ir` / `emit_function_ir`. The ~15
+// inspection passes (module_uses_*, str_values, …) keep using the cheap
+// conservative `borrowable_params_of`: they only check op-kind presence, and the
+// only op a precise drop adds (__fern_arr_dec) is already emitted by the
+// function-exit dec-sweep, so no inspection result can flip.
+pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
+    var reg: string[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].params.len() > 0) {
+            var flags: string = "";
+            var any: boolean = false;
+            var pj: i32 = 0;
+            while (pj < funcs[i].params.len()) {
+                if (!body_unsafe_for(funcs[i].body, funcs[i].params[pj].name, reg)) { flags = flags + "1"; any = true; }
+                else { flags = flags + "0"; }
+                pj = pj + 1;
+            }
+            if (any) { reg = reg.append(borrowable_key(funcs[i]) + "|" + flags); }
+        }
+        i = i + 1;
+    }
+    return reg;
+}
 pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;

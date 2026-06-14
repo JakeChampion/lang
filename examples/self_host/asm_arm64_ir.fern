@@ -226,8 +226,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // (str x0,[sp,#-16]! / ldr x0,[sp],#16), params copied from the caller rt-stack
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
-function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs), irlower.strarr_ret_fns_of(s.funcs), irlower.opt_ret_fns_of(s.funcs), irlower.i64_ret_fns_of(s.funcs), irlower.tuple_ret_fns_of(s.funcs), irlower.struct_ret_fns_of(s.funcs, s.struct_decls), irlower.f64_ret_fns_of(s.funcs), irlower.f64arr_ret_fns_of(s.funcs), irlower.i64arr_ret_fns_of(s.funcs), irlower.fn_param_sigs_of(s.funcs), irlower.closure_ret_fns_of(s.funcs), irlower.const_fns_of(s.funcs), irlower.borrowable_params_of(s.funcs));
+function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[]): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs), irlower.strarr_ret_fns_of(s.funcs), irlower.opt_ret_fns_of(s.funcs), irlower.i64_ret_fns_of(s.funcs), irlower.tuple_ret_fns_of(s.funcs), irlower.struct_ret_fns_of(s.funcs, s.struct_decls), irlower.f64_ret_fns_of(s.funcs), irlower.f64arr_ret_fns_of(s.funcs), irlower.i64arr_ret_fns_of(s.funcs), irlower.fn_param_sigs_of(s.funcs), irlower.closure_ret_fns_of(s.funcs), irlower.const_fns_of(s.funcs), borrowable_params);
 
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
@@ -788,9 +788,12 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
     var arf: string[] = asm_ir.array_ret_fns(mod);
+    // Inter-procedural borrowability computed ONCE per module (not per function —
+    // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
+    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        s = emit_function_via_ir(mod.funcs[fi], arf, s);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams);
         fi = fi + 1;
     }
     s = s.write("_start:\n");

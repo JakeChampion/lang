@@ -128,10 +128,16 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// so the arg is not reclaimed early — the exit-sweep frees it. Sound either
 		// way; the detector confirms no over-release.
 		{"escape-helper-detector", `function keep(v: i32[]): i32[] { return v; } function main(): i32 { var t = [1, 2, 3, 4]; var u = keep(t); var a = u[0]; if (a != 1) { return 99; } return __rc_underflow(); }`, 0},
-		// A param passed to ANOTHER call is not borrowable under the conservative
-		// intra-procedural rule (no inter-procedural fixpoint yet) — so `t` is not
-		// reclaimed here, but the result stays sound (detector 0).
-		{"transitive-call-detector", `function inner(v: i32[]): i32 { return v[0]; } function outer(v: i32[]): i32 { return inner(v); } function main(): i32 { var t = [5, 6, 7]; var a = outer(t); if (a != 5) { return 99; } return __rc_underflow(); }`, 0},
+		// Inter-procedural borrow inference (single forward pass on the emit path,
+		// computed once per module): `inner` is defined before `outer` and borrows
+		// its param, so the pass recognises `outer`'s forwarded param as a borrow too
+		// — `t` IS reclaimed after its last `outer(t)`.
+		{"transitive-reclaim-value", `function inner(v: i32[]): i32 { return v[0]; } function outer(v: i32[]): i32 { return inner(v); } function main(): i32 { var t = [5, 6, 7, 8]; var a = outer(t); var b = outer(t); return a + b; }`, 10},
+		{"transitive-reclaim-detector", `function inner(v: i32[]): i32 { return v[0]; } function outer(v: i32[]): i32 { return inner(v); } function main(): i32 { var t = [5, 6, 7]; var a = outer(t); if (a != 5) { return 99; } return __rc_underflow(); }`, 0},
+		// Escape through a chain stays rejected: `wrap` forwards to `idf`, which
+		// RETURNS its param, so `idf` is not borrowable, hence `wrap` is not, hence
+		// `t` is not reclaimed — the result that aliases `t` stays valid.
+		{"escape-chain-detector", `function idf(v: i32[]): i32[] { return v; } function wrap(v: i32[]): i32[] { return idf(v); } function main(): i32 { var t = [3, 4, 5]; var u = wrap(t); if (u[1] != 4) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
