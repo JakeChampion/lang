@@ -306,26 +306,41 @@ test("?theme=dark URL param boots into dark mode", async ({ page }) => {
   await expect(page.locator("body")).toHaveClass(/dark/);
 });
 
-test("embed mode shows the pane-tab strip; Assembly tab swaps content", async ({
+test("embed mode is output-only — the Assembly view is dropped", async ({
   page,
 }) => {
   await page.goto("/index.html?embed=1");
   await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
-  // Tab strip visible only under body.embed.
-  await expect(page.locator(".pane-tabs")).toBeVisible();
-  // Default is the Output tab — body shouldn't carry the asm class.
-  await expect(page.locator("body")).not.toHaveClass(/tab-asm/);
+  // Assembly is a power-user feature dropped from embeds: the in-pane
+  // tab strip (its only embed entry point) and the toolbar's View
+  // assembly button are both hidden, and the asm panel stays closed.
+  await expect(page.locator(".pane-tabs")).not.toBeVisible();
+  await expect(page.locator("#viewAsm")).not.toBeVisible();
   await expect(page.locator(".asm-panel")).not.toBeVisible();
-  // Switch to Assembly. Body class flips; asm pane appears with
-  // emitted content for the default target (arm64).
-  await page.locator('.pane-tabs .tab[data-tab="asm"]').click();
-  await expect(page.locator("body")).toHaveClass(/tab-asm/);
-  await expect(page.locator(".asm-panel")).toBeVisible();
-  await expect(page.locator("#asmOut")).toContainText(".text", { timeout: 10_000 });
-  // Output pane hidden while Assembly is active.
-  await expect(page.locator(".pane-output pre#out")).not.toBeVisible();
-  // Embed target dropdown becomes visible only on the Asm tab.
-  await expect(page.locator("#embedTarget")).toBeVisible();
+  // The output pane is what the reader sees, and Run still works.
+  await expect(page.locator(".pane-output pre#out")).toBeVisible();
+  await expect(page.locator("#run")).toBeVisible();
+});
+
+test("minimal mode is read-only, hides Run, and autoruns", async ({ page }) => {
+  // No #src → the default "hello" example loads; minimal forces autorun.
+  await page.goto("/index.html?minimal=1");
+  await expect(page.locator("#status")).toContainText("ready", { timeout: 30_000 });
+  // minimal implies embed; body carries both classes.
+  await expect(page.locator("body")).toHaveClass(/\bembed\b/);
+  await expect(page.locator("body")).toHaveClass(/\bminimal\b/);
+  // The editor is frozen: CodeMirror's content DOM is not editable.
+  await expect(page.locator(".cm-content")).toHaveAttribute(
+    "contenteditable",
+    "false",
+  );
+  // No Run button to click — and none of the other action buttons.
+  await expect(page.locator("#run")).not.toBeVisible();
+  await expect(page.locator("#runWasm")).not.toBeVisible();
+  // Autorun produced output without any interaction.
+  await expect(page.locator("#out")).toContainText("hello, world", {
+    timeout: 30_000,
+  });
 });
 
 test("standalone mode does NOT show the embed tab strip", async ({ page }) => {
