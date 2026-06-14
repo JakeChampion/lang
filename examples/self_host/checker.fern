@@ -696,6 +696,25 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
                 _ => { return false; }
             }
         },
+        TypeTuple(te) => {
+            match (from) {
+                TypeTuple(fe) => {
+                    // Same arity, element-wise assignable. An unknown source
+                    // element is a wildcard (mirrors the array / map rule) so a
+                    // generic tuple `(T, U)` — whose params erase to `unknown` —
+                    // flows into any concrete tuple slot, and a literal whose
+                    // element infers `unknown` doesn't false-positive.
+                    if (fe.elements.len() != te.elements.len()) { return false; }
+                    var i: i32 = 0;
+                    while (i < te.elements.len()) {
+                        if (!is_unknown(fe.elements[i]) && !type_assignable(fe.elements[i], te.elements[i], unions)) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
         TypeUnion(un) => {
             match (from) {
                 TypeStruct(sn) => { return is_variant_of(sn.name, un.name, unions); },
@@ -1659,6 +1678,24 @@ function type_from_name_with_structs_unions(name: string, structs: StructSig[], 
         var elem_name: string = name[0:name.len() - 2];
         return t_array(type_from_name_with_structs_unions(elem_name, structs, unions));
     }
+    // Tuple `(A, B, …)` → TypeTuple of the recursively-resolved elements.
+    // Needs at least one top-level comma (a single `(T)` is just a
+    // parenthesised type, not a tuple). A function type `(A, B) => R` does
+    // NOT end in `)` so it never reaches here; a tuple-array `(A, B)[]` is
+    // peeled by the array branch above first.
+    if (name.len() >= 2 && name[0] == 40 && name[name.len() - 1] == 41) {
+        var inner: string = name[1:name.len() - 1];
+        var parts: string[] = split_top_commas(inner);
+        if (parts.len() >= 2) {
+            var elems: Type[] = [];
+            var pi: i32 = 0;
+            while (pi < parts.len()) {
+                elems = elems.append(type_from_name_with_structs_unions(parts[pi], structs, unions));
+                pi = pi + 1;
+            }
+            return t_tuple(elems);
+        }
+    }
     // Generic-instantiated `Map[K, V]` arrives as a single
     // string spelling from parse_type_name. Strip the prefix
     // / suffix, split on the first top-level `,`, and recurse
@@ -1700,6 +1737,29 @@ function split_top_comma(s: string): i32 {
         i = i + 1;
     }
     return 0 - 1;
+}
+
+// split_top_commas splits `s` on every top-level comma — one not nested
+// inside `[…]` or `(…)` — returning the trimmed parts. Used to parse a
+// tuple type spelling `A, B, C` (the inner of `(A, B, C)`) into its element
+// names. A string with no top-level comma yields a single part.
+function split_top_commas(s: string): string[] {
+    var out: string[] = [];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b == 91 || b == 40) { depth = depth + 1; }
+        else if (b == 93 || b == 41) { depth = depth - 1; }
+        else if (b == 44 && depth == 0) {
+            out = out.append(trim_spaces(s[start:i]));
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    out = out.append(trim_spaces(s[start:s.len()]));
+    return out;
 }
 
 // trim_spaces removes leading + trailing space (byte 32) chars.
