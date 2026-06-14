@@ -512,6 +512,11 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
 		return out
+	case ast.ProjType:
+		// Associated-type projection: substitute inside the base
+		// (`T::Item` → `IntBox::Item`); the checker re-check resolves the
+		// now-concrete projection to its binding. See docs/ASSOCIATED-TYPES.md.
+		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
 	}
 	return t
 }

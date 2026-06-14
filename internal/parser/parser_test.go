@@ -1554,6 +1554,52 @@ func TestTraitDefaultMethodParses(t *testing.T) {
 	}
 }
 
+// A trait may declare associated types (`type Item;`), an impl binds them
+// (`type Item = i32;`), and signatures reference them as `Self::Item` /
+// `T::Item` (parsed to ast.ProjType). See docs/ASSOCIATED-TYPES.md.
+func TestAssociatedTypesParse(t *testing.T) {
+	prog, err := Parse(`trait Iterator {
+    type Item;
+    function next(self: Self): Self::Item;
+}
+struct B { v: i32 }
+impl Iterator for B {
+    type Item = i32;
+    function next(self: Self): Self::Item { return self.v; }
+}
+function first[I: Iterator](it: I): I::Item { return it.next(); }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := prog.Traits[0]
+	if len(tr.AssocTypes) != 1 || tr.AssocTypes[0] != "Item" {
+		t.Errorf("trait AssocTypes = %v, want [Item]", tr.AssocTypes)
+	}
+	pj, ok := tr.Methods[0].Result.(ast.ProjType)
+	if !ok || pj.Name != "Item" {
+		t.Fatalf("next result = %T %v, want ProjType …::Item", tr.Methods[0].Result, tr.Methods[0].Result)
+	}
+	if _, ok := pj.Base.(ast.SelfType); !ok {
+		t.Errorf("projection base = %T, want SelfType", pj.Base)
+	}
+	impl := prog.Impls[0]
+	if impl.AssocTypeBindings == nil || impl.AssocTypeBindings["Item"] == nil {
+		t.Fatalf("impl AssocTypeBindings missing Item: %v", impl.AssocTypeBindings)
+	}
+	var first *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "first" {
+			first = fn
+		}
+	}
+	if first == nil {
+		t.Fatal("first not found")
+	}
+	if pj, ok := first.ReturnType.(ast.ProjType); !ok || pj.Name != "Item" {
+		t.Errorf("first return = %T %v, want ProjType …::Item", first.ReturnType, first.ReturnType)
+	}
+}
+
 // A trait may declare supertraits with `trait Ord: Eq + Hash { … }`;
 // they're recorded on TraitDecl.Supertraits (qualifiers preserved). A
 // trait with no `:` clause has an empty list. See docs/TRAITS.md.
