@@ -3623,6 +3623,44 @@ function e055_diag(e: parser.Expr, s: Scope): Diag[] {
 // stmts_call_diags walks a statement list, threading scope (so a callee
 // name shadowed by a local `var` is recognised as a local, not the
 // function) and collecting the E004s from every expression.
+// typed_array_elem_diags reports E034 for a typed array-literal binding
+// `var x: Elem[] = [ ... ]` whose declared element type is a COMPOSITE
+// (struct / enum / union / array / tuple / map) and some element isn't
+// assignable to it. Primitive-element arrays (`i32[]`, `string[]`, …) are
+// already covered by the first-element-anchored E034 in call_diags, so we
+// skip them here to avoid a duplicate diagnostic; this fills the composite
+// gap that anchor check deliberately left open. The annotation's element
+// type is matched with the union-widening `type_assignable`, so a
+// heterogeneous-but-widening literal — e.g. `var xs: Stmt[] = [StmtVar{…},
+// StmtReturn{…}]`, ubiquitous in this very compiler — stays clean. Mirrors
+// the Go checker, which checks each element against the expected element
+// type and reports at the offending element.
+function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope): Diag[] {
+    var out: Diag[] = [];
+    if (type_name.len() == 0) { return out; }
+    var declared: Type = type_from_name_with_structs_unions(type_name, s.structs, s.unions);
+    var elem_ty: Type = t_unknown("not an array");
+    match (declared) {
+        TypeArray(ad) => { elem_ty = ad.elem; },
+        _ => { return out; }
+    }
+    if (is_unknown(elem_ty) || is_primitive_type(elem_ty)) { return out; }
+    match (init) {
+        parser.ExprArray(arr) => {
+            var k: i32 = 0;
+            while (k < arr.elements.len()) {
+                var ekt: Type = check_expr(arr.elements[k], s);
+                if (!is_unknown(ekt) && !type_assignable(ekt, elem_ty, s.unions)) {
+                    out = out.append(dg_at("E034", "array element type " + type_label(ekt) + ", expected " + type_label(elem_ty), expr_line(arr.elements[k]), expr_col(arr.elements[k])));
+                }
+                k = k + 1;
+            }
+        },
+        _ => { }
+    }
+    return out;
+}
+
 function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
     var out: Diag[] = [];
     var cur: Scope = s;
@@ -3652,6 +3690,7 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                     _ => { }
                 }
                 out = append_diags(out, call_diags(v.init, vsc));
+                out = append_diags(out, typed_array_elem_diags(v.type_name, v.init, vsc));
             },
             parser.StmtReturn(r) => { out = append_diags(out, call_diags(r.value, cur)); },
             parser.StmtExpr(x) => {
