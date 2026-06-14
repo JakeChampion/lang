@@ -4270,6 +4270,25 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 _ => {}
             }
             if (opt_ty == "" && v.type_name.len() >= 8 && (v.type_name[0:7] == "Option[" || v.type_name[0:7] == "Result[")) { opt_ty = v.type_name; }
+            // An UNANNOTATED array literal of Option values (`var a = [Some(1),
+            // Some(2), None]`): infer the element opt-type from the first Some
+            // element and record the slot's "Option[T][]" (the array form — the
+            // foreach / index element path strips the trailing `[]`). The
+            // construction analogue of the `var a: Option[T][] = …` annotation
+            // above (#3024 array sibling). `None`-only literals stay untyped.
+            if (opt_ty == "") {
+                match (v.init) {
+                    parser.ExprArray(oalit) => {
+                        var oali: i32 = 0;
+                        while (oali < oalit.elements.len()) {
+                            var oaet: string = some_opt_type(oalit.elements[oali], se);
+                            if (oaet != "") { opt_ty = oaet + "[]"; oali = oalit.elements.len(); }
+                            else { oali = oali + 1; }
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // `var o = a[i]` where `a` is an Option/Result ARRAY — the element is
             // an Option/Result value, so record o's opt_type (strip the array's
             // `[]`) so a later `match (o)` recovers the payload. This also drives
