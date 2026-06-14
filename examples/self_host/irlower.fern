@@ -3426,6 +3426,42 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // `__fn_<Type>.<m>` label). calls_only_known verifies the method
                     // exists, else the module bails to AST.
                     var rty: string = expr_struct_type(fa.obj, s);
+                    // Option/Result-receiver method call `o.method(args)` (impl on
+                    // Option[T] / Result[T, E]). expr_struct_type is "" for an
+                    // Option, so recover the receiver's opt-type (a local's tracked
+                    // type, a direct `Some(x)`, or an Option-returning call), then
+                    // dispatch call_direct("Option.<method>") — base_type_name
+                    // strips the payload, matching the emitted label — with the
+                    // receiver as arg 0, mirroring the struct-method path (#3031).
+                    var orty: string = "";
+                    match (fa.obj) {
+                        parser.ExprIdent(orid) => { orty = s.opt_type_of_slot(s.slot_of(orid.name)); },
+                        parser.ExprCall(orc) => {
+                            orty = some_opt_type(fa.obj, s);
+                            if (orty == "") {
+                                match (orc.callee) {
+                                    parser.ExprIdent(orcid) => { orty = s.opt_ret_type(orcid.name); },
+                                    _ => {}
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                    if (orty.len() >= 8 && (orty[0:7] == "Option[" || orty[0:7] == "Result[")) {
+                        var odt: string = util.base_type_name(orty);
+                        var om: LowerState = lower_expr(fa.obj, s);
+                        if (!om.ok) { return om; }
+                        var oai: i32 = 0;
+                        while (oai < c.args.len()) {
+                            var ofvn: string = fn_value_arg_name(c.args[oai], om);
+                            if (ofvn.len() > 0 && om.callee_param_is_fn(odt + "." + fa.field, oai)) { om = om.emit(ir.op_const_func(0, ofvn)); }
+                            else if (om.param_is_i64(odt + "." + fa.field, oai)) { om = lower_i64(c.args[oai], om); }
+                            else { om = lower_expr(c.args[oai], om); }
+                            if (!om.ok) { return om; }
+                            oai = oai + 1;
+                        }
+                        return om.emit(ir.op_call_direct(odt + "." + fa.field, 1 + c.args.len()));
+                    }
                     // `dyn Trait` method call: the receiver's concrete type is
                     // known only at runtime. Spill the receiver (arg 0) + args
                     // into argc consecutive temp locals, then op_dyn_dispatch —
@@ -6069,11 +6105,18 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         var r_is_struct: boolean = decl_is_struct(structs, rbase);
         var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64" || rbase == "f64";
         var r_is_enum: boolean = is_enum_like_name(rbase, structs);
+        // An Option[T] / Result[T, E] receiver (`function (o: Option[i32])
+        // unwrap_or(...)`) binds slot 0 as a leak-only opt box carrying the full
+        // receiver type, so `match (self)` recovers the payload — the same way an
+        // Option/Result PARAM is opt-tracked below. The call site dispatches to
+        // `Option.<method>` (base_type_name strips the payload), matching the
+        // emitted label (#3031).
+        var r_is_opt: boolean = fn.receiver_type.len() >= 8 && (fn.receiver_type[0:7] == "Option[" || fn.receiver_type[0:7] == "Result[");
         if (r_is_struct) {
             if (!decl_is_leaksafe(structs, rbase)) {
                 return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
             }
-        } else if (!r_is_prim && !r_is_enum) {
+        } else if (!r_is_prim && !r_is_enum && !r_is_opt) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
         // A nominal receiver (struct or enum) carries its type name in
@@ -6081,12 +6124,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // `self.method()` (enum) dispatch. A primitive carries "".
         var rsty: string = "";
         if (r_is_struct || r_is_enum) { rsty = rbase; }
+        var ropt: string = "";
+        if (r_is_opt) { ropt = fn.receiver_type; }
         names = names.append(fn.receiver_name);
         isarr = isarr.append(false);
         isstr = isstr.append(rbase == "string");
         isstrarr = isstrarr.append(false);
         structty = structty.append(rsty);
-        optty = optty.append("");
+        optty = optty.append(ropt);
         tupty = tupty.append("");
         mapty = mapty.append("");
         isi64 = isi64.append(rbase == "i64");
