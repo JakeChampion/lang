@@ -506,7 +506,11 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteByte(')')
 	case *ast.FieldAccess:
 		printExpr(b, x.Target)
-		b.WriteByte('.')
+		if x.PathSep {
+			b.WriteString("::")
+		} else {
+			b.WriteByte('.')
+		}
 		b.WriteString(x.Field)
 	}
 }

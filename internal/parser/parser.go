@@ -3830,6 +3830,25 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
 			}
 			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos}
+		case p.match(lexer.Punct, "::"):
+			// `Type::method` / `mod::func` / `Type::CONST` — the
+			// path-style namespaced access. Produces the SAME FieldAccess
+			// node as the `.` form, so an associated-function call
+			// (`Point::origin()`), a module-qualified call (`json::encode()`),
+			// and a qualified const all resolve through the existing
+			// modload + checker paths. `::` is pure surface syntax; the AST
+			// carries no record of which separator was written. See #2700.
+			colons := p.advance()
+			fname, err := p.expectMemberName()
+			if err != nil {
+				return nil, err
+			}
+			// `mod::Foo { … }` is a path-qualified struct literal, mirroring
+			// the `mod.Foo { … }` form (suppressed in noStructLit positions).
+			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
+				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
+			}
+			expr = &ast.FieldAccess{P: colons.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos, PathSep: true}
 		case p.match(lexer.Punct, "?"):
 			// Postfix `?` — Option-try operator. `expr?` evaluates
 			// to the Some payload and early-returns None when the

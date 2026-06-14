@@ -1519,6 +1519,11 @@ type FieldAccess struct {
 	Target   Expr
 	Field    string
 	FieldPos Position
+	// PathSep records that the source used the path separator `::`
+	// (`Type::method`, `mod::func`) rather than `.`. Purely cosmetic — the
+	// checker / modload treat both identically; it only lets the printer
+	// round-trip the separator the author wrote. See #2700.
+	PathSep bool
 }
 
 // Lambda is an anonymous function expression: `function (x: i32):

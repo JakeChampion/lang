@@ -417,15 +417,25 @@ escapes strings); both produce identical output.
 ### 6.8 Associated functions
 A trait method declared with **no `self` receiver** is an *associated
 function*, called on the type rather than a value — the constructor /
-static-method shape (`Type.f(args)`, dot-qualified like `Color.Red`, no
-`::`):
+static-method shape. It can be called either dot-qualified (`Type.f(args)`,
+like `Color.Red`) or with the path separator `Type::f(args)` (#2700); both
+parse to the same `FieldAccess` (`PathSep` records which separator was
+written so the printer round-trips it) and resolve identically:
 
 ```fern
 trait Default { function default(): Self; }
 impl Default for Point { function default(): Self { return Point { x: 0, y: 0 }; } }
-var p: Point = Point.default();          // `Self` resolves to Point
-function mk[T: Default](): T { return T.default(); }   // generic constructor
+var p: Point = Point::default();         // `Self` resolves to Point (`::` or `.`)
+function mk[T: Default](): T { return T::default(); }  // generic constructor
 ```
+
+The `::` separator works for any namespaced reference, not just associated
+functions: a module-qualified call (`helpers::add5(10)`) or const
+(`helpers::BONUS`) is the path-style spelling of `helpers.add5(10)` /
+`helpers.BONUS`. It's pure surface syntax — the checker / modload are
+separator-agnostic. (The library-wide `Type::ctor` *convention* + the
+`json.json_encode` stutter cleanup from #2700 are follow-ups; this lands
+the mechanism.)
 
 The parser marks a receiver-less trait/impl method (`TraitMethod.Assoc` /
 `FuncDecl.AssocType`); the checker hoists it to `__assoc_<Type>_<name>`
