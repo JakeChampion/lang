@@ -642,7 +642,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     // u64 returns ride the i64 result type (8-byte; only signedness of the
     // value's own ops differs, handled at the producing expression) (#2904).
     if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + " (result i64)\n"; }
-    else if (fd.ret_type == "f64") { out = out + " (result f64)\n"; }
+    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + " (result f64)\n"; }
     else { out = out + " (result i32)\n"; }
     // body locals + 4 scratch locals. A body local in r.i64_slots is declared
     // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
@@ -1100,7 +1100,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
                         && irlower.decl_is_struct(structs, util.base_type_name(funcs[df0].receiver_type))) {
                     if (nimpl == 0) {
                         if (funcs[df0].ret_type == "i64" || funcs[df0].ret_type == "u64") { drt = "i64"; }
-                        else if (funcs[df0].ret_type == "f64") { drt = "f64"; }
+                        else if (irlower.is_f64_scalar_type_name(funcs[df0].ret_type)) { drt = "f64"; }
                     }
                     nimpl = nimpl + 1;
                 }
@@ -1147,7 +1147,7 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
     // stack-polymorphic typing accepts an underflow, not a wrong-typed top), so
     // the default's type tracks the result: i64 / f64 / i32.
     if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + "    i64.const 0)\n"; }
-    else if (fd.ret_type == "f64") { out = out + "    f64.const 0)\n"; }
+    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + "    f64.const 0)\n"; }
     else { out = out + "    i32.const 0)\n"; }
     return out;
 }
