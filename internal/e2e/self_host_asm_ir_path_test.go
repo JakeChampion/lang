@@ -1015,6 +1015,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// order them correctly through the IR path; both paths must agree.
 		{"u64-return-array", "function id(arr: u64[]): u64[] { return arr; } function main(): i32 { return id([7u64, 8u64])[1] as i32; }"},
 		{"u64-sort-big", "function srt(arr: u64[]): u64[] { var n = arr.len(); var out: u64[] = []; var i = 0; while (i < n) { out = out.append(arr[i]); i = i + 1; } var k = 1; while (k < n) { var key: u64 = out[k]; var j = k - 1; while (j >= 0 && out[j] > key) { out = out.with(j + 1, out[j]); j = j - 1; } out = out.with(j + 1, key); k = k + 1; } return out; } function main(): i32 { var s = srt([9223372036854775810u64, 9223372036854775809u64, 3u64]); if (s[0] == 3u64 && s[1] == 9223372036854775809u64 && s[2] == 9223372036854775810u64) { return 0; } return 1; }"},
+		// match on a STRING-receiver method's Option result (`match (s.m())`): the
+		// scrutinee-type recovery now keys "string.<method>", so std/string's
+		// parse_int_or (match (s.parse_int()) { … }) lowers. Both Some and None
+		// arms exercised; must match the AST path.
+		{"string-method-option-match", "function (s: string) firstlen(): Option[i32] { if (s.len() == 0) { return None; } return Some(s.len()); } function f(s: string): i32 { match (s.firstlen()) { Some(v) => { return v; }, None => { return 0 - 1; } } } function main(): i32 { return f(\"hello\") * 10 + (f(\"\") + 1); }"},
 	}
 
 	for _, tc := range cases {
