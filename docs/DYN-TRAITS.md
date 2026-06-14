@@ -353,8 +353,8 @@ changes), same vtable cells, just AArch64 instruction selection (AAPCS64).
 so the RC passes *could* try to inc/dec it, but `DynTraitType` has no
 drop handler and the lowering emits no inc/alias on a `dyn` value, so no
 RC traffic is generated for it. Precise RC of the boxed cell (and its
-inner `data`) is designed in **§4.4** (the Perceus follow-up): a leading
-vtable drop slot + a universal `__drop_dyn` that runs the concrete
+inner `data`) is designed in **§4.4** (the Perceus follow-up): a trailing
+vtable drop slot + a per-trait `__drop_dyn_<Trait>` that runs the concrete
 destructor and frees the cell.
 
 ### 4.3 Self-host (x86-64 + arm64 — shipped)
@@ -405,33 +405,44 @@ free a value whose static type is gone, so the drop must *dynamically
 dispatch* — exactly what the vtable is for. The plan adds the
 destructor to the vtable and routes `dyn` drops through it.
 
-1. **Vtable gains a leading drop slot.** Every `(trait, concrete)`
-   vtable grows one fixed slot **at index 0** holding the concrete
-   type's drop function (`dropFnNameFor(C)` → `__drop_struct_<C>` /
-   `__drop_enum_<…>` / `__drop_tuple_<…>`), or a **null sentinel (0)**
-   when `C` needs no drop (a flat struct of scalars). The method slots
-   shift to start at index 1, so `OpCallDyn`'s slot becomes
-   `trait_method_index + 1` — a one-line change in the dispatch
-   lowering. Index 0 is chosen over a trailing slot precisely so the
-   drop slot's position is **independent of the trait's method count**,
-   which lets a single trait-agnostic drop path read `vtable[0]` without
-   knowing which trait it's dropping. `collectVtables` records the drop
-   fn alongside the methods; each backend's vtable emitter prepends it
-   (wasm: a function-table index; natives: an absolute function
-   pointer), matching the slot's existing word kind.
+1. **Vtable gains a TRAILING drop slot.** Every `(trait, concrete)`
+   vtable grows one slot **at the end, index `method_count`**, holding
+   the concrete type's drop function (`dropFnNameFor(C)` →
+   `__drop_struct_<C>` / `__drop_enum_<…>` / `__drop_tuple_<…>`), or a
+   **null sentinel (0)** when `C` needs no drop (a flat struct of
+   scalars). Trailing — *not* leading — is the load-bearing choice: it
+   leaves the method slot indices (0..n-1) untouched, so `OpCallDyn`'s
+   slot math is **unchanged on all three already-shipped backends**, and
+   the drop slot can be added to one backend's emitter at a time without
+   a coordinated slot shift. (A leading slot at index 0 would force
+   `OpCallDyn` slot → `trait_index + 1` *everywhere at once*, or a
+   backend-divergent slot offset — both worse for an incremental,
+   one-backend-per-slice rollout.) The drop slot's index varies by trait
+   (= the trait's method count) but is **statically known at every drop
+   site**, because the value being dropped still has IR type
+   `DynTraitType{Trait}` — the trait is not erased in the IR, only the
+   concrete type is. `collectVtables` records the drop fn alongside the
+   methods; each backend's vtable emitter appends it (wasm: a
+   function-table index; natives: an absolute function pointer), matching
+   the slot's existing word kind. Backends that haven't wired RC yet
+   simply don't append the slot — harmless, since nothing reads past
+   `method_count` until that backend's RC slice lands.
 
 2. **`dropFnNameFor` learns `DynTraitType`.** It returns
-   `("__drop_dyn", true)` — one universal helper, because the dispatch
-   is fully data-driven off `vtable[0]`. The helper takes the `dyn`
-   value in its native shape and:
-   - reads `vtable[0]`; if non-null, `call`s it with `data` (this runs
-     the concrete destructor, which frees `data` and anything it
-     transitively owns — e.g. a `String` field);
+   `("__drop_dyn_<Trait>", true)` — a per-trait helper (the trait fixes
+   the drop-slot index `method_count`, which the helper bakes in). The
+   helper takes the `dyn` value in its native shape and:
+   - reads `vtable[method_count]`; if non-null, `call`s it with `data`
+     (this runs the concrete destructor, which frees `data` and anything
+     it transitively owns — e.g. a `String` field);
    - on the **natives** (boxed) then `__fern_free`s the 16-byte cell;
      on **wasm** (inline) there is no cell, so it stops after the
      concrete drop.
    The `vtable` word itself is static `.rodata`/data-segment — never
-   inc'd or dec'd.
+   inc'd or dec'd. (Per-trait rather than one universal helper precisely
+   because the slot index is `method_count`; the alternative — a single
+   `__drop_dyn` taking the slot index as an argument — also works and can
+   be adopted if helper-count becomes a concern.)
 
 3. **Perceus dec/drop insertion treats `dyn` as owning.** The
    inc/dec/borrow passes already classify pointer-shaped owned values;
