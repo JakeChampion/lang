@@ -586,6 +586,13 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
                         else {
                             var mrb: string = opt_recv_base_type(cfa.obj, s);
                             if (mrb != "") { t = s.opt_ret_type(mrb + "." + cfa.field); }
+                            // An ENUM-receiver method returning Option/Result, called
+                            // on a fresh variant (`V(7).get()`) — key "<Enum>.<m>"
+                            // via the variant's enum_owner (#3076).
+                            else {
+                                var men: string = expr_enum_type(cfa.obj, s);
+                                if (men != "") { t = s.opt_ret_type(men + "." + cfa.field); }
+                            }
                         }
                     },
                     _ => {}
@@ -3784,6 +3791,10 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                     // "Option.<m>" / "Result.<m>" (#3049).
                     var mrb: string = opt_recv_base_type(scfa.obj, s);
                     if (mrb != "") { return s.opt_ret_type(mrb + "." + scfa.field); }
+                    // An enum-receiver method returning Option/Result on a fresh
+                    // variant (`V(7).get()`) — key "<Enum>.<m>" (#3076).
+                    var men: string = expr_enum_type(scfa.obj, s);
+                    if (men != "") { return s.opt_ret_type(men + "." + scfa.field); }
                     return "";
                 },
                 _ => { return ""; }
@@ -4538,6 +4549,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             else {
                                 var irb: string = opt_recv_base_type(ifa.obj, se);
                                 if (irb != "") { opt_ty = se.opt_ret_type(irb + "." + ifa.field); }
+                                // An enum-receiver method returning Option/Result on
+                                // a fresh variant (`var o = V(7).get()`) (#3076).
+                                else {
+                                    var ien: string = expr_enum_type(ifa.obj, se);
+                                    if (ien != "") { opt_ty = se.opt_ret_type(ien + "." + ifa.field); }
+                                }
                             }
                         },
                         _ => {}
@@ -5478,6 +5495,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                                     else {
                                                         var mrb: string = opt_recv_base_type(scfa.obj, ms);
                                                         if (mrb != "") { srt = ms.opt_ret_type(mrb + "." + scfa.field); }
+                                                        // An enum-receiver method returning
+                                                        // Option/Result on a fresh variant
+                                                        // (`match (V(7).get())`) (#3076).
+                                                        else {
+                                                            var men: string = expr_enum_type(scfa.obj, ms);
+                                                            if (men != "") { srt = ms.opt_ret_type(men + "." + scfa.field); }
+                                                        }
                                                     }
                                                 }
                                             },
