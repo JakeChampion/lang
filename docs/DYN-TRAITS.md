@@ -154,14 +154,18 @@ needs a real runtime representation. The plan (not in slice 1):
 - Vtables are static data emitted once per (trait, concrete-type) pair
   actually coerced in the program; a whole-program pass collects the
   coercion sites (the concrete types that flow into each `dyn Trait`).
-- The fat pointer is two pointer-width slots; `ast.IsPointerType` and
-  the layout helpers treat `DynTraitType` as a two-word value (compare
-  the tuple/slice two-word handling).
+- The runtime representation is **target-dependent**: wasm carries the
+  fat pointer **inline** as two pointer-width slots (§4.2.1), while the
+  natives **box** it as a single pointer to a `{data, vtable}` heap cell
+  (§4.2.2). The IR layout helpers gate the two-word `DynTraitType` cases
+  on `ptrW == 4`; on `ptrW == 8` a boxed `dyn` is an ordinary one-word
+  pointer (`ast.IsPointerType` is true for it).
 
-Until those slices land, codegen rejects `DynTraitType` with a clean
-diagnostic (`dyn Trait is not yet supported on compiled backends; use
-the interpreter or a closed enum`) rather than crashing — so the feature
-is interpreter-only but never silently miscompiles.
+Until a backend's slice lands, codegen rejects `DynTraitType` with a
+clean diagnostic (`dyn Trait is not yet supported on compiled backends;
+…`) rather than crashing — so the feature is supported only where a slice
+has shipped (interpreter, wasm, x86-64) and never silently miscompiles
+(arm64 still rejects).
 
 #### 4.2.1 Slice 2b implementation spec (wasm — next build)
 
@@ -234,6 +238,80 @@ one slot per non-associated trait method in declaration order.
 **RC follow-up:** the `data` word's box currently leaks. Once dispatch is
 solid, teach the RC passes to inc/dec word 0 of a two-word `dyn` slot and
 skip word 1 (the static `vtable`). Tracked as part of goal 2 (Perceus).
+
+#### 4.2.2 Slice 2c implementation (x86-64 — BOXED one-word)
+
+The natives (`ptrW==8`) deliberately do **not** reuse wasm's inline
+two-word value pathway (they have none, and adding a two-word ABI on
+natives is a large, separate change). Instead a native `dyn Trait` value
+is **boxed one-word**: a single 8-byte heap pointer to a cell
+
+```
+{ data (8B @0), vtable (8B @8) }
+```
+
+where `data` is the concrete heap pointer and `vtable` is the absolute
+address of the static `(trait, concrete)` vtable. This reuses the
+existing one-word pointer pathway end-to-end — no two-word ABI changes
+on natives. The vtable itself is an **array of function POINTERS**
+(8-byte absolute addresses of the `__method_*` functions), *not* the
+wasm-style table indices; `OpCallDyn` loads slot *k* and `call`s it
+directly.
+
+Representation-aware layout. The IR layout helpers
+(`payloadSlotSize`, `payloadStoreOpFor`, `arrayElemStoreOpFor`,
+`payloadLoadOpFor`, the `*ast.Index` load path, and
+`ast.ElemSizeBytesFor`) gate their two-word `DynTraitType` cases on
+`ptrW == 4`. On `ptrW == 8` a boxed `dyn` is just a pointer, so it falls
+through to the existing `IsPointerType → WidthPtr` / `ptrW` branches —
+one word everywhere on natives.
+
+Target discriminator. `ptrW` alone cannot tell x86-64 from arm64
+(both are 8). `ir.LowerWith` takes optional `LowerOption`s; the x86-64
+backend passes `ir.DynSupported()` to lift its gate, arm64 omits it. The
+gate is now: reject `dyn` unless `ptrW == 4 || dynSupported`. All other
+callers are behaviour-identical (arm64 + the SSA/test harnesses still
+reject on `ptrW == 8`).
+
+Lowering (boxed). The builder branches on `b.dynBoxed()` (= `ptrW
+!= 4`):
+
+- *Coercion*: after lowering the concrete value (`data`) and emitting
+  `OpConstVtable` (pushes the vtable address), emit `OpBoxDyn` — a new IR
+  op that pops `[data, vtable]`, allocates a `2*ptrW`-byte cell via the
+  normal `__fern_alloc` path, stores `data` at +0 / `vtable` at +ptrW,
+  and pushes the single cell pointer. `OpBoxDyn` is native-only; wasm
+  never emits it (and its wasm handler is a guard that errors).
+- *Dispatch*: the receiver lowers to a one-word cell pointer; stash it,
+  push `data = load(cell + 0)`, lower args, push `vtable = load(cell +
+  ptrW)`, then `OpCallDyn`. This reconstructs the SAME
+  `[data, args..., vtable]` stack `OpCallDyn` already expects, so the op
+  stays uniform across backends — only how `data`/`vtable` are obtained
+  (deref cell vs inline) differs.
+
+x86-64 backend (`internal/codegen/x86_64/x86_64.go`):
+
+- `OpConstVtable` interns + materialises a `.rodata` cell
+  (`__vtable_<trait>_<concrete>`) holding `len(methods)` 8-byte absolute
+  `__method_*` pointers in trait-declaration order, then `lea`s its
+  address (mirrors the `OpConstFunc` `.rodata` cell path).
+- `OpBoxDyn` allocates 16 bytes via `__fern_alloc` and stores
+  `{data, vtable}`.
+- `OpCallDyn` pops the vtable, loads `[vtable + slot*8]` into `r11`,
+  loads `[data, args...]` into the SysV arg registers (receiver-first,
+  plain — no closure env), and `call r11`. Void iff `op.Sig.Result ==
+  nil`.
+- The vtable's `__method_*` targets are reachable only through the
+  runtime vtable, so the build pins them as tree-shake roots via the
+  shared `treeshake.DynCoercionImplMethods(info)` helper (hoisted out of
+  the wasm build path so both backends share one rooting source).
+
+**RC note (boxed).** The boxed cell *and* its `data` word currently leak
+— same scope as wasm's slice 2b. The cell is a normal heap pointer now,
+so the RC passes *could* try to inc/dec it, but `DynTraitType` has no
+drop handler and the lowering emits no inc/alias on a `dyn` value, so no
+RC traffic is generated for it. Precise RC of the boxed cell (and its
+inner `data`) is the same Perceus follow-up tracked above.
 
 ### 4.3 Self-host (x86-64 + arm64 — shipped)
 
@@ -359,14 +437,22 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
      into `LowerWith` (nil today: the reject gate still returns first for
      `dyn` programs). Unit-tested in `internal/ir/vtable_test.go`. No
      behaviour change; it's the static data every backend will emit.
-   - **2b (next): wasm codegen** — full implementation spec in §4.2.1.
+   - **2b (landed): wasm codegen** — full implementation spec in §4.2.1.
      wasm leads (its `ptrW==4` gate lifts in isolation; it already has the
      two-word inline pathway). Inline `[data,vtable]`, checker-recorded
      coercion sites, `OpConstVtable` + `OpCallDyn`, vtable data segments.
-   - **2c–2d: native codegen** (x86-64, then arm64) — the from-scratch
-     inline-two-word value pathway (natives have none today) plus a target
-     discriminator threaded into `LowerWith` to lift their gates
-     independently.
+   - **2c (landed): x86-64 codegen** — BOXED one-word representation
+     (§4.2.2). A `dyn Trait` is a single heap pointer to a `{data,
+     vtable}` cell; the vtable is an array of absolute `__method_*`
+     function pointers. Reuses the existing one-word pointer pathway (no
+     native two-word ABI). Adds `OpBoxDyn`, a `LowerWith` target
+     discriminator (`ir.DynSupported()`), and the x86-64 `OpConstVtable`
+     / `OpCallDyn` / `OpBoxDyn` handlers + `.rodata` vtable cells.
+   - **2d (next): arm64 codegen** — the same boxed one-word
+     representation as x86-64 (it is also `ptrW==8`); arm64 just passes
+     `ir.DynSupported()` to lift its gate and gains the mirrored
+     `emit_*` handlers. Until then arm64 keeps rejecting `dyn` with the
+     clean diagnostic.
 3. **Slice 3: self-host parity (x86-64 + arm64 — shipped).** `dyn Trait`
    parses in the self-host and dispatches over its existing shape-pointer
    path; struct/enum concrete types work end-to-end (see §4.3). Remaining:

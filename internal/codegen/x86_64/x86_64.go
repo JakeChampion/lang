@@ -109,8 +109,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// into x86_64's lowering — producing mixed-ABI code.
 	ast.CodegenMu.Lock()
 	defer ast.CodegenMu.Unlock()
-	treeshake.Run(prog)
-	ip, err := ir.LowerWith(prog, info, 8)
+	// `dyn Trait` vtable impl methods are reachable only through the
+	// runtime vtable (OpConstVtable names them by string), never via a
+	// static call the AST walker / IR reachability can see — pin them as
+	// tree-shake roots so they survive (mirrors the wasm build path).
+	// See docs/DYN-TRAITS.md §4.2.2.
+	treeshake.Run(prog, treeshake.DynCoercionImplMethods(info)...)
+	// x86-64 supports boxed one-word `dyn Trait` values
+	// (docs/DYN-TRAITS.md §4.2.2); pass DynSupported so the IR gate
+	// lifts here (arm64, also ptrW==8, omits it and keeps rejecting).
+	ip, err := ir.LowerWith(prog, info, 8, ir.DynSupported())
 	if err != nil {
 		return "", err
 	}
@@ -143,7 +151,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
 	// runtime emitters below know which helpers to include
@@ -170,6 +178,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
 				// Closure env block + (optional) pair both
 				// come from __fern_alloc.
+				g.usesAlloc = true
+			}
+			if op.Kind == ir.OpBoxDyn {
+				// The boxed `dyn Trait` cell is a normal heap object
+				// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
 				g.usesAlloc = true
 			}
 		}
@@ -415,7 +428,7 @@ type generator struct {
 	// &ts)` syscall (#228). Returns
 	// `tv_sec * 1000 + tv_nsec / 1_000_000` in rax as i64.
 	// Backs `time.instant_now()` on x86_64 Linux.
-	usesNowUnixMs       bool
+	usesNowUnixMs bool
 	// usesMonotonicNs pulls in `__fern_monotonic_ns()` — monotonic
 	// nanoseconds via `clock_gettime(CLOCK_MONOTONIC, &ts)` (#228),
 	// returning `tv_sec * 1e9 + tv_nsec` in rax as i64.
@@ -461,6 +474,16 @@ type generator struct {
 	// (top-level fn value, runtime-built closure) through a
 	// uniform pair shape.
 	constFuncCells map[string]bool
+	// vtables holds the per-(trait,concrete) dispatch tables for
+	// `dyn Trait` values (ir.collectVtables). OpConstVtable looks up
+	// the method list here to emit the .rodata vtable cell. See
+	// docs/DYN-TRAITS.md §4.2.2.
+	vtables []ir.VtableDecl
+	// dynVtableCells tracks the (trait, concrete) pairs referenced via
+	// OpConstVtable. Each gets a `.rodata` symbol holding `len(methods)`
+	// 8-byte absolute function pointers (interned per pair). Key is
+	// "<trait>/<concrete>".
+	dynVtableCells map[string]bool
 	// usesArrEmpty gates the `.LArr_Empty` sentinel — a shared
 	// static 4-byte `[length=0]` buffer that __alloc_u8(0)
 	// returns instead of allocating a fresh length-only block.
@@ -1640,6 +1663,71 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emitCallArgsLoad(argc + 1)
 		g.emit("call r11")
 		g.emitCallArgsCleanup(argc + 1)
+		g.push()
+
+	case ir.OpConstVtable:
+		// Materialise the address of the static (trait, concrete)
+		// vtable into rax. The vtable is a `.rodata` array of absolute
+		// `__method_*` function pointers, one per non-associated trait
+		// method in declaration order (docs/DYN-TRAITS.md §4.2.2). On
+		// natives the vtable holds POINTERS, not table indices (the wasm
+		// form): OpCallDyn loads slot k and `call`s it directly.
+		key := op.Str + "/" + op.Str2
+		if g.dynVtableCells == nil {
+			g.dynVtableCells = map[string]bool{}
+		}
+		g.dynVtableCells[key] = true
+		g.emit(fmt.Sprintf("lea rax, [rip + %s]", dynVtableLabel(op.Str, op.Str2)))
+		g.push()
+
+	case ir.OpBoxDyn:
+		// Pack a boxed one-word `dyn Trait` value (docs/DYN-TRAITS.md
+		// §4.2.2). Operand stack on entry: [data, vtable] (vtable on
+		// top). Allocate a 16-byte {data @0, vtable @8} cell via the
+		// normal __fern_alloc path, store both words, and push the cell
+		// pointer. The cell is a plain heap object; precise RC of the
+		// box is out of scope (it leaks — the interp doesn't RC trait
+		// objects either).
+		g.pop()                // rax = vtable (top)
+		g.emit("mov r10, rax") // r10 = vtable
+		g.pop()                // rax = data
+		g.emit("mov r11, rax") // r11 = data
+		g.emit("mov rdi, 16")  // cell size = 2 * ptrW
+		g.emit("call __fern_alloc")
+		g.emit("mov [rax], r11")     // cell[0] = data
+		g.emit("mov [rax + 8], r10") // cell[8] = vtable
+		g.push()
+
+	case ir.OpCallDyn:
+		// Dispatch a `dyn Trait` method call (docs/DYN-TRAITS.md
+		// §4.2.2). Operand stack on entry: [data, args..., vtable]
+		// (vtable on top). Pop the vtable, load slot `op.I32`'s 8-byte
+		// function pointer (`vtable + slot*8`), then do an indirect call
+		// with [data, args...] as the SysV args (receiver-first, plain —
+		// no closure env). op.Sig is the receiver-first method
+		// signature; argc = len(params) (= 1 receiver + method args),
+		// void iff Result == nil.
+		if op.Sig == nil {
+			return fmt.Errorf("x86_64: OpCallDyn missing op.Sig")
+		}
+		argc := len(op.Sig.Params)
+		g.pop()                // rax = vtable (top)
+		g.emit("mov r10, rax") // r10 = vtable base
+		if op.I32 != 0 {
+			g.emit(fmt.Sprintf("mov r11, [r10 + %d]", int(op.I32)*8))
+		} else {
+			g.emit("mov r11, [r10]")
+		}
+		// r11 = fn pointer. Stash it below the args while we load arg
+		// registers (emitCallArgsLoad consumes operand-stack slots, so
+		// r11 — a caller-save scratch the loader doesn't touch — is safe
+		// to hold across it).
+		g.emitCallArgsLoad(argc)
+		g.emit("call r11")
+		g.emitCallArgsCleanup(argc)
+		if op.Sig.Result == nil {
+			break
+		}
 		g.push()
 
 	case ir.OpCallDirect:
@@ -2834,6 +2922,21 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
+// dynVtableLabel returns the GAS symbol for the (trait, concrete)
+// `dyn Trait` vtable cell. Trait / concrete names are Fern identifiers,
+// so the joined symbol is always a valid assembler label.
+func dynVtableLabel(trait, concrete string) string {
+	return "__vtable_" + trait + "_" + concrete
+}
+
+// splitPair undoes the "<trait>/<concrete>" key used by dynVtableCells.
+func splitPair(key string) (string, string) {
+	if i := strings.IndexByte(key, '/'); i >= 0 {
+		return key[:i], key[i+1:]
+	}
+	return key, ""
+}
+
 // emitDataSections writes `.rodata` (interned string
 // literals) and `.bss` (the bump-allocator cursor +
 // heap-end sentinel). All entries are gated on usage so
@@ -2845,6 +2948,40 @@ func (g *generator) emitDataSections() {
 	// 16 bytes: 8 bytes fn_ptr + 8 bytes env=0. OpCallIndirect
 	// derefs these cells to recover (fn, env) just like it does
 	// for heap-allocated OpMakeClosure pairs.
+	// Static `dyn Trait` vtables: one `.rodata` cell per (trait,
+	// concrete) pair referenced via OpConstVtable, holding
+	// `len(methods)` absolute `__method_*` function pointers in trait
+	// declaration order (docs/DYN-TRAITS.md §4.2.2). OpCallDyn loads
+	// slot k (`vtable + k*8`) and calls through it.
+	if len(g.dynVtableCells) > 0 {
+		g.line("")
+		g.line(".section .rodata")
+		keys := make([]string, 0, len(g.dynVtableCells))
+		for k := range g.dynVtableCells {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		byPair := map[string]ir.VtableDecl{}
+		for _, vt := range g.vtables {
+			byPair[vt.Trait+"/"+vt.Concrete] = vt
+		}
+		for _, key := range keys {
+			vt, ok := byPair[key]
+			if !ok {
+				// Should not happen: OpConstVtable only names pairs that
+				// collectVtables produced. Emit an empty (but labelled)
+				// cell so the link doesn't fail with an undefined symbol.
+				g.line(".align 8")
+				g.label(dynVtableLabel(splitPair(key)))
+				continue
+			}
+			g.line(".align 8")
+			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
+			for _, m := range vt.Methods {
+				g.line(fmt.Sprintf("\t.quad %s", m.Func))
+			}
+		}
+	}
 	if len(g.constFuncCells) > 0 {
 		g.line("")
 		g.line(".section .rodata")
@@ -3124,11 +3261,11 @@ func (g *generator) emitAllocRuntime() {
 		g.emit("lea r8, [rcx - 2]") // r8 = e-2 = grid-spacing exponent
 		g.emit("mov r9, 1")
 		g.emit("mov rcx, r8")
-		g.emit("shl r9, cl")        // r9 = gran = 1<<(e-2)
+		g.emit("shl r9, cl") // r9 = gran = 1<<(e-2)
 		g.emit("lea rax, [rdi + r9 - 1]")
 		g.emit("neg r9")
-		g.emit("and rax, r9")       // rax = cap = roundup(size, gran)
-		g.emit("mov rdi, rax")      // rdi = cap = bytes to bump
+		g.emit("and rax, r9")  // rax = cap = roundup(size, gran)
+		g.emit("mov rdi, rax") // rdi = cap = bytes to bump
 		// class = (e2-11)*4 + (mant-4) + 128, where e2 = bsr(cap) (recomputed
 		// so a round-up that carried into a new power of two is binned right)
 		// and mant = cap>>(e2-2) ∈ {4,5,6,7}. Folds to 4*(e2-2) + mant + 88.
@@ -3136,7 +3273,7 @@ func (g *generator) emitAllocRuntime() {
 		g.emit("lea r8, [rcx - 2]") // r8 = e2-2
 		g.emit("mov rdx, rax")
 		g.emit("mov rcx, r8")
-		g.emit("shr rdx, cl")       // rdx = mant = cap>>(e2-2)
+		g.emit("shr rdx, cl")                // rdx = mant = cap>>(e2-2)
 		g.emit("lea rax, [rdx + r8*4 + 88]") // large class index
 		g.label(".Lalloc_fltry")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
@@ -3236,15 +3373,15 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("lea r8, [rcx - 2]")
 		g.emit("mov r9, 1")
 		g.emit("mov rcx, r8")
-		g.emit("shl r9, cl")        // r9 = gran
+		g.emit("shl r9, cl") // r9 = gran
 		g.emit("lea rax, [rsi + r9 - 1]")
 		g.emit("neg r9")
-		g.emit("and rax, r9")       // rax = cap
+		g.emit("and rax, r9") // rax = cap
 		g.emit("bsr rcx, rax")
 		g.emit("lea r8, [rcx - 2]")
 		g.emit("mov rdx, rax")
 		g.emit("mov rcx, r8")
-		g.emit("shr rdx, cl")       // rdx = mant
+		g.emit("shr rdx, cl")                // rdx = mant
 		g.emit("lea rax, [rdx + r8*4 + 88]") // class
 		g.label(".Lfree_push")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
@@ -4581,9 +4718,9 @@ func (g *generator) emitMonotonicNsRuntime() {
 	g.emit("mov rsi, rsp") // &timespec
 	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
 	g.emit("syscall")
-	g.emit("mov rax, [rsp]")                 // rax = tv_sec
-	g.emit("imul rax, rax, 1000000000")      // sec * 1e9
-	g.emit("add rax, [rsp + 8]")             // + tv_nsec
+	g.emit("mov rax, [rsp]")            // rax = tv_sec
+	g.emit("imul rax, rax, 1000000000") // sec * 1e9
+	g.emit("add rax, [rsp + 8]")        // + tv_nsec
 	g.emit("mov rsp, rbp")
 	g.emit("pop rbp")
 	g.emit("ret")
@@ -4639,15 +4776,15 @@ func (g *generator) emitSleepMsRuntime() {
 	g.emit("cmp rdi, 0")
 	g.emit("jle .Lsleep_ms_done")
 	g.emit("mov rax, rdi")
-	g.emit("xor edx, edx")     // clear high for div
+	g.emit("xor edx, edx") // clear high for div
 	g.emit("mov rcx, 1000")
-	g.emit("div rcx")          // rax = ms/1000 (sec), rdx = ms%1000 (rem)
-	g.emit("mov [rsp], rax")   // tv_sec
+	g.emit("div rcx")        // rax = ms/1000 (sec), rdx = ms%1000 (rem)
+	g.emit("mov [rsp], rax") // tv_sec
 	g.emit("mov rax, 1000000")
-	g.emit("imul rax, rdx")    // rem * 1e6 = tv_nsec
+	g.emit("imul rax, rdx") // rem * 1e6 = tv_nsec
 	g.emit("mov [rsp + 8], rax")
-	g.emit("mov rdi, rsp")     // &req
-	g.emit("xor esi, esi")     // rem = NULL
+	g.emit("mov rdi, rsp") // &req
+	g.emit("xor esi, esi") // rem = NULL
 	g.emit(fmt.Sprintf("mov eax, %d", sysNanosleep))
 	g.emit("syscall")
 	g.label(".Lsleep_ms_done")
@@ -5103,8 +5240,8 @@ func (g *generator) emitStringAsBytesRuntime() {
 	g.label("__method_string_as_bytes")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("sub rsp, 32")  // scratch: [rbp-8] inline spill, [rbp-16] len, [rbp-24] data
-	g.emit("push rbx")     // callee-saved scratch (preserve 16-byte alignment via even pushes below)
+	g.emit("sub rsp, 32") // scratch: [rbp-8] inline spill, [rbp-16] len, [rbp-24] data
+	g.emit("push rbx")    // callee-saved scratch (preserve 16-byte alignment via even pushes below)
 	g.emit("push r12")
 	g.emit("mov rbx, rdi") // rbx = string value (inline or heap ptr)
 	id := g.labelCounter
@@ -5112,8 +5249,8 @@ func (g *generator) emitStringAsBytesRuntime() {
 	g.emit("test bl, 1")
 	g.emit(fmt.Sprintf("jnz .Lasbytes_inline_%d", id))
 	// Heap form: data ptr = value, len = [value-4].
-	g.emit("mov r12, rbx")          // data ptr
-	g.emit("mov esi, [rbx - 4]")    // len
+	g.emit("mov r12, rbx")       // data ptr
+	g.emit("mov esi, [rbx - 4]") // len
 	g.emit(fmt.Sprintf("jmp .Lasbytes_make_%d", id))
 	g.label(fmt.Sprintf(".Lasbytes_inline_%d", id))
 	// Inline form: length in bits 1..3, bytes 1..7 of the value.
@@ -6104,7 +6241,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	// back a pointer into it. Treating the raw inline value as an
 	// address (the old `mov r12, rsi`) wrote from a garbage pointer
 	// and trapped EFAULT for every <=7-byte string.
-	g.emitStrLen("r13d", "rsi")                 // len (SSO-aware)
+	g.emitStrLen("r13d", "rsi")                  // len (SSO-aware)
 	g.emitStrDataPtr("r12", "rsi", "[rbp - 40]") // r12 = data byte ptr
 	g.emit("xor r14, r14")
 	g.label(".Lww_loop")

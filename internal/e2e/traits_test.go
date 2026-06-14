@@ -562,12 +562,16 @@ function main(): i32 {
 			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
 		}
 	}
-	// Compiled backend: clean unsupported-feature diagnostic, no crash.
-	gen := exec.Command(bin, "-target", "x86-64", "-o", filepath.Join(dir, "out"), src)
+	// arm64 (still gated — slice 2d): clean unsupported-feature
+	// diagnostic, no crash. (x86-64 now LOWERS `dyn` via the boxed
+	// one-word representation — covered by TestX86_64DynTrait* in
+	// dyn_trait_compiled_test.go — so it must NOT be asserted to reject
+	// here anymore. docs/DYN-TRAITS.md §4.2.2/§7.)
+	gen := exec.Command(bin, "-target", "arm64", "-o", filepath.Join(dir, "out"), src)
 	var gerr bytes.Buffer
 	gen.Stderr = &gerr
 	if err := gen.Run(); err == nil {
-		t.Errorf("compiling dyn Trait to x86-64 should fail with a clean error, but it succeeded")
+		t.Errorf("compiling dyn Trait to arm64 should fail with a clean error, but it succeeded")
 	}
 	if !strings.Contains(gerr.String(), "dyn Trait is not yet supported on compiled backends") {
 		t.Errorf("compiled-backend diagnostic missing; got: %s", gerr.String())
