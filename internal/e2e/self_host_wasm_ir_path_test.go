@@ -469,6 +469,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"ifexpr-optarr-index", `function main(): i32 { var c = 5; var a = if (c > 3) { [Some(7), None] } else { [Some(1)] }; return match (a[0]) { Some(v) => v, None => 0 }; }`},
 		{"ifexpr-optarr-foreach", `function main(): i32 { var c = 5; var a = if (c > 3) { [Some(7), None, Some(3)] } else { [Some(1)] }; var s = 0; for o in a { match (o) { Some(v) => { s = s + v; }, None => {} } } return s; }`},
 		{"matchexpr-optarr-index", `function main(): i32 { var k = 1; var a = match (k) { 1 => [Some(9)], _ => [Some(0)] }; return match (a[0]) { Some(v) => v, None => 0 }; }`},
+		// A binding from a NESTED if-/match-expression (a branch is itself an
+		// if-expression): iife_leaf_value unwraps the nested IIFE chain so the StmtVar
+		// type inference sees the leaf struct/Some/array literal (#3156).
+		{"nested-ifexpr-opt", `function main(): i32 { var c = 5; var o = if (c > 3) { if (c > 10) { Some(1) } else { Some(7) } } else { None }; return match (o) { Some(v) => v, None => 0 }; }`},
+		{"nested-ifexpr-struct", `struct P { x: i32 } function main(): i32 { var c = 5; var p = if (c > 3) { if (c > 10) { P { x: 1 } } else { P { x: 7 } } } else { P { x: 0 } }; return p.x; }`},
+		{"nested-ifexpr-arr", `function main(): i32 { var c = 5; var a = if (c > 3) { if (c > 10) { [1] } else { [7, 8] } } else { [0] }; var s = 0; for x in a { s = s + x; } return s; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},

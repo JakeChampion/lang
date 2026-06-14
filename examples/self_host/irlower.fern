@@ -4022,8 +4022,35 @@ function iife_first_return_expr(st: parser.Stmt): parser.Expr {
     return parser.e_unknown("");
 }
 
-// iife_any_return_i64 reports whether ANY `return` in an if/match-expression
-// IIFE body yields an i64-width value — an i64-typed expr (infer_expr_width 64)
+// iife_leaf_value unwraps a (possibly nested) if-/match-expression IIFE
+// (`ExprCall{callee: ExprLambda}`) to the innermost first-branch returned value
+// — e.g. a NESTED if-expression `if (a) { if (b) { P{..} } else { .. } } else
+// { .. }` resolves to the `P{..}` literal. Returns `e` unchanged when it isn't an
+// IIFE. Lets the StmtVar value-type inference (opt / struct / array) see through a
+// nested IIFE binding to the leaf struct/Some/array literal. Bounded to avoid a
+// pathological loop.
+function iife_leaf_value(e: parser.Expr): parser.Expr {
+    var cur: parser.Expr = e;
+    var guard: i32 = 0;
+    while (guard < 64) {
+        var stop: boolean = true;
+        match (cur) {
+            parser.ExprCall(c) => {
+                match (c.callee) {
+                    parser.ExprLambda(lam) => {
+                        if (lam.body.len() > 0) { cur = iife_first_return_expr(lam.body[0]); stop = false; }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        if (stop) { return cur; }
+        guard = guard + 1;
+    }
+    return cur;
+}
+
 // or an i64-sized integer literal. Unlike f64 / string (where the first branch
 // classifies the whole expression), an i64 if-expression can mix an i64-sized
 // branch with a small-literal branch (`{ 5000000000 } else { 1 }`), so every
@@ -4635,7 +4662,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         // track is_arr; `for x in a` / `a.len()` then resolve.
                         parser.ExprLambda(clam) => {
                             if (clam.body.len() > 0) {
-                                match (iife_first_return_expr(clam.body[0])) {
+                                match (iife_leaf_value(v.init)) {
                                     parser.ExprArray(_) => { is_arr = true; },
                                     _ => {}
                                 }
@@ -4772,7 +4799,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         match (ic.callee) {
                             parser.ExprLambda(ilam) => {
                                 if (ilam.body.len() > 0) {
-                                    var bre: parser.Expr = iife_first_return_expr(ilam.body[0]);
+                                    var bre: parser.Expr = iife_leaf_value(v.init);
                                     var bst: string = expr_struct_type(bre, se);
                                     if (bst != "" && decl_is_struct(se.structs, bst)) { struct_ty = bst; }
                                     else {
@@ -4866,7 +4893,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         // some_opt_type, so a later `match (o)` lowers (lower_iife
                         // already lowers the Option-valued if-expression itself).
                         parser.ExprLambda(ilam) => {
-                            if (ilam.body.len() > 0) { opt_ty = some_opt_type(iife_first_return_expr(ilam.body[0]), se); }
+                            if (ilam.body.len() > 0) { opt_ty = some_opt_type(iife_leaf_value(v.init), se); }
                         },
                         _ => {}
                     }
@@ -4923,7 +4950,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         match (oic.callee) {
                             parser.ExprLambda(oilam) => {
                                 if (oilam.body.len() > 0) {
-                                    match (iife_first_return_expr(oilam.body[0])) {
+                                    match (iife_leaf_value(v.init)) {
                                         parser.ExprArray(obra) => {
                                             var obi: i32 = 0;
                                             while (obi < obra.elements.len()) {
