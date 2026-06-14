@@ -971,6 +971,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"lines-just-nl", `function main(): i32 { return "\n".lines().len() + 5; }`},
 		{"lines-elem", `function main(): i32 { var ls = "ab\ncd".lines(); return ls[1].len() * 10 + ls[1][0]; }`},
 		{"lines-forin", `function main(): i32 { var n = 0; for ln in "a\nbb\nccc".lines() { n = n + ln.len(); } return n; }`},
+		// `for x in <u64[]>`: the element rides the i64 8-byte read but is bound
+		// u64, so body compares/shifts on it are unsigned. The IR path now lowers
+		// this (previously bailed to AST); both paths must agree, and the large
+		// element (> 2^63) makes a signed-vs-unsigned miscompile observable — a
+		// signed `>` would mis-order it, picking the wrong max.
+		{"u64-forin-sum", "function main(): i32 { var xs: u64[] = [10u64, 20u64, 5u64]; var s: u64 = 0u64; for x in xs { s = s + x; } return s as i32; }"},
+		{"u64-forin-max-big", "function main(): i32 { var xs: u64[] = [5u64, 9223372036854775809u64, 7u64]; var best: u64 = 0u64; for x in xs { if (x > best) { best = x; } } if (best == 9223372036854775809u64) { return 0; } return 1; }"},
 	}
 
 	for _, tc := range cases {

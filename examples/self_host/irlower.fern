@@ -5811,6 +5811,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // of x route through lower_i64 and x declares as a wasm (local i64).
             var elem_is_i64: boolean = s.is_i64arr_slot(aslot);
             var elem_is_f64: boolean = s.is_f64arr_slot(aslot);
+            // `for x in <u64[]>`: u64 rides the i64 64-bit domain (#2904), so the
+            // element is read 8-byte (arr_get_i64, identical bytes to i64) but
+            // the binding is marked u64 — mark_u64 makes is_i64_slot(x) true (so
+            // x is i64-wide) AND is_u64_slot(x) true (so the body's compares /
+            // shifts on x select the UNSIGNED ops; a signed compare would
+            // mis-order a value >= 2^63, e.g. in max_u64). The slot passed the
+            // is_arr_slot guard above, so is_u64_slot here means u64[], not a
+            // scalar u64.
+            var elem_is_u64: boolean = s.is_u64_slot(aslot);
             var elem_w: i32 = 32;
             if (elem_is_f64) { elem_w = 64; }
             // Fresh hidden index local + the user-visible element binding.
@@ -5824,6 +5833,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             if (elem_is_str) { ff = ff.mark_str(xslot, true); }
             if (elem_is_f64) { ff = ff.mark_f64(xslot, true); }
             if (elem_is_i64) { ff = ff.mark_i64(xslot, true); }
+            if (elem_is_u64) { ff = ff.mark_u64(xslot, true); }
             // `for f in <closure[]>`: each element is a closure box, so bind the
             // loop var as a closure local (its call unpacks the env box rather
             // than calling the raw pointer as a table index).
@@ -5867,7 +5877,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // x = arr[idx]  (8-byte i64 / f64 element, or 4-byte i32 / string[])
             ff = ff.emit(ir.op_load_local(aslot));
             ff = ff.emit(ir.op_load_local(idxslot));
-            if (elem_is_i64) { ff = ff.emit(ir.op_arr_get_i64()); }
+            if (elem_is_i64 || elem_is_u64) { ff = ff.emit(ir.op_arr_get_i64()); }
             else { ff = ff.emit(ir.op_arr_get(elem_w)); }
             ff = ff.emit(ir.op_store_local(xslot));
             ff = lower_block(fr.body, ff);
