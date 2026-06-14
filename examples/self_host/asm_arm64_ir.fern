@@ -677,6 +677,38 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    str x19, [x0, #8]\n");                  // value @8
             s = s.write("    ldr x19, [sp], #16\n");                 // restore x19
             s = s.write("    str x0, [sp, #-16]!\n");                // push cell ptr
+        } else if (o.kind == "dyn_downcast") {
+            // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
+            // pointer carrying its concrete shape @0) is on top of the operand
+            // stack. Read its shape and compare to T's interned shape (the SAME
+            // .S label struct_make / dyn_dispatch use, so pointer identity
+            // holds): equal → Some(value) box [tag0@0, payload@8]; else → None
+            // box [tag1@0, 0@8] — the ordinary Option box `match` reads. The dyn
+            // value rides the operand stack (which __fern_alloc preserves)
+            // across the alloc, so the hit path reloads it as the Some payload.
+            s = s.mark_heap();
+            var dcl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = dcl.state;
+            var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
+            var dcend: string = lp + "dcend" + util.i32_to_string(i);
+            s = s.write("    ldr x0, [sp]\n");                       // peek dyn ptr (left on stack)
+            s = s.write("    ldr x1, [x0]\n");                       // shape @0
+            s = s.write("    adrp x2, .S" + util.i32_to_string(dcl.idx) + "\n");
+            s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(dcl.idx) + "\n");
+            s = s.write("    cmp x1, x2\n    b.ne " + dcmiss + "\n");
+            // hit: Some(value) — alloc, tag 0, reload+store the dyn ptr payload.
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    mov x1, #0\n    str x1, [x0]\n");
+            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    b " + dcend + "\n");
+            // miss: None — discard the dyn ptr, build a payloadless tag-1 box.
+            s = s.write(dcmiss + ":\n");
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write(dcend + ":\n");
         } else if (o.kind == "const_func") {
             // A function VALUE is the function's code address (adrp/add of its
             // label) — push it. No funcref table (the address is the value);

@@ -530,6 +530,19 @@ pub function op_dyn_dispatch(method: string, base_slot: i32, argc: i32): Op {
 pub function op_dyn_box(type_name: string): Op {
     return Op { kind: "dyn_box", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
+// op_dyn_downcast is the `e as? T` fallible downcast (docs/DYN-TRAITS.md §9).
+// The `dyn Trait` value (a heap pointer carrying its concrete shape at offset 0)
+// is on top of the operand stack. The op reads that offset-0 shape and compares
+// it to T's interned shape (the SAME `.S<idx>` label / numeric type-id the
+// op_dyn_dispatch arms and struct_make use, so pointer/id identity holds) — on
+// an exact match it builds `Some(value)` (the value IS the concrete `T`
+// pointer), else `None`, leaving an ordinary Option box (tag@0, payload@) a
+// downstream `match` reads with the same opt_tag/opt_payload it reads any
+// Option with. `str` is the target concrete type name T. No new shape metadata:
+// the downcast is a single shape read + compare, mirroring the dispatch chain.
+pub function op_dyn_downcast(target: string): Op {
+    return Op { kind: "dyn_downcast", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: target };
+}
 pub function op_call_indirect(argc: i32): Op {
     return Op { kind: "call_indirect", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
