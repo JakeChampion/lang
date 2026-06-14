@@ -238,7 +238,18 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 			f.b.WriteString(", ")
 		}
 		f.b.WriteString(v.Name)
-		if len(v.Payloads) > 0 {
+		if len(v.FieldNames) > 0 {
+			f.b.WriteString(" { ")
+			for j, fn := range v.FieldNames {
+				if j > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString(fn)
+				f.b.WriteString(": ")
+				f.b.WriteString(formatType(v.Payloads[j]))
+			}
+			f.b.WriteString(" }")
+		} else if len(v.Payloads) > 0 {
 			f.b.WriteByte('(')
 			for j, p := range v.Payloads {
 				if j > 0 {
@@ -607,7 +618,16 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 					f.b.WriteByte('.')
 				}
 				f.b.WriteString(arm.VariantName)
-				if len(arm.Bindings) > 0 {
+				if arm.NamedFields {
+					f.b.WriteString(" { ")
+					for j, b := range arm.Bindings {
+						if j > 0 {
+							f.b.WriteString(", ")
+						}
+						f.b.WriteString(b)
+					}
+					f.b.WriteString(" }")
+				} else if len(arm.Bindings) > 0 {
 					f.b.WriteByte('(')
 					for j, b := range arm.Bindings {
 						if j > 0 {
@@ -1003,7 +1023,16 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 					f.b.WriteByte('.')
 				}
 				f.b.WriteString(arm.VariantName)
-				if len(arm.Bindings) > 0 {
+				if arm.NamedFields {
+					f.b.WriteString(" { ")
+					for j, bind := range arm.Bindings {
+						if j > 0 {
+							f.b.WriteString(", ")
+						}
+						f.b.WriteString(bind)
+					}
+					f.b.WriteString(" }")
+				} else if len(arm.Bindings) > 0 {
 					f.b.WriteByte('(')
 					for j, bind := range arm.Bindings {
 						if j > 0 {

@@ -1444,6 +1444,54 @@ func TestMethodCallOnUnknownMethodErrors(t *testing.T) {
 }
 
 // Variant constructors type-check argument count + payload types.
+// A named-field variant can be matched with `Rect { w, h }` (any field
+// order), binding each field by name; the checker validates the names and
+// reorders to declaration order. See docs/NAMED-FIELD-VARIANTS.md.
+func TestNamedFieldVariantMatch(t *testing.T) {
+	good := `enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 } }
+function area(s: Shape): i32 {
+    match (s) {
+        Circle { r } => { return r * r; },
+        Rect { h, w } => { return w * h; },
+    }
+    return 0;
+}
+function main(): i32 { return area(Rect(3, 4)); }`
+	if err := checkSource(t, good); err != nil {
+		t.Errorf("named-field match should type-check: %v", err)
+	}
+}
+
+func TestNamedFieldVariantMatchErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// unknown field in pattern
+		{`enum E { V { a: i32 } }
+function f(e: E): i32 { match (e) { V { b } => { return b; }, } return 0; }
+function main(): i32 { return 0; }`, "has no field"},
+		// missing a field
+		{`enum E { V { a: i32, b: i32 } }
+function f(e: E): i32 { match (e) { V { a } => { return a; }, } return 0; }
+function main(): i32 { return 0; }`, "must bind all"},
+		// named pattern on a positional variant
+		{`enum E { V(i32) }
+function f(e: E): i32 { match (e) { V { a } => { return a; }, } return 0; }
+function main(): i32 { return 0; }`, "positional payloads"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 	good := `enum E { Pair(i32, i32) }
 		function main(): i32 {

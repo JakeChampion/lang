@@ -1791,10 +1791,17 @@ type MatchArm struct {
 	VariantModule string
 	Bindings      []string // payload binding names, in payload order
 	BindingTypes  []Type   // resolved by the checker; same length as Bindings
-	IsWildcard    bool     // `_ => …`
-	Literal       Expr     // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
-	Guard         Expr     // optional `when <expr>`; nil for unconditional arms
-	Body          *Block
+	// NamedFields marks a named-field pattern (`Rect { w, h }`): each
+	// Bindings entry is a field name (the bound local takes that name).
+	// The checker validates the names against the variant's FieldNames
+	// and reorders Bindings + BindingTypes into declaration order, so
+	// every later stage treats them positionally like a `Rect(w, h)`
+	// pattern. False for the positional form.
+	NamedFields bool
+	IsWildcard  bool // `_ => …`
+	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
+	Guard       Expr // optional `when <expr>`; nil for unconditional arms
+	Body        *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -1825,6 +1832,7 @@ type MatchExprArm struct {
 	VariantModule string // optional `mod.` qualifier — same semantics as MatchArm.VariantModule
 	Bindings      []string
 	BindingTypes  []Type
+	NamedFields   bool // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
 	Guard         Expr
@@ -2123,15 +2131,23 @@ type EnumDecl struct {
 	SourceModule string
 }
 
-// EnumVariant is one constructor in an EnumDecl. Payloads are
-// positional; we don't yet have named-field variants. An empty
-// Payloads slice means the variant is constructed by bare name
-// (`Red`); a non-empty one means it's called like a function
-// (`Square(2.0, 3.0)`).
+// EnumVariant is one constructor in an EnumDecl. An empty Payloads
+// slice means the variant is constructed by bare name (`Red`).
+//
+// A variant is either POSITIONAL — `Square(f64, f64)`, constructed
+// `Square(2.0, 3.0)` and matched `Square(w, h)` — or NAMED-FIELD —
+// `Rect { w: f64, h: f64 }`, constructed `Rect { w: 2.0, h: 3.0 }` and
+// matched `Rect { w, h }`. FieldNames is empty for the positional form
+// and, for the named form, parallel to Payloads (FieldNames[i] is the
+// name of the field whose type is Payloads[i]). The runtime layout is
+// identical either way — payloads are laid out in declaration order — so
+// names are purely a parse/check concern; the checker reorders named
+// match bindings + constructor args into declaration order before codegen.
 type EnumVariant struct {
-	P        Position
-	Name     string
-	Payloads []Type
+	P          Position
+	Name       string
+	Payloads   []Type
+	FieldNames []string
 }
 
 // ResourceDecl is a top-level `resource Name;` — a nominal WIT resource-handle
