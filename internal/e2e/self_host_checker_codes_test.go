@@ -247,6 +247,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-on-i32", "function main(): i32 { var x: i32 = 3; x.foo(); return 0; }\n", []string{"E043"}},
 		{"method-on-f64", "function main(): i32 { var f: f64 = 1.0; f.foo(); return 0; }\n", []string{"E043"}},
 		{"method-on-string-ok", "function main(): i32 { var s: string = \"a\"; return s.len(); }\n", nil},
+		{"method-on-i32-user-method-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { var x: i32 = 21; return x.twice(); }\n", nil},
 		{"call-too-few-args", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1); }\n", []string{"E004"}},
 		{"call-too-many-args", "function id(a: i32): i32 { return a; }\nfunction main(): i32 { return id(1, 2); }\n", []string{"E004"}},
 		{"call-correct-arity-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
