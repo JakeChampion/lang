@@ -6123,6 +6123,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                                         else {
                                                             var men: string = expr_enum_type(scfa.obj, ms);
                                                             if (men != "") { srt = ms.opt_ret_type(men + "." + scfa.field); }
+                                                            // A string-receiver method returning
+                                                            // Option/Result (`match (s.parse_int())`)
+                                                            // — key "string.<method>" (string methods
+                                                            // register under base_type "string").
+                                                            else if (expr_is_str(scfa.obj, ms)) {
+                                                                srt = ms.opt_ret_type("string." + scfa.field);
+                                                            }
                                                         }
                                                     }
                                                 }
