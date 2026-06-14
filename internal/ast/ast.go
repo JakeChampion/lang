@@ -339,42 +339,14 @@ func SubstSelf(t Type, self Type) Type {
 	}
 }
 
-// CloneFuncDecl deep-copies a FuncDecl: the Body is structure-cloned
-// (via CloneBlock) and the slice fields are copied so a caller can
-// mutate the clone — rename it, prepend a receiver, substitute types in
-// the body — without disturbing the original. Used by the checker to
-// materialise a trait's default method once per implementing type (see
-// docs/TRAITS.md) and available to any pass that needs an isolated copy
-// of a function. (monomorph keeps its own cloneFuncDecl, which also nils
-// TypeParams; it delegates the body clone here.)
-func CloneFuncDecl(fn *FuncDecl) *FuncDecl {
-	if fn == nil {
-		return nil
-	}
-	c := *fn
-	c.TypeParams = append([]string(nil), fn.TypeParams...)
-	c.Params = append([]Param(nil), fn.Params...)
-	c.Captures = append([]Param(nil), fn.Captures...)
-	if fn.Receiver != nil {
-		r := *fn.Receiver
-		c.Receiver = &r
-	}
-	if fn.Bounds != nil {
-		b := make(map[string][]string, len(fn.Bounds))
-		for k, v := range fn.Bounds {
-			b[k] = append([]string(nil), v...)
-		}
-		c.Bounds = b
-	}
-	c.Body = CloneBlock(fn.Body)
-	return &c
-}
-
 // CloneBlock / CloneStmt / CloneExpr deep-copy a statement tree so an
 // in-place rewrite of the copy (type substitution, dispatch resolution,
 // numeric-literal settling) never leaks into the original. Leaf
 // expressions are still pointer-copied so a caller can swap fields
-// without aliasing the source node.
+// without aliasing the source node. The checker uses CloneBlock to
+// materialise a trait's default method body once per implementing type
+// (see docs/TRAITS.md); monomorph uses all three to instantiate a
+// generic function's body per type-argument set.
 func CloneBlock(b *Block) *Block {
 	if b == nil {
 		return nil

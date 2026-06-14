@@ -827,13 +827,6 @@ func cloneFuncDecl(fn *ast.FuncDecl) *ast.FuncDecl {
 	return &c
 }
 
-// cloneBlock / cloneStmt / cloneExpr delegate to the shared deep-clone
-// in package ast (their original home). They stay as thin wrappers so
-// the substitute* call sites in this file read unchanged.
-func cloneBlock(b *ast.Block) *ast.Block { return ast.CloneBlock(b) }
-func cloneStmt(s ast.Stmt) ast.Stmt      { return ast.CloneStmt(s) }
-func cloneExpr(e ast.Expr) ast.Expr      { return ast.CloneExpr(e) }
-
 // walkBlockStructLits is the StructLit analogue of walkBlock —
 // invokes fn on every StructLit reachable from the body so the
 // monomorpher can rewrite generic instantiations regardless of
