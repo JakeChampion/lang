@@ -7250,6 +7250,24 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             }
             return LiftExpr { expr: parser.ExprArray { elements: nelems }, acc: aa };
         },
+        // A struct literal with a NO-CAPTURE lambda FIELD value (`Box { f:
+        // function(x){...} }`): hoist each lambda field to a top-level `__lam_N`,
+        // so the field holds a bare function-name ident (a function-pointer
+        // value) -- the same shape a named-function field (`Box { f: dbl }`)
+        // already lowers, so `b.f(args)` rides the existing fn-value-field call
+        // path. A capturing lambda field keeps the module on the AST path.
+        parser.ExprStructLit(sl) => {
+            var sa: LiftAcc = acc;
+            var nvals: parser.Expr[] = [];
+            var fvi: i32 = 0;
+            while (fvi < sl.field_values.len()) {
+                var fr: LiftExpr = lift_call_arg(sl.field_values[fvi], sa, gfns);
+                sa = fr.acc;
+                nvals = nvals.append(fr.expr);
+                fvi = fvi + 1;
+            }
+            return LiftExpr { expr: parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: sl.base, line: sl.line, col: sl.col }, acc: sa };
+        },
         _ => { return LiftExpr { expr: e, acc: acc }; }
     }
     return LiftExpr { expr: e, acc: acc };
