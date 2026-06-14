@@ -223,7 +223,7 @@ per-function bugs in the audit log.
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | | | | | | ⬜ | |
 | `std/stream` | | | | | | ⬜ | |
-| `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow); only the Zoned / TimeZone-IANA operations remain self-host-unconfirmed |
+| `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | | | | | | ⬜ | |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
@@ -246,6 +246,23 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-14 — std/time Zoned / TimeZone surface via the self-host IR path (x86-64 + wasm) — std/time row now fully ✅
+
+Closed the last std/time "self-host pending" piece. `TestSelfHostTimeZonedIR`
+runs fixed-offset zone construction, `in_zone`, `to_datetime` (wall-clock
+split), and an IANA-style `Option[TimeZone]` lookup through the x86-64 and wasm
+IR drivers, **oracle-checked against the interpreter** and pinned to the `"ir"`
+path. New ground: **nested structs** — a struct field that is itself a struct
+(`Zoned { instant: Instant, zone: TimeZone }`, `DateTime { date: Date, time:
+Time }`), built and read through two levels (`z.instant.sec`, `dt.time.hour`,
+`dt.date.day`), including a positive/negative offset wall-clock shift and
+`timezone_iana` composed into `in_zone` → `to_datetime`. Verified empirically to
+route `"ir"` with the emitted code matching the interpreter on both backends —
+coverage-only, no compiler change. Structs renamed
+`Civil`/`Moment`/`Clock`/`Zd`/`Tz`/`DT` (the built-ins are reserved, E010). With
+this the **std/time row is fully ✅ on self-host** (all of pure-i32 helpers,
+Date methods, `Option` parse, RFC-3339 i64, Span/Duration, and Zoned/TimeZone).
 
 ### 2026-06-13 — std/time calendar/absolute arithmetic (`add_span` / `add_duration` / `duration_since` / `days_until`) via the self-host IR path (x86-64 + wasm)
 
