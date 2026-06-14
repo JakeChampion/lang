@@ -338,6 +338,256 @@ func SubstSelf(t Type, self Type) Type {
 		return t
 	}
 }
+
+// CloneFuncDecl deep-copies a FuncDecl: the Body is structure-cloned
+// (via CloneBlock) and the slice fields are copied so a caller can
+// mutate the clone — rename it, prepend a receiver, substitute types in
+// the body — without disturbing the original. Used by the checker to
+// materialise a trait's default method once per implementing type (see
+// docs/TRAITS.md) and available to any pass that needs an isolated copy
+// of a function. (monomorph keeps its own cloneFuncDecl, which also nils
+// TypeParams; it delegates the body clone here.)
+func CloneFuncDecl(fn *FuncDecl) *FuncDecl {
+	if fn == nil {
+		return nil
+	}
+	c := *fn
+	c.TypeParams = append([]string(nil), fn.TypeParams...)
+	c.Params = append([]Param(nil), fn.Params...)
+	c.Captures = append([]Param(nil), fn.Captures...)
+	if fn.Receiver != nil {
+		r := *fn.Receiver
+		c.Receiver = &r
+	}
+	if fn.Bounds != nil {
+		b := make(map[string][]string, len(fn.Bounds))
+		for k, v := range fn.Bounds {
+			b[k] = append([]string(nil), v...)
+		}
+		c.Bounds = b
+	}
+	c.Body = CloneBlock(fn.Body)
+	return &c
+}
+
+// CloneBlock / CloneStmt / CloneExpr deep-copy a statement tree so an
+// in-place rewrite of the copy (type substitution, dispatch resolution,
+// numeric-literal settling) never leaks into the original. Leaf
+// expressions are still pointer-copied so a caller can swap fields
+// without aliasing the source node.
+func CloneBlock(b *Block) *Block {
+	if b == nil {
+		return nil
+	}
+	out := &Block{P: b.P, Stmts: make([]Stmt, len(b.Stmts))}
+	for i, s := range b.Stmts {
+		out.Stmts[i] = CloneStmt(s)
+	}
+	return out
+}
+
+func CloneStmt(s Stmt) Stmt {
+	switch x := s.(type) {
+	case *Var:
+		c := *x
+		c.Init = CloneExpr(x.Init)
+		return &c
+	case *Destructure:
+		c := *x
+		c.Names = append([]string(nil), x.Names...)
+		c.Init = CloneExpr(x.Init)
+		return &c
+	case *ExprStmt:
+		c := *x
+		c.Expr = CloneExpr(x.Expr)
+		return &c
+	case *Return:
+		c := *x
+		c.Value = CloneExpr(x.Value)
+		return &c
+	case *Block:
+		return CloneBlock(x)
+	case *If:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		c.Then = CloneStmt(x.Then).(*Block)
+		if x.Else != nil {
+			c.Else = CloneStmt(x.Else)
+		}
+		return &c
+	case *IfLet:
+		c := *x
+		c.Source = CloneExpr(x.Source)
+		c.Bindings = append([]string(nil), x.Bindings...)
+		c.BindingTypes = append([]Type(nil), x.BindingTypes...)
+		c.Then = CloneStmt(x.Then)
+		if x.Else != nil {
+			c.Else = CloneStmt(x.Else)
+		}
+		return &c
+	case *LetElse:
+		c := *x
+		c.Source = CloneExpr(x.Source)
+		c.Bindings = append([]string(nil), x.Bindings...)
+		c.BindingTypes = append([]Type(nil), x.BindingTypes...)
+		c.Else = CloneBlock(x.Else)
+		return &c
+	case *While:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *For:
+		c := *x
+		if x.Init != nil {
+			c.Init = CloneStmt(x.Init)
+		}
+		c.Cond = CloneExpr(x.Cond)
+		if x.Step != nil {
+			c.Step = CloneStmt(x.Step)
+		}
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *Match:
+		c := *x
+		c.Tag = CloneExpr(x.Tag)
+		c.Arms = make([]*MatchArm, len(x.Arms))
+		for i, arm := range x.Arms {
+			ac := *arm
+			ac.Guard = CloneExpr(arm.Guard)
+			ac.Body = CloneBlock(arm.Body)
+			c.Arms[i] = &ac
+		}
+		return &c
+	}
+	return s
+}
+
+func CloneExpr(e Expr) Expr {
+	if e == nil {
+		return nil
+	}
+	switch x := e.(type) {
+	case *Ident:
+		c := *x
+		return &c
+	case *NumberLit:
+		c := *x
+		return &c
+	case *FloatLit:
+		c := *x
+		return &c
+	case *BoolLit:
+		c := *x
+		return &c
+	case *StringLit:
+		c := *x
+		return &c
+	case *Binary:
+		c := *x
+		c.Left = CloneExpr(x.Left)
+		c.Right = CloneExpr(x.Right)
+		return &c
+	case *Unary:
+		c := *x
+		c.Operand = CloneExpr(x.Operand)
+		return &c
+	case *Call:
+		c := *x
+		c.Callee = CloneExpr(x.Callee)
+		c.Args = make([]Expr, len(x.Args))
+		for i, a := range x.Args {
+			c.Args[i] = CloneExpr(a)
+		}
+		c.TypeArgs = append([]Type(nil), x.TypeArgs...)
+		return &c
+	case *Index:
+		c := *x
+		c.Array = CloneExpr(x.Array)
+		c.Idx = CloneExpr(x.Idx)
+		return &c
+	case *SliceExpr:
+		c := *x
+		c.Source = CloneExpr(x.Source)
+		c.Low = CloneExpr(x.Low)
+		c.High = CloneExpr(x.High)
+		return &c
+	case *FieldAccess:
+		c := *x
+		c.Target = CloneExpr(x.Target)
+		return &c
+	case *TryOp:
+		c := *x
+		c.Inner = CloneExpr(x.Inner)
+		return &c
+	case *IfExpr:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		c.Then = CloneExpr(x.Then)
+		c.Else = CloneExpr(x.Else)
+		return &c
+	case *MatchExpr:
+		c := *x
+		c.Tag = CloneExpr(x.Tag)
+		c.Arms = make([]*MatchExprArm, len(x.Arms))
+		for i, arm := range x.Arms {
+			a := *arm
+			if arm.Guard != nil {
+				a.Guard = CloneExpr(arm.Guard)
+			}
+			a.Body = CloneExpr(arm.Body)
+			c.Arms[i] = &a
+		}
+		return &c
+	case *ArrayLit:
+		c := *x
+		c.Elems = make([]Expr, len(x.Elems))
+		for i, el := range x.Elems {
+			c.Elems[i] = CloneExpr(el)
+		}
+		return &c
+	case *TupleLit:
+		c := *x
+		c.Elems = make([]Expr, len(x.Elems))
+		for i, el := range x.Elems {
+			c.Elems[i] = CloneExpr(el)
+		}
+		return &c
+	case *Lambda:
+		c := *x
+		c.Params = append([]Param(nil), x.Params...)
+		c.Captures = append([]Param(nil), x.Captures...)
+		c.Body = CloneBlock(x.Body)
+		return &c
+	case *StructLit:
+		c := *x
+		c.Fields = make([]FieldInit, len(x.Fields))
+		for i, f := range x.Fields {
+			c.Fields[i] = FieldInit{Name: f.Name, Value: CloneExpr(f.Value)}
+		}
+		c.TypeArgs = append([]Type(nil), x.TypeArgs...)
+		return &c
+	case *CastExpr:
+		c := *x
+		c.Inner = CloneExpr(x.Inner)
+		return &c
+	case *Assign:
+		c := *x
+		c.Target = CloneExpr(x.Target)
+		c.Value = CloneExpr(x.Value)
+		return &c
+	}
+	return e
+}
+
 func (f *FuncType) String() string {
 	out := "("
 	for i, p := range f.Params {
@@ -1986,6 +2236,13 @@ type TraitMethod struct {
 	Params []Param
 	Result Type
 	Assoc  bool
+	// Body, when non-nil, is a default implementation: the trait method
+	// was written `function f(self: Self): T { … }` rather than ending
+	// at a `;`. An `impl` that omits a defaulted method inherits a copy
+	// of this body (with `Self` substituted to the impl type) — see the
+	// checker's synthesizeTraitDefaults and docs/TRAITS.md. nil = an
+	// abstract signature every impl must provide.
+	Body *Block
 }
 
 // ImplDecl is a top-level `impl Trait for Type { <function>… }`. The
@@ -2010,6 +2267,12 @@ type ImplDecl struct {
 	// signature comparison lines up with the (generic) hoisted
 	// methods. See docs/TRAITS.md.
 	TypeParams []string
+	// Bounds maps each impl type parameter to its trait bounds (from
+	// `impl[T: Bound] …`). The parser passes these straight onto each
+	// desugared method, so ImplDecl only needs them for methods the
+	// checker synthesises later — a trait's default method inherited by
+	// a parametric impl (synthesizeTraitDefaults). Nil for a plain impl.
+	Bounds map[string][]string
 	// SourceModule is the module that wrote the impl — used by the
 	// orphan-rule check (the impl is legal only if Trait or Type is
 	// declared in this same module). Empty for single-file programs.

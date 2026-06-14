@@ -1789,6 +1789,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// before the receiver-hoist and conformance passes pick them up.
 	c.synthesizeDerives(prog)
 
+	// A trait method written with a `{ … }` body is a default: any impl
+	// that omits it inherits a copy (with `Self` substituted to the impl
+	// type). Synthesise those receiver-method FuncDecls now — after
+	// derives, before the receiver-hoist — so they flow through the
+	// existing hoist + conformance + dispatch paths unchanged. See
+	// docs/TRAITS.md.
+	c.synthesizeTraitDefaults(prog)
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver
@@ -2753,6 +2761,84 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			})
 		}
 	}
+}
+
+// synthesizeTraitDefaults materialises a trait's default methods for
+// every impl that omits them. A trait method written with a `{ … }`
+// body is a default: an impl that doesn't provide its own copy inherits
+// one here. We deep-clone the default body (so each impl gets an
+// isolated copy the checker can rewrite in place), substitute `Self` to
+// the impl type across the signature, build a receiver-method (or
+// associated-function) FuncDecl, append it to prog.Funcs, and record it
+// in impl.MethodNames so the conformance pass sees the method as
+// present. Idempotent across the monomorph re-check: the synthesised
+// FuncDecl is a plain method (no trait default attached) and
+// MethodNames already lists it, so a second pass adds nothing. See
+// docs/TRAITS.md.
+func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
+	for _, impl := range prog.Impls {
+		td, ok := c.info.Traits[impl.Trait]
+		if !ok {
+			continue // unknown trait — the conformance pass reports it
+		}
+		provided := map[string]bool{}
+		for _, mn := range impl.MethodNames {
+			provided[mn] = true
+		}
+		for _, m := range td.Methods {
+			if m.Body == nil || provided[m.Name] {
+				continue
+			}
+			method := &ast.FuncDecl{
+				Name:         m.Name,
+				ReturnType:   ast.SubstSelf(m.Result, impl.Type),
+				Body:         ast.CloneBlock(m.Body),
+				SourceModule: impl.SourceModule,
+			}
+			if m.Assoc {
+				// Associated default (no `self`): hoists to
+				// `__assoc_<Type>_<name>`. Use methodTypeName so the hoist
+				// key matches what the conformance pass looks up.
+				method.Params = substSelfParams(m.Params, impl.Type)
+				if tn, ok := methodTypeName(impl.Type); ok {
+					method.AssocType = tn
+				} else {
+					method.AssocType = impl.Type.String()
+				}
+			} else {
+				// Ordinary default: m.Params[0] is `self: Self` → the
+				// receiver the hoist prepends as Params[0].
+				recv := m.Params[0]
+				method.Receiver = &ast.Param{Name: recv.Name, Type: impl.Type, Own: recv.Own}
+				method.Params = substSelfParams(m.Params[1:], impl.Type)
+			}
+			// A parametric impl (`impl[T: Bound] Trait for Box[T]`) makes
+			// every method generic over the impl's type params — a default
+			// body may reference T — so carry the params + bounds exactly as
+			// the parser does for written methods.
+			if len(impl.TypeParams) > 0 {
+				method.TypeParams = append([]string(nil), impl.TypeParams...)
+				method.Bounds = impl.Bounds
+			}
+			prog.Funcs = append(prog.Funcs, method)
+			impl.MethodNames = append(impl.MethodNames, m.Name)
+		}
+	}
+}
+
+// substSelfParams copies params with `Self` substituted to self in each
+// type, preserving names + `own` flags. Used when materialising a trait
+// default method for a concrete impl.
+func substSelfParams(params []ast.Param, self ast.Type) []ast.Param {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make([]ast.Param, len(params))
+	for i, p := range params {
+		out[i] = p
+		out[i].Type = ast.SubstSelf(p.Type, self)
+	}
+	return out
 }
 
 // deriveRecvStruct builds the receiver type + impl type-parameter list

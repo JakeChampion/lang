@@ -674,11 +674,21 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 			}
 			ret = t
 		}
-		if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		// A trait method either ends at `;` (an abstract signature every
+		// impl must provide) or carries a `{ … }` default body that impls
+		// inherit when they omit it (see docs/TRAITS.md).
+		var body *ast.Block
+		if p.match(lexer.Punct, "{") {
+			b, err := p.parseBlock()
+			if err != nil {
+				return nil, err
+			}
+			body = b
+		} else if _, err := p.expect(lexer.Punct, ";"); err != nil {
 			return nil, err
 		}
 		td.Methods = append(td.Methods, ast.TraitMethod{
-			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, Assoc: assoc,
+			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, Assoc: assoc, Body: body,
 		})
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
@@ -731,7 +741,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		fn, err := p.parseFunction()

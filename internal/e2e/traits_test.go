@@ -794,3 +794,136 @@ function main(): i32 {
 		}
 	}
 }
+
+// A trait method with a default body is inherited by an impl that omits
+// it and may be overridden by one that provides its own. Both forms
+// dispatch through the interpreter, including when reached via a
+// trait-bounded generic. See docs/TRAITS.md.
+const traitDefaultMethodSrc = `import "std/i32";
+
+trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hello, " + self.name(); }
+}
+
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }
+
+struct Cat { age: i32 }
+impl Greet for Cat {
+    function name(self: Self): string { return "felix"; }
+    function greeting(self: Self): string { return "meow from " + self.name(); }
+}
+
+function announce[T: Greet](x: T): string { return x.greeting(); }
+
+function main(): i32 {
+    var d: Dog = Dog { age: 3 };
+    var c: Cat = Cat { age: 5 };
+    print(d.greeting());       // inherited default
+    print(c.greeting());       // overridden
+    print(announce(d));        // default via bound
+    return 0;
+}
+`
+
+func TestInterpTraitDefaultMethod(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(traitDefaultMethodSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{"hello, rex", "meow from felix"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stdout missing %q; got: %q (stderr: %s)", want, got, errb.String())
+		}
+	}
+	// `announce(d)` reuses the inherited default → "hello, rex" appears twice.
+	if strings.Count(got, "hello, rex") != 2 {
+		t.Errorf("expected inherited default reached twice (direct + via bound), got: %q", got)
+	}
+}
+
+// Default methods compile + run natively: they desugar to ordinary
+// receiver methods, so codegen needs no trait awareness. The x86-64 e2e
+// helper doesn't run the monomorph pass, so this variant uses direct
+// dispatch (inherited default + override); the bounded-generic path is
+// covered natively by the arm64 test below and on the interpreter.
+const traitDefaultMethodDirectSrc = `import "std/i32";
+
+trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hello, " + self.name(); }
+}
+
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }
+
+struct Cat { age: i32 }
+impl Greet for Cat {
+    function name(self: Self): string { return "felix"; }
+    function greeting(self: Self): string { return "meow from " + self.name(); }
+}
+
+function main(): i32 {
+    var d: Dog = Dog { age: 3 };
+    var c: Cat = Cat { age: 5 };
+    print(d.greeting());       // inherited default
+    print(c.greeting());       // overridden
+    return 0;
+}
+`
+
+func TestX86_64TraitDefaultMethod(t *testing.T) {
+	out, code := compileAndRunX86_64(t, traitDefaultMethodDirectSrc)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"hello, rex", "meow from felix"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("x86-64 output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// arm64 native default-method coverage, including the bounded-generic
+// path (`announce[T: Greet]` → inherited default) which the arm64 helper
+// monomorphises like the production driver.
+func TestArm64TraitDefaultMethod(t *testing.T) {
+	out, code := compileAndRunArm64(t, traitDefaultMethodSrc)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"hello, rex", "meow from felix"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("arm64 output missing %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "hello, rex") != 2 {
+		t.Errorf("expected inherited default reached twice (direct + via bound), got:\n%s", out)
+	}
+}
+
+// wasm default-method coverage, including the bounded-generic path — the
+// wasm component builder monomorphises like the production driver.
+func TestWASMTraitDefaultMethod(t *testing.T) {
+	got := runWasmCapturingStdout(t, traitDefaultMethodSrc)
+	for _, want := range []string{"hello, rex", "meow from felix"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("wasm output missing %q; got:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "hello, rex") != 2 {
+		t.Errorf("expected inherited default reached twice (direct + via bound), got:\n%s", got)
+	}
+}

@@ -1408,6 +1408,32 @@ func TestTraitDeclParses(t *testing.T) {
 	}
 }
 
+// A trait method may carry a `{ … }` default body; an abstract one
+// still ends at `;`. The default body is retained on TraitMethod.Body
+// for the checker to materialise per impl. See docs/TRAITS.md.
+func TestTraitDefaultMethodParses(t *testing.T) {
+	prog, err := Parse(`trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hi " + self.name(); }
+}`)
+	if err != nil {
+		t.Fatalf("trait with default method should parse: %v", err)
+	}
+	td := prog.Traits[0]
+	if len(td.Methods) != 2 {
+		t.Fatalf("expected 2 methods, got %d", len(td.Methods))
+	}
+	if td.Methods[0].Body != nil {
+		t.Errorf("abstract method `name` should have nil Body, got %+v", td.Methods[0].Body)
+	}
+	if td.Methods[1].Name != "greeting" || td.Methods[1].Body == nil {
+		t.Errorf("default method `greeting` should retain its Body, got %+v", td.Methods[1])
+	}
+	if n := len(td.Methods[1].Body.Stmts); n != 1 {
+		t.Errorf("default body should have 1 statement, got %d", n)
+	}
+}
+
 // An `impl Trait for Type` desugars each method into an ordinary
 // receiver-method FuncDecl (with Self replaced by the concrete type)
 // appended to Program.Funcs, plus an ImplDecl record. See docs/TRAITS.md.
