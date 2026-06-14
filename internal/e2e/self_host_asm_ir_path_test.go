@@ -593,6 +593,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"nested-ifexpr-opt", `function main(): i32 { var c = 5; var o = if (c > 3) { if (c > 10) { Some(1) } else { Some(7) } } else { None }; return match (o) { Some(v) => v, None => 0 }; }`},
 		{"nested-ifexpr-struct", `struct P { x: i32 } function main(): i32 { var c = 5; var p = if (c > 3) { if (c > 10) { P { x: 1 } } else { P { x: 7 } } } else { P { x: 0 } }; return p.x; }`},
 		{"nested-ifexpr-arr", `function main(): i32 { var c = 5; var a = if (c > 3) { if (c > 10) { [1] } else { [7, 8] } } else { [0] }; var s = 0; for x in a { s = s + x; } return s; }`},
+		// A match whose scrutinee is directly an if-/match-EXPRESSION (a 0-arg IIFE):
+		// both the main StmtMatch scrutinee resolution and try_opt_type now recover
+		// the Option type via iife_leaf_value + some_opt_type (#3161).
+		{"match-scrut-ifexpr-some", `function main(): i32 { var c = 5; return match (if (c > 3) { Some(7) } else { None }) { Some(v) => v, None => 0 }; }`},
+		{"match-scrut-ifexpr-none", `function main(): i32 { var c = 1; return match (if (c > 3) { Some(7) } else { None }) { Some(v) => v, None => 9 }; }`},
+		{"stmt-match-scrut-ifexpr", `function main(): i32 { var c = 5; match (if (c > 3) { Some(7) } else { None }) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
