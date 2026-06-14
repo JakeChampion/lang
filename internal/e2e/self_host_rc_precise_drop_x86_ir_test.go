@@ -157,6 +157,21 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"i64arr-builder-call-detector", `function build64(): i64[] { return [1, 2, 3, 4]; } function main(): i32 { var a = build64(); var s: i64 = 0; var i = 0; while (i < 4) { s = s + a[i]; i = i + 1; } if (s as i32 != 10) { return 99; } return __rc_underflow(); }`, 0},
 		{"f64arr-builder-call-value", `function buildf(): f64[] { return [1.5, 2.5]; } function main(): i32 { var a = buildf(); var s: f64 = 0.0; var i = 0; while (i < 2) { s = s + a[i]; i = i + 1; } return s as i32; }`, 4},
 		{"f64arr-builder-call-detector", `function buildf(): f64[] { return [1.5, 2.5]; } function main(): i32 { var a = buildf(); var s: f64 = 0.0; var i = 0; while (i < 2) { s = s + a[i]; i = i + 1; } if (s as i32 != 4) { return 99; } return __rc_underflow(); }`, 0},
+		// Struct in-place reuse (FBIP), functional-update self-overwrite: `var c =
+		// T { ...d, f: v }` where d is a fresh, non-escaping, scalar-field struct
+		// local DEAD after this update reuses d's box in place (the override field
+		// is written into d's box, d's slot zeroed). The value is correct and the
+		// over-release detector stays 0 (d's box is freed exactly once, through c).
+		{"struct-reuse-value", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y; }`, 14},
+		{"struct-reuse-detector", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; var sum = c.x + c.y; if (sum != 14) { return 99; } return __rc_underflow(); }`, 0},
+		// Multi-field override: both overrides written into d's box in place; the
+		// un-overridden field (y) is left untouched (already correct in d's box).
+		{"struct-reuse-multi-override", `struct Trip { a: i32, b: i32, c: i32 } function main(): i32 { var d = Trip { a: 1, b: 2, c: 3 }; var e = Trip { ...d, a: 10, c: 30 }; return e.a + e.b + e.c; }`, 42},
+		// NON-firing: d is used AFTER the update (`d.x` in the return), so it is NOT
+		// dead at the update site — reuse must NOT fire (d's box stays live). The
+		// value is still correct via the normal alloc-a-new-box path.
+		{"struct-no-reuse-base-used-after-value", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y + d.x; }`, 17},
+		{"struct-no-reuse-base-used-after-detector", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; var r = c.x + c.y + d.x; if (r != 17) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
