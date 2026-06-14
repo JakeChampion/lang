@@ -28,8 +28,23 @@ import (
 // through the runtime vtable, never via a static call the tree-shake /
 // IR reachability walkers can follow, so each backend pins them as
 // extra roots (`treeshake.Run(prog, DynCoercionImplMethods(info)...)`).
-// The names mirror ir.collectVtables' slot resolution (info.Methods,
-// falling back to the conventional `__method_<concrete>_<method>`).
+//
+// For a struct/enum concrete the vtable slot points directly at the real
+// receiver method, so the mangled `__method_<C>_<m>` is rooted (mirrors
+// ir.collectVtables' struct/enum slot resolution: info.Methods, falling
+// back to the conventional name).
+//
+// For a primitive/string concrete the value is heap-boxed at the coercion
+// site and the vtable slot points at a synthesized unboxing WRAPPER
+// `__dynbox_<C>_<m>` (docs/DYN-TRAITS.md §4.2.3). That wrapper is generated
+// during IR lowering, not present in the AST, so rooting its name here is a
+// (harmless) no-op for the AST-level tree-shaker; what tree-shake must keep
+// alive is the REAL `__method_<C>_<m>` the wrapper calls — that AST func
+// must survive into IR lowering where the wrapper's call edge picks it up.
+// So both the real method and the wrapper name are rooted: the former keeps
+// the AST func, the latter documents the vtable edge (and is robust to any
+// IR-level reachability consumer of these roots).
+//
 // Shared by the wasm and x86-64 build paths. See docs/DYN-TRAITS.md.
 func DynCoercionImplMethods(info *checker.Info) []string {
 	if info == nil || len(info.DynCoercions) == 0 {
@@ -43,20 +58,38 @@ func DynCoercionImplMethods(info *checker.Info) []string {
 			out = append(out, name)
 		}
 	}
+	isPrimitive := func(concrete string) bool {
+		if _, isStruct := info.Structs[concrete]; isStruct {
+			return false
+		}
+		if _, isEnum := info.Enums[concrete]; isEnum {
+			return false
+		}
+		return true
+	}
 	for _, dc := range info.DynCoercions {
 		td, ok := info.Traits[dc.Trait]
 		if !ok {
 			continue
 		}
+		prim := isPrimitive(dc.Concrete)
 		for _, m := range td.Methods {
 			if m.Assoc {
 				continue
 			}
+			// Always root the real method: a struct/enum vtable slot points
+			// at it, and a primitive's wrapper calls it (so it must survive
+			// into IR lowering where the wrapper is generated).
 			fn := info.Methods[dc.Concrete+"."+m.Name]
 			if fn == "" {
 				fn = "__method_" + dc.Concrete + "_" + m.Name
 			}
 			add(fn)
+			// For a primitive concrete also root the wrapper name (the
+			// actual vtable target). No-op in the AST tree-shaker today.
+			if prim {
+				add("__dynbox_" + dc.Concrete + "_" + m.Name)
+			}
 		}
 	}
 	return out
