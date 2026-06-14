@@ -1356,6 +1356,13 @@ type Binary struct {
 	// (cmp returns -1/0/1). The post-check rewrite replaces the
 	// Binary with that scalar comparison; Op is preserved.
 	CmpCall *Call
+	// ArithCall is set by the checker when an arithmetic operator
+	// (`+` `-` `*` `/`) is applied to a composite type (struct / enum)
+	// whose conventionally-named method exists (`+`→add, `-`→sub,
+	// `*`→mul, `/`→div) — operator overloading. The post-check rewrite
+	// replaces the Binary with this method call, so every later pass
+	// sees an ordinary call. See #2706.
+	ArithCall *Call
 }
 type Unary struct {
 	P       Position
