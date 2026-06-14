@@ -263,6 +263,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"forin-i32-param", `function total(xs: i32[]): i32 { var s = 0; for v in xs { s = s + v; } return s; } function main(): i32 { var a = [1, 2, 3, 4, 5]; return total(a); }`},
 		{"forin-nested", `function main(): i32 { var xs = [1, 2, 3]; var t = 0; for a in xs { for b in xs { t = t + a * b; } } return t; }`},
 		{"forin-string", `function main(): i32 { var ss: string[] = ["a", "bb", "ccc", "dddd"]; var n = 0; for s in ss { n = n + s.len(); } return n; }`},
+		// Array-of-arrays (#2987): inner binding / loop var types as an array on
+		// the wasm backend too (the fix lives in the shared irlower).
+		{"arr2d-forin-annot", `function main(): i32 { var a: i32[][] = [[1, 2], [3, 4]]; var s = 0; for row in a { for x in row { s = s + x; } } return s; }`},
+		{"arr2d-forin-literal", `function main(): i32 { var a = [[1, 2], [3, 4]]; var s = 0; for row in a { for x in row { s = s + x; } } return s; }`},
+		{"arr2d-manual-bind", `function main(): i32 { var a: i32[][] = [[1, 2], [3, 4]]; var row = a[1]; var s = 0; for x in row { s = s + x; } return s; }`},
+		{"arr2d-strarr", `function main(): i32 { var a: string[][] = [["a", "bb"], ["c"]]; var s = 0; for row in a { for w in row { s = s + w.len(); } } return s; }`},
 		{"enum-struct-payload", `struct BinExpr { left: i32, right: i32 } enum Expr { Lit(i32), Binary(BinExpr) } function eval(e: Expr): i32 { match (e) { Lit(n) => { return n; }, Binary(b) => { return b.left + b.right; } } return 0; } function main(): i32 { return eval(Lit(7)) + eval(Binary(BinExpr { left: 3, right: 9 })); }`},
 		{"enum-struct-payload-guard", `struct P { x: i32, y: i32 } enum Shape { Rect(P), Dot } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, _ => { return 0; } } return 0; } function main(): i32 { return area(Rect(P { x: 4, y: 5 })); }`},
 		{"enum-struct-payload-nested", `struct Inner { v: i32 } struct Mid { i: Inner } enum E { A(Mid), B } function f(e: E): i32 { match (e) { A(m) => { return m.i.v; }, B => { return 9; } } return 0; } function main(): i32 { return f(A(Mid { i: Inner { v: 42 } })) + f(B); }`},
