@@ -5670,8 +5670,35 @@ pub function module_with_builtins(mod: Module): Module {
 }
 
 // ImplResult carries the parser plus the desugared receiver-method
-// FuncDecls produced from an `impl Trait for Type { … }` block.
-pub struct ImplResult { par: Par, funcs: FuncDecl[] }
+// FuncDecls produced from an `impl Trait for Type { … }` block, along
+// with the metadata parse_module needs to synthesise inherited trait
+// default methods after every trait declaration has been seen:
+// trait_name (simple, qualifier stripped), impl_type, the impl's bounded
+// type params, and the method names the impl explicitly provided.
+pub struct ImplResult { par: Par, funcs: FuncDecl[], trait_name: string, impl_type: string, type_params: string[], method_names: string[] }
+
+// TraitDefault is one trait method that carries a `{ … }` default body
+// (abstract signatures are dropped). `trait_name` is the simple trait
+// name; `method` is the parsed method (params[0] = self for a receiver
+// method, `Self` still spelled in its types). An impl of the trait that
+// omits the method inherits a copy via finalize_impl_method.
+pub struct TraitDefault { trait_name: string, method: FuncDecl }
+pub struct TraitParseResult { par: Par, defaults: TraitDefault[] }
+
+// ImplInfo is the per-impl metadata parse_module retains so it can
+// synthesise inherited defaults after the full module is parsed (a trait
+// may be declared after the impl that depends on it).
+pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], method_names: string[] }
+
+// str_list_contains reports whether `xs` holds `want`.
+function str_list_contains(xs: string[], want: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == want) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
 
 // ============ @derive synthesis (structs) ============
 // Mirrors the Go checker's synthEq / synthDisplay / synthOrd so a
@@ -6308,6 +6335,7 @@ function parse_resource_decl_name(p: Par): ResourceNameResult {
 // trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
 function parse_impl_decl(p: Par): ImplResult {
     var out: FuncDecl[] = [];
+    var method_names: string[] = [];
     p = p.advance(); // `impl`
     // Parametric impl: `impl[T: Bound] Trait for Box[T] { … }`. Collect
     // the impl's type-parameter names (bounded ones drive
@@ -6342,9 +6370,11 @@ function parse_impl_decl(p: Par): ImplResult {
         }
         if (p.peek_punct() == "]") { p = p.advance(); }
     }
-    // Trait name (possibly `mod.Trait`) — discarded.
+    // Trait name (possibly `mod.Trait`) — retained so parse_module can
+    // match the impl against the trait's default methods.
     var tnr: TypeNameResult = parse_type_name(p);
     p = tnr.par;
+    var trait_name: string = tnr.name;
     if (p.peek_keyword() == "for") { p = p.advance(); }
     var ity: TypeNameResult = parse_type_name(p);
     p = ity.par;
@@ -6362,111 +6392,125 @@ function parse_impl_decl(p: Par): ImplResult {
         var fr: FuncResult = parse_func_decl(p);
         p = fr.par;
         var m: FuncDecl = fr.func;
-        // An impl method whose first parameter is `self` is a receiver
-        // method; one whose first parameter is anything else (or which
-        // has no parameters at all) is an *associated function* —
-        // `Type.f(args)` with no receiver, e.g. a constructor like
-        // `Point.make(x, y)`. The two are encoded in the same FuncDecl
-        // shape: the emitters key a method's label off `receiver_type`
-        // and read `has_recv = receiver_name.len() > 0`, so an associated
-        // function is just a FuncDecl with `receiver_type = impl_type`
-        // and an EMPTY `receiver_name` (no receiver slot). Avoid indexing
-        // `m.params[0]` when there are no params.
-        var has_self: boolean = false;
-        if (m.params.len() > 0) {
-            if (m.params[0].name == "self") { has_self = true; }
+        // finalize_impl_method does the receiver-peel / associated-function
+        // encoding, the `Self` -> impl_type rewrite, and the bounded-type-
+        // param merge (shared with trait default-method synthesis).
+        out = out.append(finalize_impl_method(m, impl_type, impl_tps));
+        method_names = method_names.append(m.name);
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return ImplResult { par: p, funcs: out, trait_name: derive_simple_name(trait_name), impl_type: impl_type, type_params: impl_tps, method_names: method_names };
+}
+
+// finalize_impl_method turns a parsed impl/trait-default method `m` into
+// the receiver-method (or associated-function) FuncDecl the rest of the
+// pipeline consumes: `Self` -> impl_type across params + return, the
+// leading `self` peeled into the receiver (a method whose first param
+// isn't `self` is an associated function with an empty receiver_name),
+// and the impl's bounded type params merged in. Shared by parse_impl_decl
+// (written methods) and trait default-method synthesis in parse_module.
+function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]): FuncDecl {
+    var rt: string = m.ret_type;
+    if (rt == "Self") { rt = impl_type; }
+    var mtps: string[] = m.type_params;
+    var ti: i32 = 0;
+    while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
+    var has_self: boolean = false;
+    if (m.params.len() > 0) {
+        if (m.params[0].name == "self") { has_self = true; }
+    }
+    if (!has_self) {
+        // Associated function: keep ALL params (none is a receiver),
+        // rewrite `Self` -> impl_type across them, emit with empty receiver.
+        var aparams: ParamDecl[] = [];
+        var ai: i32 = 0;
+        while (ai < m.params.len()) {
+            var apt: string = m.params[ai].type_name;
+            if (apt == "Self") { apt = impl_type; }
+            aparams = aparams.append(ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value });
+            ai = ai + 1;
         }
-        // Shared: rewrite a `Self` return type to the concrete impl type,
-        // and merge the impl's (bounded) type params into the method's.
-        var rt: string = m.ret_type;
-        if (rt == "Self") { rt = impl_type; }
-        // A parametric impl makes every method generic over the impl's
-        // type params (so the monomorphiser — once it grows generic-
-        // receiver-method support — can clone per instantiation; until
-        // then a method whose generic field is a heap value dispatches
-        // dynamically and works as-is). Merge the impl's params with any
-        // the method declared itself.
-        var mtps: string[] = m.type_params;
-        var ti: i32 = 0;
-        while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
-        if (!has_self) {
-            // Associated function: keep ALL params (none is a receiver),
-            // rewrite `Self` -> impl_type across them, and emit with an
-            // empty receiver_name.
-            var aparams: ParamDecl[] = [];
-            var ai: i32 = 0;
-            while (ai < m.params.len()) {
-                var apt: string = m.params[ai].type_name;
-                if (apt == "Self") { apt = impl_type; }
-                aparams = aparams.append(ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value });
-                ai = ai + 1;
-            }
-            out = out.append(FuncDecl {
-                name: m.name,
-                receiver_name: "",
-                receiver_type: impl_type,
-                type_params: mtps,
-                params: aparams,
-                ret_type: rt,
-                body: m.body, line: m.line, col: m.col,
-                import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count
-            });
-            continue;
-        }
-        // Receiver method: peel the first param (`self`) into the receiver
-        // and rewrite `Self` -> impl_type across the remaining params.
-        var rname: string = "self";
-        var newparams: ParamDecl[] = [];
-        var i: i32 = 0;
-        while (i < m.params.len()) {
-            if (i == 0) {
-                rname = m.params[i].name;
-            } else {
-                var pt: string = m.params[i].type_name;
-                if (pt == "Self") { pt = impl_type; }
-                newparams = newparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value });
-            }
-            i = i + 1;
-        }
-        out = out.append(FuncDecl {
+        return FuncDecl {
             name: m.name,
-            receiver_name: rname,
+            receiver_name: "",
             receiver_type: impl_type,
             type_params: mtps,
-            params: newparams,
+            params: aparams,
             ret_type: rt,
             body: m.body, line: m.line, col: m.col,
             import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count
-        });
+        };
     }
-    if (p.peek_punct() == "}") { p = p.advance(); }
-    return ImplResult { par: p, funcs: out };
+    // Receiver method: peel the first param (`self`) into the receiver
+    // and rewrite `Self` -> impl_type across the remaining params.
+    var rname: string = "self";
+    var newparams: ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < m.params.len()) {
+        if (i == 0) {
+            rname = m.params[i].name;
+        } else {
+            var pt: string = m.params[i].type_name;
+            if (pt == "Self") { pt = impl_type; }
+            newparams = newparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value });
+        }
+        i = i + 1;
+    }
+    return FuncDecl {
+        name: m.name,
+        receiver_name: rname,
+        receiver_type: impl_type,
+        type_params: mtps,
+        params: newparams,
+        ret_type: rt,
+        body: m.body, line: m.line, col: m.col,
+        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count
+    };
 }
 
-// skip_trait_decl consumes a `trait Name { <sig>; … }` block whole.
-// The self-host doesn't validate conformance (dispatch is by
-// receiver type), so trait declarations carry no semantic weight
-// here — they're parsed and discarded.
-function skip_trait_decl(p: Par): Par {
+// parse_trait_decl consumes a `trait Name { <method>; … }` block. The
+// self-host doesn't validate conformance (dispatch is by receiver type),
+// so abstract signatures carry no weight and are dropped — but a method
+// with a `{ … }` DEFAULT body is retained: parse_module synthesises a
+// copy onto every impl of the trait that omits it (Self-host parity with
+// the Go checker's synthesizeTraitDefaults — see docs/TRAITS.md). Each
+// method parses with the ordinary parse_func_decl machinery (no receiver
+// clause; its first parameter is `self: Self`); an abstract one ends at
+// `;` and so comes back with an empty body, which we skip.
+function parse_trait_decl(p: Par): TraitParseResult {
+    var defaults: TraitDefault[] = [];
     p = p.advance(); // `trait`
-    if (p.peek_ident().len() > 0) { p = p.advance(); } // name
+    var tname: string = p.peek_ident();
+    if (tname.len() > 0) { p = p.advance(); } // name
+    var simple: string = derive_simple_name(tname);
     if (p.peek_punct() == "{") {
         p = p.advance();
-        var depth: i32 = 1;
         while (!p.at_end()) {
-            if (depth <= 0) { break; }
-            var pk: string = p.peek_punct();
-            if (pk == "{") { depth = depth + 1; }
-            if (pk == "}") { depth = depth - 1; }
-            p = p.advance();
+            if (p.peek_punct() == "}") { break; }
+            if (p.peek_keyword() == "function") {
+                var fr: FuncResult = parse_func_decl(p);
+                p = fr.par;
+                // A non-empty body marks a default method. (An empty `{}`
+                // body is indistinguishable from an abstract `;` here and
+                // is treated as abstract — it would synthesise a no-op.)
+                if (fr.func.body.len() > 0) {
+                    defaults = defaults.append(TraitDefault { trait_name: simple, method: fr.func });
+                }
+            } else {
+                // Defensive: don't stall on an unexpected token.
+                p = p.advance();
+            }
         }
+        if (p.peek_punct() == "}") { p = p.advance(); }
     }
-    return p;
+    return TraitParseResult { par: p, defaults: defaults };
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false };
     var funcs: FuncDecl[] = [];
+    var trait_defaults: TraitDefault[] = [];
+    var impl_infos: ImplInfo[] = [];
     var structs: StructDecl[] = [];
     var aliases: TypeAlias[] = [];
     var imports: Import[] = [];
@@ -6605,7 +6649,13 @@ pub function parse_module(toks: lexer.Token[]): Module {
             continue;
         }
         if (kw == "trait") {
-            p = skip_trait_decl(p);
+            var tpr: TraitParseResult = parse_trait_decl(p);
+            p = tpr.par;
+            var tdi: i32 = 0;
+            while (tdi < tpr.defaults.len()) {
+                trait_defaults = trait_defaults.append(tpr.defaults[tdi]);
+                tdi = tdi + 1;
+            }
             continue;
         }
         if (kw == "impl") {
@@ -6616,6 +6666,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 funcs = funcs.append(imr.funcs[mi]);
                 mi = mi + 1;
             }
+            impl_infos = impl_infos.append(ImplInfo { trait_name: imr.trait_name, impl_type: imr.impl_type, type_params: imr.type_params, method_names: imr.method_names });
             continue;
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).
@@ -6641,6 +6692,27 @@ pub function parse_module(toks: lexer.Token[]): Module {
         }
         p = stmtR.par;
         top_stmts = top_stmts.append(stmtR.stmt);
+    }
+    // Synthesise inherited trait default methods now that the whole module
+    // is parsed (a trait may be declared after the impl that uses it). For
+    // each impl, every default of its trait that the impl did not provide
+    // becomes a receiver method on the impl type — the same desugaring a
+    // written method gets. Self-host parity with the Go checker's
+    // synthesizeTraitDefaults (see docs/TRAITS.md); same-module only.
+    var iii: i32 = 0;
+    while (iii < impl_infos.len()) {
+        var info: ImplInfo = impl_infos[iii];
+        var ddi: i32 = 0;
+        while (ddi < trait_defaults.len()) {
+            var td: TraitDefault = trait_defaults[ddi];
+            if (td.trait_name == info.trait_name) {
+                if (!str_list_contains(info.method_names, td.method.name)) {
+                    funcs = funcs.append(finalize_impl_method(td.method, info.impl_type, info.type_params));
+                }
+            }
+            ddi = ddi + 1;
+        }
+        iii = iii + 1;
     }
     return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports };
 }

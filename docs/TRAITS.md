@@ -151,9 +151,8 @@ codegen paths are unchanged — a default reached through a `T: Greet`
 bound monomorphises exactly like a written method. Defaults work on the
 interpreter and every native/wasm backend; `Self` *as a value type
 inside* a default body is treated the same as inside a hand-written impl
-method. **Native-only so far; self-host parity is a follow-up** (the
-self-host frontend currently discards trait declarations wholesale, so it
-has no default bodies to inherit — see §7a).
+method. The self-hosted compiler has matching support (same-module) —
+see §7a, self-host slice 10.
 
 Once `impl Display for Point` exists, **`p.to_string()` works for a
 `Point` value through the ordinary method-dispatch path** — an impl
@@ -723,6 +722,29 @@ regressing the self-host gates. It needs traits in two slices:
   With this, **the full trait surface — traits/impls, parametric impls,
   `@derive` on structs + enums (incl. generic structs), enum methods, and
   `dyn Trait` — works on all three self-host backends.**
+
+- **Self-host slice 10 (shipped): default trait methods.** Before this,
+  `skip_trait_decl` consumed a `trait` block whole — the self-host had no
+  trait method bodies to inherit, so a program relying on an inherited
+  default failed to resolve the method. `parse_trait_decl` now replaces
+  the skipper: it parses each trait method with the ordinary
+  `parse_func_decl` machinery (a method with a non-empty body is a
+  default; an abstract `;` signature comes back body-less and is dropped)
+  and returns the defaults tagged with the simple trait name.
+  `parse_impl_decl` retains the trait name + impl type + bounded type
+  params + the method names the impl provides, and the receiver-peel /
+  `Self`→type / type-param-merge desugar it shared inline with default
+  synthesis is factored into `finalize_impl_method`. After the whole
+  module is parsed (so a trait declared *after* its impl still resolves),
+  `parse_module` synthesises, for each impl, every default of its trait
+  that the impl omitted — `finalize_impl_method(default, impl_type,
+  impl_tps)` — exactly the desugaring a written method gets. Mirrors the
+  Go checker's `synthesizeTraitDefaults`. **Same-module only**: a trait
+  and an impl in *different* modules don't yet inherit (the synthesis runs
+  per `parse_module`, before `merge_module`); cross-module defaults are a
+  follow-up. Tested on x86-64 + wasm IR
+  (`internal/e2e/self_host_default_method_ir_test.go`): inherited,
+  overridden, default-calls-abstract, and two-impls-inherit-independently.
 
 ## 7b. The `std/test` collapse (landed)
 
