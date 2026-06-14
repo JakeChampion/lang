@@ -389,6 +389,11 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// recursing into the inner literal (#3061, unannotated sibling of #3058).
 		{"arr2d-struct-unannot", `struct P { x: i32 } function main(): i32 { var a = [[P { x: 1 }], [P { x: 2 }, P { x: 3 }]]; var n = 0; for row in a { for p in row { n = n + p.x; } } return n; }`},
 		{"arr2d-enum-unannot", `enum C { A, B } function main(): i32 { var a = [[C.A], [C.B, C.A]]; var n = 0; for row in a { for c in row { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } } return n; }`},
+		// A 2D-array param — the param setup marks it is_arrarr and extracts the
+		// innermost struct/enum element type for the nested foreach (#3064).
+		{"arr2d-param-i32", `function sum(a: i32[][]): i32 { var n = 0; for row in a { for x in row { n = n + x; } } return n; } function main(): i32 { return sum([[1, 2], [3]]); }`},
+		{"arr2d-param-struct", `struct P { x: i32 } function sum(a: P[][]): i32 { var n = 0; for row in a { for p in row { n = n + p.x; } } return n; } function main(): i32 { return sum([[P { x: 5 }], [P { x: 6 }]]); }`},
+		{"arr2d-param-enum", `enum C { A, B } function cnt(a: C[][]): i32 { var n = 0; for row in a { for c in row { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } } return n; } function main(): i32 { return cnt([[C.A], [C.B, C.A]]); }`},
 		// A function returning a struct array — the element struct type is recorded
 		// so a[i].field / foreach over the result resolve (#3037).
 		{"ret-struct-arr-index", `struct P { x: i32 } function mk(): P[] { return [P { x: 1 }, P { x: 2 }]; } function main(): i32 { var a = mk(); return a[0].x + a[1].x; }`},
