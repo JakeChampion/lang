@@ -335,6 +335,10 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"optarr-index-via-local", `function main(): i32 { var a: Option[i32][] = [Some(7), None]; var o = a[0]; match (o) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"optarr-while-match", `function main(): i32 { var a: Option[i32][] = [Some(5), None, Some(3)]; var i = 0; var s = 0; while (i < a.len()) { match (a[i]) { Some(x) => { s = s + x; }, None => {} } i = i + 1; } return s; }`},
 		{"resultarr-index-match", `function main(): i32 { var a: Result[i32, i32][] = [Ok(5), Err(3)]; match (a[1]) { Ok(x) => { return x; }, Err(e) => { return e * 10; } } return 0; }`},
+		// Option/Result-ARRAY struct field — leak-safe, so construction +
+		// `.len()` + `match (b.o[i])` (field-array element) lower.
+		{"optarr-field-match", `struct B { o: Option[i32][] } function main(): i32 { var b = B { o: [Some(7), None] }; match (b.o[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
+		{"resultarr-field-match", `struct B { o: Result[i32, i32][] } function main(): i32 { var b = B { o: [Ok(5), Err(3)] }; match (b.o[1]) { Ok(x) => { return x; }, Err(e) => { return e * 10; } } return 0; }`},
 		{"optarr-alias-index-match", `function main(): i32 { var a: Option[i32][] = [Some(9), None]; var b = a; var o = b[0]; match (o) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		// `for o in optArray { match (o) }` — the asmcore type checker no longer
 		// mis-parses the `Option[T][]` / `Result[…][]` annotation as
