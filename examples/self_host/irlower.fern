@@ -4401,6 +4401,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                          || is_enum_like_name(v.type_name[0 : v.type_name.len() - 2], se.structs))) {
                 struct_ty = v.type_name[0 : v.type_name.len() - 2];
             }
+            // A 2D struct-/enum-ARRAY annotation (`var a: P[][]`): the INNERMOST
+            // element is the struct/enum (strip both `[]`). The slot is is_arrarr;
+            // the array-foreach propagates this element type through `row` (the
+            // inner array) to its struct element, so `for row in a { for p in row
+            // { p.field } }` resolves (#3059, the depth-2 sibling of the P[] case).
+            else if (struct_ty == "" && is_array_type_name(v.type_name)
+                     && v.type_name.len() >= 4 && is_array_type_name(v.type_name[0 : v.type_name.len() - 2])
+                     && (decl_is_struct(se.structs, v.type_name[0 : v.type_name.len() - 4])
+                         || is_enum_like_name(v.type_name[0 : v.type_name.len() - 4], se.structs))) {
+                struct_ty = v.type_name[0 : v.type_name.len() - 4];
+            }
             // A struct-array LITERAL without annotation (`var ps = [P { .. }, ..]`):
             // infer the ELEMENT struct type from the first element, matching the
             // `var ps: P[]` annotation path above, so `ps[i].field` / `for x in ps`
