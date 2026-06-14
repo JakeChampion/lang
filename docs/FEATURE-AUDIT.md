@@ -247,6 +247,31 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — no-capture lambdas in IIFE / tuple / assignment positions via the IR path
+
+Widened the lambda-lift pre-pass to hoist no-capture lambdas in three more
+positions, so they lower through the self-host IR path:
+
+- **IIFE callee** — `(function(b){...})(args)` hoists the callee lambda to a
+  top-level `__lam_N`, so the call becomes a direct `__lam_N(args)`
+  (lift_call_arg now also lifts the callee in `lift_expr_walk`'s ExprCall arm).
+- **tuple element** — `(function(x){...}, 10)` hoists to a fn-pointer tuple
+  element, so `t.0(t.1)` rides the tuple-element `call_indirect` path (new
+  `ExprTuple` arm in `lift_expr_walk`).
+- **assignment RHS** — `f = function(x){...}` hoists to `f = __lam_N`, a
+  fn-pointer store (new `StmtAssign` arm in `lift_stmt`).
+
+These join the already-lifted call-argument / array-element / struct-field /
+return positions. A CAPTURING lambda in any of these is left in place (still
+bails to AST — calling it needs the env-passing closure form, an ABI change).
+Also still on AST: a lambda nested inside a binary expression (`(iife) + 1`),
+since `lift_expr_walk` doesn't recurse into `ExprBinary` — a separate slice.
+
+New routing-pinned `TestSelfHostLambdaLiftPositionIR` (x86-64 + wasm,
+oracle-checked: IIFE, 2-arg IIFE, tuple-fn, reassign, plus a call-argument
+regression guard). Verified end-to-end on x86-64, wasm, and arm64 (qemu); x86-64
++ stage2 fixpoint hold.
+
 ### 2026-06-14 — calling the result of a call (`mk()(args)`) via the self-host IR path
 
 Follow-up to the no-capture-lambda-return slice (#3088): calling the RESULT of a

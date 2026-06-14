@@ -8040,6 +8040,14 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
     match (e) {
         parser.ExprCall(c) => {
             var a: LiftAcc = acc;
+            // Lift the CALLEE too: a no-capture lambda in call position — an IIFE
+            // `(function(b){...})(args)` — hoists to a bare `__lam_N` fn-name, so
+            // the call becomes a direct `__lam_N(args)`. lift_call_arg recurses for
+            // a non-lambda callee (ident / `mk()` / etc.), leaving it unchanged, so
+            // a normal call's numbering is untouched (an ident callee consumes no
+            // counter). A capturing lambda callee is left in place (stays on AST).
+            var ce: LiftExpr = lift_call_arg(c.callee, a, gfns);
+            a = ce.acc;
             var nargs: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) {
@@ -8048,7 +8056,24 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
                 nargs = nargs.append(r.expr);
                 i = i + 1;
             }
-            return LiftExpr { expr: parser.ExprCall { callee: c.callee, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, acc: a };
+            return LiftExpr { expr: parser.ExprCall { callee: ce.expr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, acc: a };
+        },
+        // A no-capture lambda in a TUPLE-element position (`(function(x){...}, 10)`)
+        // hoists the same way — lift_call_arg turns it into a bare `__lam_N` fn-name
+        // (which lowers to a fn pointer), so `t.0(t.1)` rides the existing
+        // tuple-element fn-value call_indirect path. A capturing lambda element is
+        // left in place (stays on AST).
+        parser.ExprTuple(tu) => {
+            var ta: LiftAcc = acc;
+            var nte: parser.Expr[] = [];
+            var ti: i32 = 0;
+            while (ti < tu.elements.len()) {
+                var ter: LiftExpr = lift_call_arg(tu.elements[ti], ta, gfns);
+                ta = ter.acc;
+                nte = nte.append(ter.expr);
+                ti = ti + 1;
+            }
+            return LiftExpr { expr: parser.ExprTuple { elements: nte }, acc: ta };
         },
         // An array literal of NO-CAPTURE lambdas (`var fs = [function(x){...}, ...]`):
         // hoist each lambda element to a top-level `__lam_N` (the same lift a
@@ -8131,6 +8156,15 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
         parser.StmtExpr(s) => {
             var e: LiftExpr = lift_expr_walk(s.value, acc, gfns);
             var ns: parser.Stmt = parser.StmtExpr { value: e.expr };
+            return LiftStmts { stmts: [ns], acc: e.acc };
+        },
+        // `f = function(x){...}` of a NO-CAPTURE lambda hoists to `f = __lam_N`
+        // (via lift_call_arg, like the StmtReturn case) — a bare fn-name the assign
+        // lowers as a fn-pointer store. A capturing lambda RHS is left in place
+        // (stays on AST); a non-lambda RHS recurses through lift_expr_walk.
+        parser.StmtAssign(asg) => {
+            var e: LiftExpr = lift_call_arg(asg.value, acc, gfns);
+            var ns: parser.Stmt = parser.StmtAssign { target: asg.target, value: e.expr, line: asg.line, col: asg.col, target_line: asg.target_line, target_col: asg.target_col };
             return LiftStmts { stmts: [ns], acc: e.acc };
         },
         parser.StmtIf(f) => {
