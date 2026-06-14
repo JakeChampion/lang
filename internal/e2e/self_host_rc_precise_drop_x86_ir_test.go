@@ -150,6 +150,13 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"i64arr-two-arrays-detector", `function main(): i32 { var v: i64[] = [10, 20, 30]; var s: i64 = 0; var i = 0; while (i < 3) { s = s + v[i]; i = i + 1; } var w: i64[] = [1, 2, 3, 4]; var t: i64 = 0; var k = 0; while (k < 4) { t = t + w[k]; k = k + 1; } if ((s + t) as i32 != 70) { return 99; } return __rc_underflow(); }`, 0},
 		{"f64arr-two-arrays-value", `function main(): i32 { var v: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; var i = 0; while (i < 3) { s = s + v[i]; i = i + 1; } var w: f64[] = [0.5, 0.5]; var t: f64 = 0.0; var k = 0; while (k < 2) { t = t + w[k]; k = k + 1; } return (s + t) as i32; }`, 8},
 		{"f64arr-two-arrays-detector", `function main(): i32 { var v: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; var i = 0; while (i < 3) { s = s + v[i]; i = i + 1; } var w: f64[] = [0.5, 0.5]; var t: f64 = 0.0; var k = 0; while (k < 2) { t = t + w[k]; k = k + 1; } if ((s + t) as i32 != 8) { return 99; } return __rc_underflow(); }`, 0},
+		// A fresh i64[]- / f64[]-returning FREE call with scalar-literal args is a
+		// candidate too (the builder-call win, now scalar-typed); string[]-returning
+		// calls stay excluded (the candidacy crash).
+		{"i64arr-builder-call-value", `function build64(): i64[] { return [1, 2, 3, 4]; } function main(): i32 { var a = build64(); var s: i64 = 0; var i = 0; while (i < 4) { s = s + a[i]; i = i + 1; } return s as i32; }`, 10},
+		{"i64arr-builder-call-detector", `function build64(): i64[] { return [1, 2, 3, 4]; } function main(): i32 { var a = build64(); var s: i64 = 0; var i = 0; while (i < 4) { s = s + a[i]; i = i + 1; } if (s as i32 != 10) { return 99; } return __rc_underflow(); }`, 0},
+		{"f64arr-builder-call-value", `function buildf(): f64[] { return [1.5, 2.5]; } function main(): i32 { var a = buildf(); var s: f64 = 0.0; var i = 0; while (i < 2) { s = s + a[i]; i = i + 1; } return s as i32; }`, 4},
+		{"f64arr-builder-call-detector", `function buildf(): f64[] { return [1.5, 2.5]; } function main(): i32 { var a = buildf(); var s: f64 = 0.0; var i = 0; while (i < 2) { s = s + a[i]; i = i + 1; } if (s as i32 != 4) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
