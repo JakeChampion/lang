@@ -4440,6 +4440,42 @@ func (c *checker) variantEnumList(name string) string {
 // "couldn't fully resolve" cases. Recurses into composite types
 // (arrays, function types, generic enum args) so a payload like
 // `Option[T]` resolves to `Option[number]` when T=number.
+// arithOpMethod maps a binary arithmetic / bitwise operator to the
+// conventionally-named method that overloads it on a composite type,
+// mirroring `==`→eq / `<`→cmp. See compositeOpOverload / #2706.
+var arithOpMethod = map[string]string{
+	"+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
+	"&": "bitand", "|": "bitor", "^": "bitxor", "<<": "shl", ">>": "shr",
+}
+
+// compositeOpOverload handles operator overloading for a binary operator
+// whose operands are the same composite (struct / enum) type: it desugars
+// `a <op> b` to the type's conventionally-named method (`arithOpMethod`),
+// stashing the checked call on n.ArithCall (swapped in by the post-check
+// rewrite) and returning its result type. handled=false means the operands
+// aren't a matching composite pair, so the caller falls through to the
+// numeric path. A composite operand without the method is a clear E009.
+func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) (ast.Type, bool) {
+	if lt == nil || !ast.Equal(lt, rt) {
+		return nil, false
+	}
+	switch lt.(type) {
+	case ast.StructType, ast.EnumType:
+	default:
+		return nil, false
+	}
+	opMethod := arithOpMethod[n.Op]
+	tn, _ := methodTypeName(lt)
+	if mangled, ok := c.info.Methods[tn+"."+opMethod]; ok && c.methodVisibleHere(mangled) {
+		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
+		rtt := c.checkExpr(call, s)
+		n.ArithCall = call
+		return rtt, true
+	}
+	c.errfCode(n.P, "E009", "operator %q is not defined for %s — implement `function (self: %s) %s(other: %s): %s` to overload it", n.Op, lt, tn, opMethod, tn, tn)
+	return lt, true
+}
+
 // resolveProj resolves an associated-type projection whose base is a
 // concrete type (`Foo::Item`) to the type the impl binds it to, recursing
 // into composite types. A projection with an abstract base (`Self::Item`,
@@ -8545,25 +8581,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			fallthrough
 		case "-", "*", "/":
-			// Composite-type arithmetic operator overloading. `a <op> b`
-			// on a struct / enum desugars to the type's conventionally-
-			// named method (`+`→add, `-`→sub, `*`→mul, `/`→div), mirroring
-			// composite `==` (eq) / `<` (cmp). Stashed on ArithCall and
-			// swapped in by the post-check rewrite. See #2706.
-			if lt != nil && ast.Equal(lt, rt) {
-				switch lt.(type) {
-				case ast.StructType, ast.EnumType:
-					opMethod := map[string]string{"+": "add", "-": "sub", "*": "mul", "/": "div"}[n.Op]
-					tn, _ := methodTypeName(lt)
-					if mangled, ok := c.info.Methods[tn+"."+opMethod]; ok && c.methodVisibleHere(mangled) {
-						call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
-						rtt := c.checkExpr(call, s)
-						n.ArithCall = call
-						return rtt
-					}
-					c.errfCode(n.P, "E009", "operator %q is not defined for %s — implement `function (self: %s) %s(other: %s): %s` (or `impl … for %s`) to overload it", n.Op, lt, tn, opMethod, tn, tn, tn)
-					return lt
-				}
+			// Composite-type arithmetic operator overloading (`+`→add,
+			// `-`→sub, `*`→mul, `/`→div). See compositeOpOverload / #2706.
+			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
+				return rtt
 			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
@@ -8609,6 +8630,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return common
 		case "%", "&", "|", "^", "<<", ">>":
+			// Composite-type operator overloading (`%`→rem, `&`→bitand,
+			// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr). See #2706.
+			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
+				return rtt
+			}
 			c.requireInteger(n.P, lt, n.Op)
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)

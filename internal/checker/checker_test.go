@@ -102,6 +102,24 @@ function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
 }`); err != nil {
 		t.Errorf("composite arithmetic with add/sub/mul/div should type-check, got: %v", err)
 	}
+	// The remaining binary operators overload too: `%`→rem, `&`→bitand,
+	// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr. See #2706.
+	const bitOps = `struct F { b: i32 }
+function (self: F) rem(o: F): F { return F { b: self.b % o.b }; }
+function (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }
+function (self: F) bitor(o: F): F { return F { b: self.b | o.b }; }
+function (self: F) bitxor(o: F): F { return F { b: self.b ^ o.b }; }
+function (self: F) shl(o: F): F { return F { b: self.b << o.b }; }
+function (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }
+`
+	if err := checkSource(t, bitOps+`function main(): i32 {
+  var a: F = F { b: 12 };
+  var b: F = F { b: 10 };
+  var r: F = ((((a & b) | a) ^ b) << F{b:1}) >> F{b:1};
+  return (r % F{b:7}).b;
+}`); err != nil {
+		t.Errorf("composite %% & | ^ << >> should type-check, got: %v", err)
+	}
 	// A composite without the operator method is rejected.
 	err := checkSource(t, `struct W { x: i32 }
 function main(): i32 { var a: W = W{x:1}; var b: W = W{x:2}; var c: W = a + b; return c.x; }`)
