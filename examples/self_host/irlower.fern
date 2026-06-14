@@ -555,6 +555,21 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
     var t: string = "";
     match (e) {
         parser.ExprIdent(id) => { t = s.opt_type_of_slot(s.slot_of(id.name)); },
+        // `b.v` where `v` is an Option/Result struct field, or `t.N` where the
+        // tuple element is an Option/Result — lets `b.v.uo(...)` / `match (b.v)`
+        // dispatch on the field value (#3069).
+        parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                var tt: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                if (tt.len() >= 8 && (tt[0:7] == "Option[" || tt[0:7] == "Result[")) { t = tt; }
+            } else {
+                var foty: string = expr_struct_type(fa.obj, s);
+                if (foty != "") {
+                    var fft: string = decl_field_type(s.structs, foty, fa.field);
+                    if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { t = fft; }
+                }
+            }
+        },
         parser.ExprCall(c) => {
             t = some_opt_type(e, s);
             if (t == "") {
