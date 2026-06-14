@@ -113,6 +113,21 @@ function main(): i32 { var a: W = W{x:1}; var b: W = W{x:2}; var c: W = a + b; r
 	if err := checkSource(t, `function main(): i32 { return 2 + 3 * 4 - 1; }`); err != nil {
 		t.Errorf("numeric arithmetic should still type-check, got: %v", err)
 	}
+	// Unary `-` on a composite routes to `neg`; `ops` has no `neg`, so it
+	// is rejected; a type WITH `neg` type-checks; numeric unary minus is
+	// unaffected. See #2706.
+	if err := checkSource(t, ops+`function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err == nil ||
+		!strings.Contains(err.Error(), "unary `-` is not defined for V") {
+		t.Errorf("unary `-` on a struct without `neg` should be rejected with a hint, got: %v", err)
+	}
+	if err := checkSource(t, `struct V { x: i32 }
+function (self: V) neg(): V { return V { x: 0 - self.x }; }
+function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err != nil {
+		t.Errorf("unary `-` with a `neg` method should type-check, got: %v", err)
+	}
+	if err := checkSource(t, `function main(): i32 { var x: i32 = 7; return -x; }`); err != nil {
+		t.Errorf("numeric unary minus should still type-check, got: %v", err)
+	}
 }
 
 func TestCompositeEqualityRoutesToEq(t *testing.T) {
