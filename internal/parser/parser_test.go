@@ -1070,6 +1070,39 @@ struct PrivPoint { x: i32 }`)
 	}
 }
 
+// `pub(package) function f` sets PackageScoped (not Public). See
+// docs/PUB-PACKAGE.md.
+func TestPubPackageSetsPackageScoped(t *testing.T) {
+	prog, err := Parse(`pub(package) function helper(): i32 { return 1; }
+pub function exposed(): i32 { return 2; }
+pub(package) const K: i32 = 3;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var helper, exposed *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		switch fn.Name {
+		case "helper":
+			helper = fn
+		case "exposed":
+			exposed = fn
+		}
+	}
+	if helper == nil || !helper.PackageScoped || helper.Public {
+		t.Errorf("helper should be PackageScoped and not Public; got %+v", helper)
+	}
+	if exposed == nil || exposed.PackageScoped || !exposed.Public {
+		t.Errorf("exposed should be Public and not PackageScoped; got %+v", exposed)
+	}
+	if len(prog.Consts) != 1 || !prog.Consts[0].PackageScoped || prog.Consts[0].Public {
+		t.Errorf("const K should be PackageScoped; got %+v", prog.Consts)
+	}
+	// `pub(foo)` (anything but package) is a parse error.
+	if _, err := Parse(`pub(crate) function f(): i32 { return 1; }`); err == nil {
+		t.Error("`pub(crate)` should be a parse error")
+	}
+}
+
 // `pub` is only valid in front of `function`, `struct`, or `const`.
 // `pub var` (or any other kind of decl) should be rejected with a
 // clear message rather than silently swallowed.

@@ -611,6 +611,60 @@ function main(): i32 {
 // Cross-module references to a non-`pub` function are a load-time
 // error. The diagnostic mentions the offending qualified name and
 // hints at the fix.
+// `pub(package)` decls are visible to a module in the SAME package (same
+// directory) — `util.helper()` resolves like a `pub` decl would. See
+// docs/PUB-PACKAGE.md.
+func TestLoadPubPackageSamePackage(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.fern": `pub(package) function helper(): i32 { return 42; }`,
+		"main.fern": `import "./util";
+function main(): i32 { return util.helper(); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("same-package pub(package) access should load: %v", err)
+	}
+	if main := findFunc(prog, "main"); main == nil || !callsDirect(main, "util__helper") {
+		t.Errorf("util.helper() should resolve to util__helper; funcs: %v", funcNames(prog))
+	}
+}
+
+// A `pub(package)` decl is NOT visible from a module in a DIFFERENT
+// package (different directory).
+func TestLoadPubPackageCrossPackageRejected(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.fern":     `pub(package) function helper(): i32 { return 42; }`,
+		"sub/app.fern":  `import "../util";
+function appmain(): i32 { return util.helper(); }`,
+		"main.fern": `import "./sub/app";
+function main(): i32 { return 0; }`,
+	})
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err == nil {
+		t.Fatal("cross-package pub(package) access should error")
+	}
+	if !strings.Contains(err.Error(), "pub(package)") || !strings.Contains(err.Error(), "helper") {
+		t.Errorf("error should explain the package-scope restriction; got %v", err)
+	}
+}
+
+func TestSamePackage(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"/p/a.fern", "/p/b.fern", true},
+		{"/p/a.fern", "/p/q/b.fern", false},
+		{"stdlib://std/json.fern", "stdlib://core/int.fern", true},
+		{"stdlib://std/json.fern", "/p/a.fern", false},
+	}
+	for _, c := range cases {
+		if got := modload.SamePackageForTest(c.a, c.b); got != c.want {
+			t.Errorf("samePackage(%q,%q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func TestLoadRejectsPrivateFunctionAccess(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"util.fern": `function secret(): i32 { return 9; }`,

@@ -264,8 +264,31 @@ func (p *parser) parseProgram() *ast.Program {
 		// Public flag after the decl is built. A bare `pub` without
 		// a following decl is a parse error.
 		isPub := false
+		isPackage := false
 		if p.match(lexer.Keyword, "pub") {
 			pubTok := p.advance()
+			// `pub(package) <decl>` — package-scoped visibility: exported to
+			// other modules in the same package (directory / stdlib) but not
+			// to outside consumers. `package` is a contextual ident.
+			if _, ok := p.accept(lexer.Punct, "("); ok {
+				if _, err := p.expect(lexer.Ident, "package"); err != nil {
+					p.errors = append(p.errors, p.errorf(pubTok.Pos, "`pub(...)` only supports `pub(package)`"))
+					p.syncToTopLevel()
+					if p.i == before {
+						p.advance()
+					}
+					continue
+				}
+				if _, err := p.expect(lexer.Punct, ")"); err != nil {
+					p.errors = append(p.errors, err)
+					p.syncToTopLevel()
+					if p.i == before {
+						p.advance()
+					}
+					continue
+				}
+				isPackage = true
+			}
 			// `pub use "path".{name, …};` — a re-export. Handled here
 			// rather than as a normal `pub <decl>` because it produces a
 			// PubUse, not a Public-flagged declaration.
@@ -300,7 +323,9 @@ func (p *parser) parseProgram() *ast.Program {
 				}
 				continue
 			}
-			isPub = true
+			// `pub` exports; `pub(package)` is package-scoped (isPackage set
+			// above) and is NOT also Public.
+			isPub = !isPackage
 		}
 		// `fip` is a contextual modifier on a function decl (`pub fip
 		// function …` / `fip function …`): the checker (E053) verifies the
@@ -341,6 +366,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if rd != nil {
 				rd.Public = isPub
+				rd.PackageScoped = isPackage
 				rd.ImportIface = importIface
 				rd.ImportWITName = importWIT
 				if len(derives) > 0 {
@@ -390,6 +416,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if sd != nil {
 				sd.Public = isPub
+				sd.PackageScoped = isPackage
 				sd.Derives = derives
 				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
@@ -416,6 +443,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if cd != nil {
 				cd.Public = isPub
+				cd.PackageScoped = isPackage
 				prog.Consts = append(prog.Consts, cd)
 			}
 			continue
@@ -432,6 +460,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if ed != nil {
 				ed.Public = isPub
+				ed.PackageScoped = isPackage
 				ed.Derives = derives
 				prog.Enums = append(prog.Enums, ed)
 			}
@@ -458,6 +487,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if ud != nil {
 				ud.Public = isPub
+				ud.PackageScoped = isPackage
 				prog.Unions = append(prog.Unions, ud)
 			}
 			continue
@@ -474,6 +504,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if td != nil {
 				td.Public = isPub
+				td.PackageScoped = isPackage
 				prog.Traits = append(prog.Traits, td)
 			}
 			continue
@@ -508,6 +539,7 @@ func (p *parser) parseProgram() *ast.Program {
 		}
 		if fn != nil {
 			fn.Public = isPub
+			fn.PackageScoped = isPackage
 			fn.Fip = isFip
 			if importIface != "" {
 				if fn.Body != nil {
