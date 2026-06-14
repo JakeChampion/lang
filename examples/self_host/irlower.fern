@@ -6009,6 +6009,38 @@ function all_i32_number_elems(elems: parser.Expr[]): boolean {
     return true;
 }
 
+// all_scalar_literal_args reports whether every argument of a call is a scalar
+// LITERAL (number / boolean / string) — so the call passes NO array, hence its
+// result cannot be an alias/view of a caller-live array (it is a fresh owned
+// buffer). Used to admit `var v = build(100)` array-returning free calls as
+// precise-drop candidates.
+function all_scalar_literal_args(args: parser.Expr[]): boolean {
+    var i: i32 = 0;
+    while (i < args.len()) {
+        match (args[i]) {
+            parser.ExprNumber(_) => {},
+            parser.ExprBool(_) => {},
+            parser.ExprString(_) => {},
+            _ => { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// call_returns_i32_array reports whether a free function `name` is known to
+// return a PURE i32[] — in the array-returning registry but NOT in the
+// string[] / f64[] / i64[] registries. Only such a call's fresh result is a
+// precise-drop candidate; admitting a string[]-returning call crashed the
+// self-host (its element-pointer buffer + view-returning methods), so the
+// element type is checked HERE, at candidacy, not just at emission.
+function call_returns_i32_array(name: string, arr: string[], strarr: string[], f64arr: string[], i64arr: string[]): boolean {
+    return util.index_of_str(arr, name) >= 0
+        && util.index_of_str(strarr, name) < 0
+        && util.index_of_str(f64arr, name) < 0
+        && util.index_of_str(i64arr, name) < 0;
+}
+
 // PreciseDrops is the result of precise_drop_names: two PARALLEL arrays — for
 // each precise drop, the top-level body-statement index AFTER which to release
 // the array, and the local name to release. (A flat pair, not a `string[][]`,
@@ -6023,7 +6055,7 @@ struct PreciseDrops { idxs: i32[], names: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: parser.Stmt[]): PreciseDrops {
+function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -6032,16 +6064,26 @@ function precise_drop_names(body: parser.Stmt[]): PreciseDrops {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                // Only a PURE i32 array literal (every element a non-float number
-                // literal) qualifies. This excludes string[] / f64[] / i64[] /
-                // nested-array literals, whose buffers hold pointers / wide values
-                // and whose method semantics differ — freeing such a buffer early
-                // is unsound (its elements / views can still be live). The
-                // fixpoint + std-test validated the i32[] case; a string[] literal
-                // segfaulted (its join/first/last keep the buffer live).
+                // Candidate inits — both produce a FRESH OWNED i32[] buffer that
+                // is not an alias/view of a live value (so a sole-owner early free
+                // is sound): a pure i32 array literal, or a FREE call (not a method
+                // — a method like `.slice()` could return a view of its receiver)
+                // that returns i32[] (call_returns_i32_array) with all-scalar-
+                // literal args (so it passes no array to alias). string[] / f64[] /
+                // i64[] / nested-array inits are excluded (their buffers hold
+                // pointers / wide values, and a string[] init crashed the
+                // self-host).
                 var is_lit: boolean = false;
                 match (v.init) {
                     parser.ExprArray(arrl) => { is_lit = all_i32_number_elems(arrl.elements); },
+                    parser.ExprCall(c) => {
+                        match (c.callee) {
+                            parser.ExprIdent(cid) => {
+                                if (call_returns_i32_array(cid.name, arr_ret, strarr_ret, f64arr_ret, i64arr_ret) && all_scalar_literal_args(c.args)) { is_lit = true; }
+                            },
+                            _ => {}
+                        }
+                    },
                     _ => {}
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
@@ -6650,7 +6692,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = precise_drop_names(fn.body);
+    var pdrops: PreciseDrops = precise_drop_names(fn.body, arr_ret_fns, strarr_ret_fns, f64arr_ret_fns, i64arr_ret_fns);
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
