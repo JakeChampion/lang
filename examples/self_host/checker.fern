@@ -3620,14 +3620,27 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             out = stmts_call_diags(lm.body, lsc);
         },
         parser.ExprIdent(id) => {
-            // E001: a bare identifier in VALUE position that resolves to
-            // nothing — not a local / param / loop / match binding, a free
-            // function or const, an enum/union variant (declared or
-            // builtin), or a struct name. Call callees are handled in the
-            // ExprCall arm (a bare-ident callee is skipped here), so this
-            // fires only on value reads, matching where the Go checker's
-            // errIdent reports E001.
-            if (!is_resolvable_value(id.name, s)) {
+            // E036: a payload-bearing variant referenced bare — a union member
+            // (`type U = P | Q`, P a struct) or an enum variant with a payload
+            // (`A(i32)`) used as a value WITHOUT calling its constructor. Both
+            // are registered as a union variant whose backing struct has >= 1
+            // field, so `variant_in_unions` is true and the struct has fields;
+            // a nullary variant has no backing fields and stays a valid bare
+            // value. The constructor CALL form (`P(...)` / `A(5)`) is an
+            // ExprCall callee handled elsewhere, so it isn't flagged. Mirrors
+            // the Go checker ("variant X expects a payload; call it as X(...)").
+            // Checked before E001 — these names DO resolve (as variants), so
+            // is_resolvable_value would otherwise let them pass silently.
+            if (variant_in_unions(id.name, s.unions) && s.lookup_struct(id.name).field_names.len() > 0) {
+                out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
+            } else if (!is_resolvable_value(id.name, s)) {
+                // E001: a bare identifier in VALUE position that resolves to
+                // nothing — not a local / param / loop / match binding, a free
+                // function or const, an enum/union variant (declared or
+                // builtin), or any other value. Call callees are handled in the
+                // ExprCall arm (a bare-ident callee is skipped here), so this
+                // fires only on value reads, matching where the Go checker's
+                // errIdent reports E001.
                 out = out.append(dg_at("E001", "undefined name \"" + id.name + "\"", id.line, id.col));
             }
         },

@@ -474,6 +474,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-name-as-value", "struct P { x: i32 }\nfunction main(): i32 { return P; }\n", []string{"E001"}},
 		{"struct-name-as-value-var", "struct P { x: i32 }\nfunction main(): i32 { var q = P; return 0; }\n", []string{"E001"}},
 		{"struct-literal-not-value-ok", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.x; }\n", nil},
+		// A payload-bearing variant referenced bare (a union member, or an enum
+		// variant with a payload) is E036 — it must be constructed/called. A
+		// nullary variant, a constructor call, and a struct literal stay clean.
+		{"payload-variant-bare", "enum E { A(i32), B }\nfunction f(): E { return A; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"union-member-bare", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U { return P; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"payload-variant-call-ok", "enum E { A(i32), B }\nfunction f(): E { return A(5); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"nullary-variant-bare-ok", "enum E { A, B }\nfunction f(): E { return A; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"value-param-ok", "function f(a: i32): i32 { return a; }\nfunction main(): i32 { return f(1); }\n", nil},
 		{"value-function-as-value-ok", "function g(): i32 { return 1; }\nfunction run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(g); }\n", nil},
 		{"value-enum-variant-ok", "enum E { A, B }\nfunction main(): i32 { var e: E = A; return 0; }\n", nil},
