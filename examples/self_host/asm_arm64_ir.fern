@@ -83,22 +83,8 @@ function ir_bin_asm(kind: string): string {
     return "    // ir: unsupported bin " + kind + "\n";
 }
 
-// is_str_op_kind reports whether `k` is one of the string operand-stack ops
-// emit_str_op handles. Pulled out of emit_function_via_ir's giant op-dispatch
-// chain so that ~550-line function stays under the self-host backend's
-// oversized-function miscompile threshold (#2720).
-function is_str_op_kind(k: string): boolean {
-    return k == "str_len" || k == "str_index" || k == "str_slice"
-        || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
-        || k == "str_to_lower" || k == "str_repeat" || k == "str_trim"
-        || k == "str_reverse" || k == "str_replace" || k == "str_chars" || k == "str_lines"
-        || k == "str_starts_with"
-        || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
-        || k == "str_eq" || k == "str_cmp";
-}
-
 // emit_str_op emits one string operand-stack op (the bodies factored out of
-// emit_function_via_ir's dispatch — see is_str_op_kind). The runtime helpers
+// emit_function_via_ir's dispatch — see ir.is_str_op_kind). The runtime helpers
 // come from asm_arm64.emit_runtime, gated by the mark_* needs set here.
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind == "str_len") {
@@ -385,7 +371,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    mov x1, #" + util.i32_to_string(o.str.len()) + "\n");
             s = s.write("    str x1, [x0, #8]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-        } else if (is_str_op_kind(o.kind)) {
+        } else if (ir.is_str_op_kind(o.kind)) {
             // All string operand-stack ops (len/index/slice/bytes/split/
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
             // to keep this dispatch under the oversized-function threshold (#2720).

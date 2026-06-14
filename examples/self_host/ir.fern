@@ -656,3 +656,21 @@ pub function op_allocates(kind: string): boolean {
     if (kind == "dyn_box" || kind == "dyn_downcast") { return true; }
     return false;
 }
+
+// is_str_op_kind reports whether `k` is one of the string operand-stack ops
+// that each native backend dispatches to a __fern_str_* runtime helper (rather
+// than inline instruction selection). The asm + arm64 IR backends both factor
+// these out of their giant op-dispatch chain into an emit_str_op helper, gated
+// on this predicate (keeping that dispatch under the self-host backend's
+// oversized-function miscompile threshold, #2720). The membership is a property
+// of the IR op set — not of any one target — so it lives here and both backends
+// share it; a new string op is taught to every backend's dispatch at once.
+pub function is_str_op_kind(k: string): boolean {
+    return k == "str_len" || k == "str_index" || k == "str_slice"
+        || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
+        || k == "str_to_lower" || k == "str_repeat" || k == "str_trim"
+        || k == "str_reverse" || k == "str_replace" || k == "str_chars" || k == "str_lines"
+        || k == "str_starts_with"
+        || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
+        || k == "str_eq" || k == "str_cmp";
+}
