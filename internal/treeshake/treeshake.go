@@ -68,27 +68,38 @@ func DynCoercionImplMethods(info *checker.Info) []string {
 		return true
 	}
 	for _, dc := range info.DynCoercions {
-		td, ok := info.Traits[dc.Trait]
-		if !ok {
-			continue
+		// Root the impl methods of EVERY trait in the `dyn` set (a
+		// multi-trait `dyn A + B` needs A's and B's methods kept alive).
+		// Fall back to the single Trait field if Traits is unset (older
+		// callers / single-trait sites).
+		traits := dc.Traits
+		if len(traits) == 0 {
+			traits = []string{dc.Trait}
 		}
 		prim := isPrimitive(dc.Concrete)
-		for _, m := range td.Methods {
-			if m.Assoc {
+		for _, tr := range traits {
+			td, ok := info.Traits[tr]
+			if !ok {
 				continue
 			}
-			// Always root the real method: a struct/enum vtable slot points
-			// at it, and a primitive's wrapper calls it (so it must survive
-			// into IR lowering where the wrapper is generated).
-			fn := info.Methods[dc.Concrete+"."+m.Name]
-			if fn == "" {
-				fn = "__method_" + dc.Concrete + "_" + m.Name
-			}
-			add(fn)
-			// For a primitive concrete also root the wrapper name (the
-			// actual vtable target). No-op in the AST tree-shaker today.
-			if prim {
-				add("__dynbox_" + dc.Concrete + "_" + m.Name)
+			for _, m := range td.Methods {
+				if m.Assoc {
+					continue
+				}
+				// Always root the real method: a struct/enum vtable slot
+				// points at it, and a primitive's wrapper calls it (so it
+				// must survive into IR lowering where the wrapper is
+				// generated).
+				fn := info.Methods[dc.Concrete+"."+m.Name]
+				if fn == "" {
+					fn = "__method_" + dc.Concrete + "_" + m.Name
+				}
+				add(fn)
+				// For a primitive concrete also root the wrapper name (the
+				// actual vtable target). No-op in the AST tree-shaker today.
+				if prim {
+					add("__dynbox_" + dc.Concrete + "_" + m.Name)
+				}
 			}
 		}
 	}

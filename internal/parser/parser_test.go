@@ -1858,15 +1858,69 @@ function many(ds: dyn Shape[]): i32 { return 0; }`)
 		t.Fatal("functions not parsed")
 	}
 	dt, ok := one.Params[0].Type.(ast.DynTraitType)
-	if !ok || dt.Trait != "Shape" {
+	if !ok || len(dt.Traits) != 1 || dt.Traits[0] != "Shape" {
 		t.Errorf("one param type = %#v, want dyn Shape", one.Params[0].Type)
 	}
 	at, ok := many.Params[0].Type.(ast.ArrayType)
 	if !ok {
 		t.Fatalf("many param type = %#v, want array", many.Params[0].Type)
 	}
-	if edt, ok := at.Elem.(ast.DynTraitType); !ok || edt.Trait != "Shape" {
+	if edt, ok := at.Elem.(ast.DynTraitType); !ok || len(edt.Traits) != 1 || edt.Traits[0] != "Shape" {
 		t.Errorf("many element type = %#v, want dyn Shape", at.Elem)
+	}
+}
+
+// `dyn A + B` parses to a DynTraitType carrying the SORTED + DEDUPED
+// trait set (so `dyn A + B` ≡ `dyn B + A`), `dyn A + B + C` keeps all
+// three, `dyn A+B[]` is an array of multi-trait objects, and a trailing
+// `+` is a parse error. See docs/DYN-TRAITS.md.
+func TestDynMultiTraitParse(t *testing.T) {
+	prog, err := Parse(`trait A { function a(self: Self): i32; }
+trait B { function b(self: Self): i32; }
+trait C { function c(self: Self): i32; }
+function f(d: dyn B + A): i32 { return 0; }
+function g(d: dyn C + A + B): i32 { return 0; }
+function h(ds: dyn A + B[]): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("multi-trait dyn should parse: %v", err)
+	}
+	byName := map[string]*ast.FuncDecl{}
+	for _, fn := range prog.Funcs {
+		byName[fn.Name] = fn
+	}
+	// `dyn B + A` normalises to the sorted set [A, B].
+	dt, ok := byName["f"].Params[0].Type.(ast.DynTraitType)
+	if !ok || len(dt.Traits) != 2 || dt.Traits[0] != "A" || dt.Traits[1] != "B" {
+		t.Errorf("f param = %#v, want sorted dyn A + B", byName["f"].Params[0].Type)
+	}
+	if dt.String() != "dyn A + B" {
+		t.Errorf("String() = %q, want %q", dt.String(), "dyn A + B")
+	}
+	// `dyn C + A + B` → [A, B, C].
+	dt3, ok := byName["g"].Params[0].Type.(ast.DynTraitType)
+	if !ok || len(dt3.Traits) != 3 || dt3.Traits[0] != "A" || dt3.Traits[1] != "B" || dt3.Traits[2] != "C" {
+		t.Errorf("g param = %#v, want sorted dyn A + B + C", byName["g"].Params[0].Type)
+	}
+	// `dyn A + B[]` → array of dyn A + B.
+	at, ok := byName["h"].Params[0].Type.(ast.ArrayType)
+	if !ok {
+		t.Fatalf("h param = %#v, want array", byName["h"].Params[0].Type)
+	}
+	if edt, ok := at.Elem.(ast.DynTraitType); !ok || len(edt.Traits) != 2 {
+		t.Errorf("h element = %#v, want dyn A + B array", at.Elem)
+	}
+	// Order-insensitive Equal: `dyn A + B` ≡ `dyn B + A`.
+	if !ast.Equal(ast.NewDynTraitType("A", "B"), ast.NewDynTraitType("B", "A")) {
+		t.Errorf("dyn A + B should equal dyn B + A")
+	}
+	// Dedup: `dyn A + A` → single-element [A].
+	if d := ast.NewDynTraitType("A", "A"); len(d.Traits) != 1 {
+		t.Errorf("dyn A + A should dedup to [A], got %#v", d.Traits)
+	}
+	// Trailing `+` is a parse error.
+	if _, err := Parse(`trait A { function a(self: Self): i32; }
+function bad(d: dyn A +): i32 { return 0; }`); err == nil {
+		t.Errorf("trailing `+` in dyn type should be a parse error")
 	}
 }
 

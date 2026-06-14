@@ -148,12 +148,19 @@ type Info struct {
 	DynCoercions map[ast.Expr]DynCoercion
 }
 
-// DynCoercion identifies one concrete→`dyn Trait` boxing site: the
-// trait being coerced to and the concrete type flowing in. The IR uses
-// the pair to select the (trait, concrete) vtable to pair with the
-// boxed value. See checker.Info.DynCoercions and docs/DYN-TRAITS.md.
+// DynCoercion identifies one concrete→`dyn …` boxing site: the trait(s)
+// being coerced to and the concrete type flowing in. The IR uses the
+// (trait, concrete) pair to select the vtable to pair with the boxed
+// value. See checker.Info.DynCoercions and docs/DYN-TRAITS.md.
+//
+// Trait is the PRIMARY (single) trait — `Traits[0]` — kept for the
+// single-trait compiled codegen path (the only one that lowers today;
+// multi-trait is compiled-rejected). Traits holds the WHOLE set, so
+// set-aware consumers (tree-shaking, which must root the impl methods of
+// EVERY trait in the set) iterate it rather than reading only Trait.
 type DynCoercion struct {
 	Trait    string
+	Traits   []string
 	Concrete string
 }
 
@@ -2264,6 +2271,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// hidden side channel. Runs on success only; it also runs inside
 	// monomorph's re-check, so cloned generic bodies desugar too.
 	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
+		// Composite unary minus: `-v` → `v.neg()`.
+		if u, ok := e.(*ast.Unary); ok {
+			if u.NegCall != nil {
+				return u.NegCall
+			}
+			return e
+		}
 		b, ok := e.(*ast.Binary)
 		if !ok {
 			return e
@@ -2380,7 +2394,12 @@ func (c *checker) setElemHintFor(e ast.Expr, dst ast.Type) {
 func forEachDynTrait(t ast.Type, fn func(string)) {
 	switch x := t.(type) {
 	case ast.DynTraitType:
-		fn(x.Trait)
+		// Multi-trait-aware: validate EVERY trait in the set so
+		// `dyn Bogus + Eq` reports both the unknown and the
+		// non-object-safe trait.
+		for _, tr := range x.Traits {
+			fn(tr)
+		}
 	case ast.ArrayType:
 		forEachDynTrait(x.Elem, fn)
 	case ast.SliceType:
@@ -2630,25 +2649,49 @@ func (c *checker) objectSafe(traitName string) (bool, string) {
 // dispatch (Call.DynTrait), leaving the callee a FieldAccess. Returns
 // the call's result type (nil on a hard error). See docs/DYN-TRAITS.md.
 func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.DynTraitType, s *scope) ast.Type {
-	td, ok := c.info.Traits[dt.Trait]
-	if !ok {
-		// Unknown / non-object-safe traits are reported once by
-		// validateDynTraitTypes over type positions; bail silently
-		// here so the same error isn't repeated per call site.
-		return nil
-	}
-	if safe, _ := c.objectSafe(dt.Trait); !safe {
-		return nil
-	}
-	var tm *ast.TraitMethod
-	for i := range td.Methods {
-		if td.Methods[i].Name == fa.Field {
-			tm = &td.Methods[i]
-			break
+	// Method resolution searches the UNION of the traits' method sets.
+	// Each trait must be known + object-safe (validateDynTraitTypes
+	// reports those errors once over type positions; bail silently here
+	// so per-call sites don't repeat them).
+	for _, tr := range dt.Traits {
+		if _, ok := c.info.Traits[tr]; !ok {
+			return nil
+		}
+		if safe, _ := c.objectSafe(tr); !safe {
+			return nil
 		}
 	}
+	// Find the method across all traits in the set. Exactly one trait
+	// declaring it → use it. Two+ → an ambiguity error (disambiguation
+	// syntax is a follow-up; docs/DYN-TRAITS.md §N). None → no-method.
+	var tm *ast.TraitMethod
+	var ownerTrait string
+	var collidingTraits []string
+	for _, tr := range dt.Traits {
+		td := c.info.Traits[tr]
+		for i := range td.Methods {
+			if td.Methods[i].Name == fa.Field {
+				if tm != nil && ownerTrait != tr {
+					collidingTraits = append(collidingTraits, tr)
+				} else {
+					tm = &td.Methods[i]
+					ownerTrait = tr
+				}
+				break
+			}
+		}
+	}
+	if len(collidingTraits) > 0 {
+		all := append([]string{ownerTrait}, collidingTraits...)
+		for i := range all {
+			all[i] = demangle(all[i])
+		}
+		c.errfCode(fa.FieldPos, "E062", "ambiguous method %q on `%s`: declared by traits %s",
+			fa.Field, dt.String(), strings.Join(all, ", "))
+		return nil
+	}
 	if tm == nil {
-		c.errfCode(fa.FieldPos, "E021", "no method %q on `dyn %s`", fa.Field, demangle(dt.Trait))
+		c.errfCode(fa.FieldPos, "E021", "no method %q on `%s`", fa.Field, dt.String())
 		return nil
 	}
 	// Trait method signatures are stored as written: a `self` receiver is
@@ -2676,7 +2719,11 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 		}
 	}
 	n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: dt}
-	n.DynTrait = dt.Trait
+	// DynTrait records the trait that OWNS the resolved method (not the
+	// whole set) — that's what the IR vtable lookup and the interp's
+	// error messages key on. Runtime dispatch is still by the receiver's
+	// concrete type, so for the single-trait case this is unchanged.
+	n.DynTrait = ownerTrait
 	return ast.SubstSelf(tm.Result, dt)
 }
 
@@ -3787,13 +3834,17 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 		_, _, found := c.resolveTraitMethodForParam(x.Name, "to_string")
 		return found
 	case ast.DynTraitType:
-		td, ok := c.info.Traits[x.Trait]
-		if !ok {
-			return false
-		}
-		for _, m := range td.Methods {
-			if m.Name == "to_string" {
-				return true
+		// Display via any trait in the set — `to_string` may be declared
+		// by any of the traits the object spans.
+		for _, tr := range x.Traits {
+			td, ok := c.info.Traits[tr]
+			if !ok {
+				continue
+			}
+			for _, m := range td.Methods {
+				if m.Name == "to_string" {
+					return true
+				}
 			}
 		}
 		return false
@@ -4389,6 +4440,42 @@ func (c *checker) variantEnumList(name string) string {
 // "couldn't fully resolve" cases. Recurses into composite types
 // (arrays, function types, generic enum args) so a payload like
 // `Option[T]` resolves to `Option[number]` when T=number.
+// arithOpMethod maps a binary arithmetic / bitwise operator to the
+// conventionally-named method that overloads it on a composite type,
+// mirroring `==`→eq / `<`→cmp. See compositeOpOverload / #2706.
+var arithOpMethod = map[string]string{
+	"+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
+	"&": "bitand", "|": "bitor", "^": "bitxor", "<<": "shl", ">>": "shr",
+}
+
+// compositeOpOverload handles operator overloading for a binary operator
+// whose operands are the same composite (struct / enum) type: it desugars
+// `a <op> b` to the type's conventionally-named method (`arithOpMethod`),
+// stashing the checked call on n.ArithCall (swapped in by the post-check
+// rewrite) and returning its result type. handled=false means the operands
+// aren't a matching composite pair, so the caller falls through to the
+// numeric path. A composite operand without the method is a clear E009.
+func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) (ast.Type, bool) {
+	if lt == nil || !ast.Equal(lt, rt) {
+		return nil, false
+	}
+	switch lt.(type) {
+	case ast.StructType, ast.EnumType:
+	default:
+		return nil, false
+	}
+	opMethod := arithOpMethod[n.Op]
+	tn, _ := methodTypeName(lt)
+	if mangled, ok := c.info.Methods[tn+"."+opMethod]; ok && c.methodVisibleHere(mangled) {
+		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
+		rtt := c.checkExpr(call, s)
+		n.ArithCall = call
+		return rtt, true
+	}
+	c.errfCode(n.P, "E009", "operator %q is not defined for %s — implement `function (self: %s) %s(other: %s): %s` to overload it", n.Op, lt, tn, opMethod, tn, tn)
+	return lt, true
+}
+
 // resolveProj resolves an associated-type projection whose base is a
 // concrete type (`Foo::Item`) to the type the impl binds it to, recursing
 // into composite types. A projection with an abstract base (`Self::Item`,
@@ -4908,11 +4995,18 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 	// src is not already dyn). See docs/DYN-TRAITS.md §4.2.1.
 	if dt, ok := dst.(ast.DynTraitType); ok {
 		if _, isDyn := srcType.(ast.DynTraitType); !isDyn {
-			if tn, ok := methodTypeName(srcType); ok && c.info.Impls[dt.Trait][tn] {
+			// Coercion gate: the concrete must implement EVERY trait in
+			// the set (`dyn A + B` ⇐ C iff C impls A AND B). Record the
+			// whole set so tree-shaking roots all the impl methods.
+			if tn, ok := methodTypeName(srcType); ok && c.implementsAllDynTraits(dt, tn) {
 				if c.info.DynCoercions == nil {
 					c.info.DynCoercions = map[ast.Expr]DynCoercion{}
 				}
-				c.info.DynCoercions[*holder] = DynCoercion{Trait: dt.Trait, Concrete: tn}
+				c.info.DynCoercions[*holder] = DynCoercion{
+					Trait:    dt.Trait0(),
+					Traits:   dt.Traits,
+					Concrete: tn,
+				}
 			}
 		}
 		return srcType
@@ -4963,6 +5057,42 @@ func (c *checker) inStdlibContext() bool {
 	return c.current != nil && strings.HasPrefix(c.current.SourceModule, "stdlib://")
 }
 
+// implementsAllDynTraits reports whether the concrete type named `tn`
+// implements EVERY trait in the `dyn` set — the impl-all coercion gate
+// for `dyn A + B` (a concrete coerces in iff it impls A AND B). The
+// single-trait case is just the 1-element loop.
+func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
+	for _, tr := range dt.Traits {
+		if !c.info.Impls[tr][tn] {
+			return false
+		}
+	}
+	return true
+}
+
+// missingDynTraits returns a human-readable description of which trait(s)
+// in the `dyn` set the concrete type `src` fails to implement — used to
+// name the offending trait(s) in coercion-failure diagnostics. Returns
+// the single trait spelling for a 1-element gap (so the single-trait
+// message reads exactly as before).
+func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
+	tn, ok := methodTypeName(src)
+	if !ok {
+		return demangle(dt.Trait0())
+	}
+	var missing []string
+	for _, tr := range dt.Traits {
+		if !c.info.Impls[tr][tn] {
+			missing = append(missing, demangle(tr))
+		}
+	}
+	if len(missing) == 0 {
+		// Shouldn't happen on the failure path, but fall back to the set.
+		return demangle(dt.Trait0())
+	}
+	return strings.Join(missing, " + ")
+}
+
 func (c *checker) assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
@@ -4979,7 +5109,9 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 			return false // distinct dyn types: only Equal (handled above) assigns
 		}
 		if tn, ok := methodTypeName(src); ok {
-			return c.info.Impls[dt.Trait][tn]
+			// Impl-ALL: a concrete coerces to `dyn A + B` iff it impls
+			// every trait in the set.
+			return c.implementsAllDynTraits(dt, tn)
 		}
 		return false
 	}
@@ -5556,13 +5688,17 @@ func (c *checker) methodConsumesReceiver(m *ast.MethodCallSite) bool {
 		return false
 	}
 	if dt, ok := m.Receiver.(ast.DynTraitType); ok {
-		td, ok := c.info.Traits[dt.Trait]
-		if !ok {
-			return false
-		}
-		for i := range td.Methods {
-			if td.Methods[i].Name == m.Field {
-				return len(td.Methods[i].Params) > 0 && td.Methods[i].Params[0].Own
+		// The method may be declared by any trait in the set — search
+		// the union, matching checkDynMethodCall's resolution.
+		for _, tr := range dt.Traits {
+			td, ok := c.info.Traits[tr]
+			if !ok {
+				continue
+			}
+			for i := range td.Methods {
+				if td.Methods[i].Name == m.Field {
+					return len(td.Methods[i].Params) > 0 && td.Methods[i].Params[0].Own
+				}
 			}
 		}
 		return false
@@ -7406,7 +7542,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E059", "'as?' downcast requires a 'dyn Trait' value on the left, got %s", inner)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
-		n.Trait = dt.Trait
+		// Trait records the PRIMARY trait for the single-trait codegen
+		// path (multi-trait downcast is compiled-rejected). The impl gate
+		// below checks the whole set.
+		n.Trait = dt.Trait0()
+		n.Traits = dt.Traits
 		// The target must be a struct or enum (slice 1 scope).
 		tn, hasName := methodTypeName(n.Target)
 		_, isStruct := n.Target.(ast.StructType)
@@ -7415,9 +7555,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
-		// The target must implement the trait — mirror the coercion gate.
-		if !c.info.Impls[dt.Trait][tn] {
-			c.errfCode(n.P, "E060", "%s does not implement %s, so a 'dyn %s' cannot downcast to it", n.Target, dt.Trait, dt.Trait)
+		// The target must implement EVERY trait in the set — mirror the
+		// coercion gate (only a type that could have been coerced in can
+		// be recovered).
+		if !c.implementsAllDynTraits(dt, tn) {
+			c.errfCode(n.P, "E060", "%s does not implement %s, so a '%s' cannot downcast to it", n.Target, c.missingDynTraits(dt, n.Target), dt.String())
 		}
 		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 	case *ast.CastExpr:
@@ -7660,8 +7802,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				t = c.maybeWrapForUnion(dt, &n.Elems[i], t, s)
 				if t != nil && !c.assignable(dt, t) {
 					c.errfCode(n.Elems[i].Pos(), "E034",
-						"array element of type %s does not implement %s, so it cannot be a `dyn %s`",
-						t, demangle(dt.Trait), demangle(dt.Trait))
+						"array element of type %s does not implement %s, so it cannot be a `%s`",
+						t, c.missingDynTraits(dt, t), dt.String())
 				}
 			}
 			n.ElemType = dt
@@ -8440,25 +8582,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			fallthrough
 		case "-", "*", "/":
-			// Composite-type arithmetic operator overloading. `a <op> b`
-			// on a struct / enum desugars to the type's conventionally-
-			// named method (`+`→add, `-`→sub, `*`→mul, `/`→div), mirroring
-			// composite `==` (eq) / `<` (cmp). Stashed on ArithCall and
-			// swapped in by the post-check rewrite. See #2706.
-			if lt != nil && ast.Equal(lt, rt) {
-				switch lt.(type) {
-				case ast.StructType, ast.EnumType:
-					opMethod := map[string]string{"+": "add", "-": "sub", "*": "mul", "/": "div"}[n.Op]
-					tn, _ := methodTypeName(lt)
-					if mangled, ok := c.info.Methods[tn+"."+opMethod]; ok && c.methodVisibleHere(mangled) {
-						call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
-						rtt := c.checkExpr(call, s)
-						n.ArithCall = call
-						return rtt
-					}
-					c.errfCode(n.P, "E009", "operator %q is not defined for %s — implement `function (self: %s) %s(other: %s): %s` (or `impl … for %s`) to overload it", n.Op, lt, tn, opMethod, tn, tn, tn)
-					return lt
-				}
+			// Composite-type arithmetic operator overloading (`+`→add,
+			// `-`→sub, `*`→mul, `/`→div). See compositeOpOverload / #2706.
+			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
+				return rtt
 			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
@@ -8504,6 +8631,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return common
 		case "%", "&", "|", "^", "<<", ">>":
+			// Composite-type operator overloading (`%`→rem, `&`→bitand,
+			// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr). See #2706.
+			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
+				return rtt
+			}
 			c.requireInteger(n.P, lt, n.Op)
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
@@ -8676,6 +8808,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// Propagate polymorphism — `-3.14` should still
 				// be polymorphic so it can settle to f32 / f64.
 				return ft
+			}
+			// Composite-type unary minus: `-v` on a struct / enum with a
+			// `neg` method desugars to `v.neg()` — operator overloading,
+			// mirroring the binary `+ - * /` (add/sub/mul/div) overloads.
+			// See #2706.
+			switch t.(type) {
+			case ast.StructType, ast.EnumType:
+				tn, _ := methodTypeName(t)
+				if mangled, ok := c.info.Methods[tn+".neg"]; ok && c.methodVisibleHere(mangled) {
+					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
+					rtt := c.checkExpr(call, s)
+					n.NegCall = call
+					return rtt
+				}
+				c.errfCode(n.P, "E009", "unary `-` is not defined for %s — implement `function (self: %s) neg(): %s` to overload it", t, tn, tn)
+				return t
 			}
 			// Unary minus applies to any integer width, not just
 			// i32 — `-5i64`, `-x` on an i8, etc. requireNumber

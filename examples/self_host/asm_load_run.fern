@@ -18,6 +18,7 @@ import "./parser";
 import "./flatten";
 import "./checker";
 import "./asm";
+import "./asm_ir";
 
 // last_slash returns the index of the final '/' in p, or -1.
 function last_slash(p: string): i32 {
@@ -105,12 +106,23 @@ function main(): i32 {
     }
     var entry_path: string = av[1];
     var dir: string = dir_of(entry_path);
-    // Optional stdlib root: when given, `std/…` / `core/…` imports are
-    // resolved under it (`<root>/std/foo.fern`). Without it those
-    // imports are skipped (the entry must be self-contained over local
-    // modules + builtins).
+    // Optional stdlib root: the first non-flag arg after the entry. When given,
+    // `std/…` / `core/…` imports are resolved under it (`<root>/std/foo.fern`);
+    // without it those imports are skipped (the entry must be self-contained
+    // over local modules + builtins). `-ir-probe` reports the IR-eligibility
+    // frontier of the fully-loaded program instead of emitting asm — a
+    // per-function breakdown of what lowers through the stack-IR path vs what
+    // bails to the AST emitter (asm_ir.eligibility_report). Unlike the
+    // single-module asm_ir_run probe, this sees the WHOLE program with its
+    // stdlib imports flattened in, so it reports the frontier real programs hit.
     var root: string = "";
-    if (av.len() >= 3) { root = av[2]; }
+    var probe: boolean = false;
+    var ag: i32 = 2;
+    while (ag < av.len()) {
+        if (av[ag] == "-ir-probe") { probe = true; }
+        else if (root == "") { root = av[ag]; }
+        ag = ag + 1;
+    }
 
     var esrc: string = "";
     var eok: boolean = false;
@@ -157,6 +169,14 @@ function main(): i32 {
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+
+    // `-ir-probe`: report the IR-eligibility frontier of the whole loaded
+    // program (lambda-lifted to match what the emitter routes on) and stop —
+    // no codegen, no checker gate.
+    if (probe) {
+        write(asm_ir.eligibility_report(asm_ir.lift_lambdas(merged)));
+        return 0;
+    }
 
     // Immutability gate: reject the immutable-data cycle rules
     // (E048 field assign / E049 capture write-back / E055 discarded pure

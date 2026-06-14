@@ -580,6 +580,80 @@ function main(): i32 {
 	}
 }
 
+// TestInterpDynMultiTrait exercises a MULTI-trait trait object
+// (`dyn Show + Eq`, slice 1 of multi-trait `dyn` — docs/DYN-TRAITS.md):
+// a struct implementing BOTH traits coerces to `dyn Show + Eq` and can
+// call a method from EACH trait, dispatched by the value's runtime
+// concrete type. A heterogeneous `dyn Show + Eq[]` iterates + dispatches.
+// The compiled backends REJECT multi-trait `dyn` cleanly (merged-vtable
+// codegen is a later slice) — assert each target rejects with the clean
+// message, no panic.
+func TestInterpDynMultiTrait(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := `import "std/i32";
+trait Show { function show(self: Self): string; }
+trait Weigh { function weight(self: Self): i32; }
+struct Apple { g: i32 }
+struct Brick { kg: i32 }
+impl Show for Apple { function show(self: Self): string { return "apple"; } }
+impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } }
+impl Show for Brick { function show(self: Self): string { return "brick"; } }
+impl Weigh for Brick { function weight(self: Self): i32 { return self.kg * 1000; } }
+function describe(d: dyn Show + Weigh): string {
+    // a method from EACH trait, on the same multi-trait object
+    return d.show() + "=" + d.weight().to_string();
+}
+function main(): i32 {
+    // order-insensitive: dyn Weigh + Show is the same type
+    var one: dyn Weigh + Show = Apple { g: 150 };
+    print(describe(one));
+    var items: dyn Show + Weigh[] = [Apple { g: 120 }, Brick { kg: 2 }];
+    var total: i32 = 0;
+    for it in items {
+        print(describe(it));
+        total = total + it.weight();
+    }
+    print("total=" + total.to_string());
+    return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	// Interpreter: multi-trait dispatch from both traits works.
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("interp exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	for _, want := range []string{"apple=150", "apple=120", "brick=2000", "total=2120"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
+		}
+	}
+	// Compiled backends now LOWER multi-trait `dyn A + B` dispatch through
+	// the merged vtable (docs/DYN-TRAITS.md §10) — codegen must succeed (no
+	// reject, no panic). The differential correctness tests against the
+	// interpreter live in dyn_trait_compiled_test.go (dynAllBackends).
+	for _, target := range []string{"arm64", "x86-64", "wasm"} {
+		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
+		var gerr bytes.Buffer
+		gen.Stderr = &gerr
+		err := gen.Run()
+		if err != nil {
+			t.Errorf("compiling multi-trait `dyn` dispatch to %s should now succeed, got error:\n%s", target, gerr.String())
+		}
+		if strings.Contains(gerr.String(), "panic") {
+			t.Errorf("%s multi-trait codegen panicked: %s", target, gerr.String())
+		}
+	}
+}
+
 // TestInterpDowncast exercises the `e as? T` fallible downcast
 // (docs/DYN-TRAITS.md §9) on the interpreter: a `dyn Shape` holding a
 // Circle downcasts to Some(circle) (and the bound value is usable as the

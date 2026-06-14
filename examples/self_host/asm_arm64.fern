@@ -2024,6 +2024,24 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.write("    str x0, [sp, #-16]!\n");
         return s;
     }
+    // Array auto-discovered method (mirror of asm.fern): `a.<field>(args)` on an
+    // array with a std/array `__method_Array_<field>` helper in scope desugars
+    // to `__method_Array_<field>(a, args)` and reuses emit_call. Intercepted
+    // fast paths returned above; this catches the rest (sum_squared, reversed,
+    // sorted_asc, …).
+    if (asmcore.ty_is_array(prim_recv) || asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv)) {
+        var amf: string = asmcore.find_array_method_func(fa.field, s);
+        if (amf.len() > 0) {
+            var new_args: parser.Expr[] = [fa.obj];
+            var nai: i32 = 0;
+            while (nai < c.args.len()) { new_args = new_args.append(c.args[nai]); nai = nai + 1; }
+            var rewritten: parser.ExprCall = parser.ExprCall {
+                callee: parser.ExprIdent { name: amf, line: fa.line, col: fa.col },
+                args: new_args, line: c.line, col: c.col, type_argc: 0
+            };
+            return emit_call(rewritten, s);
+        }
+    }
     // Method call mirror of asm.fern. Push args
     // right-to-left then push the receiver, so
     // receiver lands at +16(x29) and arg[0] at

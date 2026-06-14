@@ -1754,18 +1754,30 @@ func (p *parser) parseType() (ast.Type, error) {
 			return nil, p.errorf(t.Pos, "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
 		}
 	case t.Kind == lexer.Keyword && t.Text == "dyn":
-		// `dyn Trait` — a runtime trait-object type. The trait name is
-		// a bare (optionally module-qualified) identifier; no generic
-		// args or bounds. Falls through to the trailing-`[]` suffix
-		// loop, so `dyn Shape[]` is an array of trait objects. See
+		// `dyn Trait` (single) or `dyn A + B` (multi-trait object) — a
+		// runtime trait-object type. Each trait name is a bare
+		// (optionally module-qualified) identifier; no generic args or
+		// bounds. Additional traits after the first are joined with `+`
+		// (mirroring trait-bound syntax, parseOptBounds). The set is
+		// normalised (sorted + deduped) by NewDynTraitType so
+		// `dyn A + B` ≡ `dyn B + A`. Falls through to the trailing-`[]`
+		// suffix loop, so `dyn Shape[]` / `dyn A + B[]` is an array of
+		// trait objects. A trailing/empty `+` is a parse error. See
 		// docs/DYN-TRAITS.md.
 		p.advance() // consume `dyn`
-		nameTok, err := p.expect(lexer.Ident, "")
-		if err != nil {
-			return nil, err
+		var traits []string
+		for {
+			nameTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			traits = append(traits, p.maybeQualify(nameTok.Text))
+			if _, ok := p.accept(lexer.Punct, "+"); ok {
+				continue
+			}
+			break
 		}
-		name := p.maybeQualify(nameTok.Text)
-		base = ast.DynTraitType{Trait: name}
+		base = ast.NewDynTraitType(traits...)
 	case (t.Kind == lexer.Ident) && (t.Text == "own" || t.Text == "borrow") &&
 		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident:
 		// `own R` / `borrow R` — a WIT resource-handle type (P5 —

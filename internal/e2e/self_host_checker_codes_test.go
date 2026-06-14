@@ -304,6 +304,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-on-f64", "function main(): i32 { var f: f64 = 1.0; f.foo(); return 0; }\n", []string{"E043"}},
 		{"method-on-string-ok", "function main(): i32 { var s: string = \"a\"; return s.len(); }\n", nil},
 		{"method-on-i32-user-method-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { var x: i32 = 21; return x.twice(); }\n", nil},
+		// E043 (array method existence): only append / with / len are
+		// unconditional array builtins; everything else is an auto-discovered
+		// std/array function, so `a.sum()` / `a.bogus()` without `import
+		// "std/array"` is a call to a non-existent method. append / with / len
+		// stay clean. (The import path — where the std/array functions ARE in
+		// scope — is covered by TestSelfHostCheckerBundleDifferentialX86_64.)
+		{"method-on-array-sum-noimp", "function main(): i32 { var a: i32[] = [1]; return a.sum(); }\n", []string{"E043"}},
+		{"method-on-array-bogus", "function main(): i32 { var a: i32[] = [1]; return a.bogus(); }\n", []string{"E043"}},
+		{"method-on-array-append-ok", "function main(): i32 { var a: i32[] = []; a = a.append(1); return a.len(); }\n", nil},
+		{"method-on-array-with-ok", "function main(): i32 { var a: i32[] = [1, 2]; a = a.with(0, 9); return a.len(); }\n", nil},
 		// E043 (string method existence): a string carries only the `len` /
 		// `as_bytes` builtins; any other method must be user-defined (here,
 		// none is in scope), else it's a call to a non-existent method.
@@ -935,6 +945,14 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"string-is-empty-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }\n"},
 		{"string-trim-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"  a \"; var t = s.trim(); return 0; }\n"},
 		{"string-to-lower-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"AB\"; var t = s.to_lower(); return 0; }\n"},
+		// Auto-discovered std/array methods (__method_Array_*) must resolve once
+		// std/array is imported — the import-side companion to the single-module
+		// E043 corpus (a.sum() without import → E043). A codegen-intercepted
+		// method (sum) and a non-intercepted one (sum_squared) both stay clean;
+		// an unknown method (bogus) is still E043 even with std/array in scope.
+		{"array-sum-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum(); }\n"},
+		{"array-sum-squared-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum_squared(); }\n"},
+		{"array-bogus-import-e043", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.bogus(); }\n"},
 		// The string-method-existence E043 rule must still fire for a method
 		// that no imported module defines, even WITH std/string in scope —
 		// the bundle harness's reason for existing. `substr` isn't a std/string

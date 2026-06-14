@@ -102,6 +102,24 @@ function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
 }`); err != nil {
 		t.Errorf("composite arithmetic with add/sub/mul/div should type-check, got: %v", err)
 	}
+	// The remaining binary operators overload too: `%`→rem, `&`→bitand,
+	// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr. See #2706.
+	const bitOps = `struct F { b: i32 }
+function (self: F) rem(o: F): F { return F { b: self.b % o.b }; }
+function (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }
+function (self: F) bitor(o: F): F { return F { b: self.b | o.b }; }
+function (self: F) bitxor(o: F): F { return F { b: self.b ^ o.b }; }
+function (self: F) shl(o: F): F { return F { b: self.b << o.b }; }
+function (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }
+`
+	if err := checkSource(t, bitOps+`function main(): i32 {
+  var a: F = F { b: 12 };
+  var b: F = F { b: 10 };
+  var r: F = ((((a & b) | a) ^ b) << F{b:1}) >> F{b:1};
+  return (r % F{b:7}).b;
+}`); err != nil {
+		t.Errorf("composite %% & | ^ << >> should type-check, got: %v", err)
+	}
 	// A composite without the operator method is rejected.
 	err := checkSource(t, `struct W { x: i32 }
 function main(): i32 { var a: W = W{x:1}; var b: W = W{x:2}; var c: W = a + b; return c.x; }`)
@@ -112,6 +130,21 @@ function main(): i32 { var a: W = W{x:1}; var b: W = W{x:2}; var c: W = a + b; r
 	// struct/enum operands).
 	if err := checkSource(t, `function main(): i32 { return 2 + 3 * 4 - 1; }`); err != nil {
 		t.Errorf("numeric arithmetic should still type-check, got: %v", err)
+	}
+	// Unary `-` on a composite routes to `neg`; `ops` has no `neg`, so it
+	// is rejected; a type WITH `neg` type-checks; numeric unary minus is
+	// unaffected. See #2706.
+	if err := checkSource(t, ops+`function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err == nil ||
+		!strings.Contains(err.Error(), "unary `-` is not defined for V") {
+		t.Errorf("unary `-` on a struct without `neg` should be rejected with a hint, got: %v", err)
+	}
+	if err := checkSource(t, `struct V { x: i32 }
+function (self: V) neg(): V { return V { x: 0 - self.x }; }
+function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err != nil {
+		t.Errorf("unary `-` with a `neg` method should type-check, got: %v", err)
+	}
+	if err := checkSource(t, `function main(): i32 { var x: i32 = 7; return -x; }`); err != nil {
+		t.Errorf("numeric unary minus should still type-check, got: %v", err)
 	}
 }
 
@@ -2918,6 +2951,73 @@ function main(): i32 { return 0; }`,
 			prelude + `struct NoShape { z: i32 }
 function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]; return 0; }`,
 			"does not implement Shape"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestDynMultiTraitChecker exercises multi-trait trait objects
+// (`dyn A + B`, docs/DYN-TRAITS.md): a concrete coerces in iff it impls
+// EVERY trait; a method resolves across the UNION of the traits' method
+// sets; a method declared by two traits is ambiguous; a non-object-safe
+// or unknown trait anywhere in the set errors. Single-trait `dyn A` is
+// unaffected (covered by TestDynTraitChecker).
+func TestDynMultiTraitChecker(t *testing.T) {
+	const prelude = `trait Show { function show(self: Self): i32; }
+trait Sized { function size(self: Self): i32; }
+struct Both { v: i32 }
+impl Show for Both { function show(self: Self): i32 { return self.v; } }
+impl Sized for Both { function size(self: Self): i32 { return 1; } }
+struct OnlyShow { v: i32 }
+impl Show for OnlyShow { function show(self: Self): i32 { return self.v; } }
+`
+	// Accepted: Both impls Show AND Sized → coerces to `dyn Show + Sized`,
+	// and a method from EACH trait resolves.
+	if err := checkSource(t, prelude+`
+function f(d: dyn Show + Sized): i32 { return d.show() + d.size(); }
+function main(): i32 { var d: dyn Show + Sized = Both { v: 3 }; return f(d); }`); err != nil {
+		t.Fatalf("valid multi-trait dyn use should check: %v", err)
+	}
+	// Order-insensitive: `dyn Sized + Show` is the same type.
+	if err := checkSource(t, prelude+`
+function main(): i32 { var d: dyn Sized + Show = Both { v: 3 }; return d.show() + d.size(); }`); err != nil {
+		t.Fatalf("order-insensitive multi-trait dyn should check: %v", err)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"missing one trait",
+			prelude + `function main(): i32 { var d: dyn Show + Sized = OnlyShow { v: 1 }; return 0; }`,
+			"Sized"},
+		{"ambiguous method across traits",
+			`trait A { function m(self: Self): i32; }
+trait B { function m(self: Self): i32; }
+struct C { v: i32 }
+impl A for C { function m(self: Self): i32 { return 1; } }
+impl B for C { function m(self: Self): i32 { return 2; } }
+function f(d: dyn A + B): i32 { return d.m(); }
+function main(): i32 { return 0; }`,
+			"ambiguous method"},
+		{"unknown trait in set",
+			`trait Show { function show(self: Self): i32; }
+function f(d: dyn Show + Bogus): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"unknown trait"},
+		{"non-object-safe trait in set",
+			`trait Show { function show(self: Self): i32; }
+trait Eq { function eq(self: Self, other: Self): boolean; }
+function f(d: dyn Show + Eq): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"not object-safe"},
+		{"method on neither trait",
+			prelude + `function f(d: dyn Show + Sized): i32 { return d.nope(); }
+function main(): i32 { return 0; }`,
+			`no method "nope"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

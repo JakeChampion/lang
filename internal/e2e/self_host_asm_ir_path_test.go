@@ -980,6 +980,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-match-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = match (1) { 1 => P{x:10,y:2}, _ => P{x:3,y:4} }; return p.x + p.y; }`},
 		{"struct-if-expr-direct-field", `struct P { x: i32, y: i32 } function main(): i32 { return (if (true) { P{x:7,y:2} } else { P{x:3,y:4} }).x; }`},
 		{"struct-if-expr-method", `struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { var p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.sum(); }`},
+		// `for x in <u64[]>`: the element rides the i64 8-byte read but is bound
+		// u64, so body compares/shifts on it are unsigned. The IR path now lowers
+		// this (previously bailed to AST); both paths must agree, and the large
+		// element (> 2^63) makes a signed-vs-unsigned miscompile observable — a
+		// signed `>` would mis-order it, picking the wrong max.
+		{"u64-forin-sum", "function main(): i32 { var xs: u64[] = [10u64, 20u64, 5u64]; var s: u64 = 0u64; for x in xs { s = s + x; } return s as i32; }"},
+		{"u64-forin-max-big", "function main(): i32 { var xs: u64[] = [5u64, 9223372036854775809u64, 7u64]; var best: u64 = 0u64; for x in xs { if (x > best) { best = x; } } if (best == 9223372036854775809u64) { return 0; } return 1; }"},
 	}
 
 	for _, tc := range cases {
