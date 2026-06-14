@@ -4894,11 +4894,23 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         // `var o = if (c) { Some(7) } else { None }` — an
                         // if-/match-EXPRESSION desugars to a 0-arg IIFE
                         // (ExprCall{callee: ExprLambda}). Recover o's Option type
-                        // from the first branch's returned Some(...) via
-                        // some_opt_type, so a later `match (o)` lowers (lower_iife
-                        // already lowers the Option-valued if-expression itself).
+                        // from the leaf branch's returned Some(...) via some_opt_type,
+                        // so a later `match (o)` lowers (lower_iife already lowers the
+                        // Option-valued if-expression itself). When the leaf branch
+                        // returns an Option/Result-typed LOCAL instead of a fresh
+                        // `Some(..)` (`if (c) { someOpt } else { None }`), recover from
+                        // that slot's tracked opt_type.
                         parser.ExprLambda(ilam) => {
-                            if (ilam.body.len() > 0) { opt_ty = some_opt_type(iife_leaf_value(v.init), se); }
+                            if (ilam.body.len() > 0) {
+                                var oleaf: parser.Expr = iife_leaf_value(v.init);
+                                opt_ty = some_opt_type(oleaf, se);
+                                if (opt_ty == "") {
+                                    match (oleaf) {
+                                        parser.ExprIdent(olid) => { opt_ty = se.opt_type_of_slot(se.slot_of(olid.name)); },
+                                        _ => {}
+                                    }
+                                }
+                            }
                         },
                         _ => {}
                     }
