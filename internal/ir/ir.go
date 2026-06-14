@@ -193,6 +193,29 @@ const (
 	OpCallDirect   // (args...)        → result | ()
 	OpCallIndirect // (args..., idx)   → result | ()
 
+	// `dyn Trait` runtime dispatch (docs/DYN-TRAITS.md §4.2.1).
+	//
+	// OpConstVtable pushes the i32 address of the static vtable for
+	// a (Trait, Concrete) pair — an array of i32 function-table
+	// indices, one slot per non-associated trait method in
+	// declaration order. The boxing of a concrete value into a
+	// `dyn Trait` lowers the concrete value (one word = data), then
+	// emits OpConstVtable, leaving the inline two-word `[data,
+	// vtable]` fat pointer on the stack. Trait/Concrete in Op.Str /
+	// Op.Str2.
+	OpConstVtable // () → i32 (vtable address)
+
+	// OpCallDyn dispatches a `dyn Trait` method call. Stack on entry
+	// is `[data, args..., vtable]`: the receiver data word, the
+	// (already-lowered) method args, and the receiver's vtable word
+	// on top. The backend pops the vtable, loads slot `Op.I32` (the
+	// method's index among the trait's non-associated methods,
+	// `+ slot*4`), and `call_indirect`s through the resulting table
+	// index with `[data, args...]`. Op.Sig is the receiver-first
+	// method signature (receiver = i32 concrete pointer, uniform
+	// across concrete types).
+	OpCallDyn // (data, args..., vtable) → result | ()
+
 	// OpCallClosureDirect is the defunctionalised form of an
 	// OpCallIndirect whose receiver slot was provably mono-
 	// morphic (single `MakeClosure` flow source). The caller
@@ -463,6 +486,10 @@ func (k OpKind) String() string {
 		return "call"
 	case OpCallIndirect:
 		return "call_indirect"
+	case OpConstVtable:
+		return "const.vtable"
+	case OpCallDyn:
+		return "call_dyn"
 	case OpCallClosureDirect:
 		return "call_closure_direct"
 	case OpDrop:
@@ -549,8 +576,12 @@ type Op struct {
 	// signedness-agnostic — the flag has no effect there.
 	Unsigned bool
 	// Str carries OpConstStr's string value and OpCallDirect's callee
-	// name. Empty otherwise.
+	// name. For OpConstVtable it carries the Trait name. Empty otherwise.
 	Str string
+	// Str2 carries OpConstVtable's Concrete type name (Str holds the
+	// Trait); together they key the (Trait, Concrete) vtable. Empty
+	// for every other op.
+	Str2 string
 	// Sig is set on OpCallIndirect to the static signature of the
 	// function-typed local being dispatched through. Codegen uses it
 	// to resolve the right `(type $tN)` clause in the WAT output.
@@ -1512,6 +1543,10 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
+	case OpConstVtable:
+		return fmt.Sprintf("%s %s/%s", op.Kind, op.Str, op.Str2)
+	case OpCallDyn:
+		return fmt.Sprintf("%s slot=%d", op.Kind, op.I32)
 	case OpMakeClosure, OpMakeEnv:
 		return fmt.Sprintf("%s %s caps=%d", op.Kind, op.Str, op.I32)
 	}
@@ -1709,8 +1744,17 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// IR layer is the single choke point for every compiled backend, so
 	// reject `dyn` here with a clear message rather than letting it fall
 	// through to a cryptic "indirect call from non-identifier" later.
-	if err := rejectDynTrait(prog); err != nil {
-		return nil, err
+	// `dyn Trait` (runtime trait objects) is implemented on wasm
+	// (ptrW==4) via the inline two-word `[data, vtable]` fat pointer +
+	// per-(trait,concrete) vtable data segments (docs/DYN-TRAITS.md
+	// §4.2.1). The native backends (ptrW==8) have no two-word-value
+	// pathway yet, so they still reject `dyn` here with a clear message
+	// rather than miscompiling it. collectVtables (below) populates
+	// prog.Vtables for the backend that lifted its gate.
+	if ptrW != 4 {
+		if err := rejectDynTrait(prog); err != nil {
+			return nil, err
+		}
 	}
 	// Automatic drop for owned WIT resource handles (P5 slice 3): insert
 	// `defer <drop>(h);` for each kept `own R` local and synthesize the
@@ -3412,6 +3456,13 @@ type builder struct {
 	// (rebox to heap so existing consumers see the legacy
 	// shape).
 	suppressPairRebox bool
+	// dynCoerceDone guards the `dyn Trait` coercion-boxing check at the
+	// top of `expr`: when an expression is a key in info.DynCoercions,
+	// the first visit lowers the concrete value (one word = data) and
+	// appends OpConstVtable. To avoid re-triggering on the recursive
+	// lowering of the same expression, the expr is marked here before
+	// recursing. See docs/DYN-TRAITS.md §4.2.1.
+	dynCoerceDone map[ast.Expr]bool
 }
 
 // twoWordStrings reports whether the current target carries
@@ -7308,6 +7359,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		trmcConsumeSafe:      trmcConsumeSafe,
 		paramEscapes:         paramEscapes,
 		thisIsPair:           pairForm[fn.Name],
+		dynCoerceDone:        map[ast.Expr]bool{},
 	}
 	if b.thisIsPair {
 		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {
@@ -9288,6 +9340,22 @@ func (b *builder) stmt(s ast.Stmt) error {
 
 func (b *builder) expr(e ast.Expr) error {
 	b.curPos = e.Pos()
+	// `dyn Trait` coercion (boxing): when this expression is a recorded
+	// concrete→`dyn Trait` site, lower the concrete value (one word =
+	// data), then push the vtable address so the inline two-word
+	// `[data, vtable]` fat pointer lands on the stack. The dynCoerceDone
+	// guard prevents the recursive lower of the same expression from
+	// re-triggering. See docs/DYN-TRAITS.md §4.2.1.
+	if b.info != nil && b.info.DynCoercions != nil && b.dynCoerceDone != nil && !b.dynCoerceDone[e] {
+		if dc, ok := b.info.DynCoercions[e]; ok {
+			b.dynCoerceDone[e] = true
+			if err := b.expr(e); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpConstVtable, Str: dc.Trait, Str2: dc.Concrete})
+			return nil
+		}
+	}
 	switch n := e.(type) {
 	case *ast.NumberLit:
 		// The checker stamps Width on the literal once a concrete
@@ -10108,6 +10176,14 @@ func (b *builder) expr(e ast.Expr) error {
 			// calls (data @ +0, len @ +4). On natives this stays
 			// as a single ptr-width load via the LSB-tagged form.
 			if _, isString := elemType.(ast.StringType); isString && b.twoWordStrings() {
+				loadWidth = WidthString
+			}
+			// `dyn Trait` elements are inline two-word `[data, vtable]`
+			// fat pointers (docs/DYN-TRAITS.md §4.2.1): load both words
+			// via the WidthString fan-out, the same as a two-word
+			// string. (IsPointerType is true for dyn, so this must
+			// override the WidthPtr branch above.)
+			if _, isDyn := elemType.(ast.DynTraitType); isDyn {
 				loadWidth = WidthString
 			}
 		}
@@ -12180,6 +12256,72 @@ func callArgTypesFromSig(params []ast.Type, argc int) []ast.Type {
 }
 
 func (b *builder) call(n *ast.Call) error {
+	// `dyn Trait` runtime dispatch. The checker marked this call with
+	// the trait name and left the callee a FieldAccess (`d.area()` where
+	// `d: dyn Shape`). Lower the receiver to its inline two-word `[data,
+	// vtable]` fat pointer, stash the vtable word, lower the args, push
+	// the vtable back, and emit OpCallDyn{Sig, slot}. The receiver ABI is
+	// a plain i32 concrete pointer, uniform across concrete types, so one
+	// signature serves every implementor. See docs/DYN-TRAITS.md §4.2.1.
+	if n.DynTrait != "" {
+		fa, ok := n.Callee.(*ast.FieldAccess)
+		if !ok {
+			return fmt.Errorf("ir: dyn %s call without a field-access callee", n.DynTrait)
+		}
+		td, ok := b.info.Traits[n.DynTrait]
+		if !ok {
+			return fmt.Errorf("ir: dyn %s call references an unknown trait", n.DynTrait)
+		}
+		// Slot index = position of fa.Field among the trait's non-
+		// associated methods, in declaration order. Build the receiver-
+		// first method signature at the same time.
+		slot := -1
+		var meth *ast.TraitMethod
+		k := 0
+		for i := range td.Methods {
+			if td.Methods[i].Assoc {
+				continue
+			}
+			if td.Methods[i].Name == fa.Field {
+				slot = k
+				meth = &td.Methods[i]
+				break
+			}
+			k++
+		}
+		if slot < 0 || meth == nil {
+			return fmt.Errorf("ir: method %q not found on trait %s", fa.Field, n.DynTrait)
+		}
+		// Receiver-first signature: param[0] is the concrete-receiver
+		// pointer (an i32 on wasm — any pointer-shaped type lowers to
+		// i32). The remaining params + result come from the trait
+		// method (its self param dropped). Self never appears outside
+		// the receiver slot (object-safety guarantees it), so no Self
+		// substitution is needed.
+		params := []ast.Type{ast.StructType{}}
+		for _, p := range meth.Params[1:] {
+			params = append(params, p.Type)
+		}
+		sig := &ast.FuncType{Params: params, Result: meth.Result}
+		// Lower the receiver → [data, vtable]; pop the vtable word into
+		// a fresh i32 temp (OpStoreLocal pops one word, leaving [data]).
+		if err := b.expr(fa.Target); err != nil {
+			return err
+		}
+		vtmp := b.allocSlot()
+		b.scratchType[vtmp] = ast.NumberType{Width: 32}
+		b.emit(Op{Kind: OpStoreLocal, I32: vtmp})
+		// Lower the args → [data, args...].
+		for _, a := range n.Args {
+			if err := b.expr(a); err != nil {
+				return err
+			}
+		}
+		// Push the vtable back → [data, args..., vtable], then dispatch.
+		b.emit(Op{Kind: OpLoadLocal, I32: vtmp})
+		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Sig: sig})
+		return nil
+	}
 	// Captured-closure callee: closureconv rewrote a captured
 	// function-typed name (param / outer var) inside this body
 	// to a CaptureRef. Treat it as a function-typed value coming
@@ -16310,6 +16452,12 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 	if _, isString := t.(ast.StringType); isString {
 		return stringSlotSize(ptrW)
 	}
+	// A `dyn Trait` value is an inline two-word `[data, vtable]`
+	// fat pointer — two pointer-width slots, like a two-word
+	// string (docs/DYN-TRAITS.md §4.2.1).
+	if _, isDyn := t.(ast.DynTraitType); isDyn {
+		return int32(2 * ptrW)
+	}
 	if ast.IsPointerType(t) {
 		return int32(ptrW)
 	}
@@ -16481,6 +16629,12 @@ func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 		}
 		return Op{Kind: OpStore, Width: WidthPtr}
 	}
+	// `dyn Trait` is an inline two-word `[data, vtable]`; store it
+	// with the same two-word fan-out as a string (representation-
+	// agnostic — two adjacent i32s).
+	if _, isDyn := t.(ast.DynTraitType); isDyn {
+		return Op{Kind: OpStore, Width: WidthString}
+	}
 	if ast.IsPointerType(t) {
 		return Op{Kind: OpStore, Width: WidthPtr}
 	}
@@ -16503,6 +16657,11 @@ func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 			return Op{Kind: OpStore, Width: WidthString}
 		}
 		return Op{Kind: OpStore, Width: WidthPtr}
+	}
+	// `dyn Trait` array elements are inline two-word `[data, vtable]`
+	// fat pointers — two-word fan-out, same as strings.
+	if _, isDyn := t.(ast.DynTraitType); isDyn {
+		return Op{Kind: OpStore, Width: WidthString}
 	}
 	if ast.IsPointerType(t) {
 		return Op{Kind: OpStore, Width: WidthPtr}
@@ -16535,6 +16694,11 @@ func payloadLoadOpFor(t ast.Type, ptrW int) Op {
 			return Op{Kind: OpLoad, Width: WidthString}
 		}
 		return Op{Kind: OpLoad, Width: WidthPtr}
+	}
+	// `dyn Trait` is an inline two-word `[data, vtable]`; load it
+	// with the same two-word fan-out as a string.
+	if _, isDyn := t.(ast.DynTraitType); isDyn {
+		return Op{Kind: OpLoad, Width: WidthString}
 	}
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return Op{Kind: OpLoad, Width: 64}
