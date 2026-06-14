@@ -461,12 +461,35 @@ pub function fn_value_arg_name(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// ident_is_fn_value reports whether a bare ident lowers to a function VALUE
+// (op_const_func) rather than a local load / `None` / unit-variant box / const
+// call — i.e. it names a top-level function WITH params. Mirrors the ExprIdent
+// lowering's const_func fall-through (so a tuple-element tag matches what the
+// element actually emits): not a local slot, not `None`, not a struct / unit
+// variant name, and not a const (a 0-arg receiver-less fn). const_funcs_only_known
+// still backstops a bogus name — if the tag says "fn" the element emits a
+// const_func, and an unknown function bails the whole module either way.
+pub function ident_is_fn_value(name: string, s: LowerState): boolean {
+    if (s.slot_of(name) >= 0) { return false; }
+    if (name == "None") { return false; }
+    if (decl_is_struct(s.structs, name)) { return false; }
+    if (s.is_const_fn(name)) { return false; }
+    return true;
+}
+
 // elem_type_tag computes the type tag of an expression for tuple-element typing:
-// "string" for a string, a struct type name for a struct, "i64"/"f64" for an
-// 8-byte scalar, else "i32" (scalar). The 8-byte tags drive the wasm tuple's
-// per-element i64.store/load vs f64.store/load (and route i64 through lower_i64).
+// "string" for a string, a struct type name for a struct, "fn" for a function
+// value, "i64"/"f64" for an 8-byte scalar, else "i32" (scalar). The 8-byte tags
+// drive the wasm tuple's per-element i64.store/load vs f64.store/load (and route
+// i64 through lower_i64); "fn" lets `t.N(args)` recover the element's callability.
 pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     if (expr_is_str(e, s)) { return "string"; }
+    // A bare fn-name element (`(inc, 5)`): a function VALUE (a plain fn pointer,
+    // one slot), tagged "fn" so `t.N(args)` lowers to tuple_get + call_indirect.
+    match (e) {
+        parser.ExprIdent(fid) => { if (ident_is_fn_value(fid.name, s)) { return "fn"; } },
+        _ => {}
+    }
     var st: string = expr_struct_type(e, s);
     if (st != "") { return st; }
     if (expr_is_f64(e, s)) { return "f64"; }
@@ -3033,6 +3056,29 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     return s.fail();
                 },
                 parser.ExprFieldAccess(fa) => {
+                    // A function-VALUE tuple element call `t.N(args)` — `t.N` is a
+                    // numeric tuple index whose element is a fn value (tagged "fn"
+                    // at construction by elem_type_tag). Lower the args, then the
+                    // tuple element (tuple_get → the fn pointer on TOS), and
+                    // call_indirect — the same shape the "fn"-typed struct field
+                    // uses (#3016). Gated on the element tag being "fn", so a normal
+                    // numeric tuple read falls through.
+                    if (util.is_all_digits(fa.field)) {
+                        var tfn: i32 = util.digits_to_i32(fa.field);
+                        if (expr_tuple_elem_tag(fa.obj, tfn, s) == "fn") {
+                            var tfs: LowerState = s;
+                            var tfi: i32 = 0;
+                            while (tfi < c.args.len()) {
+                                tfs = lower_expr(c.args[tfi], tfs);
+                                if (!tfs.ok) { return tfs; }
+                                tfi = tfi + 1;
+                            }
+                            tfs = lower_expr(fa.obj, tfs);
+                            if (!tfs.ok) { return tfs; }
+                            tfs = tfs.emit(ir.op_tuple_get(tfn));
+                            return tfs.emit(ir.op_call_indirect(c.args.len()));
+                        }
+                    }
                     var mrslot: i32 = 0 - 1;
                     match (fa.obj) {
                         parser.ExprIdent(mrid) => { mrslot = s.slot_of(mrid.name); },
