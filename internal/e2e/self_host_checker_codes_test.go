@@ -398,6 +398,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"missing-return-one-armed-if", "function f(c: boolean): i32 { if (c) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"return-while-true-ok", "function f(): i32 { while (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// void return type: an empty body is fine (no E052 — falling off the
+		// end is the normal exit), a bare `return;` is fine, and returning a
+		// value is E002. Mirrors the Go checker's special handling of void.
+		{"void-empty-ok", "function f(): void { }\nfunction main(): i32 { return 0; }\n", nil},
+		{"void-bare-return-ok", "function f(): void { return; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"void-returns-value", "function f(): void { return 3; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"method-unknown-receiver", "function (r: Nope) m(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"method-struct-receiver-ok", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return p.x; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"method-builtin-receiver-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { return 0; }\n", nil},
