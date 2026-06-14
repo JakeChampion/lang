@@ -517,25 +517,11 @@ pub function flatten_qualified(mod: parser.Module): parser.Module {
 // contributes to the flat namespace: non-receiver functions, structs,
 // and type aliases. Receiver methods are excluded — they dispatch by
 // receiver type, not by a prefix-mangled name.
-// is_method_helper_name reports whether `name` is a `__method_<Type>_<Name>`
-// auto-discovered method-helper (e.g. __method_Array_sum_squared). Go's modload
-// keeps these bare under module mangling (it carves out the `__method_` prefix);
-// the bundler must do the same so the checker's array/map method auto-discovery
-// resolves `a.method()` to the imported `__method_Array_<name>` by its exact
-// name — a mangled `array____method_Array_sum_squared` would be invisible to
-// it. Inert for the compiler's own modules (none define a `__method_` free
-// function), so the self-host bundle stays byte-identical.
-function is_method_helper_name(name: string): boolean {
-    var p: string = "__method_";
-    if (name.len() < p.len()) { return false; }
-    return name[0:p.len()] == p;
-}
-
 pub function collect_decl_names(mod: parser.Module): string[] {
     var names: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type == "" && !is_method_helper_name(mod.funcs[i].name)) {
+        if (mod.funcs[i].receiver_type == "") {
             names = names.append(mod.funcs[i].name);
         }
         i = i + 1;
