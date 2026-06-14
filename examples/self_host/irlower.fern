@@ -4728,6 +4728,28 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 var enum_init: string = expr_enum_type(v.init, se);
                 if (enum_init != "") { struct_ty = enum_init; }
             }
+            // A struct-valued if-/match-EXPRESSION (`var p = if (c) { P { .. } }
+            // else { .. }`) desugars to a 0-arg IIFE (ExprCall{callee: ExprLambda}).
+            // Recover p's struct type from the first branch's returned struct
+            // literal, so `p.field` resolves (the struct sibling of the Option
+            // if-expression binding #3124; lower_iife already lowers the
+            // struct-valued if-expression itself, as it does for tuple/enum).
+            if (struct_ty == "") {
+                match (v.init) {
+                    parser.ExprCall(ic) => {
+                        match (ic.callee) {
+                            parser.ExprLambda(ilam) => {
+                                if (ilam.body.len() > 0) {
+                                    var bst: string = expr_struct_type(iife_first_return_expr(ilam.body[0]), se);
+                                    if (bst != "" && decl_is_struct(se.structs, bst)) { struct_ty = bst; }
+                                }
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // Aliasing an array local (`var qs = ps`) — expr_struct_type returns
             // "" for an array (the value itself isn't a struct), so the ELEMENT
             // struct/enum type the source array carries (which drives

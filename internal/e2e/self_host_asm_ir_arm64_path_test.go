@@ -432,6 +432,12 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"ifexpr-opt-bind-some", `function main(): i32 { var x = 5; var o = if (x > 3) { Some(7) } else { None }; match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
 		{"ifexpr-opt-bind-none", `function main(): i32 { var x = 1; var o = if (x > 3) { Some(7) } else { None }; match (o) { Some(v) => { return v; }, None => { return 42; } } return 9; }`},
 		{"matchexpr-opt-bind", `function main(): i32 { var e = 2; var o = match (e) { 1 => Some(10), _ => Some(20) }; match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
+		// A struct bound from an if-/match-EXPRESSION (IIFE): the StmtVar struct-type
+		// inference now recovers p's struct type from the first branch's struct
+		// literal, so p.field resolves (the struct sibling of #3124) (#3133).
+		{"ifexpr-struct-bind", `struct P { x: i32 } function main(): i32 { var c = 5; var p = if (c > 3) { P { x: 7 } } else { P { x: 1 } }; return p.x; }`},
+		{"ifexpr-struct-bind-else", `struct P { x: i32, y: i32 } function main(): i32 { var c = 1; var p = if (c > 3) { P { x: 7, y: 2 } } else { P { x: 1, y: 0 } }; return p.x + p.y; }`},
+		{"matchexpr-struct-bind", `struct P { x: i32 } function main(): i32 { var c = 1; var p = match (c) { 1 => P { x: 9 }, _ => P { x: 0 } }; return p.x; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
