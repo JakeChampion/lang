@@ -2647,7 +2647,19 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 		c.errfCode(fa.FieldPos, "E021", "no method %q on `dyn %s`", fa.Field, demangle(dt.Trait))
 		return nil
 	}
-	wantParams := tm.Params[1:] // drop the `self` receiver
+	// Trait method signatures are stored as written: a `self` receiver is
+	// present in Params only when the author spelled it (`function area(self:
+	// Self): i32`); the common `function area(): i32;` form has none. Strip a
+	// leading self when present so the remainder are the call arguments —
+	// indexing `Params[1:]` unconditionally panicked on the no-self form (and
+	// silently dropped the first real argument when a method had params but no
+	// explicit self).
+	wantParams := tm.Params
+	if len(wantParams) > 0 {
+		if _, isSelf := wantParams[0].Type.(ast.SelfType); isSelf || wantParams[0].Name == "self" {
+			wantParams = wantParams[1:]
+		}
+	}
 	if len(n.Args) != len(wantParams) {
 		c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
 		return ast.SubstSelf(tm.Result, dt)
