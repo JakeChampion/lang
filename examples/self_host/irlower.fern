@@ -7313,6 +7313,212 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
     }
 }
 
+// --- struct in-place reuse (FBIP): cross-statement full-construction pairing ---
+//
+// A SECOND reuse shape, complementing the functional-update self-overwrite above.
+// Pair a FULL struct construction `var c = T { a:.., b:.., .. }` (NO `...base` —
+// every field set explicitly) at statement k with the heap box of an EARLIER
+// local d of the SAME type T that is provably DEAD by the time control reaches k.
+// Instead of allocating a fresh box for c, REUSE d's box: release each overwritten
+// array field's OLD value, write every field of c into d's box, bind c to d's box,
+// and zero d's slot so the exit dec-sweep frees the box once (through c).
+//
+// The donor d must be:
+//   - bound from a fresh `T { ... }` literal of the SAME type T (no base),
+//   - never reassigned (not in body_assign_targets),
+//   - never escaping anywhere in the body (a bare-ident mention is an escape;
+//     `d.field` reads are fine) — so nothing else can alias the box,
+//   - DEAD from statement k onward: NO textual mention of d (incl. `d.field`) in
+//     statement k or any later statement (collect_idents_stmt). This single gate
+//     also guarantees c's own field values (at index k) do not reference d, so
+//     reading-while-writing is a non-issue.
+// The construction c must be:
+//   - a full `T { ... }` literal (no base), T struct_fields_reusable,
+//   - NOT itself a self-overwrite reuse site (those are consumed by the path above),
+//   - every leak-safe ARRAY field value a FRESH array literal (ExprArray) — the
+//     reused box then owns the new array, mirroring the struct_make constraint.
+//
+// Determinism (the byte-identical fixpoint demands the pairing be a deterministic
+// function of the AST): self-overwrite donors / sites are computed first and never
+// reused here. Constructions are scanned in increasing index order; for each, the
+// FIRST (nearest-from-the-front) eligible, not-yet-consumed donor at a strictly
+// earlier index is chosen, and each donor is consumed at most once.
+
+// CrossReuseSites: parallel arrays — for each cross-statement reuse site, the
+// construction's body-statement index and the donor local name d whose box it
+// reuses. A flat pair (not string[][]) for the self-host nested-array limitation.
+struct CrossReuseSites { idxs: i32[], donors: string[] }
+
+// stmt_is_full_struct_lit reports whether statement i is `var c = T { ... }` with
+// a full (no-base) struct literal of a struct type, returning the bound name and
+// type via out-params encoded as the literal itself; here we only need a boolean
+// plus the type name, computed by callers re-matching the StmtVar.
+
+// cross_construction_donor finds the donor name for a full-construction at index k
+// given the already-computed self-overwrite reuse sites and the set of donors
+// already consumed by earlier cross pairings. Returns "" if none is eligible.
+function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDecl[], k: i32, c_type: string, c_name: string, so_bases: string[], consumed: string[]): string {
+    var i: i32 = 0;
+    while (i < k) {
+        match (body[i]) {
+            parser.StmtVar(dv) => {
+                var dname: string = dv.name;
+                // donor must differ from c, be a fresh full T{...} of the same type,
+                // not a self-overwrite donor, and not already consumed here.
+                var elig: boolean = dname != c_name
+                    && fresh_struct_lit_type(body, dname) == c_type
+                    && util.index_of_str(so_bases, dname) < 0
+                    && util.index_of_str(consumed, dname) < 0;
+                if (elig) {
+                    // never reassigned, never escapes anywhere in the body.
+                    if (util.index_of_str(body_assign_targets(body), dname) >= 0) { elig = false; }
+                }
+                if (elig) {
+                    var allesc: string[] = walk_stmts_escapes(body, []);
+                    if (util.index_of_str(allesc, dname) >= 0) { elig = false; }
+                }
+                if (elig) {
+                    // dead from statement k onward: no mention (incl. d.field) at
+                    // index >= k. Covers c's own field values referencing d too.
+                    var m: i32 = k;
+                    while (m < body.len()) {
+                        var none: string[] = [];
+                        if (util.index_of_str(astwalk.collect_idents_stmt(body[m], none), dname) >= 0) { elig = false; }
+                        m = m + 1;
+                    }
+                }
+                if (elig) { return dname; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// cross_reuse_sites computes the cross-statement full-construction reuse points.
+// It first computes the self-overwrite sites (so it never consumes a donor or a
+// construction those already own), then scans full no-base constructions of a
+// reusable struct type in index order, pairing each with the nearest eligible
+// earlier dead donor of the same type. Each donor is consumed at most once.
+function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[]): CrossReuseSites {
+    var so: ReuseSites = self_overwrite_reuse_sites(body, structs);
+    var idxs: i32[] = [];
+    var donors: string[] = [];
+    var k: i32 = 0;
+    while (k < body.len()) {
+        // skip a statement that is itself a self-overwrite reuse site.
+        var is_so: boolean = false;
+        var si: i32 = 0;
+        while (si < so.idxs.len()) { if (so.idxs[si] == k) { is_so = true; } si = si + 1; }
+        if (!is_so) {
+            match (body[k]) {
+                parser.StmtVar(v) => {
+                    match (v.init) {
+                        parser.ExprStructLit(slit) => {
+                            if (!slit.has_base && struct_fields_reusable(structs, slit.type_name)) {
+                                // every leak-safe array field VALUE must be a fresh
+                                // array literal (the reused box then owns it).
+                                var ok: boolean = true;
+                                var fk: i32 = 0;
+                                while (fk < slit.field_names.len()) {
+                                    var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
+                                    if (is_leaksafe_array_field(fkt)) {
+                                        match (slit.field_values[fk]) {
+                                            parser.ExprArray(_) => {},
+                                            _ => { ok = false; }
+                                        }
+                                    }
+                                    fk = fk + 1;
+                                }
+                                if (ok) {
+                                    var donor: string = cross_construction_donor(body, structs, k, slit.type_name, v.name, so.bases, donors);
+                                    if (donor.len() > 0) {
+                                        idxs = idxs.append(k);
+                                        donors = donors.append(donor);
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        }
+        k = k + 1;
+    }
+    return CrossReuseSites { idxs: idxs, donors: donors };
+}
+
+// emit_cross_struct_reuse lowers a full `var c = T { ... }` construction as an
+// IN-PLACE reuse of donor d's (dead) box (the site found by cross_reuse_sites).
+// `c_name` is the new local; `init` the full no-base struct literal; `donor_name`
+// is d. For each leak-safe ARRAY field it first RELEASES the OLD value in d's box
+// (load box; struct_get; __fern_rc_dec; drop) — c overwrites every field, so the
+// donor's old array would otherwise leak — then writes EVERY field of c into d's
+// box (in decl order), binds c to d's box, and ZEROES d's slot so the exit sweep
+// frees the box exactly once (via c) and harmlessly decs a null for d.
+function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
+    var dslot: i32 = s.slot_of(donor_name);
+    if (dslot < 0) { return s.fail(); }
+    match (init) {
+        parser.ExprStructLit(slit) => {
+            var st: LowerState = s;
+            // Write every decl field of T into d's box, in decl order. For each
+            // field find the literal value (a full construction sets all fields).
+            var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
+            var di: i32 = 0;
+            while (di < ndecl) {
+                // find the literal field whose decl index is di.
+                var jj: i32 = 0;
+                var found: i32 = 0 - 1;
+                while (jj < slit.field_names.len()) {
+                    if (st.field_index_in(slit.type_name, slit.field_names[jj]) == di) { found = jj; }
+                    jj = jj + 1;
+                }
+                if (found < 0) { return st.fail(); }
+                var fty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[found]);
+                if (is_leaksafe_array_field(fty)) {
+                    // dec the OLD array value in d's box before overwriting it.
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                    // write the new (fresh) array: [box, value] -> struct_set.
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_expr(slit.field_values[found], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
+                } else if (struct_field_is_i64(st.structs, slit.type_name, di)) {
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_i64(slit.field_values[found], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set_i64(di));
+                } else {
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_expr(slit.field_values[found], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
+                }
+                di = di + 1;
+            }
+            // Bind c to d's box (the reused box is the construction's result).
+            var cb: LowerState = st.add_local(c_name);
+            var cslot: i32 = cb.slot_of(c_name);
+            cb = cb.mark_struct_type(cslot, slit.type_name);
+            cb = cb.emit(ir.op_load_local(dslot));
+            cb = cb.emit(ir.op_store_local(cslot));
+            // Zero d's slot: c now owns the box; the exit sweep frees it once (via
+            // c) and decs a null for d.
+            cb = cb.emit(ir.op_const_i32(0));
+            cb = cb.emit(ir.op_store_local(dslot));
+            return cb;
+        },
+        _ => { return s.fail(); },
+    }
+}
+
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
 // arr_ret_fns is the set of array-returning function names (for move tracking);
 // strarr_ret_fns is the string[]-returning subset (for element typing at calls).
@@ -7558,6 +7764,10 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // self_overwrite_reuse_sites). Each such statement is lowered by
     // emit_self_overwrite_reuse instead of lower_stmt.
     var reuse: ReuseSites = self_overwrite_reuse_sites(fn.body, structs);
+    // Cross-statement full-construction reuse sites: `var c = T { ... }` reusing an
+    // earlier dead same-type donor's box (see cross_reuse_sites). Disjoint from the
+    // self-overwrite sites by construction (it skips those indices + donors).
+    var xreuse: CrossReuseSites = cross_reuse_sites(fn.body, structs);
     var j: i32 = 0;
     while (j < fn.body.len()) {
         // Is statement j a self-overwrite reuse site? If so, lower it in place.
@@ -7567,9 +7777,21 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (reuse.idxs[ri] == j) { reuse_i = ri; }
             ri = ri + 1;
         }
+        // Is statement j a cross-statement reuse site?
+        var xreuse_i: i32 = 0 - 1;
+        var xri: i32 = 0;
+        while (xri < xreuse.idxs.len()) {
+            if (xreuse.idxs[xri] == j) { xreuse_i = xri; }
+            xri = xri + 1;
+        }
         if (reuse_i >= 0) {
             match (fn.body[j]) {
                 parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, reuse.bases[reuse_i], s); },
+                _ => { s = lower_stmt(fn.body[j], s); },
+            }
+        } else if (xreuse_i >= 0) {
+            match (fn.body[j]) {
+                parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xreuse_i], s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else {
