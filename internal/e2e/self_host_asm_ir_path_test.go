@@ -610,6 +610,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-ifexpr-elem0", `function main(): i32 { var c = 5; var t = (if (c > 3) { 7 } else { 1 }, 3); return t.0 + t.1; }`},
 		{"tuple-ifexpr-elem1", `function main(): i32 { var c = 1; var t = (3, if (c > 3) { 7 } else { 1 }); return t.0 + t.1; }`},
 		{"tuple-matchexpr-elem", `function main(): i32 { var k = 1; var t = (match (k) { 1 => 5, _ => 0 }, 3); return t.0 + t.1; }`},
+		// A struct array field set from an if-/match-EXPRESSION whose every branch is
+		// a fresh array literal (iife_returns_fresh_array): admitted as an owned value
+		// (#3179). An aliased branch stays on the AST path (verified by probe).
+		{"struct-fld-ifexpr-arr", `struct B { xs: i32[] } function main(): i32 { var c = 5; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4] } }; return b.xs.len(); }`},
+		{"struct-fld-ifexpr-arr-else", `struct B { xs: i32[] } function main(): i32 { var c = 1; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4, 5] } }; return b.xs.len(); }`},
+		{"struct-fld-matchexpr-arr", `struct B { xs: i32[] } function main(): i32 { var k = 1; var b = B { xs: match (k) { 1 => [7, 8, 9], _ => [0] } }; return b.xs.len() + b.xs[0]; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},

@@ -2539,10 +2539,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // the struct still references it → bail to the AST path.
                     var cfft: string = decl_field_type(s.structs, slit.type_name, slit.field_names[found]);
                     if (is_leaksafe_array_field(cfft) || is_struct_array_field_type(s.structs, cfft)) {
-                        match (slit.field_values[found]) {
-                            parser.ExprArray(_) => {},
-                            _ => { return s.fail(); }
+                        // A fresh array LITERAL, or an if-/match-expression whose
+                        // every branch returns a fresh array literal (#3175) — both
+                        // are owned by the struct (no aliasing). Anything else (an
+                        // ident / call, or an IIFE with a non-literal branch) could
+                        // alias a swept local, so bail.
+                        var fav: parser.Expr = slit.field_values[found];
+                        var fav_ok: boolean = iife_returns_fresh_array(fav);
+                        match (fav) {
+                            parser.ExprArray(_) => { fav_ok = true; },
+                            _ => {}
                         }
+                        if (!fav_ok) { return s.fail(); }
                     }
                     // An i64 field value is an 8-byte i64 (a bare integer literal
                     // isn't self-evidently i64), so lower it via lower_i64.
@@ -4061,6 +4069,62 @@ function iife_leaf_value(e: parser.Expr): parser.Expr {
         guard = guard + 1;
     }
     return cur;
+}
+
+// iife_any_nonarray_return reports whether ANY `return` reachable in an
+// if-/match-expression IIFE body yields a value that is NOT a fresh array
+// LITERAL (`[..]`). Used to admit a struct array FIELD set from an if-/match-
+// expression (`B { xs: if (c) { [1,2,3] } else { [4] } }`) only when EVERY branch
+// is a fresh owned array — so the field leaks with the struct, never aliasing a
+// swept local (the safety invariant the direct-`ExprArray` field check enforces).
+function iife_any_nonarray_return(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprArray(_) => { return false; },
+                _ => { return true; }
+            }
+        },
+        parser.StmtIf(iff) => {
+            var k: i32 = 0;
+            while (k < iff.then_body.len()) { if (iife_any_nonarray_return(iff.then_body[k])) { return true; } k = k + 1; }
+            var j: i32 = 0;
+            while (j < iff.else_body.len()) { if (iife_any_nonarray_return(iff.else_body[j])) { return true; } j = j + 1; }
+            return false;
+        },
+        parser.StmtMatch(mm) => {
+            var a: i32 = 0;
+            while (a < mm.arms.len()) {
+                var b: i32 = 0;
+                while (b < mm.arms[a].body.len()) { if (iife_any_nonarray_return(mm.arms[a].body[b])) { return true; } b = b + 1; }
+                a = a + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_returns_fresh_array reports whether `e` is an if-/match-expression IIFE
+// whose every branch returns a fresh array literal (so it's a safe owned value
+// for a struct array field). False for a non-IIFE expression.
+function iife_returns_fresh_array(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprLambda(lam) => {
+                    if (lam.body.len() == 0) { return false; }
+                    var i: i32 = 0;
+                    while (i < lam.body.len()) { if (iife_any_nonarray_return(lam.body[i])) { return false; } i = i + 1; }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // or an i64-sized integer literal. Unlike f64 / string (where the first branch
