@@ -633,8 +633,8 @@ function main(): i32 { return util.helper(); }`,
 // package (different directory).
 func TestLoadPubPackageCrossPackageRejected(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.fern":     `pub(package) function helper(): i32 { return 42; }`,
-		"sub/app.fern":  `import "../util";
+		"util.fern": `pub(package) function helper(): i32 { return 42; }`,
+		"sub/app.fern": `import "../util";
 function appmain(): i32 { return util.helper(); }`,
 		"main.fern": `import "./sub/app";
 function main(): i32 { return 0; }`,
@@ -743,20 +743,54 @@ function main(): i32 { return facade.secret(); }`,
 	}
 }
 
-// Re-exporting a type is not supported in v1 — clear error.
-func TestLoadPubUseRejectsType(t *testing.T) {
+// A `pub use`-re-exported type resolves through the facade to its
+// original module's mangled name (not the facade's prefix), so a
+// consumer's `facade.Pt` annotation + literal both land on `helpers__Pt`.
+func TestLoadPubUseTypeReexport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"helpers.fern": `pub struct Pt { x: i32 }`,
 		"facade.fern":  `pub use "./helpers".{Pt};`,
+		"main.fern": `import "./facade";
+function make(): facade.Pt { return facade.Pt { x: 7 }; }
+function main(): i32 { return make().x; }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("type re-export should load: %v", err)
+	}
+	mk := findFunc(prog, "make")
+	if mk == nil {
+		t.Fatal("make not found")
+	}
+	// Return type annotation `facade.Pt` → helpers__Pt.
+	st, ok := mk.ReturnType.(ast.StructType)
+	if !ok || st.Name != "helpers__Pt" {
+		t.Errorf("make return type = %#v, want StructType{Name: helpers__Pt}", mk.ReturnType)
+	}
+	// Struct literal `facade.Pt { … }` → helpers__Pt.
+	ret, _ := mk.Body.Stmts[0].(*ast.Return)
+	if ret == nil {
+		t.Fatal("make body should start with a return")
+	}
+	if sl, ok := ret.Value.(*ast.StructLit); !ok || sl.TypeName != "helpers__Pt" {
+		t.Errorf("struct literal = %#v, want StructLit{TypeName: helpers__Pt}", ret.Value)
+	}
+}
+
+// `pub use` can only re-export PUBLIC types — a private one is rejected.
+func TestLoadPubUseRejectsPrivateType(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `struct Secret { x: i32 }`,
+		"facade.fern":  `pub use "./helpers".{Secret};`,
 		"main.fern": `import "./facade";
 function main(): i32 { return 0; }`,
 	})
 	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err == nil {
-		t.Fatal("re-exporting a type should error in v1")
+		t.Fatal("re-exporting a private type should error")
 	}
-	if !strings.Contains(err.Error(), "not supported") {
-		t.Errorf("error should say type re-export is not supported; got %v", err)
+	if !strings.Contains(err.Error(), "does not export") || !strings.Contains(err.Error(), "Secret") {
+		t.Errorf("error should mention the missing export `Secret`; got %v", err)
 	}
 }
 
