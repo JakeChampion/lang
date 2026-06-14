@@ -529,7 +529,11 @@ pub function expr_opt_elem_tag(e: parser.Expr, s: LowerState): string {
 // `match (Some(7))` scrutinee recover the payload — the construction analogue of
 // the call-returns-Option path (opt_ret_fns). `Ok`/`Err` are NOT handled: a
 // direct `Ok(x)` can't determine the Result's `E` arm (it needs an annotation,
-// handled separately). A nested-Option / fn payload is deferred ("").
+// handled separately). A nested-OPTION payload (`Some(Some(5))` →
+// "Option[Option[i32]]") IS recovered — the StmtMatch payload binding marks the
+// inner Option type (mark_opt_type) so a nested `match (b)` resolves it. A
+// nested-RESULT payload (whose type spelling carries a comma) and a fn payload
+// are deferred ("").
 pub function some_opt_type(e: parser.Expr, s: LowerState): string {
     match (e) {
         parser.ExprCall(c) => {
@@ -538,7 +542,7 @@ pub function some_opt_type(e: parser.Expr, s: LowerState): string {
                     if (cid.name == "Some" && c.args.len() == 1) {
                         var pt: string = elem_type_tag(c.args[0], s);
                         if (pt == "fn") { return ""; }
-                        if (pt.len() >= 7 && (pt[0:7] == "Option[" || pt[0:7] == "Result[")) { return ""; }
+                        if (pt.len() >= 7 && pt[0:7] == "Result[") { return ""; }
                         return "Option[" + pt + "]";
                     }
                     return "";
