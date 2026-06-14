@@ -1103,6 +1103,14 @@ pub function ty_from_name(name: string): Ty {
     if (name == "string[]") { return ty_array_string(); }
     if (name == "i32[]") { return ty_array_i32(); }
     if (name == "bool[]" || name == "boolean[]") { return ty_array_i32(); }
+    // A generic-ELEMENT array (`Option[T][]`, `Result[…][]`, `Map[…][]`, `P[]`)
+    // whose trailing top-level `[]` is the array suffix collapses to the coarse
+    // ty_array() (the asmcore Ty tracks element types only for the scalar arrays
+    // handled above). Checked BEFORE the Option[/Result[/Map[ prefixes below,
+    // which would otherwise strip the inner `]` from INSIDE the element and
+    // mis-read `Option[i32][]` as `Option[i32]]` → Option[unknown] (the spurious
+    // E003 on `var a: Option[i32][] = […]` when its loop body matches an element).
+    if (name.len() >= 2 && name[name.len() - 2 : name.len()] == "[]") { return ty_array(); }
     if (name.len() >= 8 && name[0:8] == "MapIter[") {
         return ty_mapiter(generic_value_ty(name, 8));
     }
