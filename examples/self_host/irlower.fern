@@ -4989,7 +4989,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // handled here — aliasing them needs the reclamation analysis to
             // borrow-track the field, left to the Perceus self-host port (#3003).
             if (!for_var_comma) {
-                var fld_elem_kind: i32 = 0;   // 0 none, 1 string[], 2 struct[]/enum[]
+                var fld_elem_kind: i32 = 0;   // 0 none, 1 string[], 2 struct[]/enum[], 3 Option/Result[]
                 var fld_elem_ty: string = "";
                 match (fr.iter) {
                     parser.ExprFieldAccess(ffa) => {
@@ -5000,6 +5000,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             else if (is_struct_array_field_type(s.structs, fft) || is_enum_array_field_type(s.structs, fft)) {
                                 fld_elem_kind = 2;
                                 fld_elem_ty = fft[0 : fft.len() - 2];
+                            }
+                            // An Option/Result-array field (`xs: Option[i32][]`):
+                            // the element is a leak-only opt box — carry its
+                            // Option/Result type so `match (o)` in the body
+                            // recovers the payload (#3054, the field-foreach analog
+                            // of the Option-array local case).
+                            else if (fft.len() >= 5 && fft[fft.len() - 2 : fft.len()] == "[]") {
+                                var fel: string = fft[0 : fft.len() - 2];
+                                if (fel.len() >= 8 && (fel[0:7] == "Option[" || fel[0:7] == "Result[")) {
+                                    fld_elem_kind = 3;
+                                    fld_elem_ty = fel;
+                                }
                             }
                         }
                     },
@@ -5025,6 +5037,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     lf = lf.add_local(fr.var_name);
                     var fldvslot: i32 = lf.slot_of(fr.var_name);
                     if (fld_elem_kind == 1) { lf = lf.mark_str(fldvslot, true); }
+                    else if (fld_elem_kind == 3) { lf = lf.mark_opt_type(fldvslot, fld_elem_ty); }
                     else { lf = lf.mark_struct_type(fldvslot, fld_elem_ty); }
                     // counted loop using explicit arr_len/arr_get on the borrow.
                     lf = lf.emit(ir.op_block(0)).enter_loop();
