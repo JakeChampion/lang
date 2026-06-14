@@ -8839,7 +8839,7 @@ function main(): i32 {
 // (`map_new` → `map_new_impl`, `__method_Map_*` → `_impl`),
 // the new `__store_i32` / `__load_i32` / `__memset` runtime
 // helpers, and the lang prelude's open-addressing core. Same
-// shape as TestArm32Map / TestWASMStateMapAcrossCalls.
+// shape as TestWASMStateMapAcrossCalls.
 func TestArm64Map(t *testing.T) {
 	for _, c := range []struct {
 		src  string
