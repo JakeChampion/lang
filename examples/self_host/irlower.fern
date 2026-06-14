@@ -589,6 +589,9 @@ pub function expr_enum_type(e: parser.Expr, s: LowerState): string {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => { return variant_enum_owner(s.structs, id.name); },
+                // Qualified payload construction `Enum.Variant(args)` — the
+                // variant is the field, confirmed against the bare enum name.
+                parser.ExprFieldAccess(cfa) => { return qualified_variant_enum(cfa, s); },
                 _ => { return ""; }
             }
         },
@@ -596,7 +599,26 @@ pub function expr_enum_type(e: parser.Expr, s: LowerState): string {
             if (s.slot_of(id.name) < 0) { return variant_enum_owner(s.structs, id.name); }
             return "";
         },
+        // Qualified UNIT variant `Enum.Variant` (no call) — e.g. `Dir.N`. Without
+        // this an unannotated `var d = Dir.N` left d untyped, so `d.method()` and
+        // `Dir.N.method()` couldn't dispatch to `<Enum>.<method>` and bailed to AST.
+        parser.ExprFieldAccess(fa) => { return qualified_variant_enum(fa, s); },
         _ => { return ""; }
+    }
+    return "";
+}
+
+// qualified_variant_enum resolves `Enum.Variant` (a field access whose field is
+// a variant and whose object is the bare owning enum name, not a local) to the
+// enum name, else "".
+function qualified_variant_enum(fa: parser.ExprFieldAccess, s: LowerState): string {
+    var owner: string = variant_enum_owner(s.structs, fa.field);
+    if (owner == "") { return ""; }
+    match (fa.obj) {
+        parser.ExprIdent(eid) => {
+            if (eid.name == owner && s.slot_of(eid.name) < 0) { return owner; }
+        },
+        _ => {}
     }
     return "";
 }
