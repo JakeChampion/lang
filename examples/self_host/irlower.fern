@@ -6492,17 +6492,18 @@ function all_scalar_literal_args(args: parser.Expr[]): boolean {
     return true;
 }
 
-// call_returns_i32_array reports whether a free function `name` is known to
-// return a PURE i32[] — in the array-returning registry but NOT in the
-// string[] / f64[] / i64[] registries. Only such a call's fresh result is a
-// precise-drop candidate; admitting a string[]-returning call crashed the
-// self-host (its element-pointer buffer + view-returning methods), so the
-// element type is checked HERE, at candidacy, not just at emission.
-function call_returns_i32_array(name: string, arr: string[], strarr: string[], f64arr: string[], i64arr: string[]): boolean {
+// call_returns_scalar_array reports whether a free function `name` returns a
+// SCALAR-element array (i32[] / i64[] / f64[]) — in the array-returning registry
+// but NOT in the string[] one. Such a call's fresh result is a precise-drop
+// candidate (a flat scalar buffer, sole owner, freeable shallowly). string[] is
+// excluded HERE, at candidacy, because admitting it crashed the self-host (its
+// element-pointer buffer + view-returning methods); a NESTED-array return is in
+// `arr` and admitted here but rejected by the emission-site is_arrarr guard (its
+// buffer holds array pointers needing an element walk), so no nested drop is
+// emitted.
+function call_returns_scalar_array(name: string, arr: string[], strarr: string[]): boolean {
     return util.index_of_str(arr, name) >= 0
-        && util.index_of_str(strarr, name) < 0
-        && util.index_of_str(f64arr, name) < 0
-        && util.index_of_str(i64arr, name) < 0;
+        && util.index_of_str(strarr, name) < 0;
 }
 
 // PreciseDrops is the result of precise_drop_names: two PARALLEL arrays — for
@@ -6534,18 +6535,19 @@ function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: 
                 // i64[] via all_i32_number_elems, f64[] via all_f64_number_elems —
                 // all flat scalar buffers, no nested pointers), or a FREE call (not
                 // a method — a method like `.slice()` could return a view of its
-                // receiver) that returns i32[] (call_returns_i32_array) with
-                // all-scalar-literal args (so it passes no array to alias). string[]
-                // / nested-array inits stay excluded (their buffers hold pointers
-                // needing an element walk, and a string[] init crashed the
-                // self-host); the emission-site slot guard enforces this.
+                // receiver) that returns a scalar-element array
+                // (call_returns_scalar_array: i32[]/i64[]/f64[]) with all-scalar-
+                // literal args (so it passes no array to alias). string[] / nested-
+                // array inits stay excluded (their buffers hold pointers needing an
+                // element walk, and a string[] init crashed the self-host); the
+                // emission-site slot guard enforces this.
                 var is_lit: boolean = false;
                 match (v.init) {
                     parser.ExprArray(arrl) => { is_lit = all_i32_number_elems(arrl.elements) || all_f64_number_elems(arrl.elements); },
                     parser.ExprCall(c) => {
                         match (c.callee) {
                             parser.ExprIdent(cid) => {
-                                if (call_returns_i32_array(cid.name, arr_ret, strarr_ret, f64arr_ret, i64arr_ret) && all_scalar_literal_args(c.args)) { is_lit = true; }
+                                if (call_returns_scalar_array(cid.name, arr_ret, strarr_ret) && all_scalar_literal_args(c.args)) { is_lit = true; }
                             },
                             _ => {}
                         }
