@@ -498,6 +498,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"struct-fld-ifexpr-arr", `struct B { xs: i32[] } function main(): i32 { var c = 5; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4] } }; return b.xs.len(); }`},
 		{"struct-fld-ifexpr-arr-else", `struct B { xs: i32[] } function main(): i32 { var c = 1; var b = B { xs: if (c > 3) { [1, 2, 3] } else { [4, 5] } }; return b.xs.len(); }`},
 		{"struct-fld-matchexpr-arr", `struct B { xs: i32[] } function main(): i32 { var k = 1; var b = B { xs: match (k) { 1 => [7, 8, 9], _ => [0] } }; return b.xs.len() + b.xs[0]; }`},
+		// An array literal whose element is an if-/match-EXPRESSION struct: the StmtVar
+		// struct-array inference classifies the first element by its leaf branch via
+		// iife_leaf_value, so a[i].field resolves (#3183).
+		{"arr-ifexpr-struct-elem", `struct P { x: i32 } function main(): i32 { var c = 5; var a = [if (c > 3) { P { x: 7 } } else { P { x: 1 } }]; return a[0].x; }`},
+		{"arr-ifexpr-struct-foreach", `struct P { x: i32 } function main(): i32 { var c = 5; var a = [if (c > 3) { P { x: 7 } } else { P { x: 1 } }, P { x: 2 }]; var s = 0; for p in a { s = s + p.x; } return s; }`},
+		{"arr-matchexpr-struct-elem", `struct P { x: i32 } function main(): i32 { var k = 1; var a = [match (k) { 1 => P { x: 9 }, _ => P { x: 0 } }]; return a[0].x; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
