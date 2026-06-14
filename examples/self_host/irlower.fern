@@ -3959,6 +3959,37 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 _ => {}
             }
             if (opt_ty == "" && v.type_name.len() >= 8 && (v.type_name[0:7] == "Option[" || v.type_name[0:7] == "Result[")) { opt_ty = v.type_name; }
+            // `var o = a[i]` where `a` is an Option/Result ARRAY — the element is
+            // an Option/Result value, so record o's opt_type (strip the array's
+            // `[]`) so a later `match (o)` recovers the payload. This also drives
+            // the desugared `for o in a` (its iter-hoist binds `var o =
+            // __foreach_iter[idx]`). The ExprIdent arm preserves the array's
+            // opt_type across the foreach's `var __foreach_iter = a` alias so the
+            // element recovery still fires (mirrors the struct-element alias above).
+            if (opt_ty == "") {
+                match (v.init) {
+                    parser.ExprIndex(oix) => {
+                        match (oix.array) {
+                            parser.ExprIdent(oaid) => {
+                                var oaot: string = se.opt_type_of_slot(se.slot_of(oaid.name));
+                                if (oaot.len() >= 2 && oaot[oaot.len() - 2 : oaot.len()] == "[]") {
+                                    var oelt: string = oaot[0 : oaot.len() - 2];
+                                    if (oelt.len() >= 8 && (oelt[0:7] == "Option[" || oelt[0:7] == "Result[")) { opt_ty = oelt; }
+                                }
+                            },
+                            _ => {}
+                        }
+                    },
+                    parser.ExprIdent(oaid2) => {
+                        var oasl: i32 = se.slot_of(oaid2.name);
+                        if (se.is_arr_slot(oasl)) {
+                            var oaot2: string = se.opt_type_of_slot(oasl);
+                            if (oaot2.len() >= 2 && oaot2[oaot2.len() - 2 : oaot2.len()] == "[]") { opt_ty = oaot2; }
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // An explicitly array-typed binding (`var w: u32[] = f()`) is an
             // array regardless of how the init was classified — the init-based
             // checks above miss an array-returning call when the array-return
@@ -4702,6 +4733,22 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                         if (foty != "") {
                                             var fft: string = decl_field_type(ms.structs, foty, sfa.field);
                                             if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { srt = fft; }
+                                        }
+                                    },
+                                    // `match (a[i])` where `a` is an Option/Result
+                                    // ARRAY — recover the element type from the array
+                                    // slot's opt_type (the annotated `Option[T][]` /
+                                    // `Result[...][]`), stripping the trailing `[]`.
+                                    parser.ExprIndex(six) => {
+                                        match (six.array) {
+                                            parser.ExprIdent(arrid) => {
+                                                var aot: string = ms.opt_type_of_slot(ms.slot_of(arrid.name));
+                                                if (aot.len() >= 2 && aot[aot.len() - 2 : aot.len()] == "[]") {
+                                                    var elt: string = aot[0 : aot.len() - 2];
+                                                    if (elt.len() >= 8 && (elt[0:7] == "Option[" || elt[0:7] == "Result[")) { srt = elt; }
+                                                }
+                                            },
+                                            _ => {}
                                         }
                                     },
                                     _ => {}
