@@ -542,30 +542,32 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
     };
 }
 
+// `__append_all(dst, src)` — return `dst` with every element of
+// `src` appended in order. The three string-array accumulators in
+// `merge` (failures / skip_reasons / cleanup_paths) all folded a
+// child list onto a parent with the identical index loop; this
+// names that loop once. Plain monomorphic helper (no generics /
+// closures) so it stays inside the self-host fixed-point emit
+// surface that std/test lands in via the differential gate.
+function __append_all(dst: string[], src: string[]): string[] {
+    var out: string[] = dst;
+    var i: i32 = 0;
+    while (i < src.len()) {
+        out = out.append(src[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // (r) merge(child) — fold a subsuite's counters and failure
 // notes back into the parent. The child's `passed / failed /
 // skipped` get added; its `failures` / `skip_reasons` get
 // concatenated. The parent's prefix and verbose flag are
 // preserved.
 pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
-    var fs: string[] = r.failures;
-    var i: i32 = 0;
-    while (i < child.failures.len()) {
-        fs = fs.append(child.failures[i]);
-        i = i + 1;
-    }
-    var sr: string[] = r.skip_reasons;
-    i = 0;
-    while (i < child.skip_reasons.len()) {
-        sr = sr.append(child.skip_reasons[i]);
-        i = i + 1;
-    }
-    var cl: string[] = r.cleanup_paths;
-    i = 0;
-    while (i < child.cleanup_paths.len()) {
-        cl = cl.append(child.cleanup_paths[i]);
-        i = i + 1;
-    }
+    var fs: string[] = __append_all(r.failures, child.failures);
+    var sr: string[] = __append_all(r.skip_reasons, child.skip_reasons);
+    var cl: string[] = __append_all(r.cleanup_paths, child.cleanup_paths);
     return TestRunner {
         suite: r.suite,
         passed: r.passed + child.passed,
