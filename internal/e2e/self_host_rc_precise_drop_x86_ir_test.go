@@ -138,6 +138,11 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// RETURNS its param, so `idf` is not borrowable, hence `wrap` is not, hence
 		// `t` is not reclaimed — the result that aliases `t` stays valid.
 		{"escape-chain-detector", `function idf(v: i32[]): i32[] { return v; } function wrap(v: i32[]): i32[] { return idf(v); } function main(): i32 { var t = [3, 4, 5]; var u = wrap(t); if (u[1] != 4) { return 99; } return __rc_underflow(); }`, 0},
+		// Full convergence (least-fixpoint, iterated): `outer` is defined BEFORE the
+		// borrowable `inner`, so a single forward pass would miss it — the iterated
+		// fixpoint propagates inner's borrowability back to outer, reclaiming `t`.
+		{"caller-before-callee-value", `function outer(v: i32[]): i32 { return inner(v); } function inner(v: i32[]): i32 { return v[0]; } function main(): i32 { var t = [5, 6, 7, 8]; var a = outer(t); var b = outer(t); return a + b; }`, 10},
+		{"caller-before-callee-detector", `function outer(v: i32[]): i32 { return inner(v); } function inner(v: i32[]): i32 { return v[0]; } function main(): i32 { var t = [5, 6, 7]; var a = outer(t); if (a != 5) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

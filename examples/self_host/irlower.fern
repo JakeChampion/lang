@@ -7498,21 +7498,45 @@ function borrowable_key(fn: parser.FuncDecl): string {
 // only op a precise drop adds (__fern_arr_dec) is already emitted by the
 // function-exit dec-sweep, so no inspection result can flip.
 pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
+    // Least-fixpoint FROM BELOW, iterated to convergence: start with NOTHING
+    // borrowable, then repeatedly re-run the escape walker against the PREVIOUS
+    // iteration's complete registry and mark a param '1' wherever all its uses are
+    // borrows — including forwarding it to any borrowable callee, regardless of
+    // definition order or (mutual) recursion. Pass 1 (empty registry ⇒ every call
+    // arg escapes) is the conservative answer; each later pass only ADDS
+    // borrowability as more callees become known borrowable, so the set grows
+    // monotonically and the iteration converges when its size stops changing. The
+    // registry is kept stripped to the borrowable subset so `param_is_borrowable`'s
+    // scan stays cheap, and a small cap bounds pathological cases (convergence is
+    // normally 2-4 passes). This is the full inter-procedural inference; it is
+    // affordable because it is computed ONCE per module on the emit path (see the
+    // emit_function_via_ir / emit_function_ir call sites), not per lowered function.
+    // Encoded "callee|flags"; methods keyed "<Type>.<method>".
     var reg: string[] = [];
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (funcs[i].params.len() > 0) {
-            var flags: string = "";
-            var any: boolean = false;
-            var pj: i32 = 0;
-            while (pj < funcs[i].params.len()) {
-                if (!body_unsafe_for(funcs[i].body, funcs[i].params[pj].name, reg)) { flags = flags + "1"; any = true; }
-                else { flags = flags + "0"; }
-                pj = pj + 1;
+    var cap: i32 = 8;
+    var iter: i32 = 0;
+    var prevsize: i32 = 0 - 1;
+    while (iter < cap && reg.len() != prevsize) {
+        prevsize = reg.len();
+        var next: string[] = [];
+        var i: i32 = 0;
+        while (i < funcs.len()) {
+            if (funcs[i].params.len() > 0) {
+                var flags: string = "";
+                var any: boolean = false;
+                var pj: i32 = 0;
+                while (pj < funcs[i].params.len()) {
+                    if (!body_unsafe_for(funcs[i].body, funcs[i].params[pj].name, reg)) { flags = flags + "1"; any = true; }
+                    else { flags = flags + "0"; }
+                    pj = pj + 1;
+                }
+                if (any) { next = next.append(borrowable_key(funcs[i]) + "|" + flags); }
             }
-            if (any) { reg = reg.append(borrowable_key(funcs[i]) + "|" + flags); }
+            i = i + 1;
         }
-        i = i + 1;
+        // borrowability is monotone-increasing, so an unchanged size = converged.
+        reg = next;
+        iter = iter + 1;
     }
     return reg;
 }
