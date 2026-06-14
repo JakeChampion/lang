@@ -383,6 +383,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-builtin-collide-none", "enum O { Some(i32), None }\nfunction get(): O { return None; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
 		{"variant-builtin-collide-result", "enum E { Ok(i32), Bad }\nfunction get(): E { return Ok(1); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
 		{"variant-builtin-no-collide-ok", "function get(): Option[i32] { return None; }\nfunction main(): i32 { return 0; }\n", nil},
+		// A QUALIFIED variant reference `Enum.Variant` is valid — the enum-name
+		// qualifier is not a bare value, so it must not trip E001. Covers a
+		// user enum, a collision resolved by qualifying, and a built-in enum.
+		{"qualified-variant-user-ok", "enum Color { Red, Green }\nfunction get(): Color { return Color.Red; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"qualified-variant-collide-ok", "enum A { X, Y }\nenum B { X, Z }\nfunction get(): A { return A.X; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"qualified-variant-builtin-ok", "enum O { Some(i32), None }\nfunction get(): O { return O.None; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"match-wildcard-not-last", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { _ => { return 0; }, Has(n) => { return n; } } }\n", []string{"E026"}},
 		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
 		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
