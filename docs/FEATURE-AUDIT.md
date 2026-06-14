@@ -215,7 +215,7 @@ per-function bugs in the audit log.
 | `std/io_buffered` | | | | | | ⬜ | |
 | `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
 | `std/base64` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range |
-| `std/hex` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_codec_roundtrip` |
+| `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `hex_encode`/`hex_decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes` helper-gate fix |
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
 | `std/url` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes` now uses `__fern_alloc_rc1`) |
@@ -248,6 +248,17 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — std/hex via the self-host IR path (coverage)
+
+Confirmed `std/hex` (`hex_encode` / `hex_decode`) lowers through the self-host IR
+path end-to-end, now that the wasm `string_from_bytes` / `arr_push` helper-gate
+fixes unblocked the byte→string primitives it builds on. `TestSelfHostHexIR`
+compiles the REAL `internal/stdlib/std/hex.fern` source concatenated with a main
+(the single-module trick the std/json self-host test uses — std/hex has no
+imports), routing-pinned to `"ir"` and oracle-checked on x86-64 + wasm (verified
+on arm64 via qemu too): encode length / digit, decode length / char, and
+encode→decode round-trips. Coverage-only, no compiler change. std/hex S column
+flipped to ✅.
 ### 2026-06-14 — fix: `.append` (arr_push) missing helper on the wasm IR path
 
 Same class of bug as the `string_from_bytes` fix: the wasm IR backend lowered
