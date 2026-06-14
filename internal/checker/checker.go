@@ -7000,10 +7000,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		hint := c.elemHint
 		c.elemHint = nil
 		if dt, ok := hint.(ast.DynTraitType); ok {
-			for _, el := range n.Elems {
-				t := c.checkExpr(el, s)
+			for i := range n.Elems {
+				t := c.checkExpr(n.Elems[i], s)
+				// Record the concrete→`dyn Trait` coercion against the
+				// element holder (compiled backends box it into the
+				// `[data, vtable]` fat pointer via Info.DynCoercions —
+				// docs/DYN-TRAITS.md §4.2.1). This mirrors the per-
+				// element maybeWrapForUnion call the union-array branch
+				// below makes, and is a no-op on the interpreter.
+				t = c.maybeWrapForUnion(dt, &n.Elems[i], t, s)
 				if t != nil && !c.assignable(dt, t) {
-					c.errfCode(el.Pos(), "E034",
+					c.errfCode(n.Elems[i].Pos(), "E034",
 						"array element of type %s does not implement %s, so it cannot be a `dyn %s`",
 						t, demangle(dt.Trait), demangle(dt.Trait))
 				}
