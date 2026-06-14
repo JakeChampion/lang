@@ -4251,6 +4251,38 @@ function iife_payload_bindable(pv: parser.PatVariant, opt_srt: string, temp_is_i
     return decl_field_type(s.structs, vname, "__ev") == "i32";
 }
 
+// iife_enum_payloads_i32 reports whether a MULTI-payload user-enum variant arm
+// (`Pair(a, b)`) binds only i32 payloads — the main binding (`__ev`) and every
+// extra binding (`__ev1`, `__ev2`, …). Used to admit a multi-payload variant arm
+// into the inlined match-expression: each `tmp = E` store is i32 and the
+// underlying StmtMatch path binds the payload fields. A `_` binding is skipped.
+function iife_enum_payloads_i32(pv: parser.PatVariant, s: LowerState): boolean {
+    var vname: string = pv.type_name;
+    var vld: i32 = 0;
+    while (vld < pv.type_name.len()) {
+        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()]; }
+        vld = vld + 1;
+    }
+    if (!decl_is_struct(s.structs, vname)) { return false; }
+    if (pv.binding.len() > 0 && pv.binding != "_") {
+        if (decl_field_type(s.structs, vname, "__ev") != "i32") { return false; }
+    }
+    var k: i32 = 0;
+    while (k < pv.extra_bindings.len()) {
+        // Bind the array element to an explicitly-typed string local: the
+        // self-host compiler's inference defaults a parameter field's array
+        // element to i32, so `pv.extra_bindings[k].len()` would dispatch as
+        // `i32__len` (undefined) when this file is bootstrapped. The annotated
+        // local pins the receiver type to string.
+        var eb: string = pv.extra_bindings[k];
+        if (eb.len() > 0 && eb != "_") {
+            if (decl_field_type(s.structs, vname, "__ev" + util.i32_to_string(k + 1)) != "i32") { return false; }
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
 function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
@@ -4301,8 +4333,12 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
         var arm: parser.MatchArm = m.arms[i];
         match (arm.pattern) {
             parser.PatVariant(pv) => {
-                if (pv.extra_bindings.len() > 0) { return s.fail(); }
-                if (pv.binding.len() > 0 && pv.binding != "_") {
+                if (pv.extra_bindings.len() > 0) {
+                    // A MULTI-payload user-enum variant arm (`Pair(a, b) => a + b`):
+                    // admit when every bound payload is i32 and the result temp is
+                    // i32 — the underlying StmtMatch path binds __ev / __ev1… (#3193).
+                    if (!temp_is_i32 || !iife_enum_payloads_i32(pv, ts)) { return s.fail(); }
+                } else if (pv.binding.len() > 0 && pv.binding != "_") {
                     // Single payload binding: an i32 payload (`tmp = n` is an i32
                     // store), or a nested-Option payload into an i32 temp (bound via
                     // the underlying StmtMatch path, consumed by an inner match).
