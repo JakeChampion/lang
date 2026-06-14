@@ -172,6 +172,28 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// value is still correct via the normal alloc-a-new-box path.
 		{"struct-no-reuse-base-used-after-value", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y + d.x; }`, 17},
 		{"struct-no-reuse-base-used-after-detector", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; var r = c.x + c.y + d.x; if (r != 17) { return 99; } return __rc_underflow(); }`, 0},
+		// Array-field widening (FBIP): the reused struct now admits leak-safe array
+		// fields (i32[]/boolean[]/i64[]/f64[]) alongside flat scalars. Here the i32[]
+		// field is NOT overridden — it stays in d's box and MOVES to c (deep-dropped
+		// once at c's reclamation). Only the scalar `tag` is rewritten in place. The
+		// array contents read back correctly and the detector stays 0 (no over-release).
+		{"struct-reuse-array-field-keep-value", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var c = Vec { ...d, tag: 2 }; return c.items[0] + c.items[1] + c.items[2] + c.tag; }`, 62},
+		{"struct-reuse-array-field-keep-detector", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var c = Vec { ...d, tag: 2 }; var s = c.items[0] + c.items[1] + c.items[2] + c.tag; if (s != 62) { return 99; } return __rc_underflow(); }`, 0},
+		// Array-field REPLACE: the override targets the i32[] field with a FRESH array
+		// literal. The OLD array already in d's box is released (dec) before the new
+		// one is written, then the new array is owned by the reused box. New contents
+		// read back correctly and the detector stays 0 (old array freed exactly once,
+		// new array freed exactly once — no leak, no over-release).
+		{"struct-reuse-array-field-replace-value", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var c = Vec { ...d, tag: 7, items: [100, 50] }; return c.items[0] + c.items[1] + c.tag; }`, 157},
+		{"struct-reuse-array-field-replace-detector", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var c = Vec { ...d, tag: 7, items: [100, 200] }; var s = c.items[0] + c.items[1] + c.tag; if (s != 307) { return 99; } return __rc_underflow(); }`, 0},
+		// Wide-scalar (i64) field alongside an array field: the i64 override is stored
+		// 8-byte (struct_set_i64) into the reused box; the non-overridden array field
+		// moves to c. Value correct, detector 0.
+		{"struct-reuse-i64-field-detector", `struct Box { a: i64, items: i32[] } function main(): i32 { var d = Box { a: 5, items: [1, 2, 3] }; var c = Box { ...d, a: 40 }; var av: i64 = c.a; var s = (av as i32) + c.items[0] + c.items[1] + c.items[2]; if (s != 46) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing with an array field: the base d is read AFTER the update (d.items[0]
+		// in the return), so d is NOT dead at the update site — reuse must NOT fire (d's
+		// box and its array stay live). Value still correct via the normal alloc path.
+		{"struct-no-reuse-array-base-used-after-detector", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var c = Vec { ...d, tag: 9 }; var r = c.tag + d.items[0]; if (r != 19) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
