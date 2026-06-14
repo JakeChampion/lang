@@ -951,3 +951,68 @@ unchanged, just earlier. Anything uncertain degrades to today's exit-sweep
 (sound, the safe-leak invariant). Land behind an off-by-default flag (zero
 regression risk; full suite green with it off), then flip on in a separately
 fixpoint-/std-test-validated follow-up — native's staged `RcFreeEnabled` pattern.
+
+---
+
+## Next slice (ready to execute): borrow-inference-enabled reclamation (2026-06-14)
+
+Two precise-drop slices have landed on the IR (#3054 i32[] literals, #3079
+i32[]-returning builder calls). The **most impactful** next Perceus step is to
+reclaim arrays passed to read-only helpers — today a `var t = [..]; helper(t);`
+local is NOT precise-dropped because the escape walker conservatively treats ANY
+call argument as an escape (the callee might retain it). The fix is a **two-level
+borrowability** model that reuses the precise-drop emission entirely (no new
+runtime, no per-backend asm):
+
+- **Level 1 — param borrowability (intra-procedural, conservative).** A function
+  param is *borrowable* iff it is only borrow-read in the body and never
+  returned / stored in a container / passed to any call / captured — i.e.
+  `!body_unsafe_for(fn.body, paramName, /*empty borrowable registry*/)`. This is
+  exactly the strict escape walker already written for precise drops. Encode as a
+  `string[]` registry `"<fn>|<flags>"` (flag i = '1' iff param i borrowable),
+  computed once via `borrowable_params_of(funcs)` (sibling of `fn_param_sigs_of`).
+  Conservative: a param passed to ANY call is NOT borrowable (we don't yet do the
+  inter-procedural `inferParamEscapes` fixpoint — native ir.go:2554), so it's a
+  safe under-approximation.
+
+- **Level 2 — reclaim.** In the precise-drop escape walker (`expr_unsafe_for`'s
+  FREE-call case), a DIRECT bare-ident arg `name` at a borrowable param position
+  is a BORROW (safe), not an escape. So `var t = [literal]; f(t); g(t); …` (f, g
+  borrowable) makes `t` a precise-drop candidate, released after its last use via
+  the existing dec+zero emission. Method calls stay escapes (a method like
+  `.slice()` can return a view). Soundness: a borrowable callee provably doesn't
+  retain the arg, so after the call the sole-owner local is dead → free is sound.
+
+**Why it's a focused-session task, not a quick edit:** it threads a new
+`borrowable_params` registry through `lower_func` (≈25 call sites across
+`irlower` / `asm_ir` / `asm_arm64_ir` / `wasm_ir`) and the recursive
+`expr_unsafe_for` / `stmt_unsafe_for` / `body_unsafe_for` chain (which is also
+reused at Level 1 with an EMPTY registry to avoid circularity). Mechanical but
+broad; a single threading error breaks the build, and a mis-judged borrowable
+param is a UAF that only the fixpoint + std-test + `asm_run` gates catch — so it
+must land as one careful, fully-gated slice (gate set: TestSelfHostAsmRunX86_64 +
+byte-identical fixpoint/stage-2 + TestSelfHostStdTestE2E + the RC suites,
+detector 0).
+
+After this: the inter-procedural `inferParamEscapes` fixpoint (lets a param
+passed to a borrowable callee stay borrowable, widening Level 1), then the full
+owned-by-value param model + move-on-call (frees owned/escaping params and
+call-arg temporaries — the largest remaining leak), then reuse/FBIP, drop
+specialisation, TRMC.
+
+### Landed (2026-06-14)
+
+Implemented exactly as specced. `borrowable_params_of(funcs)` (sibling of
+`fn_param_sigs_of`) emits the `"callee|flags"` registry; `param_is_borrowable`
+mirrors `callee_param_is_fn`'s lookup; the `borrowable` registry threads through
+`expr_unsafe_for` / `stmt_unsafe_for` / `body_unsafe_for` → `precise_drop_names`
+→ `lower_func` (new last param, all ~23 call sites across the four IR files).
+Level 1 computes borrowability with an EMPTY registry (every call arg escapes);
+Level 2 admits a direct bare-ident arg at a borrowable free-function param as a
+borrow. Firing proof: the identical `var t=[..]; sum_arr(t); sum_arr(t)` program
+emits one MORE array dec than before (3 → 4), and the over-release detector reads
+0. Gates green: `TestSelfHostAsmRunX86_64` (auto-routes to IR), byte-identical
+fixpoint + stage-2, `TestSelfHostStdTestE2E`, the RC suites, and a new
+`TestSelfHostRcPreciseDropX86IR` borrow/escape/transitive case set. Method-call
+args and any aliasing (`var u = t`) stay escapes — conservative and sound. Next:
+the inter-procedural `inferParamEscapes` fixpoint to widen Level 1.
