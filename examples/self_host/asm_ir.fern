@@ -44,7 +44,7 @@ pub function ir_eligible(fd: parser.FuncDecl, mod: parser.Module): boolean {
     // under-approximates, routing such modules to the AST path even though they
     // lower; all three backends now thread the real registries through emission
     // too, so the gate and the emitter agree.
-    var r: irlower.LowerResult = irlower.lower_func(fd, array_ret_fns(mod), mod.structs, irlower.str_ret_fns_of(mod.funcs), irlower.strarr_ret_fns_of(mod.funcs), irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs), irlower.borrowable_params_of(mod.funcs));
+    var r: irlower.LowerResult = irlower.lower_func_for(fd, array_ret_fns(mod), mod.structs, mod.funcs);
     if (!r.ok) { return false; }
     return true;
 }
@@ -105,7 +105,7 @@ function module_uses_maps(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs), irlower.borrowable_params_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func_for_noret(mod.funcs[fi], mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var k: string = r.ops[i].kind;
@@ -121,7 +121,7 @@ function module_uses_heap(mod: parser.Module): boolean {
     var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[fi], noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs), irlower.borrowable_params_of(mod.funcs));
+        var r: irlower.LowerResult = irlower.lower_func_for_noret(mod.funcs[fi], mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
             // arr_make (array literal) is the allocating op now; `alloc` is
@@ -1867,7 +1867,7 @@ pub function all_eligible(mod: parser.Module): boolean {
 // funcref table slot, so such modules fall back to AST.
 function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs), irlower.borrowable_params_of(mod.funcs));
+    var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         if (r.ops[i].kind == "const_func" && !module_has_func(mod, r.ops[i].str)) { return false; }
@@ -1895,7 +1895,7 @@ function module_has_func(mod: parser.Module, name: string): boolean {
 // function or an IR runtime helper (not a builtin).
 function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
     var noret: string[] = [];
-    var r: irlower.LowerResult = irlower.lower_func(fd, noret, mod.structs, noret, noret, irlower.opt_ret_fns_of(mod.funcs), irlower.i64_ret_fns_of(mod.funcs), irlower.tuple_ret_fns_of(mod.funcs), irlower.struct_ret_fns_of(mod.funcs, mod.structs), irlower.f64_ret_fns_of(mod.funcs), irlower.f64arr_ret_fns_of(mod.funcs), irlower.i64arr_ret_fns_of(mod.funcs), irlower.fn_param_sigs_of(mod.funcs), irlower.closure_ret_fns_of(mod.funcs), irlower.const_fns_of(mod.funcs), irlower.borrowable_params_of(mod.funcs));
+    var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
