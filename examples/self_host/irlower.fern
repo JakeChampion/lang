@@ -4056,6 +4056,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
                     else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
                     else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
+                    else if (dtag.len() >= 8 && (dtag[0:7] == "Option[" || dtag[0:7] == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
                     else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
                     dk = dk + 1;
                 }
@@ -6158,6 +6159,12 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             var t: string = tags[start : i];
             var ok_elem: boolean = (t == "i32" || t == "bool" || t == "string" || t == "i64" || t == "f64");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
+            // An Option[T] element is a leak-only box — one pointer slot, like a
+            // string / struct element — so a tuple-returning fn can return it
+            // (the ExprTuple construction admits it too). Only a comma-free tag
+            // matches here: a `Result[T, E]` tag has an internal comma this
+            // (non-depth-aware) element split can't see, so it stays deferred.
+            if (!ok_elem && t.len() >= 8 && t[0:7] == "Option[") { ok_elem = true; }
             if (!ok_elem) { return false; }
             start = i + 1;
         }
