@@ -1202,7 +1202,12 @@ pub function (s: LowerState) field_index_in(struct_name: string, field: string):
 
 // is_builtin_pattern reports whether a match pattern names a built-in Option /
 // Result / bool variant — these discriminate on an i32 tag at offset 0 (not the
-// struct shape), so the IR path bails on them for now.
+// user-enum struct shape). The StmtMatch lowering uses this to route them to the
+// tag-test arm shape (true/false test the 0/1 scrutinee directly; Some/Ok/Err
+// bind their payload via opt_payload once the scrutinee's Option/Result type is
+// recovered) instead of the variant_is path it uses for user enums. Only a
+// payload whose type can't be recovered, or a non-scalar/-string payload, still
+// bails to the AST emitter from there.
 pub function is_builtin_pattern(name: string): boolean {
     return name == "Some" || name == "None" || name == "Ok" || name == "Err"
         || name == "true" || name == "false";
