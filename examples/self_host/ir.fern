@@ -622,3 +622,37 @@ pub function render_op(o: Op): string {
     if (o.kind == "tuple_get") { return "tuple_get " + util.i32_to_string(o.i32_imm); }
     return o.kind;
 }
+
+// op_allocates reports whether an op of `kind` allocates on the heap (a box via
+// __fern_alloc / __fern_arr_box / __fern_str_box, or one of the string helpers
+// that builds a fresh box). It is the single source of truth for the
+// "does this module need the heap + RC runtime?" gate that each backend's
+// module-level scan runs: asm_ir.module_uses_heap and wasm_ir.module_allocates
+// both walk the lowered op stream and ask this. Keeping the list here means a
+// newly-added allocating op is taught to every backend's heap gate at once,
+// rather than silently routing modules to the AST fallback because one backend's
+// hand-maintained copy of the list fell behind.
+//
+// (wasm_ir.module_allocates additionally ORs in module_uses_strings for the
+// non-allocating string ops — str_len/str_eq/str_cmp/str_index — that still
+// pull the heap in via $__fern_strcat; the const_str/str_concat/str_slice
+// members below are a subset of that, so listing them here does not change its
+// result.)
+pub function op_allocates(kind: string): boolean {
+    // Low-level + literal allocations.
+    if (kind == "alloc" || kind == "alloc_u8" || kind == "arr_make" || kind == "arr_push") { return true; }
+    if (kind == "const_str" || kind == "str_concat" || kind == "str_slice" || kind == "str_from_bytes") { return true; }
+    // Composite boxes.
+    if (kind == "struct_make" || kind == "tuple_make") { return true; }
+    if (kind == "opt_make" || kind == "opt_none") { return true; }
+    if (kind == "map_new" || kind == "map_set") { return true; }
+    // Byte/string builders that materialise a fresh box.
+    if (kind == "random_bytes" || kind == "str_bytes" || kind == "str_split") { return true; }
+    if (kind == "str_to_upper" || kind == "str_to_lower") { return true; }
+    if (kind == "str_repeat" || kind == "str_trim" || kind == "str_reverse") { return true; }
+    if (kind == "str_replace" || kind == "str_chars" || kind == "str_lines") { return true; }
+    // dyn_box allocates the 16-byte primitive `dyn` cell; dyn_downcast allocates
+    // the Some/None Option box (docs/DYN-TRAITS.md §4.2.3, §9).
+    if (kind == "dyn_box" || kind == "dyn_downcast") { return true; }
+    return false;
+}

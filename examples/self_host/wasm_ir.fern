@@ -300,44 +300,18 @@ pub function module_allocates(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            var k: string = r.ops[i].kind;
-            if (k == "arr_make" || k == "alloc") { return true; }
-            // struct_make / tuple_make allocate a box via $__fern_str_box.
-            if (k == "struct_make") { return true; }
-            if (k == "opt_make" || k == "opt_none") { return true; }
-            if (k == "map_new" || k == "map_set") { return true; }
-            if (k == "tuple_make") { return true; }
-            // random_bytes builds a string block (via $__fern_str_box); str_bytes
-            // builds a u8[] (via $__fern_arr_box). Both need the heap runtime.
-            if (k == "random_bytes" || k == "str_bytes") { return true; }
-            // str_split builds the result string[] (via $__fern_arr_box) + each
-            // segment box (via $__fern_str_box); to_upper/to_lower build the fresh
-            // cased block (via $__fern_str_box).
-            if (k == "str_split") { return true; }
-            if (k == "str_to_upper" || k == "str_to_lower") { return true; }
-            if (k == "str_repeat") { return true; }
-            if (k == "str_trim") { return true; }
-            if (k == "str_reverse") { return true; }
-            if (k == "str_replace") { return true; }
-            if (k == "str_chars") { return true; }
-            if (k == "str_lines") { return true; }
-            // alloc_u8 / arr_push / str_from_bytes all allocate via $__fern_arr_box
-            // / $__fern_string_from_bytes, so a program whose only allocation is
-            // one of these still needs the heap runtime.
-            if (k == "alloc_u8" || k == "arr_push" || k == "str_from_bytes") { return true; }
-            // dyn_box allocates the 16-byte primitive `dyn` cell via
-            // $__fern_str_box (docs/DYN-TRAITS.md §4.2.3).
-            if (k == "dyn_box") { return true; }
-            // dyn_downcast allocates the Some/None Option box via $__fern_str_box
-            // (docs/DYN-TRAITS.md §9).
-            if (k == "dyn_downcast") { return true; }
+            // Any allocating op needs the heap + RC runtime. ir.op_allocates is
+            // the shared list (see ir.fern), identical to asm_ir's heap gate.
+            if (ir.op_allocates(r.ops[i].kind)) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
     }
     // String programs need the heap too: $__fern_strcat allocates via
     // $__fern_str_box, and strcat_helpers references it even for a str_eq-only
-    // program, so $__fern_str_box (in heap_alloc_helpers) must be present.
+    // program, so $__fern_str_box (in heap_alloc_helpers) must be present. This
+    // also covers the str_len/str_eq/str_cmp/str_index ops that don't allocate
+    // themselves but still pull the heap in via $__fern_strcat.
     return module_uses_strings(mod);
 }
 

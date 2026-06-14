@@ -102,7 +102,6 @@ pub function ir_helper_symbol(name: string): string {
 // module_uses_maps reports whether any function uses a map op (so the map
 // runtime + its __fern_str_eq / __fern_arr_push deps need emitting).
 function module_uses_maps(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var r: irlower.LowerResult = irlower.lower_func_for_noret(mod.funcs[fi], mod.structs, mod.funcs);
@@ -118,44 +117,15 @@ function module_uses_maps(mod: parser.Module): boolean {
 }
 
 function module_uses_heap(mod: parser.Module): boolean {
-    var noret: string[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         var r: irlower.LowerResult = irlower.lower_func_for_noret(mod.funcs[fi], mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            // arr_make (array literal) is the allocating op now; `alloc` is
-            // kept for any low-level allocation path. String literals and concat
-            // also allocate (the 16-byte box + concat buffer), and struct_make
-            // allocates the struct box — all pull in the heap/allocator runtime.
-            if (r.ops[i].kind == "alloc" || r.ops[i].kind == "arr_make") { return true; }
-            if (r.ops[i].kind == "const_str" || r.ops[i].kind == "str_concat") { return true; }
-            if (r.ops[i].kind == "str_slice") { return true; }
-            if (r.ops[i].kind == "struct_make") { return true; }
-            if (r.ops[i].kind == "opt_make" || r.ops[i].kind == "opt_none") { return true; }
-            if (r.ops[i].kind == "map_new" || r.ops[i].kind == "map_set") { return true; }
-            if (r.ops[i].kind == "tuple_make") { return true; }
-            // random_bytes allocates the byte buffer + string box; str_bytes
-            // allocates the result u8[] (both via __fern_alloc / __fern_arr_box).
-            if (r.ops[i].kind == "random_bytes" || r.ops[i].kind == "str_bytes") { return true; }
-            // str_split allocates the result string[] + each segment box;
-            // to_upper / to_lower allocate the fresh cased string box.
-            if (r.ops[i].kind == "str_split") { return true; }
-            if (r.ops[i].kind == "str_to_upper" || r.ops[i].kind == "str_to_lower") { return true; }
-            if (r.ops[i].kind == "str_repeat") { return true; }
-            if (r.ops[i].kind == "str_trim") { return true; }
-            if (r.ops[i].kind == "str_reverse") { return true; }
-            if (r.ops[i].kind == "str_replace") { return true; }
-            if (r.ops[i].kind == "str_chars") { return true; }
-            if (r.ops[i].kind == "str_lines") { return true; }
-            // alloc_u8 / arr_push / str_from_bytes all allocate (via
-            // __fern_alloc / __fern_arr_box) — pull in the heap runtime even for a
-            // program whose ONLY allocation is `__alloc_u8(n)` (no array literal).
-            if (r.ops[i].kind == "alloc_u8" || r.ops[i].kind == "arr_push" || r.ops[i].kind == "str_from_bytes") { return true; }
-            // dyn_box allocates the 16-byte primitive `dyn` cell (docs/DYN-TRAITS.md §4.2.3).
-            if (r.ops[i].kind == "dyn_box") { return true; }
-            // dyn_downcast allocates the Some/None Option box (docs/DYN-TRAITS.md §9).
-            if (r.ops[i].kind == "dyn_downcast") { return true; }
+            // Any allocating op pulls in the heap/allocator + RC runtime.
+            // ir.op_allocates is the shared list (see ir.fern), so a new
+            // allocating op is taught to this gate and wasm's at once.
+            if (ir.op_allocates(r.ops[i].kind)) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -1866,7 +1836,6 @@ pub function all_eligible(mod: parser.Module): boolean {
 // twin of calls_only_known. A const_func to an unknown name can't resolve to a
 // funcref table slot, so such modules fall back to AST.
 function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
-    var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
@@ -1894,7 +1863,6 @@ function module_has_func(mod: parser.Module, name: string): boolean {
 // calls_only_known reports whether every direct call in fd targets a module
 // function or an IR runtime helper (not a builtin).
 function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
-    var noret: string[] = [];
     var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
