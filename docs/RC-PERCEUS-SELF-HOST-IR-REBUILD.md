@@ -1059,3 +1059,46 @@ fixpoint from O(funcs) recomputations to O(passes) (~once per full module walk),
 making it effectively free — at which point the validated fixpoint logic lands as
 a single slice. Gate it on the SAME set, with the stage-1/stage-2 self-compile
 tests as the specific must-pass (they are what caught the cost regression).
+
+### Update (2026-06-14): three cost attempts confirm the hoist is mandatory
+
+Tried to land inter-procedural widening as a cheap per-function change, three ways
+— ALL blocked by the self-compile budget, even though each was verified
+functionally correct on the IR driver (transitive `outer → inner` reclaims, value
++ detector sound; the escape chain `wrap → idf` stays rejected):
+
+1. **All-`'1'` greatest fixpoint** (iterate removing escapers to convergence):
+   SIGKILLed `TestSelfHostLoadFixpointX86_64` stage-1 + both
+   `TestSelfHostStage2FixedPoint{,Arm64}` (exit 137).
+2. **Bounded all-`'0'` least fixpoint, cap=2, stripped registry** (one extra
+   propagation round): STILL SIGKILLed x86 stage-1/stage-2 — proving the cost is
+   the per-function recomputation × any extra round, not the round count.
+3. **Single forward pass with a growing stripped registry** (no iteration; sees
+   only earlier-defined callees): PASSED the full x86 gate
+   (`TestSelfHostAsmRunX86_64` auto-routes to IR, x86 fixpoint + stage-2,
+   `TestSelfHostStdTestE2E`, RC suites, targeted IR test) — but SIGKILLed
+   `TestSelfHostStage2FixedPointArm64` **even run in isolation with 14 GB free**.
+   The arm64 self-source is larger (adds `asm_arm64*.fern`), and admitting more
+   borrowable params also makes `precise_drop_names`' per-candidate
+   `collect_idents_stmt` walk allocate more — the native-x86 `mmc1` compiling that
+   larger source OOMed.
+
+Conclusion: the merged conservative slice (#3087) is the most that fits as a
+per-function computation. ANY inter-procedural widening — even a single pass — has
+to get cheaper first. **Before committing to the compute-once hoist, the next
+session should PROFILE which cost dominates the arm64 `mmc1` self-compile OOM:**
+
+- If it is `borrowable_params_of`'s per-function recomputation, the hoist (compute
+  the registry once per module compile, thread `bparams` into the ≈12 per-function
+  lowering loops across `asm_ir` / `asm_arm64_ir` / `wasm_ir` / `irlower` detailed
+  above) fixes it, and the single-pass / full-convergence logic drops in for free.
+- If it is instead `precise_drop_names` allocating more (its per-candidate
+  `collect_idents_stmt` walk scales with the number of admitted candidates, which
+  inter-procedural widening increases regardless of how borrowability is computed),
+  then the hoist alone will NOT fix the OOM — `precise_drop_names` itself needs to
+  be made cheaper (e.g. compute the last-use map once per function instead of an
+  O(candidates × statements) re-walk) before the widening can land.
+
+Reverted all three attempts; the tree stays at the merged conservative version,
+which is green. The validated fixpoint/single-pass logic is recorded here so
+whichever cost fix is needed, the widening itself is a drop-in.
