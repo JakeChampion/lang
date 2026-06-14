@@ -376,6 +376,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-multi-enum-ref", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { var a: A = X; return 0; }\n", []string{"E036"}},
 		{"variant-multi-enum-unref-ok", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-disjoint-ref-ok", "enum A { P, Q }\nenum B { R, S }\nfunction main(): i32 { var a: A = P; return 0; }\n", nil},
+		// E036 also covers a user-enum variant that collides with a BUILT-IN
+		// enum variant (Option / Result / …): `enum O { Some(i32), None }`
+		// shadows Option's Some / None, so a bare reference must be qualified.
+		// Plain Option usage (no colliding user enum) stays clean.
+		{"variant-builtin-collide-none", "enum O { Some(i32), None }\nfunction get(): O { return None; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-builtin-collide-result", "enum E { Ok(i32), Bad }\nfunction get(): E { return Ok(1); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-builtin-no-collide-ok", "function get(): Option[i32] { return None; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"match-wildcard-not-last", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { _ => { return 0; }, Has(n) => { return n; } } }\n", []string{"E026"}},
 		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
 		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
