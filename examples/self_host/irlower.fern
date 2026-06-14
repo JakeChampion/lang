@@ -6936,6 +6936,203 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     return util.index_of_str(s.reclaimable_names, s.local_names[i]) >= 0;
 }
 
+// --- struct in-place reuse (FBIP): functional-update self-overwrite ---------
+//
+// Native's struct_reuse / computeReuseSources (ir.go ~3661): pair a freed box
+// with a same-shape construction so the construction REUSES the box instead of
+// free-then-alloc. This is the first, most contained slice — the
+// functional-update self-overwrite: for `var c = T { ...d, f: v }` where `d` is
+// a struct local of the SAME type T that is fresh, non-escaping (reclaimable),
+// and DEAD after this statement (its last use is this update), reuse d's box in
+// place: write only the overridden fields into d's box, leave the rest (already
+// correct in d's box), make c be d's box, and zero d's slot so the exit sweep
+// frees the box once (through c), never twice.
+//
+// Restricted to the simplest SOUND case: T has only pure-scalar (i32/boolean)
+// fields, the base is a bare ident of a reclaimable same-type local, the
+// override values do not themselves reference d, and d is referenced nowhere in
+// the rest of the body. Anything else falls back to the existing
+// alloc-a-new-box path (unchanged behaviour). Soundness is gated by the
+// byte-identical self-compile fixpoint.
+
+// struct_all_scalar_i32_fields: every field of `struct_name` is i32 or boolean
+// (a flat scalar box — no rc-tracked fields to deep-drop, so moving the box from
+// d to c cannot dangle or leak a field). Strings / i64 / f64 / arrays / nested
+// structs are excluded to keep this first slice trivially sound.
+function struct_all_scalar_i32_fields(structs: parser.StructDecl[], struct_name: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            if (structs[i].fields.len() == 0) { return false; }
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                var t: string = structs[i].fields[fi].type_name;
+                if (t != "i32" && t != "boolean") { return false; }
+                fi = fi + 1;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ReuseSites: parallel arrays — for each self-overwrite reuse site, the
+// top-level body-statement index and the base local name d whose box is reused
+// in place. A flat pair (not string[][]) for the same self-host nested-array
+// limitation as PreciseDrops.
+struct ReuseSites { idxs: i32[], bases: string[] }
+
+// fresh_struct_lit_type returns the struct type a name was bound from when its
+// init is a direct `T { ... }` literal (no base), else "" — used to confirm the
+// base d's box is a same-type T box that this update can overwrite in place.
+function fresh_struct_lit_type(body: parser.Stmt[], name: string): string {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprStructLit(sl) => { if (!sl.has_base) { return sl.type_name; } return ""; },
+                        _ => { return ""; },
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// name_escapes_outside_stmt reports whether `name` escapes anywhere in `body`
+// except statement `skip` — used to confirm d's ONLY escaping use is the
+// struct-update base at the reuse statement (which is the consuming use the
+// reuse optimises, not a real escape). reclaimable_names_of treats a
+// struct-update base as an escape, so d would never be in `reclaim`; this is the
+// reuse-specific reclaimability check that excludes that one base occurrence.
+function name_escapes_outside_stmt(body: parser.Stmt[], name: string, skip: i32): boolean {
+    var esc: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        if (i != skip) { esc = walk_stmt_escapes(body[i], esc); }
+        i = i + 1;
+    }
+    return util.index_of_str(esc, name) >= 0;
+}
+
+// self_overwrite_reuse_sites computes the functional-update self-overwrite reuse
+// points. A statement i qualifies when it is `var c = T { ...d, f: v, ... }`
+// (a struct-lit with a bare-ident base d) where:
+//   - T has only scalar i32/boolean fields (struct_all_scalar_i32_fields),
+//   - d was bound from a fresh `T { ... }` literal of the SAME type T,
+//   - d does not escape anywhere outside this statement (its only escaping use is
+//     the update base here — the consuming use the reuse takes ownership of),
+//   - none of the override VALUES reference d (so reading d's box while writing
+//     it is order-safe; the overrides are evaluated against d's current fields),
+//   - d is referenced nowhere in statements i+1.., i.e. dead after this update.
+// d is never reassigned (a fresh single binding; a reassignment of d before i
+// would make it escape via the RHS walk, caught by name_escapes_outside_stmt).
+function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[]): ReuseSites {
+    var idxs: i32[] = [];
+    var bases: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprStructLit(slit) => {
+                        if (slit.has_base) {
+                            match (slit.base) {
+                                parser.ExprIdent(bid) => {
+                                    var ok: boolean = struct_all_scalar_i32_fields(structs, slit.type_name)
+                                        && fresh_struct_lit_type(body, bid.name) == slit.type_name
+                                        && v.name != bid.name
+                                        && util.index_of_str(body_assign_targets(body), bid.name) < 0
+                                        && !name_escapes_outside_stmt(body, bid.name, i);
+                                    // No override value may reference d.
+                                    if (ok) {
+                                        var fj: i32 = 0;
+                                        while (fj < slit.field_values.len()) {
+                                            var none: string[] = [];
+                                            if (util.index_of_str(astwalk.collect_idents_expr(slit.field_values[fj], none), bid.name) >= 0) { ok = false; }
+                                            fj = fj + 1;
+                                        }
+                                    }
+                                    // d must be dead after this statement: no use
+                                    // in any later top-level statement.
+                                    if (ok) {
+                                        var k: i32 = i + 1;
+                                        while (k < body.len()) {
+                                            var none2: string[] = [];
+                                            if (util.index_of_str(astwalk.collect_idents_stmt(body[k], none2), bid.name) >= 0) { ok = false; }
+                                            k = k + 1;
+                                        }
+                                    }
+                                    if (ok) {
+                                        idxs = idxs.append(i);
+                                        bases = bases.append(bid.name);
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return ReuseSites { idxs: idxs, bases: bases };
+}
+
+// emit_self_overwrite_reuse lowers `var c = T { ...d, f: v, ... }` as an
+// IN-PLACE reuse of d's box (the reuse site found by self_overwrite_reuse_sites).
+// `c_name` is the new local; `slit` the struct-update literal; `base_name` is d.
+// For each override field it writes the new value into d's box via struct_set,
+// binds c to d's box (a plain alias — leak-only scalar structs need no rc inc),
+// then ZEROES d's slot so the function-exit dec-sweep frees the box exactly once
+// (through c, which now owns it) and harmlessly decs a null for d. The `slit` is
+// passed as the wrapped parser.Expr (not the unwrapped variant struct) and
+// re-matched here — passing a large unwrapped AST struct by value is avoided.
+function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name: string, s: LowerState): LowerState {
+    var dslot: i32 = s.slot_of(base_name);
+    if (dslot < 0) { return s.fail(); }
+    match (init) {
+        parser.ExprStructLit(slit) => {
+            var st: LowerState = s;
+            // Write each override field into d's box: [box, value] -> struct_set.
+            var fj: i32 = 0;
+            while (fj < slit.field_names.len()) {
+                var fidx: i32 = st.field_index_in(slit.type_name, slit.field_names[fj]);
+                if (fidx < 0) { return st.fail(); }
+                st = st.emit(ir.op_load_local(dslot));
+                st = lower_expr(slit.field_values[fj], st);
+                if (!st.ok) { return st; }
+                st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
+                fj = fj + 1;
+            }
+            // Bind c to d's box (the reused box is the result of the update).
+            var cb: LowerState = st.add_local(c_name);
+            var cslot: i32 = cb.slot_of(c_name);
+            cb = cb.mark_struct_type(cslot, slit.type_name);
+            cb = cb.emit(ir.op_load_local(dslot));
+            cb = cb.emit(ir.op_store_local(cslot));
+            // Zero d's slot: c now owns the box; the exit sweep frees it once (via
+            // c) and decs a null for d. (c is an alias binding, not in the
+            // reclaimable set, so it is itself left to leak — the same shallow
+            // leak the pre-reuse path had for the freshly-allocated box; sound,
+            // no double-free.)
+            cb = cb.emit(ir.op_const_i32(0));
+            cb = cb.emit(ir.op_store_local(dslot));
+            return cb;
+        },
+        _ => { return s.fail(); },
+    }
+}
+
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
 // arr_ret_fns is the set of array-returning function names (for move tracking);
 // strarr_ret_fns is the string[]-returning subset (for element typing at calls).
@@ -7176,9 +7373,28 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
     var pdrops: PreciseDrops = precise_drop_names(fn.body, arr_ret_fns, strarr_ret_fns, f64arr_ret_fns, i64arr_ret_fns, borrowable_params);
+    // Struct in-place reuse (FBIP): the functional-update self-overwrite sites
+    // where `var c = T { ...d, .. }` reuses d's box in place (see
+    // self_overwrite_reuse_sites). Each such statement is lowered by
+    // emit_self_overwrite_reuse instead of lower_stmt.
+    var reuse: ReuseSites = self_overwrite_reuse_sites(fn.body, structs);
     var j: i32 = 0;
     while (j < fn.body.len()) {
-        s = lower_stmt(fn.body[j], s);
+        // Is statement j a self-overwrite reuse site? If so, lower it in place.
+        var reuse_i: i32 = 0 - 1;
+        var ri: i32 = 0;
+        while (ri < reuse.idxs.len()) {
+            if (reuse.idxs[ri] == j) { reuse_i = ri; }
+            ri = ri + 1;
+        }
+        if (reuse_i >= 0) {
+            match (fn.body[j]) {
+                parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, reuse.bases[reuse_i], s); },
+                _ => { s = lower_stmt(fn.body[j], s); },
+            }
+        } else {
+            s = lower_stmt(fn.body[j], s);
+        }
         if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots }; }
         var pi: i32 = 0;
         while (pi < pdrops.idxs.len()) {
