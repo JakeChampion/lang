@@ -611,6 +611,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-match-bool-i32", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => true, B => 1 }; return 0; }\n", []string{"E031"}},
 		{"e031-match-payload-arm-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; var r = match (o) { Has(n) => n, Nil => 0 }; return r; }\n", nil},
 		{"e031-match-three-arms-last-bad", "enum O { A, B, C }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => 1, B => 2, C => \"x\" }; return 0; }\n", []string{"E031"}},
+		// A value if/match-expression has a real result type (the branches'
+		// common type): a mismatched var annotation is E003, a mismatched
+		// `return` is E002. A matching annotation, and a numeric-mix set (which
+		// this port doesn't unify), stay clean.
+		{"if-expr-value-assign-bad", "function main(): i32 { var x: string = if (1 < 2) { 1 } else { 2 }; return 0; }\n", []string{"E003"}},
+		{"match-expr-value-assign-bad", "enum E { A, B }\nfunction main(): i32 { var e: E = A; var x: string = match (e) { A => 1, B => 2 }; return 0; }\n", []string{"E003"}},
+		{"if-expr-value-assign-ok", "function main(): i32 { var x: i32 = if (1 < 2) { 1 } else { 2 }; return x; }\n", nil},
+		{"if-expr-value-return-bad", "function f(): string { return if (1 < 2) { 1 } else { 2 }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		// Same-enum-family / element-wise compatible arms are NOT flagged (Go
 		// also reports nothing): Option Some/None, enum variants, a nested
 		// if-expression arm, tuple arms with matching element types.

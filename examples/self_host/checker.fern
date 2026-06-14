@@ -822,6 +822,41 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             return t_unknown("unknown unary op:" + u.op);
         },
         parser.ExprCall(c) => {
+            // A desugared value if/match-expression is a 0-arg call of a
+            // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
+            // returning each branch's value. Its value type is the branches'
+            // common type. Return it (instead of `unknown`) so assignment /
+            // return / argument checks see the real type — closing E003/E002
+            // on `var x: string = if (…) { 1 } else { 2 }` and the match form.
+            // Only when EVERY branch agrees (type_eq); a mixed-type set (e.g. a
+            // numeric i32/f64 widening, which the Go checker unifies but this
+            // port's type_assignable doesn't) falls back to `unknown` so it
+            // can't false-positive. Arm-type *consistency* itself is E031,
+            // checked separately.
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprLambda(lm) => {
+                        if (lm.params.len() == 0 && lm.body.len() == 1) {
+                            var bts: Type[] = [];
+                            match (lm.body[0]) {
+                                parser.StmtIf(f) => { bts = mx_if_branch_types(f, s); },
+                                parser.StmtMatch(m) => { bts = mx_match_arm_types(m, s); },
+                                _ => { }
+                            }
+                            if (bts.len() > 0) {
+                                var all_same: boolean = true;
+                                var bi: i32 = 1;
+                                while (bi < bts.len()) {
+                                    if (!type_eq(bts[bi], bts[0])) { all_same = false; }
+                                    bi = bi + 1;
+                                }
+                                if (all_same && !is_unknown(bts[0])) { return bts[0]; }
+                            }
+                        }
+                    },
+                    _ => { }
+                }
+            }
             // Bare-ident callee → plain function call.
             // FieldAccess callee → method call: type-check the
             // receiver, look up the method by (name, recv_type).
