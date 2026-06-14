@@ -216,6 +216,15 @@ const (
 	// across concrete types).
 	OpCallDyn // (data, args..., vtable) → result | ()
 
+	// OpBoxDyn packs a boxed one-word `dyn Trait` value on the native
+	// (ptrW==8) backends (docs/DYN-TRAITS.md §4.2.2). Stack on entry is
+	// `[data, vtable]` (vtable on top, just like the wasm inline form);
+	// the backend allocates a `2*ptrW`-byte heap cell via the normal
+	// `__fern_alloc` path, stores `data` at +0 and `vtable` at +ptrW,
+	// and pushes the single cell pointer. Never emitted on wasm, which
+	// keeps the inline two-word fat pointer instead.
+	OpBoxDyn // (data, vtable) → i32 (cell ptr)
+
 	// OpCallClosureDirect is the defunctionalised form of an
 	// OpCallIndirect whose receiver slot was provably mono-
 	// morphic (single `MakeClosure` flow source). The caller
@@ -490,6 +499,8 @@ func (k OpKind) String() string {
 		return "const.vtable"
 	case OpCallDyn:
 		return "call_dyn"
+	case OpBoxDyn:
+		return "box_dyn"
 	case OpCallClosureDirect:
 		return "call_closure_direct"
 	case OpDrop:
@@ -1733,25 +1744,49 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 	return out
 }
 
+// LowerOption tweaks LowerWith's behaviour for a particular backend.
+// The zero set of options is the historical default (used by every
+// existing caller): `dyn Trait` is supported only on wasm (ptrW==4).
+type LowerOption func(*lowerOpts)
+
+type lowerOpts struct {
+	// dynSupported lets a ptrW==8 native backend opt into boxed
+	// `dyn Trait` lowering. ptrW alone cannot discriminate x86-64
+	// from arm64 (both are 8), so the backend threads its capability
+	// in explicitly. See docs/DYN-TRAITS.md §4.2.2.
+	dynSupported bool
+}
+
+// DynSupported marks the calling backend as able to lower `dyn Trait`
+// values (boxed one-word on natives, §4.2.2). x86-64 passes it; arm64
+// does not (so arm64 keeps rejecting `dyn` with the clean diagnostic).
+// wasm never needs it — its ptrW==4 gate already lifts on its own.
+func DynSupported() LowerOption { return func(o *lowerOpts) { o.dynSupported = true } }
+
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
 // wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
 // struct fields, array elements, and closure captures so heap
 // addresses survive arm64-darwin's >= 4 GiB heap.
-func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error) {
-	// `dyn Trait` (runtime trait objects) is interpreter-only in its
-	// first slice — the compiled backends need a fat-pointer + vtable
-	// representation that isn't built yet (docs/DYN-TRAITS.md §4.2). The
-	// IR layer is the single choke point for every compiled backend, so
-	// reject `dyn` here with a clear message rather than letting it fall
-	// through to a cryptic "indirect call from non-identifier" later.
-	// `dyn Trait` (runtime trait objects) is implemented on wasm
-	// (ptrW==4) via the inline two-word `[data, vtable]` fat pointer +
-	// per-(trait,concrete) vtable data segments (docs/DYN-TRAITS.md
-	// §4.2.1). The native backends (ptrW==8) have no two-word-value
-	// pathway yet, so they still reject `dyn` here with a clear message
-	// rather than miscompiling it. collectVtables (below) populates
-	// prog.Vtables for the backend that lifted its gate.
-	if ptrW != 4 {
+func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOption) (*Program, error) {
+	var lo lowerOpts
+	for _, opt := range opts {
+		opt(&lo)
+	}
+	// `dyn Trait` (runtime trait objects) representation by target
+	// (docs/DYN-TRAITS.md §4.2):
+	//   - wasm (ptrW==4): inline two-word `[data, vtable]` fat pointer
+	//     + per-(trait,concrete) vtable data segments (§4.2.1).
+	//   - x86-64 (ptrW==8, DynSupported): BOXED one-word — a single
+	//     heap pointer to a `{data, vtable}` cell, dispatched through a
+	//     vtable of absolute function pointers (§4.2.2).
+	//   - arm64 / any other ptrW==8 backend without DynSupported: no
+	//     lowering yet, so reject `dyn` here with a clear message
+	//     rather than miscompiling it.
+	// The IR layer is the single choke point for every compiled
+	// backend. collectVtables (below) populates prog.Vtables for the
+	// backends that lifted their gate.
+	dynSupported := ptrW == 4 || lo.dynSupported
+	if !dynSupported {
 		if err := rejectDynTrait(prog); err != nil {
 			return nil, err
 		}
@@ -3476,6 +3511,15 @@ type builder struct {
 // every consumer.
 func (b *builder) twoWordStrings() bool {
 	return ast.UseTwoWordStrings(b.ptrW)
+}
+
+// dynBoxed reports whether `dyn Trait` values use the BOXED one-word
+// native representation (a single heap pointer to a `{data, vtable}`
+// cell) rather than the wasm inline two-word `[data, vtable]` fat
+// pointer. True on natives (ptrW==8), false on wasm (ptrW==4). See
+// docs/DYN-TRAITS.md §4.2.2.
+func (b *builder) dynBoxed() bool {
+	return b.ptrW != 4
 }
 
 // collectDefers walks `s` recursively and appends every
@@ -9342,10 +9386,14 @@ func (b *builder) expr(e ast.Expr) error {
 	b.curPos = e.Pos()
 	// `dyn Trait` coercion (boxing): when this expression is a recorded
 	// concrete→`dyn Trait` site, lower the concrete value (one word =
-	// data), then push the vtable address so the inline two-word
-	// `[data, vtable]` fat pointer lands on the stack. The dynCoerceDone
-	// guard prevents the recursive lower of the same expression from
-	// re-triggering. See docs/DYN-TRAITS.md §4.2.1.
+	// data), then push the vtable address. The dynCoerceDone guard
+	// prevents the recursive lower of the same expression from
+	// re-triggering. Representation (docs/DYN-TRAITS.md §4.2):
+	//   - wasm (inline two-word): leave `[data, vtable]` on the stack —
+	//     the slot itself holds the fat pointer (§4.2.1).
+	//   - natives (boxed one-word): emit OpBoxDyn to pop `[data,
+	//     vtable]`, allocate a `{data, vtable}` heap cell, and push the
+	//     single cell pointer (§4.2.2).
 	if b.info != nil && b.info.DynCoercions != nil && b.dynCoerceDone != nil && !b.dynCoerceDone[e] {
 		if dc, ok := b.info.DynCoercions[e]; ok {
 			b.dynCoerceDone[e] = true
@@ -9353,6 +9401,9 @@ func (b *builder) expr(e ast.Expr) error {
 				return err
 			}
 			b.emit(Op{Kind: OpConstVtable, Str: dc.Trait, Str2: dc.Concrete})
+			if b.dynBoxed() {
+				b.emit(Op{Kind: OpBoxDyn})
+			}
 			return nil
 		}
 	}
@@ -10178,12 +10229,14 @@ func (b *builder) expr(e ast.Expr) error {
 			if _, isString := elemType.(ast.StringType); isString && b.twoWordStrings() {
 				loadWidth = WidthString
 			}
-			// `dyn Trait` elements are inline two-word `[data, vtable]`
-			// fat pointers (docs/DYN-TRAITS.md §4.2.1): load both words
-			// via the WidthString fan-out, the same as a two-word
-			// string. (IsPointerType is true for dyn, so this must
-			// override the WidthPtr branch above.)
-			if _, isDyn := elemType.(ast.DynTraitType); isDyn {
+			// On wasm (ptrW==4) `dyn Trait` elements are inline two-word
+			// `[data, vtable]` fat pointers (docs/DYN-TRAITS.md §4.2.1):
+			// load both words via the WidthString fan-out, the same as a
+			// two-word string. (IsPointerType is true for dyn, so this
+			// must override the WidthPtr branch above.) On natives
+			// (ptrW==8) a `dyn` element is a boxed one-word pointer
+			// (§4.2.2) — the WidthPtr branch above already handles it.
+			if _, isDyn := elemType.(ast.DynTraitType); isDyn && b.ptrW == 4 {
 				loadWidth = WidthString
 			}
 		}
@@ -12303,8 +12356,41 @@ func (b *builder) call(n *ast.Call) error {
 			params = append(params, p.Type)
 		}
 		sig := &ast.FuncType{Params: params, Result: meth.Result}
-		// Lower the receiver → [data, vtable]; pop the vtable word into
-		// a fresh i32 temp (OpStoreLocal pops one word, leaving [data]).
+		// OpCallDyn's stack contract is uniform across backends:
+		// `[data, args..., vtable]`. Only how `data` and `vtable` are
+		// obtained from the receiver differs by representation
+		// (docs/DYN-TRAITS.md §4.2):
+		if b.dynBoxed() {
+			// Boxed one-word (natives, §4.2.2): the receiver is a single
+			// pointer to a `{data @0, vtable @ptrW}` cell. Stash the cell
+			// pointer, deref `data` (+0), lower args, deref `vtable`
+			// (+ptrW), then dispatch.
+			if err := b.expr(fa.Target); err != nil {
+				return err
+			}
+			cellTmp := b.allocSlot()
+			b.scratchType[cellTmp] = ast.NumberType{Width: 32}
+			b.emit(Op{Kind: OpStoreLocal, I32: cellTmp})
+			// data = load(cell + 0)  → [data]
+			b.emit(Op{Kind: OpLoadLocal, I32: cellTmp})
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+			// args → [data, args...]
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			// vtable = load(cell + ptrW)  → [data, args..., vtable]
+			b.emit(Op{Kind: OpLoadLocal, I32: cellTmp})
+			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+			b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Sig: sig})
+			return nil
+		}
+		// Inline two-word (wasm, §4.2.1): lower the receiver →
+		// [data, vtable]; pop the vtable word into a fresh i32 temp
+		// (OpStoreLocal pops one word, leaving [data]).
 		if err := b.expr(fa.Target); err != nil {
 			return err
 		}
@@ -16452,10 +16538,13 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 	if _, isString := t.(ast.StringType); isString {
 		return stringSlotSize(ptrW)
 	}
-	// A `dyn Trait` value is an inline two-word `[data, vtable]`
-	// fat pointer — two pointer-width slots, like a two-word
-	// string (docs/DYN-TRAITS.md §4.2.1).
-	if _, isDyn := t.(ast.DynTraitType); isDyn {
+	// On wasm (ptrW==4) a `dyn Trait` value is an inline two-word
+	// `[data, vtable]` fat pointer — two pointer-width slots, like a
+	// two-word string (docs/DYN-TRAITS.md §4.2.1). On natives
+	// (ptrW==8) it is BOXED one-word: a single heap pointer to a
+	// `{data, vtable}` cell (§4.2.2), so it falls through to the
+	// one-word pointer branch below.
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
 		return int32(2 * ptrW)
 	}
 	if ast.IsPointerType(t) {
@@ -16629,10 +16718,12 @@ func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 		}
 		return Op{Kind: OpStore, Width: WidthPtr}
 	}
-	// `dyn Trait` is an inline two-word `[data, vtable]`; store it
-	// with the same two-word fan-out as a string (representation-
-	// agnostic — two adjacent i32s).
-	if _, isDyn := t.(ast.DynTraitType); isDyn {
+	// On wasm (ptrW==4) `dyn Trait` is an inline two-word `[data,
+	// vtable]`; store it with the same two-word fan-out as a string
+	// (representation-agnostic — two adjacent i32s). On natives it is
+	// a boxed one-word pointer (§4.2.2), handled by the pointer branch
+	// below.
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
 		return Op{Kind: OpStore, Width: WidthString}
 	}
 	if ast.IsPointerType(t) {
@@ -16658,9 +16749,11 @@ func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 		}
 		return Op{Kind: OpStore, Width: WidthPtr}
 	}
-	// `dyn Trait` array elements are inline two-word `[data, vtable]`
-	// fat pointers — two-word fan-out, same as strings.
-	if _, isDyn := t.(ast.DynTraitType); isDyn {
+	// On wasm (ptrW==4) `dyn Trait` array elements are inline two-word
+	// `[data, vtable]` fat pointers — two-word fan-out, same as
+	// strings. On natives (ptrW==8) they are boxed one-word pointers
+	// (§4.2.2), handled by the pointer branch below.
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
 		return Op{Kind: OpStore, Width: WidthString}
 	}
 	if ast.IsPointerType(t) {
@@ -16695,9 +16788,11 @@ func payloadLoadOpFor(t ast.Type, ptrW int) Op {
 		}
 		return Op{Kind: OpLoad, Width: WidthPtr}
 	}
-	// `dyn Trait` is an inline two-word `[data, vtable]`; load it
-	// with the same two-word fan-out as a string.
-	if _, isDyn := t.(ast.DynTraitType); isDyn {
+	// On wasm (ptrW==4) `dyn Trait` is an inline two-word `[data,
+	// vtable]`; load it with the same two-word fan-out as a string.
+	// On natives (ptrW==8) it is a boxed one-word pointer (§4.2.2),
+	// handled by the pointer branch below.
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
 		return Op{Kind: OpLoad, Width: WidthString}
 	}
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {

@@ -19,7 +19,48 @@ package treeshake
 
 import (
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/checker"
 )
+
+// DynCoercionImplMethods returns the mangled impl-method names that a
+// `dyn Trait` vtable points at, for every (trait, concrete) pair the
+// checker recorded as a coercion site. These methods are reachable only
+// through the runtime vtable, never via a static call the tree-shake /
+// IR reachability walkers can follow, so each backend pins them as
+// extra roots (`treeshake.Run(prog, DynCoercionImplMethods(info)...)`).
+// The names mirror ir.collectVtables' slot resolution (info.Methods,
+// falling back to the conventional `__method_<concrete>_<method>`).
+// Shared by the wasm and x86-64 build paths. See docs/DYN-TRAITS.md.
+func DynCoercionImplMethods(info *checker.Info) []string {
+	if info == nil || len(info.DynCoercions) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	for _, dc := range info.DynCoercions {
+		td, ok := info.Traits[dc.Trait]
+		if !ok {
+			continue
+		}
+		for _, m := range td.Methods {
+			if m.Assoc {
+				continue
+			}
+			fn := info.Methods[dc.Concrete+"."+m.Name]
+			if fn == "" {
+				fn = "__method_" + dc.Concrete + "_" + m.Name
+			}
+			add(fn)
+		}
+	}
+	return out
+}
 
 // watHelperDeps lists the stdlib functions a still-in-wat
 // helper depends on, plus aliases the codegen layer

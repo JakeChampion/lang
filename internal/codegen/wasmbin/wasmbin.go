@@ -2202,6 +2202,12 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		body = memory.InstI32Load(body, 2, 0) // push fn_table_idx
 		return inst.InstCallIndirect(body, tIdx, 0), nil
 
+	case ir.OpBoxDyn:
+		// OpBoxDyn is the BOXED native (`dyn Trait`) representation
+		// (docs/DYN-TRAITS.md §4.2.2); wasm uses the inline two-word
+		// fat pointer and never emits it. Reaching here is an IR bug.
+		return nil, fmt.Errorf("OpBoxDyn is native-only; wasm uses the inline two-word dyn representation")
+
 	// ---- String runtime helpers ----
 	case ir.OpStrLen:
 		// Stack: (data, len). The synthetic __fern_str_len helper
