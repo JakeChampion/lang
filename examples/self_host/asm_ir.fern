@@ -1831,6 +1831,46 @@ pub function all_eligible(mod: parser.Module): boolean {
     return eligible_core(mod);
 }
 
+// eligibility_report returns a per-function IR-eligibility breakdown for `mod`:
+// one line per function — "<name>: ir" when it lowers AND its direct calls /
+// function-value references all resolve, or "<name>: BAIL <reasons>" naming
+// which gate(s) failed (`lower` = lower_func bailed the body; `call` = a direct
+// call targets a builtin / unknown function; `const_func` = a function-value
+// names an unknown function). The final line is the module verdict
+// ("module: IR" / "module: AST"), including the no-main / empty-module cases
+// all_eligible rejects.
+//
+// Read-only: it runs exactly the checks eligible_core / all_eligible route on,
+// so it observes the real IR-vs-AST frontier the driver uses — without touching
+// any emit path. It makes that frontier OBSERVABLE per function, so widening the
+// IR subset (goal 1) can see WHICH function, and which category, forces a module
+// to the AST fallback, and prove a construct moved onto the IR path.
+pub function eligibility_report(mod: parser.Module): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[i];
+        var name: string = fd.name;
+        if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+        var lower_ok: boolean = ir_eligible(fd, mod);
+        var calls_ok: boolean = calls_only_known(fd, mod);
+        var cfns_ok: boolean = const_funcs_only_known(fd, mod);
+        if (lower_ok && calls_ok && cfns_ok) {
+            out = out + name + ": ir\n";
+        } else {
+            var reasons: string = "";
+            if (!lower_ok) { reasons = reasons + " lower"; }
+            if (!calls_ok) { reasons = reasons + " call"; }
+            if (!cfns_ok) { reasons = reasons + " const_func"; }
+            out = out + name + ": BAIL" + reasons + "\n";
+        }
+        i = i + 1;
+    }
+    var verdict: string = "module: AST";
+    if (all_eligible(mod)) { verdict = "module: IR"; }
+    return out + verdict + "\n";
+}
+
 // const_funcs_only_known reports whether every function-value reference
 // (const_func) in fd names a function defined in the module — the function-value
 // twin of calls_only_known. A const_func to an unknown name can't resolve to a
