@@ -154,6 +154,25 @@ function (p: Point) sum(): i32 { return p.x + p.y; }`)
 	}
 }
 
+// The `::` path separator (`Type::method`, `mod::func`, `mod::CONST`)
+// round-trips through Format — it is not normalised to `.`. See #2700.
+func TestFormatPathSep(t *testing.T) {
+	got := formatSrc(t, `import "./helpers";
+function main(): i32 {
+    var a: i32 = Point::origin().x;
+    return a + helpers::add5(10) + helpers::BONUS;
+}`)
+	for _, want := range []string{"Point::origin()", "helpers::add5(10)", "helpers::BONUS"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q preserved in:\n%s", want, got)
+		}
+	}
+	// The ordinary `.x` field access stays a dot.
+	if !strings.Contains(got, "Point::origin().x") {
+		t.Errorf("`.x` should stay a dot:\n%s", got)
+	}
+}
+
 // Switch statements indent each case and the optional default; the
 // case bodies use the same multi-line block formatting.
 func TestFormatSwitch(t *testing.T) {

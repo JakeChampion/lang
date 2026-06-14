@@ -1671,6 +1671,47 @@ func TestTraitDefaultMethodParses(t *testing.T) {
 	}
 }
 
+// The path separator `::` in expression position parses to the same
+// FieldAccess node as `.`, with PathSep set so the printer round-trips it.
+// `Type::method(args)`, `mod::func()`, and `mod::CONST` all work. See #2700.
+func TestPathSepParse(t *testing.T) {
+	prog, err := Parse(`function main(): i32 {
+    var a: i32 = Point::origin().x;
+    var b: i32 = helpers::add5(10);
+    var c: i32 = helpers::BONUS;
+    return a + b + c;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := prog.Funcs[0].Body.Stmts
+	fieldOf := func(e ast.Expr) *ast.FieldAccess {
+		switch x := e.(type) {
+		case *ast.FieldAccess:
+			return x
+		case *ast.Call:
+			if fa, ok := x.Callee.(*ast.FieldAccess); ok {
+				return fa
+			}
+		}
+		return nil
+	}
+	// a = Point::origin().x → outer `.x` (dot) on Call(Point::origin()).
+	ax := body[0].(*ast.Var).Init.(*ast.FieldAccess)
+	if ax.PathSep {
+		t.Errorf("`.x` should not be a path separator")
+	}
+	if origin := fieldOf(ax.Target); origin == nil || origin.Field != "origin" || !origin.PathSep {
+		t.Errorf("Point::origin should be FieldAccess{Field:origin, PathSep:true}, got %#v", ax.Target)
+	}
+	if fa := fieldOf(body[1].(*ast.Var).Init); fa == nil || !fa.PathSep || fa.Field != "add5" {
+		t.Errorf("helpers::add5 should be a PathSep FieldAccess, got %#v", body[1].(*ast.Var).Init)
+	}
+	if fa := fieldOf(body[2].(*ast.Var).Init); fa == nil || !fa.PathSep || fa.Field != "BONUS" {
+		t.Errorf("helpers::BONUS should be a PathSep FieldAccess, got %#v", body[2].(*ast.Var).Init)
+	}
+}
+
 // A trait may declare associated types (`type Item;`), an impl binds them
 // (`type Item = i32;`), and signatures reference them as `Self::Item` /
 // `T::Item` (parsed to ast.ProjType). See docs/ASSOCIATED-TYPES.md.

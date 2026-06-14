@@ -1160,7 +1160,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(')')
 	case *ast.FieldAccess:
 		f.formatExpr(x.Target, precPrimary)
-		f.b.WriteByte('.')
+		if x.PathSep {
+			f.b.WriteString("::")
+		} else {
+			f.b.WriteByte('.')
+		}
 		f.b.WriteString(x.Field)
 	case *ast.Lambda:
 		// Anonymous function expression: `function(p: T): R { ... }`.
