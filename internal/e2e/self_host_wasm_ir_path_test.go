@@ -426,6 +426,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"match-expr-some-construct", `function main(): i32 { return match (Some(6)) { Some(w) => w, None => 0 }; }`},
 		{"match-expr-some-construct-derived", `function main(): i32 { return match (Some(20)) { Some(w) => w + 1, None => 0 }; }`},
 		{"match-expr-arm-some-construct", `function main(): i32 { var o = Some(5); return match (o) { Some(v) => match (Some(v + 1)) { Some(w) => w, None => 0 }, None => 0 }; }`},
+		// A match-EXPRESSION whose scrutinee is an Option-typed tuple element (t.0):
+		// try_opt_type now resolves a numeric (tuple-element) field via
+		// expr_tuple_elem_tag, mirroring the main StmtMatch path (#3118).
+		{"match-expr-tuple-elem0", `function main(): i32 { var t = (Some(5), 3); return match (t.0) { Some(v) => v, None => 0 } + t.1; }`},
+		{"match-expr-tuple-elem1", `function main(): i32 { var t = (3, Some(8)); return match (t.1) { Some(v) => v, None => 0 } + t.0; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},

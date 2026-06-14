@@ -3921,6 +3921,14 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
         },
         parser.ExprIdent(sid) => { return s.opt_type_of_slot(s.slot_of(sid.name)); },
         parser.ExprFieldAccess(sfa) => {
+            // `t.N` where the tuple element is an Option/Result — recover from the
+            // element's tracked tag (a numeric field; mirrors the main StmtMatch
+            // path so `match (t.0) { … }` in value position lowers).
+            if (util.is_all_digits(sfa.field)) {
+                var ttg: string = expr_tuple_elem_tag(sfa.obj, util.digits_to_i32(sfa.field), s);
+                if (ttg.len() >= 8 && (ttg[0:7] == "Option[" || ttg[0:7] == "Result[")) { return ttg; }
+                return "";
+            }
             var foty: string = expr_struct_type(sfa.obj, s);
             if (foty != "") {
                 var fft: string = decl_field_type(s.structs, foty, sfa.field);
