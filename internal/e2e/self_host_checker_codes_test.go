@@ -288,6 +288,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"field-known-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", nil},
 		{"method-call-not-field-ok", "struct P { x: i32 }\nfunction (p: P) getx(): i32 { return p.x; }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.getx(); }\n", nil},
 		{"field-nested-unknown", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q { a: 1 } }; return p.q.z; }\n", []string{"E043"}},
+		// E043 (non-struct-value variant): a field READ on an i32 / string /
+		// array (no fields). Method calls and struct/tuple field access stay ok.
+		{"field-on-i32", "function main(): i32 { var x = 5; return x.foo; }\n", []string{"E043"}},
+		{"field-on-string", "function main(): i32 { var s = \"a\"; return s.foo; }\n", []string{"E043"}},
+		{"field-on-array", "function main(): i32 { var a = [1, 2, 3]; return a.foo; }\n", []string{"E043"}},
+		{"str-method-not-field-ok", "function main(): i32 { var s = \"abc\"; return s.len(); }\n", nil},
 		{"slice-low-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: string = s[\"x\":3]; return 0; }\n", []string{"E037"}},
 		{"slice-high-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: string = s[1:\"y\"]; return 0; }\n", []string{"E037"}},
 		{"slice-bounds-ok", "function main(): i32 { var s: string = \"hello\"; var t: string = s[1:3]; return 0; }\n", nil},
