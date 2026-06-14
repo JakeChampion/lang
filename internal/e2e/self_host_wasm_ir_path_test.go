@@ -759,6 +759,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"enum-if-expr-method", `enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; } function main(): i32 { var s = if (true) { Circle(2) } else { Square(3) }; return s.area(); }`},
 		{"enum-match-expr-method", `enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; } function main(): i32 { var s = match (1) { 1 => Circle(2), _ => Square(3) }; return s.area(); }`},
 		{"enum-unit-if-expr-method", `enum Color { Red, Green, Blue } function (c: Color) code(): i32 { match (c) { Red => { return 1; }, Green => { return 2; }, Blue => { return 3; } } return 0; } function main(): i32 { var c = if (false) { Red } else { Green }; return c.code(); }`},
+		// A NESTED struct-valued if-/match-EXPRESSION binding: each inner branch
+		// is itself lifted to a `__lam_M`, so fn_inferred_struct_ret recurses
+		// through the `__lam` chain to the innermost struct literal.
+		{"struct-nested-if-expr", `struct P { x: i32, y: i32 } function main(): i32 { var p = if (true) { if (false) { P{x:1,y:2} } else { P{x:5,y:6} } } else { P{x:3,y:4} }; return p.x + p.y; }`},
+		{"struct-match-then-if-expr", `struct P { x: i32, y: i32 } function main(): i32 { var p = match (1) { 1 => if (true) { P{x:4,y:5} } else { P{x:0,y:0} }, _ => P{x:3,y:4} }; return p.x + p.y; }`},
 		// NB: the str_starts_with / str_index_of FREE-function builtins exist on the
 		// x86-64 AST path but not the wasm AST path, so they can't ride this wasm
 		// differential gate — the method forms above cover the IR predicate ops, and
