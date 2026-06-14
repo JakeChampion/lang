@@ -107,3 +107,91 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostIRPipelineProbe exercises the asm_load_run driver's `-ir-probe`
+// flag — the pipeline-level companion to TestSelfHostIREligibilityProbe. Where
+// the asm_ir_run probe sees a single parsed module, this loader-driven probe
+// reports eligibility for the WHOLE program after its `import "std/…"` modules
+// are resolved from disk and flattened in, so it reveals the IR-vs-AST frontier
+// that real (stdlib-using) programs actually hit — the worklist for goal-1
+// widening. The cases pin: a self-contained module reports per-function + a
+// verdict, and a stdlib-importing program's report includes the mangled
+// stdlib functions (proving the whole loaded program is probed, not just the
+// entry module).
+func TestSelfHostIRPipelineProbe(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	// asm_load_run pulls in flatten + checker on top of the core emitter set.
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_load_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+
+	// probe writes prog to a temp entry file and runs `<driver> <entry> [root]
+	// -ir-probe`, returning the report. root="" omits the stdlib root.
+	probe := func(t *testing.T, prog, root string) string {
+		t.Helper()
+		entry := filepath.Join(dir, "probe_entry.fern")
+		if err := os.WriteFile(entry, []byte(prog), 0o644); err != nil {
+			t.Fatalf("write entry: %v", err)
+		}
+		args := []string{entry}
+		if root != "" {
+			args = append(args, root)
+		}
+		args = append(args, "-ir-probe")
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin, args...)
+		} else {
+			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("probe driver failed for %q: %v", prog, err)
+		}
+		return string(out)
+	}
+
+	t.Run("self-contained", func(t *testing.T) {
+		rep := probe(t, "function helper(n: i32): i32 { return n * 2; }\nfunction main(): i32 { return helper(21); }", "")
+		for _, want := range []string{"helper: ir", "main: ir", "module: IR"} {
+			if !strings.Contains(rep, want) {
+				t.Errorf("report missing %q\n--- report ---\n%s", want, rep)
+			}
+		}
+	})
+
+	t.Run("stdlib-loaded-whole-program", func(t *testing.T) {
+		// Importing a stdlib module pulls its (mangled) functions into the
+		// loaded program; the report must list them, proving the probe sees the
+		// whole flattened program, not just the entry module.
+		rep := probe(t, "import \"std/array\";\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.len(); }", stdlibRoot)
+		if !strings.Contains(rep, "module:") {
+			t.Errorf("report missing verdict line\n--- report ---\n%s", rep)
+		}
+		if !strings.Contains(rep, "array__") {
+			t.Errorf("report does not list mangled std/array functions — stdlib not loaded into the probe?\n--- report (head) ---\n%s", firstNLines(rep, 20))
+		}
+	})
+}
+
+// firstNLines returns the first n newline-delimited lines of s (for compact
+// failure output on a large report).
+func firstNLines(s string, n int) string {
+	lines := strings.SplitN(s, "\n", n+1)
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}
