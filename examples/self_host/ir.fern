@@ -146,6 +146,18 @@ pub function op_fbin(kind: string): Op {
     return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
+// f64 unary math intrinsic. `kind` is the float opcode ("fsqrt"/"ffloor"/
+// "fceil"/"ftrunc"/"fabs") for std/float's single-operand __*_f64 builtins.
+// Like op_fbin the operand + result are f64 (one value popped, one pushed); each
+// backend selects the single hardware instruction (sqrtsd / roundsd / and-mask
+// on x86, fsqrt / frint* / fabs on arm64, f64.sqrt / floor / ceil / trunc / abs
+// on wasm). Round-half-away (__round_f64) and the libm transcendentals
+// (log/exp/sin/cos/pow) need multi-instruction emulation / external calls and
+// stay on the AST path for now.
+pub function op_funary(kind: string): Op {
+    return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+}
+
 // f64 <-> i32 conversions. i32_to_f64 widens a signed i32 to f64 (cvtsi2sd /
 // scvtf / f64.convert_i32_s); f64_to_i32 truncates an f64 toward zero to a
 // signed i32 (cvttsd2si / fcvtzs / i32.trunc_f64_s). The value rides the stack

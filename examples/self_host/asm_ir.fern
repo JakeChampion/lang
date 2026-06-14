@@ -2535,6 +2535,20 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             else if (o.kind == "fmul") { s = s.write("    mulsd %xmm1, %xmm0\n"); }
             else { s = s.write("    divsd %xmm1, %xmm0\n"); }
             s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
+        } else if (o.kind == "fsqrt" || o.kind == "ffloor" || o.kind == "fceil" || o.kind == "ftrunc") {
+            // f64 unary math (op_funary): pop the operand bits into xmm0, apply the
+            // single SSE instruction, push. roundsd needs SSE4.1 (universal on
+            // x86-64); $1/$2/$3 select floor / ceil / trunc. Mirrors asm.fern.
+            s = s.write("    popq %rax\n    movq %rax, %xmm0\n");
+            if (o.kind == "fsqrt") { s = s.write("    sqrtsd %xmm0, %xmm0\n"); }
+            else if (o.kind == "ffloor") { s = s.write("    roundsd $1, %xmm0, %xmm0\n"); }
+            else if (o.kind == "fceil") { s = s.write("    roundsd $2, %xmm0, %xmm0\n"); }
+            else { s = s.write("    roundsd $3, %xmm0, %xmm0\n"); }
+            s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
+        } else if (o.kind == "fabs") {
+            // |x| clears the f64 sign bit — a plain mask on the bits in %rax, no
+            // xmm needed (mirrors asm.fern's __abs_f64).
+            s = s.write("    popq %rax\n    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n    pushq %rax\n");
         } else if (o.kind == "flt" || o.kind == "fle" || o.kind == "fgt" || o.kind == "fge" || o.kind == "feq" || o.kind == "fne") {
             // f64 compare → i32 0/1, NaN-correct (mirrors asm.fern): ucomisd sets
             // CF=ZF=PF=1 when unordered, so `<`/`<=`/`==` mask with setnp and

@@ -251,6 +251,12 @@ function wasm_binop_w(kind: string, width: i32): string {
     if (kind == "fsub") { return "f64.sub"; }
     if (kind == "fmul") { return "f64.mul"; }
     if (kind == "fdiv") { return "f64.div"; }
+    // f64 unary math intrinsics (op_funary) — single wasm instructions.
+    if (kind == "fsqrt") { return "f64.sqrt"; }
+    if (kind == "ffloor") { return "f64.floor"; }
+    if (kind == "fceil") { return "f64.ceil"; }
+    if (kind == "ftrunc") { return "f64.trunc"; }
+    if (kind == "fabs") { return "f64.abs"; }
     if (kind == "feq") { return "f64.eq"; }
     if (kind == "fne") { return "f64.ne"; }
     if (kind == "flt") { return "f64.lt"; }

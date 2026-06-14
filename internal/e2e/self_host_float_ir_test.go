@@ -5,24 +5,60 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
-// TestSelfHostFloatIntrinsicsIR covers the f64 math intrinsics std/float wraps
-// (__floor_f64 / __ceil_f64 / __sqrt_f64 / __abs_f64 / __round_f64 /
-// __trunc_f64) through the self-hosted x86-64 IR path — the lowering std/float's
-// f64 methods rely on (a "self-host pending" audit gap). The program computes
-// each, casts to i32, and returns 42 iff all match; cross-checked against the
-// reference interpreter, which agrees.
-func TestSelfHostFloatIntrinsicsIR(t *testing.T) {
+// floatMathIRCases exercise std/float's single-instruction f64 math builtins —
+// __sqrt_f64 / __floor_f64 / __ceil_f64 / __trunc_f64 / __abs_f64 — through the
+// self-host IR path on x86-64 + wasm. Each maps to one hardware instruction on
+// every backend (sqrtsd / roundsd / sign-mask on x86, fsqrt / frint* / fabs on
+// arm64, f64.sqrt / floor / ceil / trunc / abs on wasm), so the IR path now
+// lowers them (op_funary) instead of falling back to the AST emitter — the
+// FEATURE-AUDIT "float math builtins" row was self-host-blank.
+//
+// These cases pin routing to the "ir" path via the pathprobe driver. (The older
+// combined test used `-ir`, which silently falls back to AST when the module is
+// not all_eligible — so including __round_f64 routed the whole program through
+// the AST emitter and never verified the IR path.)
+//
+// __round_f64 (round-half-away needs a trunc(x+copysign(0.5,x)) emulation) and
+// the libm transcendentals (log/exp/sin/cos/pow) are intentionally NOT covered —
+// they stay on the AST path and are a documented follow-up.
+//
+// Each case casts its f64 result to i32 and returns a non-negative value kept
+// <= 126 (the wasmtime exit-code truncation gap, cf. #2908), oracle-checked
+// against the interpreter. FEATURE-AUDIT std/float row.
+var floatMathIRCases = []struct {
+	name string
+	main string
+}{
+	{"sqrt", `return __sqrt_f64(16.0) as i32;`},
+	{"sqrt-large", `return __sqrt_f64(10000.0) as i32;`},
+	{"floor", `return __floor_f64(7.8) as i32;`},
+	{"ceil", `return __ceil_f64(7.2) as i32;`},
+	{"trunc", `return __trunc_f64(7.9) as i32;`},
+	// abs of a negative input: exercises the sign-bit clear with a positive result.
+	{"abs", `return __abs_f64(0.0 - 5.5) as i32;`},
+	// Nested intrinsics: sqrt(abs(-16)) = 4.
+	{"nested", `return __sqrt_f64(__abs_f64(0.0 - 16.0)) as i32;`},
+	// Intrinsic result feeding f64 arithmetic: sqrt(2) * 10 = 14.14 -> 14.
+	{"in-expr", `var x: f64 = 2.0; return (__sqrt_f64(x) * 10.0) as i32;`},
+	// f64 local round-trip: floor of a stored value.
+	{"via-local", `var y: f64 = 9.99; return __floor_f64(y) as i32;`},
+}
+
+func floatMathIRSrc(mainBody string) string {
+	return "function main(): i32 { " + mainBody + " }\n"
+}
+
+// TestSelfHostFloatMathIRX86_64 routes each case through the self-hosted x86-64
+// IR driver, oracle-checked, with routing pinned to the "ir" path.
+func TestSelfHostFloatMathIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_ir_run.fern"} {
+	interpBin := buildLangBinForInterp(t)
+	dir := writeSelfHostAsmProject(t)
+	for _, name := range []string{"asm_run.fern", "asm_pathprobe_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -31,74 +67,85 @@ func TestSelfHostFloatIntrinsicsIR(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_ir_run.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverAsm := filepath.Join(dir, "driver.s")
-	driverBin := filepath.Join(dir, "driver")
-	if err := os.WriteFile(driverAsm, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write driver asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", driverAsm, "-o", driverBin).CombinedOutput(); err != nil {
-		t.Fatalf("driver gcc: %v\n%s", err, out)
-	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
-	emitAndRunIR := func(t *testing.T, src string) int {
-		t.Helper()
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir")
-		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-		}
-		cmd.Stdin = bytes.NewReader([]byte(src))
-		emitted, err := cmd.Output()
-		if err != nil || len(emitted) == 0 {
-			t.Fatalf("driver failed: %v", err)
-		}
-		innerAsm := filepath.Join(dir, "ir_inner.s")
-		innerBin := filepath.Join(dir, "ir_inner")
-		if err := os.WriteFile(innerAsm, emitted, 0o644); err != nil {
-			t.Fatalf("write inner asm: %v", err)
-		}
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", innerAsm, "-o", innerBin).CombinedOutput(); err != nil {
-			t.Fatalf("inner gcc: %v\n%s", err, out)
-		}
-		var inner *exec.Cmd
-		if len(runner) == 0 {
-			inner = exec.Command(innerBin)
-		} else {
-			inner = exec.Command(runner[0], append(append([]string{}, runner[1:]...), innerBin)...)
-		}
-		_ = inner.Run()
-		if inner.ProcessState == nil || !inner.ProcessState.Exited() {
-			t.Fatalf("inner did not exit normally")
-		}
-		return inner.ProcessState.ExitCode()
+	for _, tc := range floatMathIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(floatMathIRSrc(tc.main))
+			want := interpExit(t, interpBin, string(src))
+			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
+			if path != "ir" {
+				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
+			}
+			asm := runCapture(t, gcc, runner, driverBin, src)
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != want {
+				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			}
+		})
 	}
+}
 
-	const src = `function main(): i32 {
-    if ((__floor_f64(3.7) as i32) != 3) { return 1; }
-    if ((__ceil_f64(3.2) as i32) != 4) { return 2; }
-    if ((__sqrt_f64(16.0) as i32) != 4) { return 3; }
-    if ((__abs_f64(0.0 - 5.0) as i32) != 5) { return 4; }
-    if ((__round_f64(2.5) as i32) != 3) { return 5; }
-    if ((__trunc_f64(3.9) as i32) != 3) { return 6; }
-    return 42;
-}`
-	if got := emitAndRunIR(t, src); got != 42 {
-		t.Errorf("self-host IR f64 intrinsics: check = %d, want 42 (1=floor 2=ceil 3=sqrt 4=abs 5=round 6=trunc)", got)
+// TestSelfHostFloatMathIRWasm runs the same cases through the wasm IR backend.
+func TestSelfHostFloatMathIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host float-math wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range floatMathIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(floatMathIRSrc(tc.main))
+			want := interpExit(t, interpBin, string(src))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader(src)
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.name, err)
+			}
+			watFile := filepath.Join(dir, "float_prog.wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			run := exec.Command("wasmtime", "run", watFile)
+			_ = run.Run()
+			if run.ProcessState == nil || !run.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
+			}
+			if code := run.ProcessState.ExitCode(); code != want {
+				t.Errorf("float-math wasm IR %q = %d, want %d (interp oracle)", tc.name, code, want)
+			}
+		})
 	}
 }
