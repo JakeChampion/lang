@@ -1080,6 +1080,48 @@ pub function is_enum_like_name(t: string, structs: parser.StructDecl[]): boolean
     return true;
 }
 
+// decl_is_prim_recv reports whether a method-receiver type spelling names a
+// PRIMITIVE / `string` type (i32/i64/u32/u64/usize/f64/f32/boolean/string) —
+// the receivers `impl Trait for <prim>` can name, whose `dyn` values are
+// heap-boxed at coercion (docs/DYN-TRAITS.md §4.2.3). Not a struct, not an
+// enum, not an array. Mirrors asmcore.is_prim_recv_name for the wasm backend,
+// which works on (structs) inputs rather than EmitState.
+pub function decl_is_prim_recv(structs: parser.StructDecl[], name: string): boolean {
+    if (name.len() == 0) { return false; }
+    if (is_array_type_name(name)) { return false; }
+    if (decl_is_struct(structs, name)) { return false; }
+    if (is_enum_like_name(name, structs)) { return false; }
+    if (name == "i32" || name == "i64" || name == "u32" || name == "u64" || name == "usize"
+        || name == "f64" || name == "f32" || name == "float"
+        || name == "boolean" || name == "bool" || name == "string") { return true; }
+    return false;
+}
+
+// prim_type_ids is the canonical ordered list of primitive receiver type names
+// used to assign a dyn-box shape id on wasm (the natives use the interned
+// type-name string). The id is structs.len() + index, so it never collides with
+// a struct's type id (its index in `structs`). The order is fixed for
+// deterministic codegen (docs/DYN-TRAITS.md §4.2.3 — fixpoint determinism).
+pub function prim_type_ids(): string[] {
+    return ["i32", "boolean", "bool", "i64", "u32", "u64", "usize", "f64", "f32", "float", "string"];
+}
+
+// prim_type_id maps a primitive receiver type name to its wasm dyn-box shape id
+// (structs.len() + its index in prim_type_ids), or -1 if not a primitive. Both
+// op_dyn_box (store @0) and op_dyn_dispatch (compare) key off this, so a boxed
+// value's offset-0 id matches the dispatch arm. bool/boolean and f32/f64/float
+// share spellings but each maps to its own slot; that is harmless (an impl names
+// exactly one spelling, used at both box and dispatch).
+pub function prim_type_id(structs: parser.StructDecl[], name: string): i32 {
+    var names: string[] = prim_type_ids();
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (names[i] == name) { return structs.len() + i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 // decl_has_scalar_array reports whether a struct has any scalar-array field.
 pub function decl_has_scalar_array(structs: parser.StructDecl[], struct_name: string): boolean {
     var i: i32 = 0;
@@ -1292,6 +1334,24 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     if (expr_is_f64(e, s)) { return "f64"; }
     if (infer_expr_width(e, s) == 64) { return "i64"; }
     return "i32";
+}
+
+// lower_dyn_arg lowers an expression that flows into a `dyn Trait` slot
+// (docs/DYN-TRAITS.md §4.2.3). A struct/enum value already carries its shape at
+// offset 0, so it is the `dyn` pointer directly — lowered unchanged. A
+// primitive/string value (expr_recv_prim_type != "") has no shape pointer, so
+// it is heap-boxed into a cell [shape@0, value@8] via op_dyn_box, keyed by the
+// primitive type name; the box pointer becomes the `dyn` value. op_dyn_dispatch
+// then reads offset 0 and, on a primitive arm, reloads the value from offset 8.
+pub function lower_dyn_arg(e: parser.Expr, s: LowerState): LowerState {
+    var prim: string = expr_recv_prim_type(e, s);
+    if (prim == "") {
+        // Struct / enum concrete — already shape-carrying, no box.
+        return lower_expr(e, s);
+    }
+    var ls: LowerState = lower_expr(e, s);
+    if (!ls.ok) { return ls; }
+    return ls.emit(ir.op_dyn_box(prim));
 }
 
 // expr_is_nonscalar conservatively reports whether `e` evaluates to a non-scalar
@@ -3215,6 +3275,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var fvn: string = fn_value_arg_name(c.args[ai], sc);
                         if (fvn.len() > 0 && sc.callee_param_is_fn(cid.name, ai)) {
                             sc = sc.emit(ir.op_const_func(0, fvn));
+                        } else if (sc.callee_param_is_dyn(cid.name, ai)) {
+                            // A primitive/string arg coerced into a `dyn Trait`
+                            // param: lower the value, then heap-box it into a `dyn`
+                            // cell [shape@0, value@8] so the receiver carries a
+                            // shape pointer (docs/DYN-TRAITS.md §4.2.3). A struct/
+                            // enum value already carries its shape (prim type ""),
+                            // so it flows unboxed as the `dyn` pointer directly.
+                            sc = lower_dyn_arg(c.args[ai], sc);
                         } else if (sc.param_is_i64(cid.name, ai)) {
                             // An argument bound to an i64 param must be lowered as
                             // an i64 value (so an i64 literal / i32 source widens).
@@ -4113,6 +4181,37 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // array — which the AST path retains but the leak-only IR path can't;
             // bail to AST to preserve that RC behaviour.
             if (is_scalar_arr_field_access(v.init, s)) { return s.fail(); }
+            // `var xs: dyn Trait[] = [ ... ]` — a `dyn Trait` ARRAY literal. Each
+            // element coerces to `dyn Trait`: a struct/enum element flows unboxed
+            // (it carries its shape), a primitive/string element is heap-boxed via
+            // op_dyn_box so it carries a shape pointer (docs/DYN-TRAITS.md
+            // §4.2.3). lower_dyn_arg makes that per-element box/no-box choice; the
+            // boxed pointers then ride one array slot each, and the slot is bound
+            // is_arr with NO element struct type so `for x in xs` reads the loop
+            // var as "unknown" → runtime shape dispatch (the §4.3 array tag fix).
+            if (v.type_name.len() > 6 && v.type_name[0:4] == "dyn " && is_array_type_name(v.type_name)) {
+                var dab_ok: boolean = false;
+                match (v.init) { parser.ExprArray(_) => { dab_ok = true; }, _ => {} }
+                if (dab_ok) {
+                    match (v.init) {
+                        parser.ExprArray(darr) => {
+                            var das: LowerState = s;
+                            var dei: i32 = 0;
+                            while (dei < darr.elements.len()) {
+                                das = lower_dyn_arg(darr.elements[dei], das);
+                                if (!das.ok) { return das; }
+                                dei = dei + 1;
+                            }
+                            das = das.emit(ir.op_arr_make(darr.elements.len(), 32));
+                            var dab: LowerState = das.add_local(v.name);
+                            var daslot: i32 = dab.slot_of(v.name);
+                            dab = dab.mark_arr(daslot, true);
+                            return dab.emit(ir.op_store_local(daslot));
+                        },
+                        _ => {}
+                    }
+                }
+            }
             // First-class closure binding (slice 3a): `var f = <lambda>` or
             // `var f = <call to a closure-returning fn>` — the init lowers to an
             // i32[] env box; bind f as an array slot AND mark it a closure local
@@ -7020,6 +7119,16 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
         var pj: i32 = 0;
         while (pj < funcs[k].params.len()) {
             if (funcs[k].params[pj].type_name == "fn") { flags = flags + "1"; any = true; }
+            // A SCALAR `dyn Trait` param: flag '2'. A primitive/string arg passed
+            // here is heap-boxed into a `dyn` cell at the call site (op_dyn_box) so
+            // the receiver carries a shape pointer (docs/DYN-TRAITS.md §4.2.3).
+            // '2' is distinct from the fn flag '1', so callee_param_is_fn is
+            // unaffected; callee_param_is_dyn reads '2'. A `dyn Trait[]` param
+            // (an ARRAY) is NOT flagged: it receives an already-built array whose
+            // primitive elements were boxed at the array literal, so the array
+            // pointer flows in one word unchanged (no per-call box).
+            else if (funcs[k].params[pj].type_name.len() > 4 && funcs[k].params[pj].type_name[0:4] == "dyn "
+                     && !is_array_type_name(funcs[k].params[pj].type_name)) { flags = flags + "2"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -7132,6 +7241,25 @@ pub function (s: LowerState) callee_param_is_fn(name: string, idx: i32): boolean
         if (bar < e.len() && e[0:bar] == name) {
             var pos: i32 = bar + 1 + idx;
             return pos < e.len() && e[pos] == 49;   // 49 = '1'
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// callee_param_is_dyn reports whether callee `name`'s param `idx` is a
+// `dyn Trait` type (flag '2' in fn_param_sigs) — so a primitive/string arg
+// there must be heap-boxed into a `dyn` cell (op_dyn_box) before the call
+// (docs/DYN-TRAITS.md §4.2.3). Same registry/format as callee_param_is_fn.
+pub function (s: LowerState) callee_param_is_dyn(name: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < s.fn_param_sigs.len()) {
+        var e: string = s.fn_param_sigs[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        if (bar < e.len() && e[0:bar] == name) {
+            var pos: i32 = bar + 1 + idx;
+            return pos < e.len() && e[pos] == 50;   // 50 = '2'
         }
         i = i + 1;
     }

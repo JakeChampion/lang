@@ -417,14 +417,30 @@ needed only the **parse**, not a new dispatch path:
   *any* struct array, not just `dyn` — `for p in points { p.m() }` hit
   it too; the `dyn` work surfaced it.)
 
-Same boundary as elsewhere: `dyn` over a **struct/enum** concrete type
-works (it has a shape); over an unboxed **primitive / string** it does
-not (no shape pointer) — that needs the monomorphisation path. The
-self-host checker (`checker.fern`) does not yet enforce object-safety or
-the coercion rule; the Go checker is the strict gate until it retires,
-at which point those rules move into `checker.fern`. The **wasm**
-self-host backend (static-dispatch, no runtime shape-compare) now handles
-`dyn Trait` via `emit_dyn_dispatch`: it reads the receiver's struct id
+Primitive / `string` receivers behind `dyn` now work in the self-host
+too, via the same **uniform boxing** as native (§4.2.3) adapted to the
+shape-pointer model: at a coercion site a primitive/string value is
+heap-boxed into a cell `[shape@0, value@8]` (the `op_dyn_box` op), where
+`shape` is the concrete's interned type-name (the same id struct shapes
+use) and `value` is the one-word scalar (or a string's box pointer). Each
+backend's `dyn_dispatch` chain gained primitive-receiver arms that match
+the box's offset-0 shape and **unbox** offset 8 as the receiver. Wired at
+the two reachable, fixpoint-safe coercion sites — **scalar `dyn` call
+args** and **`dyn Trait[]` array-literal elements** (the §4.2 motivating
+shapes: passing to a function + heterogeneous collections), detected via
+a `'2'` flag in the existing `fn_param_sigs` registry (no new
+`LowerState` field, so the byte-identical bootstrap is untouched).
+**Remaining (next self-host increment):** the scalar `var d: dyn = x` /
+`d = x` / `return x` coercion sites are not yet wired — a primitive there
+still flows in unboxed and mis-dispatches (pre-existing, no regression);
+the `lower_dyn_arg` helper drops straight into those two sites once their
+dyn-type detection is added. The self-host checker (`checker.fern`) still
+does not enforce object-safety or the coercion rule; the Go checker is
+the strict gate until it retires.
+
+The **wasm**
+self-host backend (static-dispatch, no runtime shape-compare) handles
+struct `dyn Trait` via `emit_dyn_dispatch`: it reads the receiver's struct id
 (the offset-0 type tag) and branches to the matching `$Struct__method`
 over every implementing struct — see TRAITS.md §7a slice 9.
 

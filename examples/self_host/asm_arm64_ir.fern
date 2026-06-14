@@ -617,9 +617,15 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             var darmn: i32 = 0;
             while (dfi < s.funcs.len()) {
                 var dfd: parser.FuncDecl = s.funcs[dfi];
+                var ddbn: string = util.base_type_name(dfd.receiver_type);
+                // Dispatch arms: struct receivers (value carries its shape) AND
+                // primitive/string receivers (value heap-boxed at coercion —
+                // docs/DYN-TRAITS.md §4.2.3). A primitive arm UNBOXES: the receiver
+                // local holds the box pointer, so arg0 is reloaded from box+8.
+                var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
                 if (dfd.name == o.str && dfd.receiver_type.len() > 0
-                        && asmcore.is_struct_decl_name(util.base_type_name(dfd.receiver_type), s)) {
-                    var dbn: string = util.base_type_name(dfd.receiver_type);
+                        && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
+                    var dbn: string = ddbn;
                     var dlit: asmcore.StringLitOut = asmcore.add_string_lit(s, dbn);
                     s = dlit.state;
                     var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
@@ -628,8 +634,15 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                     s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
                     var dk: i32 = dargc - 1;
                     while (dk >= 0) {
-                        s = fr_ldr(s, "x0", 0 - 8 * (dbase + dk + 1));
-                        s = s.write("    str x0, [sp, #-16]!\n");
+                        if (dk == 0 && dprim) {
+                            // arg0 is the receiver: unbox the value from box+8.
+                            s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
+                            s = s.write("    ldr x0, [x0, #8]\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                        } else {
+                            s = fr_ldr(s, "x0", 0 - 8 * (dbase + dk + 1));
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                        }
                         dk = dk - 1;
                     }
                     s = s.write("    bl __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
@@ -643,6 +656,27 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             }
             s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");   // fallback (unreachable)
             s = s.write(dend + ":\n");
+        } else if (o.kind == "dyn_box") {
+            // Heap-box a primitive/string value coerced into a `dyn Trait` slot
+            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 16 bytes;
+            // shape = the interned primitive type name (the SAME .S label struct
+            // shapes use). The value (one word) is on the operand stack. arm64's
+            // __fern_alloc clobbers x0..x14, so pop the value into the callee-saved
+            // x19 (saved/restored around the call) before alloc; then store shape
+            // (x2 = .S addr) + value, push the cell pointer. Mirrors opt_make's
+            // alloc-then-store, with x19 carrying the value across the call.
+            var dbl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = dbl.state;
+            s = s.write("    ldr x9, [sp], #16\n");                  // pop value -> x9
+            s = s.write("    str x19, [sp, #-16]!\n");               // save callee-saved x19
+            s = s.write("    mov x19, x9\n");                        // x19 = value (survives alloc)
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");   // x0 = cell ptr
+            s = s.write("    adrp x2, .S" + util.i32_to_string(dbl.idx) + "\n");
+            s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(dbl.idx) + "\n");
+            s = s.write("    str x2, [x0]\n");                       // shape @0
+            s = s.write("    str x19, [x0, #8]\n");                  // value @8
+            s = s.write("    ldr x19, [sp], #16\n");                 // restore x19
+            s = s.write("    str x0, [sp, #-16]!\n");                // push cell ptr
         } else if (o.kind == "const_func") {
             // A function VALUE is the function's code address (adrp/add of its
             // label) — push it. No funcref table (the address is the value);
