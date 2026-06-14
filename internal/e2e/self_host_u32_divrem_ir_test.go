@@ -36,8 +36,6 @@ var u32DivRemIRCases = []struct {
 	{"rem-low", `function main(): i32 { var u: u32 = 100 as u32; return (u % (7 as u32)) as i32; }`},
 }
 
-func u32DivRemSrc(mainBody string) string { return "function main(): i32 { " + mainBody + " }\n" }
-
 // TestSelfHostU32DivRemIRX86_64 routes each case through the self-hosted x86-64 IR
 // driver, oracle-checked, with routing pinned to "ir".
 func TestSelfHostU32DivRemIRX86_64(t *testing.T) {
