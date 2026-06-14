@@ -111,10 +111,49 @@ impl Eq for Point {
   first parameter must be `self: Self`. `Self` is a contextual type that
   stands for the implementing type.
 - An **impl** provides bodies for exactly the trait's methods, with `Self`
-  bound to the `for` type. Every method must be present; signatures must
-  match (modulo `Self` → `Type`); no extra methods are allowed.
+  bound to the `for` type. Every *abstract* method must be present;
+  signatures must match (modulo `Self` → `Type`); no extra methods are
+  allowed.
 - `trait` may be `pub`. Impls inherit visibility from the type/trait;
   there is no `pub impl`.
+
+### Default methods
+
+A trait method may carry a `{ … }` body instead of ending at `;`. That
+body is a **default**: an impl that omits the method inherits a copy
+(with `Self` substituted to the impl type); an impl may still provide its
+own to override it.
+
+```fern
+trait Greet {
+    function name(self: Self): string;                 // abstract — every impl must provide it
+    function greeting(self: Self): string {            // default, expressed via the abstract method
+        return "hello, " + self.name();
+    }
+}
+
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }   // greeting inherited
+
+struct Cat { age: i32 }
+impl Greet for Cat {
+    function name(self: Self): string { return "felix"; }
+    function greeting(self: Self): string { return "meow from " + self.name(); }   // override
+}
+```
+
+This is the single-required-method-plus-derived-helpers shape that makes
+Rust's `Iterator` usable. It is a pure front-end feature: the checker
+materialises each inherited default as an ordinary receiver method on the
+impl type (`synthesizeTraitDefaults`, run right after `@derive`
+synthesis), so the hoist, conformance, dispatch, monomorphisation and
+codegen paths are unchanged — a default reached through a `T: Greet`
+bound monomorphises exactly like a written method. Defaults work on the
+interpreter and every native/wasm backend; `Self` *as a value type
+inside* a default body is treated the same as inside a hand-written impl
+method. **Native-only so far; self-host parity is a follow-up** (the
+self-host frontend currently discards trait declarations wholesale, so it
+has no default bodies to inherit — see §7a).
 
 Once `impl Display for Point` exists, **`p.to_string()` works for a
 `Point` value through the ordinary method-dispatch path** — an impl

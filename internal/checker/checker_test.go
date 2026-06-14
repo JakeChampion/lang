@@ -2250,6 +2250,67 @@ function main(): i32 { var p: Point = Point { x: 1, y: 2 }; var s: string = p.to
 	}
 }
 
+// A trait method with a default body is inherited by an impl that omits
+// it: the impl conforms even though it only provides the abstract
+// method, and the default is materialised as a receiver method on the
+// impl type. An impl may still override the default. See docs/TRAITS.md.
+func TestTraitDefaultMethodConformance(t *testing.T) {
+	src := `trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hi " + self.name(); }
+}
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }
+struct Cat { age: i32 }
+impl Greet for Cat {
+    function name(self: Self): string { return "felix"; }
+    function greeting(self: Self): string { return "meow"; }
+}
+function main(): i32 {
+    var d: Dog = Dog { age: 1 };
+    var c: Cat = Cat { age: 2 };
+    var a: string = d.greeting();
+    var b: string = c.greeting();
+    return 0;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !info.Impls["Greet"]["Dog"] || !info.Impls["Greet"]["Cat"] {
+		t.Errorf("both impls should conform, got %+v", info.Impls)
+	}
+	// Dog inherits the default `greeting`; it must be hoisted as a method.
+	if info.Methods["Dog.greeting"] == "" {
+		t.Errorf("inherited default `greeting` should be registered for Dog, got %+v", info.Methods["Dog.greeting"])
+	}
+	// Cat's explicit override must still be the registered method.
+	if info.Methods["Cat.greeting"] == "" {
+		t.Errorf("overriding `greeting` should be registered for Cat")
+	}
+}
+
+// A default method whose body references a still-abstract trait method
+// works through a bounded generic: `announce[T: Greet]` calls
+// `x.greeting()`, which monomorphises to the inherited default.
+func TestTraitDefaultMethodViaBound(t *testing.T) {
+	src := `trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hi " + self.name(); }
+}
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }
+function announce[T: Greet](x: T): string { return x.greeting(); }
+function main(): i32 { var d: Dog = Dog { age: 1 }; var s: string = announce(d); return 0; }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("default method via bound should typecheck: %v", err)
+	}
+}
+
 // Implementing a trait for a built-in numeric type is allowed when the
 // trait is local (orphan rule satisfied by the trait being local).
 func TestTraitImplForBuiltinType(t *testing.T) {
