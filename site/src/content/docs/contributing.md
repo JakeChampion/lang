@@ -73,8 +73,24 @@ import FernPlayground from "../../components/FernPlayground.astro";
 It base64-URL-encodes the snippet into the playground iframe's hash —
 the same codec the standalone playground's **Share** button uses, so the
 URLs are interchangeable. Pass `autoRun={false}` for snippets where the
-reader should predict the output before running, or `client:visible`-style
-`height="320px"` to size the frame.
+reader should predict the output before running, or `height="320px"` to
+size the frame.
+
+For a snippet you only want to *show* (code + its output, not invite
+editing) pass `minimal`:
+
+```mdx
+<FernPlayground minimal code={`function main(): i32 {
+    print("hello");
+    return 0;
+}`} />
+```
+
+`minimal` freezes the editor (read-only, still highlighted), drops the
+Run buttons and the Assembly tab, always autoruns, and auto-grows the
+iframe to fit its content — so `height` is just the initial size. The
+**open in playground →** link still lets readers jump to a full,
+editable session.
 
 ## The standard-library reference is generated
 
