@@ -2179,14 +2179,8 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 	if _, err := p.expect(lexer.Punct, ")"); err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
-		return nil, err
-	}
-	thenE, err := p.parseExpr()
+	thenE, err := p.parseBranchBody()
 	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
 	if _, err := p.expect(lexer.Keyword, "else"); err != nil {
@@ -2205,17 +2199,114 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 		}
 		return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
 	}
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
-		return nil, err
-	}
-	elseE, err := p.parseExpr()
+	elseE, err := p.parseBranchBody()
 	if err != nil {
 		return nil, err
+	}
+	return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
+}
+
+// parseBranchBody parses the `{ … }` body of an `if`/`match` expression
+// branch (slice 1 of block-expressions). The body is a sequence of
+// `;`-terminated statements run in a fresh child scope, optionally
+// followed by a trailing expression written WITHOUT a `;` — that
+// trailing expression is the block's value.
+//
+//   - `{ e }`                  → the bare expression `e` (single-expr
+//     branch, kept byte-identical to the pre-block-expr behaviour so
+//     existing `if`/`match` expressions don't regress).
+//   - `{ s; s; tail }`         → `BlockExpr{Stmts:[s,s], Tail:tail}`.
+//   - `{ s; }`                 → `BlockExpr{Stmts:[s], Tail:nil}` — a
+//     value-less block; the checker reports E060 when it's used where a
+//     value is required.
+//
+// Statement-led forms (keyword statements: `var`/`if`/`while`/… and a
+// nested `{`-block) always parse as statements via parseStmt, which
+// consumes its own terminator. A non-keyword item parses as an
+// expression: if a `;` follows it's an ExprStmt, if `}` follows it's
+// the trailing value expression. This keeps the new grammar form
+// confined to branch position — general value-position blocks are a
+// later slice.
+func (p *parser) parseBranchBody() (ast.Expr, error) {
+	open, err := p.expect(lexer.Punct, "{")
+	if err != nil {
+		return nil, err
+	}
+	var stmts []ast.Stmt
+	var tail ast.Expr
+	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		if p.branchStmtStart() {
+			s, err := p.parseStmt()
+			if err != nil {
+				return nil, err
+			}
+			if s != nil {
+				stmts = append(stmts, s)
+			}
+			continue
+		}
+		// Non-keyword item: an expression that is either an ExprStmt
+		// (followed by `;`) or the trailing value (followed by `}`).
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := p.accept(lexer.Punct, ";"); ok {
+			stmts = append(stmts, &ast.ExprStmt{P: e.Pos(), Expr: e})
+			continue
+		}
+		// No `;` — this must be the trailing tail expression, so `}`
+		// has to follow. The expect below surfaces a clear error if a
+		// statement is missing its `;`.
+		tail = e
+		break
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
+	// A single trailing expression with no leading statements stays a
+	// bare expr — keeps existing single-expr branches byte-identical.
+	if len(stmts) == 0 && tail != nil {
+		return tail, nil
+	}
+	return &ast.BlockExpr{P: open.Pos, Stmts: stmts, Tail: tail}, nil
+}
+
+// branchStmtStart reports whether the next token begins a statement
+// that parseStmt handles directly (and which consumes its own
+// terminator) inside a branch body. These are the keyword-led
+// statements plus a nested `{`-block and a labeled loop. Everything
+// else is parsed as an expression (ExprStmt or the trailing tail).
+func (p *parser) branchStmtStart() bool {
+	t := p.peek()
+	if t.Kind == lexer.Punct && t.Text == "{" {
+		return true
+	}
+	// Labeled loop: `IDENT : (while|loop|for)` — same three-token
+	// lookahead parseStmt uses.
+	if t.Kind == lexer.Ident && p.i+2 < len(p.tokens) {
+		c, n := p.tokens[p.i+1], p.tokens[p.i+2]
+		if c.Kind == lexer.Punct && c.Text == ":" && n.Kind == lexer.Keyword &&
+			(n.Text == "while" || n.Text == "loop" || n.Text == "for") {
+			return true
+		}
+	}
+	if t.Kind == lexer.Keyword {
+		switch t.Text {
+		// `if` / `match` / `switch` are deliberately NOT listed: they
+		// can stand as the trailing value expression (`{ …; if (c) { a }
+		// else { b } }`), and the existing single-expr branch form
+		// `if (a) { … } else { if (c) { … } else { … } }` relies on the
+		// inner `if`/`match` parsing as an expression. The expr path in
+		// parseBranchBody then decides statement-vs-tail by the trailing
+		// `;` / `}`, so they still work as ExprStmts when followed by `;`.
+		case "while", "loop", "for", "break", "continue",
+			"return", "defer", "errdefer", "var", "let",
+			"function", "use":
+			return true
+		}
+	}
+	return false
 }
 
 // parseFor produces a real For node so that `continue` can jump to the
@@ -2991,7 +3082,18 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
 		return nil, err
 	}
-	body, err := p.parseExpr()
+	// A `{ … }` arm body is a block-expression (slice 1): statements
+	// then an optional trailing value. A bare expression body stays the
+	// pre-block-expr single-expr form. parseBranchBody collapses the
+	// no-statement single-expr `{ e }` back to `e`, so existing
+	// brace-wrapped single-expr arms are byte-identical.
+	var body ast.Expr
+	var err error
+	if p.match(lexer.Punct, "{") {
+		body, err = p.parseBranchBody()
+	} else {
+		body, err = p.parseExpr()
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -1089,6 +1089,24 @@ type DowncastExpr struct {
 	// before checking.
 	Trait string
 }
+// BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.
+// The statements run first, in a fresh child scope, then the trailing
+// expression `Tail` (written WITHOUT a `;`) is the block's value. A block
+// whose final element is a `;`-terminated statement has no trailing
+// expression (`Tail == nil`) and therefore no value (type `void`); using
+// such a block where a value is required is a checker error.
+//
+// Slice 1 scope: this node is produced ONLY for `if`/`match` *expression*
+// branches (the `{ … }` after `if (cond)` / `else` / a match arm `=>`).
+// General value-position blocks, compiled codegen, and the self-hosted
+// compiler are later slices — see docs/BLOCK-EXPRESSIONS.md. The compiled
+// backends reject this node cleanly (interp-only, like the `as?` downcast
+// slice 1).
+type BlockExpr struct {
+	P     Position
+	Stmts []Stmt
+	Tail  Expr // value expression; nil for a value-less (void) block
+}
 type BoolLit struct {
 	P     Position
 	Value bool
@@ -1560,6 +1578,7 @@ type MakeClosure struct {
 func (e *NumberLit) Pos() Position    { return e.P }
 func (e *CastExpr) Pos() Position     { return e.P }
 func (e *DowncastExpr) Pos() Position { return e.P }
+func (e *BlockExpr) Pos() Position    { return e.P }
 func (e *BoolLit) Pos() Position      { return e.P }
 func (e *StringLit) Pos() Position    { return e.P }
 func (e *FString) Pos() Position      { return e.P }
@@ -1591,6 +1610,22 @@ func (*DowncastExpr) isExpr() {}
 // String renders the downcast in source form, `<inner> as? <Target>`.
 func (e *DowncastExpr) String() string {
 	return fmt.Sprintf("%v as? %s", e.Inner, e.Target)
+}
+
+func (*BlockExpr) isExpr() {}
+
+// String renders the block in source form, `{ <N stmts> <tail> }`.
+// Statements aren't Stringers, so they're summarised by count; the tail
+// (an Expr) renders in full.
+func (e *BlockExpr) String() string {
+	tail := "void"
+	if e.Tail != nil {
+		tail = fmt.Sprintf("%v", e.Tail)
+	}
+	if len(e.Stmts) == 0 {
+		return fmt.Sprintf("{ %s }", tail)
+	}
+	return fmt.Sprintf("{ <%d stmt(s)>; %s }", len(e.Stmts), tail)
 }
 func (*BoolLit) isExpr()     {}
 func (*StringLit) isExpr()   {}

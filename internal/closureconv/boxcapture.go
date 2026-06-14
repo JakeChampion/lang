@@ -408,6 +408,14 @@ func rewriteBoxedExpr(e ast.Expr, boxed map[string]ast.Type) ast.Expr {
 			x.Arms[i].Body = rewriteBoxedExpr(x.Arms[i].Body, boxed)
 		}
 		return x
+	case *ast.BlockExpr:
+		for i := range x.Stmts {
+			rewriteBoxedStmt(x.Stmts[i], boxed)
+		}
+		if x.Tail != nil {
+			x.Tail = rewriteBoxedExpr(x.Tail, boxed)
+		}
+		return x
 	case *ast.Lambda:
 		// Descend into the closure body: a captured boxed name read/written
 		// inside it becomes `x[0]`, which ConvertWith then routes through the

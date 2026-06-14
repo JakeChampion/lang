@@ -912,6 +912,123 @@ func TestMatchExprParses(t *testing.T) {
 	}
 }
 
+// Block-expressions (slice 1): an `if`-expression branch with leading
+// statements followed by a trailing value expression (no `;`) parses to
+// a *ast.BlockExpr whose Stmts hold the statements and Tail the value.
+func TestBlockExprIfBranch(t *testing.T) {
+	prog, err := Parse(`function f(e: i32): i32 {
+		return if (e > 0) { var k = e + 1; k } else { 0 };
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	be, ok := ie.Then.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("then branch should be *BlockExpr, got %T", ie.Then)
+	}
+	if len(be.Stmts) != 1 {
+		t.Fatalf("expected 1 leading stmt, got %d", len(be.Stmts))
+	}
+	if _, ok := be.Stmts[0].(*ast.Var); !ok {
+		t.Errorf("stmt 0 should be *Var, got %T", be.Stmts[0])
+	}
+	if be.Tail == nil {
+		t.Fatal("tail should be non-nil (the trailing `k`)")
+	}
+	if id, ok := be.Tail.(*ast.Ident); !ok || id.Name != "k" {
+		t.Errorf("tail should be Ident `k`, got %T %v", be.Tail, be.Tail)
+	}
+	// The else branch is a bare single-expr — decision 3: keeps the
+	// no-statement single-expr case as a plain expr, NOT a BlockExpr.
+	if _, ok := ie.Else.(*ast.BlockExpr); ok {
+		t.Errorf("else `{ 0 }` (single expr, no stmts) should stay a bare expr, got *BlockExpr")
+	}
+}
+
+// A single-expression branch stays byte-identical to the pre-block-expr
+// behaviour: `{ 1 }` is a bare NumberLit, not a BlockExpr.
+func TestBlockExprSingleExprUnchanged(t *testing.T) {
+	prog, err := Parse(`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	if _, ok := ie.Then.(*ast.NumberLit); !ok {
+		t.Errorf("then `{ 1 }` should be a bare NumberLit, got %T", ie.Then)
+	}
+	if _, ok := ie.Else.(*ast.NumberLit); !ok {
+		t.Errorf("else `{ 2 }` should be a bare NumberLit, got %T", ie.Else)
+	}
+}
+
+// A branch whose final element is a `;`-terminated statement has NO
+// trailing value — BlockExpr.Tail is nil (the checker reports E061 when
+// it's used in value position).
+func TestBlockExprNoTail(t *testing.T) {
+	prog, err := Parse(`function f(b: boolean): i32 {
+		return if (b) { var k = 1; } else { 0 };
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	be, ok := ie.Then.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("then branch should be *BlockExpr, got %T", ie.Then)
+	}
+	if be.Tail != nil {
+		t.Errorf("a `;`-terminated final stmt means no tail; got Tail=%v", be.Tail)
+	}
+	if len(be.Stmts) != 1 {
+		t.Errorf("expected 1 stmt, got %d", len(be.Stmts))
+	}
+}
+
+// `else if` chaining still parses with the block-expr branch path: the
+// nested IfExpr lives in the outer's Else slot.
+func TestBlockExprElseIfChain(t *testing.T) {
+	prog, err := Parse(`function f(n: i32): i32 {
+		return if (n == 1) { var a = 10; a } else if (n == 2) { 20 } else { 30 };
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	if _, ok := ie.Then.(*ast.BlockExpr); !ok {
+		t.Errorf("then should be *BlockExpr, got %T", ie.Then)
+	}
+	if _, ok := ie.Else.(*ast.IfExpr); !ok {
+		t.Fatalf("else should be a nested IfExpr (else-if chain), got %T", ie.Else)
+	}
+}
+
+// A `match`-expression arm body can be a block-expression: the `{ stmts;
+// tail }` form parses to a *ast.BlockExpr on the arm, while a bare-expr
+// arm body stays unchanged.
+func TestBlockExprMatchArm(t *testing.T) {
+	prog, err := Parse(`function f(tag: i32): i32 {
+		return match (tag) {
+			0 => { var s = tag + 5; s },
+			_ => 99
+		};
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.MatchExpr)
+	be, ok := me.Arms[0].Body.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("arm 0 body should be *BlockExpr, got %T", me.Arms[0].Body)
+	}
+	if len(be.Stmts) != 1 || be.Tail == nil {
+		t.Errorf("arm 0 block: want 1 stmt + tail, got %d stmts, tail=%v", len(be.Stmts), be.Tail)
+	}
+	if _, ok := me.Arms[1].Body.(*ast.NumberLit); !ok {
+		t.Errorf("arm 1 body `99` should stay a bare NumberLit, got %T", me.Arms[1].Body)
+	}
+}
+
 func TestStructDecl(t *testing.T) {
 	prog, err := Parse(`struct Point { x: i32, y: i32 }`)
 	if err != nil {

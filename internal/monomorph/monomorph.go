@@ -787,6 +787,13 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 			}
 			substituteExpr(arm.Body, sub)
 		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			substituteStmt(st, sub)
+		}
+		if x.Tail != nil {
+			substituteExpr(x.Tail, sub)
+		}
 	case *ast.ArrayLit:
 		// Substitute the literal's element-type annotation too — it
 		// drives the per-element store width at codegen, so leaving a
@@ -943,6 +950,13 @@ func walkExprStructLits(e ast.Expr, fn func(*ast.StructLit)) {
 				walkExprStructLits(arm.Guard, fn)
 			}
 			walkExprStructLits(arm.Body, fn)
+		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			walkStmtStructLits(st, fn)
+		}
+		if x.Tail != nil {
+			walkExprStructLits(x.Tail, fn)
 		}
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {
@@ -1238,6 +1252,13 @@ func walkExpr(e ast.Expr, fn func(*ast.Call)) {
 				walkExpr(arm.Guard, fn)
 			}
 			walkExpr(arm.Body, fn)
+		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			walkStmt(st, fn)
+		}
+		if x.Tail != nil {
+			walkExpr(x.Tail, fn)
 		}
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {

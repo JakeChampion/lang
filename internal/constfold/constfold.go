@@ -390,6 +390,13 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			}
 			s.walkExpr(&arm.Body)
 		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			s.walkStmt(st)
+		}
+		if x.Tail != nil {
+			s.walkExpr(&x.Tail)
+		}
 	case *ast.StructLit:
 		for i := range x.Fields {
 			s.walkExpr(&x.Fields[i].Value)

@@ -6021,6 +6021,29 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	c.mutualRecSiblings = prevMutualRec
 }
 
+// checkBlockExpr type-checks a block-expression `{ stmts; tail }` used
+// in an `if`/`match` expression branch (slice 1). The statements run in
+// a fresh child scope so locals they bind are visible to Tail but do
+// NOT leak into the enclosing expression; the block's type is Tail's
+// type checked in that scope. A value-less block (Tail == nil — its
+// final element was a `;`-terminated statement) is `void`; the caller
+// (if/match arm-type unification) rejects `void` where a value is
+// required (see E061), so we surface the diagnostic here too.
+func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
+	s := newScope(parent)
+	prevMutualRec := c.mutualRecSiblings
+	c.mutualRecSiblings = nil
+	for _, st := range n.Stmts {
+		c.checkStmt(st, s)
+	}
+	c.mutualRecSiblings = prevMutualRec
+	if n.Tail == nil {
+		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
+		return ast.VoidType{}
+	}
+	return c.checkExpr(n.Tail, s)
+}
+
 // detectMutualRecSCCs computes the names that participate in a
 // mutual-recursion SCC among `localFns`. A name is in an SCC of
 // size ≥ 2 iff there's a cycle of references through other
@@ -6218,6 +6241,11 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 			walkExprForNames(arm.Guard, selfName, siblings, seen)
 			walkExprForNames(arm.Body, selfName, siblings, seen)
 		}
+	case *ast.BlockExpr:
+		for _, st := range n.Stmts {
+			walkStmtForNames(st, selfName, siblings, seen)
+		}
+		walkExprForNames(n.Tail, selfName, siblings, seen)
 	case *ast.StructLit:
 		if n.Base != nil {
 			walkExprForNames(n.Base, selfName, siblings, seen)
@@ -8783,6 +8811,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			ft.Params = append(ft.Params, p.Type)
 		}
 		return ft
+	case *ast.BlockExpr:
+		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:
 		ct := c.checkExpr(n.Cond, s)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
@@ -9736,6 +9766,13 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 			}
 			c.settleInt(arm.Body, hn)
 		}
+	case *ast.BlockExpr:
+		// Block-expression branch (`{ …; tail }`): the value is the
+		// trailing expression, so settle it against the destination
+		// width — `var n: i64 = if (c) { var k = 1; k } else { 0 }`.
+		if x.Tail != nil {
+			c.settleInt(x.Tail, hn)
+		}
 	case *ast.Call:
 		// Generic-function call whose result type substitutes
 		// to the hint's T. The initial check ran with sub[T]
@@ -9842,6 +9879,11 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 				continue
 			}
 			c.settleFloat(arm.Body, hf)
+		}
+	case *ast.BlockExpr:
+		// Block-expression branch: settle the trailing value.
+		if x.Tail != nil {
+			c.settleFloat(x.Tail, hf)
 		}
 	case *ast.Call:
 		// Generic-function call returning T against a float
@@ -9969,6 +10011,14 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 				continue
 			}
 			if t := postSettleType(arm.Body, prior); t != nil {
+				return t
+			}
+		}
+	case *ast.BlockExpr:
+		// Block-expression branch: the value is the trailing
+		// expression, so its post-settle type is the block's type.
+		if x.Tail != nil {
+			if t := postSettleType(x.Tail, prior); t != nil {
 				return t
 			}
 		}

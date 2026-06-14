@@ -186,6 +186,13 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 			}
 			x.Arms[i].Body = rewriteExpr(x.Arms[i].Body, fn)
 		}
+	case *BlockExpr:
+		for _, s := range x.Stmts {
+			rewriteStmtChildren(s, fn)
+		}
+		if x.Tail != nil {
+			x.Tail = rewriteExpr(x.Tail, fn)
+		}
 	// Statements — traverse, don't replace.
 	case Stmt:
 		rewriteStmtChildren(x, fn)
@@ -363,6 +370,13 @@ func walkChildren(n Node, fn func(Node) bool) {
 				Walk(a.Guard, fn)
 			}
 			Walk(a.Body, fn)
+		}
+	case *BlockExpr:
+		for _, s := range x.Stmts {
+			Walk(s, fn)
+		}
+		if x.Tail != nil {
+			Walk(x.Tail, fn)
 		}
 
 	// ---------- Statements ----------
