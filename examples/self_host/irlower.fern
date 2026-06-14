@@ -4040,13 +4040,30 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): 
 // arms must have NO payload binding (a unit variant, `_`, or `true`/`false`)
 // and an i32 result. A payload-binding arm (`Some(n) => n`) or an f64 / string
 // / i64 result bails to the AST emitter (#2938 follow-up).
-// iife_payload_is_i32 reports whether a payload-binding match arm binds an i32
-// — an Option/Result Some/Ok/Err payload (resolved from the scrutinee's tracked
-// opt type), or a user-enum variant whose single payload field (`__ev`) is i32.
-// Keeps the inlined match-expression's i32 result temp the right width; a
-// non-i32 (or unresolvable) payload bails the whole match-expression to AST.
-function iife_payload_is_i32(pv: parser.PatVariant, opt_srt: string, s: LowerState): boolean {
-    if (opt_srt != "") { return opt_payload_type(opt_srt, pv.type_name) == "i32"; }
+// iife_payload_bindable reports whether a payload-binding match arm's payload can
+// be bound for the inlined match-expression. The payload type is resolved from the
+// scrutinee's tracked opt type (Option/Result Some/Ok/Err) or, for a user-enum
+// variant, its single payload field (`__ev`).
+//
+// An i32 payload is always bindable (the rewritten `tmp = E` is an i32 store). A
+// nested OPTION payload (`Some(b)` where b: Option[T]) is bindable when the result
+// temp is i32 AND the match scrutinee is a plain local (`scrut_is_ident`): every arm
+// then returns i32 (arms share a result type in valid Fern), so the bound Option is
+// only consumed to compute an i32 — typically a nested `match (b)` — never stored
+// into the i32 temp as the result. The underlying StmtMatch path binds it via
+// mark_opt_type, so the inner match recovers b's type. The ident-scrutinee
+// restriction is deliberate: a CALL scrutinee returning a nested Option
+// (`match (f()) { Some(b) => match (b) … }`) is left on the AST path. A non-i32
+// result temp keeps the strict i32-only rule (a payload returned directly would
+// need its type at gate-classify time, before the binding is in scope). A
+// string / Result / fn payload stays on the AST path here.
+function iife_payload_bindable(pv: parser.PatVariant, opt_srt: string, temp_is_i32: boolean, scrut_is_ident: boolean, s: LowerState): boolean {
+    if (opt_srt != "") {
+        var pt: string = opt_payload_type(opt_srt, pv.type_name);
+        if (pt == "i32") { return true; }
+        if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && pt[0:7] == "Option[") { return true; }
+        return false;
+    }
     // User-enum variant: strip any `Enum.` qualifier, then read its payload field.
     var vname: string = pv.type_name;
     var vld: i32 = 0;
@@ -4090,6 +4107,15 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     // (a call scrutinee) lowers instead of bailing. A user-enum payload is read
     // from the variant's `__ev` field. A non-i32 (or unresolvable) payload bails.
     var opt_srt: string = try_opt_type(m.scrutinee, ts);
+    // The temp is i32 unless classified f64 / i64 / string above. A nested-Option
+    // payload binding is admitted only into an i32 temp, and only for an ident
+    // scrutinee (see iife_payload_bindable).
+    var temp_is_i32: boolean = !ts.is_f64_slot(tslot) && !ts.is_i64_slot(tslot) && !ts.is_str_slot(tslot);
+    var scrut_is_ident: boolean = false;
+    match (m.scrutinee) {
+        parser.ExprIdent(sidc) => { scrut_is_ident = true; },
+        _ => {}
+    }
     var newarms: parser.MatchArm[] = [];
     var i: i32 = 0;
     while (i < m.arms.len()) {
@@ -4098,9 +4124,10 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
             parser.PatVariant(pv) => {
                 if (pv.extra_bindings.len() > 0) { return s.fail(); }
                 if (pv.binding.len() > 0 && pv.binding != "_") {
-                    // Single payload binding: require an i32 payload (Option/Result
-                    // or a user-enum variant), so `tmp = n` is an i32 store.
-                    if (!iife_payload_is_i32(pv, opt_srt, ts)) { return s.fail(); }
+                    // Single payload binding: an i32 payload (`tmp = n` is an i32
+                    // store), or a nested-Option payload into an i32 temp (bound via
+                    // the underlying StmtMatch path, consumed by an inner match).
+                    if (!iife_payload_bindable(pv, opt_srt, temp_is_i32, scrut_is_ident, ts)) { return s.fail(); }
                 }
             },
             _ => {}
