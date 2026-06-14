@@ -3009,7 +3009,19 @@ func synthEnumDisplay(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 			bind[i] = fmt.Sprintf("__p%d", i)
 		}
 		var expr ast.Expr = &ast.StringLit{Value: v.Name}
-		if len(v.Payloads) > 0 {
+		if len(v.FieldNames) > 0 {
+			// Named-field variant renders `Rect { w: …, h: … }`.
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: " { "})
+			for i, fn := range v.FieldNames {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(&ast.StringLit{Value: fn + ": "})
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_string"))
+			}
+			add(&ast.StringLit{Value: " }"})
+		} else if len(v.Payloads) > 0 {
 			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
 			add(&ast.StringLit{Value: "("})
 			for i := range v.Payloads {
@@ -3044,7 +3056,18 @@ func synthEnumDebug(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 			bind[i] = fmt.Sprintf("__p%d", i)
 		}
 		var expr ast.Expr = &ast.StringLit{Value: v.Name}
-		if len(v.Payloads) > 0 {
+		if len(v.FieldNames) > 0 {
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: " { "})
+			for i, fn := range v.FieldNames {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(&ast.StringLit{Value: fn + ": "})
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_debug"))
+			}
+			add(&ast.StringLit{Value: " }"})
+		} else if len(v.Payloads) > 0 {
 			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
 			add(&ast.StringLit{Value: "("})
 			for i := range v.Payloads {
@@ -3445,22 +3468,36 @@ func synthEnumJson(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 		}
 		var expr ast.Expr
 		add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
-		switch len(v.Payloads) {
-		case 0:
-			expr = &ast.StringLit{Value: "\"" + v.Name + "\""}
-		case 1:
-			expr = &ast.StringLit{Value: "{\"" + v.Name + "\":"}
-			add(methodCall(&ast.Ident{Name: bind[0]}, "to_json"))
-			add(&ast.StringLit{Value: "}"})
-		default:
-			expr = &ast.StringLit{Value: "{\"" + v.Name + "\":["}
-			for k := range v.Payloads {
+		if len(v.FieldNames) > 0 {
+			// Named-field variant encodes as a nested object:
+			// `{"Rect":{"w":<p0>,"h":<p1>}}`.
+			expr = &ast.StringLit{Value: "{\"" + v.Name + "\":{"}
+			for k, fn := range v.FieldNames {
 				if k > 0 {
 					add(&ast.StringLit{Value: ","})
 				}
+				add(&ast.StringLit{Value: "\"" + fn + "\":"})
 				add(methodCall(&ast.Ident{Name: bind[k]}, "to_json"))
 			}
-			add(&ast.StringLit{Value: "]}"})
+			add(&ast.StringLit{Value: "}}"})
+		} else {
+			switch len(v.Payloads) {
+			case 0:
+				expr = &ast.StringLit{Value: "\"" + v.Name + "\""}
+			case 1:
+				expr = &ast.StringLit{Value: "{\"" + v.Name + "\":"}
+				add(methodCall(&ast.Ident{Name: bind[0]}, "to_json"))
+				add(&ast.StringLit{Value: "}"})
+			default:
+				expr = &ast.StringLit{Value: "{\"" + v.Name + "\":["}
+				for k := range v.Payloads {
+					if k > 0 {
+						add(&ast.StringLit{Value: ","})
+					}
+					add(methodCall(&ast.Ident{Name: bind[k]}, "to_json"))
+				}
+				add(&ast.StringLit{Value: "]}"})
+			}
 		}
 		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
 	}
@@ -6296,6 +6333,63 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 // be an enum value; each arm's pattern variant must belong to
 // that enum and supply the right number of binding names; the
 // arm list must cover every variant of the enum (or end in a
+// resolveVariantBindings validates a variant pattern's bindings and
+// returns them, with their (type-substituted) types, in declaration
+// (payload) order — ready to declare in a per-arm scope and to drive the
+// position-based IR lowering. For a positional pattern it checks arity
+// and pairs binding[i] with payload[i]. For a named-field pattern
+// (named=true) each binding is a field name: every field must be named
+// exactly once (any order), and the result is the variant's fields in
+// declaration order. Errors report at pos. See docs/NAMED-FIELD-VARIANTS.md.
+func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVariant, bindings []string, named bool, sub map[string]ast.Type) ([]string, []ast.Type) {
+	if named && len(variant.FieldNames) > 0 {
+		outNames := make([]string, len(variant.FieldNames))
+		outTypes := make([]ast.Type, len(variant.FieldNames))
+		copy(outNames, variant.FieldNames)
+		for i := range variant.FieldNames {
+			outTypes[i] = substituteType(variant.Payloads[i], sub)
+		}
+		seen := map[string]bool{}
+		for _, b := range bindings {
+			idx := -1
+			for i, fn := range variant.FieldNames {
+				if fn == b {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 {
+				c.errfCode(pos, "E015", "variant %s has no field %q", variant.Name, b)
+				continue
+			}
+			if seen[b] {
+				c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", b, variant.Name)
+			}
+			seen[b] = true
+		}
+		if len(seen) != len(variant.FieldNames) {
+			c.errfCode(pos, "E015", "named-field pattern for %s must bind all %d field(s) (%s)",
+				variant.Name, len(variant.FieldNames), strings.Join(variant.FieldNames, ", "))
+		}
+		return outNames, outTypes
+	}
+	if named && len(variant.FieldNames) == 0 {
+		c.errfCode(pos, "E015", "variant %s has positional payloads; match it as %s(...), not %s { ... }",
+			variant.Name, variant.Name, variant.Name)
+	}
+	if len(bindings) != len(variant.Payloads) {
+		c.errfCode(pos, "E015", "variant %s has %d payload(s), got %d binding(s)",
+			variant.Name, len(variant.Payloads), len(bindings))
+	}
+	outTypes := make([]ast.Type, len(bindings))
+	for k := range bindings {
+		if k < len(variant.Payloads) {
+			outTypes[k] = substituteType(variant.Payloads[k], sub)
+		}
+	}
+	return bindings, outTypes
+}
+
 // wildcard). Bindings are typed against the matching variant's
 // payload list and bound in a fresh per-arm scope.
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
@@ -6399,23 +6493,16 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		if arm.Guard == nil {
 			covered[arm.VariantName] = true
 		}
-		if len(arm.Bindings) != len(variant.Payloads) {
-			c.errfCode(arm.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
-				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
-		}
 		// Bind names in a fresh scope so they don't leak into
 		// sibling arms. Payload types get the type-parameter
 		// substitution applied so `Some(v)` on `Option[number]`
-		// types `v` as `number`, not the abstract `T`.
+		// types `v` as `number`, not the abstract `T`. A named-field
+		// pattern (`Rect { w, h }`) is validated + reordered into
+		// declaration order here.
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
-		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		for k, name := range arm.Bindings {
-			var bt ast.Type
-			if k < len(variant.Payloads) {
-				bt = substituteType(variant.Payloads[k], sub)
-			}
-			arm.BindingTypes[k] = bt
-			armScope.names[name] = bt
+			armScope.names[name] = arm.BindingTypes[k]
 		}
 		// Guard runs in the bindings-in-scope frame so it can
 		// reference the payload names. Required to be bool.
@@ -6650,19 +6737,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		if arm.Guard == nil {
 			covered[arm.VariantName] = true
 		}
-		if len(arm.Bindings) != len(variant.Payloads) {
-			c.errfCode(arm.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
-				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
-		}
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
-		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		for k, name := range arm.Bindings {
-			var bt ast.Type
-			if k < len(variant.Payloads) {
-				bt = substituteType(variant.Payloads[k], sub)
-			}
-			arm.BindingTypes[k] = bt
-			armScope.names[name] = bt
+			armScope.names[name] = arm.BindingTypes[k]
 		}
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, armScope)

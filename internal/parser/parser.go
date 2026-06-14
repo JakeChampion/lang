@@ -1464,6 +1464,41 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 				if _, err := p.expect(lexer.Punct, ")"); err != nil {
 					return nil, err
 				}
+			} else if _, ok := p.accept(lexer.Punct, "{"); ok {
+				// Named-field variant: `Rect { w: f64, h: f64 }`. Field
+				// names parallel Payloads; the runtime layout is the same
+				// declaration-ordered tagged union as the positional form.
+				variant.FieldNames = []string{}
+				if !p.match(lexer.Punct, "}") {
+					for {
+						fname, err := p.expect(lexer.Ident, "")
+						if err != nil {
+							return nil, err
+						}
+						if _, err := p.expect(lexer.Punct, ":"); err != nil {
+							return nil, err
+						}
+						ft, err := p.parseType()
+						if err != nil {
+							return nil, err
+						}
+						variant.FieldNames = append(variant.FieldNames, fname.Text)
+						variant.Payloads = append(variant.Payloads, ft)
+						if _, ok := p.accept(lexer.Punct, ","); ok {
+							if p.match(lexer.Punct, "}") {
+								break
+							}
+							continue
+						}
+						break
+					}
+				}
+				if _, err := p.expect(lexer.Punct, "}"); err != nil {
+					return nil, err
+				}
+				if len(variant.FieldNames) == 0 {
+					return nil, p.errorf(vname.Pos, "named-field variant %s must declare at least one field", vname.Text)
+				}
 			}
 			variants = append(variants, variant)
 			if _, ok := p.accept(lexer.Punct, ","); ok {
@@ -2637,6 +2672,37 @@ func (p *parser) parseMatch() (ast.Stmt, error) {
 	return m, nil
 }
 
+// parseNamedFieldPattern parses a named-field variant pattern body
+// `{ f1, f2 }` — shorthand where each field binds a local of the same
+// name — with the cursor just after the variant name. Returns ok=true
+// (and the field-name bindings) when a `{` was present; ok=false with no
+// error when the next token isn't `{` (a positional or payloadless arm).
+func (p *parser) parseNamedFieldPattern() (bindings []string, ok bool, err error) {
+	if _, isBrace := p.accept(lexer.Punct, "{"); !isBrace {
+		return nil, false, nil
+	}
+	if !p.match(lexer.Punct, "}") {
+		for {
+			nameTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, false, err
+			}
+			bindings = append(bindings, nameTok.Text)
+			if _, c := p.accept(lexer.Punct, ","); c {
+				if p.match(lexer.Punct, "}") {
+					break
+				}
+				continue
+			}
+			break
+		}
+	}
+	if _, e := p.expect(lexer.Punct, "}"); e != nil {
+		return nil, false, e
+	}
+	return bindings, true, nil
+}
+
 func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 	t := p.peek()
 	arm := &ast.MatchArm{P: t.Pos}
@@ -2697,6 +2763,11 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return nil, err
 			}
+		} else if bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
+			return nil, err
+		} else if ok {
+			arm.NamedFields = true
+			arm.Bindings = bindings
 		}
 	} else {
 		return nil, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
@@ -2816,6 +2887,11 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return nil, err
 			}
+		} else if bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
+			return nil, err
+		} else if ok {
+			arm.NamedFields = true
+			arm.Bindings = bindings
 		}
 	} else {
 		return nil, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)

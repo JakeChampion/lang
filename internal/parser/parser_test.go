@@ -1163,6 +1163,67 @@ pub enum Direction { N, S, E, W }`)
 	}
 }
 
+// A named-field variant (`Rect { w: i32, h: i32 }`) parses with
+// FieldNames parallel to Payloads; the positional form leaves FieldNames
+// empty. See docs/NAMED-FIELD-VARIANTS.md.
+func TestNamedFieldEnumVariantParses(t *testing.T) {
+	prog, err := Parse(`enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 }, Unit, Pair(i32, i32) }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := prog.Enums[0].Variants
+	if len(vs) != 4 {
+		t.Fatalf("expected 4 variants, got %d", len(vs))
+	}
+	if len(vs[0].FieldNames) != 1 || vs[0].FieldNames[0] != "r" || len(vs[0].Payloads) != 1 {
+		t.Errorf("Circle = %+v, want field r", vs[0])
+	}
+	if len(vs[1].FieldNames) != 2 || vs[1].FieldNames[0] != "w" || vs[1].FieldNames[1] != "h" {
+		t.Errorf("Rect = %+v, want fields w, h", vs[1])
+	}
+	if len(vs[2].FieldNames) != 0 || len(vs[2].Payloads) != 0 {
+		t.Errorf("Unit should be payloadless, got %+v", vs[2])
+	}
+	if len(vs[3].FieldNames) != 0 || len(vs[3].Payloads) != 2 {
+		t.Errorf("Pair should stay positional, got %+v", vs[3])
+	}
+	// Empty named-field body is a parse error.
+	if _, err := Parse(`enum E { V {} }`); err == nil {
+		t.Error("`V {}` (empty named-field body) should be a parse error")
+	}
+}
+
+// A named-field match pattern `Rect { w, h }` sets NamedFields with the
+// field names as bindings.
+func TestNamedFieldMatchPatternParses(t *testing.T) {
+	prog, err := Parse(`enum Shape { Rect { w: i32, h: i32 } }
+function f(s: Shape): i32 {
+    match (s) {
+        Rect { w, h } => { return w + h; },
+    }
+    return 0;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m *ast.Match
+	for _, st := range prog.Funcs[0].Body.Stmts {
+		if mm, ok := st.(*ast.Match); ok {
+			m = mm
+		}
+	}
+	if m == nil {
+		t.Fatal("no match stmt found")
+	}
+	arm := m.Arms[0]
+	if !arm.NamedFields {
+		t.Errorf("arm should be NamedFields")
+	}
+	if len(arm.Bindings) != 2 || arm.Bindings[0] != "w" || arm.Bindings[1] != "h" {
+		t.Errorf("arm bindings = %v, want [w h]", arm.Bindings)
+	}
+}
+
 // `match (e) { Variant => { … }, _ => { … } }` parses into a
 // Match stmt with an Arms slice mirroring the source order.
 func TestMatchStmtParses(t *testing.T) {
