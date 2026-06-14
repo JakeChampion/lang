@@ -527,6 +527,10 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// recursing into the inner literal (#3061, unannotated sibling of #3058).
 		{"arr2d-struct-unannot", `struct P { x: i32 } function main(): i32 { var a = [[P { x: 1 }], [P { x: 2 }, P { x: 3 }]]; var n = 0; for row in a { for p in row { n = n + p.x; } } return n; }`},
 		{"arr2d-enum-unannot", `enum C { A, B } function main(): i32 { var a = [[C.A], [C.B, C.A]]; var n = 0; for row in a { for c in row { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } } return n; }`},
+		// Unannotated 2D Option-array literal — element opt-type inferred by
+		// recursing into the inner literal (#3074, depth-2 sibling of #3027).
+		{"arr2d-opt-unannot-i32", `function main(): i32 { var a = [[Some(1)], [Some(2), None]]; var n = 0; for row in a { for o in row { match (o) { Some(x) => { n = n + x; }, None => {} } } } return n; }`},
+		{"arr2d-opt-unannot-string", `function main(): i32 { var a = [[Some("ab")], [None, Some("c")]]; var n = 0; for row in a { for o in row { match (o) { Some(s) => { n = n + s.len(); }, None => {} } } } return n; }`},
 		// A 2D-array param — the param setup marks it is_arrarr and extracts the
 		// innermost struct/enum element type for the nested foreach (#3064).
 		{"arr2d-param-i32", `function sum(a: i32[][]): i32 { var n = 0; for row in a { for x in row { n = n + x; } } return n; } function main(): i32 { return sum([[1, 2], [3]]); }`},
