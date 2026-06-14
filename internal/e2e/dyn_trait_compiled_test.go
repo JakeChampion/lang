@@ -360,3 +360,217 @@ func TestWASMDynTraitPrimitiveReceiver(t *testing.T) {
 		t.Errorf("interp baseline = %q, want \"v=105\"", want)
 	}
 }
+
+// --- Uniform primitive boxing for `dyn Trait` (docs/DYN-TRAITS.md §4.2.3).
+// A primitive/string concrete coercing to `dyn` is heap-boxed so `data` is
+// always a one-word pointer, and the vtable slots point at unboxing wrappers
+// (`__dynbox_<C>_<m>`). This closes the previously-broken cases: i64/f64 on
+// wasm (wider than the inline i32 data slot) and string on wasm + arm64 (a
+// two-word value / non-integer receiver ABI). These differential tests run
+// each previously-broken case across ALL THREE backends and assert the
+// stdout matches the interpreter. ---
+
+// dynAllBackends runs src on all three compiled backends + the interpreter
+// and asserts each compiled stdout matches the interpreter's, and that the
+// interpreter's matches wantInterp.
+func dynAllBackends(t *testing.T, src, wantInterp string) {
+	t.Helper()
+	want := dynInterpStdout(t, src)
+	if want != wantInterp {
+		t.Fatalf("interp baseline = %q, want %q", want, wantInterp)
+	}
+	t.Run("wasm", func(t *testing.T) {
+		got := runWasmCapturingStdout(t, src)
+		if got != want {
+			t.Errorf("wasm = %q, want %q (interp)", got, want)
+		}
+	})
+	t.Run("x86_64", func(t *testing.T) {
+		got, code := compileAndRunX86_64(t, src)
+		got = strings.TrimSpace(got)
+		if code != 0 {
+			t.Fatalf("x86-64 exit = %d, want 0; stdout:\n%s", code, got)
+		}
+		if got != want {
+			t.Errorf("x86-64 = %q, want %q (interp)", got, want)
+		}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		got, code := compileAndRunArm64(t, src)
+		got = strings.TrimSpace(got)
+		if code != 0 {
+			t.Fatalf("arm64 exit = %d, want 0; stdout:\n%s", code, got)
+		}
+		if got != want {
+			t.Errorf("arm64 = %q, want %q (interp)", got, want)
+		}
+	})
+}
+
+// dynCompiledBackends runs src on all three compiled backends and asserts
+// each stdout equals want. Unlike dynAllBackends it does NOT differential
+// against the interpreter — used for `dyn` over i64, which the interpreter
+// cannot dispatch (its width-less Number tags every integer "i32", a
+// documented slice-1 limitation; see interp.valueTypeName / DYN-TRAITS.md
+// §4.1). The compiled backends carry the width, so they dispatch correctly.
+func dynCompiledBackends(t *testing.T, src, want string) {
+	t.Helper()
+	t.Run("wasm", func(t *testing.T) {
+		got := runWasmCapturingStdout(t, src)
+		if got != want {
+			t.Errorf("wasm = %q, want %q", got, want)
+		}
+	})
+	t.Run("x86_64", func(t *testing.T) {
+		got, code := compileAndRunX86_64(t, src)
+		got = strings.TrimSpace(got)
+		if code != 0 {
+			t.Fatalf("x86-64 exit = %d, want 0; stdout:\n%s", code, got)
+		}
+		if got != want {
+			t.Errorf("x86-64 = %q, want %q", got, want)
+		}
+	})
+	t.Run("arm64", func(t *testing.T) {
+		got, code := compileAndRunArm64(t, src)
+		got = strings.TrimSpace(got)
+		if code != 0 {
+			t.Fatalf("arm64 exit = %d, want 0; stdout:\n%s", code, got)
+		}
+		if got != want {
+			t.Errorf("arm64 = %q, want %q", got, want)
+		}
+	})
+}
+
+// dyn over i64 — the boxed `data` cell now holds the full 8-byte value
+// (previously broken on wasm, where the inline i32 data slot truncated it).
+// Compiled-only: the interpreter can't dispatch dyn-over-i64 (width-less
+// Number), so this checks the three backends against a literal expectation.
+func TestDynTraitPrimitiveI64(t *testing.T) {
+	src := `import "std/i64";
+trait Show {
+    function show(self: Self): i64;
+}
+impl Show for i64 {
+    function show(self: Self): i64 { return self + (1000 as i64); }
+}
+function run(s: dyn Show): i64 { return s.show(); }
+function main(): i32 {
+    var x: i64 = 9000000000 as i64;
+    print("v=" + run(x).to_string());
+    return 0;
+}
+`
+	dynCompiledBackends(t, src, "v=9000001000")
+}
+
+// dyn over f64 — the boxed cell carries the 8-byte float and the wrapper
+// reloads it with the f64 ABI (previously broken on wasm).
+func TestDynTraitPrimitiveF64(t *testing.T) {
+	src := `import "std/float";
+trait Show {
+    function show(self: Self): f64;
+}
+impl Show for f64 {
+    function show(self: Self): f64 { return self * 2.5; }
+}
+function run(s: dyn Show): f64 { return s.show(); }
+function main(): i32 {
+    var x: f64 = 4.0;
+    print("v=" + run(x).to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "v=10")
+}
+
+// dyn over string — the value-box holds the two-word `(data, len)` string
+// and the wrapper reloads it with the two-word load (previously broken on
+// wasm + arm64). The impl returns `self.len()` (the design's example).
+func TestDynTraitPrimitiveString(t *testing.T) {
+	src := `import "std/i32";
+trait Show {
+    function show(self: Self): i32;
+}
+impl Show for string {
+    function show(self: Self): i32 { return self.len(); }
+}
+function run(s: dyn Show): i32 { return s.show(); }
+function main(): i32 {
+    var x: string = "hello";
+    print("len=" + run(x).to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "len=5")
+}
+
+// Heterogeneous `dyn Show[]` mixing string + i32 concretes — each element's
+// vtable routes to its own unboxing wrapper, proving the per-concrete box
+// layout (two-word string vs one-word i32) and dispatch coexist in one array.
+func TestDynTraitPrimitiveHeterogeneous(t *testing.T) {
+	src := `import "std/i32";
+trait Show {
+    function show(self: Self): i32;
+}
+impl Show for string {
+    function show(self: Self): i32 { return self.len(); }
+}
+impl Show for i32 {
+    function show(self: Self): i32 { return self + 100; }
+}
+function main(): i32 {
+    var xs: dyn Show[] = ["hi", 7, "world"];
+    var total: i32 = 0;
+    for x in xs {
+        total = total + x.show();
+    }
+    print("total=" + total.to_string());
+    return 0;
+}
+`
+	// "hi".len()=2, 7+100=107, "world".len()=5 → 114
+	dynAllBackends(t, src, "total=114")
+}
+
+// A trait method WITH an argument on a primitive receiver — proves the
+// wrapper passes method args straight through past the unboxed receiver.
+func TestDynTraitPrimitiveMethodArg(t *testing.T) {
+	src := `import "std/i32";
+trait Adder {
+    function add(self: Self, n: i32): i32;
+}
+impl Adder for i32 {
+    function add(self: Self, n: i32): i32 { return self + n; }
+}
+function run(a: dyn Adder, n: i32): i32 { return a.add(n); }
+function main(): i32 {
+    var x: i32 = 10;
+    print("r=" + run(x, 32).to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "r=42")
+}
+
+// A trait method with a STRING argument on a string receiver — both the
+// receiver (unboxed from the value cell) and the arg are two-word strings,
+// proving the two-word arg ABI survives past the unboxed receiver.
+func TestDynTraitPrimitiveStringMethodArg(t *testing.T) {
+	src := `import "std/i32";
+trait Joiner {
+    function joined_len(self: Self, other: string): i32;
+}
+impl Joiner for string {
+    function joined_len(self: Self, other: string): i32 { return self.len() + other.len(); }
+}
+function run(j: dyn Joiner, other: string): i32 { return j.joined_len(other); }
+function main(): i32 {
+    var x: string = "abc";
+    print("n=" + run(x, "de").to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "n=5")
+}

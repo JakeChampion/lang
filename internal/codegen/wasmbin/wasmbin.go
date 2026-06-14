@@ -460,11 +460,16 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		addSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params))
 			for _, pt := range sig.Params {
-				vt, err := valtypeFor(pt)
+				// slotValtypes (not valtypeFor) so a two-word string param
+				// fans out to [i32, i32] — matching paramValtypes, which
+				// types the call_indirect target the same way. A `dyn`
+				// method with a string arg dispatches through this seam
+				// (docs/DYN-TRAITS.md §4.2.3).
+				vts, err := slotValtypes(pt)
 				if err != nil {
 					return 0, err
 				}
-				params = append(params, vt)
+				params = append(params, vts...)
 			}
 			results, err := resultValtypes(sig.Result)
 			if err != nil {

@@ -4163,7 +4163,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // 8-byte bit pattern; mark the slot f64 so later uses pick the float
             // ops. Scalar locals only — f64 params / returns / arrays / fields
             // are deferred to the AST path (lower_func bails an f64 signature).
-            if (comma < 0 && (v.type_name == "f64" || expr_is_f64(v.init, s))) {
+            if (comma < 0 && (is_f64_scalar_type_name(v.type_name) || expr_is_f64(v.init, s))) {
                 var fv: LowerState = lower_expr(v.init, s);
                 if (!fv.ok) { return fv; }
                 var fvb: LowerState = fv.add_local(v.name);
@@ -6154,6 +6154,16 @@ function is_u64_type_name(t: string): boolean {
     return t == "u64" || t == "u64[]";
 }
 
+// is_f64_scalar_type_name reports whether a declared SCALAR type is an 8-byte
+// IEEE float — f64 or f32 (Fern represents f32 as an f64 internally: f32<->f64
+// casts are no-ops and every float op runs at double width). The two spell the
+// same runtime value, so a slot of either is marked local_is_f64 and a function
+// returning either is registered f64-returning. (Arrays f64[]/f32[] are tracked
+// separately via local_is_f64arr; this is the scalar classifier only.)
+pub function is_f64_scalar_type_name(t: string): boolean {
+    return t == "f64" || t == "f32" || t == "float";
+}
+
 // --- struct reclamation: conservative intra-procedural escape analysis ---
 //
 // reclaimable_names_of computes the struct-local names that are SAFE to free at
@@ -6496,7 +6506,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         tupty = tupty.append("");
         mapty = mapty.append("");
         isi64 = isi64.append(rbase == "i64");
-        isf64 = isf64.append(rbase == "f64");
+        isf64 = isf64.append(is_f64_scalar_type_name(rbase));
         isf64arr = isf64arr.append(false);
         isi64arr = isi64arr.append(false);
         isu32 = isu32.append(is_u32_type_name(fn.receiver_type));
@@ -6556,7 +6566,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         tupty = tupty.append("");
         mapty = mapty.append("");
         isi64 = isi64.append(fn.params[i].type_name == "i64");
-        isf64 = isf64.append(fn.params[i].type_name == "f64");
+        isf64 = isf64.append(is_f64_scalar_type_name(fn.params[i].type_name));
         // An f64[] param is element-width-tracked (a[i] reads an 8-byte f64);
         // the array itself rides the same 8-byte-stride layout every f64 array
         // literal in this (whole-module-IR) program uses, so passing one is safe.
@@ -6813,7 +6823,7 @@ pub function f64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].ret_type == "f64") {
+        if (is_f64_scalar_type_name(funcs[k].ret_type)) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key);

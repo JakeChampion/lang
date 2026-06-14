@@ -1685,6 +1685,66 @@ func dynTraitNamesUsed(prog *ast.Program) map[string]bool {
 	return used
 }
 
+// isPrimitiveConcrete reports whether a `dyn` coercion's concrete
+// type-name string names a primitive / `string` type rather than a
+// struct or enum. A struct/enum value is already a heap pointer (so its
+// `data` word can hold it directly); a primitive/string value is not, so
+// it is uniformly heap-boxed into a value cell and dispatched through an
+// unboxing wrapper (docs/DYN-TRAITS.md §4.2.3). The check is purely "not
+// a known struct and not a known enum" — every other concrete an impl
+// can name (i32/i64/u32/u64/f32/f64/boolean/string) is primitive.
+func isPrimitiveConcrete(info *checker.Info, concrete string) bool {
+	if info == nil {
+		return false
+	}
+	if _, isStruct := info.Structs[concrete]; isStruct {
+		return false
+	}
+	if _, isEnum := info.Enums[concrete]; isEnum {
+		return false
+	}
+	return true
+}
+
+// astTypeForConcreteName maps a primitive/`string` concrete type-name
+// string (as recorded in DynCoercion.Concrete / VtableDecl.Concrete) to
+// the ast.Type the IR layout helpers (payloadSlotSize / payloadStoreOpFor
+// / payloadLoadOpFor) expect. Mirrors checker.methodTypeName's spellings.
+// Returns nil for an unrecognised name (a struct/enum concrete — callers
+// gate on isPrimitiveConcrete before calling).
+func astTypeForConcreteName(name string) ast.Type {
+	switch name {
+	case "i32":
+		return ast.NumberType{Width: 32, Signed: true}
+	case "i64":
+		return ast.NumberType{Width: 64, Signed: true}
+	case "u32":
+		return ast.NumberType{Width: 32, Signed: false}
+	case "u64":
+		return ast.NumberType{Width: 64, Signed: false}
+	case "usize":
+		return ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
+	case "f32":
+		return ast.FloatType{Width: 32}
+	case "f64":
+		return ast.FloatType{Width: 64}
+	case "boolean":
+		return ast.BoolType{}
+	case "string":
+		return ast.StringType{}
+	}
+	return nil
+}
+
+// dynboxWrapperName is the synthesized unboxing-wrapper function name for
+// a (primitive concrete, trait method) pair. The wrapper's dispatch-facing
+// signature is `(boxptr, args...) -> result`: it loads the concrete value
+// from the value-box and calls the real `__method_<C>_<m>` with the
+// unboxed receiver (docs/DYN-TRAITS.md §4.2.3).
+func dynboxWrapperName(concrete, method string) string {
+	return "__dynbox_" + concrete + "_" + method
+}
+
 // collectVtables builds one VtableDecl per (trait, concrete-type) pair
 // where the trait is used in a `dyn Trait` type somewhere in the program
 // and the concrete type implements it. The method slots follow the
@@ -1724,9 +1784,21 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 		}
 		sort.Strings(concretes)
 		for _, concrete := range concretes {
+			prim := isPrimitiveConcrete(info, concrete)
 			var methods []VtableMethod
 			for _, m := range td.Methods {
 				if m.Assoc {
+					continue
+				}
+				// For a struct/enum concrete the vtable slot points at the
+				// real receiver method (the `data` word is already a heap
+				// pointer). For a primitive/string concrete the value is
+				// heap-boxed at the coercion site, so the slot points at an
+				// unboxing wrapper `__dynbox_<C>_<m>(boxptr, args...)` that
+				// loads the concrete value back and calls the real method
+				// with the unboxed receiver (docs/DYN-TRAITS.md §4.2.3).
+				if prim {
+					methods = append(methods, VtableMethod{Method: m.Name, Func: dynboxWrapperName(concrete, m.Name)})
 					continue
 				}
 				fn := info.Methods[concrete+"."+m.Name]
@@ -1742,6 +1814,116 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 		}
 	}
 	return out
+}
+
+// realImplMethodName resolves the mangled receiver-method a (concrete,
+// method) slot dispatches to — `info.Methods[C.m]`, falling back to the
+// conventional `__method_<C>_<m>` (mirrors collectVtables' resolution).
+func realImplMethodName(info *checker.Info, concrete, method string) string {
+	if fn := info.Methods[concrete+"."+method]; fn != "" {
+		return fn
+	}
+	return "__method_" + concrete + "_" + method
+}
+
+// buildDynboxWrappers synthesizes the unboxing-wrapper `Func`s that a
+// primitive/string concrete's vtable slots point at (docs/DYN-TRAITS.md
+// §4.2.3). For every (primitive concrete, trait method) pair that
+// collectVtables routed through `dynboxWrapperName`, it emits a function
+//
+//	__dynbox_<C>_<m>(boxptr: i32, args...) -> result {
+//	    return __method_<C>_<m>(load_concrete(boxptr), args...);
+//	}
+//
+// The wrapper loads the concrete value from the heap value-box (using the
+// concrete type's own load width — two words for a wasm string, 8 bytes
+// for i64/f64) and calls the real method with the unboxed value as the
+// receiver. The dispatch-facing signature is (boxptr, args...) -> result,
+// so OpCallDyn's receiver-first contract lines up: it passes the box
+// pointer (the `dyn` value's `data` word) as arg 0, and the wrapper does
+// the unbox. Deterministically ordered for stable codegen.
+func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]*Func, error) {
+	if info == nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	var out []*Func
+	for _, vt := range vtables {
+		if !isPrimitiveConcrete(info, vt.Concrete) {
+			continue
+		}
+		concreteType := astTypeForConcreteName(vt.Concrete)
+		if concreteType == nil {
+			return nil, fmt.Errorf("ir: dyn over %q: no value-box layout for concrete type %q", vt.Trait, vt.Concrete)
+		}
+		td, ok := info.Traits[vt.Trait]
+		if !ok {
+			continue
+		}
+		// Trait method declarations carry the receiver-first param list +
+		// result, the source of truth for the wrapper's signature and the
+		// real method's arg types.
+		methByName := map[string]*ast.TraitMethod{}
+		for i := range td.Methods {
+			methByName[td.Methods[i].Name] = &td.Methods[i]
+		}
+		for _, vm := range vt.Methods {
+			wname := dynboxWrapperName(vt.Concrete, vm.Method)
+			if seen[wname] {
+				continue
+			}
+			seen[wname] = true
+			tm, ok := methByName[vm.Method]
+			if !ok || len(tm.Params) == 0 {
+				return nil, fmt.Errorf("ir: dyn wrapper for %s.%s: trait method missing or has no receiver", vt.Concrete, vm.Method)
+			}
+			// Method args after the receiver (tm.Params[0] is `self`).
+			argTypes := make([]ast.Type, 0, len(tm.Params)-1)
+			for _, p := range tm.Params[1:] {
+				argTypes = append(argTypes, p.Type)
+			}
+			// Wrapper params: boxptr (i32) + the method args, in order.
+			params := make([]ast.Param, 0, 1+len(argTypes))
+			params = append(params, ast.Param{Name: "__boxptr", Type: ast.NumberType{Width: 32, Signed: true}})
+			for i, at := range argTypes {
+				params = append(params, ast.Param{Name: fmt.Sprintf("__a%d", i), Type: at})
+			}
+			fn := &Func{Name: wname, Params: params, ReturnType: tm.Result}
+			emit := func(op Op) { fn.Ops = append(fn.Ops, op) }
+			// value = load(boxptr) with the concrete type's load width
+			// (two-word for wasm string; 8 bytes for i64/f64).
+			emit(Op{Kind: OpLoadLocal, I32: 0})
+			emit(payloadLoadOpFor(concreteType, ptrW))
+			// Push the method args (param slots 1..n).
+			for i := range argTypes {
+				emit(Op{Kind: OpLoadLocal, I32: int32(i + 1)})
+			}
+			// call __method_<C>_<m>(value, args...). The real method's
+			// param types are (concreteReceiver, args...): ArgTypes drives
+			// the backend's operand-stack slot accounting (a string
+			// receiver / arg occupies two slots).
+			callArgTypes := make([]ast.Type, 0, 1+len(argTypes))
+			callArgTypes = append(callArgTypes, concreteType)
+			callArgTypes = append(callArgTypes, argTypes...)
+			emit(Op{
+				Kind:     OpCallDirect,
+				Str:      realImplMethodName(info, vt.Concrete, vm.Method),
+				I32:      int32(1 + len(argTypes)),
+				ArgTypes: callArgTypes,
+			})
+			if tm.Result == nil {
+				emit(Op{Kind: OpReturnVoid})
+			} else {
+				if _, isVoid := tm.Result.(ast.VoidType); isVoid {
+					emit(Op{Kind: OpReturnVoid})
+				} else {
+					emit(Op{Kind: OpReturn})
+				}
+			}
+			out = append(out, fn)
+		}
+	}
+	return out, nil
 }
 
 // LowerOption tweaks LowerWith's behaviour for a particular backend.
@@ -2144,6 +2326,24 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			})
 			out.Funcs = append(out.Funcs, fn)
 		}
+	}
+	// `dyn` over a primitive/string: synthesize the unboxing wrappers the
+	// vtable slots point at (docs/DYN-TRAITS.md §4.2.3). Each loads the
+	// boxed concrete value and calls the real `__method_<C>_<m>`. Appended
+	// in lockstep — an AST stub into prog.Funcs (codegen pairs prog.Funcs[i]
+	// with out.Funcs[i] by index) and the IR Func into out.Funcs.
+	dynWrappers, wrErr := buildDynboxWrappers(info, ptrW, out.Vtables)
+	if wrErr != nil {
+		return nil, wrErr
+	}
+	for _, fn := range dynWrappers {
+		prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
+			Name:       fn.Name,
+			Params:     fn.Params,
+			ReturnType: fn.ReturnType,
+			Body:       &ast.Block{},
+		})
+		out.Funcs = append(out.Funcs, fn)
 	}
 	return out, nil
 }
@@ -8178,6 +8378,43 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	return nil
 }
 
+// boxPrimitiveDynValue heap-boxes the primitive/string value currently on
+// top of the operand stack into a fresh value cell, leaving the cell
+// POINTER on the stack as the `dyn` fat pointer's `data` word
+// (docs/DYN-TRAITS.md §4.2.3). The cell is sized + stored via the concrete
+// type's own layout helpers, so a two-word wasm string boxes as two words,
+// an i64/f64 as 8 bytes, etc. The cell carries no rc header (leak-mode,
+// like the existing dyn box). `concrete` is the primitive type-name string
+// from the coercion site; the caller has already gated isPrimitiveConcrete.
+func (b *builder) boxPrimitiveDynValue(concrete string) error {
+	ct := astTypeForConcreteName(concrete)
+	if ct == nil {
+		return fmt.Errorf("ir: dyn coercion of %q: no value-box layout for primitive concrete", concrete)
+	}
+	size := payloadSlotSize(ct, b.ptrW)
+	// Stash the value (one or two words) into a typed scratch so the
+	// subsequent alloc — which may trigger heap init/grow and clobber the
+	// operand stack model — doesn't strand it.
+	valSlot := b.allocSlot()
+	b.scratchType[valSlot] = ct
+	b.locals[fmt.Sprintf("__dynbox_val_%d", valSlot)] = valSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
+	// Allocate the value cell (no rc header — leak-mode dyn box).
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpAlloc})
+	cellSlot := b.allocSlot()
+	b.scratchType[cellSlot] = ast.NumberType{Width: 32}
+	b.locals[fmt.Sprintf("__dynbox_cell_%d", cellSlot)] = cellSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+	// cell[0] = value (concrete store width: two-word for a wasm string).
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
+	b.emit(payloadStoreOpFor(ct, b.ptrW))
+	// Leave the cell pointer on the stack as `data`.
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	return nil
+}
+
 // allocSlot reserves the next synthetic local slot index. Use
 // this everywhere a fresh scratch / binding is needed; it
 // stays accurate even when callers also rebind the same key
@@ -9399,6 +9636,18 @@ func (b *builder) expr(e ast.Expr) error {
 			b.dynCoerceDone[e] = true
 			if err := b.expr(e); err != nil {
 				return err
+			}
+			// Uniform primitive boxing (docs/DYN-TRAITS.md §4.2.3): a
+			// struct/enum concrete's value is already a heap pointer, so it
+			// is the `data` word directly. A primitive/string concrete's
+			// value is not pointer-shaped (and may be wider than one slot —
+			// i64/f64, or a two-word string), so heap-box it into a value
+			// cell: `data` becomes a one-word pointer to the cell, and the
+			// vtable slots point at unboxing wrappers that reload it.
+			if isPrimitiveConcrete(b.info, dc.Concrete) {
+				if err := b.boxPrimitiveDynValue(dc.Concrete); err != nil {
+					return err
+				}
 			}
 			b.emit(Op{Kind: OpConstVtable, Str: dc.Trait, Str2: dc.Concrete})
 			if b.dynBoxed() {
