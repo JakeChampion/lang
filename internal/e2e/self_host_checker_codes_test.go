@@ -312,6 +312,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-elem-i32-in-string", "function main(): i32 { var a = [\"a\", 1]; return 0; }\n", []string{"E034"}},
 		{"array-elem-homogeneous-i32-ok", "function main(): i32 { var a = [1, 2, 3]; return a[0]; }\n", nil},
 		{"array-elem-homogeneous-string-ok", "function main(): i32 { var a = [\"p\", \"q\"]; return 0; }\n", nil},
+		// E034 (index variant): an array / string index must be an i32.
+		{"index-string", "function main(): i32 { var a = [1, 2, 3]; return a[\"x\"]; }\n", []string{"E034"}},
+		{"index-string-on-string", "function main(): i32 { var s = \"abc\"; return s[\"x\"]; }\n", []string{"E034"}},
+		{"index-bool", "function main(): i32 { var a = [1, 2, 3]; var b = true; return a[b]; }\n", []string{"E034"}},
+		{"index-i32-ok", "function main(): i32 { var a = [1, 2, 3]; var i = 1; return a[i]; }\n", nil},
 		{"match-variant-on-i32", "enum E { A, B }\nfunction main(): i32 { var n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
 		{"match-variant-on-string", "enum E { A, B }\nfunction main(): i32 { var s: string = \"x\"; match (s) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
 		{"match-i32-wildcard-only-ok", "function main(): i32 { var n: i32 = 5; match (n) { _ => { return 0; } } }\n", nil},
