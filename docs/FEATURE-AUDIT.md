@@ -134,7 +134,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Traits (`Display`/`Eq`/`Ord`, bounds) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | trait + impl method dispatch |
 | Nested functions + closures (capture) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `function(x: T): R { … cap … }` |
 | Function values / indirect calls | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | named fn as value; higher-order |
-| Lambdas (anonymous `function(…)`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **arrow `(x) => e` is match-arm-only, NOT a lambda** |
+| Lambdas (anonymous `function(…)` + arrow `(x: T): R => e`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | arrow form desugars to `function(…){ return e; }` — typed params required, return type optional (#2701) |
 | Tail-call optimisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | depth 5000 self-recursion, no overflow |
 | Modules / imports (`import "./path";`) | | | | | | ⬜ | |
 | Visibility (`pub`) | | | | | | ⬜ | front-end only |
@@ -796,11 +796,13 @@ and both clear the wasm owned-vs-borrow differential gate.
 all of the above. All pass on the self-hosted compiler.
 
 **Notes (no bugs filed):**
-- **Lambda syntax** is the anonymous `function(x: T): R { … }` form. The arrow
-  `(x) => e` is **match-arm-only** — native rejects it as a lambda value with
-  `P001`. The §A "Lambdas" row is corrected accordingly. (The self-host parser
-  accepts the invalid arrow form and then miscompiles it rather than erroring —
-  an error-reporting parity nuance, not a valid-program miscompile.)
+- **Lambda syntax** is the anonymous `function(x: T): R { … }` form *or* the
+  concise arrow `(x: T): R => e` (#2701), which desugars to
+  `function(x: T): R { return e; }`. Parameter types are required (as in the
+  verbose form); the return type is optional and defaults to void. The arrow
+  form is native-only so far; self-host parser support is a follow-up. (Outside
+  a lambda, `=>` is the `match`-arm separator and the function-*type* arrow
+  `(T) => R`.)
 - **Out-of-range integer literal in a cast** (`300 as u8`) is a **static**
   checker error on native (`literal 300 does not fit in u8`); wrapping is for
   **runtime** values (`v as u8`). Fixtures use runtime values for wrap tests.

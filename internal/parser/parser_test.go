@@ -2213,6 +2213,54 @@ func TestOpaqueStructParses(t *testing.T) {
 	}
 }
 
+// Arrow lambdas `(params): R => expr` desugar to an ast.Lambda whose body
+// is `{ return expr; }`. Parens that hold a parameter list are an arrow
+// lambda; ordinary grouping `(e)` and tuples `(e1, e2)` are unaffected.
+// See #2701.
+func TestArrowLambdaParse(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+  var g: (i32, i32) => i32 = (a: i32, b: i32): i32 => a + b;
+  var h: () => i32 = (): i32 => 42;
+  var grouped: i32 = (1 + 2) * 3;
+  var pair: (i32, i32) = (4, 5);
+  return g(grouped, pair.0) + h();
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	// `g` is a 2-param arrow lambda → Lambda{Body: {return a+b}}.
+	g := stmts[0].(*ast.Var)
+	lam, ok := g.Init.(*ast.Lambda)
+	if !ok {
+		t.Fatalf("g init should be a Lambda, got %T", g.Init)
+	}
+	if len(lam.Params) != 2 || lam.Params[0].Name != "a" || lam.Params[1].Name != "b" {
+		t.Errorf("lambda params = %v, want [a b]", lam.Params)
+	}
+	if _, ok := lam.ReturnType.(ast.NumberType); !ok {
+		t.Errorf("lambda return type = %T, want NumberType(i32)", lam.ReturnType)
+	}
+	if len(lam.Body.Stmts) != 1 {
+		t.Fatalf("arrow body should be one stmt, got %d", len(lam.Body.Stmts))
+	}
+	if _, ok := lam.Body.Stmts[0].(*ast.Return); !ok {
+		t.Errorf("arrow body stmt should be a Return, got %T", lam.Body.Stmts[0])
+	}
+	// `h` is a zero-param arrow lambda.
+	if hl, ok := stmts[1].(*ast.Var).Init.(*ast.Lambda); !ok || len(hl.Params) != 0 {
+		t.Errorf("h should be a zero-param Lambda, got %T", stmts[1].(*ast.Var).Init)
+	}
+	// Grouping is NOT a lambda.
+	if _, ok := stmts[2].(*ast.Var).Init.(*ast.Lambda); ok {
+		t.Errorf("(1 + 2) * 3 should not parse as a lambda")
+	}
+	// Tuple is NOT a lambda.
+	if _, ok := stmts[3].(*ast.Var).Init.(*ast.TupleLit); !ok {
+		t.Errorf("(4, 5) should parse as a TupleLit, got %T", stmts[3].(*ast.Var).Init)
+	}
+}
+
 // Array.build desugars to a unique-local IIFE: a `var b: T[] = []`, the
 // body with statement-position `b.append(x);` rewritten to `b = b.append(x)`,
 // and a trailing `return b`. ArrayBuilder[T] is surface-only — it never
