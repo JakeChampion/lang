@@ -6483,6 +6483,22 @@ function parse_trait_decl(p: Par): TraitParseResult {
     var tname: string = p.peek_ident();
     if (tname.len() > 0) { p = p.advance(); } // name
     var simple: string = derive_simple_name(tname);
+    // Optional supertrait clause `: Trait (+ Trait)*` (each possibly
+    // `mod.Trait`). The self-host dispatches by receiver type and doesn't
+    // validate conformance, so supertraits carry no weight here — they're
+    // parsed and discarded. See docs/TRAITS.md.
+    if (p.peek_punct() == ":") {
+        p = p.advance();
+        var go_sup: boolean = true;
+        while (go_sup && !p.at_end()) {
+            if (p.peek_ident().len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == ".") {
+                p = p.advance();
+                if (p.peek_ident().len() > 0) { p = p.advance(); }
+            }
+            if (p.peek_punct() == "+") { p = p.advance(); } else { go_sup = false; }
+        }
+    }
     if (p.peek_punct() == "{") {
         p = p.advance();
         while (!p.at_end()) {

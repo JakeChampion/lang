@@ -939,6 +939,12 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 			}
 			r.rewriteType(&td.Methods[i].Result)
 		}
+		// Supertrait references mangle the same way a `[T: mod.Trait]`
+		// bound or an `impl mod.Trait for …` does, so they line up with
+		// the mangled TraitDecl.Name they point at.
+		for k, sup := range td.Supertraits {
+			td.Supertraits[k] = r.rewriteTraitNameAt(sup, td.NamePos)
+		}
 	}
 	for _, impl := range m.prog.Impls {
 		r.rewriteType(&impl.Type)

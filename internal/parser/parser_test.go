@@ -1434,6 +1434,36 @@ func TestTraitDefaultMethodParses(t *testing.T) {
 	}
 }
 
+// A trait may declare supertraits with `trait Ord: Eq + Hash { … }`;
+// they're recorded on TraitDecl.Supertraits (qualifiers preserved). A
+// trait with no `:` clause has an empty list. See docs/TRAITS.md.
+func TestTraitSupertraitsParse(t *testing.T) {
+	prog, err := Parse(`trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Hash { function hash(self: Self): i32; }
+trait Ord: Eq + Hash { function lt(self: Self, other: Self): boolean; }`)
+	if err != nil {
+		t.Fatalf("trait with supertraits should parse: %v", err)
+	}
+	var ord, eq *ast.TraitDecl
+	for _, td := range prog.Traits {
+		switch td.Name {
+		case "Ord":
+			ord = td
+		case "Eq":
+			eq = td
+		}
+	}
+	if ord == nil || eq == nil {
+		t.Fatalf("expected Ord and Eq traits, got %d traits", len(prog.Traits))
+	}
+	if len(eq.Supertraits) != 0 {
+		t.Errorf("Eq should have no supertraits, got %v", eq.Supertraits)
+	}
+	if len(ord.Supertraits) != 2 || ord.Supertraits[0] != "Eq" || ord.Supertraits[1] != "Hash" {
+		t.Errorf("Ord supertraits = %v, want [Eq Hash]", ord.Supertraits)
+	}
+}
+
 // An `impl Trait for Type` desugars each method into an ordinary
 // receiver-method FuncDecl (with Self replaced by the concrete type)
 // appended to Program.Funcs, plus an ImplDecl record. See docs/TRAITS.md.

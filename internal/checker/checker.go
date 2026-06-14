@@ -2094,6 +2094,46 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 	}
 
+	// Supertrait references must name real traits, and the supertrait
+	// graph must be acyclic (a cyclic graph would still terminate via the
+	// `seen` guard in collectTraitSupers, but it's a user error). See
+	// docs/TRAITS.md.
+	for _, td := range prog.Traits {
+		for _, sup := range td.Supertraits {
+			if _, ok := c.info.Traits[sup]; !ok {
+				c.errfCode(td.P, "E021", "unknown supertrait %q in trait %s", demangle(sup), demangle(td.Name))
+			}
+		}
+		if c.traitInItsOwnSupers(td.Name) {
+			c.errfCode(td.P, "E021", "cyclic supertrait: %s is (transitively) its own supertrait", demangle(td.Name))
+		}
+	}
+
+	// Supertrait satisfaction: an `impl Trait for T` requires T to also
+	// implement every (transitive) supertrait of Trait. Run after the loop
+	// above has registered all conforming impls, so impl order within the
+	// program doesn't matter. See docs/TRAITS.md.
+	for _, impl := range prog.Impls {
+		typeName, ok := methodTypeName(impl.Type)
+		if !ok {
+			continue
+		}
+		if !c.info.Impls[impl.Trait][typeName] {
+			continue // impl didn't conform; the missing-method error already fired
+		}
+		td, ok := c.info.Traits[impl.Trait]
+		if !ok {
+			continue
+		}
+		for _, sup := range c.expandTraits(td.Supertraits) {
+			if !c.info.Impls[sup][typeName] {
+				c.errfCode(impl.P, "E021",
+					"impl %s for %s also requires `impl %s for %s` (supertrait of %s)",
+					demangle(impl.Trait), demangle(typeName), demangle(sup), demangle(typeName), demangle(impl.Trait))
+			}
+		}
+	}
+
 	// Validate that every trait named in a function's type-parameter
 	// bounds actually exists. Catches typos / unknown traits before
 	// the deferred-dispatch path silently fails to resolve. See
@@ -3475,7 +3515,10 @@ func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.Trait
 	if c.current == nil {
 		return ast.TraitMethod{}, "", false
 	}
-	for _, traitName := range c.current.Bounds[paramName] {
+	// Expand the bound traits with their supertraits: a `T: Ord` bound
+	// also exposes the methods of Ord's supertraits (e.g. Eq). See
+	// docs/TRAITS.md.
+	for _, traitName := range c.expandTraits(c.current.Bounds[paramName]) {
 		td, ok := c.info.Traits[traitName]
 		if !ok {
 			continue
@@ -3487,6 +3530,60 @@ func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.Trait
 		}
 	}
 	return ast.TraitMethod{}, "", false
+}
+
+// collectTraitSupers appends `name` and all its transitive supertraits to
+// *acc (deduped via seen, which also breaks cycles), following
+// TraitDecl.Supertraits.
+func (c *checker) collectTraitSupers(name string, seen map[string]bool, acc *[]string) {
+	if seen[name] {
+		return
+	}
+	seen[name] = true
+	*acc = append(*acc, name)
+	if td, ok := c.info.Traits[name]; ok {
+		for _, sup := range td.Supertraits {
+			c.collectTraitSupers(sup, seen, acc)
+		}
+	}
+}
+
+// traitInItsOwnSupers reports whether `name` is reachable from its own
+// supertraits — i.e. the supertrait graph has a cycle through `name`
+// (`trait A: A`, or `A: B` with `B: A`).
+func (c *checker) traitInItsOwnSupers(name string) bool {
+	seen := map[string]bool{}
+	var stack []string
+	if td, ok := c.info.Traits[name]; ok {
+		stack = append(stack, td.Supertraits...)
+	}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if cur == name {
+			return true
+		}
+		if seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		if td, ok := c.info.Traits[cur]; ok {
+			stack = append(stack, td.Supertraits...)
+		}
+	}
+	return false
+}
+
+// expandTraits returns `traits` plus all their transitive supertraits,
+// deduplicated. Each trait is followed by its supertraits, so the order
+// is deterministic. See docs/TRAITS.md.
+func (c *checker) expandTraits(traits []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range traits {
+		c.collectTraitSupers(t, seen, &out)
+	}
+	return out
 }
 
 func (c *checker) methodVisibleHere(mangled string) bool {

@@ -2311,6 +2311,59 @@ function main(): i32 { var d: Dog = Dog { age: 1 }; var s: string = announce(d);
 	}
 }
 
+// A supertrait (`trait Ord: Eq`) lets a `T: Ord` bound call the
+// supertrait's methods on T, and requires every `impl Ord for X` to also
+// have `impl Eq for X`. See docs/TRAITS.md.
+func TestTraitSupertraitAccepted(t *testing.T) {
+	src := `trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+struct P { x: i32 }
+impl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
+function cmp[T: Ord](a: T, b: T): boolean { if (a.eq(b)) { return true; } return a.lt(b); }
+function main(): i32 { var p: P = P { x: 1 }; if (cmp(p, p)) { return 1; } return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("supertrait program should typecheck: %v", err)
+	}
+}
+
+func TestTraitSupertraitErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// impl Ord for P without impl Eq for P.
+		{`trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+struct P { x: i32 }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
+function main(): i32 { return 0; }`, "supertrait of Ord"},
+		// supertrait names a nonexistent trait.
+		{`trait Ord: Nope { function lt(self: Self, other: Self): boolean; }
+struct P { x: i32 }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return true; } }
+function main(): i32 { return 0; }`, "unknown supertrait"},
+		// cyclic supertrait graph.
+		{`trait A: B { function fa(self: Self): i32; }
+trait B: A { function fb(self: Self): i32; }
+function main(): i32 { return 0; }`, "cyclic supertrait"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 // Implementing a trait for a built-in numeric type is allowed when the
 // trait is local (orphan rule satisfied by the trait being local).
 func TestTraitImplForBuiltinType(t *testing.T) {
