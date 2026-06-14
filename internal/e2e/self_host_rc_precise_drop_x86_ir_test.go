@@ -194,6 +194,23 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// in the return), so d is NOT dead at the update site — reuse must NOT fire (d's
 		// box and its array stay live). Value still correct via the normal alloc path.
 		{"struct-no-reuse-array-base-used-after-detector", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var c = Vec { ...d, tag: 9 }; var r = c.tag + d.items[0]; if (r != 19) { return 99; } return __rc_underflow(); }`, 0},
+		// Cross-statement FBIP: a FULL construction `var c = T { ... }` (no base)
+		// reuses the heap box of an EARLIER, same-type donor `d` that is dead by the
+		// construction site — d's box is rewritten field-by-field and c bound to it,
+		// d's slot zeroed. Here d is read once (d.x + d.y) BEFORE c, then never again,
+		// so it is dead at c and reuse fires. Value correct, detector 0 (box freed once).
+		{"struct-cross-reuse-value", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var u = d.x + d.y; var c = Point { x: 10, y: 20 }; return c.x + c.y + u; }`, 37},
+		{"struct-cross-reuse-detector", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var u = d.x + d.y; var c = Point { x: 10, y: 20 }; var sum = c.x + c.y + u; if (sum != 37) { return 99; } return __rc_underflow(); }`, 0},
+		// Cross-statement FBIP with an array field: the donor's OLD array is released
+		// (dec) before c's fresh array is written into the reused box; c then owns the
+		// new array. Donor read once before c, dead after. Value correct, detector 0.
+		{"struct-cross-reuse-array-value", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var u = d.items[0]; var c = Vec { tag: 2, items: [100, 50] }; return c.items[0] + c.items[1] + c.tag + u; }`, 162},
+		{"struct-cross-reuse-array-detector", `struct Vec { tag: i32, items: i32[] } function main(): i32 { var d = Vec { tag: 1, items: [10, 20, 30] }; var u = d.items[0]; var c = Vec { tag: 2, items: [100, 50] }; var s = c.items[0] + c.items[1] + c.tag + u; if (s != 162) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing cross case: the donor d is used AFTER the full construction
+		// (`d.x` in the return), so d is NOT dead at the construction — reuse must NOT
+		// fire and c gets a fresh box. Value still correct, detector 0.
+		{"struct-cross-no-reuse-donor-used-after-value", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { x: 10, y: 20 }; return c.x + c.y + d.x; }`, 33},
+		{"struct-cross-no-reuse-donor-used-after-detector", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { x: 10, y: 20 }; var r = c.x + c.y + d.x; if (r != 33) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
