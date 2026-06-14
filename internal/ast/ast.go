@@ -2211,6 +2211,13 @@ type TraitDecl struct {
 	Name    string
 	NamePos Position
 	Methods []TraitMethod
+	// Supertraits names the traits this trait requires (`trait Ord: Eq +
+	// Hash { … }`): an `impl Ord for T` is legal only if `T` also
+	// implements every supertrait (transitively), and a `T: Ord` bound
+	// grants access to the supertraits' methods too. Empty for a trait
+	// with no supertraits. modload mangles these names like any other
+	// trait reference. See docs/TRAITS.md.
+	Supertraits []string
 	// Public marks the trait as exported — same semantics as
 	// FuncDecl.Public / StructDecl.Public.
 	Public bool

@@ -996,3 +996,114 @@ func TestWASMTraitDefaultMethod(t *testing.T) {
 		t.Errorf("expected inherited default reached twice (direct + via bound), got:\n%s", got)
 	}
 }
+
+// Supertraits (`trait Ord: Eq`): a `T: Ord` bound can call the
+// supertrait Eq's method on T, and the impl-time check requires every
+// `impl Ord for P` to also have `impl Eq for P`. The generic `rank`
+// exercises supertrait dispatch through monomorphisation. See
+// docs/TRAITS.md.
+const traitSupertraitSrc = `import "std/i32";
+
+trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+
+struct P { x: i32 }
+impl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
+
+function rank[T: Ord](a: T, b: T): string {
+    if (a.eq(b)) { return "eq"; }   // Eq method via the Ord supertrait bound
+    if (a.lt(b)) { return "lt"; }
+    return "gt";
+}
+
+function main(): i32 {
+    var p: P = P { x: 3 };
+    var q: P = P { x: 5 };
+    print(rank(p, q));   // lt
+    print(rank(q, p));   // gt
+    print(rank(p, p));   // eq
+    return 0;
+}
+`
+
+func TestInterpTraitSupertrait(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(traitSupertraitSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{"lt", "gt", "eq"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stdout missing %q; got: %q (stderr: %s)", want, got, errb.String())
+		}
+	}
+}
+
+// arm64 native supertrait coverage (the arm64 helper monomorphises the
+// `rank[T: Ord]` generic like the production driver).
+func TestArm64TraitSupertrait(t *testing.T) {
+	out, code := compileAndRunArm64(t, traitSupertraitSrc)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"lt", "gt", "eq"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("arm64 output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// wasm supertrait coverage (the wasm component builder monomorphises).
+func TestWASMTraitSupertrait(t *testing.T) {
+	got := runWasmCapturingStdout(t, traitSupertraitSrc)
+	for _, want := range []string{"lt", "gt", "eq"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("wasm output missing %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// Direct (non-generic) supertrait dispatch, for the x86-64 e2e helper
+// (which doesn't run the monomorph pass). Still exercises supertrait
+// conformance (`impl Ord for P` requires `impl Eq for P`) and dispatch of
+// both the trait's own and the supertrait's methods on a concrete value.
+const traitSupertraitDirectSrc = `import "std/i32";
+
+trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+
+struct P { x: i32 }
+impl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
+
+function main(): i32 {
+    var p: P = P { x: 3 };
+    var q: P = P { x: 5 };
+    if (p.eq(q)) { print("eq"); } else { print("neq"); }   // neq
+    if (p.lt(q)) { print("lt"); }                          // lt
+    return 0;
+}
+`
+
+func TestX86_64TraitSupertrait(t *testing.T) {
+	out, code := compileAndRunX86_64(t, traitSupertraitDirectSrc)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"neq", "lt"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("x86-64 output missing %q; got:\n%s", want, out)
+		}
+	}
+}

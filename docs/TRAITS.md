@@ -170,6 +170,42 @@ pub function assert_eq[T: Display + Eq](actual: T, expected: T): Option[string] 
 }
 ```
 
+### Supertraits
+
+A trait may require other traits with a `: Trait + Trait` clause after its
+name. `trait Ord: Eq` means **Eq is a supertrait of Ord**:
+
+```fern
+trait Eq  { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+```
+
+Two consequences (Rust's semantics):
+
+- **Conformance**: `impl Ord for P` is legal only if `impl Eq for P` also
+  exists (checked transitively, and independent of impl order). The error
+  reads `impl Ord for P also requires \`impl Eq for P\` (supertrait of Ord)`.
+- **Bound expansion**: a `T: Ord` bound also exposes the supertraits'
+  methods, so a generic over `Ord` can call `eq`:
+
+  ```fern
+  function rank[T: Ord](a: T, b: T): i32 {
+      if a.eq(b) { return 0; }       // Eq method, reached via Ord's supertrait
+      if a.lt(b) { return -1; }
+      return 1;
+  }
+  ```
+
+Supertrait names may be qualified (`mod.Trait`) and are mangled like any
+other trait reference. The supertrait graph must be acyclic and each
+supertrait must name a real trait (both are checked: `cyclic supertrait`
+/ `unknown supertrait`). Implemented in the checker
+(`expandTraits` / `collectTraitSupers` drive bound expansion;
+`traitInItsOwnSupers` the cycle check) — `core/cmp`'s traits stay flat for
+now, so no existing impl is forced to gain a supertrait. The self-host
+parser skips the supertrait clause (it dispatches by receiver type and
+carries no conformance), so supertrait programs still compile there.
+
 ## 3a. Display spine: `print` / `write` / `eprint` (#2696)
 
 `Display` is the language's stringification spine: a type implements it by

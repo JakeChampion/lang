@@ -614,10 +614,16 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Optional supertraits: `trait Ord: Eq + Hash { … }`. Same `: Trait
+	// (+ Trait)*` grammar as a type-parameter bound (qualifiers allowed).
+	supertraits, err := p.parseOptBounds()
+	if err != nil {
+		return nil, err
+	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
-	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos}
+	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		mkw, err := p.expect(lexer.Keyword, "function")
 		if err != nil {
