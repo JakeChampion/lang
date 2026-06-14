@@ -4545,6 +4545,80 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     return mkf.emit(ir.op_end()).exit_loop();
                 }
             }
+            // `for c in r.cells` over a leak-safe array-typed STRUCT FIELD
+            // (string[] / struct[] / enum[] — element types that aren't
+            // reclaimed). The field access is snapshotted into a hidden BORROW
+            // local (NOT array-marked, so the exit-sweep never decs it: the
+            // field buffer's lifetime stays with the owning struct, which leaks
+            // these element types — emit_struct_field_drops only frees the
+            // reclaimable scalar fields — so the borrow can't double-free / UAF).
+            // Then a counted loop with explicit arr_len/arr_get + element typing
+            // (mirroring the map keys()/values() borrow path). The reclaimed
+            // scalar fields (i32[]/boolean[]/f64[]/i64[]) are deliberately NOT
+            // handled here — aliasing them needs the reclamation analysis to
+            // borrow-track the field, left to the Perceus self-host port (#3003).
+            if (!for_var_comma) {
+                var fld_elem_kind: i32 = 0;   // 0 none, 1 string[], 2 struct[]/enum[]
+                var fld_elem_ty: string = "";
+                match (fr.iter) {
+                    parser.ExprFieldAccess(ffa) => {
+                        var foty: string = expr_struct_type(ffa.obj, s);
+                        if (foty != "") {
+                            var fft: string = decl_field_type(s.structs, foty, ffa.field);
+                            if (fft == "string[]") { fld_elem_kind = 1; }
+                            else if (is_struct_array_field_type(s.structs, fft) || is_enum_array_field_type(s.structs, fft)) {
+                                fld_elem_kind = 2;
+                                fld_elem_ty = fft[0 : fft.len() - 2];
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+                if (fld_elem_kind != 0) {
+                    // snapshot field access -> hidden borrow local (NOT array-marked)
+                    var fldsn: string = "$forfld" + util.i32_to_string(s.local_names.len());
+                    var lf: LowerState = s.add_local(fldsn);
+                    var fldslot: i32 = lf.slot_of(fldsn);
+                    lf = lower_expr(fr.iter, lf);
+                    if (!lf.ok) { return lf; }
+                    lf = lf.emit(ir.op_store_local(fldslot));
+                    // hidden index (advance-at-top, #2788)
+                    var fldidxn: string = "$forfldi" + util.i32_to_string(lf.local_names.len());
+                    lf = lf.add_local(fldidxn);
+                    var fldidxslot: i32 = lf.slot_of(fldidxn);
+                    lf = lf.emit(ir.op_const_i32(0 - 1));
+                    lf = lf.emit(ir.op_store_local(fldidxslot));
+                    // element binding: string element marks the slot str; a
+                    // struct/enum element carries the element type so `c.field`
+                    // / `c.method()` / `match (c)` in the body resolve.
+                    lf = lf.add_local(fr.var_name);
+                    var fldvslot: i32 = lf.slot_of(fr.var_name);
+                    if (fld_elem_kind == 1) { lf = lf.mark_str(fldvslot, true); }
+                    else { lf = lf.mark_struct_type(fldvslot, fld_elem_ty); }
+                    // counted loop using explicit arr_len/arr_get on the borrow.
+                    lf = lf.emit(ir.op_block(0)).enter_loop();
+                    lf = lf.emit(ir.op_loop(0));
+                    lf = lf.emit(ir.op_load_local(fldidxslot));
+                    lf = lf.emit(ir.op_const_i32(1));
+                    lf = lf.emit(ir.op_bin("add", 0, false));
+                    lf = lf.emit(ir.op_store_local(fldidxslot));
+                    lf = lf.emit(ir.op_load_local(fldidxslot));
+                    lf = lf.emit(ir.op_load_local(fldslot));
+                    lf = lf.emit(ir.op_arr_len());
+                    lf = lf.emit(ir.op_bin("lt_s", 0, false));
+                    lf = lf.emit(ir.op_bin("not", 0, false));
+                    lf = lf.emit(ir.op_brif(1));
+                    lf = lf.emit(ir.op_load_local(fldslot));
+                    lf = lf.emit(ir.op_load_local(fldidxslot));
+                    lf = lf.emit(ir.op_arr_get(32));
+                    lf = lf.emit(ir.op_store_local(fldvslot));
+                    lf = lower_block(fr.body, lf);
+                    if (!lf.ok) { return lf; }
+                    lf = lf.emit(ir.op_br(0));
+                    lf = lf.emit(ir.op_end());
+                    return lf.emit(ir.op_end()).exit_loop();
+                }
+            }
             if (!for_iter_ident && !for_var_comma) {
                 return lower_foreach_snapshot(fr.var_name, fr.iter, fr.body, s);
             }
