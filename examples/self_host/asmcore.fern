@@ -452,6 +452,29 @@ pub function recv_is_array(rt: string): boolean {
     return rt[n - 2 : n] == "[]";
 }
 
+// find_array_method_func returns the exact in-scope name of the std/array
+// auto-discovered helper backing `a.<field>()` — `__method_Array_<field>` when
+// the program imports std/array as a single file, or the `<mod>__`-mangled name
+// the bundler produced (which ends in the bare convention name) — or "" when no
+// such function is in scope (then `a.<field>()` is a genuine unknown method).
+// Only free functions (no receiver) qualify; the `__method_Array_` suffix is
+// specific enough that no other decl collides. Shared by both asm backends so
+// the array-method-syntax dispatch can't drift between them.
+pub function find_array_method_func(field: string, s: EmitState): string {
+    var target: string = "__method_Array_" + field;
+    var tn: i32 = target.len();
+    var i: i32 = 0;
+    while (i < s.funcs.len()) {
+        var nm: string = s.funcs[i].name;
+        if (s.funcs[i].receiver_type.len() == 0) {
+            if (nm == target) { return nm; }
+            if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return nm; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
     var di: i32 = 0;
     while (di < s.struct_decls.len()) {
