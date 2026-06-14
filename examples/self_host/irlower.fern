@@ -2014,6 +2014,12 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
+                    // A scalar VALUE receiver (`(3.5).m()`) isn't struct-typed —
+                    // resolve its primitive receiver type so an f64-returning
+                    // method `<f64>.m` is recognised as an f64 value. Without this
+                    // `a.m() as i32` masked the double's low 32 bits (→ garbage)
+                    // instead of truncating via f64_to_i32.
+                    if (crty == "") { crty = expr_recv_prim_type(cfa.obj, s); }
                     if (crty == "") { return false; }
                     return s.is_f64_ret_fn(crty + "." + cfa.field);
                 },
