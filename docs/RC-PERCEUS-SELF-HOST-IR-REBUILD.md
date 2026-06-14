@@ -1175,3 +1175,62 @@ path (the iteration adds only a few module-level passes, not a per-function cost
 Verified: caller-before-callee reclaims (value + detector sound), escape chains
 still rejected, mutual recursion sound; arm64 stage-2 self-compile stays green; full
 RC gate green with two added `caller-before-callee` cases in the targeted test.
+
+---
+
+## Status + next major slice: struct/enum in-place reuse (FBIP) (2026-06-14)
+
+### What's done
+
+The array-reclaim Perceus arc is COMPLETE on the self-host IR (merged): direct
+borrow reclamation (#3087), inter-procedural borrow inference computed once on the
+emit path (#3126), iterated to full convergence (#3143), and widened to all
+scalar-element arrays — `i64[]`/`f64[]` literals (#3150) and `i64[]`/`f64[]`-
+returning calls (#3160). Array FBIP is already realised implicitly: `__fern_arr_dec`
+returns buffers to a size-class freelist, so a precise drop makes the next same-size
+allocation reuse the freed buffer.
+
+A probe sweep (`asm_pathprobe_run`) confirmed the IR subset is otherwise
+COMPREHENSIVE: maps (with `import "core/map"`), options, f-strings (`f"..${e}.."`),
+structs, enums, tuples, closures, dyn-traits, slices, `i64`/`f64`/`u32`/`u64`,
+recursion, compound-assign, nested arrays all route to the IR path, and all are
+already gated by the ~120 `self_host_*_ir_test.go` files. (Every apparent gap was
+invalid syntax — backticks, `i32?`, lowercase `none`, `.push()`/`.sort()`, brace
+map-literals — or a missing import; none is a real IR gap.)
+
+### The next major Perceus slice (not yet started — large, atomic)
+
+Struct/enum **in-place reuse** (native `computeReuseSources` / `consumingMatchReuse`,
+ir.go ~3661): pair a drop site D (a reclaimable struct/enum box freed by the
+exit-sweep) with a construction site C of the same shape later in the function, and
+have C **reuse D's box in place** instead of free-then-alloc — the general FBIP win;
+the marquee case is a consuming `match` arm that rebuilds the same variant
+(zero-alloc map/fold over a linked structure).
+
+Concrete touch points in this codebase (from investigation):
+
+- **Construction site:** `irlower.fern:2568` `op_struct_make(type_name, ndecl)` is
+  where a fresh struct box is allocated; the reuse-aware variant takes a reuse token
+  (a freed same-size box ptr) and uses it instead of allocating, falling back to
+  alloc when no token is live.
+- **Drop site:** `emit_dec_sweep_except` (~6499) + `slot_is_reclaimable_struct` +
+  `emit_struct_field_drops` (~6231) free reclaimable struct locals at exit. Reuse
+  must *take* such a box (suppress its free, hand its ptr to C) instead of freeing —
+  native's `reuseConsumed[D]` marks D so `computePreciseDrops` doesn't ALSO drop it.
+- **Analysis:** a `reuseSources` pass pairing each C with a compatible D (same struct
+  type / box size, D dead before C, D not escaping). Mirrors `computeReuseSources`.
+- **New IR op / token:** either a `reuse` field on `op_struct_make` or a paired
+  `op_take_box` (drop→token) + `op_struct_make_reuse` (token→box). Defined in
+  `ir.fern`, emitted by all THREE backends (`asm_ir` / `asm_arm64_ir` / `wasm_ir`).
+- **Runtime:** the alloc-or-reuse is trivial given the freelist — `op_struct_make`
+  already allocs; reuse just skips the alloc and writes fields into the taken box
+  (same size guaranteed by the pairing).
+
+**Why it's atomic (no incremental stub):** the `deadcode` CI job rejects dormant
+unused code, so unlike native's flag-gated `RcReuseEnabled` landing, the first slice
+must be wired in AND active. Scope the first slice to the simplest SOUND case
+(a single reclaimable struct local D dead before a single same-type `op_struct_make`
+C in straight-line code — no match, no aliasing) to bound it. Gate set: the usual
+`TestSelfHostAsmRunX86_64` (auto-routes to IR) + byte-identical fixpoint/stage-2 on
+both arches + `TestSelfHostStdTestE2E` + the RC suites + a new reuse e2e with the
+`__rc_underflow()` detector at 0 + a firing proof (one fewer alloc than before).
