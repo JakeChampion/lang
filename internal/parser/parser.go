@@ -266,6 +266,24 @@ func (p *parser) parseProgram() *ast.Program {
 		isPub := false
 		if p.match(lexer.Keyword, "pub") {
 			pubTok := p.advance()
+			// `pub use "path".{name, …};` — a re-export. Handled here
+			// rather than as a normal `pub <decl>` because it produces a
+			// PubUse, not a Public-flagged declaration.
+			if p.match(lexer.Keyword, "use") {
+				pu, err := p.parsePubUse(pubTok.Pos)
+				if err != nil {
+					p.errors = append(p.errors, err)
+					p.syncToTopLevel()
+					if p.i == before {
+						p.advance()
+					}
+					continue
+				}
+				if pu != nil {
+					prog.PubUses = append(prog.PubUses, pu)
+				}
+				continue
+			}
 			if !p.match(lexer.Keyword, "function") &&
 				!p.match(lexer.Keyword, "struct") &&
 				!p.match(lexer.Keyword, "enum") &&
@@ -551,6 +569,45 @@ func (p *parser) parseImport() (*ast.Import, error) {
 		LocalName: localName,
 		Alias:     alias,
 	}, nil
+}
+
+// parsePubUse parses `pub use "<path>" . { name1, name2, … } ;` — a
+// re-export of the named public symbols from the target module. The
+// leading `pub` is already consumed (its position is pubPos); the `use`
+// keyword is at the cursor. See docs/PRELUDE-TO-MODULES.md.
+func (p *parser) parsePubUse(pubPos ast.Position) (*ast.PubUse, error) {
+	p.advance() // use
+	pathTok, err := p.expect(lexer.String, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "."); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	var names []string
+	for !p.match(lexer.Punct, "}") {
+		nameTok, err := p.expectMemberName()
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, nameTok.Text)
+		if _, ok := p.accept(lexer.Punct, ","); !ok {
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		return nil, p.errorf(pubPos, "`pub use` must name at least one symbol, e.g. `pub use \"std/string\".{split};`")
+	}
+	return &ast.PubUse{P: pubPos, Path: pathTok.Text, Names: names}, nil
 }
 
 // importLocalName returns the binding name a qualified call uses

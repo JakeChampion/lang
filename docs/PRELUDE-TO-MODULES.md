@@ -278,3 +278,45 @@ Tasks:
       test pins that an unimported `.split` is a clean type
       error rather than silently resolving.
 - [x] Phase 6 — docs (`docs/STDLIB.md`).
+
+## `pub use` re-exports
+
+With explicit imports, a library that wants to present a curated public
+surface — or a project that wants a small facade/prelude module — can
+**re-export** symbols from other modules with `pub use`:
+
+```fern
+// facade.fern — a curated public API assembled from focused modules
+pub use "./helpers".{add5, clamp};
+pub use "core/int".{int_to_string};
+```
+
+A consumer then imports the facade and uses the re-exported names through
+the facade's qualifier; they resolve to the *original* module's
+definition (no copy is made):
+
+```fern
+import "./facade";
+function main(): i32 { return facade.add5(10); }   // → helpers__add5(10)
+```
+
+Semantics:
+
+- Only **public** symbols can be re-exported (re-exporting a private name
+  errors: `module "helpers" does not export "secret"`).
+- A re-exported name becomes part of the re-exporting module's public
+  surface, so it can be re-exported again (transitive chains resolve to
+  the ultimate original).
+- This is the intended fix for the stdlib's `__`-helper leak: a module can
+  keep its internals out of its public qualifier and re-export only the
+  curated names (pairs with a future `pub(package)` visibility level).
+
+Implementation (`internal/modload/modload.go`): `pub use` targets are
+loaded like imports; after mangle prefixes are assigned,
+`resolveReexports` builds a per-module `reexports` table (name → original
+mangled name) and adds the names to the module's public set, so the
+rewriter resolves a consumer's `facade.name` to the original flat name.
+Parsed by `parsePubUse` into `ast.PubUse`.
+
+**v1 scope**: function and const (value) re-exports. Type/trait
+re-exports and self-host-compiler support are follow-ups.

@@ -287,6 +287,23 @@ type module struct {
 	// to decide whether `mod.X` should suggest `pub function X`
 	// (default) or `pub const X` (when X is a known private const).
 	allConsts map[string]bool
+	// reexports maps a `pub use`-re-exported name to the flat mangled
+	// name it ultimately resolves to (e.g. "split" → "helpers__split").
+	// A consumer's `thismod.split` rewrites to that mangled name rather
+	// than `thismod__split`. Filled by resolveReexports after mangle
+	// prefixes are assigned. See docs/PRELUDE-TO-MODULES.md.
+	reexports map[string]string
+	// pubUses records this module's `pub use` directives (resolved
+	// target path + names) so resolveReexports can build the reexports
+	// table once every module + its prefix is known.
+	pubUses []pubUseEntry
+}
+
+// pubUseEntry is one resolved `pub use "path".{names…};` directive.
+type pubUseEntry struct {
+	childPath string
+	names     []string
+	pos       ast.Position
 }
 
 // loadRecursive parses path (if not already loaded), then recurses
@@ -354,6 +371,17 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 			return err
 		}
 	}
+	// `pub use "path".{…};` re-export targets are loaded like imports so
+	// the target module's decls are in the combined program; the actual
+	// re-export table is built later (resolveReexports), once mangle
+	// prefixes are known.
+	pubUsePaths := make([]string, len(prog.PubUses))
+	for i, pu := range prog.PubUses {
+		pubUsePaths[i] = resolveImportPath(dir, pu.Path)
+		if err := loadRecursive(pubUsePaths[i], loaded, stack, srcs, overrides, lit); err != nil {
+			return err
+		}
+	}
 
 	mod := &module{
 		path:          path,
@@ -367,6 +395,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicConsts:  map[string]bool{},
 		publicEnums:   map[string]bool{},
 		allConsts:     map[string]bool{},
+		reexports:     map[string]string{},
 	}
 	for _, fn := range prog.Funcs {
 		// Stamp every FuncDecl with the path of the module that
@@ -438,6 +467,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		// pointer in a second pass once every module is loaded.
 		mod.imports[imp.LocalName] = child
 		mod.importPaths[imp.LocalName] = childPaths[i]
+	}
+	for i, pu := range prog.PubUses {
+		mod.pubUses = append(mod.pubUses, pubUseEntry{childPath: pubUsePaths[i], names: pu.Names, pos: pu.P})
 	}
 	loaded[path] = mod
 	return nil
@@ -644,6 +676,9 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 		}
 	}
 	assignManglePrefixes(loaded, entryPath)
+	if err := resolveReexports(loaded); err != nil {
+		return nil, err
+	}
 	var firstErr error
 	for _, mod := range loaded {
 		errs := mod.rewriteAll(mod.manglePrefix)
@@ -736,6 +771,85 @@ func assignManglePrefixes(loaded map[string]*module, entryPath string) {
 		m.manglePrefix = pref
 		used[pref] = true
 	}
+}
+
+// exportedMangled resolves a name in this module to the flat mangled
+// name a consumer would call, if the name is part of this module's
+// public surface. Re-exports are checked first (so a re-exported name
+// resolves to its *original* module's mangled name, not this module's),
+// then this module's own public funcs/consts (values) and structs/enums/
+// traits (types). isType marks the latter.
+func (m *module) exportedMangled(name string) (mangled string, isType bool, ok bool) {
+	if mg, ok := m.reexports[name]; ok {
+		return mg, false, true
+	}
+	if m.publicFuncs[name] || m.publicConsts[name] {
+		return m.manglePrefix + name, false, true
+	}
+	if m.publicStructs[name] || m.publicEnums[name] {
+		return m.manglePrefix + name, true, true
+	}
+	return "", false, false
+}
+
+// resolveReexports builds every module's `reexports` table from its
+// `pub use` directives, now that mangle prefixes are assigned. A
+// re-exported name is also added to the re-exporting module's public
+// funcs so a consumer's visibility check passes. Resolution iterates to
+// a fixpoint so a re-export of a name that the target itself re-exports
+// resolves once the target's entry is filled. v1 supports value
+// (function / const) re-exports; a type/trait re-export is a clear error.
+func resolveReexports(loaded map[string]*module) error {
+	paths := make([]string, 0, len(loaded))
+	for p := range loaded {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	type pending struct {
+		mod     *module
+		child   *module
+		name    string
+		pos     ast.Position
+		modPath string
+	}
+	var work []pending
+	for _, p := range paths {
+		mod := loaded[p]
+		for _, pu := range mod.pubUses {
+			child := loaded[pu.childPath]
+			for _, name := range pu.names {
+				work = append(work, pending{mod: mod, child: child, name: name, pos: pu.pos, modPath: p})
+			}
+		}
+	}
+
+	for len(work) > 0 {
+		progress := false
+		remaining := work[:0]
+		for _, w := range work {
+			if w.child == nil {
+				return fmt.Errorf("%s: `pub use` target module was not loaded", w.modPath)
+			}
+			mangled, isType, ok := w.child.exportedMangled(w.name)
+			if !ok {
+				remaining = append(remaining, w)
+				continue
+			}
+			if isType {
+				return fmt.Errorf("%s:%s: `pub use` of type %q is not supported yet (re-export functions and consts)", w.modPath, w.pos, w.name)
+			}
+			w.mod.reexports[w.name] = mangled
+			w.mod.publicFuncs[w.name] = true
+			progress = true
+		}
+		work = remaining
+		if len(work) > 0 && !progress {
+			w := work[0]
+			return fmt.Errorf("%s:%s: module %q does not export %q (cannot `pub use` it)", w.modPath, w.pos, importLocalName(w.child.path), w.name)
+		}
+	}
+	return nil
 }
 
 // isRuntimeHelperName reports whether a function name should be
@@ -1286,6 +1400,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 				if mod, prefix, ok := r.importedModule(id.Name); ok {
 					r.checkPublicFunc(mod, fa.Field, fa.P)
 					mangled := prefix + fa.Field
+					// A `pub use`-re-exported name resolves to its original
+					// module's mangled name, not this module's prefix.
+					if rx, ok := mod.reexports[fa.Field]; ok {
+						mangled = rx
+					}
 					// Preserve the source-level call site so the
 					// LSP can resolve hover / goto-def on `fn` in
 					// `mod.fn()` after we rewrite the AST to a
@@ -1317,7 +1436,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if mod, prefix, ok := r.importedModule(id.Name); ok {
 				r.checkPublicValue(mod, x.Field, x.P)
-				*slot = &ast.Ident{P: id.P, Name: prefix + x.Field}
+				target := prefix + x.Field
+				if rx, ok := mod.reexports[x.Field]; ok {
+					target = rx
+				}
+				*slot = &ast.Ident{P: id.P, Name: target}
 				return
 			}
 		}

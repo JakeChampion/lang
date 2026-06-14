@@ -2328,6 +2328,8 @@ type Program struct {
 	// stitches the combined program before the checker runs.
 	// Single-file programs leave this empty.
 	Imports []*Import
+	// PubUses holds the module's `pub use "path".{…};` re-exports.
+	PubUses []*PubUse
 	// ModuleImports records each loaded module's transitive import
 	// closure. The map is keyed by module path; each entry is the
 	// set of module paths reachable via `import` chains starting
@@ -2414,6 +2416,21 @@ type Import struct {
 	// LocalName so the printer can round-trip the `as` clause.
 	Alias string
 }
+
+// PubUse is a `pub use "path".{name1, name2};` re-export: the named
+// public symbols of the target module become part of *this* module's
+// public surface, so an importer of this module can reference them as
+// `thismod.name` and they resolve to the original module's definition
+// (no copy is made). modload loads the target like an import and records
+// a per-module re-export table; the rewriter resolves a re-exported
+// `mod.name` to the original mangled flat name. See docs/PRELUDE-TO-MODULES.md.
+type PubUse struct {
+	P     Position
+	Path  string   // import path of the module being re-exported from
+	Names []string // the public names re-exported (in source order)
+}
+
+func (d *PubUse) Pos() Position { return d.P }
 
 // Pos accessors for top-level declarations that aren't also Stmts.
 // FuncDecl already has Pos() via its Stmt role; the rest need their
