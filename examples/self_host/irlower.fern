@@ -6371,12 +6371,22 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
         var elig: boolean = false;
+        var elem_t: string = rt;
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) { elig = true; }
         else if (is_enum_like_name(rt, structs)) { elig = true; }
+        // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
+        // struct type so a call site `var a = f()` (already is_arr via
+        // arr_ret_fns) recovers `a[i]`'s struct type for field access / foreach.
+        // The slot is an array, so struct_type_of_slot is read as the element
+        // type (expr_struct_type reports "" for the array value itself). #3035.
+        else if (rt.len() >= 3 && rt[rt.len() - 2 : rt.len()] == "[]") {
+            var et: string = rt[0 : rt.len() - 2];
+            if (decl_is_struct(structs, et) && decl_is_leaksafe(structs, et)) { elig = true; elem_t = et; }
+        }
         if (elig) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
-            out = out.append(key + "|" + rt);
+            out = out.append(key + "|" + elem_t);
         }
         k = k + 1;
     }
