@@ -3929,6 +3929,11 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                     if (men != "") { return s.opt_ret_type(men + "." + scfa.field); }
                     return "";
                 },
+                // An if-/match-EXPRESSION scrutinee (`match (if (c) { Some(7) }
+                // else { None }) { … }`) — a 0-arg IIFE. Recover the Option type
+                // from the leaf branch's Some(...) via iife_leaf_value (unwrapping
+                // any nesting), so the value-position match lowers.
+                parser.ExprLambda(_) => { return some_opt_type(iife_leaf_value(inner), s); },
                 _ => { return ""; }
             }
         },
@@ -5900,6 +5905,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                                     }
                                                 }
                                             },
+                                            // An if-/match-EXPRESSION scrutinee
+                                            // (`match (if (c) { Some(7) } else { None })`)
+                                            // — a 0-arg IIFE. Recover the Option type from
+                                            // the leaf branch's Some(...) via iife_leaf_value
+                                            // (unwrapping any nesting).
+                                            parser.ExprLambda(_) => { srt = some_opt_type(iife_leaf_value(m.scrutinee), ms); },
                                             _ => {}
                                         }
                                     },
