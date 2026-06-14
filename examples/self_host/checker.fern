@@ -576,6 +576,26 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
     return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0 };
 }
 
+// has_array_method reports whether an auto-discovered std/array method
+// `__method_Array_<field>` is in scope. The function is in scope only when
+// std/array is imported; the bundler (flatten.bundle) mangles it to
+// `<mod>__` + `__method_Array_<field>`, so the in-scope sig is either the bare
+// convention name (the native modload path, which keeps `__method_` bare) or a
+// mangled name ENDING in it. Match both so the array-method-existence check
+// resolves an imported method whichever loader built the table.
+function (s: Scope) has_array_method(field: string): boolean {
+    var target: string = "__method_Array_" + field;
+    var tn: i32 = target.len();
+    var i: i32 = 0;
+    while (i < s.sigs.len()) {
+        var nm: string = s.sigs[i].name;
+        if (nm == target) { return true; }
+        if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function (s: Scope) lookup_struct(name: string): StructSig {
     var i: i32 = 0;
     while (i < s.structs.len()) {
@@ -3336,6 +3356,22 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 if (!is_unknown(wvt) && !type_assignable(wvt, ar.elem, s.unions)) {
                                     out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt), expr_line(c.args[1]), expr_col(c.args[1])));
                                 }
+                            }
+                            // E043 (array method existence): only `append` / `with`
+                            // / `len` are unconditional array builtins. Every other
+                            // method is an auto-discovered std/array function —
+                            // `__method_Array_<name>`, in scope only when std/array
+                            // is imported — or a user-defined array method. When the
+                            // call is none of those it names a non-existent method.
+                            // Mirrors the Go checker, which registers append/with/len
+                            // unconditionally and resolves the rest from the imported
+                            // module (so `a.sum()` without `import "std/array"` is
+                            // E043, but resolves with it). User methods on a raw
+                            // array type aren't a case — Go forbids them (E021) — so
+                            // only the builtins + auto-discovered functions count.
+                            if (mfa.field != "append" && mfa.field != "with" && mfa.field != "len"
+                                    && !s.has_array_method(mfa.field)) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
                             }
                         },
                         TypeStruct(sn) => {
