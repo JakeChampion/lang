@@ -1009,6 +1009,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"i64-append-build", "function main(): i32 { var a: i64[] = []; var i = 0; while (i < 4) { a = a.append((i as i64) * 5000000000); i = i + 1; } if (a[3] == 15000000000 as i64) { return 0; } return 1; }"},
 		{"i64-sort-asc", "function main(): i32 { var a: i64[] = []; a = a.append(9 as i64); a = a.append(3 as i64); a = a.append(6 as i64); var k = 1; while (k < 3) { var key: i64 = a[k]; var j = k - 1; while (j >= 0 && a[j] > key) { a = a.with(j + 1, a[j]); j = j - 1; } a = a.with(j + 1, key); k = k + 1; } if (a[0] == 3 as i64 && a[2] == 9 as i64) { return 0; } return 1; }"},
 		{"u64-append-with-big", "function main(): i32 { var xs: u64[] = []; xs = xs.append(9223372036854775809u64); xs = xs.append(3u64); xs = xs.with(1, 9223372036854775810u64); if (xs[0] != 9223372036854775809u64) { return 1; } if (xs[1] > xs[0]) { return 0; } return 2; }"},
+		// Returning a u64[] (a pointer move) — the std/sort sort_u64_asc shape.
+		// The width-64 return guard must NOT mistake the u64[] array for a scalar
+		// u64. Sorting elements spanning 2^63 proves the body's unsigned compares
+		// order them correctly through the IR path; both paths must agree.
+		{"u64-return-array", "function id(arr: u64[]): u64[] { return arr; } function main(): i32 { return id([7u64, 8u64])[1] as i32; }"},
+		{"u64-sort-big", "function srt(arr: u64[]): u64[] { var n = arr.len(); var out: u64[] = []; var i = 0; while (i < n) { out = out.append(arr[i]); i = i + 1; } var k = 1; while (k < n) { var key: u64 = out[k]; var j = k - 1; while (j >= 0 && out[j] > key) { out = out.with(j + 1, out[j]); j = j - 1; } out = out.with(j + 1, key); k = k + 1; } return out; } function main(): i32 { var s = srt([9223372036854775810u64, 9223372036854775809u64, 3u64]); if (s[0] == 3u64 && s[1] == 9223372036854775809u64 && s[2] == 9223372036854775810u64) { return 0; } return 1; }"},
 	}
 
 	for _, tc := range cases {

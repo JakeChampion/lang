@@ -5471,8 +5471,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             }
             // An i64 value returned from a non-i64 function is a width mismatch
             // the checker rejects; guard anyway so a stray i64 never lands in an
-            // i32 return slot.
-            if (infer_expr_width(r.value, s) == 64) { return s.fail(); }
+            // i32 return slot. A u64[] ARRAY ident reports width 64 via the
+            // overloaded is_u64 flag (scalar u64 and u64[] share it), but an array
+            // return is a pointer MOVE, not a scalar — exclude array values so
+            // `return <u64[]>` (e.g. sort_u64_asc) reaches the move-on-return path
+            // instead of bailing. (i64[] uses the separate is_i64arr flag, so it
+            // already reports width 32 here.)
+            var ret_val_is_arr: boolean = false;
+            match (r.value) {
+                parser.ExprIdent(rvid) => { ret_val_is_arr = s.is_arr_slot(s.slot_of(rvid.name)); },
+                _ => {}
+            }
+            if (!ret_val_is_arr && infer_expr_width(r.value, s) == 64) { return s.fail(); }
             // Returning a scalar-array struct field aliases it out — the AST path
             // retains; bail so that RC behaviour is preserved (see StmtVar).
             if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
