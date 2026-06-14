@@ -6396,6 +6396,25 @@ function all_i32_number_elems(elems: parser.Expr[]): boolean {
     return true;
 }
 
+// all_f64_number_elems reports whether every element of an array literal is a
+// FLOAT number literal — i.e. the literal is a pure f64[]. Like i32[]/i64[], an
+// f64[] buffer holds only scalars (no nested pointers), so a sole-owner early
+// free is sound and needs no element walk. (i64[] literals are written with the
+// same non-float syntax as i32[] and are already caught by all_i32_number_elems;
+// the slot's is_i64arr flag distinguishes them at emission.)
+function all_f64_number_elems(elems: parser.Expr[]): boolean {
+    if (elems.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < elems.len()) {
+        match (elems[i]) {
+            parser.ExprNumber(num) => { if (!num.is_float) { return false; } },
+            _ => { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // all_scalar_literal_args reports whether every argument of a call is a scalar
 // LITERAL (number / boolean / string) — so the call passes NO array, hence its
 // result cannot be an alias/view of a caller-live array (it is a fresh owned
@@ -6451,18 +6470,20 @@ function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: 
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                // Candidate inits — both produce a FRESH OWNED i32[] buffer that
-                // is not an alias/view of a live value (so a sole-owner early free
-                // is sound): a pure i32 array literal, or a FREE call (not a method
-                // — a method like `.slice()` could return a view of its receiver)
-                // that returns i32[] (call_returns_i32_array) with all-scalar-
-                // literal args (so it passes no array to alias). string[] / f64[] /
-                // i64[] / nested-array inits are excluded (their buffers hold
-                // pointers / wide values, and a string[] init crashed the
-                // self-host).
+                // Candidate inits — both produce a FRESH OWNED scalar-element
+                // buffer that is not an alias/view of a live value (so a sole-owner
+                // early free is sound): a pure SCALAR-NUMBER array literal (i32[] /
+                // i64[] via all_i32_number_elems, f64[] via all_f64_number_elems —
+                // all flat scalar buffers, no nested pointers), or a FREE call (not
+                // a method — a method like `.slice()` could return a view of its
+                // receiver) that returns i32[] (call_returns_i32_array) with
+                // all-scalar-literal args (so it passes no array to alias). string[]
+                // / nested-array inits stay excluded (their buffers hold pointers
+                // needing an element walk, and a string[] init crashed the
+                // self-host); the emission-site slot guard enforces this.
                 var is_lit: boolean = false;
                 match (v.init) {
-                    parser.ExprArray(arrl) => { is_lit = all_i32_number_elems(arrl.elements); },
+                    parser.ExprArray(arrl) => { is_lit = all_i32_number_elems(arrl.elements) || all_f64_number_elems(arrl.elements); },
                     parser.ExprCall(c) => {
                         match (c.callee) {
                             parser.ExprIdent(cid) => {
@@ -7092,9 +7113,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         while (pi < pdrops.idxs.len()) {
             if (pdrops.idxs[pi] == j) {
                 var dslot: i32 = s.slot_of(pdrops.names[pi]);
+                // Reclaim any scalar-element array slot (i32[] / i64[] / f64[] are
+                // all is_arr and freed by the exit dec-sweep with the same
+                // __fern_rc_dec); the precise drop just moves that dec earlier and
+                // zeroes the slot. string[] (strarr) and nested arrays (arrarr) stay
+                // excluded — their buffers hold pointers needing an element walk.
                 if (dslot >= s.n_params && s.is_arr_slot(dslot)
-                        && !s.is_strarr_slot(dslot) && !s.is_f64arr_slot(dslot)
-                        && !s.is_i64arr_slot(dslot) && !s.is_arrarr_slot(dslot)) {
+                        && !s.is_strarr_slot(dslot) && !s.is_arrarr_slot(dslot)) {
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());
