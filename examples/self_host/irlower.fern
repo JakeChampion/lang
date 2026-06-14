@@ -6183,6 +6183,30 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         // types the bound name from the variant struct's field type
                         // so downstream dispatch routes correctly. A `_` / empty
                         // binding skips that field.
+                        // Discriminate an enum variant (`enum E { V(T) }`, whose
+                        // desugaring gives a synthetic `__ev` payload field at
+                        // offset 8) from a union member (`type X = A | B`, where
+                        // `A`/`B` are pre-existing structs with their REAL fields
+                        // and NO `__ev`). For a union member the variant box ptr
+                        // IS the value, so bind the WHOLE scrutinee pointer typed
+                        // with the variant's struct name — a later field read
+                        // (`Num(x) => x.value`) then resolves. This mirrors the
+                        // legacy AST emitter's `is_enum_variant` split
+                        // (asm.fern:3677-3693): enum variant -> offset-8 payload,
+                        // union member -> bind the box ptr itself.
+                        var union_member: boolean = decl_field_type(ms.structs, vname, "__ev") == "";
+                        if (union_member) {
+                            // Union member: a single binding bound to the box ptr,
+                            // typed `vname` so `x.field` resolves. No struct_get /
+                            // offset — the variant box pointer is the value.
+                            if (pv.binding.len() > 0 && pv.binding != "_") {
+                                ms = ms.add_local(pv.binding);
+                                var umslot: i32 = ms.slot_of(pv.binding);
+                                ms = ms.emit(ir.op_load_local(scrut_slot));
+                                ms = ms.emit(ir.op_store_local(umslot));
+                                ms = ms.mark_struct_type(umslot, vname);
+                            }
+                        } else {
                         var nbinds: i32 = 1 + pv.extra_bindings.len();
                         var bidx: i32 = 0;
                         while (bidx < nbinds) {
@@ -6236,6 +6260,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 }
                             }
                             bidx = bidx + 1;
+                        }
                         }
                         // Guard: `Variant(x) if <cond> =>` runs the body only when
                         // the guard is true; the binding is in scope, so the guard
