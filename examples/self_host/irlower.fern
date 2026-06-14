@@ -2974,6 +2974,64 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     }
                     return sc.emit(ir.op_call_direct(cid.name, c.args.len()));
                 },
+                // `fns[i](args)` — calling an element of a function-value ARRAY
+                // inline. A CLOSURE array (`is_closurearr`, elements are env boxes
+                // [funcval, caps…]) uses the env-first form (stash the box, push it
+                // as the __env first arg, the declared args, then box[0] as the
+                // target, call_indirect(arity+1)) — the same as a closure LOCAL.
+                // A plain fn-POINTER array (`[inc, dbl]`, elements are bare
+                // function pointers) just lowers the args, then the element (the
+                // fn pointer on TOS), and call_indirect(arity) — like calling a
+                // fn-value LOCAL. (`var f = fns[i]; f(args)` already lowers via the
+                // local paths; this handles the inline form.)
+                parser.ExprIndex(cidx) => {
+                    var is_clo_arr: boolean = false;
+                    var idx_is_arr: boolean = false;
+                    match (cidx.array) {
+                        parser.ExprIdent(caid) => {
+                            var caslot: i32 = s.slot_of(caid.name);
+                            is_clo_arr = s.is_closurearr_slot(caslot);
+                            idx_is_arr = s.is_arr_slot(caslot);
+                        },
+                        _ => {}
+                    }
+                    if (is_clo_arr) {
+                        var bxs: LowerState = lower_expr(c.callee, s);   // the box (fns[i])
+                        if (!bxs.ok) { return bxs; }
+                        var btmp: string = "$cloelem" + util.i32_to_string(bxs.local_names.len());
+                        bxs = bxs.add_local(btmp);
+                        var btslot: i32 = bxs.slot_of(btmp);
+                        bxs = bxs.emit(ir.op_store_local(btslot));
+                        bxs = bxs.emit(ir.op_load_local(btslot));   // __env (the box)
+                        var cca: i32 = 0;
+                        while (cca < c.args.len()) {
+                            bxs = lower_expr(c.args[cca], bxs);
+                            if (!bxs.ok) { return bxs; }
+                            cca = cca + 1;
+                        }
+                        bxs = bxs.emit(ir.op_load_local(btslot));
+                        bxs = bxs.emit(ir.op_const_i32(0));
+                        bxs = bxs.emit(ir.op_arr_get(32));
+                        return bxs.emit(ir.op_call_indirect(c.args.len() + 1));
+                    }
+                    if (idx_is_arr) {
+                        // Plain fn-pointer array element: args, then the element
+                        // (the fn pointer), then call_indirect(arity). The checker
+                        // guarantees the element is callable (a non-fn array indexed
+                        // in call position wouldn't type-check).
+                        var pfs: LowerState = s;
+                        var pfa: i32 = 0;
+                        while (pfa < c.args.len()) {
+                            pfs = lower_expr(c.args[pfa], pfs);
+                            if (!pfs.ok) { return pfs; }
+                            pfa = pfa + 1;
+                        }
+                        pfs = lower_expr(c.callee, pfs);   // fns[i] -> fn pointer on TOS
+                        if (!pfs.ok) { return pfs; }
+                        return pfs.emit(ir.op_call_indirect(c.args.len()));
+                    }
+                    return s.fail();
+                },
                 parser.ExprFieldAccess(fa) => {
                     var mrslot: i32 = 0 - 1;
                     match (fa.obj) {
