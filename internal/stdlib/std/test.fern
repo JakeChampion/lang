@@ -178,21 +178,7 @@ pub function test_new(suite: string): TestRunner {
 // flag without hand-rolling the argv plumbing.
 pub function test_new_filtered(suite: string, filter: string): TestRunner {
     var r: TestRunner = test_new(suite);
-    return TestRunner {
-        suite: r.suite,
-        passed: r.passed,
-        failed: r.failed,
-        skipped: r.skipped,
-        failures: r.failures,
-        skip_reasons: r.skip_reasons,
-        verbose: r.verbose,
-        prefix: r.prefix,
-        base_idx: r.base_idx,
-        cleanup_paths: r.cleanup_paths,
-        filter: filter,
-        fail_fast: r.fail_fast,
-        quiet: r.quiet,
-    };
+    return TestRunner { ...r, filter: filter };
 }
 
 // parse_filter_from_args(args) — scan a `args()`-style
@@ -244,21 +230,7 @@ pub function test_new_fail_fast(suite: string): TestRunner {
 // `r` via `test_new(...)` opt into fail-fast based on a
 // CLI flag without having to discard the runner.
 pub function (r: TestRunner) with_fail_fast(): TestRunner {
-    return TestRunner {
-        suite: r.suite,
-        passed: r.passed,
-        failed: r.failed,
-        skipped: r.skipped,
-        failures: r.failures,
-        skip_reasons: r.skip_reasons,
-        verbose: r.verbose,
-        prefix: r.prefix,
-        base_idx: r.base_idx,
-        cleanup_paths: r.cleanup_paths,
-        filter: r.filter,
-        fail_fast: true,
-        quiet: r.quiet,
-    };
+    return TestRunner { ...r, fail_fast: true };
 }
 
 // `parse_fail_fast_from_args(argv)` — true iff `--fail-fast`
@@ -304,21 +276,7 @@ pub function test_new_quiet(suite: string): TestRunner {
 // `test_new(...)` opt into quiet based on a CLI flag
 // without having to discard the runner.
 pub function (r: TestRunner) with_quiet(): TestRunner {
-    return TestRunner {
-        suite: r.suite,
-        passed: r.passed,
-        failed: r.failed,
-        skipped: r.skipped,
-        failures: r.failures,
-        skip_reasons: r.skip_reasons,
-        verbose: r.verbose,
-        prefix: r.prefix,
-        base_idx: r.base_idx,
-        cleanup_paths: r.cleanup_paths,
-        filter: r.filter,
-        fail_fast: r.fail_fast,
-        quiet: true,
-    };
+    return TestRunner { ...r, quiet: true };
 }
 
 // `parse_quiet_from_args(argv)` — true iff `--quiet`
@@ -342,21 +300,7 @@ pub function parse_quiet_from_args(argv: string[]): boolean {
 // or extra context to passing cases.
 pub function test_new_verbose(suite: string): TestRunner {
     var r: TestRunner = test_new(suite);
-    return TestRunner {
-        suite: r.suite,
-        passed: r.passed,
-        failed: r.failed,
-        skipped: r.skipped,
-        failures: r.failures,
-        skip_reasons: r.skip_reasons,
-        verbose: true,
-        prefix: r.prefix,
-        base_idx: r.base_idx,
-        cleanup_paths: r.cleanup_paths,
-        filter: r.filter,
-        fail_fast: r.fail_fast,
-        quiet: r.quiet,
-    };
+    return TestRunner { ...r, verbose: true };
 }
 
 // (r) it(name, result) — record the outcome of one test.
@@ -398,21 +342,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
             if (!r.quiet) {
                 print("ok " + idx.to_string() + " - " + display);
             }
-            return TestRunner {
-                suite: r.suite,
-                passed: r.passed + 1,
-                failed: r.failed,
-                skipped: r.skipped,
-                failures: r.failures,
-                skip_reasons: r.skip_reasons,
-                verbose: r.verbose,
-                prefix: r.prefix,
-                base_idx: r.base_idx,
-                cleanup_paths: r.cleanup_paths,
-                filter: r.filter,
-                fail_fast: r.fail_fast,
-                quiet: r.quiet,
-            };
+            return TestRunner { ...r, passed: r.passed + 1 };
         },
         Some(msg) => {
             print("not ok " + idx.to_string() + " - " + display);
@@ -420,21 +350,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
             print("  message: " + msg);
             print("  ---");
             var fs: string[] = r.failures.append(display + ": " + msg);
-            return TestRunner {
-                suite: r.suite,
-                passed: r.passed,
-                failed: r.failed + 1,
-                skipped: r.skipped,
-                failures: fs,
-                skip_reasons: r.skip_reasons,
-                verbose: r.verbose,
-                prefix: r.prefix,
-                base_idx: r.base_idx,
-                cleanup_paths: r.cleanup_paths,
-                filter: r.filter,
-                fail_fast: r.fail_fast,
-                quiet: r.quiet,
-            };
+            return TestRunner { ...r, failed: r.failed + 1, failures: fs };
         }
     }
 }
@@ -461,21 +377,7 @@ pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
         print("ok " + idx.to_string() + " - " + display + " # SKIP " + reason);
     }
     var sr: string[] = r.skip_reasons.append(display + ": " + reason);
-    return TestRunner {
-        suite: r.suite,
-        passed: r.passed,
-        failed: r.failed,
-        skipped: r.skipped + 1,
-        failures: r.failures,
-        skip_reasons: sr,
-        verbose: r.verbose,
-        prefix: r.prefix,
-        base_idx: r.base_idx,
-        cleanup_paths: r.cleanup_paths,
-        filter: r.filter,
-        fail_fast: r.fail_fast,
-        quiet: r.quiet,
-    };
+    return TestRunner { ...r, skipped: r.skipped + 1, skip_reasons: sr };
 }
 
 // (r) skip_if(cond, name, reason, result) — conditional run.
@@ -514,14 +416,16 @@ pub function (r: TestRunner) skip_if(cond: boolean, name: string, reason: string
 // the only nesting signal. Two-level nesting works too
 // (`arm.subsuite("regress")`) by chaining the prefixes.
 pub function (r: TestRunner) subsuite(name: string): TestRunner {
+    // Spread `...r` carries the config fields (verbose / filter /
+    // fail_fast / quiet) forward; the overrides below reset the
+    // counters + accumulators and re-root the prefix / base_idx.
     return TestRunner {
-        suite: r.suite,
+        ...r,
         passed: 0,
         failed: 0,
         skipped: 0,
         failures: [],
         skip_reasons: [],
-        verbose: r.verbose,
         prefix: r.prefix + name + " / ",
         // Inherit the parent's running count so the subsuite's
         // first case prints `ok N+1` rather than restarting at
@@ -533,12 +437,6 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
         // them. Empty here — the child accumulates its own as
         // tests register them.
         cleanup_paths: [],
-        // The child inherits the parent's filter so a
-        // `--filter PATTERN` applied at the top level applies
-        // to every nested case too.
-        filter: r.filter,
-        fail_fast: r.fail_fast,
-        quiet: r.quiet,
     };
 }
 
@@ -569,19 +467,13 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
     var sr: string[] = __append_all(r.skip_reasons, child.skip_reasons);
     var cl: string[] = __append_all(r.cleanup_paths, child.cleanup_paths);
     return TestRunner {
-        suite: r.suite,
+        ...r,
         passed: r.passed + child.passed,
         failed: r.failed + child.failed,
         skipped: r.skipped + child.skipped,
         failures: fs,
         skip_reasons: sr,
-        verbose: r.verbose,
-        prefix: r.prefix,
-        base_idx: r.base_idx,
         cleanup_paths: cl,
-        filter: r.filter,
-        fail_fast: r.fail_fast,
-        quiet: r.quiet,
     };
 }
 
@@ -603,21 +495,7 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
 // would hide the actual test failure.
 pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
     var cl: string[] = r.cleanup_paths.append(path);
-    return TestRunner {
-        suite: r.suite,
-        passed: r.passed,
-        failed: r.failed,
-        skipped: r.skipped,
-        failures: r.failures,
-        skip_reasons: r.skip_reasons,
-        verbose: r.verbose,
-        prefix: r.prefix,
-        base_idx: r.base_idx,
-        cleanup_paths: cl,
-        filter: r.filter,
-        fail_fast: r.fail_fast,
-        quiet: r.quiet,
-    };
+    return TestRunner { ...r, cleanup_paths: cl };
 }
 
 // (r) log(msg) — emit a TAP comment (`# msg`) without
