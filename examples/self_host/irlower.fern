@@ -5337,7 +5337,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     var ws: LowerState = s.emit(ir.op_load_local(slot));
                                     ws = lower_expr(wc.args[0], ws);
                                     if (!ws.ok) { return ws; }
-                                    if (s.is_i64arr_slot(slot)) {
+                                    // i64[] / u64[]: 8-byte element store (u64 rides
+                                    // the i64 width; the raw store is signedness-
+                                    // agnostic). arr_set is 8-byte-slot on the register
+                                    // backends and arr_set_i64 picks i64.store on wasm.
+                                    if (s.is_i64arr_slot(slot) || (s.is_arr_slot(slot) && s.is_u64_slot(slot))) {
                                         ws = lower_i64(wc.args[1], ws);
                                         if (!ws.ok) { return ws; }
                                         return ws.emit(ir.op_arr_set_i64());
@@ -5352,7 +5356,20 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     return ws.emit(ir.op_arr_set(32));
                                 }
                                 if (self_recv && wfa.field == "append" && wc.args.len() == 1) {
-                                    if (s.is_i64arr_slot(slot) || s.is_f64arr_slot(slot)) { return s.fail(); }
+                                    // f64[] append still bails (needs an f64 value +
+                                    // arr_push_f64 — a separate slice).
+                                    if (s.is_f64arr_slot(slot)) { return s.fail(); }
+                                    // i64[] / u64[] (8-byte element): lower the value as
+                                    // an i64 and grow via the 8-byte arr_push_i64. u64
+                                    // rides the i64 width here — its unsigned-ness only
+                                    // matters at scalar ops, not the raw 8-byte store.
+                                    if (s.is_i64arr_slot(slot) || (s.is_arr_slot(slot) && s.is_u64_slot(slot))) {
+                                        var ap8: LowerState = s.emit(ir.op_load_local(slot));
+                                        ap8 = lower_i64(wc.args[0], ap8);
+                                        if (!ap8.ok) { return ap8; }
+                                        ap8 = ap8.emit(ir.op_arr_push_i64());
+                                        return ap8.emit(ir.op_store_local(slot));
+                                    }
                                     var aps: LowerState = s.emit(ir.op_load_local(slot));
                                     aps = lower_expr(wc.args[0], aps);
                                     if (!aps.ok) { return aps; }

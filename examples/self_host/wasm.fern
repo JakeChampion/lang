@@ -7337,6 +7337,14 @@ function arr_helpers(): string {
 // `vty` is the wasm value type of the appended element (i64 / f64);
 // `sop` its store op. Existing elements are copied with a raw i64 move
 // (8 bytes, element-type-agnostic).
+// arr_push_i64_helper emits $__fern_arr_push_i64 standalone for the IR path
+// (the AST path gets it bundled inside arr_helpers). 8-byte-slot geometric-
+// growth push — the i64[] / u64[] companion to arr_push_helper's 4-byte
+// $__fern_arr_push. Depends only on $__fern_arr_box (module_allocates).
+pub function arr_push_i64_helper(): string {
+    return arr_push_wide("i64", "i64");
+}
+
 function arr_push_wide(vty: string, sop: string): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_push_" + vty + " (param $a i32) (param $v " + vty + ") (result i32)\n";
@@ -11146,6 +11154,11 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // emitting both would define $__fern_arr_push twice.
         if (wasm_ir.module_emits_op(mod, "arr_push") && !wasm_ir.module_emits_op(mod, "str_split")) {
             ir_out = ir_out + arr_push_helper();
+        }
+        // 8-byte i64[]/u64[] push — its own helper ($__fern_arr_push_i64), no
+        // str_split entanglement (str_split builds 4-byte arrays).
+        if (wasm_ir.module_emits_op(mod, "arr_push_i64")) {
+            ir_out = ir_out + arr_push_i64_helper();
         }
         // $__fern_str_split (bundles its own $__fern_arr_push via arr_push_helper).
         if (wasm_ir.module_emits_op(mod, "str_split") || wasm_ir.module_uses_str_lines(mod)) { ir_out = ir_out + str_split_helper(); }
