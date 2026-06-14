@@ -1272,7 +1272,7 @@ func formatType(t ast.Type) string {
 	case ast.SelfType:
 		return "Self"
 	case ast.DynTraitType:
-		return "dyn " + x.Trait
+		return x.String()
 	case ast.HandleType:
 		if x.Borrowed {
 			return "borrow " + x.Resource

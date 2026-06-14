@@ -72,8 +72,9 @@ function main(): i32 {
 }
 ```
 
-- `dyn Trait` is a single nominal type for one trait (no `dyn A + B` in
-  v1 — multi-trait objects are a follow-up; see §8).
+- `dyn Trait` is a trait-object type. Multi-trait objects `dyn A + B`
+  (slice 1 shipped on the interpreter; compiled backends reject) span a
+  set of traits — see §10.
 - `dyn Trait` carries no postfix generics of its own; `dyn Trait[]`
   parses as `(dyn Trait)[]` — an array of trait objects.
 - A `dyn Trait` value is produced by **coercion**: a concrete value
@@ -671,9 +672,14 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    ordinary heap-box `Option` representation. Downcast-only targets are
    rooted via `treeshake.DowncastImplMethods`. Struct/enum targets;
    primitive targets remain a follow-up.
-7. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast,
-   primitive downcast targets, `dyn` in struct fields with the fat-pointer
-   layout, RC of the produced downcast `Option`/`data` (§4.4).
+7. **Multi-trait objects (`dyn A + B`) — slice 1 IN PROGRESS (interp-first).**
+   Surface + checker + interpreter shipped; compiled backends reject a
+   multi-trait `dyn` cleanly (single-trait `dyn A` still lowers). Spec +
+   status in **§10**. Remaining: the merged-vtable compiled codegen and
+   disambiguation syntax for a method declared by two traits.
+8. **Follow-ups.** Explicit upcast, primitive downcast targets, `dyn` in
+   struct fields with the fat-pointer layout, RC of the produced downcast
+   `Option`/`data` (§4.4), and the merged-vtable codegen for `dyn A + B`.
 
 ## 8. Testing
 
@@ -785,3 +791,80 @@ E059, non-impl target → E060); e2e interp + compiled — `TestInterpDowncast`
 `TestDowncast*` (`dyn_trait_compiled_test.go`, via `dynAllBackends`):
 struct hit/miss, heterogeneous `dyn Shape[]` per-element count, an
 enum-with-payload target, and a downcast-only-target tree-shake guard.
+
+## 10. Multi-trait trait objects — `dyn A + B`
+
+A trait object can span **multiple** traits: `dyn A + B` is usable as
+both `A` and `B`. This generalises the single-trait `dyn A` (the
+1-element case, which stays 100% behaviour-identical).
+
+```fern
+trait Show  { function show(self: Self): string; }
+trait Weigh { function weight(self: Self): i32; }
+struct Apple { g: i32 }
+impl Show  for Apple { function show(self: Self): string { return "apple"; } }
+impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } }
+
+function describe(d: dyn Show + Weigh): string {
+    return d.show() + "=" + d.weight().to_string();   // a method from EACH trait
+}
+```
+
+**Syntax.** `dyn A + B + C` — the first trait name followed by zero or
+more `+ Trait` (mirroring trait-bound syntax). Each name may be
+module-qualified (`dyn mod.A + B`) and the whole thing takes the usual
+postfix `[]` (`dyn A + B[]` is an array of multi-trait objects). A
+trailing or empty `+` is a parse error.
+
+**Set semantics (sorted + deduped, order-insensitive).** The trait set
+is normalised to a sorted, deduplicated list at construction
+(`ast.NewDynTraitType`), so `dyn A + B` ≡ `dyn B + A` ≡ `dyn A + B + A`.
+`ast.Equal` is therefore a plain element-wise compare and `String()` is
+deterministic (`"dyn A + B"`). The representation is
+`DynTraitType{Traits []string}`; `Trait0()` reads the first trait for
+genuinely single-trait-only contexts (the compiled codegen path, which
+only lowers single-trait `dyn` today), while multi-trait-aware code
+iterates `Traits`.
+
+**Object-safety — ALL.** Every trait in the set must exist, be a trait,
+and be object-safe (§3). `validateDynTraitTypes` reports per offending
+trait, so `dyn Bogus + Eq` surfaces both the unknown trait and the
+non-object-safe one.
+
+**Coercion — impl-ALL.** A concrete `C` coerces to `dyn A + B` iff `C`
+implements **every** trait in the set (`Info.Impls[t][methodTypeName(C)]`
+for all `t`). The checker's `assignable` gate runs `implementsAllDynTraits`
+so every boxing site (var init, assignment, argument, array element,
+return) is covered uniformly; a failure names the missing trait(s).
+
+**Method resolution — UNION, collision = error.** A call `d.m()` resolves
+`m` across the union of the traits' method sets:
+- exactly one trait declares `m` → use it (the owning trait is recorded
+  on `Call.DynTrait` for codegen / dispatch);
+- two or more traits declare `m` → an **ambiguity error** (`E062`);
+  disambiguation syntax (e.g. `d.(A::m)()`) is a follow-up;
+- none → `no method "m" on dyn A + B` (`E021`).
+
+Dispatch is still by the receiver's **runtime concrete type** (the
+interpreter's `valueTypeName` tag), so once `m` is resolved the call
+lands on `C`'s impl exactly as for single-trait `dyn`.
+
+**Status — interp-first; compiled rejects.** Slice 1 ships the surface
+(parser), the checker (validity / coercion / resolution / ambiguity), and
+the interpreter (dispatch from any trait in the set, heterogeneous
+`dyn A + B[]`, passing to a `dyn A + B` param) — mirroring how single-
+trait `dyn`, `as?` downcast, and block-expressions shipped interp-first.
+The compiled backends **reject** a multi-trait `dyn` cleanly
+(`ir.rejectMultiTraitDyn`, a `WalkProgram` scan that fires regardless of
+the single-trait gate; clean message, no panic). Single-trait `dyn A`
+lowers exactly as before.
+
+**Planned merged-vtable codegen (later slice).** The compiled
+representation will pair the boxed `data` with a **merged vtable** that
+lays out the union of the traits' method slots (in a deterministic
+sorted-trait, then declaration order), so `OpCallDyn` indexes the right
+slot per resolved (owning-trait, method). The single-(trait,concrete)
+`collectVtables` infrastructure (§4.2) generalises to a
+(trait-set,concrete) key; `DynCoercion.Traits` already records the whole
+set so tree-shaking roots the impl methods of every trait, and
+`dynTraitNamesUsed` already collects all traits in a set.

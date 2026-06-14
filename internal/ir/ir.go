@@ -1644,6 +1644,73 @@ func rejectDynTrait(prog *ast.Program) error {
 	return nil
 }
 
+// typeHasMultiTraitDyn reports whether a type is, or nests, a multi-trait
+// `dyn A + B` (a DynTraitType with len(Traits) > 1).
+func typeHasMultiTraitDyn(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.DynTraitType:
+		return len(x.Traits) > 1
+	case ast.ArrayType:
+		return typeHasMultiTraitDyn(x.Elem)
+	case ast.SliceType:
+		return typeHasMultiTraitDyn(x.Elem)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if typeHasMultiTraitDyn(e) {
+				return true
+			}
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			if typeHasMultiTraitDyn(p) {
+				return true
+			}
+		}
+		return typeHasMultiTraitDyn(x.Result)
+	}
+	return false
+}
+
+// rejectMultiTraitDyn scans a program for any multi-trait `dyn A + B`
+// usage (function signatures, local-var annotations, downcast targets,
+// and the receiver type stamped on a dyn method call) and returns a
+// clean unsupported-feature error if any is found. Multi-trait trait
+// objects need a merged-vtable codegen that is a later slice; until then
+// they are interpreter-only. Single-trait `dyn` is unaffected. Mirrors
+// rejectDynTrait / rejectBlockExpr (WalkProgram scan, clean message, no
+// panic). See docs/DYN-TRAITS.md.
+func rejectMultiTraitDyn(prog *ast.Program) error {
+	const msg = "multi-trait `dyn A + B` is not yet supported on compiled backends; run it on the interpreter (fern -interp). Single-trait `dyn A` is supported."
+	var found bool
+	check := func(t ast.Type) {
+		found = found || typeHasMultiTraitDyn(t)
+	}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			for _, p := range x.Params {
+				check(p.Type)
+			}
+			check(x.ReturnType)
+		case *ast.Var:
+			check(x.Type)
+		case *ast.Call:
+			// A method call on a multi-trait receiver stamps the dyn
+			// set on Method.Receiver (the value itself necessarily came
+			// from a var/param/return whose type the scans above also
+			// catch, but this is a direct, robust signal).
+			if x.Method != nil {
+				check(x.Method.Receiver)
+			}
+		}
+		return true
+	})
+	if found {
+		return fmt.Errorf("ir: %s", msg)
+	}
+	return nil
+}
+
 // rejectDowncast scans a program for any `e as? T` downcast
 // (DowncastExpr) that this backend cannot lower. The fallible downcast
 // lowers to a runtime vtable-pointer compare reusing the slice-2 vtable
@@ -1705,7 +1772,12 @@ func dynTraitNamesUsed(prog *ast.Program) map[string]bool {
 	walk = func(t ast.Type) {
 		switch x := t.(type) {
 		case ast.DynTraitType:
-			used[x.Trait] = true
+			// Every trait in the set needs a vtable (multi-trait `dyn`
+			// is compiled-rejected before this runs, so today this is a
+			// 1-element loop; set-aware for when merged vtables land).
+			for _, tr := range x.Traits {
+				used[tr] = true
+			}
 		case ast.ArrayType:
 			walk(x.Elem)
 		case ast.SliceType:
@@ -2023,6 +2095,15 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		if err := rejectDynTrait(prog); err != nil {
 			return nil, err
 		}
+	}
+	// Multi-trait trait objects (`dyn A + B`) need a merged-vtable codegen
+	// that is a LATER slice (docs/DYN-TRAITS.md). Until then reject a
+	// multi-trait `dyn` cleanly on EVERY compiled backend (even those that
+	// lifted their single-trait gate), so a multi-trait program is
+	// interpreter-only rather than miscompiled through the single-trait
+	// vtable path. Single-trait `dyn` (len(Traits)==1) is unaffected.
+	if err := rejectMultiTraitDyn(prog); err != nil {
+		return nil, err
 	}
 	// The `e as? T` fallible downcast (DowncastExpr) now lowers to a
 	// runtime vtable-pointer compare on every backend that supports `dyn`

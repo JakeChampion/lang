@@ -7,6 +7,8 @@ package ast
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -187,14 +189,55 @@ type ProjType struct {
 	Name string
 }
 
-// DynTraitType is a runtime trait-object type, written `dyn Trait` in
-// type position. A concrete value whose type implements `Trait` coerces
+// DynTraitType is a runtime trait-object type, written `dyn Trait` (a
+// single trait) or `dyn A + B` (a multi-trait object) in type position.
+// A concrete value whose type implements EVERY trait in the set coerces
 // to it (the checker's assignability gate); a method call on a
-// `dyn Trait` value dispatches at runtime by the value's concrete type
+// `dyn …` value resolves the method across the UNION of the traits'
+// method sets and dispatches at runtime by the value's concrete type
 // rather than being statically rewritten. `dyn` is the open,
 // runtime-dispatched counterpart to the static `impl`/bounded-generic
 // path — see docs/DYN-TRAITS.md.
-type DynTraitType struct{ Trait string }
+//
+// Traits is kept SORTED and DEDUPED at construction (see NewDynTraitType)
+// so the set is canonical: `dyn A + B` ≡ `dyn B + A`, `Equal` is a plain
+// slice compare, and `String()` is deterministic. A single-trait
+// `dyn A` is the 1-element case. Use Trait0() for genuinely
+// single-trait-only contexts; multi-trait-aware code iterates Traits.
+type DynTraitType struct{ Traits []string }
+
+// NewDynTraitType builds a DynTraitType from a trait-name set, normalising
+// it to the canonical sorted+deduped form. Callers (the parser, modload,
+// any code synthesising a `dyn` type) should go through this so the
+// invariant holds everywhere.
+func NewDynTraitType(traits ...string) DynTraitType {
+	if len(traits) <= 1 {
+		return DynTraitType{Traits: append([]string(nil), traits...)}
+	}
+	cp := append([]string(nil), traits...)
+	sort.Strings(cp)
+	out := cp[:0]
+	var prev string
+	for i, t := range cp {
+		if i == 0 || t != prev {
+			out = append(out, t)
+			prev = t
+		}
+	}
+	return DynTraitType{Traits: out}
+}
+
+// Trait0 returns the first (and, for a single-trait object, only) trait
+// name. It is for genuinely single-trait contexts (e.g. the compiled
+// backends, which currently only lower single-trait `dyn`). Multi-trait
+// aware code must iterate Traits instead. Returns "" for an empty set
+// (should never happen for a validly-parsed type).
+func (d DynTraitType) Trait0() string {
+	if len(d.Traits) == 0 {
+		return ""
+	}
+	return d.Traits[0]
+}
 
 // HandleType is a WIT resource-handle type (P5 — docs/WIT-BRING-YOUR-OWN.md),
 // written `own R` / `borrow R` in type position where R names a top-level
@@ -300,7 +343,7 @@ func (e EnumType) String() string {
 }
 func (p ParamType) String() string    { return p.Name }
 func (SelfType) String() string       { return "Self" }
-func (d DynTraitType) String() string { return "dyn " + d.Trait }
+func (d DynTraitType) String() string { return "dyn " + strings.Join(d.Traits, " + ") }
 func (h HandleType) String() string {
 	if h.Borrowed {
 		return "borrow " + h.Resource
@@ -1009,7 +1052,18 @@ func Equal(a, b Type) bool {
 		return ok
 	case DynTraitType:
 		y, ok := b.(DynTraitType)
-		return ok && x.Trait == y.Trait
+		if !ok || len(x.Traits) != len(y.Traits) {
+			return false
+		}
+		// Both are kept sorted+deduped at construction, so an
+		// element-wise compare is order-insensitive: `dyn A + B` ≡
+		// `dyn B + A`.
+		for i := range x.Traits {
+			if x.Traits[i] != y.Traits[i] {
+				return false
+			}
+		}
+		return true
 	case HandleType:
 		y, ok := b.(HandleType)
 		return ok && x.Resource == y.Resource && x.Borrowed == y.Borrowed
