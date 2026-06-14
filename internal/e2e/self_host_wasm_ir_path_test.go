@@ -743,6 +743,15 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
 		{"repeat-zero", `function main(): i32 { return "hello".repeat(0).len() + 9; }`},
 		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
+		// A struct-valued if-/match-EXPRESSION binding (lifted to a `__lam_N`
+		// whose return type is inferred from its struct-literal body, so the
+		// `__lam_N()` call site recovers the struct type for `.field` / method
+		// dispatch). The legacy AST path also handles these, so they ride the
+		// differential gate.
+		{"struct-if-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.x + p.y; }`},
+		{"struct-match-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = match (1) { 1 => P{x:10,y:2}, _ => P{x:3,y:4} }; return p.x + p.y; }`},
+		{"struct-if-expr-direct-field", `struct P { x: i32, y: i32 } function main(): i32 { return (if (true) { P{x:7,y:2} } else { P{x:3,y:4} }).x; }`},
+		{"struct-if-expr-method", `struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { var p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.sum(); }`},
 		// NB: the str_starts_with / str_index_of FREE-function builtins exist on the
 		// x86-64 AST path but not the wasm AST path, so they can't ride this wasm
 		// differential gate — the method forms above cover the IR predicate ops, and
