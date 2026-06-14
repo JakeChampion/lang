@@ -3965,7 +3965,15 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
                 if (util.has_str(enums[j].variant_names, vn[k])) { cnt = cnt + 1; }
                 j = j + 1;
             }
-            if (cnt >= 2 && !util.has_str(out, vn[k])) { out = out.append(vn[k]); }
+            // Ambiguous if the name is declared in 2+ USER enums, OR in a user
+            // enum AND a BUILT-IN enum (Option / Result / JsonValue / IoError):
+            // e.g. `enum O { Some(i32), None }` collides with Option's
+            // Some / None, so a bare `None` must be qualified. Mirrors the Go
+            // checker, which carries the built-in enums in the same variant
+            // table the user enums register into. (cnt is >= 1 here — the
+            // current enum contains vn[k].)
+            var also_builtin: boolean = mx_builtin_enum_of(vn[k]).len() > 0;
+            if ((cnt >= 2 || also_builtin) && !util.has_str(out, vn[k])) { out = out.append(vn[k]); }
             k = k + 1;
         }
         i = i + 1;
