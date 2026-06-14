@@ -1308,6 +1308,11 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                     if (rty == "") { return ""; }
                     return s.struct_ret_type(rty + "." + fa.field);
                 },
+                // An if-/match-EXPRESSION value (`(if (c) { P{..} } else { .. }).x`)
+                // — a 0-arg IIFE; its struct type is the leaf branch's struct type
+                // (iife_leaf_value unwraps any nesting), so a direct `.field` /
+                // `.method()` on it resolves.
+                parser.ExprLambda(_) => { return expr_struct_type(iife_leaf_value(e), s); },
                 _ => { return ""; }
             }
         },

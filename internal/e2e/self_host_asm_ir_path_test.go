@@ -622,6 +622,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"arr-ifexpr-struct-elem", `struct P { x: i32 } function main(): i32 { var c = 5; var a = [if (c > 3) { P { x: 7 } } else { P { x: 1 } }]; return a[0].x; }`},
 		{"arr-ifexpr-struct-foreach", `struct P { x: i32 } function main(): i32 { var c = 5; var a = [if (c > 3) { P { x: 7 } } else { P { x: 1 } }, P { x: 2 }]; var s = 0; for p in a { s = s + p.x; } return s; }`},
 		{"arr-matchexpr-struct-elem", `struct P { x: i32 } function main(): i32 { var k = 1; var a = [match (k) { 1 => P { x: 9 }, _ => P { x: 0 } }]; return a[0].x; }`},
+		// Field access / method dispatch directly on an if-/match-EXPRESSION:
+		// expr_struct_type now resolves an IIFE value's struct type via
+		// iife_leaf_value, so `(if (c) { P{..} } else { .. }).field` lowers (#3186).
+		{"ifexpr-field-direct", `struct P { x: i32 } function main(): i32 { var c = 5; return (if (c > 3) { P { x: 7 } } else { P { x: 1 } }).x; }`},
+		{"ifexpr-method-direct", `struct P { x: i32 } function (p: P) g(): i32 { return p.x; } function main(): i32 { var c = 5; return (if (c > 3) { P { x: 7 } } else { P { x: 1 } }).g(); }`},
+		{"matchexpr-field-direct", `struct P { x: i32 } function main(): i32 { var k = 1; return (match (k) { 1 => P { x: 9 }, _ => P { x: 0 } }).x; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
