@@ -3497,25 +3497,39 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             }
         },
         parser.ExprFieldAccess(fa) => {
-            // A qualified variant reference `Enum.Variant` — the object names a
-            // declared enum/union (registered as a UnionSig) or a built-in enum
-            // (Option / Result / …), and the field is one of its variants. This
-            // is NOT a value field-read: the object is a type qualifier, not a
-            // resolvable value, so recursing into it would mis-fire E001
-            // ("undefined name"). The Go checker accepts `O.None` / `Color.Red`
-            // silently; skip the object recursion for these. (Module-qualified
-            // names like `parser.Foo` never reach here — modload mangles them to
-            // bare names before checking.)
-            var is_qual_variant: boolean = false;
+            // A qualified reference `Enum.Variant` — the object names a declared
+            // enum/union (registered as a UnionSig) or a built-in enum (Option /
+            // Result / …). This is NOT a value field-read: the object is a type
+            // qualifier, not a resolvable value, so recursing into it would
+            // mis-fire E001 ("undefined name"). When the field IS one of the
+            // enum's variants the reference is well-formed and silent (the Go
+            // checker accepts `O.None` / `Color.Red`); when it ISN'T, it's a
+            // bad qualified variant — E036, matching Go ("enum X has no variant
+            // Y"). Either way the object recursion is skipped. A name bound as a
+            // local shadows the enum, so it's a genuine field access — left to
+            // the normal path. (Module-qualified names like `parser.Foo` never
+            // reach here — modload mangles them to bare names before checking.)
+            var is_qual_ref: boolean = false;
             match (fa.obj) {
                 parser.ExprIdent(oid) => {
-                    var ou: UnionSig = s.lookup_union(oid.name);
-                    if (ou.name.len() > 0 && util.has_str(ou.variants, fa.field)) { is_qual_variant = true; }
-                    if (mx_builtin_enum_of(fa.field) == oid.name) { is_qual_variant = true; }
+                    if (is_unknown(s.lookup(oid.name))) {
+                        var ou: UnionSig = s.lookup_union(oid.name);
+                        if (ou.name.len() > 0) {
+                            is_qual_ref = true;
+                            if (!util.has_str(ou.variants, fa.field)) {
+                                out = out.append(dg_at("E036", "enum " + oid.name + " has no variant \"" + fa.field + "\"", fa.line, fa.col));
+                            }
+                        } else if (is_reserved_enum_name(oid.name)) {
+                            is_qual_ref = true;
+                            if (mx_builtin_enum_of(fa.field) != oid.name) {
+                                out = out.append(dg_at("E036", "enum " + oid.name + " has no variant \"" + fa.field + "\"", fa.line, fa.col));
+                            }
+                        }
+                    }
                 },
                 _ => { }
             }
-            if (is_qual_variant) { return out; }
+            if (is_qual_ref) { return out; }
             out = call_diags(fa.obj, s);
             // E043: a field READ on a struct that has no such field (and no
             // method of that name). Method-call callees never reach here
