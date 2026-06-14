@@ -1114,6 +1114,15 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             var asline: i32 = p.peek_line();
             var ascol: i32 = p.peek_col();
             p = p.advance();
+            // `expr as? Type` downcast (docs/DYN-TRAITS.md §9): an `as`
+            // immediately followed by `?` is the fallible `dyn Trait`
+            // downcast, NOT the numeric/ascription cast. Disambiguate by
+            // peeking the `?` here and tagging the unary op `as?_<Type>`
+            // (vs the plain `as_<Type>`); irlower lowers it to a shape
+            // read + compare yielding Option[T]. Consume the `?` now so it
+            // binds to `as` and isn't mis-read as the postfix `?` try op.
+            var is_downcast: boolean = false;
+            if (p.peek_punct() == "?") { is_downcast = true; p = p.advance(); }
             var tyname: string = p.peek_ident();
             if (tyname.len() == 0) { tyname = p.peek_keyword(); }
             if (tyname.len() > 0) { p = p.advance(); }
@@ -1139,7 +1148,8 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                     }
                 }
             }
-            base = e_unary_at("as_" + tyname, base, asline, ascol);
+            if (is_downcast) { base = e_unary_at("as?_" + tyname, base, asline, ascol); }
+            else { base = e_unary_at("as_" + tyname, base, asline, ascol); }
         } else if (p.peek_punct() == "?") {
             // `expr?` try operator. Desugar to the unary op `try_`
             // (operand = base); the emitter unwraps a Some/Ok payload

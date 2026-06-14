@@ -328,6 +328,9 @@ pub function module_allocates(mod: parser.Module): boolean {
             // dyn_box allocates the 16-byte primitive `dyn` cell via
             // $__fern_str_box (docs/DYN-TRAITS.md §4.2.3).
             if (k == "dyn_box") { return true; }
+            // dyn_downcast allocates the Some/None Option box via $__fern_str_box
+            // (docs/DYN-TRAITS.md §9).
+            if (k == "dyn_downcast") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -1159,6 +1162,29 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(irlower.prim_type_id(structs, o.str)) + "\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "dyn_downcast") {
+            // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
+            // pointer carrying its concrete type id @0) is on the stack. Stash it,
+            // read the id @0 and compare to T's struct_type_id (the SAME id
+            // struct_make stores / dyn_dispatch compares): equal → Some(value)
+            // box [tag0@0, payload@4]; else → None box [tag1@0, 0@4] — the 8-byte
+            // i32-payload Option box (matching opt_make/opt_none) a downstream
+            // `match` reads with opt_tag/opt_payload.
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
+            out = out + "    if (result i32)\n";
+            // hit: Some(value) — 8-byte box [tag0@0, payload(dyn ptr)@4].
+            out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 0\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    else\n";
+            // miss: None — 8-byte box [tag1@0, 0@4].
+            out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    end\n";
         } else if (o.kind == "const_func") {
             // A function VALUE is its slot index in the module's funcref table
             // (fn_table). The table is built over the address-taken functions in

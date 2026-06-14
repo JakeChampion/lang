@@ -81,6 +81,27 @@ var dynTraitIRCases = []struct {
 	// dispatches. 5 -> show() returns 5: pick().show() = 5.
 	{"prim-i32-return",
 		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self; } } function pick(): dyn Show { return 5; } function main(): i32 { var d: dyn Show = pick(); return d.show(); }`, 5},
+
+	// --- `e as? T` downcast (docs/DYN-TRAITS.md §9) ---
+	// The downcast reads the dyn value's offset-0 shape and compares it to T's
+	// interned shape: Some(v) on an exact match (v IS the concrete T pointer),
+	// else None. The result is an ordinary Option a `match` reads.
+
+	// HIT: a `dyn Shape` holding a Circle, `s as? Circle` → Some(circle); the
+	// bound value is usable as a Circle (field `r`). r = 7.
+	{"downcast-hit",
+		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { var c: Circle = Circle { r: 7 }; return dc(c); }`, 7},
+	// MISS: a `dyn Shape` holding a Rect, `s as? Circle` → None → 0.
+	{"downcast-miss",
+		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { var r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, 0},
+	// The OTHER target on the same value: a `dyn Shape` Rect, `s as? Rect` → Some;
+	// w*h = 2*5 = 10.
+	{"downcast-hit-rect",
+		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Rect) { Some(re) => { return re.w * re.h; }, None => { return 0; } } } function main(): i32 { var r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, 10},
+	// HETEROGENEOUS `dyn Shape[]`: downcast each element to Circle and count the
+	// hits. [Circle, Rect, Circle] → 2 circles.
+	{"downcast-array-count",
+		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function count(xs: dyn Shape[]): i32 { var n: i32 = 0; for x in xs { match (x as? Circle) { Some(c) => { n = n + 1; }, None => { } } } return n; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Circle { r: 1 }]; return count(xs); }`, 2},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64

@@ -154,6 +154,8 @@ function module_uses_heap(mod: parser.Module): boolean {
             if (r.ops[i].kind == "alloc_u8" || r.ops[i].kind == "arr_push" || r.ops[i].kind == "str_from_bytes") { return true; }
             // dyn_box allocates the 16-byte primitive `dyn` cell (docs/DYN-TRAITS.md §4.2.3).
             if (r.ops[i].kind == "dyn_box") { return true; }
+            // dyn_downcast allocates the Some/None Option box (docs/DYN-TRAITS.md §9).
+            if (r.ops[i].kind == "dyn_downcast") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -2511,6 +2513,34 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    leaq .S" + util.i32_to_string(dbl.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
+        } else if (o.kind == "dyn_downcast") {
+            // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
+            // pointer carrying its concrete shape @0) is on top of the operand
+            // (machine) stack. Read its shape and compare to T's interned shape
+            // (the SAME .S label struct_make / dyn_dispatch use, so pointer
+            // identity holds): equal → Some(value) box [tag0@0, payload@8]; else
+            // → None box [tag1@0, 0@8] — the ordinary Option box `match` reads.
+            // The dyn value rides the machine stack across __fern_alloc (like
+            // opt_make/dyn_box), so the hit path reuses it as the Some payload.
+            var dcl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = dcl.state;
+            var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
+            var dcend: string = lp + "dcend" + util.i32_to_string(i);
+            s = s.write("    movq (%rsp), %rax\n");        // peek dyn ptr (left on stack)
+            s = s.write("    movq (%rax), %rcx\n");        // shape @0
+            s = s.write("    leaq .S" + util.i32_to_string(dcl.idx) + "(%rip), %rdx\n");
+            s = s.write("    cmpq %rdx, %rcx\n    jne " + dcmiss + "\n");
+            // hit: Some(value) — pop the dyn ptr as payload.
+            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            s = s.write("    movq $0, (%rax)\n");
+            s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
+            s = s.write("    jmp " + dcend + "\n");
+            // miss: None — discard the dyn ptr, build a payloadless tag-1 box.
+            s = s.write(dcmiss + ":\n");
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            s = s.write("    movq $1, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
+            s = s.write(dcend + ":\n");
         } else if (o.kind == "const_func") {
             // A function VALUE is the function's code address — push it. Register
             // backends need no funcref table (unlike wasm's table index): the

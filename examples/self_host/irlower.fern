@@ -2859,6 +2859,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // their value-converting path; an unsupported operand (e.g. a bare
             // `None` to an Option target) makes lower_expr bail, and the caller
             // falls back to the AST path.
+            // `e as? T` fallible downcast (docs/DYN-TRAITS.md §9): the parser
+            // tags this `as?_<T>`. `e` is a `dyn Trait` value (a heap pointer
+            // carrying its concrete shape at offset 0); lower it, then
+            // op_dyn_downcast reads that shape, compares to T's interned shape,
+            // and yields Some(e) on an exact match / None otherwise — an
+            // ordinary Option box a downstream `match` reads normally. The
+            // self-host checker is permissive here (the Go checker is the strict
+            // §9 gate), so we don't re-validate the dyn/impl relationship.
+            if (u.op.len() > 4 && u.op[0:4] == "as?_") {
+                var dcs: LowerState = lower_expr(u.operand, s);
+                if (!dcs.ok) { return dcs; }
+                return dcs.emit(ir.op_dyn_downcast(u.op[4 : u.op.len()]));
+            }
             if (u.op.len() > 3 && u.op[0:3] == "as_" && !is_numeric_cast_op(u.op)) {
                 return lower_expr(u.operand, s);
             }
@@ -3920,6 +3933,12 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
             }
         },
         parser.ExprIdent(sid) => { return s.opt_type_of_slot(s.slot_of(sid.name)); },
+        // `e as? T` downcast (docs/DYN-TRAITS.md §9) → Option[T]; the parser tags
+        // it `as?_<T>`.
+        parser.ExprUnary(sun) => {
+            if (sun.op.len() > 4 && sun.op[0:4] == "as?_") { return "Option[" + sun.op[4 : sun.op.len()] + "]"; }
+            return "";
+        },
         parser.ExprFieldAccess(sfa) => {
             // `t.N` where the tuple element is an Option/Result — recover from the
             // element's tracked tag (a numeric field; mirrors the main StmtMatch
@@ -5766,6 +5785,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                         }
                                     },
                                     parser.ExprIdent(sid) => { srt = ms.opt_type_of_slot(ms.slot_of(sid.name)); },
+                                    // `match (e as? T)` — the downcast scrutinee
+                                    // (docs/DYN-TRAITS.md §9) yields Option[T]; the
+                                    // parser tags it `as?_<T>`, so the Some-arm
+                                    // payload binds as a T (struct) value.
+                                    parser.ExprUnary(sun) => {
+                                        if (sun.op.len() > 4 && sun.op[0:4] == "as?_") { srt = "Option[" + sun.op[4 : sun.op.len()] + "]"; }
+                                    },
                                     // `match (p.opt)` where `opt` is an Option/Result
                                     // struct field — recover its type from the field.
                                     // `match (t.N)` where the tuple element is an
