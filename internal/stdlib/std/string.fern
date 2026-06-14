@@ -642,26 +642,34 @@ pub function (s: string) shift_byte(delta: i32): string {
     return string_from_bytes(buf);
 }
 
+// `__byte_in_set(b, set)` — true iff byte `b` appears anywhere
+// in `set`. The shared inner loop behind without_chars /
+// contains_only / count_chars_in (and any future set-membership
+// string verb). Plain i32/string -> bool (no closures), so it
+// stays inside the self-host fixed-point emit surface.
+function __byte_in_set(b: i32, set: string): boolean {
+    var j: i32 = 0;
+    var setLen: i32 = set.len();
+    while (j < setLen) {
+        if (set[j] == b) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
 // `s.without_chars(set)` — remove every byte from s that
 // appears anywhere in `set`. Empty set → unchanged.
 // ASCII-level character class semantics.
 pub function (s: string) without_chars(set: string): string {
     var n: i32 = s.len();
     if (n == 0) { return s; }
-    var setLen: i32 = set.len();
-    if (setLen == 0) { return s; }
+    if (set.len() == 0) { return s; }
     var buf: u8[] = __alloc_u8(n);
     var pos: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
-        var found: boolean = false;
-        var j: i32 = 0;
-        while (j < setLen) {
-            if (set[j] == b) { found = true; }
-            j = j + 1;
-        }
-        if (!found) {
+        if (!__byte_in_set(b, set)) {
             buf = buf.with(pos, b as u8);
             pos = pos + 1;
         }
@@ -682,18 +690,10 @@ pub function (s: string) without_chars(set: string): string {
 pub function (s: string) contains_only(set: string): boolean {
     var n: i32 = s.len();
     if (n == 0) { return true; }
-    var setLen: i32 = set.len();
-    if (setLen == 0) { return false; }
+    if (set.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
-        var found: boolean = false;
-        var j: i32 = 0;
-        while (j < setLen) {
-            if (set[j] == b) { found = true; }
-            j = j + 1;
-        }
-        if (!found) { return false; }
+        if (!__byte_in_set(s[i], set)) { return false; }
         i = i + 1;
     }
     return true;
@@ -704,17 +704,11 @@ pub function (s: string) contains_only(set: string): boolean {
 // Empty set → 0.
 pub function (s: string) count_chars_in(set: string): i32 {
     var n: i32 = s.len();
-    var setLen: i32 = set.len();
-    if (n == 0 || setLen == 0) { return 0; }
+    if (n == 0 || set.len() == 0) { return 0; }
     var c: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
-        var j: i32 = 0;
-        while (j < setLen) {
-            if (set[j] == b) { c = c + 1; j = setLen; }
-            j = j + 1;
-        }
+        if (__byte_in_set(s[i], set)) { c = c + 1; }
         i = i + 1;
     }
     return c;
