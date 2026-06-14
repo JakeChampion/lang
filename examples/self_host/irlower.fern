@@ -4759,8 +4759,25 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         match (ic.callee) {
                             parser.ExprLambda(ilam) => {
                                 if (ilam.body.len() > 0) {
-                                    var bst: string = expr_struct_type(iife_first_return_expr(ilam.body[0]), se);
+                                    var bre: parser.Expr = iife_first_return_expr(ilam.body[0]);
+                                    var bst: string = expr_struct_type(bre, se);
                                     if (bst != "" && decl_is_struct(se.structs, bst)) { struct_ty = bst; }
+                                    else {
+                                        // A struct-ARRAY-valued if-/match-expression
+                                        // (`var ps = if (c) { [P { .. }] } else { … }`):
+                                        // record the ELEMENT struct type and mark the
+                                        // slot is_arr (a fresh owned move, rc=1, no
+                                        // alias_inc), so `ps[i].field` resolves.
+                                        match (bre) {
+                                            parser.ExprArray(bra) => {
+                                                if (bra.elements.len() > 0) {
+                                                    var est: string = expr_struct_type(bra.elements[0], se);
+                                                    if (est != "" && decl_is_struct(se.structs, est)) { struct_ty = est; is_arr = true; }
+                                                }
+                                            },
+                                            _ => {}
+                                        }
+                                    }
                                 }
                             },
                             _ => {}
