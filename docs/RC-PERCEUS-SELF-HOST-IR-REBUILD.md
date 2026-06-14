@@ -1234,3 +1234,54 @@ C in straight-line code — no match, no aliasing) to bound it. Gate set: the us
 `TestSelfHostAsmRunX86_64` (auto-routes to IR) + byte-identical fixpoint/stage-2 on
 both arches + `TestSelfHostStdTestE2E` + the RC suites + a new reuse e2e with the
 `__rc_underflow()` detector at 0 + a firing proof (one fewer alloc than before).
+
+---
+
+## Struct in-place reuse (FBIP) — landed shapes + the enum blocker (2026-06-14)
+
+Three FBIP reuse shapes now lower on the self-host IR (all pure-lowering, no backend
+changes, gated by the byte-identical self-compile fixpoint):
+
+1. **Functional-update self-overwrite** (#3177): `var c = T { ...d, f: v }` with `d`
+   a fresh, non-escaping, never-reassigned same-type struct local dead after the
+   statement → reuse `d`'s box; write the overrides, bind `c`, zero `d`'s slot.
+2. **Array / wide-scalar fields** (#3191): widened candidacy from i32/boolean-only to
+   any struct whose fields are scalar (i32/boolean/i64/f64/u32/u64) or leaksafe-array
+   (i32[]/boolean[]/i64[]/f64[]). An overridden array field's OLD value is released
+   (`struct_get` + `__fern_rc_dec`) before the fresh override is written.
+3. **Cross-statement donor pairing** (#3202): a full `var c = T { .. }` (no base)
+   reuses the box of an earlier dead same-type local; deterministic
+   nearest-from-the-front unconsumed-donor pairing (self-overwrite sites excluded),
+   each donor consumed once.
+
+### Consuming-`match` enum reuse — NOT a contained slice (blocked; do NOT retry as-is)
+
+The marquee FBIP (zero-alloc map/fold: `match (x) { A(p) => B(g(p)) }` reusing the
+consumed scrutinee box) is blocked structurally in the current IR. Verified in
+`irlower.fern`:
+
+- The match scrutinee enum box is **never reclaimable and never freed — it deliberately
+  leaks**. Payload bindings are BORROWS (`struct_get` reads, box intact); the scrutinee
+  is pushed into the escape set by `walk_expr_escapes` (a bare-ident scrutinee escapes),
+  so it is never in `reclaimable_names` and never swept.
+- Enum-variant locals are never even reclaim candidates: `collect_fresh_in_stmt` /
+  `is_fresh_struct_init` only collect `ExprStructLit` inits; an enum box is built from an
+  `ExprCall` via `op_struct_make` and sits outside the reclaimable-struct machinery
+  (`emit_dec_sweep_except` sweeps only `slot_is_reclaimable_struct`).
+- Both existing reuse emitters work by redirecting a box that **was already going to be
+  freed at exit** (an RC-tracked reclaimable donor) and zeroing the donor slot so it's
+  freed exactly once via the new binding. The scrutinee box is neither RC-tracked nor
+  reclaimed, so the zero-the-slot/free-once trick has nothing to hook into.
+- The reuse dispatch lives only in `lower_func`'s TOP-LEVEL statement loop; it never
+  descends into match-arm bodies (`lower_block`).
+
+**Prerequisite for a future attempt** (sizeable, soundness-critical, goal-2 territory):
+make consuming-match enum scrutinee boxes RC-reclaimable single-owner values — extend
+`is_fresh_struct_init`/`collect_fresh_in_stmt` to recognise variant-constructor
+`ExprCall`s and the dec-sweep to deep-drop+free enum boxes (this changes the leak
+invariant for ALL enum locals and risks double-frees on shared/escaping enums, so it
+must keep the fixpoint), add a consuming-scrutinee classification (exclude the bare-ident
+scrutinee from "escape" only when the scrutinee is fresh/single-owner/dead-after-match),
+and thread a reuse token into arm-body lowering with same-variant-box-size analysis.
+There is NO minimal sound slice before that prerequisite lands — you cannot reuse a box
+the compiler currently leaks and does not own.
