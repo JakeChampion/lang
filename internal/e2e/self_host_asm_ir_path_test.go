@@ -563,6 +563,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-str-unit", `enum C { A, B } function main(): i32 { var c: C = A; var s = match (c) { A => "xx", B => "y" }; return s.len(); }`},
 		{"matchexpr-str-3arm", `enum C { R, G, B } function pick(c: C): string { return match (c) { R => "red", G => "green", B => "blue" }; } function main(): i32 { return pick(G).len(); }`},
 		{"matchexpr-str-payload", `enum E { N(i32), Z } function f(e: E): string { return match (e) { N(n) => if (n > 0) { "pos" } else { "neg" }, Z => "zero" }; } function main(): i32 { return f(N(5)).len() + f(Z).len(); }`},
+		// f64-valued if / match expressions: the inline temp is an 8-byte f64 temp
+		// (the binding tracks the result as f64). i64 results stay on the AST path.
+		{"ifexpr-f64", `function main(): i32 { var n = 5; var f = if (n > 3) { 1.5 } else { 2.5 }; return (f * 2.0) as i32; }`},
+		{"ifexpr-f64-return", `function pick(n: i32): f64 { return if (n > 0) { 1.5 } else { 0.5 }; } function main(): i32 { return (pick(5) * 10.0) as i32; }`},
+		{"ifexpr-f64-elseif", `function main(): i32 { var n = 5; var f = if (n > 10) { 1.0 } else if (n > 3) { 2.5 } else { 9.0 }; return (f * 2.0) as i32; }`},
+		{"matchexpr-f64", `enum C { A, B } function main(): i32 { var c: C = A; var f = match (c) { A => 1.5, B => 2.5 }; return (f * 10.0) as i32; }`},
+		{"matchexpr-f64-3arm", `enum C { R, G, B } function w(c: C): f64 { return match (c) { R => 1.5, G => 2.5, B => 3.5 }; } function main(): i32 { return (w(G) * 10.0) as i32; }`},
 		{"i64-cmp", `function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`},
 		{"i64-add", `function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`},
 		{"i64-mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`},

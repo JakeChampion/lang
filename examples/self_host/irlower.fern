@@ -1891,6 +1891,19 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprCall(c) => {
+            // An f64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
+            // — classify by its first branch's returned value, so `var f = if (…)
+            // { 1.5 } else { 2.5 }` tracks f as an f64.
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprLambda(lam) => {
+                        if (lam.params.len() == 0 && lam.body.len() == 1) {
+                            return expr_is_f64(iife_first_return_expr(lam.body[0]), s);
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // A call to an f64-returning free function OR method is an f64 value.
             match (c.callee) {
                 parser.ExprIdent(cid) => { return s.is_f64_ret_fn(cid.name); },
@@ -3665,11 +3678,15 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): 
             var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
             var ts: LowerState = s.add_local(tmp);
             var tslot: i32 = ts.slot_of(tmp);
-            // A STRING-valued if-expression stores a string pointer in the temp
-            // (same slot mechanics as i32); mark the temp a string so the branch
-            // tails admit string results and the loaded value dispatches as a
-            // string (`.len()` / concat). i32 stays the default.
-            if (expr_is_str(iife_first_return_expr(lam.body[0]), ts)) { ts = ts.mark_str(tslot, true); }
+            // Type the inline temp from the if-expression's result (the first
+            // branch's returned value classifies it, since all branches share a
+            // type): an f64 temp (8-byte) for a float result, else a string temp
+            // (pointer) for a string result, else the default i32 temp. The temp
+            // type steers the branch-tail value lowering + the loaded value's
+            // downstream dispatch.
+            var ifre: parser.Expr = iife_first_return_expr(lam.body[0]);
+            if (expr_is_f64(ifre, ts)) { ts = ts.mark_f64(tslot, true); }
+            else if (expr_is_str(ifre, ts)) { ts = ts.mark_str(tslot, true); }
             var rs: LowerState = lower_value_if(iff, tslot, ts);
             if (!rs.ok) { return rs; }
             return rs.emit(ir.op_load_local(tslot));
@@ -3722,7 +3739,9 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     // type). The payload-width gate below is orthogonal — a string result from
     // an i32-payload arm (`A(n) => n.to_string()`) still binds n as i32.
     if (m.arms.len() > 0 && m.arms[0].body.len() > 0) {
-        if (expr_is_str(iife_first_return_expr(m.arms[0].body[0]), ts)) { ts = ts.mark_str(tslot, true); }
+        var mfre: parser.Expr = iife_first_return_expr(m.arms[0].body[0]);
+        if (expr_is_f64(mfre, ts)) { ts = ts.mark_f64(tslot, true); }
+        else if (expr_is_str(mfre, ts)) { ts = ts.mark_str(tslot, true); }
     }
     // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
     // payload is i32, so the i32 temp stays the right width. An Option/Result
@@ -3751,9 +3770,11 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
         if (arm.body.len() != 1) { return s.fail(); }
         match (arm.body[0]) {
             parser.StmtReturn(r) => {
-                if (expr_is_f64(r.value, ts)) { return s.fail(); }
-                // String result admitted only into a string temp (set above for a
-                // string-valued match); otherwise a string into the i32 temp bails.
+                // f64 / string results admitted only into a matching temp (set
+                // above for an f64- / string-valued match); otherwise into the i32
+                // temp they bail. The rewritten `tmp = E` store is steered by the
+                // temp's slot type.
+                if (expr_is_f64(r.value, ts) && !ts.is_f64_slot(tslot)) { return s.fail(); }
                 if (expr_is_str(r.value, ts) && !ts.is_str_slot(tslot)) { return s.fail(); }
                 if (infer_expr_width(r.value, ts) == 64) { return s.fail(); }
                 var nbody: parser.Stmt[] = [parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 }];
@@ -3803,7 +3824,15 @@ function lower_value_tail(body: parser.Stmt[], tslot: i32, s: LowerState): Lower
     var last: parser.Stmt = body[body.len() - 1];
     match (last) {
         parser.StmtReturn(r) => {
-            if (expr_is_f64(r.value, cs)) { return s.fail(); }
+            // An f64 result is admitted into an f64 temp (an f64-valued if-expr —
+            // lower_iife marked the temp); the 8-byte store/load is steered by the
+            // temp's f64 slot type. An f64 into a non-f64 temp still bails.
+            if (expr_is_f64(r.value, cs)) {
+                if (!cs.is_f64_slot(tslot)) { return s.fail(); }
+                cs = lower_expr(r.value, cs);
+                if (!cs.ok) { return cs; }
+                return cs.emit(ir.op_store_local(tslot));
+            }
             // A string result is admitted only when the temp is a STRING temp
             // (a string-valued if/match-expression — lower_iife marked it); the
             // pointer store/load is otherwise identical to the i32 path. A string
