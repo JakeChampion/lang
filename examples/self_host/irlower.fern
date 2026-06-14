@@ -560,6 +560,19 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
             if (t == "") {
                 match (c.callee) {
                     parser.ExprIdent(cid) => { t = s.opt_ret_type(cid.name); },
+                    // `b.find()` where b's method returns Option/Result — keyed
+                    // "<Type>.<method>" (struct receiver) or "Option.<m>" /
+                    // "Result.<m>" (an Option/Result-receiver method, recursively).
+                    // Lets a chained `b.find().map(...)` recover the inner result
+                    // (#3066).
+                    parser.ExprFieldAccess(cfa) => {
+                        var mrty: string = expr_struct_type(cfa.obj, s);
+                        if (mrty != "") { t = s.opt_ret_type(mrty + "." + cfa.field); }
+                        else {
+                            var mrb: string = opt_recv_base_type(cfa.obj, s);
+                            if (mrb != "") { t = s.opt_ret_type(mrb + "." + cfa.field); }
+                        }
+                    },
                     _ => {}
                 }
             }
@@ -3492,22 +3505,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // dispatch call_direct("Option.<method>") — base_type_name
                     // strips the payload, matching the emitted label — with the
                     // receiver as arg 0, mirroring the struct-method path (#3031).
-                    var orty: string = "";
-                    match (fa.obj) {
-                        parser.ExprIdent(orid) => { orty = s.opt_type_of_slot(s.slot_of(orid.name)); },
-                        parser.ExprCall(orc) => {
-                            orty = some_opt_type(fa.obj, s);
-                            if (orty == "") {
-                                match (orc.callee) {
-                                    parser.ExprIdent(orcid) => { orty = s.opt_ret_type(orcid.name); },
-                                    _ => {}
-                                }
-                            }
-                        },
-                        _ => {}
-                    }
-                    if (orty.len() >= 8 && (orty[0:7] == "Option[" || orty[0:7] == "Result[")) {
-                        var odt: string = util.base_type_name(orty);
+                    var odt: string = opt_recv_base_type(fa.obj, s);
+                    if (odt != "") {
                         var om: LowerState = lower_expr(fa.obj, s);
                         if (!om.ok) { return om; }
                         var oai: i32 = 0;
