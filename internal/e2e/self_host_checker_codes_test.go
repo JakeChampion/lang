@@ -249,6 +249,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"typed-arr-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }, P { x: 2 }]; return 0; }\n", nil},
 		{"typed-arr-union-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", nil},
 		{"typed-arr-union-bad", "struct P { x: i32 }\nstruct Q { y: i32 }\nstruct R { z: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }, R { z: 3 }]; return 0; }\n", []string{"E034"}},
+		// E034 in non-var positions: the same composite-array element check at
+		// a `T[]` return, a `T[]` call argument, and a reassignment to a `T[]`
+		// variable. Union element types still widen (members ok).
+		{"arr-elem-return-bad", "struct P { x: i32 }\nfunction f(): P[] { return [P { x: 1 }, 5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"arr-elem-return-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U[] { return [P { x: 1 }, Q { y: 2 }]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"arr-elem-arg-bad", "struct P { x: i32 }\nfunction f(a: P[]): i32 { return 0; }\nfunction main(): i32 { return f([P { x: 1 }, 5]); }\n", []string{"E034"}},
+		{"arr-elem-assign-bad", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }]; a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
 		// E043 (method-call on a numeric scalar): i32 / f64 carry no methods,
 		// so any `x.m(...)` on one is a field access on a non-struct. Valid
 		// string / array / struct method calls stay clean (no false positive).
