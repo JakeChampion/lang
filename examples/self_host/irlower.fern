@@ -544,6 +544,33 @@ pub function some_opt_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// opt_recv_base_type returns "Option" / "Result" if `e` is an Option/Result
+// VALUE — an opt-typed local/param, a direct `Some(x)`, or an Option/Result-
+// returning free call — else "". It's the dispatch base for an Option/Result-
+// RECEIVER method (`Some(5).map(...)` / `r.map(...)`): the method is keyed
+// "Option.<m>" / "Result.<m>" (base_type_name of the receiver type), so a
+// `var x = <opt>.m()` binding or a `match (<opt>.m())` scrutinee recovers the
+// result's Option/Result type via opt_ret_type. #3049.
+pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
+    var t: string = "";
+    match (e) {
+        parser.ExprIdent(id) => { t = s.opt_type_of_slot(s.slot_of(id.name)); },
+        parser.ExprCall(c) => {
+            t = some_opt_type(e, s);
+            if (t == "") {
+                match (c.callee) {
+                    parser.ExprIdent(cid) => { t = s.opt_ret_type(cid.name); },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    if (t.len() >= 7 && t[0:7] == "Option[") { return "Option"; }
+    if (t.len() >= 7 && t[0:7] == "Result[") { return "Result"; }
+    return "";
+}
+
 // "string" for a string, a struct type name for a struct, "fn" for a function
 // value, "Option[T]" for an Option value, "i64"/"f64" for an 8-byte scalar, else
 // "i32" (scalar). The 8-byte tags drive the wasm tuple's per-element
@@ -3737,6 +3764,10 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                     // key by "<Type>.<method>".
                     var mrty: string = expr_struct_type(scfa.obj, s);
                     if (mrty != "") { return s.opt_ret_type(mrty + "." + scfa.field); }
+                    // An Option/Result-RECEIVER method (`r.map()`) — key
+                    // "Option.<m>" / "Result.<m>" (#3049).
+                    var mrb: string = opt_recv_base_type(scfa.obj, s);
+                    if (mrb != "") { return s.opt_ret_type(mrb + "." + scfa.field); }
                     return "";
                 },
                 _ => { return ""; }
@@ -4453,6 +4484,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             // later `match (o)` recovers the payload type.
                             var irty: string = expr_struct_type(ifa.obj, se);
                             if (irty != "") { opt_ty = se.opt_ret_type(irty + "." + ifa.field); }
+                            // An Option/Result-RECEIVER method (`Some(5).map()` /
+                            // `r.map()`) keyed "Option.<m>" / "Result.<m>" (#3049).
+                            else {
+                                var irb: string = opt_recv_base_type(ifa.obj, se);
+                                if (irb != "") { opt_ty = se.opt_ret_type(irb + "." + ifa.field); }
+                            }
                         },
                         _ => {}
                     }
@@ -5355,6 +5392,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                                 if (srt == "") {
                                                     var mrty: string = expr_struct_type(scfa.obj, ms);
                                                     if (mrty != "") { srt = ms.opt_ret_type(mrty + "." + scfa.field); }
+                                                    // An Option/Result-RECEIVER method
+                                                    // (`match (r.map())`) — key
+                                                    // "Option.<m>" / "Result.<m>" (#3049).
+                                                    else {
+                                                        var mrb: string = opt_recv_base_type(scfa.obj, ms);
+                                                        if (mrb != "") { srt = ms.opt_ret_type(mrb + "." + scfa.field); }
+                                                    }
                                                 }
                                             },
                                             _ => {}
