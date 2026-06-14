@@ -4429,6 +4429,28 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // (#2954 item 2).
                                 var eet: string = expr_enum_type(arrl.elements[0], se);
                                 if (eet != "") { struct_ty = eet; }
+                                // A 2D struct/enum array LITERAL (`[[P { .. }], …]`):
+                                // the first element is itself an array — recurse into
+                                // ITS first element for the innermost struct/enum
+                                // type (the unannotated-literal sibling of #3058; the
+                                // depth-2 array literal sets is_arrarr below, and the
+                                // array-foreach propagates this element type through
+                                // `row` to its element).
+                                else {
+                                    match (arrl.elements[0]) {
+                                        parser.ExprArray(inner) => {
+                                            if (inner.elements.len() > 0) {
+                                                var iest: string = expr_struct_type(inner.elements[0], se);
+                                                if (iest != "" && decl_is_struct(se.structs, iest)) { struct_ty = iest; }
+                                                else {
+                                                    var ieet: string = expr_enum_type(inner.elements[0], se);
+                                                    if (ieet != "") { struct_ty = ieet; }
+                                                }
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
                     },
