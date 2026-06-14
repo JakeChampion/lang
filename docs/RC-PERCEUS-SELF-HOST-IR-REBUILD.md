@@ -1016,3 +1016,46 @@ fixpoint + stage-2, `TestSelfHostStdTestE2E`, the RC suites, and a new
 `TestSelfHostRcPreciseDropX86IR` borrow/escape/transitive case set. Method-call
 args and any aliasing (`var u = t`) stay escapes — conservative and sound. Next:
 the inter-procedural `inferParamEscapes` fixpoint to widen Level 1.
+
+### Next slice (validated, blocked on a compute-once hoist): inter-procedural fixpoint (2026-06-14)
+
+Prototyped and **proven correct** but **not landed** — it hit a compile-time cost
+wall that needs a small refactor first. Recording the full state so the next
+session lands it directly.
+
+**The change (validated):** turn `borrowable_params_of` into a GREATEST fixpoint
+(native `inferParamEscapes`, ir.go:2554): seed every param `'1'` (optimistically
+borrowable), then re-run the escape walker against the CURRENT registry —
+`!body_unsafe_for(fn.body, p, reg)` — and drop borrowability wherever an escape
+is found, iterating until stable. Monotone-decreasing from all-`'1'` ⇒
+terminates; sound because a DIRECT escape (return / store / slice / alias /
+pass-to-non-borrowable) is caught regardless of the optimistic seed. A
+`borrowable_key(fn)` helper builds the `"name"` / `"<Type>.<method>"` key; every
+function with ≥1 param stays in the registry (even all-`'0'`) so callee look-ups
+during iteration stay accurate; change-detection is a positional diff of `reg`
+vs `newreg` (both share key order). Verified on the driver: the transitive
+`outer(v) → inner(v)` (inner borrowable ⇒ outer borrowable) now reclaims `t`
+(dec 3 → 4), value correct, detector 0; the escape chain `wrap(v) → idf(v)` where
+`idf` returns its param is correctly still rejected (detector 0). The targeted
+`TestSelfHostRcPreciseDropX86IR` (with added transitive-reclaim + escape-chain
+cases) passed.
+
+**Why it's blocked:** `borrowable_params_of(mod.funcs)` is an INLINE argument at
+every `lower_func` call site, and those sit INSIDE the per-function lowering loops
+— so it is recomputed once per function lowered. A single-pass registry tolerates
+that (it's how every other `*_ret_fns_of` helper is used), but the fixpoint's
+extra iterations × per-call recomputation, in the slow self-host runtime, pushed
+mmc-compiles-mmc over its budget: `TestSelfHostLoadFixpointX86_64` stage-1 and
+both `TestSelfHostStage2FixedPoint{,Arm64}` were SIGKILLed (exit 137). The x86
+`AsmRunX86_64` + `StdTestE2E` + RC suites + the targeted IR test all PASSED; only
+the self-compile-of-the-whole-compiler tests tipped over.
+
+**The fix (the actual next task):** compute the borrowable registry **once per
+module compile** and reuse it, instead of recomputing per function. Hoist
+`var bparams = irlower.borrowable_params_of(<funcs>);` out of each per-function
+lowering loop (≈12 loops across `asm_ir` / `asm_arm64_ir` / `wasm_ir` /
+`irlower`) and pass `bparams` into the loop's `lower_func` calls. That drops the
+fixpoint from O(funcs) recomputations to O(passes) (~once per full module walk),
+making it effectively free — at which point the validated fixpoint logic lands as
+a single slice. Gate it on the SAME set, with the stage-1/stage-2 self-compile
+tests as the specific must-pass (they are what caught the cost regression).
