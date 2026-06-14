@@ -3946,6 +3946,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 var enum_init: string = expr_enum_type(v.init, se);
                 if (enum_init != "") { struct_ty = enum_init; }
             }
+            // Aliasing an array local (`var qs = ps`) — expr_struct_type returns
+            // "" for an array (the value itself isn't a struct), so the ELEMENT
+            // struct/enum type the source array carries (which drives
+            // `qs[i].field` / `qs[i].method()` dispatch) would be lost. Copy it
+            // from the source slot. (is_arr / alias_inc are already set by the
+            // ExprIdent arm above.)
+            if (struct_ty == "") {
+                match (v.init) {
+                    parser.ExprIdent(aid) => {
+                        var asl: i32 = se.slot_of(aid.name);
+                        if (se.is_arr_slot(asl)) { struct_ty = se.struct_type_of_slot(asl); }
+                    },
+                    _ => {}
+                }
+            }
             // string[] tracking (element typing for a[i]); the annotation is
             // authoritative too. The array itself is already is_arr (RC-tracked).
             var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";
