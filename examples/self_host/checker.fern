@@ -3337,6 +3337,22 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                     out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt), expr_line(c.args[1]), expr_col(c.args[1])));
                                 }
                             }
+                            // E043 (array method existence): only `append` / `with`
+                            // / `len` are unconditional array builtins. Every other
+                            // method is an auto-discovered std/array function —
+                            // `__method_Array_<name>`, in scope only when std/array
+                            // is imported — or a user-defined array method. When the
+                            // call is none of those it names a non-existent method.
+                            // Mirrors the Go checker, which registers append/with/len
+                            // unconditionally and resolves the rest from the imported
+                            // module (so `a.sum()` without `import "std/array"` is
+                            // E043, but resolves with it). User methods on a raw
+                            // array type aren't a case — Go forbids them (E021) — so
+                            // only the builtins + auto-discovered functions count.
+                            if (mfa.field != "append" && mfa.field != "with" && mfa.field != "len"
+                                    && s.lookup_sig("__method_Array_" + mfa.field).name.len() == 0) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                            }
                         },
                         TypeStruct(sn) => {
                             var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
