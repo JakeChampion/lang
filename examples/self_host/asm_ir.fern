@@ -152,6 +152,8 @@ function module_uses_heap(mod: parser.Module): boolean {
             // __fern_alloc / __fern_arr_box) — pull in the heap runtime even for a
             // program whose ONLY allocation is `__alloc_u8(n)` (no array literal).
             if (r.ops[i].kind == "alloc_u8" || r.ops[i].kind == "arr_push" || r.ops[i].kind == "str_from_bytes") { return true; }
+            // dyn_box allocates the 16-byte primitive `dyn` cell (docs/DYN-TRAITS.md §4.2.3).
+            if (r.ops[i].kind == "dyn_box") { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -2457,9 +2459,16 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             var darmn: i32 = 0;
             while (dfi < s.funcs.len()) {
                 var dfd: parser.FuncDecl = s.funcs[dfi];
+                var ddbn: string = util.base_type_name(dfd.receiver_type);
+                // Dispatch arms: every method named o.str whose receiver is a
+                // struct (value carries its shape) OR a primitive/string (value
+                // is heap-boxed at coercion — docs/DYN-TRAITS.md §4.2.3). A
+                // primitive arm UNBOXES: the receiver local holds the box pointer,
+                // so arg0 is reloaded from box+8, not pushed directly.
+                var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
                 if (dfd.name == o.str && dfd.receiver_type.len() > 0
-                        && asmcore.is_struct_decl_name(util.base_type_name(dfd.receiver_type), s)) {
-                    var dbn: string = util.base_type_name(dfd.receiver_type);
+                        && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
+                    var dbn: string = ddbn;
                     var dlit: asmcore.StringLitOut = asmcore.add_string_lit(s, dbn);
                     s = dlit.state;
                     var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
@@ -2468,7 +2477,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                     s = s.write("    jne " + dnext + "\n");
                     var dk: i32 = dargc - 1;
                     while (dk >= 0) {
-                        s = s.write("    pushq " + util.i32_to_string(0 - 8 * (dbase + dk + 1)) + "(%rbp)\n");
+                        if (dk == 0 && dprim) {
+                            // arg0 is the receiver: unbox the value from box+8.
+                            s = s.write("    movq " + util.i32_to_string(0 - 8 * (dbase + 1)) + "(%rbp), %rax\n");
+                            s = s.write("    pushq 8(%rax)\n");
+                        } else {
+                            s = s.write("    pushq " + util.i32_to_string(0 - 8 * (dbase + dk + 1)) + "(%rbp)\n");
+                        }
                         dk = dk - 1;
                     }
                     s = s.write("    call __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
@@ -2482,6 +2497,20 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             }
             s = s.write("    pushq $0\n");   // fallback (unreachable for a valid dyn value)
             s = s.write(dend + ":\n");
+        } else if (o.kind == "dyn_box") {
+            // Heap-box a primitive/string value coerced into a `dyn Trait` slot
+            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 16 bytes;
+            // shape = the interned primitive type name (the SAME .S label struct
+            // shapes use), so op_dyn_dispatch's offset-0 compare matches. The
+            // value (one word — an i32/i64/f64 scalar OR a string box pointer) is
+            // on the operand stack; alloc first (it survives on the machine stack,
+            // like opt_make), then store shape + value, push the cell pointer.
+            var dbl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = dbl.state;
+            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            s = s.write("    leaq .S" + util.i32_to_string(dbl.idx) + "(%rip), %rcx\n");
+            s = s.write("    movq %rcx, (%rax)\n");
+            s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
         } else if (o.kind == "const_func") {
             // A function VALUE is the function's code address — push it. Register
             // backends need no funcref table (unlike wasm's table index): the

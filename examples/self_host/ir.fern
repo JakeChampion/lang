@@ -516,6 +516,20 @@ pub function op_call_direct(callee: string, argc: i32): Op {
 pub function op_dyn_dispatch(method: string, base_slot: i32, argc: i32): Op {
     return Op { kind: "dyn_dispatch", i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: method };
 }
+// op_dyn_box heap-boxes a PRIMITIVE/string value coerced into a `dyn Trait`
+// slot (docs/DYN-TRAITS.md §4.2.3). A struct/enum value already carries its
+// shape at offset 0, so it is the `dyn` fat pointer directly and needs no box;
+// a primitive value has no shape pointer, so it is boxed into a cell
+// `[shape@0, value@8]` whose offset-0 shape is the concrete type's interned
+// type-name (the SAME `.S<idx>` / type-id mechanism struct shapes use, keyed by
+// the primitive type name e.g. "i32"/"string"). The boxed value (one word — an
+// i32/i64/f64 scalar OR a `string`'s heap-box pointer) is stored at offset 8.
+// The value is on top of the operand stack; the op leaves the cell pointer.
+// `str` is the primitive type name. Dispatch (op_dyn_dispatch) reads offset 0,
+// matches a primitive arm, and reloads the value from offset 8 (UNBOX).
+pub function op_dyn_box(type_name: string): Op {
+    return Op { kind: "dyn_box", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+}
 pub function op_call_indirect(argc: i32): Op {
     return Op { kind: "call_indirect", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }

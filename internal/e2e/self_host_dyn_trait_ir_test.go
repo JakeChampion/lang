@@ -38,6 +38,28 @@ var dynTraitIRCases = []struct {
 	// chain. 3*3 + 2*5 + 7 = 9 + 10 + 7 = 26.
 	{"three-impls",
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } struct Unit { } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } impl Shape for Unit { function area(self: Self): i32 { return 7; } } function sum(xs: dyn Shape[]): i32 { var t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Unit { }]; return sum(xs); }`, 26},
+
+	// --- `dyn` over PRIMITIVE / string receivers (docs/DYN-TRAITS.md §4.2.3) ---
+	// A primitive value has no shape pointer, so it is heap-boxed at the coercion
+	// site into a `dyn` cell [shape@0, value@8] (op_dyn_box); dispatch matches the
+	// box's offset-0 shape (the interned primitive type name / id) and UNBOXES the
+	// value from offset 8 before calling `<prim>.<method>`.
+
+	// `dyn` over i32, SCALAR param. The arg 41 is boxed at the call; show() adds 1.
+	{"prim-i32-scalar",
+		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { var x: i32 = 41; return run(x); }`, 42},
+	// `dyn` over i32 with a method ARGUMENT. 5 * 3 = 15 (the unboxed receiver 5,
+	// the plain arg 3).
+	{"prim-i32-method-arg",
+		`trait Sc { function sc(self: Self, k: i32): i32; } impl Sc for i32 { function sc(self: Self, k: i32): i32 { return self * k; } } function f(s: dyn Sc): i32 { return s.sc(3); } function main(): i32 { var a: i32 = 5; return f(a); }`, 15},
+	// `dyn` over `string`: the value is a one-word string-box pointer, boxed like
+	// any primitive. show() returns its length. len("hello") = 5.
+	{"prim-string",
+		`trait Show { function show(self: Self): i32; } impl Show for string { function show(self: Self): i32 { return self.len(); } } function run(s: dyn Show): i32 { return s.show(); } function main(): i32 { var x: string = "hello"; return run(x); }`, 5},
+	// A homogeneous `dyn`-over-i32 ARRAY: each element is boxed at the array
+	// literal, then iterated + dispatched through runtime shape. 3 + 4 + 5 = 12.
+	{"prim-i32-array",
+		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self; } } function sum(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; } function main(): i32 { var xs: dyn Show[] = [3, 4, 5]; return sum(xs); }`, 12},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64

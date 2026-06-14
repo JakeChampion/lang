@@ -412,6 +412,23 @@ pub function is_struct_decl_name(name: string, s: EmitState): boolean {
     return false;
 }
 
+// is_prim_recv_name reports whether a method-receiver type spelling names a
+// PRIMITIVE / `string` type (i32/i64/u32/u64/usize/f64/f32/boolean/string) —
+// the receivers that `impl Trait for <prim>` can name and that a `dyn` value
+// boxes (docs/DYN-TRAITS.md §4.2.3). A primitive has no runtime shape pointer,
+// so a `dyn` over it is heap-boxed at coercion; the dispatch chain matches the
+// box's offset-0 shape (the interned primitive type name) and unboxes. Distinct
+// from is_struct_decl_name (structs) and is_enum_recv (enums); an array
+// receiver (recv_is_array) is excluded.
+pub function is_prim_recv_name(name: string, s: EmitState): boolean {
+    if (recv_is_array(name)) { return false; }
+    if (is_struct_decl_name(name, s)) { return false; }
+    if (is_int_tag(ty_from_name(name))) { return true; }
+    if (name == "string" || name == "bool" || name == "boolean") { return true; }
+    if (name == "f64" || name == "f32" || name == "float") { return true; }
+    return false;
+}
+
 pub function is_enum_recv(name: string, s: EmitState): boolean {
     if (is_struct_decl_name(name, s)) { return false; }
     if (is_int_tag(ty_from_name(name))) { return false; }
