@@ -7601,6 +7601,36 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     }
     return out;
 }
+
+// lower_func_for is the common-case wrapper over lower_func: it derives the
+// fourteen `*_ret_fns_of(funcs)` / signature / borrowable side-tables from a
+// single `funcs` list (plus `structs`), so a backend lowering a function only
+// supplies the function, its array-returning-name set, the struct decls, and
+// the module's function list. The eligibility scans and the per-function emit
+// loops that lower with a module-derived `borrowable_params_of(funcs)` all
+// passed exactly these arguments; naming the derivation once removes a
+// ~700-char call from each site and means a new side-table threaded through
+// lowering is added in one place, not ~15.
+//
+// NOT for the inter-procedural Perceus emit paths (emit_function_via_ir on the
+// asm/arm64 backends, wasm_ir's emit_one): those thread a precomputed,
+// fixed-point `borrowable_params` that is deliberately NOT
+// `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
+pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs));
+}
+
+// lower_func_for_noret is lower_func_for with the array- and string-return name
+// sets left empty. The module-level op scanners (module_uses_heap /
+// module_uses_maps) lower every function only to inspect the resulting op
+// kinds, so the move-tracking name sets that the array/string return args feed
+// are irrelevant there; passing them empty keeps those scans matching their
+// previous behaviour while sharing the side-table derivation.
+pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
+    var none: string[] = [];
+    return lower_func(fn, none, structs, none, none, opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs));
+}
+
 // i64_sig_of returns the "<ret><params>" flag string for `name`, or "" if the
 // function has no i64 signature entry.
 pub function (s: LowerState) i64_sig_of(name: string): string {
