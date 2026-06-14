@@ -231,6 +231,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"return-ok", "function f(): string { var s: string = \"x\"; return s; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"struct-missing-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", []string{"E005"}},
 		{"struct-nested-missing", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q {} }; return 0; }\n", []string{"E005"}},
+		// E043 (unknown-field-in-literal): a struct literal naming a field the
+		// struct doesn't declare (incl. update literals). All-declared is clean.
+		{"struct-extra-field", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1, y: 2 }; return p.x; }\n", []string{"E043"}},
+		{"struct-extra-update", "struct P { x: i32, y: i32 }\nfunction f(p: P): P { return P { ...p, z: 9 }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		{"struct-all-fields-ok", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p = P { x: 1, y: 2 }; return p.x + p.y; }\n", nil},
 		{"struct-complete-ok", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; return p.x; }\n", nil},
 		{"struct-field-type-mismatch", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: \"no\" }; return 0; }\n", []string{"E043"}},
 		{"struct-field-type-string-ok", "struct P { x: i32, name: string }\nfunction main(): i32 { var p: P = P { x: 1, name: \"hi\" }; return p.x; }\n", nil},

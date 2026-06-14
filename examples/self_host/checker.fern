@@ -2352,6 +2352,21 @@ function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
         parser.ExprStructLit(sl) => {
             var fv: i32 = 0;
             while (fv < sl.field_values.len()) { out = append_diags(out, slit_diags(sl.field_values[fv], structs)); fv = fv + 1; }
+            // E043: a struct-literal field whose name isn't declared on the
+            // struct. Mirrors the Go checker (per-literal-field "struct S has no
+            // field f"). Runs for update literals too (`S { ...b, bad: 1 }`) —
+            // you can't set an unknown field. A non-struct / unknown type name
+            // (generic instantiation, variant) finds no sig and is skipped.
+            var usig: StructSig = find_struct_sig(structs, sl.type_name);
+            if (usig.name.len() > 0) {
+                var uf: i32 = 0;
+                while (uf < sl.field_names.len()) {
+                    if (!util.has_str(usig.field_names, sl.field_names[uf])) {
+                        out = out.append(dg_at("E043", "struct " + sl.type_name + " has no field \"" + sl.field_names[uf] + "\"", sl.line, sl.col));
+                    }
+                    uf = uf + 1;
+                }
+            }
             if (sl.has_base) {
                 out = append_diags(out, slit_diags(sl.base, structs));
             } else {
