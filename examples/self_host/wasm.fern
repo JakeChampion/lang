@@ -1986,6 +1986,41 @@ function collect_arr_ret_fns(mod_funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// array_method_field returns the `<field>` of a `__method_Array_<field>`
+// auto-discovered helper name (handling the bundler's `<mod>__` prefix, which
+// leaves the convention name as a suffix), or "" when `name` is not one.
+function array_method_field(name: string): string {
+    var marker: string = "__method_Array_";
+    var ml: i32 = marker.len();
+    var i: i32 = 0;
+    var found: i32 = 0 - 1;
+    while (i + ml <= name.len()) {
+        if (name[i : i + ml] == marker) { found = i; }
+        i = i + 1;
+    }
+    if (found < 0) { return ""; }
+    return name[found + ml : name.len()];
+}
+
+// wasm_find_array_method returns the exact in-scope name of the std/array
+// helper backing `a.<field>()` — `__method_Array_<field>` or the bundler's
+// `<mod>__`-mangled form — or "" when none is in scope. Mirrors asmcore's
+// find_array_method_func for the wasm backend.
+function wasm_find_array_method(field: string, mod_funcs: parser.FuncDecl[]): string {
+    var target: string = "__method_Array_" + field;
+    var tn: i32 = target.len();
+    var i: i32 = 0;
+    while (i < mod_funcs.len()) {
+        var nm: string = mod_funcs[i].name;
+        if (mod_funcs[i].receiver_type.len() == 0) {
+            if (nm == target) { return nm; }
+            if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return nm; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // collect_arr_ret_methods lists the names of user METHODS declared to
 // return an array. Like user free functions, their StmtReturn applies
 // return-retain, so a result bound to a (declared-array) local is safe to
@@ -1997,6 +2032,13 @@ function collect_arr_ret_methods(mod_funcs: parser.FuncDecl[]): string[] {
     while (i < mod_funcs.len()) {
         if (mod_funcs[i].receiver_type.len() > 0 && ty_spelling_is_array(mod_funcs[i].ret_type) && !contains_str(out, mod_funcs[i].name)) {
             out = out.append(mod_funcs[i].name);
+        }
+        // Auto-discovered array methods reached via method syntax
+        // (`a.reversed()` → __method_Array_reversed) return-retain just like a
+        // user method, so an array-returning helper's FIELD name must sweep too.
+        if (mod_funcs[i].receiver_type.len() == 0 && ty_spelling_is_array(mod_funcs[i].ret_type)) {
+            var fld: string = array_method_field(mod_funcs[i].name);
+            if (fld.len() > 0 && !contains_str(out, fld)) { out = out.append(fld); }
         }
         i = i + 1;
     }
@@ -5732,6 +5774,23 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         // statically, so dispatch on the runtime struct id.
                         var dynd: string = emit_dyn_dispatch(fa.obj, fa.field, c.args, cx, depth);
                         if (dynd.len() > 0) { return dynd; }
+                    }
+                    // Array auto-discovered method (mirror of the asm backends):
+                    // `a.<field>(args)` whose `__method_Array_<field>` helper is
+                    // in scope desugars to `__method_Array_<field>(a, args)`. The
+                    // intercepted methods (len / join / append / …) returned
+                    // above; the checker has proven the receiver is an array, so
+                    // helper-existence is a sufficient gate. Bare on the
+                    // single-file path, `<mod>__`-mangled by the bundler.
+                    var amf: string = wasm_find_array_method(fa.field, cx.mod_funcs);
+                    if (amf.len() > 0) {
+                        var am: string = "(call $" + amf + " " + emit_expr(fa.obj, cx, depth);
+                        var amai: i32 = 0;
+                        while (amai < c.args.len()) {
+                            am = am + " " + emit_expr(c.args[amai], cx, depth);
+                            amai = amai + 1;
+                        }
+                        return am + ")";
                     }
                     return "(i32.const 0)";
                 },
