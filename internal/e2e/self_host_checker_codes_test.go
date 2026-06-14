@@ -241,6 +241,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-field-type-string-ok", "struct P { x: i32, name: string }\nfunction main(): i32 { var p: P = P { x: 1, name: \"hi\" }; return p.x; }\n", nil},
 		{"struct-field-array-mismatch", "struct P { xs: i32[] }\nfunction main(): i32 { var p: P = P { xs: 5 }; return 0; }\n", []string{"E043"}},
 		{"struct-field-array-ok", "struct P { xs: i32[] }\nfunction main(): i32 { var p: P = P { xs: [1, 2, 3] }; return 0; }\n", nil},
+		// E034 (typed composite-array element): an element of a `var x: Elem[]`
+		// literal must be assignable to Elem. A union element type widens
+		// (members ok); a non-member, a wrong struct, or a primitive is E034.
+		{"typed-arr-struct-bad-prim", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
+		{"typed-arr-struct-bad-struct", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", []string{"E034"}},
+		{"typed-arr-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }, P { x: 2 }]; return 0; }\n", nil},
+		{"typed-arr-union-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", nil},
+		{"typed-arr-union-bad", "struct P { x: i32 }\nstruct Q { y: i32 }\nstruct R { z: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }, R { z: 3 }]; return 0; }\n", []string{"E034"}},
 		// E043 (method-call on a numeric scalar): i32 / f64 carry no methods,
 		// so any `x.m(...)` on one is a field access on a non-struct. Valid
 		// string / array / struct method calls stay clean (no false positive).
