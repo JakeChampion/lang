@@ -662,11 +662,18 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    tests. **Next up.**
 5. **Downcast slice 1 (shipped): `e as? T` on the interpreter.** Surface
    syntax + checker + interp for the fallible downcast (§9). Struct/enum
-   targets; compiled backends reject cleanly until a later vtable-compare
-   slice.
-6. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast,
-   downcast codegen (the vtable-pointer compare) + primitive downcast
-   targets, `dyn` in struct fields with the fat-pointer layout.
+   targets.
+6. **Downcast slice 2 (shipped): `e as? T` codegen on all three
+   backends.** The vtable-pointer compare (§9), lowered target-agnostically
+   in `(*builder).emitDowncast` so wasm / x86-64 / arm64 inherit it with no
+   new IR op; the `data`/`vtable` extraction reuses the dispatch lowering's
+   `b.dynBoxed()` branch and the `Some`/`None` construction reuses the
+   ordinary heap-box `Option` representation. Downcast-only targets are
+   rooted via `treeshake.DowncastImplMethods`. Struct/enum targets;
+   primitive targets remain a follow-up.
+7. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast,
+   primitive downcast targets, `dyn` in struct fields with the fat-pointer
+   layout, RC of the produced downcast `Option`/`data` (§4.4).
 
 ## 8. Testing
 
@@ -730,27 +737,51 @@ targets (`dyn Display as? i32`) are a follow-up — they share the
 primitive-boxing boundary the dispatch slices hit (§4.2.3), since a
 primitive carries no runtime type tag in the compiled representations.
 
-**Implementation.** Slice 1 is **interpreter-only**. The interpreter's
-boxed `dyn` value *is* the concrete `Struct`/`Enum`, which already carries
-its `TypeName`/`EnumName`; the downcast recovers that name (`valueTypeName`)
+**Implementation — interpreter (slice 1).** The interpreter's boxed `dyn`
+value *is* the concrete `Struct`/`Enum`, which already carries its
+`TypeName`/`EnumName`; the downcast recovers that name (`valueTypeName`)
 and compares it to the target's name, building `Some(value)` / `None`
-through the existing `optionSome` / `optionNone` helpers. The compiled
-backends (arm64 / x86-64 / wasm) **reject** `DowncastExpr` with a clean
-unsupported-feature diagnostic (`'as?' downcast (dyn Trait → concrete) is
-not yet supported on compiled backends`); the IR's `rejectDowncast` gate
-runs unconditionally in `LowerWith` (unlike the `dyn`-dispatch gate, no
-backend has lifted it yet).
+through the existing `optionSome` / `optionNone` helpers.
 
-**Codegen (later slice).** The compiled path is a single **vtable-pointer
-compare**: the `(trait, concrete)` vtable already uniquely tags the
-concrete type, so a downcast to `T` is "does this `dyn`'s vtable word equal
-`__vtable_<Trait>_<T>`? then `Some(data)` else `None`" — no new runtime
-metadata, reusing the slice-2 vtable infrastructure (§4.2). Boxed (natives)
-vs inline (wasm) only changes how the vtable word is read.
+**Codegen (slice 2 — shipped on all three backends).** The compiled path
+is a single **vtable-pointer compare**: the `(trait, concrete)` vtable
+already uniquely tags the concrete type, so a downcast to `T` is "does
+this `dyn`'s vtable word equal `__vtable_<Trait>_<T>`? then `Some(data)`
+else `None`" — no new runtime metadata, reusing the slice-2 dispatch
+vtable infrastructure (§4.2), and **no new IR op**. `(*builder).emitDowncast`:
+
+1. lowers the receiver to its `dyn` value and extracts the `data` and
+   `vtable` words into i32 scratch locals using the **exact** extraction
+   the dispatch lowering uses (`b.dynBoxed()`: natives deref the
+   `{data@0, vtable@ptrW}` cell, wasm pops the two-word inline value's
+   high word);
+2. emits `OpConstVtable{Trait, T}` (the same static address a coercion of
+   `T` produces — pointer-identity holds) and `OpEq` against the
+   extracted vtable;
+3. branches with a `BlockTypeVoid` `OpIf`: hit → builds an ordinary
+   heap-box `Option[T].Some(data)` (`data` is the concrete heap pointer,
+   which IS the `T` value — no unbox for a struct/enum target) into a
+   scratch slot via `emitOptionSomeFromSlot`; miss → the shared
+   payloadless `OpEnumSentinel{1}` (`None`); then loads the slot.
+
+The result is an ordinary `Option` heap-box a `match` reads with the same
+`[ptr+0]` tag load as any other, so nothing downstream is downcast-aware.
+
+The `rejectDowncast` gate in `LowerWith` now only fires for a backend that
+has **not** lifted its `dyn` gate (`!dynSupported`) or — defensively — a
+non-struct/enum target (the checker blocks primitives with E060 first). A
+**downcast-only target** `T` (never coerced to `dyn Trait`, only downcast
+to) is absent from `Info.DynCoercions`, so its `__method_*` would be
+tree-shaken / IR-dead-function-eliminated and the vtable cell would
+reference a missing symbol; `treeshake.DowncastImplMethods(prog, info)`
+roots them on every backend (and the wasm path also feeds them to its
+IR-level `LiveFunctions` cull). RC of the produced `Option`/`data` is
+out of scope (leak-mode, like the rest of `dyn` — §4.4).
 
 **Tests.** Parser (`DowncastExpr` vs `CastExpr` disambiguation); checker
 (valid → `Option[T]`, `DowncastExpr.Trait` stamped, non-`dyn` LHS →
-E059, non-impl target → E060); e2e interp (`TestInterpDowncast`: a
-`dyn Shape` Circle → `Some` with the bound value used concretely, Rect →
-`None`, heterogeneous `dyn Shape[]` per-element downcast, plus the
-clean compiled-backend reject on all three targets).
+E059, non-impl target → E060); e2e interp + compiled — `TestInterpDowncast`
+(interp behaviour + all three targets now compile) and the differential
+`TestDowncast*` (`dyn_trait_compiled_test.go`, via `dynAllBackends`):
+struct hit/miss, heterogeneous `dyn Shape[]` per-element count, an
+enum-with-payload target, and a downcast-only-target tree-shake guard.

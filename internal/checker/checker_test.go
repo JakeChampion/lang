@@ -2776,6 +2776,34 @@ function main(): i32 { return 0; }`)
 		t.Errorf("DowncastExpr.Trait = %q, want Shape", dc.Trait)
 	}
 
+	// Enum target: the parser wraps a bare `as? Color` name as a
+	// StructType, but the checker rewrites it to EnumType so the result
+	// `Option[Color]` matches a `var c: Option[Color]` annotation (whose
+	// Color resolveType already canonicalised to EnumType). Without the
+	// rewrite this assignment would spuriously E003 ("cannot assign
+	// Option[Color] to Option[Color]" — same spelling, different node).
+	const enumPrelude = `trait Describe { function tag(self: Self): i32; }
+enum Color { Red, Green }
+impl Describe for Color { function tag(self: Self): i32 { return 0; } }
+`
+	enumProg, err := parser.Parse(enumPrelude + `
+function check(d: dyn Describe): Option[Color] { return d as? Color; }
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse enum-target: %v", err)
+	}
+	if _, err := Check(enumProg); err != nil {
+		t.Fatalf("enum-target downcast should check: %v", err)
+	}
+	enumRet := enumProg.Funcs[len(enumProg.Funcs)-2].Body.Stmts[0].(*ast.Return)
+	dc, ok := enumRet.Value.(*ast.DowncastExpr)
+	if !ok {
+		t.Fatalf("expected DowncastExpr, got %T", enumRet.Value)
+	}
+	if et, isEnum := dc.Target.(ast.EnumType); !isEnum || et.Name != "Color" {
+		t.Errorf("enum downcast Target = %#v, want ast.EnumType{Name:\"Color\"}", dc.Target)
+	}
+
 	cases := []struct{ name, src, want string }{
 		{"non-dyn LHS",
 			prelude + `function main(): i32 { var c: i32 = 1; var d: Option[Circle] = c as? Circle; return 0; }`,

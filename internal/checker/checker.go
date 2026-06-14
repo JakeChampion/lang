@@ -6874,6 +6874,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// construction lives in the interpreter; compiled backends reject
 		// the node until a later codegen slice.
 		inner := c.checkExpr(n.Inner, s)
+		// The parser optimistically wraps a bare type name (`as? Color`)
+		// as a StructType because it can't tell structs from enums. If the
+		// name resolves to an enum, rewrite the target to an EnumType so
+		// the result `Option[T]` matches a `var c: Option[Color]`
+		// annotation (which resolveType already canonicalised to
+		// EnumType). Without this, an enum downcast target would diverge —
+		// `Option[StructType{Color}]` vs `Option[EnumType{Color}]` — and
+		// fail an otherwise-correct assignment (E003).
+		if st, isBareStruct := n.Target.(ast.StructType); isBareStruct && len(st.Args) == 0 {
+			if _, isEnum := c.info.Enums[st.Name]; isEnum {
+				n.Target = ast.EnumType{Name: st.Name}
+			}
+		}
 		dt, ok := inner.(ast.DynTraitType)
 		if !ok {
 			c.errfCode(n.P, "E059", "'as?' downcast requires a 'dyn Trait' value on the left, got %s", inner)

@@ -124,6 +124,17 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// docs/DYN-TRAITS.md §4.2.1.
 	dynImplMethods := treeshake.DynCoercionImplMethods(info)
 	treeshakeExtras = append(treeshakeExtras, dynImplMethods...)
+	// Same rooting for `e as? T` downcast targets: the (Trait,T) vtable
+	// the compare references holds those impl methods, and a downcast-only
+	// target (never coerced) is absent from DynCoercions
+	// (docs/DYN-TRAITS.md §9). Kept in its own slice so it can also be fed
+	// to the IR-level dead-function elimination below (LiveFunctions),
+	// which culls separately from the AST tree-shaker — without that, a
+	// downcast-only target's __method_* would survive tree-shake but be
+	// dropped at the IR layer and the vtable cell would reference a
+	// missing func (OpConstVtable: impl method not in prog.Funcs).
+	downcastImplMethods := treeshake.DowncastImplMethods(prog, info)
+	treeshakeExtras = append(treeshakeExtras, downcastImplMethods...)
 	if opts.HttpHandler {
 		// `handle` is called by the wrapper but the treeshake
 		// walker doesn't see the call (the wrapper lives in
@@ -185,6 +196,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	}
 	liveExtras = append(liveExtras, exportRoots...)
 	liveExtras = append(liveExtras, dynImplMethods...)
+	liveExtras = append(liveExtras, downcastImplMethods...)
 	if live := ir.LiveFunctionsWithAliases(ip, CallDirectAliases, liveExtras...); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {
