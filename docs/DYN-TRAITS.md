@@ -1,7 +1,9 @@
 # `dyn Trait` — runtime trait-object dispatch
 
-Status: **design + slices 1–2 shipped** — interpreter (slice 1) plus all
-three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d). This
+Status: **design + slices 1–3 shipped** — interpreter (slice 1), all
+three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d), and the
+self-host (slice 3: x86-64 + arm64 + wasm). Dispatch is complete
+everywhere; **next is slice 4, RC of trait objects (§4.4)**. This
 document is the design of record; implement against it and update it as
 slices land. It is the
 runtime-dispatch counterpart to the static trait system in
@@ -241,7 +243,7 @@ one slot per non-associated trait method in declaration order.
 
 **RC follow-up:** the `data` word's box currently leaks. Once dispatch is
 solid, teach the RC passes to inc/dec word 0 of a two-word `dyn` slot and
-skip word 1 (the static `vtable`). Tracked as part of goal 2 (Perceus).
+skip word 1 (the static `vtable`). Designed in **§4.4** (goal 2, Perceus).
 
 #### 4.2.2 Slices 2c + 2d implementation (x86-64 + arm64 — BOXED one-word)
 
@@ -351,7 +353,9 @@ changes), same vtable cells, just AArch64 instruction selection (AAPCS64).
 so the RC passes *could* try to inc/dec it, but `DynTraitType` has no
 drop handler and the lowering emits no inc/alias on a `dyn` value, so no
 RC traffic is generated for it. Precise RC of the boxed cell (and its
-inner `data`) is the same Perceus follow-up tracked above.
+inner `data`) is designed in **§4.4** (the Perceus follow-up): a leading
+vtable drop slot + a universal `__drop_dyn` that runs the concrete
+destructor and frees the cell.
 
 ### 4.3 Self-host (x86-64 + arm64 — shipped)
 
@@ -384,6 +388,83 @@ self-host backend (static-dispatch, no runtime shape-compare) now handles
 `dyn Trait` via `emit_dyn_dispatch`: it reads the receiver's struct id
 (the offset-0 type tag) and branches to the matching `$Struct__method`
 over every implementing struct — see TRAITS.md §7a slice 9.
+
+### 4.4 RC of trait objects (Perceus follow-up — design)
+
+Slices 2b–2d nailed dispatch but left every compiled `dyn Trait` value
+**leaking**: the `data` word (the concrete heap object) is never dec'd,
+and on the natives the box cell is never freed. The interpreter leaks
+them too (it GC-frees nothing per-object), and a bounded leak in a
+short-lived CLI / edge handler is survivable — but the language's whole
+memory story is precise Perceus RC, so trait objects must join it. This
+section is the design of record for that work (goal 2 in CLAUDE.md);
+implement against it slice-by-slice and tick the phasing in §7.
+
+**The hard part: the concrete type is erased.** A `dyn`'s drop has to
+free a value whose static type is gone, so the drop must *dynamically
+dispatch* — exactly what the vtable is for. The plan adds the
+destructor to the vtable and routes `dyn` drops through it.
+
+1. **Vtable gains a leading drop slot.** Every `(trait, concrete)`
+   vtable grows one fixed slot **at index 0** holding the concrete
+   type's drop function (`dropFnNameFor(C)` → `__drop_struct_<C>` /
+   `__drop_enum_<…>` / `__drop_tuple_<…>`), or a **null sentinel (0)**
+   when `C` needs no drop (a flat struct of scalars). The method slots
+   shift to start at index 1, so `OpCallDyn`'s slot becomes
+   `trait_method_index + 1` — a one-line change in the dispatch
+   lowering. Index 0 is chosen over a trailing slot precisely so the
+   drop slot's position is **independent of the trait's method count**,
+   which lets a single trait-agnostic drop path read `vtable[0]` without
+   knowing which trait it's dropping. `collectVtables` records the drop
+   fn alongside the methods; each backend's vtable emitter prepends it
+   (wasm: a function-table index; natives: an absolute function
+   pointer), matching the slot's existing word kind.
+
+2. **`dropFnNameFor` learns `DynTraitType`.** It returns
+   `("__drop_dyn", true)` — one universal helper, because the dispatch
+   is fully data-driven off `vtable[0]`. The helper takes the `dyn`
+   value in its native shape and:
+   - reads `vtable[0]`; if non-null, `call`s it with `data` (this runs
+     the concrete destructor, which frees `data` and anything it
+     transitively owns — e.g. a `String` field);
+   - on the **natives** (boxed) then `__fern_free`s the 16-byte cell;
+     on **wasm** (inline) there is no cell, so it stops after the
+     concrete drop.
+   The `vtable` word itself is static `.rodata`/data-segment — never
+   inc'd or dec'd.
+
+3. **Perceus dec/drop insertion treats `dyn` as owning.** The
+   inc/dec/borrow passes already classify pointer-shaped owned values;
+   `DynTraitType` joins them (`ast.IsPointerType` is already true). At a
+   `dyn` value's last use / scope exit the pass emits the drop:
+   - *inline (wasm)*: the slot is two words `[data, vtable]` — feed both
+     to `__drop_dyn`;
+   - *boxed (natives)*: the slot is one word (cell ptr) — `__drop_dyn`
+     reloads `data`/`vtable` from the cell, drops, frees the cell.
+   **Borrow inference** keeps a `dyn` parameter that is only dispatched
+   on (never stored or returned) **borrowed** — no drop, no leak, no
+   double-free — identical to how a borrowed `struct` param is treated.
+   `inc` of a `dyn` value (aliasing) inc's `data` only (the concrete
+   object's own header); the static vtable is untouched. On the natives
+   an `inc` that must keep the box alive across two owners either inc's
+   the cell's own RC header **or** copies the cell — TBD at
+   implementation; the first cut can forbid `dyn` aliasing (move-only)
+   to dodge the question, matching how reuse analysis already prefers
+   moves.
+
+4. **Reuse / drop-specialisation** is out of scope for the first cut —
+   trait objects are dropped, not reused — but the boxed cell is a
+   fixed-size 16-byte allocation, an ideal future reuse token.
+
+**Phasing.** Mirror 2b–2d: (a) wasm inline first (it has the simplest
+drop — no cell), (b) x86-64 boxed (adds the cell free), (c) arm64 boxed
+(structural mirror). Each slice ships e2e **leak/reclaim** tests in the
+shape of `TestX86_64ArrayDropFree` / `DestructureHeapBumpBounded`: a
+loop that creates and drops many `dyn` values and asserts the heap stays
+bounded, plus a differential case where the concrete type transitively
+owns an RC value (a `struct` with a `String` field behind `dyn`) to
+prove the inner free runs through the vtable destructor. Until slice (a)
+lands, the leak is the documented, accepted behaviour.
 
 ## 5. Coercion (boxing) model
 
@@ -500,12 +581,20 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
      and `OpCallDyn` holds the fn pointer in `x16`/`x17`. **All three
      compiled backends now support `dyn` — no compiled backend rejects
      it.**
-3. **Slice 3: self-host parity (x86-64 + arm64 — shipped).** `dyn Trait`
-   parses in the self-host and dispatches over its existing shape-pointer
-   path; struct/enum concrete types work end-to-end (see §4.3). Remaining:
-   the wasm self-host backend, and the strict object-safety / coercion
-   checks in `checker.fern` (only needed once the Go checker retires).
-4. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast/
+3. **Slice 3: self-host parity (x86-64 + arm64 + wasm — shipped).**
+   `dyn Trait` parses in the self-host and dispatches over its existing
+   shape-pointer path on x86-64 + arm64; the wasm self-host backend
+   dispatches via `emit_dyn_dispatch` (struct-id compare-branch). All
+   self-host backends handle struct/enum concrete types end-to-end (see
+   §4.3). Remaining: the strict object-safety / coercion checks in
+   `checker.fern` (only needed once the Go checker retires).
+4. **Slice 4: RC of trait objects (Perceus — designed in §4.4).** Stop
+   leaking the boxed object: a leading vtable drop slot + a universal
+   `__drop_dyn` that runs the concrete destructor (and frees the box
+   cell on natives), wired into the inc/dec/borrow passes. Phased
+   wasm-inline → x86-64-boxed → arm64-boxed, each with leak/reclaim
+   tests. **Next up.**
+5. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast/
    downcast, `dyn` in struct fields with the fat-pointer layout.
 
 ## 8. Testing
