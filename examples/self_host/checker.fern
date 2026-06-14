@@ -3000,6 +3000,28 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             }
             var i: i32 = 0;
             while (i < c.args.len()) { out = append_diags(out, call_diags(c.args[i], s)); i = i + 1; }
+            // E038: calling a NON-FUNCTION value (`x(3)` where x is an i32 /
+            // string / etc.). The callee's type, when known and not a function
+            // type, isn't callable. Mirrors the Go checker (callee type not a
+            // FuncType -> E038 at the call). A free function / variant
+            // constructor / builtin callee types as unknown here (it's not a
+            // scope binding), so only a value-typed callee is flagged. A
+            // FieldAccess callee (a method, or a function-valued field) is left
+            // to the method path — a method on a non-struct is E043, not E038.
+            match (c.callee) {
+                parser.ExprFieldAccess(_) => { },
+                _ => {
+                    var calleet: Type = check_expr(c.callee, s);
+                    var callee_is_fn: boolean = false;
+                    match (calleet) {
+                        TypeFunc(_) => { callee_is_fn = true; },
+                        _ => { }
+                    }
+                    if (!is_unknown(calleet) && !callee_is_fn) {
+                        out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
+                    }
+                }
+            }
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     // E048: a field assignment `obj.field = v` is desugared
