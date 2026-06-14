@@ -256,6 +256,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-elem-return-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U[] { return [P { x: 1 }, Q { y: 2 }]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"arr-elem-arg-bad", "struct P { x: i32 }\nfunction f(a: P[]): i32 { return 0; }\nfunction main(): i32 { return f([P { x: 1 }, 5]); }\n", []string{"E034"}},
 		{"arr-elem-assign-bad", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }]; a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
+		// E034 at a struct-literal field of composite-array type: the field
+		// value's elements are checked against the field's element type (plain
+		// and `...base` literals). Union fields widen; the whole-value scalar
+		// mismatch stays E043.
+		{"arr-elem-field-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction main(): i32 { var p = P { xs: [Q { n: 1 }, 5] }; return 0; }\n", []string{"E034"}},
+		{"arr-elem-field-update-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction f(p: P): P { return P { ...p, xs: [Q { n: 1 }, 5] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"arr-elem-field-union-ok", "struct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nstruct P { xs: U[] }\nfunction main(): i32 { var p = P { xs: [A { a: 1 }, B { b: 2 }] }; return 0; }\n", nil},
 		// E043 (method-call on a numeric scalar): i32 / f64 carry no methods,
 		// so any `x.m(...)` on one is a field access on a non-struct. Valid
 		// string / array / struct method calls stay clean (no false positive).

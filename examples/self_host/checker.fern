@@ -3553,6 +3553,14 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         if (!is_unknown(ft) && !is_unknown(vt) && !type_assignable(vt, ft, s.unions)) {
                             out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
                         }
+                        // E034: a struct-literal field of composite-array type
+                        // whose value is an array literal — its elements checked
+                        // against the field's declared element type. The array as
+                        // a whole is assignable to the field type, so the E043
+                        // above stays silent; this catches a bad element. Same
+                        // composite-only + union-widening discipline as the other
+                        // positions; runs for plain and update (`...base`) literals.
+                        out = append_diags(out, array_elem_check(array_elem_type_of(ft), sl.field_values[fi], s));
                     }
                     fi = fi + 1;
                 }
