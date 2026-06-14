@@ -1,4 +1,5 @@
 import "./parser";
+import "./util";
 
 // astwalk — shared AST traversals for the self-hosted compiler.
 // First home (SH-022): the free-variable collectors used by every
@@ -66,10 +67,26 @@ pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
         parser.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) {
-                acc = collect_idents_stmt(lm.body[i], acc);
-                i = i + 1;
+            // A nested lambda reads, from the ENCLOSING scope, only its FREE
+            // variables — its own params and locally-bound names are bound WITHIN
+            // it, not read from outside. Collect the inner body's idents, subtract
+            // the inner lambda's params + locals, and append the remainder.
+            // Without this an inner lambda's params (e.g. the `y` of
+            // `function(y){…}`) leak as spurious references of the outer scope,
+            // which makes the enclosing lambda's capture analysis treat `y` as an
+            // unresolvable capture and decline the lift (nested closures bail).
+            var inner_used: string[] = [];
+            var iu: i32 = 0;
+            while (iu < lm.body.len()) { inner_used = collect_idents_stmt(lm.body[iu], inner_used); iu = iu + 1; }
+            var inner_bound: string[] = [];
+            var ip: i32 = 0;
+            while (ip < lm.params.len()) { inner_bound = inner_bound.append(lm.params[ip].name); ip = ip + 1; }
+            var ib: i32 = 0;
+            while (ib < lm.body.len()) { inner_bound = collect_bound_stmt(lm.body[ib], inner_bound); ib = ib + 1; }
+            var ik: i32 = 0;
+            while (ik < inner_used.len()) {
+                if (util.index_of_str(inner_bound, inner_used[ik]) < 0) { acc = acc.append(inner_used[ik]); }
+                ik = ik + 1;
             }
             return acc;
         },

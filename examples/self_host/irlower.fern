@@ -7762,14 +7762,24 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     }
     var acc: LiftAcc = LiftAcc { funcs: [], counter: 0 };
     var newfuncs: parser.FuncDecl[] = [];
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var fd: parser.FuncDecl = mod.funcs[fi];
+    // Worklist: the module's functions PLUS every function lifted out of a
+    // lambda body. Re-processing the lifted `__lam_N` / `$clo` functions is what
+    // lets a NESTED lambda (a lambda defined inside another lambda's body) lift:
+    // the outer lift produces a top-level function whose body still holds the
+    // inner lambda, which a later worklist round then lifts in turn. A two-level
+    // capture resolves because the outer lift turns the captured outer var into a
+    // PARAM of the lifted function, which the inner lift sees as an ordinary
+    // param. Each round strips one nesting level, so the worklist terminates.
+    var worklist: parser.FuncDecl[] = mod.funcs;
+    var wi: i32 = 0;
+    while (wi < worklist.len()) {
+        var fd: parser.FuncDecl = worklist[wi];
         // 0. Box captured-and-mutated scalar locals into 1-element array cells so
         // a closure's write to a captured outer scalar is shared by reference
         // (#2850). Must run BEFORE the closure lifts so they see the boxed cell
         // (an `i32[]` capture passed by pointer) instead of a by-value scalar.
         fd = box_mutated_scalar_captures(fd, gfns);
+        var before: i32 = acc.funcs.len();
         // 1. Capturing lambdas bound to a local + only directly called: param-lift.
         var cbody: parser.Stmt[] = fd.body;
         var more: boolean = true;
@@ -7789,10 +7799,14 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         // to a make_closure box); only the hoisted target is appended here.
         var hc: HoistResult = hoist_escaping_closure(fd, gfns);
         if (hc.ok) { acc = LiftAcc { funcs: acc.funcs.append(hc.func), counter: acc.counter + 1 }; }
-        fi = fi + 1;
+        // Drain the functions lifted by THIS iteration onto the worklist so their
+        // OWN nested lambdas lift in a later round, then clear them (the counter
+        // persists across iterations for unique `__lam_N` naming).
+        var k: i32 = before;
+        while (k < acc.funcs.len()) { worklist = worklist.append(acc.funcs[k]); k = k + 1; }
+        acc = LiftAcc { funcs: [], counter: acc.counter };
+        wi = wi + 1;
     }
     if (acc.counter == 0) { return mod; }
-    var li: i32 = 0;
-    while (li < acc.funcs.len()) { newfuncs = newfuncs.append(acc.funcs[li]); li = li + 1; }
     return parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
