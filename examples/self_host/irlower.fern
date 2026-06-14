@@ -1999,9 +1999,22 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
 // arr_index_is_i64 reports whether indexing `arr` yields an i64 — `arr` names an
 // i64[] slot. Drives a[i] -> arr_get_i64 (i64.load). (i64[] returns / slices are
 // a later slice; only a tracked ident source qualifies here.)
+//
+// u64[] qualifies too: u64 lives in the i64 64-bit domain (#2904), so a u64[]
+// element is read 8-byte with the SAME arr_get_i64 (identical bytes). This
+// function answers "is this an 8-byte-element array index" (width only); the
+// element's UNSIGNED-ness is tracked separately by expr_is_u64, which drives the
+// signed-vs-unsigned op selection at the use site — so reading a u64[] element
+// here and comparing it unsigned there stays correct for values >= 2^63.
 pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
     match (arr) {
-        parser.ExprIdent(id) => { return s.is_i64arr_slot(s.slot_of(id.name)); },
+        parser.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            // i64[] (is_i64arr) or u64[] (an array slot also marked u64) — both
+            // 8-byte elements. is_u64_slot is set for scalar u64 too, so the
+            // is_arr_slot guard keeps this to u64[] arrays.
+            return s.is_i64arr_slot(sl) || (s.is_arr_slot(sl) && s.is_u64_slot(sl));
+        },
         parser.ExprCall(c) => {
             // Direct index of an i64[]-returning call: `f()[i]` or `obj.m()[i]`.
             match (c.callee) {
