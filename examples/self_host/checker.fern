@@ -3326,7 +3326,17 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         out = out.append(dg_at("E046", "tuple has " + itoa_nn(tt.elements.len()) + " elements; index " + itoa_nn(idx) + " is out of range", fa.line, fa.col));
                     }
                 },
-                _ => { }
+                // E043: a field READ on a non-struct, non-tuple value (an i32 /
+                // string / array / … has no fields). Mirrors the Go checker
+                // (`tt` not a StructType -> "field access on non-struct value").
+                // An unknown object type is skipped (no cascade). This is a
+                // genuine read; method calls (`x.m()`) are an ExprCall callee and
+                // never reach here.
+                _ => {
+                    if (!is_unknown(ot)) {
+                        out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(ot), fa.line, fa.col));
+                    }
+                }
             }
         },
         parser.ExprStructLit(sl) => {
