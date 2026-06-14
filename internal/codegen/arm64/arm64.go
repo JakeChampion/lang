@@ -201,7 +201,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// static call the AST walker / IR reachability can see — pin them as
 	// tree-shake roots so they survive (mirrors the x86-64 + wasm build
 	// paths). See docs/DYN-TRAITS.md §4.2.2.
-	treeshake.Run(prog, treeshake.DynCoercionImplMethods(info)...)
+	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+	treeshake.Run(prog, dynRoots...)
 	// arm64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2); pass DynSupported so the IR gate
 	// lifts here (the same boxed representation x86-64 uses — both are

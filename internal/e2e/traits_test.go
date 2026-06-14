@@ -584,8 +584,10 @@ function main(): i32 {
 // (docs/DYN-TRAITS.md §9) on the interpreter: a `dyn Shape` holding a
 // Circle downcasts to Some(circle) (and the bound value is usable as the
 // concrete Circle), and to None for Rect. A heterogeneous `dyn Shape[]`
-// downcasts each element. Compiled backends must reject the downcast
-// cleanly (no panic) until a later codegen slice.
+// downcasts each element. The compiled backends now LOWER the downcast
+// (vtable-pointer compare); this test asserts each target compiles
+// without error — the per-backend differential-vs-interp behaviour lives
+// in TestDowncast* (dyn_trait_compiled_test.go).
 func TestInterpDowncast(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -629,21 +631,20 @@ function main(): i32 {
 		}
 	}
 
-	// Compiled backends reject the downcast cleanly (no panic, clear
-	// unsupported-feature message). Check all three targets.
+	// Compiled backends now LOWER the downcast (vtable-pointer compare) —
+	// compiling to each target must succeed (no error, no panic). The
+	// runtime-behaviour differential vs the interpreter is in TestDowncast*
+	// (dyn_trait_compiled_test.go).
 	for _, target := range []string{"arm64", "x86-64", "wasm"} {
 		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
 		var gerr bytes.Buffer
 		gen.Stderr = &gerr
 		err := gen.Run()
-		if err == nil {
-			t.Errorf("compiling `as?` downcast to %s should fail (interp-only in slice 1), but it succeeded", target)
-		}
-		if !strings.Contains(gerr.String(), "'as?' downcast") {
-			t.Errorf("%s reject diagnostic missing the downcast message; got: %s", target, gerr.String())
+		if err != nil {
+			t.Errorf("compiling `as?` downcast to %s should now succeed, but failed: %v\nstderr: %s", target, err, gerr.String())
 		}
 		if strings.Contains(gerr.String(), "panic") {
-			t.Errorf("%s downcast reject panicked instead of erroring cleanly: %s", target, gerr.String())
+			t.Errorf("%s downcast codegen panicked: %s", target, gerr.String())
 		}
 	}
 }

@@ -1645,23 +1645,54 @@ func rejectDynTrait(prog *ast.Program) error {
 }
 
 // rejectDowncast scans a program for any `e as? T` downcast
-// (DowncastExpr). The fallible downcast is interpreter-only in slice 1
-// — compiled backends would need a runtime vtable-pointer compare, a
-// later codegen slice (docs/DYN-TRAITS.md §9). Reject it here with a
-// clean message rather than falling through to a panic / miscompile.
-func rejectDowncast(prog *ast.Program) error {
-	const msg = "'as?' downcast (dyn Trait → concrete) is not yet supported on compiled backends; run it on the interpreter (fern -interp)"
-	var found bool
+// (DowncastExpr) that this backend cannot lower. The fallible downcast
+// lowers to a runtime vtable-pointer compare reusing the slice-2 vtable
+// infrastructure (docs/DYN-TRAITS.md §9), so it is supported on every
+// backend that supports `dyn` (dynSupported). Two cases still reject
+// cleanly rather than miscompiling:
+//
+//   - a backend that has NOT lifted its `dyn` gate (!dynSupported) — the
+//     vtable infrastructure the compare needs isn't emitted there;
+//   - a non-struct/enum (primitive/string) downcast target — slice-1
+//     scope is struct/enum only (the checker already blocks primitives
+//     with E060; this is a defensive belt-and-braces guard).
+func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) error {
+	const unsupportedBackend = "'as?' downcast (dyn Trait → concrete) is not yet supported on this backend; run it on the interpreter (fern -interp)"
+	const primTarget = "'as?' downcast target must be a concrete struct or enum (slice 1); primitive targets are not yet supported on compiled backends"
+	var rejected error
 	ast.WalkProgram(prog, func(n ast.Node) bool {
-		if _, ok := n.(*ast.DowncastExpr); ok {
-			found = true
+		dc, ok := n.(*ast.DowncastExpr)
+		if !ok {
+			return true
+		}
+		if !dynSupported {
+			rejected = fmt.Errorf("ir: %s", unsupportedBackend)
+			return false
+		}
+		// Struct/enum target only (slice-1 scope). A primitive/string
+		// target carries no runtime type tag in the compiled
+		// representations, so the vtable-pointer compare can't recover it.
+		if name, ok := downcastTargetName(dc.Target); !ok || isPrimitiveConcrete(info, name) {
+			rejected = fmt.Errorf("ir: %s", primTarget)
+			return false
 		}
 		return true
 	})
-	if found {
-		return fmt.Errorf("ir: %s", msg)
+	return rejected
+}
+
+// downcastTargetName returns the concrete type-name string for a
+// struct/enum downcast target (the `T` in `e as? T`), matching the
+// spelling collectVtables / OpConstVtable use for the (trait,concrete)
+// vtable. Returns ("", false) for any non-struct/enum target.
+func downcastTargetName(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name, true
+	case ast.EnumType:
+		return x.Name, true
 	}
-	return nil
+	return "", false
 }
 
 // dynTraitNamesUsed collects every trait named in a `dyn Trait` type
@@ -1993,12 +2024,15 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			return nil, err
 		}
 	}
-	// The `e as? T` fallible downcast (DowncastExpr) is interpreter-only
-	// in slice 1 — every compiled backend rejects it with a clean message
-	// until a later codegen slice adds the runtime vtable-pointer compare
-	// (docs/DYN-TRAITS.md §9). Unconditional: unlike `dyn` dispatch, no
-	// backend has lifted this gate yet.
-	if err := rejectDowncast(prog); err != nil {
+	// The `e as? T` fallible downcast (DowncastExpr) now lowers to a
+	// runtime vtable-pointer compare on every backend that supports `dyn`
+	// (the (trait,concrete) vtable that uniquely tags the concrete type is
+	// the slice-2 infrastructure — docs/DYN-TRAITS.md §9). A backend that
+	// has NOT lifted its `dyn` gate (a hypothetical future ptrW==8 backend,
+	// or a test harness omitting DynSupported()) still rejects it cleanly,
+	// and — defensively — a non-struct/enum target (the checker already
+	// blocks primitives with E060) is rejected too.
+	if err := rejectDowncast(prog, info, dynSupported); err != nil {
 		return nil, err
 	}
 	// Automatic drop for owned WIT resource handles (P5 slice 3): insert
@@ -8406,6 +8440,135 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	return nil
 }
 
+// emitDowncast lowers `e as? T` (DowncastExpr) where `e: dyn Trait` and
+// `T` is a struct/enum implementing the trait, to `Option[T]`
+// (docs/DYN-TRAITS.md §9). The (trait,concrete) vtable pointer uniquely
+// tags the concrete type, so the runtime test is a vtable-pointer
+// compare against the static `__vtable_<Trait>_<T>` address: equal →
+// Some(data) (data is the concrete heap pointer, which IS the T value —
+// no unbox for a struct/enum target); else → None.
+//
+// The `data`/`vtable` extraction reuses exactly the dispatch lowering's
+// pattern (see (*builder).call's DynTrait branch), branching on
+// b.dynBoxed(): boxed natives deref a `{data@0, vtable@ptrW}` cell;
+// inline wasm pops the high word of the two-word `[data, vtable]` value.
+// The Some/None construction reuses the ordinary heap-box enum
+// representation (Some via emitOptionSomeFromSlot, None via the shared
+// payloadless OpEnumSentinel), so the result is an ordinary Option value
+// a `match` reads with the same tag-at-[ptr+0] load as any other.
+func (b *builder) emitDowncast(n *ast.DowncastExpr) error {
+	if b.info == nil {
+		return fmt.Errorf("ir: 'as?' downcast lowering requires checker info")
+	}
+	if n.Trait == "" {
+		return fmt.Errorf("ir: 'as?' downcast missing trait (checker did not stamp DowncastExpr.Trait)")
+	}
+	concrete, ok := downcastTargetName(n.Target)
+	if !ok {
+		return fmt.Errorf("ir: 'as?' downcast target %v is not a struct/enum type", n.Target)
+	}
+	// Extract the receiver's `data` and `vtable` words into i32 scratch
+	// slots. Representation-dependent (docs/DYN-TRAITS.md §4.2), mirroring
+	// the dispatch lowering's extraction exactly.
+	dataSlot := b.allocSlot()
+	b.scratchType[dataSlot] = ast.NumberType{Width: 32}
+	vtSlot := b.allocSlot()
+	b.scratchType[vtSlot] = ast.NumberType{Width: 32}
+	if b.dynBoxed() {
+		// Boxed one-word (natives, §4.2.2): receiver is a pointer to a
+		// `{data @0, vtable @ptrW}` cell. Stash the cell, deref both words.
+		if err := b.expr(n.Inner); err != nil {
+			return err
+		}
+		cellTmp := b.allocSlot()
+		b.scratchType[cellTmp] = ast.NumberType{Width: 32}
+		b.emit(Op{Kind: OpStoreLocal, I32: cellTmp})
+		// data = load(cell + 0)
+		b.emit(Op{Kind: OpLoadLocal, I32: cellTmp})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+		// vtable = load(cell + ptrW)
+		b.emit(Op{Kind: OpLoadLocal, I32: cellTmp})
+		b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpStoreLocal, I32: vtSlot})
+	} else {
+		// Inline two-word (wasm, §4.2.1): receiver lowers to `[data,
+		// vtable]`. OpStoreLocal pops one word at a time: pop vtable
+		// (high), then data (low).
+		if err := b.expr(n.Inner); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: vtSlot})
+		b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+	}
+	// Compare the receiver's vtable word against the target's static
+	// vtable address. OpConstVtable pushes the SAME address a coercion of
+	// T would pair with, so the pointer-identity compare is exact.
+	b.emit(Op{Kind: OpLoadLocal, I32: vtSlot})
+	b.emit(Op{Kind: OpConstVtable, Str: n.Trait, Str2: concrete})
+	b.emit(Op{Kind: OpEq})
+	// Result Option[T] heap-box pointer, built in either arm into a
+	// shared scratch slot (a void if-block keeps the operand-stack model
+	// simple across backends; the result is loaded after OpEnd).
+	resultSlot := b.allocSlot()
+	b.scratchType[resultSlot] = ast.NumberType{Width: 32}
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	// hit → Some(data): data is the concrete heap pointer == the T value.
+	if err := b.emitOptionSomeFromSlot(n.Target, dataSlot); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpElse})
+	// miss → None (payloadless variant 1 — the shared static sentinel).
+	b.emit(Op{Kind: OpEnumSentinel, I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	return nil
+}
+
+// emitOptionSomeFromSlot builds an `Option[T].Some(v)` heap box where the
+// payload value `v` is already lowered into the i32 scratch slot
+// `dataSlot` (rather than an ast.Expr). It mirrors emitEnumNew's box
+// layout for the single-payload Some variant (varIdx 0): an 8-byte rc
+// header, the tag at [base+rcHeader], the payload at
+// [base+rcHeader+offset]. Used by the downcast lowering, whose `data`
+// word is the concrete heap pointer recovered from the `dyn` value. No
+// payload inc is emitted (leak-mode dyn, like the rest of the dyn
+// lowering — docs/DYN-TRAITS.md §4.4 RC follow-up).
+func (b *builder) emitOptionSomeFromSlot(payloadType ast.Type, dataSlot int32) error {
+	const rcHeaderBytes = 8
+	offsets, size := payloadLayout([]ast.Type{payloadType}, 1, b.ptrW)
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+	b.emit(Op{Kind: OpAlloc})
+	baseSlot := b.allocSlot()
+	b.scratchType[baseSlot] = ast.NumberType{Width: 32}
+	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+	// rc = 1 at [base+0].
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+	// tag = 0 (Some) at [base+rcHeader].
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStore})
+	// payload = data at [base+rcHeader+offset].
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[0]})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	b.emit(payloadStoreOpFor(payloadType, b.ptrW))
+	// Push the user-visible data pointer (= base + rc header).
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	return nil
+}
+
 // boxPrimitiveDynValue heap-boxes the primitive/string value currently on
 // top of the operand stack into a fresh value cell, leaving the cell
 // POINTER on the stack as the `dyn` fat pointer's `data` word
@@ -9714,12 +9877,7 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
 		}
 	case *ast.DowncastExpr:
-		// Interpreter-only in slice 1; LowerWith's rejectDowncast gate
-		// returns before we get here, but guard the lowering switch too
-		// so a future caller that bypasses the gate errors cleanly rather
-		// than hitting the generic "unsupported expression" default
-		// (docs/DYN-TRAITS.md §9).
-		return fmt.Errorf("ir: 'as?' downcast (dyn Trait → concrete) is not yet supported on compiled backends")
+		return b.emitDowncast(n)
 	case *ast.CastExpr:
 		if err := b.expr(n.Inner); err != nil {
 			return err

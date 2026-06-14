@@ -95,6 +95,66 @@ func DynCoercionImplMethods(info *checker.Info) []string {
 	return out
 }
 
+// DowncastImplMethods returns the mangled impl-method names referenced by
+// the `(Trait, T)` vtable a `e as? T` downcast compares against. The
+// compiled downcast (docs/DYN-TRAITS.md §9) emits `OpConstVtable{Trait,
+// T}` and the backend materialises the `__vtable_<Trait>_<T>` cell, whose
+// slots are `.quad __method_<T>_<m>` (natives) / function-table indices
+// (wasm). Those methods are reachable ONLY through that static vtable, so
+// — exactly like DynCoercionImplMethods for coercion sites — they must be
+// pinned as tree-shake roots or the vtable would reference a dropped
+// symbol (link failure). This matters for a DOWNCAST-ONLY target: a `T`
+// that is never coerced to `dyn Trait`, only downcast to, is absent from
+// info.DynCoercions and so would be missed by DynCoercionImplMethods.
+//
+// Struct/enum targets only (the slice-1 downcast scope); collectVtables
+// routes struct/enum slots at the real `__method_<T>_<m>`, so that is the
+// name that must survive into codegen.
+func DowncastImplMethods(prog *ast.Program, info *checker.Info) []string {
+	if prog == nil || info == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		dc, ok := n.(*ast.DowncastExpr)
+		if !ok || dc.Trait == "" {
+			return true
+		}
+		td, ok := info.Traits[dc.Trait]
+		if !ok {
+			return true
+		}
+		concrete := ""
+		switch t := dc.Target.(type) {
+		case ast.StructType:
+			concrete = t.Name
+		case ast.EnumType:
+			concrete = t.Name
+		default:
+			return true
+		}
+		for _, m := range td.Methods {
+			if m.Assoc {
+				continue
+			}
+			fn := info.Methods[concrete+"."+m.Name]
+			if fn == "" {
+				fn = "__method_" + concrete + "_" + m.Name
+			}
+			add(fn)
+		}
+		return true
+	})
+	return out
+}
+
 // watHelperDeps lists the stdlib functions a still-in-wat
 // helper depends on, plus aliases the codegen layer
 // rewrites at emit-time. The AST walker doesn't see those

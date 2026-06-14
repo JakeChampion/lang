@@ -574,3 +574,165 @@ function main(): i32 {
 `
 	dynAllBackends(t, src, "n=5")
 }
+
+// --- `e as? T` fallible downcast codegen (docs/DYN-TRAITS.md §9).
+// `e as? T` lowers to a vtable-pointer compare: extract the dyn value's
+// vtable word (boxed-cell deref on natives, inline high-word on wasm),
+// compare it against the static __vtable_<Trait>_<T> address
+// (OpConstVtable), and build Some(data) on a hit / None on a miss. These
+// differential tests run the compiled output (all three backends) against
+// the interpreter (the source of truth — it downcasts by the receiver's
+// runtime type tag). ---
+
+// TestDowncastStructHitMiss: a `dyn Shape` holding a Circle. `s as? Circle`
+// hits → Some, and the bound value is usable concretely (x.r); `s as? Rect`
+// misses → None. Exercises both arms of the vtable compare on every backend.
+func TestDowncastStructHitMiss(t *testing.T) {
+	src := `import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+}
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle {
+    function area(self: Self): i32 { return self.r * self.r; }
+}
+impl Shape for Rect {
+    function area(self: Self): i32 { return self.w * self.h; }
+}
+function describe(s: dyn Shape): string {
+    var c: Option[Circle] = s as? Circle;
+    match (c) {
+        Some(x) => { return "circle r=" + x.r.to_string(); },
+        None => {
+            var r: Option[Rect] = s as? Rect;
+            match (r) {
+                Some(y) => { return "rect a=" + y.area().to_string(); },
+                None => { return "other"; },
+            }
+        },
+    }
+}
+function main(): i32 {
+    var d: dyn Shape = Circle { r: 5 };
+    print(describe(d));
+    var e: dyn Shape = Rect { w: 3, h: 4 };
+    print(describe(e));
+    return 0;
+}
+`
+	dynAllBackends(t, src, "circle r=5\nrect a=12")
+}
+
+// TestDowncastHeterogeneousArrayCount: downcast each element of a
+// heterogeneous `dyn Shape[]` to Circle, summing the radii of the hits and
+// counting the misses. Proves the compare distinguishes concrete types
+// per-element (each element's vtable word identifies its own type).
+func TestDowncastHeterogeneousArrayCount(t *testing.T) {
+	src := `import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+}
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle {
+    function area(self: Self): i32 { return self.r * self.r; }
+}
+impl Shape for Rect {
+    function area(self: Self): i32 { return self.w * self.h; }
+}
+function main(): i32 {
+    var shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }, Rect { w: 1, h: 1 }];
+    var circle_r_sum: i32 = 0;
+    var rects: i32 = 0;
+    for s in shapes {
+        var c: Option[Circle] = s as? Circle;
+        match (c) {
+            Some(x) => { circle_r_sum = circle_r_sum + x.r; },
+            None => { rects = rects + 1; },
+        }
+    }
+    print("circle_r_sum=" + circle_r_sum.to_string());
+    print("rects=" + rects.to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "circle_r_sum=3\nrects=2")
+}
+
+// TestDowncastEnumTarget: an enum concrete target. A payload-carrying enum
+// dispatches (and downcasts) like any heap value; `d as? Box` hits when the
+// dyn holds the enum, misses for a struct. (A payloadless-only enum behind
+// dyn is a separate pre-existing dispatch limitation, not exercised here.)
+func TestDowncastEnumTarget(t *testing.T) {
+	src := `import "std/i32";
+trait Describe {
+    function tag(self: Self): i32;
+}
+enum Box { Pair(i32, i32), Single(i32) }
+struct Dot { n: i32 }
+impl Describe for Box {
+    function tag(self: Self): i32 {
+        match (self) {
+            Pair(a, b) => { return a + b; },
+            Single(v) => { return v; },
+        }
+    }
+}
+impl Describe for Dot {
+    function tag(self: Self): i32 { return 100 + self.n; }
+}
+function check(d: dyn Describe): i32 {
+    var c: Option[Box] = d as? Box;
+    match (c) {
+        Some(x) => { return x.tag(); },
+        None => { return -1; },
+    }
+}
+function main(): i32 {
+    var a: dyn Describe = Pair(3, 4);
+    var b: dyn Describe = Dot { n: 7 };
+    print("a=" + check(a).to_string());
+    print("b=" + check(b).to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "a=7\nb=-1")
+}
+
+// TestDowncastOnlyTargetRooted: a downcast target T (Rect) that is NEVER
+// coerced to `dyn Shape` — only ever appears as a downcast target. Its
+// __vtable_Shape_Rect (which the compare references) must still emit and
+// its __method_Rect_* must survive tree-shake / IR dead-function
+// elimination, or the build fails to link / find the func. Guards the
+// DowncastImplMethods rooting (docs/DYN-TRAITS.md §9).
+func TestDowncastOnlyTargetRooted(t *testing.T) {
+	src := `import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+}
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle {
+    function area(self: Self): i32 { return self.r * self.r; }
+}
+impl Shape for Rect {
+    function area(self: Self): i32 { return self.w * self.h; }
+}
+function main(): i32 {
+    var d: dyn Shape = Circle { r: 5 };
+    var r: Option[Rect] = d as? Rect;
+    match (r) {
+        Some(x) => { print("rect=" + x.area().to_string()); },
+        None => { print("not a rect"); },
+    }
+    var c: Option[Circle] = d as? Circle;
+    match (c) {
+        Some(x) => { print("circle=" + x.area().to_string()); },
+        None => { print("not a circle"); },
+    }
+    return 0;
+}
+`
+	dynAllBackends(t, src, "not a rect\ncircle=25")
+}
