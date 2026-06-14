@@ -168,7 +168,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `now_ns` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | wall-clock nanoseconds (i64); native interp + x86-64 + arm64 runtimes added (previously wasm-only); self-host x86-64/arm64 now emit it on both the AST and IR paths (wasm routes via the AST path) |
 | `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value |
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
-| float math builtins `__sqrt_f64` etc. | | | | | | ⬜ | via std/float |
+| float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/float; self-host IR path: `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends (`op_funary`; `TestSelfHostFloatMathIR`). `__round_f64` (round-half-away emulation) + the libm transcendentals (`__log_f64`/`__exp_f64`/`__sin_f64`/`__cos_f64`/`__pow_f64`) still route AST |
 | `strbuf_reset/append/take` | | | | | | ⬜ | |
 | `__heap_bump_bytes` | | | | | | ⬜ | introspection |
 | `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
@@ -202,7 +202,7 @@ per-function bugs in the audit log.
 | `std/i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host abs/min/max/clamp via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) |
 | `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | max — `audit_std_path_numeric`; self-host unsigned min/max via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`); wasm IR unsigned-compare gap tracked in [#2917](https://github.com/JakeChampion/lang/issues/2917) |
 | `std/u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | clamp — `audit_std_path_numeric`; self-host via the IR path: u64 unsigned compare / `>>` / `/` / `%` ([#2904](https://github.com/JakeChampion/lang/issues/2904); `TestSelfHostU64UnsignedIR`) + the `min`/`max`/`clamp` methods incl. high-bit-set bounds (`TestSelfHostU64IR`, oracle-checked) — the i64-domain analog of the u32 wrapping fix; `to_string` routes via the AST path (core/int `__int_to_string_u64`'s `u8[]`/`usize`/`__memcpy`) |
-| `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host: f64 intrinsics (floor/ceil/sqrt/abs/round/trunc) ✅ via the IR path (`TestSelfHostFloatIntrinsicsIR`) |
+| `std/float` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host IR path: the `sqrt`/`floor`/`ceil`/`trunc`/`abs` intrinsics lower to a single hardware instruction (`op_funary`, routing-pinned `TestSelfHostFloatMathIR`); `min`/`max`/`clamp`/`is_nan`/`is_finite`/`is_inf` are ordinary f64 compares that already lower. `round` (round-half-away) + the transcendentals (`log`/`exp`/`sin`/`cos`/`pow`) still route AST |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
@@ -246,6 +246,29 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-14 — std/float f64 math intrinsics via the self-host IR path (all 3 backends)
+
+Closed the self-host gap for std/float's single-instruction f64 math builtins.
+A new IR op (`op_funary`) carries `__sqrt_f64` / `__floor_f64` / `__ceil_f64` /
+`__trunc_f64` / `__abs_f64`; `irlower` recognises the calls (1 f64 arg → the
+intrinsic, and `expr_is_f64` now classifies them as f64-returning so they nest +
+feed f64 arithmetic), and each IR backend selects the single hardware
+instruction it already uses on the AST path: x86 `sqrtsd` / `roundsd $1/$2/$3` /
+sign-bit `andq` (`asm_ir.fern`), arm64 `fsqrt` / `frintm`/`frintp`/`frintz` /
+`fabs` (`asm_arm64_ir.fern`), wasm `f64.sqrt`/`floor`/`ceil`/`trunc`/`abs`
+(`wasm_ir.fern`). Eligibility flips for free (`ir_eligible` == "lowers"); the new
+ops aren't `call_direct` so `calls_only_known` is unaffected.
+
+New routing-pinned `TestSelfHostFloatMathIR` (x86-64 + wasm, 9 cases each,
+oracle-checked) replaces the older `TestSelfHostFloatIntrinsicsIR`, which used
+`-ir` and so **silently fell back to AST** when the program wasn't all_eligible
+— including `__round_f64` (which bails) routed the whole module through the AST
+emitter, so it never actually verified the IR path. Verified end-to-end on
+x86-64, wasm (wasmtime), and arm64 (qemu) locally; the x86-64 + arm64 fixpoint
+holds. `__round_f64` (round-half-away needs a `trunc(x+copysign(0.5,x))`
+emulation) and the libm transcendentals (`log`/`exp`/`sin`/`cos`/`pow`) stay on
+the AST path — a documented follow-up.
 
 ### 2026-06-14 — std/u64 `min`/`max`/`clamp` methods via the self-host IR path (x86-64 + wasm)
 

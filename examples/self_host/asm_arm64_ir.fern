@@ -695,6 +695,17 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             else if (o.kind == "fmul") { s = s.write("    fmul d0, d1, d0\n"); }
             else { s = s.write("    fdiv d0, d1, d0\n"); }
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "fsqrt" || o.kind == "ffloor" || o.kind == "fceil" || o.kind == "ftrunc" || o.kind == "fabs") {
+            // f64 unary math (op_funary): pop the operand into d0, apply the single
+            // FP instruction, push. frintm/frintp/frintz are round toward -inf /
+            // +inf / zero. Mirrors asm_arm64.fern.
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n");
+            if (o.kind == "fsqrt") { s = s.write("    fsqrt d0, d0\n"); }
+            else if (o.kind == "ffloor") { s = s.write("    frintm d0, d0\n"); }
+            else if (o.kind == "fceil") { s = s.write("    frintp d0, d0\n"); }
+            else if (o.kind == "ftrunc") { s = s.write("    frintz d0, d0\n"); }
+            else { s = s.write("    fabs d0, d0\n"); }
+            s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "flt" || o.kind == "fle" || o.kind == "fgt" || o.kind == "fge" || o.kind == "feq" || o.kind == "fne") {
             // f64 compare → i32 0/1. fcmp's condition codes are NaN-aware (mi/ls
             // are false when unordered); mirrors asm_arm64.fern.

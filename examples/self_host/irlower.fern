@@ -1798,6 +1798,22 @@ pub function is_fcmp_kind(kind: string): boolean {
     return kind == "feq" || kind == "fne" || kind == "flt" || kind == "fle" || kind == "fgt" || kind == "fge";
 }
 
+// f64_math_builtin_kind maps a std/float single-instruction math builtin name to
+// its op_funary opcode, or "" if `name` is not one. Covers the intrinsics every
+// backend implements with one hardware instruction: __sqrt_f64 (sqrtsd / fsqrt /
+// f64.sqrt), __floor_f64 / __ceil_f64 / __trunc_f64 (roundsd $1/$2/$3 / frint
+// m/p/z / f64.floor/ceil/trunc), and __abs_f64 (sign-bit mask / fabs / f64.abs).
+// __round_f64 (round-half-away needs trunc(x+copysign(0.5,x)) emulation) and the
+// libm transcendentals stay on the AST path.
+pub function f64_math_builtin_kind(name: string): string {
+    if (name == "__sqrt_f64") { return "fsqrt"; }
+    if (name == "__floor_f64") { return "ffloor"; }
+    if (name == "__ceil_f64") { return "fceil"; }
+    if (name == "__trunc_f64") { return "ftrunc"; }
+    if (name == "__abs_f64") { return "fabs"; }
+    return "";
+}
+
 // arr_index_is_f64 reports whether indexing `arr` (the array operand of `a[i]`)
 // yields an f64 — i.e. `arr` names an f64[] slot. Only a tracked ident source
 // qualifies (literals / function-return arrays aren't f64-element-tracked);
@@ -1934,7 +1950,11 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
             }
             // A call to an f64-returning free function OR method is an f64 value.
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_f64_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => {
+                    // The std/float single-instruction math builtins return f64.
+                    if (f64_math_builtin_kind(cid.name) != "") { return true; }
+                    return s.is_f64_ret_fn(cid.name);
+                },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { return false; }
@@ -2902,6 +2922,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var au: LowerState = lower_expr(c.args[0], s);
                         if (!au.ok) { return au; }
                         return au.emit(ir.op_alloc_u8());
+                    }
+                    // std/float single-instruction math builtins: __sqrt_f64 /
+                    // __floor_f64 / __ceil_f64 / __trunc_f64 / __abs_f64. Lower the
+                    // f64 operand, then emit the op_funary intrinsic the IR backends
+                    // select a single hardware instruction for.
+                    var fuk: string = f64_math_builtin_kind(cid.name);
+                    if (fuk != "" && c.args.len() == 1) {
+                        var fu: LowerState = lower_expr(c.args[0], s);
+                        if (!fu.ok) { return fu; }
+                        return fu.emit(ir.op_funary(fuk));
                     }
                     if (cid.name == "string_from_bytes" && c.args.len() == 1) {
                         var sfb: LowerState = lower_expr(c.args[0], s);
@@ -6371,12 +6401,22 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
         var elig: boolean = false;
+        var elem_t: string = rt;
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) { elig = true; }
         else if (is_enum_like_name(rt, structs)) { elig = true; }
+        // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
+        // struct type so a call site `var a = f()` (already is_arr via
+        // arr_ret_fns) recovers `a[i]`'s struct type for field access / foreach.
+        // The slot is an array, so struct_type_of_slot is read as the element
+        // type (expr_struct_type reports "" for the array value itself). #3035.
+        else if (rt.len() >= 3 && rt[rt.len() - 2 : rt.len()] == "[]") {
+            var et: string = rt[0 : rt.len() - 2];
+            if (decl_is_struct(structs, et) && decl_is_leaksafe(structs, et)) { elig = true; elem_t = et; }
+        }
         if (elig) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
-            out = out.append(key + "|" + rt);
+            out = out.append(key + "|" + elem_t);
         }
         k = k + 1;
     }
@@ -7250,23 +7290,27 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             }
             return LiftExpr { expr: parser.ExprArray { elements: nelems }, acc: aa };
         },
-        // A struct literal with a NO-CAPTURE lambda FIELD value (`Box { f:
-        // function(x){...} }`): hoist each lambda field to a top-level `__lam_N`,
-        // so the field holds a bare function-name ident (a function-pointer
-        // value) -- the same shape a named-function field (`Box { f: dbl }`)
-        // already lowers, so `b.f(args)` rides the existing fn-value-field call
-        // path. A capturing lambda field keeps the module on the AST path.
+        // A no-capture lambda in a STRUCT-FIELD value position (`Box { f:
+        // function(x){...} }`) hoists the same way — lift_call_arg turns it into
+        // a bare `__lam_N` fn-name (which lowers to const_func, like `Box { f:
+        // inc }`). A capturing lambda field is left in place (stays on AST).
         parser.ExprStructLit(sl) => {
             var sa: LiftAcc = acc;
             var nvals: parser.Expr[] = [];
-            var fvi: i32 = 0;
-            while (fvi < sl.field_values.len()) {
-                var fr: LiftExpr = lift_call_arg(sl.field_values[fvi], sa, gfns);
-                sa = fr.acc;
-                nvals = nvals.append(fr.expr);
-                fvi = fvi + 1;
+            var vi: i32 = 0;
+            while (vi < sl.field_values.len()) {
+                var vr: LiftExpr = lift_call_arg(sl.field_values[vi], sa, gfns);
+                sa = vr.acc;
+                nvals = nvals.append(vr.expr);
+                vi = vi + 1;
             }
-            return LiftExpr { expr: parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: sl.base, line: sl.line, col: sl.col }, acc: sa };
+            var nbase: parser.Expr = sl.base;
+            if (sl.has_base) {
+                var br: LiftExpr = lift_expr_walk(sl.base, sa, gfns);
+                sa = br.acc;
+                nbase = br.expr;
+            }
+            return LiftExpr { expr: parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, acc: sa };
         },
         _ => { return LiftExpr { expr: e, acc: acc }; }
     }

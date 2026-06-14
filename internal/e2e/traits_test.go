@@ -562,19 +562,21 @@ function main(): i32 {
 			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
 		}
 	}
-	// arm64 (still gated — slice 2d): clean unsupported-feature
-	// diagnostic, no crash. (x86-64 now LOWERS `dyn` via the boxed
-	// one-word representation — covered by TestX86_64DynTrait* in
-	// dyn_trait_compiled_test.go — so it must NOT be asserted to reject
-	// here anymore. docs/DYN-TRAITS.md §4.2.2/§7.)
+	// All three compiled backends now LOWER `dyn` via the boxed
+	// one-word representation (wasm: inline two-word, slice 2b; x86-64:
+	// slice 2c; arm64: slice 2d — docs/DYN-TRAITS.md §4.2/§7). No
+	// compiled backend rejects `dyn` anymore. Assert arm64 compiles
+	// CLEANLY (no unsupported-feature diagnostic, no crash); the
+	// differential run-vs-interp coverage lives in TestArm64DynTrait* /
+	// TestX86_64DynTrait* / TestWASMDynTrait* in dyn_trait_compiled_test.go.
 	gen := exec.Command(bin, "-target", "arm64", "-o", filepath.Join(dir, "out"), src)
 	var gerr bytes.Buffer
 	gen.Stderr = &gerr
-	if err := gen.Run(); err == nil {
-		t.Errorf("compiling dyn Trait to arm64 should fail with a clean error, but it succeeded")
+	if err := gen.Run(); err != nil {
+		t.Errorf("compiling dyn Trait to arm64 should now succeed, but it failed: %v\nstderr: %s", err, gerr.String())
 	}
-	if !strings.Contains(gerr.String(), "dyn Trait is not yet supported on compiled backends") {
-		t.Errorf("compiled-backend diagnostic missing; got: %s", gerr.String())
+	if strings.Contains(gerr.String(), "dyn Trait is not yet supported on compiled backends") {
+		t.Errorf("arm64 should no longer reject dyn; got the stale unsupported-feature diagnostic: %s", gerr.String())
 	}
 }
 

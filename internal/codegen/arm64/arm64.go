@@ -196,8 +196,17 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prevOverride }()
 
-	treeshake.Run(prog)
-	ip, err := ir.LowerWith(prog, info, 8)
+	// `dyn Trait` vtable impl methods are reachable only through the
+	// runtime vtable (OpConstVtable names them by string), never via a
+	// static call the AST walker / IR reachability can see — pin them as
+	// tree-shake roots so they survive (mirrors the x86-64 + wasm build
+	// paths). See docs/DYN-TRAITS.md §4.2.2.
+	treeshake.Run(prog, treeshake.DynCoercionImplMethods(info)...)
+	// arm64 supports boxed one-word `dyn Trait` values
+	// (docs/DYN-TRAITS.md §4.2.2); pass DynSupported so the IR gate
+	// lifts here (the same boxed representation x86-64 uses — both are
+	// ptrW==8 — so ptrW alone can't lift it).
+	ip, err := ir.LowerWith(prog, info, 8, ir.DynSupported())
 	if err != nil {
 		return "", err
 	}
@@ -220,7 +229,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `adrp + add` of a static `.rodata` cell instead of a
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, vtables: ip.Vtables}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
 	}
@@ -243,6 +252,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
 				// Closure env block (+ optional pair) come
 				// from __fern_alloc.
+				g.usesAlloc = true
+				continue
+			}
+			if op.Kind == ir.OpBoxDyn {
+				// The boxed `dyn Trait` cell is a normal heap object
+				// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
 				g.usesAlloc = true
 				continue
 			}
@@ -486,6 +501,45 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 // isn't pulled in.
 func (g *generator) emitDataSections() {
 	g.line("")
+	// Static `dyn Trait` vtables: one `.rodata` cell per (trait,
+	// concrete) pair referenced via OpConstVtable, holding
+	// `len(methods)` absolute `__method_*` function pointers in trait
+	// declaration order (docs/DYN-TRAITS.md §4.2.2). OpCallDyn loads
+	// slot k (`vtable + k*8`) and `blr`s through it. Mirrors the x86-64
+	// backend's emission.
+	if len(g.dynVtableCells) > 0 {
+		if g.darwin {
+			g.line(`.section __TEXT,__const`)
+		} else {
+			g.line(`.section .rodata`)
+		}
+		keys := make([]string, 0, len(g.dynVtableCells))
+		for k := range g.dynVtableCells {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		byPair := map[string]ir.VtableDecl{}
+		for _, vt := range g.vtables {
+			byPair[vt.Trait+"/"+vt.Concrete] = vt
+		}
+		for _, key := range keys {
+			vt, ok := byPair[key]
+			if !ok {
+				// Should not happen: OpConstVtable only names pairs that
+				// collectVtables produced. Emit an empty (but labelled)
+				// cell so the link doesn't fail with an undefined symbol.
+				g.line(".align 3")
+				tr, co := splitPair(key)
+				g.label(dynVtableLabel(tr, co))
+				continue
+			}
+			g.line(".align 3")
+			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
+			for _, m := range vt.Methods {
+				g.line(fmt.Sprintf("\t.quad %s", m.Func))
+			}
+		}
+	}
 	// Static closure-pair cells for OpConstFunc-referenced
 	// functions. Each cell holds {fn_ptr (8B), env=0 (8B)}.
 	if len(g.constFuncCells) > 0 {
@@ -5693,6 +5747,22 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
+// dynVtableLabel returns the GAS symbol for the (trait, concrete)
+// `dyn Trait` vtable cell. Trait / concrete names are Fern identifiers,
+// so the joined symbol is always a valid assembler label. Mirrors the
+// x86-64 backend so the two natives emit identically-named cells.
+func dynVtableLabel(trait, concrete string) string {
+	return "__vtable_" + trait + "_" + concrete
+}
+
+// splitPair undoes the "<trait>/<concrete>" key used by dynVtableCells.
+func splitPair(key string) (string, string) {
+	if i := strings.IndexByte(key, '/'); i >= 0 {
+		return key[:i], key[i+1:]
+	}
+	return key, ""
+}
+
 // escapeForGAS escapes a string for the GAS `.asciz`
 // directive. Only the minimum set of escapes the runtime
 // strings need; the assembler's own escape map handles `\\` /
@@ -5815,6 +5885,16 @@ type generator struct {
 	// uniform pair shape. Mirrors the x86-64 + wasm closure
 	// shape.
 	constFuncCells map[string]bool
+	// vtables holds the per-(trait,concrete) dispatch tables for
+	// `dyn Trait` values (ir.collectVtables). OpConstVtable looks up
+	// the method list here to emit the .rodata vtable cell. See
+	// docs/DYN-TRAITS.md §4.2.2.
+	vtables []ir.VtableDecl
+	// dynVtableCells tracks the (trait, concrete) pairs referenced via
+	// OpConstVtable. Each gets a `.rodata` symbol holding `len(methods)`
+	// 8-byte absolute function pointers (interned per pair). Key is
+	// "<trait>/<concrete>". Mirrors the x86-64 backend.
+	dynVtableCells map[string]bool
 	// usesArrEmpty gates the `.LArr_Empty` sentinel — a shared
 	// static 4-byte `[length=0]` buffer that __alloc_u8(0)
 	// returns instead of allocating a fresh length-only block.
@@ -7215,6 +7295,111 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 		g.constFuncCells[op.Str] = true
 		g.adrpAdd("x0", cell)
+		g.push()
+
+	case ir.OpConstVtable:
+		// Materialise the address of the static (trait, concrete)
+		// vtable into x0 via the same `adrp + add :lo12:` PC-relative
+		// pair OpConstFunc / OpConstStr use. The vtable is a `.rodata`
+		// array of absolute `__method_*` function pointers, one per
+		// non-associated trait method in declaration order
+		// (docs/DYN-TRAITS.md §4.2.2). On natives the vtable holds
+		// POINTERS, not table indices (the wasm form): OpCallDyn loads
+		// slot k and `blr`s it directly.
+		key := op.Str + "/" + op.Str2
+		if g.dynVtableCells == nil {
+			g.dynVtableCells = map[string]bool{}
+		}
+		g.dynVtableCells[key] = true
+		g.adrpAdd("x0", dynVtableLabel(op.Str, op.Str2))
+		g.push()
+
+	case ir.OpBoxDyn:
+		// Pack a boxed one-word `dyn Trait` value (docs/DYN-TRAITS.md
+		// §4.2.2). Operand stack on entry: [data, vtable] (vtable on
+		// top). Allocate a 16-byte {data @0, vtable @8} cell via the
+		// normal __fern_alloc path, store both words, and push the cell
+		// pointer.
+		//
+		// __fern_alloc clobbers x0..x14 (its bump/freelist body), so we
+		// CANNOT hold data / vtable in caller-save scratch across the
+		// `bl` the way x86-64 does with r10/r11 (which x86's __fern_alloc
+		// preserves). Park them in the callee-saved x19/x20 instead. The
+		// two operands are on top of the operand stack, so pop them FIRST
+		// (into caller-save x9/x10 — plain loads, no call between), THEN
+		// save x19/x20 below the now-shorter operand stack and move the
+		// operands in; that way the saved-register pair never aliases the
+		// operands the pops read. The cell is a plain heap object;
+		// precise RC of the box is out of scope (it leaks — the interp
+		// doesn't RC trait objects either).
+		g.emit("ldr x10, [sp], #%d", slotBytes) // x10 = vtable (top)
+		g.emit("ldr x9, [sp], #%d", slotBytes)  // x9  = data
+		g.emit("stp x19, x20, [sp, #-16]!")     // preserve callee-saves
+		g.emit("mov x19, x9")                   // x19 = data
+		g.emit("mov x20, x10")                  // x20 = vtable
+		g.emit("mov w0, #16")                   // cell size = 2 * ptrW
+		g.emit("bl __fern_alloc")
+		g.emit("str x19, [x0]")             // cell[0] = data
+		g.emit("str x20, [x0, #8]")         // cell[8] = vtable
+		g.emit("ldp x19, x20, [sp], #16")   // restore callee-saves
+		g.push()
+
+	case ir.OpCallDyn:
+		// Dispatch a `dyn Trait` method call (docs/DYN-TRAITS.md
+		// §4.2.2). Operand stack on entry: [data, args..., vtable]
+		// (vtable on top). Pop the vtable, load slot `op.I32`'s 8-byte
+		// function pointer (`vtable + slot*8`), then do an indirect call
+		// with [data, args...] as the AAPCS64 args (receiver-first,
+		// plain — no closure env). op.Sig is the receiver-first method
+		// signature; argc = len(params) (= 1 receiver + method args),
+		// void iff Result == nil.
+		if op.Sig == nil {
+			return fmt.Errorf("arm64: OpCallDyn missing op.Sig")
+		}
+		g.pop()                // x0 = vtable (top)
+		g.emit("mov x17, x0")  // x17 = vtable base
+		if op.I32 != 0 {
+			g.emit("ldr x16, [x17, #%d]", int(op.I32)*8)
+		} else {
+			g.emit("ldr x16, [x17]")
+		}
+		// x16 = fn pointer. emitCallArgsLoad only touches x0..x7 (+ x9
+		// for overflow copies), so x16 / x17 survive the arg load — same
+		// intra-procedure scratch OpCallIndirect uses for its fn_ptr.
+		//
+		// Under the two-word string ABI a string param occupies 2
+		// operand-stack slots → 2 arg registers. The receiver (param[0],
+		// a StructType pointer) is always 1 slot; method params follow.
+		// Translate the user-visible param count into the effective slot
+		// count via op.Sig — same fan-out OpCallIndirect / OpCallDirect
+		// apply.
+		slotCount := len(op.Sig.Params)
+		if ast.UseTwoWordStrings(8) {
+			slotCount = 0
+			for _, t := range op.Sig.Params {
+				if _, isStr := t.(ast.StringType); isStr {
+					slotCount += 2
+				} else {
+					slotCount += 1
+				}
+			}
+		}
+		g.emitCallArgsLoad(slotCount)
+		g.emit("blr x16")
+		g.emitCallArgsCleanup(slotCount)
+		if op.Sig.Result == nil {
+			break
+		}
+		// String result arrives as (data, len) in (x0, x1) under the
+		// two-word ABI — push both halves; other results push x0 only.
+		if ast.UseTwoWordStrings(8) {
+			if _, isStr := op.Sig.Result.(ast.StringType); isStr {
+				g.push() // data (x0)
+				g.emit("mov x0, x1")
+				g.push() // len
+				break
+			}
+		}
 		g.push()
 
 	case ir.OpReturn:
