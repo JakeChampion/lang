@@ -2264,6 +2264,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// hidden side channel. Runs on success only; it also runs inside
 	// monomorph's re-check, so cloned generic bodies desugar too.
 	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
+		// Composite unary minus: `-v` → `v.neg()`.
+		if u, ok := e.(*ast.Unary); ok {
+			if u.NegCall != nil {
+				return u.NegCall
+			}
+			return e
+		}
 		b, ok := e.(*ast.Binary)
 		if !ok {
 			return e
@@ -8676,6 +8683,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// Propagate polymorphism — `-3.14` should still
 				// be polymorphic so it can settle to f32 / f64.
 				return ft
+			}
+			// Composite-type unary minus: `-v` on a struct / enum with a
+			// `neg` method desugars to `v.neg()` — operator overloading,
+			// mirroring the binary `+ - * /` (add/sub/mul/div) overloads.
+			// See #2706.
+			switch t.(type) {
+			case ast.StructType, ast.EnumType:
+				tn, _ := methodTypeName(t)
+				if mangled, ok := c.info.Methods[tn+".neg"]; ok && c.methodVisibleHere(mangled) {
+					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
+					rtt := c.checkExpr(call, s)
+					n.NegCall = call
+					return rtt
+				}
+				c.errfCode(n.P, "E009", "unary `-` is not defined for %s — implement `function (self: %s) neg(): %s` to overload it", t, tn, tn)
+				return t
 			}
 			// Unary minus applies to any integer width, not just
 			// i32 — `-5i64`, `-x` on an i8, etc. requireNumber

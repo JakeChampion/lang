@@ -1371,6 +1371,11 @@ type Unary struct {
 	// IsFloat is set by the checker when the operand is a float,
 	// so codegen can pick the f32 form of the operation.
 	IsFloat bool
+	// NegCall is set by the checker when unary `-` is applied to a
+	// composite type (struct / enum) with a `neg` method — operator
+	// overloading (`-v` → `v.neg()`). The post-check rewrite replaces the
+	// Unary with this call. See #2706.
+	NegCall *Call
 }
 type Assign struct {
 	P      Position
