@@ -5753,8 +5753,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             }
             // `for x in <arr>` over an array LOCAL/PARAM (i32[] or string[]) →
             // a counted loop using existing ops. Other iter forms (calls,
-            // literals, maps) bail to AST; bodies with break/continue bail
-            // anyway (those statements aren't in the IR path). The array is an
+            // literals, maps) bail to AST. break/continue in the body DO lower:
+            // the loop is emitted advance-at-top (#2788, same as the range form),
+            // so the StmtBreak / StmtContinue handlers' br-to-exit / br-to-header
+            // land correctly (continue re-runs the increment). The array is an
             // ident, so re-loading it each iteration is side-effect-free.
             var aslot: i32 = 0 - 1;
             match (fr.iter) {
