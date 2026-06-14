@@ -247,6 +247,24 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — calling the result of a call (`mk()(args)`) via the self-host IR path
+
+Follow-up to the no-capture-lambda-return slice (#3088): calling the RESULT of a
+call — `mk()(args)`, where `mk` returns a function value — now lowers through the
+IR path. Binding first (`var g = mk(); g(args)`) and calling a fn-pointer array
+element (`fs[i](args)`) already lowered; only the inline call-on-call-result form
+bailed, because the `ExprCall`-callee dispatch had no arm for an `ExprCall`
+callee. The fix lowers the args, then the callee call (its returned fn pointer on
+TOS), then `call_indirect` — the same shape as the array-element / tuple-element
+fn-value calls. A callee returning a CAPTURING lambda (a closure-box-returning
+fn, tracked in `closure_fns`) needs the env-passing form and still bails to AST.
+
+New routing-pinned `TestSelfHostCallOnCallIR` (x86-64 + wasm, oracle-checked:
+inline call, result-in-arithmetic, 2-arg, called-twice, plus bind-then-call and
+fn-pointer-array-element regression guards). Verified end-to-end on x86-64, wasm,
+and arm64 (qemu); x86-64 + stage2 fixpoint hold. (Implementation note: the new
+match-arm binding had to be uniquely named — `lower_expr` is function-scoped and
+already binds a `cc: LowerState`, so a `parser.ExprCall(cc)` arm shadowed it.)
 ### 2026-06-14 — functions returning a no-capture lambda via the self-host IR path
 
 Widened the IR subset: a function returning a NO-CAPTURE lambda
