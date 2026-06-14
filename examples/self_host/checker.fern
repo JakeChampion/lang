@@ -3174,19 +3174,34 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                     }
                                 }
                             } else {
-                                // E043: a method call `obj.m(...)` on a known
-                                // struct that has neither a method `m` nor a
-                                // field `m` — it's a field access on a struct
-                                // with no such member. Mirrors the Go checker,
-                                // which resolves the method, then the field,
-                                // finds neither, and reports E043. A present
-                                // field (function-typed → a valid closure call,
-                                // or non-function → a separate E038) is excluded
-                                // by the field-name guard, so there are no false
-                                // positives on real method/closure-field calls.
+                                // A call `obj.m(...)` on a known struct with no
+                                // method `m`. Resolve `m` as a field (mirroring
+                                // the Go checker, which falls through to the
+                                // field after the method lookup misses):
+                                //   - not a field        → E043 (no such member)
+                                //   - field, function-typed → ok (closure-field
+                                //     call: `p.handler()` where handler: () => T)
+                                //   - field, non-function → E038 (calling a
+                                //     non-function value)
+                                // A present, function-typed field is the only
+                                // valid case, so neither diagnostic false-fires
+                                // on real method or closure-field calls.
                                 var fsig: StructSig = s.lookup_struct(sn.name);
-                                if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, mfa.field)) {
-                                    out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+                                if (fsig.name.len() > 0) {
+                                    var fldi: i32 = field_index(fsig, mfa.field);
+                                    if (fldi < 0) {
+                                        out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+                                    } else {
+                                        var fldt: Type = fsig.field_types[fldi];
+                                        var fld_is_fn: boolean = false;
+                                        match (fldt) {
+                                            TypeFunc(_) => { fld_is_fn = true; },
+                                            _ => { }
+                                        }
+                                        if (!fld_is_fn) {
+                                            out = out.append(dg_at("E038", "calling non-function value of type " + type_label(fldt), mfa.line, mfa.col));
+                                        }
+                                    }
                                 }
                             }
                         },
