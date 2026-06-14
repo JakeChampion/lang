@@ -1,7 +1,9 @@
 # `dyn Trait` — runtime trait-object dispatch
 
-Status: **design + slice 1 (interpreter)**. This document is the design
-of record; implement against it and update it as slices land. It is the
+Status: **design + slices 1–2 shipped** — interpreter (slice 1) plus all
+three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d). This
+document is the design of record; implement against it and update it as
+slices land. It is the
 runtime-dispatch counterpart to the static trait system in
 [`TRAITS.md`](TRAITS.md) — read that first.
 
@@ -161,11 +163,13 @@ needs a real runtime representation. The plan (not in slice 1):
   on `ptrW == 4`; on `ptrW == 8` a boxed `dyn` is an ordinary one-word
   pointer (`ast.IsPointerType` is true for it).
 
-Until a backend's slice lands, codegen rejects `DynTraitType` with a
-clean diagnostic (`dyn Trait is not yet supported on compiled backends;
-…`) rather than crashing — so the feature is supported only where a slice
-has shipped (interpreter, wasm, x86-64) and never silently miscompiles
-(arm64 still rejects).
+All three compiled backends now lower `DynTraitType` (wasm: inline
+two-word, slice 2b; x86-64: boxed one-word, slice 2c; arm64: boxed
+one-word, slice 2d), alongside the interpreter. The clean reject
+diagnostic (`dyn Trait is not yet supported on compiled backends; …`)
+remains the fallback for any future `ptrW == 8` backend that hasn't
+opted in via `ir.DynSupported()`, so the gate never silently
+miscompiles — but no shipping backend takes it today.
 
 #### 4.2.1 Slice 2b implementation spec (wasm — next build)
 
@@ -239,7 +243,7 @@ one slot per non-associated trait method in declaration order.
 solid, teach the RC passes to inc/dec word 0 of a two-word `dyn` slot and
 skip word 1 (the static `vtable`). Tracked as part of goal 2 (Perceus).
 
-#### 4.2.2 Slice 2c implementation (x86-64 — BOXED one-word)
+#### 4.2.2 Slices 2c + 2d implementation (x86-64 + arm64 — BOXED one-word)
 
 The natives (`ptrW==8`) deliberately do **not** reuse wasm's inline
 two-word value pathway (they have none, and adding a two-word ABI on
@@ -267,11 +271,12 @@ through to the existing `IsPointerType → WidthPtr` / `ptrW` branches —
 one word everywhere on natives.
 
 Target discriminator. `ptrW` alone cannot tell x86-64 from arm64
-(both are 8). `ir.LowerWith` takes optional `LowerOption`s; the x86-64
-backend passes `ir.DynSupported()` to lift its gate, arm64 omits it. The
-gate is now: reject `dyn` unless `ptrW == 4 || dynSupported`. All other
-callers are behaviour-identical (arm64 + the SSA/test harnesses still
-reject on `ptrW == 8`).
+(both are 8). `ir.LowerWith` takes optional `LowerOption`s; **both**
+native backends now pass `ir.DynSupported()` to lift their gate. The
+gate is: reject `dyn` unless `ptrW == 4 || dynSupported`. The remaining
+callers (the SSA / test harnesses) are behaviour-identical — they omit
+`DynSupported()` and so still reject on `ptrW == 8`, which is what keeps
+the fallback path exercised.
 
 Lowering (boxed). The builder branches on `b.dynBoxed()` (= `ptrW
 != 4`):
@@ -304,7 +309,42 @@ x86-64 backend (`internal/codegen/x86_64/x86_64.go`):
 - The vtable's `__method_*` targets are reachable only through the
   runtime vtable, so the build pins them as tree-shake roots via the
   shared `treeshake.DynCoercionImplMethods(info)` helper (hoisted out of
-  the wasm build path so both backends share one rooting source).
+  the wasm build path so all backends share one rooting source).
+
+arm64 backend (`internal/codegen/arm64/arm64.go`, slice 2d): the exact
+structural mirror of x86-64 — same boxed representation, same IR (zero IR
+changes), same vtable cells, just AArch64 instruction selection (AAPCS64).
+
+- `OpConstVtable` materialises the `.rodata` `__vtable_<trait>_<concrete>`
+  cell address via the `adrp` + `add :lo12:` PC-relative pair (the same
+  pattern `OpConstFunc` / `OpConstStr` use), and interns the (trait,
+  concrete) pair for emission.
+- `OpBoxDyn` allocates 16 bytes via `__fern_alloc` and stores
+  `{data, vtable}`. **Register choice differs from x86-64 here.** x86-64
+  held `data`/`vtable` in `r10`/`r11` across the `call` because its
+  `__fern_alloc` preserves them; arm64's `__fern_alloc` clobbers
+  `x0..x14` (its bump/freelist body), so a caller-save register would not
+  survive. The handler instead pops the two operands into caller-save
+  `x9`/`x10` first (plain loads, no call in between), then saves the
+  **callee-saved** `x19`/`x20` below the operand stack (`stp … [sp,
+  #-16]!`, the same pair-save `emitMakeClosureOrEnv` uses), moves the
+  operands into them, allocs, stores `{data, vtable}`, and restores
+  `x19`/`x20`. Popping before the save is load-bearing: saving first
+  would put the `x19`/`x20` pair on top of the operand stack and the
+  subsequent pops would read the saved registers, not the operands.
+- `OpCallDyn` pops the vtable into `x17`, loads `[x17 + slot*8]` into
+  `x16` (the IP0/IP1 intra-procedure scratch pair `OpCallIndirect`
+  already uses for its fn-pointer — `emitCallArgsLoad` only touches
+  `x0..x7` plus `x9` for overflow copies, so `x16`/`x17` survive the arg
+  load), loads `[data, args...]` into the AAPCS64 arg registers
+  (receiver-first, plain — no closure env), and `blr x16`. The argument
+  slot count is computed off `op.Sig` so a two-word-ABI string param
+  occupies two operand-stack slots → two arg registers (the receiver is
+  always one slot); a string result is pushed back as `(data, len)` from
+  `(x0, x1)`. Void iff `op.Sig.Result == nil`.
+- `.rodata` vtable cells emitted in `emitDataSections` (`.align 3` +
+  `__vtable_<trait>_<concrete>` label + `.quad __method_*` per slot),
+  with the Mach-O `__TEXT,__const` section choice on darwin.
 
 **RC note (boxed).** The boxed cell *and* its `data` word currently leak
 — same scope as wasm's slice 2b. The cell is a normal heap pointer now,
@@ -448,11 +488,18 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
      native two-word ABI). Adds `OpBoxDyn`, a `LowerWith` target
      discriminator (`ir.DynSupported()`), and the x86-64 `OpConstVtable`
      / `OpCallDyn` / `OpBoxDyn` handlers + `.rodata` vtable cells.
-   - **2d (next): arm64 codegen** — the same boxed one-word
-     representation as x86-64 (it is also `ptrW==8`); arm64 just passes
+   - **2d (landed): arm64 codegen** — the SAME boxed one-word
+     representation as x86-64 (it is also `ptrW==8`), the structural
+     mirror with zero IR changes (§4.2.2). arm64 passes
      `ir.DynSupported()` to lift its gate and gains the mirrored
-     `emit_*` handlers. Until then arm64 keeps rejecting `dyn` with the
-     clean diagnostic.
+     `OpConstVtable` / `OpBoxDyn` / `OpCallDyn` handlers + `.rodata`
+     vtable cells. The one divergence from x86-64 is register lifetime:
+     arm64's `__fern_alloc` clobbers `x0..x14`, so `OpBoxDyn` parks
+     `data`/`vtable` in the callee-saved `x19`/`x20` across the alloc
+     (x86-64 used caller-save `r10`/`r11`, which its alloc preserves),
+     and `OpCallDyn` holds the fn pointer in `x16`/`x17`. **All three
+     compiled backends now support `dyn` — no compiled backend rejects
+     it.**
 3. **Slice 3: self-host parity (x86-64 + arm64 — shipped).** `dyn Trait`
    parses in the self-host and dispatches over its existing shape-pointer
    path; struct/enum concrete types work end-to-end (see §4.3). Remaining:
