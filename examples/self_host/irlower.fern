@@ -478,10 +478,50 @@ pub function ident_is_fn_value(name: string, s: LowerState): boolean {
 }
 
 // elem_type_tag computes the type tag of an expression for tuple-element typing:
+// expr_opt_elem_tag returns the COMMA-FREE Option type spelling of a tuple
+// element that is an Option value (`Some(7)` → "Option[i32]", `Some("x")` →
+// "Option[string]"), or "" otherwise. Comma-free is required because the tuple-
+// element tag encoding (mark_tuple_elems / tuple_elem_tag) splits on commas, so
+// `Result[T, E]` (which has one) is deliberately NOT recovered here — a Result
+// element stays on the AST path (#3018). Only a `Some(<scalar/string>)`
+// construction or an Option-typed local/param is admitted (a leak-only box, one
+// pointer slot, like a struct element); a `None` with no statically-known
+// payload, or a nested Option, falls through to "".
+pub function expr_opt_elem_tag(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Some" && c.args.len() == 1) {
+                        var pt: string = elem_type_tag(c.args[0], s);
+                        if (pt == "i32" || pt == "string" || pt == "i64" || pt == "f64" || pt == "boolean") {
+                            return "Option[" + pt + "]";
+                        }
+                        return "";
+                    }
+                    var rt: string = s.opt_ret_type(cid.name);
+                    if (rt.len() >= 8 && rt[0:7] == "Option[") { return rt; }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        parser.ExprIdent(id) => {
+            var ot: string = s.opt_type_of_slot(s.slot_of(id.name));
+            if (ot.len() >= 8 && ot[0:7] == "Option[") { return ot; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // "string" for a string, a struct type name for a struct, "fn" for a function
-// value, "i64"/"f64" for an 8-byte scalar, else "i32" (scalar). The 8-byte tags
-// drive the wasm tuple's per-element i64.store/load vs f64.store/load (and route
-// i64 through lower_i64); "fn" lets `t.N(args)` recover the element's callability.
+// value, "Option[T]" for an Option value, "i64"/"f64" for an 8-byte scalar, else
+// "i32" (scalar). The 8-byte tags drive the wasm tuple's per-element
+// i64.store/load vs f64.store/load (and route i64 through lower_i64); "fn" lets
+// `t.N(args)` recover the element's callability; "Option[T]" lets `match (t.N)`
+// recover the payload.
 pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     if (expr_is_str(e, s)) { return "string"; }
     // A bare fn-name element (`(inc, 5)`): a function VALUE (a plain fn pointer,
@@ -490,6 +530,10 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
         parser.ExprIdent(fid) => { if (ident_is_fn_value(fid.name, s)) { return "fn"; } },
         _ => {}
     }
+    // An Option element (`(Some(7), 3)`): tag "Option[T]" so a later
+    // `match (t.N)` recovers the payload type (a leak-only pointer slot).
+    var optag: string = expr_opt_elem_tag(e, s);
+    if (optag != "") { return optag; }
     var st: string = expr_struct_type(e, s);
     if (st != "") { return st; }
     if (expr_is_f64(e, s)) { return "f64"; }
@@ -2628,7 +2672,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 var el: parser.Expr = tup.elements[tei];
                 var el_arr_ok: boolean = expr_is_arr_src(el, s)
                     && !expr_is_strarr(el, s) && !expr_is_f64arr(el, s) && !expr_is_i64arr(el, s);
-                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok) { return s.fail(); }
+                // An Option element (`(Some(7), 3)`) is a leak-only box stored in
+                // one pointer slot, like a string / struct element — admit it (its
+                // "Option[T]" tag lets `match (t.N)` recover the payload). #3018.
+                var el_opt_ok: boolean = expr_opt_elem_tag(el, s) != "";
+                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_opt_ok) { return s.fail(); }
                 tei = tei + 1;
             }
             // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
@@ -5009,11 +5057,19 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     parser.ExprIdent(sid) => { srt = ms.opt_type_of_slot(ms.slot_of(sid.name)); },
                                     // `match (p.opt)` where `opt` is an Option/Result
                                     // struct field — recover its type from the field.
+                                    // `match (t.N)` where the tuple element is an
+                                    // Option — recover from the element's tracked tag
+                                    // (a numeric field; #3018).
                                     parser.ExprFieldAccess(sfa) => {
-                                        var foty: string = expr_struct_type(sfa.obj, ms);
-                                        if (foty != "") {
-                                            var fft: string = decl_field_type(ms.structs, foty, sfa.field);
-                                            if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { srt = fft; }
+                                        if (util.is_all_digits(sfa.field)) {
+                                            var ttg: string = expr_tuple_elem_tag(sfa.obj, util.digits_to_i32(sfa.field), ms);
+                                            if (ttg.len() >= 8 && (ttg[0:7] == "Option[" || ttg[0:7] == "Result[")) { srt = ttg; }
+                                        } else {
+                                            var foty: string = expr_struct_type(sfa.obj, ms);
+                                            if (foty != "") {
+                                                var fft: string = decl_field_type(ms.structs, foty, sfa.field);
+                                                if (fft.len() >= 8 && (fft[0:7] == "Option[" || fft[0:7] == "Result[")) { srt = fft; }
+                                            }
                                         }
                                     },
                                     // `match (a[i])` where `a` is an Option/Result
