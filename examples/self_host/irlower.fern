@@ -878,11 +878,12 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                         continue;
                     }
                     // An array-of-ARRAY field `T[][]` whose element `T[]` is
-                    // itself a leaf-safe array (scalar / struct / enum array):
-                    // the whole nested structure leaks with the struct. Covers
-                    // the common 2-D field; deeper nesting (an element that ends
-                    // in `[]` but isn't a recognised leaf-safe array) still bails.
-                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt)) {
+                    // itself a leaf-safe array (scalar / struct / enum array), or
+                    // an array-of-Option/Result field `Option[T][]` whose element
+                    // `Option[T]` is a leak-safe Option/Result: the whole nested
+                    // structure leaks with the struct. Covers the common 2-D
+                    // field; deeper nesting still bails.
+                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field(elt)) {
                         fi = fi + 1;
                         continue;
                     }
@@ -4848,6 +4849,20 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                                 if (aot.len() >= 2 && aot[aot.len() - 2 : aot.len()] == "[]") {
                                                     var elt: string = aot[0 : aot.len() - 2];
                                                     if (elt.len() >= 8 && (elt[0:7] == "Option[" || elt[0:7] == "Result[")) { srt = elt; }
+                                                }
+                                            },
+                                            // `match (b.o[i])` where `o` is an
+                                            // Option/Result-array struct field —
+                                            // recover the element from the field's
+                                            // declared `Option[T][]` / `Result[…][]`.
+                                            parser.ExprFieldAccess(sfa2) => {
+                                                var foty2: string = expr_struct_type(sfa2.obj, ms);
+                                                if (foty2 != "") {
+                                                    var fat: string = decl_field_type(ms.structs, foty2, sfa2.field);
+                                                    if (fat.len() >= 2 && fat[fat.len() - 2 : fat.len()] == "[]") {
+                                                        var felt: string = fat[0 : fat.len() - 2];
+                                                        if (felt.len() >= 8 && (felt[0:7] == "Option[" || felt[0:7] == "Result[")) { srt = felt; }
+                                                    }
                                                 }
                                             },
                                             _ => {}
