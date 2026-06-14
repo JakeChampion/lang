@@ -2803,6 +2803,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if ((left_u32 || right_u32) && (kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s")) {
                 ek = to_unsigned_kind(kind);
             }
+            // u32 DIVISION / REMAINDER must be unsigned too: a u32 numerator >=
+            // 2^31 reads as signed-negative in a 32-bit slot, so signed div/rem
+            // give the wrong quotient (x86/wasm computed it signed — arm happened
+            // to be right because its 64-bit reg held the value zero-extended).
+            // Remap div_s/rem_s -> div_u/rem_u when either operand is u32, the
+            // same way u64 does (#2904); add/sub/mul stay sign-agnostic. (#3204+)
+            if ((left_u32 || right_u32) && (kind == "div_s" || kind == "rem_s")) {
+                ek = to_unsigned_kind(kind);
+            }
             var res: LowerState = s2.emit(ir.op_bin(ek, 0, false));
             var res_u32: boolean = left_u32 || right_u32;
             if (res_u32 && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
