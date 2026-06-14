@@ -9,22 +9,23 @@ import (
 	"testing"
 )
 
-// floatMathIRCases exercise std/float's single-instruction f64 math builtins —
-// __sqrt_f64 / __floor_f64 / __ceil_f64 / __trunc_f64 / __abs_f64 — through the
-// self-host IR path on x86-64 + wasm. Each maps to one hardware instruction on
+// floatMathIRCases exercise std/float's f64 math builtins — __sqrt_f64 /
+// __floor_f64 / __ceil_f64 / __trunc_f64 / __abs_f64 / __round_f64 — through the
+// self-host IR path on x86-64 + wasm. Most map to one hardware instruction on
 // every backend (sqrtsd / roundsd / sign-mask on x86, fsqrt / frint* / fabs on
 // arm64, f64.sqrt / floor / ceil / trunc / abs on wasm), so the IR path now
 // lowers them (op_funary) instead of falling back to the AST emitter — the
 // FEATURE-AUDIT "float math builtins" row was self-host-blank.
 //
+// __round_f64 is round-half-away-from-zero (Go's math.Round): one instruction on
+// arm64 (frinta) but emulated as trunc(x+copysign(0.5,x)) on x86 (roundsd has no
+// ties-away mode) and wasm (f64.nearest is ties-to-EVEN). The half-integer cases
+// below (2.5 -> 3, 99.5 -> 100) are exactly where ties-to-even would diverge.
+//
 // These cases pin routing to the "ir" path via the pathprobe driver. (The older
 // combined test used `-ir`, which silently falls back to AST when the module is
-// not all_eligible — so including __round_f64 routed the whole program through
-// the AST emitter and never verified the IR path.)
-//
-// __round_f64 (round-half-away needs a trunc(x+copysign(0.5,x)) emulation) and
-// the libm transcendentals (log/exp/sin/cos/pow) are intentionally NOT covered —
-// they stay on the AST path and are a documented follow-up.
+// not all_eligible, so it never verified the IR path.) The libm transcendentals
+// (log/exp/sin/cos/pow) remain on the AST path — a documented follow-up.
 //
 // Each case casts its f64 result to i32 and returns a non-negative value kept
 // <= 126 (the wasmtime exit-code truncation gap, cf. #2908), oracle-checked
@@ -40,12 +41,20 @@ var floatMathIRCases = []struct {
 	{"trunc", `return __trunc_f64(7.9) as i32;`},
 	// abs of a negative input: exercises the sign-bit clear with a positive result.
 	{"abs", `return __abs_f64(0.0 - 5.5) as i32;`},
+	// round half-away: 2.5 -> 3 (ties-to-even would give 2), 99.5 -> 100.
+	{"round-half", `return __round_f64(2.5) as i32;`},
+	{"round-half-large", `return __round_f64(99.5) as i32;`},
+	// round below / above the half: 2.4 -> 2, 2.6 -> 3.
+	{"round-down", `return __round_f64(2.4) as i32;`},
+	{"round-up", `return __round_f64(2.6) as i32;`},
 	// Nested intrinsics: sqrt(abs(-16)) = 4.
 	{"nested", `return __sqrt_f64(__abs_f64(0.0 - 16.0)) as i32;`},
 	// Intrinsic result feeding f64 arithmetic: sqrt(2) * 10 = 14.14 -> 14.
 	{"in-expr", `var x: f64 = 2.0; return (__sqrt_f64(x) * 10.0) as i32;`},
 	// f64 local round-trip: floor of a stored value.
 	{"via-local", `var y: f64 = 9.99; return __floor_f64(y) as i32;`},
+	// round of an f64 local.
+	{"round-via-local", `var z: f64 = 4.5; return __round_f64(z) as i32;`},
 }
 
 func floatMathIRSrc(mainBody string) string {
