@@ -1681,6 +1681,25 @@ func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) er
 	return rejected
 }
 
+// rejectBlockExpr scans a program for any block-expression
+// (`{ stmts; tail }` in an `if`/`match` value branch) and rejects it
+// cleanly: slice 1 of block-expressions is interp-only, so no compiled
+// backend can lower it yet. Mirrors rejectDowncast — a WalkProgram scan
+// plus a clean error, never a panic. (The lowering switch also has a
+// guard arm, but this surfaces a friendlier message before lowering.)
+func rejectBlockExpr(prog *ast.Program) error {
+	const unsupported = "block-expression (`if`/`match` value branch `{ stmts; tail }`) is not yet supported on compiled backends (slice 1 is interpreter-only); run it on the interpreter (fern -interp)"
+	var rejected error
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if _, ok := n.(*ast.BlockExpr); ok {
+			rejected = fmt.Errorf("ir: %s", unsupported)
+			return false
+		}
+		return true
+	})
+	return rejected
+}
+
 // downcastTargetName returns the concrete type-name string for a
 // struct/enum downcast target (the `T` in `e as? T`), matching the
 // spelling collectVtables / OpConstVtable use for the (trait,concrete)
@@ -2033,6 +2052,14 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// and — defensively — a non-struct/enum target (the checker already
 	// blocks primitives with E060) is rejected too.
 	if err := rejectDowncast(prog, info, dynSupported); err != nil {
+		return nil, err
+	}
+	// Block-expressions (`if`/`match` value branches `{ stmts; tail }`)
+	// are interp-only in slice 1 — no compiled lowering yet. Reject any
+	// BlockExpr cleanly on every compiled backend (mirrors
+	// rejectDowncast's clean-reject contract) rather than hitting the
+	// lowering switch's guard arm with a panic.
+	if err := rejectBlockExpr(prog); err != nil {
 		return nil, err
 	}
 	// Automatic drop for owned WIT resource handles (P5 slice 3): insert
@@ -11408,6 +11435,13 @@ func (b *builder) expr(e ast.Expr) error {
 		if faContainerSlot >= 0 {
 			b.emitOwnedSlotDrop(faContainerSlot, b.scratchType[faContainerSlot])
 		}
+	case *ast.BlockExpr:
+		// Slice 1 of block-expressions is interpreter-only — the
+		// rejectBlockExpr pre-pass should have already returned a clean
+		// error before lowering. This guard arm is defence-in-depth so a
+		// BlockExpr that somehow reaches lowering errors cleanly instead
+		// of falling through to a panic-shaped path.
+		return fmt.Errorf("ir: block-expression is not yet supported on compiled backends (slice 1 is interpreter-only)")
 	default:
 		return fmt.Errorf("ir: unsupported expression %T", e)
 	}

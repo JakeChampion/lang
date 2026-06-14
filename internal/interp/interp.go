@@ -2935,6 +2935,34 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		return nil, fmt.Errorf("interp: unsupported unary %q", x.Op)
 	case *ast.Assign:
 		return i.evalAssign(x, env)
+	case *ast.BlockExpr:
+		// Block-expression `{ stmts; tail }` (slice 1): run the
+		// statements in a fresh child env, then the trailing expression
+		// is the block's value. Locals bound by the statements are
+		// visible to Tail but the child env is dropped afterwards, so
+		// they don't leak out of the block.
+		blockEnv := newEnv(env)
+		defer blockEnv.releaseScope()
+		for _, s := range x.Stmts {
+			r, err := i.execStmt(s, blockEnv)
+			if err != nil {
+				return nil, err
+			}
+			if r.flow != flowNormal {
+				// A `return` / `break` / `continue` inside a
+				// value-position block-expr would need control flow
+				// threaded through expression evaluation, which slice 1
+				// doesn't do. The examples don't need it; surface a
+				// clear error rather than silently dropping the value.
+				return nil, fmt.Errorf("interp: control-flow statement (return/break/continue) inside a block-expression is not supported in slice 1")
+			}
+		}
+		if x.Tail == nil {
+			// Value-less block in value position — the checker reports
+			// E061; if it slipped through, fail loudly.
+			return nil, fmt.Errorf("interp: block-expression has no trailing value")
+		}
+		return i.evalExpr(x.Tail, blockEnv)
 	case *ast.IfExpr:
 		c, err := i.evalExpr(x.Cond, env)
 		if err != nil {

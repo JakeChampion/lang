@@ -3325,3 +3325,76 @@ function main(): i32 { return 0; }`,
 		}
 	}
 }
+
+// Block-expressions (slice 1): an `if`-expr branch with leading
+// statements + a trailing value type-checks to the tail's type; block
+// locals don't leak; a value-less block in value position errors E061;
+// branch-tail types unify (or mismatch → E031).
+func TestBlockExprChecker(t *testing.T) {
+	// Tail type flows: `if (c) { var k = e + 1; k } else { 0 }` is i32.
+	if err := checkSource(t, `function main(): i32 {
+		var e = 5;
+		var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+		return x;
+	}`); err != nil {
+		t.Errorf("if-block tail-type: unexpected error: %v", err)
+	}
+
+	// String tails unify across branches: one branch `{ ...; "a" }`, the
+	// other a bare `"b"` → string.
+	if err := checkSource(t, `function main(): i32 {
+		var t = 0;
+		var label: string = if (t == 0) { var s = "a"; s } else { "b" };
+		return label.len();
+	}`); err != nil {
+		t.Errorf("string-tail unification: unexpected error: %v", err)
+	}
+
+	// match-arm block-expr tail type flows.
+	if err := checkSource(t, `function main(): i32 {
+		var tag = 0;
+		var r: i32 = match (tag) { 0 => { var s = tag + 5; s }, _ => 99 };
+		return r;
+	}`); err != nil {
+		t.Errorf("match-arm block tail: unexpected error: %v", err)
+	}
+}
+
+func TestBlockExprCheckerErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			"local-does-not-escape",
+			`function main(): i32 {
+				var x: i32 = if (true) { var k = 1; k } else { 0 };
+				return k;
+			}`,
+			"undefined identifier",
+		},
+		{
+			"value-less-block-in-value-position",
+			`function main(): i32 {
+				var x: i32 = if (true) { var k = 1; } else { 0 };
+				return x;
+			}`,
+			"block-expression has no trailing value",
+		},
+		{
+			"mismatched-branch-tails",
+			`function main(): i32 {
+				var x = if (true) { var k = 1; k } else { var s = "x"; s };
+				return 0;
+			}`,
+			"branches differ",
+		},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want error containing %q, got %v", c.name, c.want, err)
+		}
+	}
+}

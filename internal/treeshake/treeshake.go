@@ -411,6 +411,13 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 			}
 			walkExpr(arm.Body, byName, enqueue)
 		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			walkStmt(st, byName, enqueue)
+		}
+		if x.Tail != nil {
+			walkExpr(x.Tail, byName, enqueue)
+		}
 	case *ast.Assign:
 		walkExpr(x.Target, byName, enqueue)
 		walkExpr(x.Value, byName, enqueue)

@@ -465,6 +465,17 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 			printExpr(b, arm.Body)
 		}
 		b.WriteString(" }")
+	case *ast.BlockExpr:
+		b.WriteString("{ ")
+		for _, st := range x.Stmts {
+			printStmt(b, st)
+			b.WriteByte(' ')
+		}
+		if x.Tail != nil {
+			printExpr(b, x.Tail)
+			b.WriteByte(' ')
+		}
+		b.WriteByte('}')
 	case *ast.StructLit:
 		b.WriteString(x.TypeName)
 		b.WriteString(" { ")

@@ -489,6 +489,51 @@ func isSingleLineStmt(s ast.Stmt) bool {
 	return false
 }
 
+// formatBranch renders an `if`-expression branch — always brace-wrapped
+// (`{ … }`), since an `if`-expr branch is syntactically a block. A bare
+// expression branch renders `{ e }` (byte-identical to the pre-block-expr
+// formatter, which wrote the braces itself); a BlockExpr renders its
+// statements + trailing value compactly via formatBlockExpr.
+func (f *formatter) formatBranch(e ast.Expr) {
+	if be, ok := e.(*ast.BlockExpr); ok {
+		f.formatBlockExpr(be)
+		return
+	}
+	f.b.WriteString("{ ")
+	f.formatExpr(e, 0)
+	f.b.WriteString(" }")
+}
+
+// formatArmBody renders a `match`-expression arm body. A BlockExpr body
+// is brace-wrapped (`{ stmts; tail }`); a bare expression body stays
+// unbraced — keeping existing single-expr arms byte-identical.
+func (f *formatter) formatArmBody(e ast.Expr) {
+	if be, ok := e.(*ast.BlockExpr); ok {
+		f.formatBlockExpr(be)
+		return
+	}
+	f.formatExpr(e, precLowest)
+}
+
+// formatBlockExpr renders a block-expression `{ stmt; …; tail }` in a
+// compact one-line shape: each statement followed by `;`, then the
+// trailing value expression with no `;`. Used for `if`/`match`
+// expression branches (slice 1). Statements here are the simple forms
+// the branch grammar admits (var / expr-stmt / nested control), emitted
+// via formatStmtInline so no newlines / indentation are introduced.
+func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
+	f.b.WriteString("{ ")
+	for _, s := range be.Stmts {
+		f.formatStmt(s, 0)
+		f.b.WriteByte(' ')
+	}
+	if be.Tail != nil {
+		f.formatExpr(be.Tail, 0)
+		f.b.WriteByte(' ')
+	}
+	f.b.WriteByte('}')
+}
+
 func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 	switch x := s.(type) {
 	case *ast.Block:
@@ -1018,11 +1063,10 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		}
 		f.b.WriteString("if (")
 		f.formatExpr(x.Cond, 0)
-		f.b.WriteString(") { ")
-		f.formatExpr(x.Then, 0)
-		f.b.WriteString(" } else { ")
-		f.formatExpr(x.Else, 0)
-		f.b.WriteString(" }")
+		f.b.WriteString(") ")
+		f.formatBranch(x.Then)
+		f.b.WriteString(" else ")
+		f.formatBranch(x.Else)
 		if needsParens {
 			f.b.WriteByte(')')
 		}
@@ -1046,6 +1090,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 			if arm.IsWildcard {
 				f.b.WriteByte('_')
+			} else if arm.Literal != nil {
+				// Literal-pattern arm (`0 => …`, `"yes" => …`). Without
+				// this the pattern was dropped and the formatter emitted
+				// `=> …`, which failed to re-parse.
+				f.formatExpr(arm.Literal, precLowest)
 			} else {
 				if arm.VariantModule != "" {
 					f.b.WriteString(arm.VariantModule)
@@ -1077,7 +1126,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				f.formatExpr(arm.Guard, precLowest)
 			}
 			f.b.WriteString(" => ")
-			f.formatExpr(arm.Body, precLowest)
+			f.formatArmBody(arm.Body)
 		}
 		f.b.WriteString(" }")
 	case *ast.StructLit:
@@ -1145,6 +1194,12 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		} else {
 			f.formatBlock(x.Body, 0)
 		}
+	case *ast.BlockExpr:
+		// Reached only if a BlockExpr appears outside an if/match branch
+		// (the dedicated formatBranch / formatArmBody paths handle those).
+		// Slice 1 doesn't produce that, but render it compactly so the
+		// formatter never silently drops the node.
+		f.formatBlockExpr(x)
 	}
 }
 

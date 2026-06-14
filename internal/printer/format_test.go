@@ -211,6 +211,38 @@ function main(): i32 {
 	}
 }
 
+// A single-expression `if`/`match` branch must stay byte-identical to
+// the pre-block-expr formatting (`{ a }` / bare arm body), and a
+// block-expression branch (`{ stmts; tail }`) renders compactly without
+// double-bracing.
+func TestFormatBlockExprBranches(t *testing.T) {
+	// Single-expr `if`-branch — unchanged.
+	if got := formatSrc(t, `function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`); !strings.Contains(got, "if (a < b) { a } else { b }") {
+		t.Errorf("single-expr if-branch changed:\n%s", got)
+	}
+	// Block-expr `if`-branch — leading stmt + tail, no double braces.
+	if got := formatSrc(t, `function f(e: i32): i32 { return if (e > 0) { var k = e + 1; k } else { 0 }; }`); !strings.Contains(got, "if (e > 0) { var k = e + 1; k } else { 0 }") {
+		t.Errorf("block-expr if-branch mis-rendered:\n%s", got)
+	}
+	// Block-expr `match`-arm body; bare wildcard arm unchanged.
+	if got := formatSrc(t, `function f(tag: i32): i32 { return match (tag) { 0 => { var s = tag + 5; s }, _ => 99 }; }`); !strings.Contains(got, "0 => { var s = tag + 5; s }, _ => 99") {
+		t.Errorf("block-expr match-arm mis-rendered:\n%s", got)
+	}
+}
+
+// Drive-by regression: a literal-pattern arm in a `match`-EXPRESSION
+// (`0 => …`, `"yes" => …`) must format its pattern. The formatter used
+// to drop it, emitting `=> …`, which then failed to re-parse.
+func TestFormatMatchExprLiteralArm(t *testing.T) {
+	got := formatSrc(t, `function f(n: i32): i32 { return match (n) { 0 => 10, 1 => 20, _ => 30 }; }`)
+	if !strings.Contains(got, "0 => 10, 1 => 20, _ => 30") {
+		t.Errorf("literal-pattern match-expr arm mis-rendered:\n%s", got)
+	}
+	if _, err := parser.Parse(got); err != nil {
+		t.Errorf("formatted literal-arm match-expr failed to reparse:\n%s\nerror: %v", got, err)
+	}
+}
+
 // parse → Format → parse must round-trip the AST shape (modulo the
 // known comments-and-blank-lines limitation). The check is "does
 // the formatted output reparse without errors".
@@ -218,6 +250,9 @@ func TestFormatRoundTripsThroughParser(t *testing.T) {
 	srcs := []string{
 		`function f(): i32 { return 1 + 2 * 3; }`,
 		`function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`,
+		// Block-expression branches (slice 1): leading statement + tail.
+		`function f(e: i32): i32 { return if (e > 0) { var k = e + 1; k } else { 0 }; }`,
+		`function f(tag: i32): i32 { return match (tag) { 0 => { var s = tag + 5; s }, _ => 99 }; }`,
 		// Typed numeric literal suffixes — formatter must round-trip.
 		`function f(): i64 { return 42i64; }`,
 		`function f(): u8 { return 7u8; }`,

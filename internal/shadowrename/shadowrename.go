@@ -294,6 +294,17 @@ func (r *renamer) walkExpr(e ast.Expr) {
 			}
 			r.popFrame()
 		}
+	case *ast.BlockExpr:
+		// Block-expression branch: a fresh frame so locals bound by the
+		// statements are visible to the tail but don't leak past `}`.
+		r.pushFrame()
+		for _, st := range n.Stmts {
+			r.walkStmt(st)
+		}
+		if n.Tail != nil {
+			r.walkExpr(n.Tail)
+		}
+		r.popFrame()
 	case *ast.StructLit:
 		// Base is the spread source of a struct-update literal
 		// (`Foo { ...base, field: v }`). It must be walked too, or a

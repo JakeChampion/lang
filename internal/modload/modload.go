@@ -1567,6 +1567,13 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			}
 			r.rewriteExpr(&arm.Body)
 		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			r.rewriteStmt(st)
+		}
+		if x.Tail != nil {
+			r.rewriteExpr(&x.Tail)
+		}
 	case *ast.StructLit:
 		// Three shapes here:
 		//   - `Foo { … }` where Foo lives in this module → prefix
