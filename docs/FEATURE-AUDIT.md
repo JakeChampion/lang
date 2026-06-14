@@ -247,6 +247,22 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — no-capture lambda calls in slice bounds / field-access objects via the IR path
+
+Completes `lift_expr_walk`'s compound-form recursion (after #3148's binary / unary
+/ index): a no-capture lambda CALL nested in a SLICE bound (`a[(iife)(0) : 3]`) or
+under a FIELD-ACCESS object (`arr[(iife)(0)].v`) is now hoisted, so the module
+stays on the IR path. New `ExprSlice` (array/start/end) and `ExprFieldAccess`
+(obj) arms recurse via `lift_expr_walk`; an operand with nothing to lift rebuilds
+identically, so existing programs are unchanged.
+
+New routing-pinned `TestSelfHostLambdaLiftSliceFieldIR` (x86-64 + wasm,
+oracle-checked: IIFE in a slice start bound, a slice end bound, and a
+field-access index). Verified end-to-end on x86-64, wasm, and arm64 (qemu);
+x86-64 + stage2 fixpoint hold. With this, `lift_expr_walk` descends into every
+compound expression form, so a no-capture lambda call anywhere in an expression
+lifts. (A CAPTURING lambda still bails everywhere, pending the closure ABI.)
+
 ### 2026-06-14 — no-capture lambda calls nested in compound expressions via the IR path
 
 Follow-up to the IIFE/tuple/assignment lift slice (#3125): `lift_expr_walk` now

@@ -8394,6 +8394,18 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             var ixir: LiftExpr = lift_expr_walk(ix.index, ixar.acc, gfns);
             return LiftExpr { expr: parser.ExprIndex { array: ixar.expr, index: ixir.expr }, acc: ixir.acc };
         },
+        // Slice bounds + the field-access object can also hold a nested lambda CALL
+        // (`a[(iife)(0) : 3]`, `arr[(iife)(0)].v`); recurse so it is hoisted too.
+        parser.ExprSlice(sl) => {
+            var slar: LiftExpr = lift_expr_walk(sl.array, acc, gfns);
+            var slsr: LiftExpr = lift_expr_walk(sl.start, slar.acc, gfns);
+            var sler: LiftExpr = lift_expr_walk(sl.end, slsr.acc, gfns);
+            return LiftExpr { expr: parser.ExprSlice { array: slar.expr, start: slsr.expr, end: sler.expr }, acc: sler.acc };
+        },
+        parser.ExprFieldAccess(fa) => {
+            var faor: LiftExpr = lift_expr_walk(fa.obj, acc, gfns);
+            return LiftExpr { expr: parser.ExprFieldAccess { obj: faor.expr, field: fa.field, line: fa.line, col: fa.col }, acc: faor.acc };
+        },
         _ => { return LiftExpr { expr: e, acc: acc }; }
     }
     return LiftExpr { expr: e, acc: acc };
