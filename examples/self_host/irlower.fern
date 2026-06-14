@@ -2925,7 +2925,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // elements still bail.
             var tei: i32 = 0;
             while (tei < tn) {
-                var el: parser.Expr = tup.elements[tei];
+                // An if-/match-EXPRESSION element (`(if (c) { 7 } else { 1 }, 3)`)
+                // is a 0-arg IIFE; classify it by its leaf branch value (a no-op for
+                // a non-IIFE element), so a scalar/string/struct/array/Option leaf is
+                // admitted. The original element still lowers via lower_expr below
+                // (lower_iife produces the branch value). #3168.
+                var el: parser.Expr = iife_leaf_value(tup.elements[tei]);
                 var el_arr_ok: boolean = expr_is_arr_src(el, s)
                     && !expr_is_strarr(el, s) && !expr_is_f64arr(el, s) && !expr_is_i64arr(el, s);
                 // An Option element (`(Some(7), 3)`) is a leak-only box stored in
@@ -2943,7 +2948,9 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             var ts: LowerState = s;
             var tj: i32 = 0;
             while (tj < tn) {
-                var tek: string = elem_type_tag(tup.elements[tj], ts);
+                // Classify by the leaf branch for an IIFE element (no-op otherwise),
+                // so the kind tag matches what lower_expr (lower_iife) produces.
+                var tek: string = elem_type_tag(iife_leaf_value(tup.elements[tj]), ts);
                 if (tj > 0) { tkinds = tkinds + ","; }
                 tkinds = tkinds + tek;
                 if (tek == "i64") { ts = lower_i64(tup.elements[tj], ts); }

@@ -486,6 +486,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// ident's tracked opt_type_of_slot (#3165).
 		{"ifexpr-ret-optvar", `function f(c: i32): Option[i32] { if (c > 3) { return Some(7); } return None; } function main(): i32 { var o = f(5); var r = if (true) { o } else { None }; return match (r) { Some(v) => v, None => 0 }; }`},
 		{"matchexpr-ret-optvar", `function main(): i32 { var o = Some(8); var k = 1; var r = match (k) { 1 => o, _ => o }; return match (r) { Some(v) => v, None => 0 }; }`},
+		// A tuple literal with an if-/match-EXPRESSION element: the tuple lowering now
+		// classifies each element by its leaf branch value via iife_leaf_value, so an
+		// IIFE element is admitted with the right kind tag (#3172).
+		{"tuple-ifexpr-elem0", `function main(): i32 { var c = 5; var t = (if (c > 3) { 7 } else { 1 }, 3); return t.0 + t.1; }`},
+		{"tuple-ifexpr-elem1", `function main(): i32 { var c = 1; var t = (3, if (c > 3) { 7 } else { 1 }); return t.0 + t.1; }`},
+		{"tuple-matchexpr-elem", `function main(): i32 { var k = 1; var t = (match (k) { 1 => 5, _ => 0 }, 3); return t.0 + t.1; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
