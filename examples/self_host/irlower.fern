@@ -4312,6 +4312,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             else if (cfa.field == "split" && cc.args.len() == 1 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                             else if (cfa.field == "chars" && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
                             else if (cfa.field == "lines" && cc.args.len() == 0 && expr_is_str(cfa.obj, se)) { is_arr = true; }
+                            // `var a = obj.m()` where obj is a struct and method `m`
+                            // returns an array (e.g. a struct-array `P[]`) — a MOVE,
+                            // track a as an array so `a[i].field` / `for x in a`
+                            // recover the element type (struct_ret_type carries the
+                            // element struct type, keyed "<Type>.m"). The struct
+                            // receiver gate keeps this to a genuine method call (#3040).
+                            else if (se.is_arr_ret_fn(cfa.field) && expr_struct_type(cfa.obj, se) != "") { is_arr = true; }
                         },
                         _ => {}
                     }
