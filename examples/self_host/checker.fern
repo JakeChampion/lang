@@ -3304,6 +3304,19 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
                             }
                         },
+                        TypeString(_) => {
+                            // E043: a string carries exactly two builtin methods
+                            // — `len` and `as_bytes` (mirrors registerStringMethod
+                            // in the Go checker). Any other method must be
+                            // user-defined (in scope via a `function (s: string)
+                            // m()` decl, typically from std/string); when it's
+                            // neither builtin nor user-defined, it's a call to a
+                            // non-existent method — same shape as the numeric-
+                            // scalar case above.
+                            if (mfa.field != "len" && mfa.field != "as_bytes" && s.lookup_method(mfa.field, "string").name.len() == 0) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                            }
+                        },
                         TypeArray(ar) => {
                             // E038: a built-in array method whose argument must
                             // match the element type. `append(elem)` takes the

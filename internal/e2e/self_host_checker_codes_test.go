@@ -304,6 +304,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-on-f64", "function main(): i32 { var f: f64 = 1.0; f.foo(); return 0; }\n", []string{"E043"}},
 		{"method-on-string-ok", "function main(): i32 { var s: string = \"a\"; return s.len(); }\n", nil},
 		{"method-on-i32-user-method-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { var x: i32 = 21; return x.twice(); }\n", nil},
+		// E043 (string method existence): a string carries only the `len` /
+		// `as_bytes` builtins; any other method must be user-defined (here,
+		// none is in scope), else it's a call to a non-existent method.
+		{"method-on-string-missing", "function main(): i32 { var s: string = \"a\"; var t = s.bogus(); return 0; }\n", []string{"E043"}},
+		{"method-on-string-substr-missing", "function main(): i32 { var s: string = \"abc\"; var t = s.substr(0, 1); return 0; }\n", []string{"E043"}},
+		{"method-on-string-as-bytes-ok", "function main(): i32 { var s: string = \"a\"; var b = s.as_bytes(); return 0; }\n", nil},
+		{"method-on-string-user-method-ok", "function (s: string) shout(): string { return s; }\nfunction main(): i32 { var s = \"a\"; var t = s.shout(); return 0; }\n", nil},
 		// E043 (struct method/field both missing): `p.m()` where struct P has
 		// no method m and no field m. A declared method, or a present field
 		// (closure-field call), is excluded — no false positive.
@@ -926,6 +933,13 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"string-contains-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; if (s.contains(\"b\")) { return 1; } return 0; }\n"},
 		{"string-starts-with-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; if (s.starts_with(\"a\")) { return 1; } return 0; }\n"},
 		{"string-is-empty-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }\n"},
+		{"string-trim-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"  a \"; var t = s.trim(); return 0; }\n"},
+		{"string-to-lower-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"AB\"; var t = s.to_lower(); return 0; }\n"},
+		// The string-method-existence E043 rule must still fire for a method
+		// that no imported module defines, even WITH std/string in scope —
+		// the bundle harness's reason for existing. `substr` isn't a std/string
+		// method, so both checkers report E043.
+		{"string-unknown-method-e043", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; var t = s.substr(0, 1); return 0; }\n"},
 	}
 
 	for _, tc := range progs {
