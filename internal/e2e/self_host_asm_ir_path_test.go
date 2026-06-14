@@ -1001,6 +1001,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// wrong element under a signed compare; both paths must return 0.
 		{"u64-param-idx-sum", "function s(arr: u64[]): u64 { var t: u64 = 0u64; var i = 0; while (i < arr.len()) { t = t + arr[i]; i = i + 1; } return t; } function main(): i32 { return s([10u64, 20u64, 5u64]) as i32; }"},
 		{"u64-param-idx-max-big", "function mx(arr: u64[]): u64 { var m: u64 = arr[0]; var i = 1; while (i < arr.len()) { if (arr[i] > m) { m = arr[i]; } i = i + 1; } return m; } function main(): i32 { if (mx([5u64, 9223372036854775809u64, 7u64]) == 9223372036854775809u64) { return 0; } return 1; }"},
+		// `.append` / `.with` on an 8-byte-element array (i64[] / u64[]): grow via
+		// the new arr_push_i64 (reuses __fern_arr_push on the register backends,
+		// $__fern_arr_push_i64 on wasm) and in-place 8-byte store. Large values
+		// (> 2^32, and > 2^63 for u64) catch a 4-byte truncation; the u64 unsigned
+		// compare catches a signed-compare mishandling. Both must match AST.
+		{"i64-append-build", "function main(): i32 { var a: i64[] = []; var i = 0; while (i < 4) { a = a.append((i as i64) * 5000000000); i = i + 1; } if (a[3] == 15000000000 as i64) { return 0; } return 1; }"},
+		{"i64-sort-asc", "function main(): i32 { var a: i64[] = []; a = a.append(9 as i64); a = a.append(3 as i64); a = a.append(6 as i64); var k = 1; while (k < 3) { var key: i64 = a[k]; var j = k - 1; while (j >= 0 && a[j] > key) { a = a.with(j + 1, a[j]); j = j - 1; } a = a.with(j + 1, key); k = k + 1; } if (a[0] == 3 as i64 && a[2] == 9 as i64) { return 0; } return 1; }"},
+		{"u64-append-with-big", "function main(): i32 { var xs: u64[] = []; xs = xs.append(9223372036854775809u64); xs = xs.append(3u64); xs = xs.with(1, 9223372036854775810u64); if (xs[0] != 9223372036854775809u64) { return 1; } if (xs[1] > xs[0]) { return 0; } return 2; }"},
 	}
 
 	for _, tc := range cases {
