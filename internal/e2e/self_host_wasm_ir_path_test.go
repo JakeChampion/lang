@@ -764,6 +764,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// through the `__lam` chain to the innermost struct literal.
 		{"struct-nested-if-expr", `struct P { x: i32, y: i32 } function main(): i32 { var p = if (true) { if (false) { P{x:1,y:2} } else { P{x:5,y:6} } } else { P{x:3,y:4} }; return p.x + p.y; }`},
 		{"struct-match-then-if-expr", `struct P { x: i32, y: i32 } function main(): i32 { var p = match (1) { 1 => if (true) { P{x:4,y:5} } else { P{x:0,y:0} }, _ => P{x:3,y:4} }; return p.x + p.y; }`},
+		// A struct-returning USER function called in each if-/match-expression
+		// branch: the lifted `__lam`'s leaf is a call to `mk`, so the struct type
+		// is read from `mk`'s declared return type.
+		{"struct-fncall-if-expr", `struct P { x: i32, y: i32 } function mk(v: i32): P { return P{x:v, y:v+1}; } function main(): i32 { var p = if (true) { mk(5) } else { mk(2) }; return p.x + p.y; }`},
+		{"struct-fncall-match-expr", `struct P { x: i32, y: i32 } function mk(v: i32): P { return P{x:v, y:v+1}; } function main(): i32 { var p = match (2) { 2 => mk(10), _ => mk(0) }; return p.x + p.y; }`},
 		// NB: the str_starts_with / str_index_of FREE-function builtins exist on the
 		// x86-64 AST path but not the wasm AST path, so they can't ride this wasm
 		// differential gate — the method forms above cover the IR predicate ops, and

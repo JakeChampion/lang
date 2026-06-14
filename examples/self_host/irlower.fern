@@ -8119,20 +8119,25 @@ function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: parser.StructDecl[
         parser.ExprStructLit(sl) => {
             if (decl_is_struct(structs, sl.type_name) && decl_is_leaksafe(structs, sl.type_name)) { return sl.type_name; }
         },
-        // A NESTED struct-valued if-/match-expression branch (`if (a) { if (b) {
-        // P{..} } else { … } } else { … }`) is itself lifted to another
-        // `__lam_M`, so this `__lam_N`'s leaf return is a call to it. Recurse
-        // into that callee's body to reach the innermost struct literal (bounded
-        // depth keeps a pathological cycle finite).
+        // The leaf return is a call. Two cases resolve the struct type from the
+        // callee `cid`: (1) a struct-returning USER function (`if (c) { mk(5) }
+        // else { mk(2) }` where `mk` returns `P`) — read its declared leaf-safe
+        // struct ret_type directly; (2) a NESTED if-/match-expression branch,
+        // itself lifted to another `__lam_M` (ret_type the default `i32`) — its
+        // struct comes from ITS body, so recurse (bounded depth keeps a
+        // pathological cycle finite).
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") {
-                        var ni: i32 = 0;
-                        while (ni < funcs.len()) {
-                            if (funcs[ni].name == cid.name) { return fn_inferred_struct_ret(funcs[ni], structs, funcs, depth + 1); }
-                            ni = ni + 1;
+                    var ni: i32 = 0;
+                    while (ni < funcs.len()) {
+                        if (funcs[ni].name == cid.name) {
+                            var crt: string = funcs[ni].ret_type;
+                            if (decl_is_struct(structs, crt) && decl_is_leaksafe(structs, crt)) { return crt; }
+                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return fn_inferred_struct_ret(funcs[ni], structs, funcs, depth + 1); }
+                            return "";
                         }
+                        ni = ni + 1;
                     }
                 },
                 _ => {}
