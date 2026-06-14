@@ -248,6 +248,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-on-f64", "function main(): i32 { var f: f64 = 1.0; f.foo(); return 0; }\n", []string{"E043"}},
 		{"method-on-string-ok", "function main(): i32 { var s: string = \"a\"; return s.len(); }\n", nil},
 		{"method-on-i32-user-method-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { var x: i32 = 21; return x.twice(); }\n", nil},
+		// E043 (struct method/field both missing): `p.m()` where struct P has
+		// no method m and no field m. A declared method, or a present field
+		// (closure-field call), is excluded — no false positive.
+		{"method-on-struct-missing", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.nope(); }\n", []string{"E043"}},
+		{"method-on-struct-defined-ok", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return p.x; }\nfunction main(): i32 { var p = P { x: 1 }; return p.m(); }\n", nil},
 		{"call-too-few-args", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1); }\n", []string{"E004"}},
 		{"call-too-many-args", "function id(a: i32): i32 { return a; }\nfunction main(): i32 { return id(1, 2); }\n", []string{"E004"}},
 		{"call-correct-arity-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
