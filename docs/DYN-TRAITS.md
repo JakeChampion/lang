@@ -163,6 +163,78 @@ diagnostic (`dyn Trait is not yet supported on compiled backends; use
 the interpreter or a closed enum`) rather than crashing — so the feature
 is interpreter-only but never silently miscompiles.
 
+#### 4.2.1 Slice 2b implementation spec (wasm — next build)
+
+Recon-derived, mechanical plan. **wasm goes first**: `ptrW==4` uniquely
+identifies it (natives are `ptrW==8`), so its gate lifts in isolation,
+and wasm already has the two-word inline value pathway (strings) to
+mirror. Scope: dispatch correctness for **struct/enum** concrete types;
+precise RC of the boxed object is a follow-up (the interp doesn't RC
+trait objects either — a leak in a short-lived process is acceptable for
+the first cut, tracked below).
+
+Representation: inline two-word `[data, vtable]`, `data` low / `vtable`
+high (mirrors `OpConstStr`'s `{data,len}` word order). `data` is the
+concrete heap pointer; `vtable` is a static data-segment address holding
+an array of `i32` function-**table indices** (positions in `prog.Funcs`),
+one slot per non-associated trait method in declaration order.
+
+1. **Checker** — record coercion sites. Add `Info.DynCoercions
+   map[ast.Expr]DynCoercion{Trait,Concrete}`; a `maybeRecordDynCoercion(
+   dst, *holder, srcType)` mirrors `maybeWrapForUnion`'s call sites (var
+   init, assign, call arg, return, array elem, struct field) but
+   *records* (doesn't rewrite) when `dst` is `DynTraitType`, `srcType` is
+   a concrete struct/enum impl-ing the trait, and `srcType` isn't already
+   `dyn`. Keyed by the holder `ast.Expr` pointer, which flows unchanged to
+   the IR. (Limitation: a coercion inside a *generic* body is cloned by
+   monomorph to a fresh pointer and missed — out of scope for 2b; assert
+   non-generic in the test. Checker test: the right `{Trait,Concrete}` is
+   recorded at a var-init site.)
+2. **IR layout** — `payloadSlotSize`: `DynTraitType` → `2*ptrW`.
+   `payloadStoreOpFor`/`payloadLoadOpFor`/`arrayElemStoreOpFor`: add a
+   `DynTraitType` case returning `Width: WidthString` (the two-word
+   fan-out is representation-agnostic — two adjacent i32s). Natives stay
+   gated so their fall-through is unreached.
+3. **IR ops** — `OpConstVtable{Trait,Concrete string}` → push the vtable
+   address (i32); `OpCallDyn{Sig *ast.FuncType, I32 slot}` → dispatch.
+4. **IR lowering** —
+   - *Coercion*: when lowering an expr in `Info.DynCoercions`, lower the
+     concrete value (one word = `data`), then emit `OpConstVtable{trait,
+     concrete}` → stack `[data, vtable]`.
+   - *Dispatch* (`Call.DynTrait != ""`): lower `fa.Target` → `[data,
+     vtable]`; `OpStoreLocal(vtmp)` into a fresh **i32** temp pops just
+     the top word (`vtable`), leaving `[data]`; lower args → `[data,
+     args...]`; `OpLoadLocal(vtmp)` → `[data, args..., vtable]`; emit
+     `OpCallDyn{Sig: receiver-first method sig, I32: slot}` where `slot`
+     is the method's index in the trait decl (non-assoc methods only).
+5. **Gate** — in `LowerWith`, call `rejectDynTrait` only when `ptrW != 4`.
+   `collectVtables` already runs after the gate, so `prog.Vtables`
+   populates for wasm automatically.
+6. **wasm backend** (`internal/codegen/wasmbin/wasmbin.go`) —
+   - Generalize `isStringType(slotType(...))` → an `isTwoWordType`
+     (string ∨ `DynTraitType`) at: `OpLoadLocal`/`OpStoreLocal`
+     (1643–1662), `slotValtypes` (1088), `resultValtypes` (1184), and the
+     `OpLoad`/`OpStore` `WidthString` field-store branches (1978–2015).
+   - `internVtable(trait, concrete)`: look up the `VtableDecl` in
+     `prog.Vtables`, append `len(methods)` LE-`i32` `progFuncTableIdx[
+     method.Func]` words to `dataBytes` at `stringNextOff`, return the
+     address (no rc header — vtables are never inc/dec'd). `OpConstVtable`
+     emits `i32.const` of that address.
+   - `OpCallDyn`: stack `[data, args..., vtable]`; pop `vtable`→scratch,
+     `+ slot*4`, `i32.load` → table-idx; `call_indirect` via
+     `addSigType(op.Sig)` (the plain, **no-env** sig — *not*
+     `addClosureSigType`).
+   - `anyTableOp` must return true when `OpConstVtable`/`OpCallDyn` are
+     present (and the impl methods are already in `prog.Funcs`, hence the
+     table).
+7. **Tests** — e2e: `var d: dyn Shape = Circle{...}; d.area()` on wasm
+   matches the interp; a `dyn`-array differential (heterogeneous
+   `dyn Shape[]`) vs interp. Keep the natives' reject test green.
+
+**RC follow-up:** the `data` word's box currently leaks. Once dispatch is
+solid, teach the RC passes to inc/dec word 0 of a two-word `dyn` slot and
+skip word 1 (the static `vtable`). Tracked as part of goal 2 (Perceus).
+
 ### 4.3 Self-host (x86-64 + arm64 — shipped)
 
 The self-hosted compiler dispatches heap values dynamically by shape
@@ -287,9 +359,14 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
      into `LowerWith` (nil today: the reject gate still returns first for
      `dyn` programs). Unit-tested in `internal/ir/vtable_test.go`. No
      behaviour change; it's the static data every backend will emit.
-   - **2b–2d: per-backend codegen + coercion boxing + dispatch**, lifting
-     the reject gate per target (x86-64, then arm64, then wasm). Each adds
-     the per-coercion-site boxing marker the backend consumes.
+   - **2b (next): wasm codegen** — full implementation spec in §4.2.1.
+     wasm leads (its `ptrW==4` gate lifts in isolation; it already has the
+     two-word inline pathway). Inline `[data,vtable]`, checker-recorded
+     coercion sites, `OpConstVtable` + `OpCallDyn`, vtable data segments.
+   - **2c–2d: native codegen** (x86-64, then arm64) — the from-scratch
+     inline-two-word value pathway (natives have none today) plus a target
+     discriminator threaded into `LowerWith` to lift their gates
+     independently.
 3. **Slice 3: self-host parity (x86-64 + arm64 — shipped).** `dyn Trait`
    parses in the self-host and dispatches over its existing shape-pointer
    path; struct/enum concrete types work end-to-end (see §4.3). Remaining:
