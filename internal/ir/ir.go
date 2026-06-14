@@ -1723,10 +1723,14 @@ func dynVtableSetKey(traits []string) string {
 
 // dynTraitSetsUsed collects every `dyn` trait SET (the whole sorted
 // trait list) named in a `dyn Trait` / `dyn A + B` type anywhere in the
-// program's function signatures and local-var annotations. The result
-// maps the set key (dynVtableSetKey) → the sorted trait list, so
-// collectVtables can emit one merged vtable per multi-trait set actually
-// used. Single-trait sets are included too (key == the trait name).
+// program — function signatures, local-var annotations, struct fields,
+// enum-variant payloads, cast targets, and nested inside composite types
+// (a `dyn Trait` type-argument like `Result[_, dyn E]`, or a `dyn Trait`
+// field/payload). The result maps the set key (dynVtableSetKey) → the
+// sorted trait list, so collectVtables can emit one merged vtable per
+// multi-trait set actually used. Single-trait sets are included too (key
+// == the trait name). Missing one makes its vtable cell emit empty and a
+// dispatch on such a value calls a garbage pointer (see #3213).
 func dynTraitSetsUsed(prog *ast.Program) map[string][]string {
 	sets := map[string][]string{}
 	record := func(traits []string) {
@@ -1748,6 +1752,18 @@ func dynTraitSetsUsed(prog *ast.Program) map[string][]string {
 			for _, e := range x.Elems {
 				walk(e)
 			}
+		case ast.StructType:
+			// `dyn` nested in a generic struct's type-argument, e.g.
+			// `Holder[dyn Shape]`.
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case ast.EnumType:
+			// `dyn` nested in an enum's type-argument — the common case
+			// being `Result[_, dyn Error]` / `Option[dyn Shape]`.
+			for _, a := range x.Args {
+				walk(a)
+			}
 		case *ast.FuncType:
 			for _, p := range x.Params {
 				walk(p)
@@ -1762,8 +1778,28 @@ func dynTraitSetsUsed(prog *ast.Program) map[string][]string {
 				walk(p.Type)
 			}
 			walk(x.ReturnType)
+			if x.Receiver != nil {
+				walk(x.Receiver.Type)
+			}
 		case *ast.Var:
 			walk(x.Type)
+		case *ast.StructDecl:
+			// A `dyn Trait` stored in a struct field — the field may be
+			// the only place a trait appears (#3213).
+			for _, f := range x.Fields {
+				walk(f.Type)
+			}
+		case *ast.EnumDecl:
+			for _, v := range x.Variants {
+				for _, p := range v.Payloads {
+					walk(p)
+				}
+			}
+		case *ast.ConstDecl:
+			walk(x.Type)
+		case *ast.CastExpr:
+			// `x as dyn Trait` — the coercion target names the trait.
+			walk(x.Target)
 		}
 		return true
 	})
