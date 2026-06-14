@@ -1688,14 +1688,34 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// pointer. The cell is a plain heap object; precise RC of the
 		// box is out of scope (it leaks — the interp doesn't RC trait
 		// objects either).
+		//
+		// data/vtable must survive `call __fern_alloc`, which on its
+		// heap-init / heap-grow path does an mmap `syscall` — that
+		// clobbers r11 (the CPU stashes RFLAGS there) and uses r10 as a
+		// syscall arg. So caller-save scratch (the old r10/r11) is NOT
+		// safe across the call: when the box is the allocation that
+		// triggers the grow (e.g. a `dyn` over a primitive, whose value
+		// isn't separately heap-allocated, so the box is the program's
+		// first alloc) the stored words came back as RFLAGS garbage and
+		// the trait object segfaulted on first dispatch. Park them in
+		// callee-saved rbx/r12 across the call instead (the x86-64 mirror
+		// of arm64's x19/x20 choice in OpBoxDyn). Pop BOTH operands
+		// first, into caller-save rax/rcx, BEFORE pushing rbx/r12 — a
+		// push between the pops would shift rsp under the operand stack
+		// and the second pop would read the saved register.
 		g.pop()                // rax = vtable (top)
-		g.emit("mov r10, rax") // r10 = vtable
+		g.emit("mov rcx, rax") // rcx = vtable (caller-save; no call before the save)
 		g.pop()                // rax = data
-		g.emit("mov r11, rax") // r11 = data
+		g.emit("push rbx")     // save callee-saved (2 pushes keep rsp 16-aligned)
+		g.emit("push r12")
+		g.emit("mov r12, rax") // r12 = data
+		g.emit("mov rbx, rcx") // rbx = vtable
 		g.emit("mov rdi, 16")  // cell size = 2 * ptrW
 		g.emit("call __fern_alloc")
-		g.emit("mov [rax], r11")     // cell[0] = data
-		g.emit("mov [rax + 8], r10") // cell[8] = vtable
+		g.emit("mov [rax], r12")     // cell[0] = data  (survived the call)
+		g.emit("mov [rax + 8], rbx") // cell[8] = vtable
+		g.emit("pop r12")            // restore callee-saved
+		g.emit("pop rbx")
 		g.push()
 
 	case ir.OpCallDyn:
