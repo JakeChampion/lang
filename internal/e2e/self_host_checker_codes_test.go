@@ -280,6 +280,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"not-on-int", "function main(): i32 { if (!5) { return 1; } return 0; }\n", []string{"E009"}},
 		{"and-on-bools-ok", "function main(): i32 { if ((1 < 2) && (2 < 3)) { return 1; } return 0; }\n", nil},
 		{"not-on-bool-ok", "function main(): i32 { if (!(1 < 2)) { return 1; } return 0; }\n", nil},
+		// E009 (extended ops): unary `-`, shift / bitwise, and ordering on a
+		// non-numeric operand. Numeric (i32 / f64) operands stay clean.
+		{"neg-on-string", "function main(): i32 { var s = \"a\"; var n = -s; return 0; }\n", []string{"E009"}},
+		{"shift-on-string", "function main(): i32 { var s = \"a\"; return s << 2; }\n", []string{"E009"}},
+		{"bitand-on-string", "function main(): i32 { var s = \"a\"; return s & 1; }\n", []string{"E009"}},
+		{"order-on-strings", "function main(): i32 { if (\"a\" < \"b\") { return 1; } return 0; }\n", []string{"E009"}},
+		{"order-mismatch", "function main(): i32 { if (5 < \"x\") { return 1; } return 0; }\n", []string{"E009"}},
+		{"order-i32-ok", "function main(): i32 { if (3 < 5) { return 1; } return 0; }\n", nil},
+		{"order-f64-ok", "function main(): i32 { if (1.5 < 2.5) { return 1; } return 0; }\n", nil},
+		{"neg-i32-ok", "function main(): i32 { var x = 5; return -x; }\n", nil},
+		{"shift-i32-ok", "function main(): i32 { return 1 << 4; }\n", nil},
 		{"eq-i32-string", "function main(): i32 { if (1 == \"x\") { return 1; } return 0; }\n", []string{"E041"}},
 		{"eq-bool-i32", "function main(): i32 { if ((1 < 2) == 3) { return 1; } return 0; }\n", []string{"E041"}},
 		{"eq-i32-i32-ok", "function main(): i32 { if (1 == 2) { return 1; } return 0; }\n", nil},

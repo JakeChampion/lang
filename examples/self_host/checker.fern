@@ -3202,6 +3202,34 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     }
                 }
             }
+            // E009: shift / bitwise ops (`<<` `>>` `&` `|` `^`) require both
+            // operands to be integers. Mirrors the Go checker's requireInteger
+            // for `case "%", "&", "|", "^", "<<", ">>"` (`%` is in the numeric
+            // group above). `&&` / `||` are the logical ops, handled separately.
+            if (b.op == "<<" || b.op == ">>" || b.op == "&" || b.op == "|" || b.op == "^") {
+                var slt: Type = check_expr(b.left, s);
+                var srt: Type = check_expr(b.right, s);
+                if (!is_unknown(slt) && !type_eq(slt, t_i32())) {
+                    out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(slt), b.line, b.col));
+                } else if (!is_unknown(srt) && !type_eq(srt, t_i32())) {
+                    out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(srt), b.line, b.col));
+                }
+            }
+            // E009: ordering ops (`<` `>` `<=` `>=`) require both operands to be
+            // the same numeric type (both i32 or both f64). Mirrors the Go
+            // checker (requireInteger, or requireFloat when either side is
+            // float). `==` / `!=` (equality, E041) are handled above.
+            if (b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") {
+                var olt: Type = check_expr(b.left, s);
+                var ort: Type = check_expr(b.right, s);
+                if (!is_unknown(olt) && !is_unknown(ort)) {
+                    var oki_o: boolean = type_eq(olt, t_i32()) && type_eq(ort, t_i32());
+                    var okf_o: boolean = type_eq(olt, t_float()) && type_eq(ort, t_float());
+                    if (!oki_o && !okf_o) {
+                        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
+                    }
+                }
+            }
         },
         parser.ExprUnary(u) => {
             out = call_diags(u.operand, s);
@@ -3210,6 +3238,15 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var ot: Type = check_expr(u.operand, s);
                 if (!is_unknown(ot) && !type_eq(ot, t_bool())) {
                     out = out.append(dg_at("E009", "operator \"!\" requires boolean, got " + type_label(ot), u.line, u.col));
+                }
+            }
+            // E009: unary `-` (negation) requires a numeric (i32 / f64) operand.
+            // Mirrors the Go checker (requireInteger / requireFloat for unary
+            // minus); a string / bool / composite operand is rejected.
+            if (u.op == "-") {
+                var nt: Type = check_expr(u.operand, s);
+                if (!is_unknown(nt) && !type_eq(nt, t_i32()) && !type_eq(nt, t_float())) {
+                    out = out.append(dg_at("E009", "operator \"-\" requires a numeric type, got " + type_label(nt), u.line, u.col));
                 }
             }
             // E033: an invalid `as` cast. `x as T` desugars to the
