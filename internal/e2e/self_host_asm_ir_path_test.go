@@ -599,6 +599,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"match-scrut-ifexpr-some", `function main(): i32 { var c = 5; return match (if (c > 3) { Some(7) } else { None }) { Some(v) => v, None => 0 }; }`},
 		{"match-scrut-ifexpr-none", `function main(): i32 { var c = 1; return match (if (c > 3) { Some(7) } else { None }) { Some(v) => v, None => 9 }; }`},
 		{"stmt-match-scrut-ifexpr", `function main(): i32 { var c = 5; match (if (c > 3) { Some(7) } else { None }) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
+		// An if-/match-expression binding whose branch returns an Option-typed LOCAL
+		// (not a fresh Some): the StmtVar opt-IIFE inference falls back to the leaf
+		// ident's tracked opt_type_of_slot (#3165).
+		{"ifexpr-ret-optvar", `function f(c: i32): Option[i32] { if (c > 3) { return Some(7); } return None; } function main(): i32 { var o = f(5); var r = if (true) { o } else { None }; return match (r) { Some(v) => v, None => 0 }; }`},
+		{"matchexpr-ret-optvar", `function main(): i32 { var o = Some(8); var k = 1; var r = match (k) { 1 => o, _ => o }; return match (r) { Some(v) => v, None => 0 }; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
