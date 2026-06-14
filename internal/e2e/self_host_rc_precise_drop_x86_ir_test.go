@@ -112,6 +112,12 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// ~one array as the blocks recycle.
 		{"reclaim-seq-value", seqVal, seqExp},
 		{"reclaim-seq-detector", seqDet, 0},
+		// A fresh i32[]-returning FREE call with scalar-literal args is also a
+		// candidate (the builder-call win); a string[]-returning call is NOT
+		// (excluded by the return-type registry — it crashed the compiler).
+		{"builder-call-value", `function build(): i32[] { return [1, 2, 3, 4]; } function main(): i32 { var a = build(); var s = 0; var i = 0; while (i < 4) { s = s + a[i]; i = i + 1; } return s; }`, 10},
+		{"builder-call-detector", `function build(): i32[] { return [1, 2, 3, 4]; } function main(): i32 { var a = build(); var s = 0; var i = 0; while (i < 4) { s = s + a[i]; i = i + 1; } if (s != 10) { return 99; } return __rc_underflow(); }`, 0},
+		{"strarr-call-not-dropped", `function names(): string[] { return ["a", "b"]; } function main(): i32 { var xs = names(); return xs.len(); }`, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
