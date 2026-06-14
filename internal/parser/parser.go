@@ -714,6 +714,21 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	}
 	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		// Associated type declaration: `type Item;`. Referenced in method
+		// signatures as `Self::Item`; each impl binds it with
+		// `type Item = …`. See docs/ASSOCIATED-TYPES.md.
+		if p.match(lexer.Keyword, "type") {
+			p.advance()
+			atName, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ";"); err != nil {
+				return nil, err
+			}
+			td.AssocTypes = append(td.AssocTypes, atName.Text)
+			continue
+		}
 		mkw, err := p.expect(lexer.Keyword, "function")
 		if err != nil {
 			return nil, err
@@ -839,6 +854,31 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		// Associated-type binding: `type Item = T;`. Records the concrete
+		// type the impl fixes for the trait's associated type. `Self` in T
+		// resolves to the impl type. See docs/ASSOCIATED-TYPES.md.
+		if p.match(lexer.Keyword, "type") {
+			p.advance()
+			atName, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, err := p.expect(lexer.Punct, "="); err != nil {
+				return nil, nil, err
+			}
+			atType, err := p.parseType()
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ";"); err != nil {
+				return nil, nil, err
+			}
+			if id.AssocTypeBindings == nil {
+				id.AssocTypeBindings = map[string]ast.Type{}
+			}
+			id.AssocTypeBindings[atName.Text] = ast.SubstSelf(atType, implType)
+			continue
+		}
 		fn, err := p.parseFunction()
 		if err != nil {
 			return nil, nil, err
@@ -1806,6 +1846,18 @@ func (p *parser) parseType() (ast.Type, error) {
 		}
 	default:
 		return nil, p.errorfCode(t.Pos, "P001", "expected type, got %q", t.Text)
+	}
+	// Associated-type projection `Base::Name` (`Self::Item`, `T::Item`,
+	// `Foo::Item`), repeatable for chained projections. Binds tighter
+	// than the `[]` suffix so `T::Item[]` is an array of the projection.
+	// See docs/ASSOCIATED-TYPES.md.
+	for p.match(lexer.Punct, "::") {
+		p.advance()
+		nameTok, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		base = ast.ProjType{Base: base, Name: nameTok.Text}
 	}
 	// Trailing `[]` makes it an array type, repeatable.
 	for {

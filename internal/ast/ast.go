@@ -175,6 +175,18 @@ type ParamType struct{ Name string }
 // by the conformance check). See docs/TRAITS.md.
 type SelfType struct{}
 
+// ProjType is an associated-type projection `Base::Name` — `Self::Item`
+// inside a trait or impl, `T::Item` in a bounded generic, or a concrete
+// `Foo::Item`. The checker resolves a concrete-base projection to the
+// impl's `type Item = …` binding immediately; a `Self`/`ParamType`-based
+// one stays abstract until the impl method is conformance-checked or the
+// generic is monomorphised, at which point Base becomes concrete and the
+// binding is looked up. See docs/ASSOCIATED-TYPES.md.
+type ProjType struct {
+	Base Type
+	Name string
+}
+
 // DynTraitType is a runtime trait-object type, written `dyn Trait` in
 // type position. A concrete value whose type implements `Trait` coerces
 // to it (the checker's assignability gate); a method call on a
@@ -216,6 +228,7 @@ func (EnumType) isType()     {}
 func (ParamType) isType()    {}
 func (DynTraitType) isType() {}
 func (HandleType) isType()   {}
+func (ProjType) isType()     {}
 func (n NumberType) String() string {
 	if n.IsPointerWidth() {
 		return "usize"
@@ -294,6 +307,13 @@ func (h HandleType) String() string {
 	}
 	return "own " + h.Resource
 }
+func (p ProjType) String() string {
+	base := "<nil>"
+	if p.Base != nil {
+		base = p.Base.String()
+	}
+	return base + "::" + p.Name
+}
 
 // SubstSelf recursively replaces every SelfType in t with self. Used
 // when desugaring `impl Trait for Type` methods (the parser) and when
@@ -334,6 +354,8 @@ func SubstSelf(t Type, self Type) Type {
 			params[i] = SubstSelf(pt, self)
 		}
 		return &FuncType{Params: params, Result: SubstSelf(tt.Result, self)}
+	case ProjType:
+		return ProjType{Base: SubstSelf(tt.Base, self), Name: tt.Name}
 	default:
 		return t
 	}
@@ -991,6 +1013,9 @@ func Equal(a, b Type) bool {
 	case HandleType:
 		y, ok := b.(HandleType)
 		return ok && x.Resource == y.Resource && x.Borrowed == y.Borrowed
+	case ProjType:
+		y, ok := b.(ProjType)
+		return ok && x.Name == y.Name && Equal(x.Base, y.Base)
 	}
 	return false
 }
@@ -2259,6 +2284,12 @@ type TraitDecl struct {
 	// with no supertraits. modload mangles these names like any other
 	// trait reference. See docs/TRAITS.md.
 	Supertraits []string
+	// AssocTypes names the trait's associated types (`type Item;`), in
+	// declaration order. A method signature refers to one as
+	// `Self::Item` (a ProjType); each impl must bind it via
+	// `type Item = …`. Empty for a trait with no associated types.
+	// See docs/ASSOCIATED-TYPES.md.
+	AssocTypes []string
 	// Public marks the trait as exported — same semantics as
 	// FuncDecl.Public / StructDecl.Public.
 	Public bool
@@ -2323,6 +2354,13 @@ type ImplDecl struct {
 	// checker synthesises later — a trait's default method inherited by
 	// a parametric impl (synthesizeTraitDefaults). Nil for a plain impl.
 	Bounds map[string][]string
+	// AssocTypeBindings maps each of the trait's associated-type names to
+	// the concrete type this impl binds it to (`type Item = i32;`). The
+	// conformance check requires one entry per trait associated type; the
+	// checker/monomorph resolve `Self::Item` / `T::Item` projections
+	// through it. Nil for an impl of a trait with no associated types.
+	// See docs/ASSOCIATED-TYPES.md.
+	AssocTypeBindings map[string]Type
 	// SourceModule is the module that wrote the impl — used by the
 	// orphan-rule check (the impl is legal only if Trait or Type is
 	// declared in this same module). Empty for single-file programs.

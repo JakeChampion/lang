@@ -2359,6 +2359,66 @@ function main(): i32 { var d: Dog = Dog { age: 1 }; var s: string = announce(d);
 	}
 }
 
+// Associated types: a trait declares `type Item;`, an impl binds it, and
+// the projection `Self::Item` / `T::Item` resolves to the binding — both
+// for a concrete method call and through a bounded generic. See
+// docs/ASSOCIATED-TYPES.md.
+func TestAssociatedTypesAccepted(t *testing.T) {
+	src := `trait Iterator {
+    type Item;
+    function next(self: Self): Self::Item;
+}
+struct B { v: i32 }
+impl Iterator for B {
+    type Item = i32;
+    function next(self: Self): Self::Item { return self.v; }
+}
+function first[I: Iterator](it: I): I::Item { return it.next(); }
+function main(): i32 {
+    var b: B = B { v: 9 };
+    var x: i32 = b.next();
+    var y: i32 = first(b);
+    return x + y;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("associated-types program should type-check: %v", err)
+	}
+}
+
+func TestAssociatedTypesErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// impl omits the associated-type binding
+		{`trait It { type Item; function next(self: Self): Self::Item; }
+struct B { v: i32 }
+impl It for B { function next(self: Self): Self::Item { return self.v; } }
+function main(): i32 { return 0; }`, "must bind associated type"},
+		// impl binds an undeclared associated type
+		{`trait It { type Item; function next(self: Self): Self::Item; }
+struct B { v: i32 }
+impl It for B { type Item = i32; type Extra = i32; function next(self: Self): Self::Item { return self.v; } }
+function main(): i32 { return 0; }`, "does not declare"},
+		// dyn over a trait with associated types is not object-safe
+		{`trait It { type Item; function next(self: Self): Self::Item; }
+struct B { v: i32 }
+impl It for B { type Item = i32; function next(self: Self): Self::Item { return self.v; } }
+function take(x: dyn It): i32 { return 0; }
+function main(): i32 { return 0; }`, "associated types"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 // A supertrait (`trait Ord: Eq`) lets a `T: Ord` bound call the
 // supertrait's methods on T, and requires every `impl Ord for X` to also
 // have `impl Eq for X`. See docs/TRAITS.md.

@@ -126,6 +126,11 @@ type Info struct {
 	// `impl Trait for Type` exists. Phase 2's bound checking asks
 	// "does i32 implement Display?" against this.
 	Impls map[string]map[string]bool
+	// AssocBindings records each impl's associated-type bindings:
+	// AssocBindings[typeName][assocName] = concrete type. Built during the
+	// conformance pass. resolveProj uses it to resolve a concrete-base
+	// `Foo::Item` projection to its bound type. See docs/ASSOCIATED-TYPES.md.
+	AssocBindings map[string]map[string]ast.Type
 	// DynCoercions records every concrete→`dyn Trait` boxing site,
 	// keyed by the holder expression the checker saw flow into a `dyn`
 	// slot (var init, assignment, argument, return, array element,
@@ -740,6 +745,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Generics:            map[string]ast.GenericDecl{},
 			Traits:              map[string]*ast.TraitDecl{},
 			Impls:               map[string]map[string]bool{},
+			AssocBindings:       map[string]map[string]ast.Type{},
 		},
 		variantOf: map[string][]variantRef{},
 	}
@@ -2042,11 +2048,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// Expected signature: the trait method with Self -> the
 			// concrete type. m.Params[0] is `self: Self`, which lines
 			// up with the hoisted method's prepended receiver.
+			// Resolve associated-type projections on both sides via the
+			// impl's own bindings, so `Self::Item` (expected, after
+			// Self→impl-type) and the impl method's `Self::Item` both
+			// collapse to the bound type before the structural compare.
 			want := make([]ast.Type, len(m.Params))
 			for i, p := range m.Params {
-				want[i] = c.normalizeEnumKinds(ast.SubstSelf(p.Type, impl.Type))
+				want[i] = c.resolveProjWith(c.normalizeEnumKinds(ast.SubstSelf(p.Type, impl.Type)), impl.AssocTypeBindings)
 			}
-			wantRet := c.normalizeEnumKinds(ast.SubstSelf(m.Result, impl.Type))
+			wantRet := c.resolveProjWith(c.normalizeEnumKinds(ast.SubstSelf(m.Result, impl.Type)), impl.AssocTypeBindings)
 			// Normalize the impl side to the same nominal kinds. The parser
 			// defaults every bare type name to StructType (no symbol table), so a
 			// trait signature naming an enum — `Self` on an enum impl, or a
@@ -2054,9 +2064,9 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// method's real signature carries EnumType(E); without reconciling the
 			// kinds, sigMatches saw a spurious mismatch (the E021 "expected
 			// (E)=>E, got (E)=>E" that blocked every enum-returning trait method).
-			gotSig := &ast.FuncType{Params: make([]ast.Type, len(sig.Params)), Result: c.normalizeEnumKinds(sig.Result)}
+			gotSig := &ast.FuncType{Params: make([]ast.Type, len(sig.Params)), Result: c.resolveProjWith(c.normalizeEnumKinds(sig.Result), impl.AssocTypeBindings)}
 			for i, pt := range sig.Params {
-				gotSig.Params[i] = c.normalizeEnumKinds(pt)
+				gotSig.Params[i] = c.resolveProjWith(c.normalizeEnumKinds(pt), impl.AssocTypeBindings)
 			}
 			if !sigMatches(gotSig, want, wantRet) {
 				c.errfCode(impl.P, "E021",
@@ -2086,6 +2096,38 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 						demangle(typeName), m.Name, verb, p.Name, demangle(impl.Trait))
 					conforms = false
 					break
+				}
+			}
+		}
+		// Associated types: the impl must bind exactly the trait's
+		// associated types (no missing, no extras). Record the bindings so
+		// resolveProj can resolve `Foo::Item` projections. See
+		// docs/ASSOCIATED-TYPES.md.
+		if td2, ok := c.info.Traits[impl.Trait]; ok {
+			declared := map[string]bool{}
+			for _, at := range td2.AssocTypes {
+				declared[at] = true
+			}
+			for name := range impl.AssocTypeBindings {
+				if !declared[name] {
+					c.errfCode(impl.P, "E021", "impl of %s for %s binds associated type %q which the trait does not declare",
+						demangle(impl.Trait), demangle(typeName), name)
+					conforms = false
+				}
+			}
+			for _, at := range td2.AssocTypes {
+				if _, ok := impl.AssocTypeBindings[at]; !ok {
+					c.errfCode(impl.P, "E021", "impl of %s for %s must bind associated type %q (`type %s = …;`)",
+						demangle(impl.Trait), demangle(typeName), at, at)
+					conforms = false
+				}
+			}
+			if conforms && len(impl.AssocTypeBindings) > 0 {
+				if c.info.AssocBindings[typeName] == nil {
+					c.info.AssocBindings[typeName] = map[string]ast.Type{}
+				}
+				for name, bt := range impl.AssocTypeBindings {
+					c.info.AssocBindings[typeName][name] = bt
 				}
 			}
 		}
@@ -2133,6 +2175,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			}
 		}
 	}
+
+	// Resolve concrete-base associated-type projections (`Foo::Item` →
+	// the impl's binding) across signatures + bodies, now that the
+	// conformance pass has recorded every impl's bindings. See
+	// docs/ASSOCIATED-TYPES.md.
+	c.resolveProjections(prog)
 
 	// Validate that every trait named in a function's type-parameter
 	// bounds actually exists. Catches typos / unknown traits before
@@ -2551,6 +2599,14 @@ func (c *checker) objectSafe(traitName string) (bool, string) {
 	td, ok := c.info.Traits[traitName]
 	if !ok {
 		return false, ""
+	}
+	// A trait with associated types isn't object-safe: a `dyn Trait` value
+	// erases the concrete type, so the per-impl associated-type bindings
+	// (and any `Self::Item` projection in a method signature) can't be
+	// resolved at the call site. (Rust requires `dyn Trait<Item=T>` to pin
+	// them — a follow-up.) See docs/ASSOCIATED-TYPES.md.
+	if len(td.AssocTypes) > 0 {
+		return false, "it has associated types"
 	}
 	for _, m := range td.Methods {
 		for i := 1; i < len(m.Params); i++ { // params[0] is self: Self
@@ -4139,6 +4195,15 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		return
 	}
 	switch t := (*slot).(type) {
+	case ast.ProjType:
+		// Resolve the base so `T::Item`'s base StructType{T} becomes
+		// ParamType{T} and `Self::Item` stays SelfType. The projection
+		// itself is resolved to its binding later (resolveProjections),
+		// once impl conformance has recorded the bindings.
+		base := t.Base
+		c.resolveType(&base, params)
+		*slot = ast.ProjType{Base: base, Name: t.Name}
+		return
 	case ast.StructType:
 		if params[t.Name] {
 			*slot = ast.ParamType{Name: t.Name}
@@ -4308,6 +4373,231 @@ func (c *checker) variantEnumList(name string) string {
 // "couldn't fully resolve" cases. Recurses into composite types
 // (arrays, function types, generic enum args) so a payload like
 // `Option[T]` resolves to `Option[number]` when T=number.
+// resolveProj resolves an associated-type projection whose base is a
+// concrete type (`Foo::Item`) to the type the impl binds it to, recursing
+// into composite types. A projection with an abstract base (`Self::Item`,
+// `T::Item`) is left intact (its base is still resolved) — those resolve
+// once the base becomes concrete (impl conformance / monomorph re-check).
+// Requires c.info.AssocBindings, so it's only meaningful after the
+// conformance pass. See docs/ASSOCIATED-TYPES.md.
+func (c *checker) resolveProj(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		base := c.resolveProj(x.Base)
+		if tn, ok := methodTypeName(base); ok {
+			if m, ok := c.info.AssocBindings[tn]; ok {
+				if bound, ok := m[x.Name]; ok {
+					return c.resolveProj(bound)
+				}
+			}
+		}
+		return ast.ProjType{Base: base, Name: x.Name}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProj(x.Elem)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProj(x.Elem)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProj(x.Elems[i])
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProj(x.Args[i])
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProj(x.Args[i])
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProj(x.Result)}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, c.resolveProj(p))
+		}
+		return out
+	}
+	return t
+}
+
+// resolveProjWith resolves associated-type projections using an explicit
+// per-impl bindings map (assoc name → type), resolving any ProjType whose
+// Name is bound regardless of base. Used in conformance comparison, where
+// every projection refers to the impl's own associated types (the trait
+// signature's `Self::Item` after Self→impl-type, and the impl method's
+// own `Self::Item`). See docs/ASSOCIATED-TYPES.md.
+func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		if b, ok := bindings[x.Name]; ok {
+			return c.resolveProjWith(b, bindings)
+		}
+		return ast.ProjType{Base: c.resolveProjWith(x.Base, bindings), Name: x.Name}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProjWith(x.Elem, bindings)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProjWith(x.Elem, bindings)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProjWith(x.Elems[i], bindings)
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWith(x.Args[i], bindings)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWith(x.Args[i], bindings)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings)}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, c.resolveProjWith(p, bindings))
+		}
+		return out
+	}
+	return t
+}
+
+// resolveProjections rewrites every concrete-base associated-type
+// projection in the program's function signatures + bodies to its bound
+// type, now that the conformance pass has filled c.info.AssocBindings.
+// Runs each Check (incl. the monomorph re-check, which is what resolves a
+// `T::Item` that monomorph substituted to a concrete `Foo::Item`).
+func (c *checker) resolveProjections(prog *ast.Program) {
+	if len(c.info.AssocBindings) == 0 {
+		return
+	}
+	for name, sig := range c.info.FuncSigs {
+		c.info.FuncSigs[name] = c.resolveProj(sig).(*ast.FuncType)
+	}
+	for _, fn := range prog.Funcs {
+		fn.ReturnType = c.resolveProj(fn.ReturnType)
+		for i := range fn.Params {
+			fn.Params[i].Type = c.resolveProj(fn.Params[i].Type)
+		}
+		if fn.Receiver != nil {
+			fn.Receiver.Type = c.resolveProj(fn.Receiver.Type)
+		}
+		if fn.Body != nil {
+			c.resolveProjInBlock(fn.Body)
+		}
+	}
+}
+
+// resolveProjInBlock walks a body applying resolveProj to every type
+// annotation slot (var decls, match binding types, lambda params/return,
+// cast targets) so projections written inside bodies (a generic's
+// `var x: T::Item`, concrete after monomorph) resolve too.
+func (c *checker) resolveProjInBlock(b *ast.Block) {
+	if b == nil {
+		return
+	}
+	for _, st := range b.Stmts {
+		c.resolveProjInStmt(st)
+	}
+}
+
+func (c *checker) resolveProjInStmt(s ast.Stmt) {
+	switch x := s.(type) {
+	case *ast.Var:
+		if x.Type != nil {
+			x.Type = c.resolveProj(x.Type)
+		}
+		c.resolveProjInExpr(x.Init)
+	case *ast.ExprStmt:
+		c.resolveProjInExpr(x.Expr)
+	case *ast.Return:
+		c.resolveProjInExpr(x.Value)
+	case *ast.Block:
+		c.resolveProjInBlock(x)
+	case *ast.If:
+		c.resolveProjInExpr(x.Cond)
+		c.resolveProjInStmt(x.Then)
+		if x.Else != nil {
+			c.resolveProjInStmt(x.Else)
+		}
+	case *ast.While:
+		c.resolveProjInExpr(x.Cond)
+		c.resolveProjInStmt(x.Body)
+	case *ast.For:
+		if x.Init != nil {
+			c.resolveProjInStmt(x.Init)
+		}
+		c.resolveProjInExpr(x.Cond)
+		if x.Step != nil {
+			c.resolveProjInStmt(x.Step)
+		}
+		c.resolveProjInStmt(x.Body)
+	case *ast.Match:
+		c.resolveProjInExpr(x.Tag)
+		for _, arm := range x.Arms {
+			for i := range arm.BindingTypes {
+				if arm.BindingTypes[i] != nil {
+					arm.BindingTypes[i] = c.resolveProj(arm.BindingTypes[i])
+				}
+			}
+			c.resolveProjInBlock(arm.Body)
+		}
+	}
+}
+
+func (c *checker) resolveProjInExpr(e ast.Expr) {
+	switch x := e.(type) {
+	case nil:
+		return
+	case *ast.CastExpr:
+		x.Target = c.resolveProj(x.Target)
+		c.resolveProjInExpr(x.Inner)
+	case *ast.Assign:
+		c.resolveProjInExpr(x.Target)
+		c.resolveProjInExpr(x.Value)
+	case *ast.Lambda:
+		for i := range x.Params {
+			x.Params[i].Type = c.resolveProj(x.Params[i].Type)
+		}
+		x.ReturnType = c.resolveProj(x.ReturnType)
+		c.resolveProjInBlock(x.Body)
+	case *ast.Binary:
+		c.resolveProjInExpr(x.Left)
+		c.resolveProjInExpr(x.Right)
+	case *ast.Unary:
+		c.resolveProjInExpr(x.Operand)
+	case *ast.Call:
+		c.resolveProjInExpr(x.Callee)
+		for _, a := range x.Args {
+			c.resolveProjInExpr(a)
+		}
+	case *ast.Index:
+		c.resolveProjInExpr(x.Array)
+		c.resolveProjInExpr(x.Idx)
+	case *ast.FieldAccess:
+		c.resolveProjInExpr(x.Target)
+	}
+}
+
 func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 	if t == nil {
 		return nil
@@ -4352,6 +4642,11 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
 		return out
+	case ast.ProjType:
+		// Substitute inside the base (`T::Item` → `IntBox::Item` when
+		// T→IntBox); the concrete-base projection is resolved to its
+		// binding by resolveProj. See docs/ASSOCIATED-TYPES.md.
+		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
 	}
 	return t
 }
@@ -8060,7 +8355,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 				}
 				n.TypeArgs = args
-				return substituteType(ft.Result, sub)
+				// Resolve any associated-type projection the result picked up
+				// once the type args made its base concrete (`I::Item` →
+				// `IntBox::Item` → the binding). See docs/ASSOCIATED-TYPES.md.
+				return c.resolveProj(substituteType(ft.Result, sub))
 			}
 			return nil
 		}
