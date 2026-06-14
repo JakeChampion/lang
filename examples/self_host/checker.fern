@@ -3173,6 +3173,21 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                         mi = mi + 1;
                                     }
                                 }
+                            } else {
+                                // E043: a method call `obj.m(...)` on a known
+                                // struct that has neither a method `m` nor a
+                                // field `m` — it's a field access on a struct
+                                // with no such member. Mirrors the Go checker,
+                                // which resolves the method, then the field,
+                                // finds neither, and reports E043. A present
+                                // field (function-typed → a valid closure call,
+                                // or non-function → a separate E038) is excluded
+                                // by the field-name guard, so there are no false
+                                // positives on real method/closure-field calls.
+                                var fsig: StructSig = s.lookup_struct(sn.name);
+                                if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, mfa.field)) {
+                                    out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+                                }
                             }
                         },
                         _ => { }
