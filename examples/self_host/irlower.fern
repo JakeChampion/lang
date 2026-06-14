@@ -7066,18 +7066,37 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
 // correct in d's box), make c be d's box, and zero d's slot so the exit sweep
 // frees the box once (through c), never twice.
 //
-// Restricted to the simplest SOUND case: T has only pure-scalar (i32/boolean)
-// fields, the base is a bare ident of a reclaimable same-type local, the
-// override values do not themselves reference d, and d is referenced nowhere in
-// the rest of the body. Anything else falls back to the existing
-// alloc-a-new-box path (unchanged behaviour). Soundness is gated by the
-// byte-identical self-compile fixpoint.
+// Restricted to a SOUND case: T's fields are each either a flat scalar (i32 /
+// boolean / i64 / f64 / u32 / u64 — leak-only, no rc) OR a leak-safe array field
+// (i32[] / boolean[] / i64[] / f64[] — rc-tracked, deep-dropped on the struct's
+// reclamation by emit_struct_field_drops). The base is a bare ident of a
+// reclaimable same-type local, the override values do not themselves reference d,
+// every override that targets an array field is a FRESH array literal, and d is
+// referenced nowhere in the rest of the body. Anything else (string / nested-
+// struct / struct-array / map / option / tuple fields, or an array-field override
+// that isn't a fresh literal) falls back to the existing alloc-a-new-box path
+// (unchanged behaviour). Soundness is gated by the byte-identical self-compile
+// fixpoint.
+//
+// The one extra correctness rule vs the scalar-only slice: an OVERRIDDEN array
+// field's OLD value in d's box must be released (dec) before the new value is
+// written, or it leaks. Non-overridden array fields stay in d's box and move to c
+// (deep-dropped at c's reclamation). See emit_self_overwrite_reuse.
 
-// struct_all_scalar_i32_fields: every field of `struct_name` is i32 or boolean
-// (a flat scalar box — no rc-tracked fields to deep-drop, so moving the box from
-// d to c cannot dangle or leak a field). Strings / i64 / f64 / arrays / nested
-// structs are excluded to keep this first slice trivially sound.
-function struct_all_scalar_i32_fields(structs: parser.StructDecl[], struct_name: string): boolean {
+// reuse_field_is_scalar: a flat leak-only scalar field (no rc) — i32 / boolean /
+// the 8-byte i64 / f64 and the u32 / u64 widths.
+function reuse_field_is_scalar(t: string): boolean {
+    return t == "i32" || t == "boolean" || t == "i64" || t == "f64" || t == "u32" || t == "u64";
+}
+
+// struct_fields_reusable: every field of `struct_name` is either a flat scalar
+// (reuse_field_is_scalar) or a leak-safe rc-tracked array field
+// (is_leaksafe_array_field — i32[]/boolean[]/i64[]/f64[]). String / nested-struct
+// / struct-array / map / option / tuple fields are excluded: a string or nested
+// box would dangle (no element walk on the moved box) and a struct-array / map /
+// option / tuple field isn't deep-dropped the way emit_struct_field_drops handles
+// the leaf arrays, so they bail to the alloc path.
+function struct_fields_reusable(structs: parser.StructDecl[], struct_name: string): boolean {
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == struct_name) {
@@ -7085,7 +7104,7 @@ function struct_all_scalar_i32_fields(structs: parser.StructDecl[], struct_name:
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t != "i32" && t != "boolean") { return false; }
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t)) { return false; }
                 fi = fi + 1;
             }
             return true;
@@ -7142,12 +7161,15 @@ function name_escapes_outside_stmt(body: parser.Stmt[], name: string, skip: i32)
 // self_overwrite_reuse_sites computes the functional-update self-overwrite reuse
 // points. A statement i qualifies when it is `var c = T { ...d, f: v, ... }`
 // (a struct-lit with a bare-ident base d) where:
-//   - T has only scalar i32/boolean fields (struct_all_scalar_i32_fields),
+//   - T's fields are each a flat scalar or a leak-safe array (struct_fields_reusable),
 //   - d was bound from a fresh `T { ... }` literal of the SAME type T,
 //   - d does not escape anywhere outside this statement (its only escaping use is
 //     the update base here — the consuming use the reuse takes ownership of),
 //   - none of the override VALUES reference d (so reading d's box while writing
 //     it is order-safe; the overrides are evaluated against d's current fields),
+//   - every override that targets a leak-safe array field is a FRESH array
+//     literal (ExprArray) — so the box owns the new array, mirroring the normal
+//     struct_make has-base constraint; an aliased array override bails,
 //   - d is referenced nowhere in statements i+1.., i.e. dead after this update.
 // d is never reassigned (a fresh single binding; a reassignment of d before i
 // would make it escape via the RHS walk, caught by name_escapes_outside_stmt).
@@ -7163,7 +7185,7 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                         if (slit.has_base) {
                             match (slit.base) {
                                 parser.ExprIdent(bid) => {
-                                    var ok: boolean = struct_all_scalar_i32_fields(structs, slit.type_name)
+                                    var ok: boolean = struct_fields_reusable(structs, slit.type_name)
                                         && fresh_struct_lit_type(body, bid.name) == slit.type_name
                                         && v.name != bid.name
                                         && util.index_of_str(body_assign_targets(body), bid.name) < 0
@@ -7175,6 +7197,23 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                                             var none: string[] = [];
                                             if (util.index_of_str(astwalk.collect_idents_expr(slit.field_values[fj], none), bid.name) >= 0) { ok = false; }
                                             fj = fj + 1;
+                                        }
+                                    }
+                                    // Every override targeting a leak-safe array field
+                                    // must be a FRESH array literal: the reused box then
+                                    // owns the new array (like the normal has-base path).
+                                    // An aliased array override bails to the alloc path.
+                                    if (ok) {
+                                        var fk: i32 = 0;
+                                        while (fk < slit.field_names.len()) {
+                                            var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
+                                            if (is_leaksafe_array_field(fkt)) {
+                                                match (slit.field_values[fk]) {
+                                                    parser.ExprArray(_) => {},
+                                                    _ => { ok = false; }
+                                                }
+                                            }
+                                            fk = fk + 1;
                                         }
                                     }
                                     // d must be dead after this statement: no use
@@ -7221,15 +7260,38 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
     match (init) {
         parser.ExprStructLit(slit) => {
             var st: LowerState = s;
-            // Write each override field into d's box: [box, value] -> struct_set.
+            // Write each override field into d's box. For a leak-safe ARRAY field,
+            // first RELEASE the old array already in d's box (load box; struct_get;
+            // __fern_rc_dec; drop) — or it leaks — then write the new (fresh) array.
+            // For an i64 field, lower via lower_i64 and store 8 bytes (struct_set_i64).
+            // For a plain scalar / f64 field, lower_expr + struct_set(width).
             var fj: i32 = 0;
             while (fj < slit.field_names.len()) {
                 var fidx: i32 = st.field_index_in(slit.type_name, slit.field_names[fj]);
                 if (fidx < 0) { return st.fail(); }
-                st = st.emit(ir.op_load_local(dslot));
-                st = lower_expr(slit.field_values[fj], st);
-                if (!st.ok) { return st; }
-                st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
+                var fty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[fj]);
+                if (is_leaksafe_array_field(fty)) {
+                    // dec the OLD array value in d's box before overwriting it.
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_struct_get(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                    // write the new (fresh) array: [box, value] -> struct_set.
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_expr(slit.field_values[fj], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
+                } else if (struct_field_is_i64(st.structs, slit.type_name, fidx)) {
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_i64(slit.field_values[fj], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set_i64(fidx));
+                } else {
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_expr(slit.field_values[fj], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
+                }
                 fj = fj + 1;
             }
             // Bind c to d's box (the reused box is the result of the update).
