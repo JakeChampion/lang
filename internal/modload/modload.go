@@ -1340,6 +1340,9 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	case *ast.CastExpr:
 		r.rewriteExpr(&x.Inner)
 		r.rewriteType(&x.Target)
+	case *ast.DowncastExpr:
+		r.rewriteExpr(&x.Inner)
+		r.rewriteType(&x.Target)
 	case *ast.SliceExpr:
 		r.rewriteExpr(&x.Source)
 		if x.Low != nil {

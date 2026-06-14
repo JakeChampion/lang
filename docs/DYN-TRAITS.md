@@ -660,8 +660,13 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    cell on natives), wired into the inc/dec/borrow passes. Phased
    wasm-inline → x86-64-boxed → arm64-boxed, each with leak/reclaim
    tests. **Next up.**
-5. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast/
-   downcast, `dyn` in struct fields with the fat-pointer layout.
+5. **Downcast slice 1 (shipped): `e as? T` on the interpreter.** Surface
+   syntax + checker + interp for the fallible downcast (§9). Struct/enum
+   targets; compiled backends reject cleanly until a later vtable-compare
+   slice.
+6. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast,
+   downcast codegen (the vtable-pointer compare) + primitive downcast
+   targets, `dyn` in struct fields with the fat-pointer layout.
 
 ## 8. Testing
 
@@ -678,3 +683,74 @@ Per the engineering bar (tests at the layer each change touches):
 - Full suite (incl. WASM e2e + self-host gates) stays green; the
   interpreter-only scope means no differential (interp-vs-compiled) test
   exercises `dyn` until slice 2.
+
+## 9. Downcast — `e as? T` (fallible recovery of the concrete type)
+
+A **downcast** recovers a concrete type from a trait object. It is the
+runtime-checked counterpart to coercion (§5): coercion erases a concrete
+type into a `dyn Trait`; the downcast asks, at run time, "is this
+`dyn Trait` *actually* a `T`?" and answers with an `Option`.
+
+```fern
+function describe(s: dyn Shape): string {
+    var c: Option[Circle] = s as? Circle;       // Some(circle) | None
+    match (c) {
+        Some(x) => "circle r=" + x.r.to_string(),  // x: Circle — usable concretely
+        None    => "other",
+    }
+}
+```
+
+**Syntax.** `e as? T`. The `?` distinguishes it from the numeric/ascription
+cast `e as T` (§ — `as` and `as?` are different operators producing
+different AST nodes: `CastExpr` vs `DowncastExpr`). `as?` binds at the same
+precedence tier as `as`.
+
+**Semantics.** For `e: dyn Trait` and a concrete `T` that implements
+`Trait`, `e as? T` evaluates to **`Option[T]`**:
+- `Some(v)` when `e`'s runtime concrete type is **exactly** `T` — and the
+  bound `v` is usable as a `T` (field access, methods, …);
+- `None` otherwise.
+
+The match is on the *exact* concrete type, not on "also implements `Trait`"
+or any subtyping relation (there is no trait inheritance in v1). `as?`
+always returns an `Option`, distinct from `as`, which never does.
+
+**Type rules (checker).** `e` must have type `dyn Trait` — a non-`dyn`
+left operand is `error[E059]` (`'as?' downcast requires a 'dyn Trait'
+value on the left`). `T` must implement `Trait` (the same
+`Info.Impls[Trait][T]` gate coercion uses) — otherwise `error[E060]`
+(`T does not implement Trait, so a 'dyn Trait' cannot downcast to it`).
+The checker records the inner's trait on the node (`DowncastExpr.Trait`)
+for later codegen.
+
+**Slice-1 scope: struct/enum targets only.** `T` must be a concrete
+struct or enum (`error[E060]` otherwise). Primitive / `string` downcast
+targets (`dyn Display as? i32`) are a follow-up — they share the
+primitive-boxing boundary the dispatch slices hit (§4.2.3), since a
+primitive carries no runtime type tag in the compiled representations.
+
+**Implementation.** Slice 1 is **interpreter-only**. The interpreter's
+boxed `dyn` value *is* the concrete `Struct`/`Enum`, which already carries
+its `TypeName`/`EnumName`; the downcast recovers that name (`valueTypeName`)
+and compares it to the target's name, building `Some(value)` / `None`
+through the existing `optionSome` / `optionNone` helpers. The compiled
+backends (arm64 / x86-64 / wasm) **reject** `DowncastExpr` with a clean
+unsupported-feature diagnostic (`'as?' downcast (dyn Trait → concrete) is
+not yet supported on compiled backends`); the IR's `rejectDowncast` gate
+runs unconditionally in `LowerWith` (unlike the `dyn`-dispatch gate, no
+backend has lifted it yet).
+
+**Codegen (later slice).** The compiled path is a single **vtable-pointer
+compare**: the `(trait, concrete)` vtable already uniquely tags the
+concrete type, so a downcast to `T` is "does this `dyn`'s vtable word equal
+`__vtable_<Trait>_<T>`? then `Some(data)` else `None`" — no new runtime
+metadata, reusing the slice-2 vtable infrastructure (§4.2). Boxed (natives)
+vs inline (wasm) only changes how the vtable word is read.
+
+**Tests.** Parser (`DowncastExpr` vs `CastExpr` disambiguation); checker
+(valid → `Option[T]`, `DowncastExpr.Trait` stamped, non-`dyn` LHS →
+E059, non-impl target → E060); e2e interp (`TestInterpDowncast`: a
+`dyn Shape` Circle → `Some` with the bound value used concretely, Rect →
+`None`, heterogeneous `dyn Shape[]` per-element downcast, plus the
+clean compiled-backend reject on all three targets).

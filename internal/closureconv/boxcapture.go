@@ -303,6 +303,9 @@ func rewriteBoxedExpr(e ast.Expr, boxed map[string]ast.Type) ast.Expr {
 	case *ast.CastExpr:
 		x.Inner = rewriteBoxedExpr(x.Inner, boxed)
 		return x
+	case *ast.DowncastExpr:
+		x.Inner = rewriteBoxedExpr(x.Inner, boxed)
+		return x
 	case *ast.FString:
 		for i := range x.Parts {
 			if x.Parts[i].Expr != nil {

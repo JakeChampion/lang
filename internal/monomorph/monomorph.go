@@ -750,6 +750,9 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 	case *ast.CastExpr:
 		x.Target = substituteType(x.Target, sub)
 		substituteExpr(x.Inner, sub)
+	case *ast.DowncastExpr:
+		x.Target = substituteType(x.Target, sub)
+		substituteExpr(x.Inner, sub)
 	case *ast.Binary:
 		substituteExpr(x.Left, sub)
 		substituteExpr(x.Right, sub)
@@ -945,6 +948,8 @@ func walkExprStructLits(e ast.Expr, fn func(*ast.StructLit)) {
 			walkExprStructLits(e, fn)
 		}
 	case *ast.CastExpr:
+		walkExprStructLits(x.Inner, fn)
+	case *ast.DowncastExpr:
 		walkExprStructLits(x.Inner, fn)
 	}
 }
@@ -1272,6 +1277,8 @@ func walkExpr(e ast.Expr, fn func(*ast.Call)) {
 		// body.
 		walkBlock(x.Body, fn)
 	case *ast.CastExpr:
+		walkExpr(x.Inner, fn)
+	case *ast.DowncastExpr:
 		walkExpr(x.Inner, fn)
 	}
 }

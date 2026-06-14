@@ -5291,6 +5291,12 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if id, ok := x.Inner.(*ast.Ident); ok {
 					borrow[id] = true
 				}
+			case *ast.DowncastExpr:
+				// `x as? T` inspects the `dyn` value's runtime tag — a READ,
+				// never a transfer.
+				if id, ok := x.Inner.(*ast.Ident); ok {
+					borrow[id] = true
+				}
 			case *ast.Binary:
 				// Operands of `+`, `==`, `&&`, string-concat, … are READS.
 				// (`sink(x) + sink(x)` keeps the x's as call-arg consumes — those
@@ -5746,6 +5752,8 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 	case *ast.Unary:
 		walkExprForNames(n.Operand, selfName, siblings, seen)
 	case *ast.CastExpr:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.DowncastExpr:
 		walkExprForNames(n.Inner, selfName, siblings, seen)
 	case *ast.SliceExpr:
 		walkExprForNames(n.Source, selfName, siblings, seen)
@@ -6857,6 +6865,34 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return ast.NumberType{Width: n.Width, Signed: !n.IsUnsigned}
 		}
 		return ast.NumberType{Polymorphic: true}
+	case *ast.DowncastExpr:
+		// `e as? T` — fallible downcast of a `dyn Trait` value to a
+		// concrete type (docs/DYN-TRAITS.md §9). The LHS must be a
+		// `dyn Trait`; the target must be a struct/enum that implements
+		// that trait (slice 1 scope — primitive targets are a follow-up).
+		// Result type is `Option[T]`. The runtime check + Some/None
+		// construction lives in the interpreter; compiled backends reject
+		// the node until a later codegen slice.
+		inner := c.checkExpr(n.Inner, s)
+		dt, ok := inner.(ast.DynTraitType)
+		if !ok {
+			c.errfCode(n.P, "E059", "'as?' downcast requires a 'dyn Trait' value on the left, got %s", inner)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
+		}
+		n.Trait = dt.Trait
+		// The target must be a struct or enum (slice 1 scope).
+		tn, hasName := methodTypeName(n.Target)
+		_, isStruct := n.Target.(ast.StructType)
+		_, isEnum := n.Target.(ast.EnumType)
+		if !hasName || !(isStruct || isEnum) {
+			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
+		}
+		// The target must implement the trait — mirror the coercion gate.
+		if !c.info.Impls[dt.Trait][tn] {
+			c.errfCode(n.P, "E060", "%s does not implement %s, so a 'dyn %s' cannot downcast to it", n.Target, dt.Trait, dt.Trait)
+		}
+		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 	case *ast.CastExpr:
 		// Numeric ↔ numeric is the common case. The one
 		// exception: a `[u8]` slice or `u8[]` array can cast

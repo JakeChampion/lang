@@ -1644,6 +1644,26 @@ func rejectDynTrait(prog *ast.Program) error {
 	return nil
 }
 
+// rejectDowncast scans a program for any `e as? T` downcast
+// (DowncastExpr). The fallible downcast is interpreter-only in slice 1
+// — compiled backends would need a runtime vtable-pointer compare, a
+// later codegen slice (docs/DYN-TRAITS.md §9). Reject it here with a
+// clean message rather than falling through to a panic / miscompile.
+func rejectDowncast(prog *ast.Program) error {
+	const msg = "'as?' downcast (dyn Trait → concrete) is not yet supported on compiled backends; run it on the interpreter (fern -interp)"
+	var found bool
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if _, ok := n.(*ast.DowncastExpr); ok {
+			found = true
+		}
+		return true
+	})
+	if found {
+		return fmt.Errorf("ir: %s", msg)
+	}
+	return nil
+}
+
 // dynTraitNamesUsed collects every trait named in a `dyn Trait` type
 // anywhere in the program's function signatures and local-var
 // annotations — the traits that need vtables emitted. Mirrors the scan
@@ -1972,6 +1992,14 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		if err := rejectDynTrait(prog); err != nil {
 			return nil, err
 		}
+	}
+	// The `e as? T` fallible downcast (DowncastExpr) is interpreter-only
+	// in slice 1 — every compiled backend rejects it with a clean message
+	// until a later codegen slice adds the runtime vtable-pointer compare
+	// (docs/DYN-TRAITS.md §9). Unconditional: unlike `dyn` dispatch, no
+	// backend has lifted this gate yet.
+	if err := rejectDowncast(prog); err != nil {
+		return nil, err
 	}
 	// Automatic drop for owned WIT resource handles (P5 slice 3): insert
 	// `defer <drop>(h);` for each kept `own R` local and synthesize the
@@ -9685,6 +9713,13 @@ func (b *builder) expr(e ast.Expr) error {
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
 		}
+	case *ast.DowncastExpr:
+		// Interpreter-only in slice 1; LowerWith's rejectDowncast gate
+		// returns before we get here, but guard the lowering switch too
+		// so a future caller that bypasses the gate errors cleanly rather
+		// than hitting the generic "unsupported expression" default
+		// (docs/DYN-TRAITS.md §9).
+		return fmt.Errorf("ir: 'as?' downcast (dyn Trait → concrete) is not yet supported on compiled backends")
 	case *ast.CastExpr:
 		if err := b.expr(n.Inner); err != nil {
 			return err

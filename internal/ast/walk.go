@@ -100,6 +100,8 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 		// leaves
 	case *CastExpr:
 		x.Inner = rewriteExpr(x.Inner, fn)
+	case *DowncastExpr:
+		x.Inner = rewriteExpr(x.Inner, fn)
 	case *FString:
 		for i := range x.Parts {
 			if x.Parts[i].Expr != nil {
@@ -283,6 +285,8 @@ func walkChildren(n Node, fn func(Node) bool) {
 
 	// ---------- Expressions ----------
 	case *CastExpr:
+		Walk(x.Inner, fn)
+	case *DowncastExpr:
 		Walk(x.Inner, fn)
 	case *FString:
 		for _, p := range x.Parts {

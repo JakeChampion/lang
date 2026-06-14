@@ -248,6 +248,8 @@ func (r *renamer) walkExpr(e ast.Expr) {
 		r.walkExpr(n.Operand)
 	case *ast.CastExpr:
 		r.walkExpr(n.Inner)
+	case *ast.DowncastExpr:
+		r.walkExpr(n.Inner)
 	case *ast.SliceExpr:
 		r.walkExpr(n.Source)
 		if n.Low != nil {

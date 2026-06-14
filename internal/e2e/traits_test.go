@@ -580,6 +580,74 @@ function main(): i32 {
 	}
 }
 
+// TestInterpDowncast exercises the `e as? T` fallible downcast
+// (docs/DYN-TRAITS.md §9) on the interpreter: a `dyn Shape` holding a
+// Circle downcasts to Some(circle) (and the bound value is usable as the
+// concrete Circle), and to None for Rect. A heterogeneous `dyn Shape[]`
+// downcasts each element. Compiled backends must reject the downcast
+// cleanly (no panic) until a later codegen slice.
+func TestInterpDowncast(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := `import "std/i32";
+trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } }
+function describe(s: dyn Shape): string {
+    // hit binds the concrete value, usable as a Circle (reads .r)
+    var c: Option[Circle] = s as? Circle;
+    return match (c) {
+        Some(x) => "circle r=" + x.r.to_string(),
+        None => "other",
+    };
+}
+function main(): i32 {
+    var shapes: dyn Shape[] = [Circle { r: 5 }, Rect { w: 2, h: 3 }, Circle { r: 9 }];
+    for s in shapes {
+        print(describe(s));
+    }
+    return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("interp exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	for _, want := range []string{"circle r=5", "other", "circle r=9"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
+		}
+	}
+
+	// Compiled backends reject the downcast cleanly (no panic, clear
+	// unsupported-feature message). Check all three targets.
+	for _, target := range []string{"arm64", "x86-64", "wasm"} {
+		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
+		var gerr bytes.Buffer
+		gen.Stderr = &gerr
+		err := gen.Run()
+		if err == nil {
+			t.Errorf("compiling `as?` downcast to %s should fail (interp-only in slice 1), but it succeeded", target)
+		}
+		if !strings.Contains(gerr.String(), "'as?' downcast") {
+			t.Errorf("%s reject diagnostic missing the downcast message; got: %s", target, gerr.String())
+		}
+		if strings.Contains(gerr.String(), "panic") {
+			t.Errorf("%s downcast reject panicked instead of erroring cleanly: %s", target, gerr.String())
+		}
+	}
+}
+
 // A `dyn` type may name a *module-qualified* imported trait
 // (`dyn cmp.Display`), not just a locally-declared one. Before the
 // modload fix, the qualified trait name in the `dyn` type kept its

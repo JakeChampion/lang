@@ -392,6 +392,8 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		}
 	case *ast.CastExpr:
 		walkExpr(x.Inner, byName, enqueue)
+	case *ast.DowncastExpr:
+		walkExpr(x.Inner, byName, enqueue)
 	case *ast.MakeClosure:
 		// Closure formation references the hoisted body.
 		enqueue(x.FuncName)
