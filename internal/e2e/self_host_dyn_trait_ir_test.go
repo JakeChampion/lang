@@ -60,6 +60,27 @@ var dynTraitIRCases = []struct {
 	// literal, then iterated + dispatched through runtime shape. 3 + 4 + 5 = 12.
 	{"prim-i32-array",
 		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self; } } function sum(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; } function main(): i32 { var xs: dyn Show[] = [3, 4, 5]; return sum(xs); }`, 12},
+
+	// --- SCALAR `dyn` coercion at var-init / assignment / return (§4.3) ---
+	// `var d: dyn Show = <i32>` — the primitive init is heap-boxed at the
+	// binding (op_dyn_box); `d.show()` dispatches through the boxed shape and
+	// unboxes the receiver. show() adds 1: 41 + 1 = 42.
+	{"prim-i32-var-init",
+		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function main(): i32 { var d: dyn Show = 41; return d.show(); }`, 42},
+	// `var d: dyn Show = <Circle>` — a STRUCT init flows UNBOXED, and the slot's
+	// type is "dyn Show" (NOT "Circle") so `d.show()` dispatches DYNAMICALLY
+	// (regression: must not static-dispatch to Circle.show). 4*4 = 16.
+	{"struct-var-init",
+		`trait Show { function show(self: Self): i32; } struct Circle { r: i32 } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } function main(): i32 { var d: dyn Show = Circle { r: 4 }; return d.show(); }`, 16},
+	// `d = <i32>` — reassigning a SCALAR dyn local boxes the primitive RHS at
+	// the assignment. Init with 10 (show -> 11), then reassign 41 (show -> 42).
+	{"prim-i32-assign",
+		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self + 1; } } function main(): i32 { var d: dyn Show = 10; d = 41; return d.show(); }`, 42},
+	// `return <i32>` from a SCALAR `dyn Show`-returning function: the primitive
+	// is boxed at the return site; the caller binds the box as a dyn local and
+	// dispatches. 5 -> show() returns 5: pick().show() = 5.
+	{"prim-i32-return",
+		`trait Show { function show(self: Self): i32; } impl Show for i32 { function show(self: Self): i32 { return self; } } function pick(): dyn Show { return 5; } function main(): i32 { var d: dyn Show = pick(); return d.show(); }`, 5},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64
