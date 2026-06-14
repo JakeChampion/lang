@@ -13,7 +13,9 @@ Plain records. Fields are laid out in declaration order, addressed
 by name in source.
 
 <FernPlayground
-  code={`struct Point { x: i32, y: i32 }
+  code={`import "std/i32";
+
+struct Point { x: i32, y: i32 }
 
 function origin(): Point {
     return Point { x: 0, y: 0 };
@@ -32,7 +34,9 @@ The receiver goes between `function` and the name. Calls dispatch
 by receiver type at the call site.
 
 <FernPlayground
-  code={`struct Point { x: i32, y: i32 }
+  code={`import "std/i32";
+
+struct Point { x: i32, y: i32 }
 
 function (p: Point) magnitude_sq(): i32 {
     return p.x * p.x + p.y * p.y;
@@ -52,7 +56,9 @@ Tagged unions with optional positional payloads. `Option[T]` and
 never re-declare them.
 
 <FernPlayground
-  code={`enum Shape {
+  code={`import "std/i32";
+
+enum Shape {
     Circle(i32),         // radius
     Rectangle(i32, i32), // width, height
 }

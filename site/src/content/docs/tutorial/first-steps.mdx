@@ -15,7 +15,9 @@ pattern-binding form — see
 [Language features](../../reference/language-features/#refutable-bindings--let--else).)
 
 <FernPlayground
-  code={`function main(): i32 {
+  code={`import "std/i32";
+
+function main(): i32 {
     var x: i32 = 7;
     var y = x * 2;       // type inferred as i32
     print(y.to_string());
@@ -41,7 +43,9 @@ var c: i32 = b as i32;   // wide → narrow (may truncate)
 `if` / `else`, `while`, and three-part `for`.
 
 <FernPlayground
-  code={`function main(): i32 {
+  code={`import "std/i32";
+
+function main(): i32 {
     var sum: i32 = 0;
     for (var i: i32 = 0; i < 10; i = i + 1) {
         if (i % 2 == 0) {
