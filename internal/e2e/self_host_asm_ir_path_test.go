@@ -380,6 +380,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// leak with the struct like struct-element arrays).
 		{"struct-enumarr-len", `enum C { R, G } struct Box { items: C[] } function main(): i32 { var b = Box { items: [R, G] }; return b.items.len(); }`},
 		{"struct-enumarr-index-match", `enum C { R, G } struct Box { items: C[] } function main(): i32 { var b = Box { items: [R, G, R] }; match (b.items[1]) { R => { return 1; }, G => { return 2; } } return 0; }`},
+		// Method dispatch on an ENUM-array field element (`b.items[i].method()`)
+		// — the field-array index recovers the enum element type so it dispatches
+		// `<Enum>.<method>` (the field analog of the local enum-array case).
+		{"struct-enumarr-elem-method", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } struct Box { items: C[] } function main(): i32 { var b = Box { items: [R, G] }; return b.items[0].k() * 10 + b.items[1].k(); }`},
+		{"struct-enumarr-elem-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 9; } } return 0; } struct Box { items: E[] } function main(): i32 { var b = Box { items: [A(7), B] }; return b.items[0].v() + b.items[1].v(); }`},
 		// A struct with a NESTED (array-of-array) field `i32[][]` is leak-safe, so
 		// construction + `.len()` + element index (incl. via a param) lower (the
 		// whole nested structure leaks with the struct).
