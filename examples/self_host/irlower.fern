@@ -6515,6 +6515,16 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                  && decl_is_struct(structs, fn.params[i].type_name[0 : fn.params[i].type_name.len() - 2])) {
             pty = fn.params[i].type_name[0 : fn.params[i].type_name.len() - 2];
         }
+        // A 2D struct-/enum-array param `a: P[][]`: the INNERMOST element is the
+        // struct/enum (strip both `[]`). The param is is_arrarr (set below), and
+        // the array-foreach propagates this element type through `row` to `p`
+        // (#3063, the param sibling of #3058/#3061).
+        else if (is_array_type_name(fn.params[i].type_name)
+                 && fn.params[i].type_name.len() >= 4 && is_array_type_name(fn.params[i].type_name[0 : fn.params[i].type_name.len() - 2])
+                 && (decl_is_struct(structs, fn.params[i].type_name[0 : fn.params[i].type_name.len() - 4])
+                     || is_enum_like_name(fn.params[i].type_name[0 : fn.params[i].type_name.len() - 4], structs))) {
+            pty = fn.params[i].type_name[0 : fn.params[i].type_name.len() - 4];
+        }
         // A `dyn Trait` param (or the element of a `dyn Trait[]` param) carries
         // the coarse `"dyn <Trait>"` type so `param.method()` / `for x in param`
         // dispatches dynamically by the receiver's runtime shape pointer.
@@ -6547,9 +6557,24 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var isclosurearr: boolean[] = [];
     var ci: i32 = 0;
     while (ci < names.len()) { isclosurearr = isclosurearr.append(false); ci = ci + 1; }
+    // A depth-2 array param (`a: T[][]`) is an array-of-arrays, so `for row in
+    // a` binds `row` as an inner array — mark the param slot is_arrarr (the
+    // receiver is never a 2D array — it bails earlier — so only params qualify).
+    // Without this a 2D-array param's nested foreach bails (#3063).
+    var nrecv: i32 = 0;
+    if (fn.receiver_name.len() > 0) { nrecv = 1; }
     var isarrarr: boolean[] = [];
     var cii: i32 = 0;
-    while (cii < names.len()) { isarrarr = isarrarr.append(false); cii = cii + 1; }
+    while (cii < names.len()) {
+        var aa: boolean = false;
+        var pidx: i32 = cii - nrecv;
+        if (pidx >= 0 && pidx < fn.params.len()) {
+            var ptn2: string = fn.params[pidx].type_name;
+            if (is_array_type_name(ptn2) && ptn2.len() >= 4 && is_array_type_name(ptn2[0 : ptn2.len() - 2])) { aa = true; }
+        }
+        isarrarr = isarrarr.append(aa);
+        cii = cii + 1;
+    }
     var noclos: string[] = [];
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
