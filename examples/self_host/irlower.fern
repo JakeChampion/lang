@@ -4832,14 +4832,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 match (v.init) {
                     parser.ExprArray(arrl) => {
                         if (arrl.elements.len() > 0) {
-                            var est: string = expr_struct_type(arrl.elements[0], se);
+                            // Classify the first element by its leaf branch for an
+                            // if-/match-EXPRESSION element (iife_leaf_value is a no-op
+                            // otherwise), so `var a = [if (c) { P { .. } } else { … }]`
+                            // records the element struct type for `a[i].field` (#3183).
+                            var est: string = expr_struct_type(iife_leaf_value(arrl.elements[0]), se);
                             if (est != "" && decl_is_struct(se.structs, est)) { struct_ty = est; }
                             else {
                                 // An enum-array literal (`var a = [R, G]`): the
                                 // element type is the variants' enum owner, so
                                 // `a[i].method()` dispatches to `<Enum>.<method>`
                                 // (#2954 item 2).
-                                var eet: string = expr_enum_type(arrl.elements[0], se);
+                                var eet: string = expr_enum_type(iife_leaf_value(arrl.elements[0]), se);
                                 if (eet != "") { struct_ty = eet; }
                                 // A 2D struct/enum array LITERAL (`[[P { .. }], …]`):
                                 // the first element is itself an array — recurse into
