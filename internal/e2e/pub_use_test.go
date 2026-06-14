@@ -91,3 +91,75 @@ func TestX86_64PubUseReexport(t *testing.T) {
 		t.Errorf("native exit = %d, want 115", code)
 	}
 }
+
+// pubUseTypeProject re-exports a struct, an enum, and a trait through a
+// facade, and the consumer uses all the type-position shapes: a struct
+// literal + annotation (facade.Point), an enum match (facade.Shape), a
+// trait impl method call (p.area()), and a `dyn facade.Trait` dispatch.
+// 42 (6*7) + 40 (Square(10)*4) + 42 (dyn) = 124. See docs/PRELUDE-TO-MODULES.md.
+var pubUseTypeProject = map[string]string{
+	"orig.fern": `pub struct Point { x: i32, y: i32 }
+pub enum Shape { Circle(i32), Square(i32) }
+pub trait Area { function area(self: Self): i32; }
+impl Area for Point { function area(self: Self): i32 { return self.x * self.y; } }`,
+	"facade.fern": `pub use "./orig".{Point, Shape, Area};`,
+	"main.fern": `import "./facade";
+function describe(s: facade.Shape): i32 { return match (s) { Circle(r) => r, Square(w) => w * 4 }; }
+function dynArea(a: dyn facade.Area): i32 { return a.area(); }
+function main(): i32 {
+    var p: facade.Point = facade.Point { x: 6, y: 7 };
+    return p.area() + describe(Square(10)) + dynArea(p);
+}`,
+}
+
+func TestInterpPubUseTypeReexport(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := writeProject(t, pubUseTypeProject)
+	cmd := exec.Command(bin, "-interp", filepath.Join(dir, "main.fern"))
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 124 {
+		t.Errorf("exit = %d, want 124\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+func TestX86_64PubUseTypeReexport(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeProject(t, pubUseTypeProject)
+
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(binPath)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
+	}
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 124 {
+		t.Errorf("native exit = %d, want 124", code)
+	}
+}

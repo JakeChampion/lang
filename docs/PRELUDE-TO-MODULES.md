@@ -311,12 +311,29 @@ Semantics:
   keep its internals out of its public qualifier and re-export only the
   curated names (pairs with a future `pub(package)` visibility level).
 
+**Types and traits** re-export the same way — a re-exported `struct` /
+`enum` / `trait` resolves through the facade in every type position
+(annotation, struct literal, `match` on a re-exported enum, `impl`, and
+`dyn facade.Trait`):
+
+```fern
+// facade.fern
+pub use "./shapes".{Point, Shape, Area};
+// consumer
+import "./facade";
+function dynArea(a: dyn facade.Area): i32 { return a.area(); }   // → shapes__Area
+var p: facade.Point = facade.Point { x: 6, y: 7 };               // → shapes__Point
+```
+
 Implementation (`internal/modload/modload.go`): `pub use` targets are
 loaded like imports; after mangle prefixes are assigned,
-`resolveReexports` builds a per-module `reexports` table (name → original
-mangled name) and adds the names to the module's public set, so the
-rewriter resolves a consumer's `facade.name` to the original flat name.
-Parsed by `parsePubUse` into `ast.PubUse`.
+`resolveReexports` builds two per-module tables — `reexports` (values:
+function / const) and `reexportTypes` (types: struct / enum / trait), each
+name → original mangled name — and adds the names to the module's public
+set. The rewriter resolves a consumer's `facade.name` to the original flat
+name: the value path through `rewriteExpr`, the type path through
+`rewriteStructNameAt` / `rewriteTraitNameAt` (the latter also covers
+`dyn facade.Trait`). Parsed by `parsePubUse` into `ast.PubUse`.
 
-**v1 scope**: function and const (value) re-exports. Type/trait
-re-exports and self-host-compiler support are follow-ups.
+**Remaining follow-up**: self-host-compiler `pub use` support (#3136 part
+2) — currently harmless, as no stdlib module uses `pub use`.

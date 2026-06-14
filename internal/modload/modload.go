@@ -293,6 +293,13 @@ type module struct {
 	// than `thismod__split`. Filled by resolveReexports after mangle
 	// prefixes are assigned. See docs/PRELUDE-TO-MODULES.md.
 	reexports map[string]string
+	// reexportTypes is the type/trait counterpart of reexports: a
+	// `pub use`-re-exported struct / enum / trait name → the original
+	// module's mangled type name. Consumed by the type-name rewriters
+	// (rewriteStructNameAt / rewriteTraitNameAt) so a consumer's
+	// `facade.SomeType` resolves to `orig__SomeType`, not `facade__SomeType`.
+	// See docs/PRELUDE-TO-MODULES.md.
+	reexportTypes map[string]string
 	// pubUses records this module's `pub use` directives (resolved
 	// target path + names) so resolveReexports can build the reexports
 	// table once every module + its prefix is known.
@@ -415,6 +422,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicEnums:   map[string]bool{},
 		allConsts:     map[string]bool{},
 		reexports:     map[string]string{},
+		reexportTypes: map[string]string{},
 		packageScoped: map[string]bool{},
 	}
 	for _, fn := range prog.Funcs {
@@ -821,6 +829,9 @@ func (m *module) exportedMangled(name string) (mangled string, isType bool, ok b
 	if mg, ok := m.reexports[name]; ok {
 		return mg, false, true
 	}
+	if mg, ok := m.reexportTypes[name]; ok {
+		return mg, true, true
+	}
 	if m.publicFuncs[name] || m.publicConsts[name] {
 		return m.manglePrefix + name, false, true
 	}
@@ -835,8 +846,9 @@ func (m *module) exportedMangled(name string) (mangled string, isType bool, ok b
 // re-exported name is also added to the re-exporting module's public
 // funcs so a consumer's visibility check passes. Resolution iterates to
 // a fixpoint so a re-export of a name that the target itself re-exports
-// resolves once the target's entry is filled. v1 supports value
-// (function / const) re-exports; a type/trait re-export is a clear error.
+// resolves once the target's entry is filled. Values (function / const)
+// land in the `reexports` table; types (struct / enum / trait) in
+// `reexportTypes`.
 func resolveReexports(loaded map[string]*module) error {
 	paths := make([]string, 0, len(loaded))
 	for p := range loaded {
@@ -875,10 +887,16 @@ func resolveReexports(loaded map[string]*module) error {
 				continue
 			}
 			if isType {
-				return fmt.Errorf("%s:%s: `pub use` of type %q is not supported yet (re-export functions and consts)", w.modPath, w.pos, w.name)
+				// Type / trait re-export: record it in the type table and
+				// add the name to the re-exporting module's public structs
+				// (traits register there too) so a consumer's visibility
+				// check passes for `facade.SomeType`.
+				w.mod.reexportTypes[w.name] = mangled
+				w.mod.publicStructs[w.name] = true
+			} else {
+				w.mod.reexports[w.name] = mangled
+				w.mod.publicFuncs[w.name] = true
 			}
-			w.mod.reexports[w.name] = mangled
-			w.mod.publicFuncs[w.name] = true
 			progress = true
 		}
 		work = remaining
@@ -1662,6 +1680,11 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 		modName, structName := name[:dot], name[dot+1:]
 		if mod, prefix, ok := r.importedModule(modName); ok {
 			r.checkPublicStruct(mod, structName, pos)
+			// A `pub use`-re-exported type resolves to its original
+			// module's mangled name, not this facade's prefix.
+			if rx, ok := mod.reexportTypes[structName]; ok {
+				return rx
+			}
 			return prefix + structName
 		}
 		// Unrecognised module — leave as-is so the checker can
@@ -1689,6 +1712,11 @@ func (r *rewriter) rewriteTraitNameAt(name string, pos ast.Position) string {
 			// set as struct/enum names (see the `pub trait` handling
 			// in loadRecursive), so reuse that gate.
 			r.checkPublicStruct(mod, traitName, pos)
+			// A `pub use`-re-exported trait resolves to its declaring
+			// module's mangled name, not this facade's prefix.
+			if rx, ok := mod.reexportTypes[traitName]; ok {
+				return rx
+			}
 			return prefix + traitName
 		}
 		return name
