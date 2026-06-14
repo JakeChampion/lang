@@ -31,6 +31,7 @@ package ir
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -1438,6 +1439,35 @@ type Program struct {
 	// passes (Inline / FlattenBranches / codegen) don't have to
 	// re-derive target-awareness from configuration.
 	PtrW int
+	// Vtables lists the per-(trait, concrete-type) method dispatch
+	// tables a `dyn Trait` value's vtable word points at — one entry
+	// per concrete type that implements a trait used in a `dyn` type
+	// anywhere in the program. Each backend emits these as static data
+	// (a pointer/table-index array of the impl methods in trait
+	// declaration order) and a `dyn` method call loads slot k from the
+	// receiver's vtable word. Populated by collectVtables once the
+	// compiled-backend `dyn` slices wire it in; nil until then (the IR
+	// still rejects `dyn` on compiled backends — docs/DYN-TRAITS.md §4.2).
+	Vtables []VtableDecl
+}
+
+// VtableDecl is the static dispatch table for one (trait, concrete-type)
+// pair: the concrete type's implementations of the trait's methods, in
+// the trait's declaration order, so slot k is always the same method for
+// every type implementing the trait. A `dyn Trait` fat pointer's vtable
+// word points at the emitted table for its boxed concrete type.
+type VtableDecl struct {
+	Trait    string         // trait name (mangled, as in Info.Traits)
+	Concrete string         // concrete type name (mangled, as in Info.Impls)
+	Methods  []VtableMethod // dispatchable methods, trait declaration order
+}
+
+// VtableMethod is one slot of a VtableDecl: the trait method name and the
+// mangled concrete function that implements it (the `recv`-taking flat
+// function every backend already emits for a receiver method).
+type VtableMethod struct {
+	Method string // trait method name (slot identity)
+	Func   string // mangled impl function, e.g. "__method_Circle_area"
 }
 
 // String prints the program in a textual form useful for tests and
@@ -1568,6 +1598,106 @@ func rejectDynTrait(prog *ast.Program) error {
 	return nil
 }
 
+// dynTraitNamesUsed collects every trait named in a `dyn Trait` type
+// anywhere in the program's function signatures and local-var
+// annotations — the traits that need vtables emitted. Mirrors the scan
+// in rejectDynTrait, but records the trait name rather than a bool.
+func dynTraitNamesUsed(prog *ast.Program) map[string]bool {
+	used := map[string]bool{}
+	var walk func(t ast.Type)
+	walk = func(t ast.Type) {
+		switch x := t.(type) {
+		case ast.DynTraitType:
+			used[x.Trait] = true
+		case ast.ArrayType:
+			walk(x.Elem)
+		case ast.SliceType:
+			walk(x.Elem)
+		case ast.TupleType:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case *ast.FuncType:
+			for _, p := range x.Params {
+				walk(p)
+			}
+			walk(x.Result)
+		}
+	}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			for _, p := range x.Params {
+				walk(p.Type)
+			}
+			walk(x.ReturnType)
+		case *ast.Var:
+			walk(x.Type)
+		}
+		return true
+	})
+	return used
+}
+
+// collectVtables builds one VtableDecl per (trait, concrete-type) pair
+// where the trait is used in a `dyn Trait` type somewhere in the program
+// and the concrete type implements it. The method slots follow the
+// trait's declaration order (skipping associated functions, which have
+// no receiver and so are never dispatched through a trait object), so
+// slot k names the same method for every implementing type. The result
+// is deterministically ordered (trait, then concrete, both by name) so
+// codegen emits identical static data run to run.
+//
+// This intentionally over-approximates: it emits a vtable for every
+// implementor of a `dyn`-used trait, not only the concrete types that
+// actually flow into a `dyn` value. Unused vtables are dead static data
+// the linker/backend can drop; precise per-coercion-site selection is a
+// later refinement. See docs/DYN-TRAITS.md §4.2.
+func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
+	used := dynTraitNamesUsed(prog)
+	if len(used) == 0 {
+		return nil
+	}
+	traitNames := make([]string, 0, len(used))
+	for t := range used {
+		if _, ok := info.Traits[t]; ok {
+			traitNames = append(traitNames, t)
+		}
+	}
+	sort.Strings(traitNames)
+
+	var out []VtableDecl
+	for _, trait := range traitNames {
+		td := info.Traits[trait]
+		impls := info.Impls[trait]
+		concretes := make([]string, 0, len(impls))
+		for c, ok := range impls {
+			if ok {
+				concretes = append(concretes, c)
+			}
+		}
+		sort.Strings(concretes)
+		for _, concrete := range concretes {
+			var methods []VtableMethod
+			for _, m := range td.Methods {
+				if m.Assoc {
+					continue
+				}
+				fn := info.Methods[concrete+"."+m.Name]
+				if fn == "" {
+					// Fall back to the conventional mangled name the
+					// receiver-hoist produces; an empty entry would make
+					// the slot un-dispatchable.
+					fn = "__method_" + concrete + "_" + m.Name
+				}
+				methods = append(methods, VtableMethod{Method: m.Name, Func: fn})
+			}
+			out = append(out, VtableDecl{Trait: trait, Concrete: concrete, Methods: methods})
+		}
+	}
+	return out
+}
+
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
 // wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
 // struct fields, array elements, and closure captures so heap
@@ -1629,7 +1759,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			closureCaps[fn.Name] = fn.Captures
 		}
 	}
-	out := &Program{PairForm: pairForm, PtrW: ptrW}
+	// Per-(trait,type) dispatch tables for `dyn Trait` values. Empty for
+	// every program today: the rejectDynTrait gate above returns before
+	// this point whenever `dyn` is used, so only non-dyn programs reach
+	// here (collectVtables returns nil for them). The wiring is in place
+	// so lifting the gate per backend (docs/DYN-TRAITS.md §4.2) populates
+	// the field with no further plumbing.
+	out := &Program{PairForm: pairForm, PtrW: ptrW, Vtables: collectVtables(prog, info)}
 	// Registry of generic-enum-instantiation drops discovered while
 	// routing nested fields/payloads/captures (see builder.genEnumDrops).
 	// Shared across lowering and the post-pass drop worklist below.
