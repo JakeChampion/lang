@@ -3324,6 +3324,19 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (!is_unknown(ixt) && !type_eq(ixt, t_i32())) {
                 out = out.append(dg_at("E034", "index must be an integer, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
             }
+            // E034: the indexed value must be an array or string. Mirrors the Go
+            // checker ("indexing non-array value"); a non-array/string (i32 /
+            // struct / map / …) operand is rejected. Unknown is skipped.
+            var iarrt: Type = check_expr(ix.array, s);
+            var idxable: boolean = false;
+            match (iarrt) {
+                TypeArray(_) => { idxable = true; },
+                TypeString(_) => { idxable = true; },
+                _ => { }
+            }
+            if (!is_unknown(iarrt) && !idxable) {
+                out = out.append(dg_at("E034", "indexing non-array value of type " + type_label(iarrt), expr_line(ix.array), expr_col(ix.array)));
+            }
         },
         parser.ExprSlice(s2) => {
             out = append_diags(call_diags(s2.array, s), append_diags(call_diags(s2.start, s), call_diags(s2.end, s)));
@@ -3336,6 +3349,18 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             var ebt: Type = check_expr(s2.end, s);
             if (!is_unknown(ebt) && !type_eq(ebt, t_i32())) {
                 out = out.append(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
+            }
+            // E037: the sliced value must be an array or string. Mirrors the Go
+            // checker ("cannot slice value of type T").
+            var sarrt: Type = check_expr(s2.array, s);
+            var sliceable: boolean = false;
+            match (sarrt) {
+                TypeArray(_) => { sliceable = true; },
+                TypeString(_) => { sliceable = true; },
+                _ => { }
+            }
+            if (!is_unknown(sarrt) && !sliceable) {
+                out = out.append(dg_at("E037", "cannot slice value of type " + type_label(sarrt), expr_line(s2.array), expr_col(s2.array)));
             }
         },
         parser.ExprFieldAccess(fa) => {
