@@ -247,6 +247,23 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — fix: `.append` (arr_push) missing helper on the wasm IR path
+
+Same class of bug as the `string_from_bytes` fix: the wasm IR backend lowered
+`op_arr_push` to `call $__fern_arr_push`, but `wasm_ir_run` had no gate to emit
+that helper — so any IR-path program using `arr.append(v)` produced a wasm module
+with a dangling call that failed to link. x86-64 / arm64 already emitted it. Fix:
+gate the standalone `wasm.arr_push_helper()` (push-only, so it doesn't
+double-define the separately gated `arr_slice` / `arr_slice8` helpers that the
+full AST `arr_helpers` bundle also contains) on `module_emits_op(mod,
+"arr_push")`. Depends on `$__fern_arr_box`, which `module_allocates` pulls in.
+
+New routing-pinned `TestSelfHostArrPushIR` (x86-64 + wasm, oracle-checked: append
++ length, append + index, a 10-iteration loop that exercises geometric growth /
+realloc, and a loop-built array summed). Verified end-to-end on x86-64, wasm, and
+arm64; x86-64 + stage2 fixpoint hold. (Found by cross-checking every `call
+$__fern_*` the wasm IR backend emits against the helper gates in `wasm_ir_run` —
+`arr_push` and `string_from_bytes` were the two missing.)
 ### 2026-06-14 — fix: `string_from_bytes` missing helper on the wasm IR path
 
 The wasm IR backend lowered `op_str_from_bytes` to `call

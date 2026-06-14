@@ -97,6 +97,11 @@ function main(): i32 {
         if (wasm_ir.module_uses_str_lines(mod)) { o = o + wasm.str_lines_helper(); }
         if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }
         if (wasm_ir.module_uses_arr_slice8(mod)) { o = o + wasm.arr_slice8_helper(); }
+        // `.append` (op_arr_push) emits a call to $__fern_arr_push; the IR path
+        // needs the standalone push helper (the AST path's arr_helpers bundle —
+        // which also defines arr_slice/slice8 — would double-define those, so use
+        // the push-only emitter). Depends on $__fern_arr_box (module_allocates).
+        if (wasm_ir.module_emits_op(mod, "arr_push")) { o = o + wasm.arr_push_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
         // Byte-source helpers (issue #2747). random_bytes returns a [len][bytes]
         // string block; str_bytes returns a u8[]; both reference the heap runtime
