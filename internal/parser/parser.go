@@ -2115,6 +2115,103 @@ func (p *parser) parseLoop(label string) (ast.Stmt, error) {
 // parsed inside the parser's standard return-type stack so
 // `use` desugaring inside the lambda body picks up the right
 // callback return type.
+// looksLikeArrowLambda reports whether the `(` at the cursor begins an
+// arrow lambda — `() => …`, `(): R => …`, or `(IDENT: TYPE, …) [: R] => …`.
+// The disambiguator from a grouping/tuple is the parameter shape: an arrow
+// lambda's parens are either empty or start with `IDENT :` (a typed param),
+// which an expression never does, and the matching `)` is followed by `=>`
+// or `:` (the return-type colon). See #2701.
+func (p *parser) looksLikeArrowLambda() bool {
+	// p.i is at "(".
+	if p.i+1 >= len(p.tokens) {
+		return false
+	}
+	followedByArrowOrColon := func(idx int) bool {
+		if idx >= len(p.tokens) {
+			return false
+		}
+		t := p.tokens[idx]
+		return t.Kind == lexer.Punct && (t.Text == "=>" || t.Text == ":")
+	}
+	// Empty params: `(` `)` then `=>` / `:`.
+	if p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == ")" {
+		return followedByArrowOrColon(p.i + 2)
+	}
+	// Non-empty: must start with a typed param `IDENT :`.
+	if p.i+2 >= len(p.tokens) ||
+		p.tokens[p.i+1].Kind != lexer.Ident ||
+		!(p.tokens[p.i+2].Kind == lexer.Punct && p.tokens[p.i+2].Text == ":") {
+		return false
+	}
+	// Scan to the matching `)` and check the token after it.
+	depth := 0
+	for j := p.i; j < len(p.tokens); j++ {
+		t := p.tokens[j]
+		if t.Kind == lexer.EOF {
+			return false
+		}
+		if t.Kind == lexer.Punct && t.Text == "(" {
+			depth++
+		} else if t.Kind == lexer.Punct && t.Text == ")" {
+			depth--
+			if depth == 0 {
+				return followedByArrowOrColon(j + 1)
+			}
+		}
+	}
+	return false
+}
+
+// parseArrowLambda parses `(params) [: R] => expr` into an ast.Lambda whose
+// body is `{ return expr; }`. Parameter types are required (as in the
+// verbose `function (…)` form); the return type is optional and defaults to
+// void. See #2701.
+func (p *parser) parseArrowLambda() (ast.Expr, error) {
+	open := p.advance() // "("
+	var params []ast.Param
+	if !p.match(lexer.Punct, ")") {
+		for {
+			pname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+				return nil, err
+			}
+			ptype, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype})
+			if _, ok := p.accept(lexer.Punct, ","); !ok {
+				break
+			}
+		}
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	var ret ast.Type = ast.VoidType{}
+	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		t, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		ret = t
+	}
+	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
+		return nil, err
+	}
+	p.returnTypeStack = append(p.returnTypeStack, ret)
+	bodyExpr, err := p.parseExpr()
+	p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
+	if err != nil {
+		return nil, err
+	}
+	body := &ast.Block{P: open.Pos, Stmts: []ast.Stmt{&ast.Return{P: open.Pos, Value: bodyExpr}}}
+	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, Body: body}, nil
+}
+
 func (p *parser) parseLambda() (ast.Expr, error) {
 	kw := p.advance() // function
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -4385,6 +4482,15 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.Punct:
 		switch t.Text {
 		case "(":
+			// Arrow lambda `(params): R => expr` / `(params) => expr` — a
+			// concise anonymous function whose body is a single expression
+			// (desugared to `function (params): R { return expr; }`). Checked
+			// before the grouping/tuple parse: an arrow lambda's parens hold a
+			// parameter list (`IDENT : TYPE`, or empty), which a grouping
+			// (`(e)`) or tuple (`(e1, e2)`) never does. See #2701.
+			if p.looksLikeArrowLambda() {
+				return p.parseArrowLambda()
+			}
 			// `(e)` is grouping; `(e1, e2, ...)` (>=2 elements) is
 			// a tuple literal. Single-element "tuples" don't exist
 			// as a syntactic form — `(e)` always groups.
