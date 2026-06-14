@@ -27,7 +27,9 @@ Returning `0` signals success; any non-zero value signals failure. By
 convention, `2` means a usage error.
 
 <FernPlayground
-  code={`function main(): i32 {
+  code={`import "std/i32";
+
+function main(): i32 {
     var argv: string[] = args();
     print("got " + argv.len().to_string() + " arg(s)");
     return 0;

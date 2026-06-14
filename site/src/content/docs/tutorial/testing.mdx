@@ -20,21 +20,24 @@ the compiler is self-hosted) keeps working unchanged.
 ## Hello, test
 
 A test function returns `None` when the assertion holds and
-`Some(message)` when it fails. The auto-prelude makes `TestRunner`,
-`test_new`, and every `assert_*` helper available by bare name — no
-imports needed.
+`Some(message)` when it fails. `import "std/test";` to bring the
+runner into scope, then call its functions qualified
+(`test.test_new`, `test.assert_eq`, …) with the runner type written
+`test.TestRunner`. Receiver methods (`.it`, `.finish`) stay bare.
 
 <FernPlayground
-  code={`function test_addition(): Option[string] {
-    return assert_eq_i32(2 + 2, 4);
+  code={`import "std/test";
+
+function test_addition(): Option[string] {
+    return test.assert_eq(2 + 2, 4);
 }
 
 function test_strings(): Option[string] {
-    return assert_eq_string("foo" + "bar", "foobar");
+    return test.assert_eq("foo" + "bar", "foobar");
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("hello");
+    var r: test.TestRunner = test.test_new("hello");
     r = r.it("addition", test_addition());
     r = r.it("strings", test_strings());
     return r.finish();
