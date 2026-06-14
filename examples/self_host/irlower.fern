@@ -4365,6 +4365,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             var dab: LowerState = das.add_local(v.name);
                             var daslot: i32 = dab.slot_of(v.name);
                             dab = dab.mark_arr(daslot, true);
+                            // Record the coarse element type `"dyn <Trait>"` (strip
+                            // the `[]`) on the slot — exactly as a `dyn Trait[]`
+                            // PARAM does — so `xs[i]`, `var e = xs[i]`, and
+                            // `for x in xs` over this LOCAL recover the receiver as
+                            // `dyn Trait` and dispatch through op_dyn_dispatch.
+                            // Without it the local lost its trait and every element
+                            // method call bailed to the AST path.
+                            dab = dab.mark_struct_type(daslot, v.type_name[0 : v.type_name.len() - 2]);
                             return dab.emit(ir.op_store_local(daslot));
                         },
                         _ => {}

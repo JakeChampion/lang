@@ -247,6 +247,22 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — `dyn Trait[]` LOCAL element dispatch via the self-host IR path
+
+A `dyn Trait[]` PARAM recorded the coarse `"dyn Trait"` element type on its slot,
+so `for x in param` / `param[i].m()` dispatched dynamically — but the local-`var`
+path (`var xs: dyn Trait[] = [...]`) marked the slot `is_arr` with NO element type,
+so every method call on a dyn-array LOCAL element (`xs[i].m()`, `var e = xs[i];
+e.m()`, `for x in xs { x.m() }`) bailed to the AST path. The local-decl now records
+the same coarse `"dyn Trait"` element type (strip the `[]`), mirroring the param
+path, so element receivers recover as `dyn Trait` and dispatch through
+`op_dyn_dispatch`.
+
+New routing-pinned `TestSelfHostDynArrayLocalIR` (x86-64 + wasm, oracle-checked:
+inline index, bound element, loop, two indices, and a three-element heterogeneous
+loop). Verified end-to-end on x86-64, wasm, and arm64 (qemu); x86-64 + stage2
+fixpoint hold. (Found while probing `dyn Trait` after the #3163 checker-panic fix
+unblocked dyn oracle testing.)
 ### 2026-06-14 — no-capture lambda calls in slice bounds / field-access objects via the IR path
 
 Completes `lift_expr_walk`'s compound-form recursion (after #3148's binary / unary
