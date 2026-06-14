@@ -118,6 +118,20 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"builder-call-value", `function build(): i32[] { return [1, 2, 3, 4]; } function main(): i32 { var a = build(); var s = 0; var i = 0; while (i < 4) { s = s + a[i]; i = i + 1; } return s; }`, 10},
 		{"builder-call-detector", `function build(): i32[] { return [1, 2, 3, 4]; } function main(): i32 { var a = build(); var s = 0; var i = 0; while (i < 4) { s = s + a[i]; i = i + 1; } if (s != 10) { return 99; } return __rc_underflow(); }`, 0},
 		{"strarr-call-not-dropped", `function names(): string[] { return ["a", "b"]; } function main(): i32 { var xs = names(); return xs.len(); }`, 2},
+		// Borrow-inference reclaim (Level 2): an array literal passed ONLY to a
+		// borrowable (read-only) free function is still a precise-drop candidate —
+		// the callee provably can't retain it. `sum_arr` borrows its param (only
+		// `v.len()` / `v[i]`), so `t` is dropped after its last `sum_arr(t)` call.
+		{"borrow-helper-value", `function sum_arr(v: i32[]): i32 { var s = 0; var i = 0; while (i < v.len()) { s = s + v[i]; i = i + 1; } return s; } function main(): i32 { var t = [1, 2, 3, 4]; var a = sum_arr(t); var b = sum_arr(t); return a + b; }`, 20},
+		{"borrow-helper-detector", `function sum_arr(v: i32[]): i32 { var s = 0; var i = 0; while (i < v.len()) { s = s + v[i]; i = i + 1; } return s; } function main(): i32 { var t = [1, 2, 3, 4]; var a = sum_arr(t); var b = sum_arr(t); if (a + b != 20) { return 99; } return __rc_underflow(); }`, 0},
+		// Conservative: a callee that RETURNS its param (escape) is NOT borrowable,
+		// so the arg is not reclaimed early — the exit-sweep frees it. Sound either
+		// way; the detector confirms no over-release.
+		{"escape-helper-detector", `function keep(v: i32[]): i32[] { return v; } function main(): i32 { var t = [1, 2, 3, 4]; var u = keep(t); var a = u[0]; if (a != 1) { return 99; } return __rc_underflow(); }`, 0},
+		// A param passed to ANOTHER call is not borrowable under the conservative
+		// intra-procedural rule (no inter-procedural fixpoint yet) — so `t` is not
+		// reclaimed here, but the result stays sound (detector 0).
+		{"transitive-call-detector", `function inner(v: i32[]): i32 { return v[0]; } function outer(v: i32[]): i32 { return inner(v); } function main(): i32 { var t = [5, 6, 7]; var a = outer(t); if (a != 5) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

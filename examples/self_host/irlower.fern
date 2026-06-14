@@ -5874,64 +5874,88 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
 // that could create a reference outliving a precise drop — i.e. ANY occurrence
 // except a borrow read: the base of an index (`name[i]`), the receiver of a
 // method/field access (`name.m(...)` / `name.f`). A bare ident, a slice base
-// (a view aliases the buffer), a call argument, a container-literal element, or
-// a lambda capture all escape.
-function expr_unsafe_for(e: parser.Expr, name: string): boolean {
+// (a view aliases the buffer), a container-literal element, or a lambda capture
+// all escape. A CALL ARGUMENT normally escapes too (the callee might retain it),
+// EXCEPT a direct bare-ident `name` passed at a *borrowable* param position of a
+// known free function (`borrowable` registry, "callee|flags") — a provably
+// read-only callee cannot retain the arg, so passing it there is a BORROW. The
+// registry is "" for Level-1 borrowability computation itself (every call arg
+// escapes), avoiding circularity.
+function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },
         parser.ExprNumber(_) => { return false; },
         parser.ExprString(_) => { return false; },
         parser.ExprBool(_) => { return false; },
-        parser.ExprBinary(b) => { return expr_unsafe_for(b.left, name) || expr_unsafe_for(b.right, name); },
-        parser.ExprUnary(u) => { return expr_unsafe_for(u.operand, name); },
+        parser.ExprBinary(b) => { return expr_unsafe_for(b.left, name, borrowable) || expr_unsafe_for(b.right, name, borrowable); },
+        parser.ExprUnary(u) => { return expr_unsafe_for(u.operand, name, borrowable); },
         parser.ExprIndex(ix) => {
             var base_unsafe: boolean = false;
             match (ix.array) {
                 parser.ExprIdent(_) => { base_unsafe = false; },   // name[i] / other[i]: base read is a borrow
-                _ => { base_unsafe = expr_unsafe_for(ix.array, name); }
+                _ => { base_unsafe = expr_unsafe_for(ix.array, name, borrowable); }
             }
-            return base_unsafe || expr_unsafe_for(ix.index, name);
+            return base_unsafe || expr_unsafe_for(ix.index, name, borrowable);
         },
         parser.ExprSlice(sl) => {
             // a slice creates a VIEW that aliases the source buffer → escapes.
-            return expr_unsafe_for(sl.array, name) || expr_unsafe_for(sl.start, name) || expr_unsafe_for(sl.end, name);
+            return expr_unsafe_for(sl.array, name, borrowable) || expr_unsafe_for(sl.start, name, borrowable) || expr_unsafe_for(sl.end, name, borrowable);
         },
         parser.ExprCall(c) => {
             var callee_unsafe: boolean = false;
+            var callee_name: string = "";
             match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    callee_name = cid.name;   // free call: record callee for the borrow check below
+                    if (cid.name == name) { callee_unsafe = true; }   // a value used AS the callee escapes (preserve prior behaviour)
+                },
                 parser.ExprFieldAccess(fa) => {
                     match (fa.obj) {
                         parser.ExprIdent(_) => { callee_unsafe = false; },   // name.method(): receiver is a borrow
-                        _ => { callee_unsafe = expr_unsafe_for(fa.obj, name); }
+                        _ => { callee_unsafe = expr_unsafe_for(fa.obj, name, borrowable); }
                     }
+                    // method args stay escapes: method-param borrowability isn't in
+                    // the (free-function-keyed) registry (callee_name left "").
                 },
-                _ => { callee_unsafe = expr_unsafe_for(c.callee, name); }
+                _ => { callee_unsafe = expr_unsafe_for(c.callee, name, borrowable); }
             }
             if (callee_unsafe) { return true; }
             var ai: i32 = 0;
-            while (ai < c.args.len()) { if (expr_unsafe_for(c.args[ai], name)) { return true; } ai = ai + 1; }
+            while (ai < c.args.len()) {
+                // Level 2: a DIRECT bare-ident `name` at a borrowable param position
+                // of a known free function is a BORROW, not an escape.
+                var arg_is_borrow: boolean = false;
+                match (c.args[ai]) {
+                    parser.ExprIdent(aid) => {
+                        if (aid.name == name && callee_name.len() > 0 && param_is_borrowable(borrowable, callee_name, ai)) { arg_is_borrow = true; }
+                    },
+                    _ => {}
+                }
+                if (!arg_is_borrow && expr_unsafe_for(c.args[ai], name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
             return false;
         },
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
                 parser.ExprIdent(_) => { return false; },   // name.field: base read is a borrow
-                _ => { return expr_unsafe_for(fa.obj, name); }
+                _ => { return expr_unsafe_for(fa.obj, name, borrowable); }
             }
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (expr_unsafe_for(a.elements[i], name)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (expr_unsafe_for(a.elements[i], name, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (expr_unsafe_for(t.elements[i], name)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (expr_unsafe_for(t.elements[i], name, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base && expr_unsafe_for(sl.base, name)) { return true; }
+            if (sl.has_base && expr_unsafe_for(sl.base, name, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (expr_unsafe_for(sl.field_values[i], name)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (expr_unsafe_for(sl.field_values[i], name, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprLambda(lm) => {
@@ -5945,44 +5969,63 @@ function expr_unsafe_for(e: parser.Expr, name: string): boolean {
     return false;
 }
 
+// param_is_borrowable reports whether param `idx` of free function `name` is
+// borrowable per the `borrowable` registry ("callee|flags", flag i = '1' iff
+// param i is borrowable). Defaults false (unknown callee / out-of-range index →
+// conservative escape). Mirrors the "name|flags" lookup of callee_param_is_fn.
+function param_is_borrowable(borrowable: string[], name: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < borrowable.len()) {
+        var e: string = borrowable[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        if (bar < e.len() && e[0:bar] == name) {
+            var pos: i32 = bar + 1 + idx;
+            return pos < e.len() && e[pos] == 49;   // 49 = '1'
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // stmt_unsafe_for / body_unsafe_for lift expr_unsafe_for over statements,
 // special-casing `for x in name` (a borrow iteration, safe) and recursing into
 // nested control-flow bodies. A reassignment of `name` is handled separately by
 // the body_assign_targets bail, so StmtAssign only checks the RHS here.
-function body_unsafe_for(stmts: parser.Stmt[], name: string): boolean {
+function body_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_unsafe_for(stmts[i], name)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_unsafe_for(st: parser.Stmt, name: string): boolean {
+function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name); },
-        parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name); },
-        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name); },
-        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name); },
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name, borrowable); },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
+        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable); },
         parser.StmtIf(f) => {
-            if (expr_unsafe_for(f.cond, name)) { return true; }
-            return body_unsafe_for(f.then_body, name) || body_unsafe_for(f.else_body, name);
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return body_unsafe_for(f.then_body, name, borrowable) || body_unsafe_for(f.else_body, name, borrowable);
         },
         parser.StmtWhile(w) => {
-            if (expr_unsafe_for(w.cond, name)) { return true; }
-            return body_unsafe_for(w.body, name);
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return body_unsafe_for(w.body, name, borrowable);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
             match (fo.iter) {
                 parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
-                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name); }
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for(fo.body, name);
+            return body_unsafe_for(fo.body, name, borrowable);
         },
         parser.StmtMatch(m) => {
-            if (expr_unsafe_for(m.scrutinee, name)) { return true; }
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name)) { return true; }
-                if (body_unsafe_for(m.arms[ai].body, name)) { return true; }
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (body_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -6055,7 +6098,7 @@ struct PreciseDrops { idxs: i32[], names: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[]): PreciseDrops {
+function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -6088,7 +6131,7 @@ function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: 
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
-                if (is_lit && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name)) {
+                if (is_lit && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -6460,7 +6503,7 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
 // arr_ret_fns is the set of array-returning function names (for move tracking);
 // strarr_ret_fns is the string[]-returning subset (for element typing at calls).
-pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[]): LowerResult {
+pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[]): LowerResult {
     var empty: ir.Op[] = [];
     var noslots: i32[] = [];
     // ret_i64: does this function return i64 (so `return <i64expr>` lowers via
@@ -6692,7 +6735,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = precise_drop_names(fn.body, arr_ret_fns, strarr_ret_fns, f64arr_ret_fns, i64arr_ret_fns);
+    var pdrops: PreciseDrops = precise_drop_names(fn.body, arr_ret_fns, strarr_ret_fns, f64arr_ret_fns, i64arr_ret_fns, borrowable_params);
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
@@ -7026,6 +7069,43 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
     }
     return out;
 }
+// borrowable_params_of computes, for each free function, which params are
+// "borrowable" — provably only borrow-read in the body and never escaping
+// (returned, stored in a container, passed to ANY call, sliced, or captured).
+// A borrowable param means the callee cannot retain the argument, so a
+// sole-owner array passed there can still be precise-dropped at the call site
+// (the Level-2 reclaim in expr_unsafe_for). This is a conservative,
+// intra-procedural UNDER-approximation: borrowability is computed with an EMPTY
+// borrowable registry (`none`), so the strict escape walker treats a param
+// passed to any call as escaping — i.e. we don't yet do the inter-procedural
+// inferParamEscapes fixpoint (native ir.go:2554). Encoded "callee|flags"
+// (flag i = '1' iff param i borrowable); methods keyed "<Type>.<method>" but
+// only free-function entries are consulted at call sites. Entries with no
+// borrowable param are omitted (lookup defaults to false). Mirrors native's
+// borrow inference, the conservative first cut.
+pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
+    var none: string[] = [];
+    var out: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        var flags: string = "";
+        var any: boolean = false;
+        var pj: i32 = 0;
+        while (pj < funcs[k].params.len()) {
+            var pname: string = funcs[k].params[pj].name;
+            if (!body_unsafe_for(funcs[k].body, pname, none)) { flags = flags + "1"; any = true; }
+            else { flags = flags + "0"; }
+            pj = pj + 1;
+        }
+        if (any) {
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key + "|" + flags);
+        }
+        k = k + 1;
+    }
+    return out;
+}
 pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -7249,7 +7329,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, orf, irf, trf, srtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, orf, irf, trf, srtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs));
         out = out.append(LoweredFn { name: funcs[i].name, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots });
         i = i + 1;
     }

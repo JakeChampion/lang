@@ -999,3 +999,20 @@ passed to a borrowable callee stay borrowable, widening Level 1), then the full
 owned-by-value param model + move-on-call (frees owned/escaping params and
 call-arg temporaries — the largest remaining leak), then reuse/FBIP, drop
 specialisation, TRMC.
+
+### Landed (2026-06-14)
+
+Implemented exactly as specced. `borrowable_params_of(funcs)` (sibling of
+`fn_param_sigs_of`) emits the `"callee|flags"` registry; `param_is_borrowable`
+mirrors `callee_param_is_fn`'s lookup; the `borrowable` registry threads through
+`expr_unsafe_for` / `stmt_unsafe_for` / `body_unsafe_for` → `precise_drop_names`
+→ `lower_func` (new last param, all ~23 call sites across the four IR files).
+Level 1 computes borrowability with an EMPTY registry (every call arg escapes);
+Level 2 admits a direct bare-ident arg at a borrowable free-function param as a
+borrow. Firing proof: the identical `var t=[..]; sum_arr(t); sum_arr(t)` program
+emits one MORE array dec than before (3 → 4), and the over-release detector reads
+0. Gates green: `TestSelfHostAsmRunX86_64` (auto-routes to IR), byte-identical
+fixpoint + stage-2, `TestSelfHostStdTestE2E`, the RC suites, and a new
+`TestSelfHostRcPreciseDropX86IR` borrow/escape/transitive case set. Method-call
+args and any aliasing (`var u = t`) stay escapes — conservative and sound. Next:
+the inter-procedural `inferParamEscapes` fixpoint to widen Level 1.
