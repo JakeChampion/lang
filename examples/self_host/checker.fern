@@ -3304,6 +3304,27 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
                             }
                         },
+                        TypeArray(ar) => {
+                            // E038: a built-in array method whose argument must
+                            // match the element type. `append(elem)` takes the
+                            // element; `with(i32, elem)` replaces at an index, so
+                            // its second argument is the element. Mirrors the Go
+                            // checker, which types these builtins and reports a
+                            // per-argument mismatch. An unknown element type
+                            // (uninferred receiver) or unknown arg is skipped.
+                            if (mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
+                                var aat: Type = check_expr(c.args[0], s);
+                                if (!is_unknown(aat) && !type_assignable(aat, ar.elem, s.unions)) {
+                                    out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat), expr_line(c.args[0]), expr_col(c.args[0])));
+                                }
+                            }
+                            if (mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
+                                var wvt: Type = check_expr(c.args[1], s);
+                                if (!is_unknown(wvt) && !type_assignable(wvt, ar.elem, s.unions)) {
+                                    out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt), expr_line(c.args[1]), expr_col(c.args[1])));
+                                }
+                            }
+                        },
                         TypeStruct(sn) => {
                             var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
                             if (msig.name.len() > 0) {
