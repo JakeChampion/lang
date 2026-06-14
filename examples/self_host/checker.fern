@@ -3262,7 +3262,18 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var oki_o: boolean = type_eq(olt, t_i32()) && type_eq(ort, t_i32());
                     var okf_o: boolean = type_eq(olt, t_float()) && type_eq(ort, t_float());
                     if (!oki_o && !okf_o) {
-                        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
+                        if (type_eq(olt, ort) && is_composite_type(olt)) {
+                            // E041: ordering two values of the SAME composite
+                            // type (struct / enum / array / tuple) would mean a
+                            // structural comparison the self-host has no `Ord`
+                            // for. Mirrors the Go checker, which routes
+                            // same-composite ordering to E041 — mixed
+                            // composite/scalar operands, or two differing types,
+                            // stay E009 (verified against the Go checker).
+                            out = out.append(dg_at("E041", "cannot order " + type_label(olt) + " values with \"" + b.op + "\": composite (struct / enum / array / tuple) ordering is not supported", b.line, b.col));
+                        } else {
+                            out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
+                        }
                     }
                 }
             }

@@ -307,6 +307,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"eq-bool-i32", "function main(): i32 { if ((1 < 2) == 3) { return 1; } return 0; }\n", []string{"E041"}},
 		{"eq-i32-i32-ok", "function main(): i32 { if (1 == 2) { return 1; } return 0; }\n", nil},
 		{"eq-string-string-ok", "function main(): i32 { if (\"a\" == \"b\") { return 1; } return 0; }\n", nil},
+		// E041 (composite ordering): `<` / `>` / `<=` / `>=` on two values of
+		// the SAME composite type (struct / array / tuple) is E041, not E009.
+		// Mixed composite/scalar or differing types stay E009; scalars are ok.
+		{"order-struct-struct", "struct P { x: i32 }\nfunction main(): i32 { var a = P { x: 1 }; var b = P { x: 2 }; if (a < b) { return 1; } return 0; }\n", []string{"E041"}},
+		{"order-array-array", "function main(): i32 { var a = [1]; var b = [2]; if (a <= b) { return 1; } return 0; }\n", []string{"E041"}},
+		{"order-struct-i32-mixed", "struct P { x: i32 }\nfunction main(): i32 { var a = P { x: 1 }; if (a < 3) { return 1; } return 0; }\n", []string{"E009"}},
 		{"field-unknown", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.y; }\n", []string{"E043"}},
 		{"field-known-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", nil},
 		{"method-call-not-field-ok", "struct P { x: i32 }\nfunction (p: P) getx(): i32 { return p.x; }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.getx(); }\n", nil},
