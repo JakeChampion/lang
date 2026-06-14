@@ -583,6 +583,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"ifexpr-f64-elseif", `function main(): i32 { var n = 5; var f = if (n > 10) { 1.0 } else if (n > 3) { 2.5 } else { 9.0 }; return (f * 2.0) as i32; }`},
 		{"matchexpr-f64", `enum C { A, B } function main(): i32 { var c: C = A; var f = match (c) { A => 1.5, B => 2.5 }; return (f * 10.0) as i32; }`},
 		{"matchexpr-f64-3arm", `enum C { R, G, B } function w(c: C): f64 { return match (c) { R => 1.5, G => 2.5, B => 3.5 }; } function main(): i32 { return (w(G) * 10.0) as i32; }`},
+		// i64-valued if / match expressions: the inline temp is an 8-byte i64 temp
+		// (any branch with an i64-width value classifies it — annotated, unannotated,
+		// either branch order). A fully-small-literal i64 expression stays on AST.
+		{"ifexpr-i64-annot", `function main(): i32 { var n = 5; var x: i64 = if (n > 3) { 5000000000 } else { 1 }; return (x % 7) as i32; }`},
+		{"ifexpr-i64-unannot", `function main(): i32 { var n = 5; var x = if (n > 3) { 5000000000 } else { 1 }; return (x % 7) as i32; }`},
+		{"ifexpr-i64-elsebig", `function main(): i32 { var n = 1; var x: i64 = if (n > 3) { 1 } else { 5000000000 }; return (x % 7) as i32; }`},
+		{"ifexpr-i64-return", `function pick(n: i32): i64 { return if (n > 0) { 9000000000 } else { 1 }; } function main(): i32 { return (pick(5) % 1000) as i32; }`},
+		{"matchexpr-i64", `enum C { A, B } function main(): i32 { var c: C = A; var x: i64 = match (c) { A => 8000000000, B => 1 }; return (x % 1000) as i32; }`},
 		{"i64-cmp", `function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`},
 		{"i64-add", `function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`},
 		{"i64-mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`},
