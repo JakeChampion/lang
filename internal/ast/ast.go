@@ -465,11 +465,18 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 		}
 		return ptrW
 	case DynTraitType:
-		// A `dyn Trait` value is an inline two-word `[data, vtable]`
-		// fat pointer, so an array element occupies two pointer-width
-		// slots (docs/DYN-TRAITS.md §4.2.1) — same stride as a two-
-		// word string.
-		return 2 * ptrW
+		// `dyn Trait` representation is target-dependent
+		// (docs/DYN-TRAITS.md §4.2.1/§4.2.2):
+		//   - wasm (ptrW==4): inline two-word `[data, vtable]` fat
+		//     pointer, so an element occupies two pointer-width slots —
+		//     same stride as a two-word string.
+		//   - natives (ptrW==8): boxed one-word — a `dyn` value is a
+		//     single heap pointer to a `{data, vtable}` cell, so it
+		//     strides one pointer width like any other pointer.
+		if ptrW == 4 {
+			return 2 * ptrW
+		}
+		return ptrW
 	}
 	return ptrW
 }

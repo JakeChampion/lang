@@ -111,3 +111,92 @@ function main(): i32 {
 		}
 	}
 }
+
+// --- x86-64 boxed `dyn Trait` dispatch (slice 2c — docs/DYN-TRAITS.md
+// §4.2.2). On natives a `dyn Trait` value is a BOXED one-word pointer to
+// a heap `{data, vtable}` cell; the vtable is an array of absolute
+// `__method_*` function pointers. These differential tests run the same
+// sources the wasm tests use, through the native x86-64 backend, and
+// assert the stdout matches the interpreter. ---
+
+// TestX86_64DynTraitStructDispatch: single struct receiver behind a
+// `dyn Shape` local, dispatched through its boxed vtable.
+func TestX86_64DynTraitStructDispatch(t *testing.T) {
+	src := `import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+}
+struct Circle { r: i32 }
+impl Shape for Circle {
+    function area(self: Self): i32 { return self.r * self.r; }
+}
+function main(): i32 {
+    var d: dyn Shape = Circle { r: 5 };
+    print("area=" + d.area().to_string());
+    return 0;
+}
+`
+	want := dynInterpStdout(t, src)
+	got, code := compileAndRunX86_64(t, src)
+	got = strings.TrimSpace(got)
+	if code != 0 {
+		t.Fatalf("x86-64 exit = %d, want 0; stdout:\n%s", code, got)
+	}
+	if got != want {
+		t.Errorf("x86-64 dyn dispatch = %q, want %q (interp)", got, want)
+	}
+	if want != "area=25" {
+		t.Errorf("interp baseline = %q, want \"area=25\"", want)
+	}
+}
+
+// TestX86_64DynTraitHeterogeneousArray: a `dyn Shape[]` holding two
+// different concrete types, iterated + dispatched in a loop. Exercises
+// the boxed one-word array-element store/load (single pointer stride),
+// the two-trait-method vtable (area + a string-returning name), and a
+// `dyn Shape` function parameter.
+func TestX86_64DynTraitHeterogeneousArray(t *testing.T) {
+	src := `import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+    function name(self: Self): string;
+}
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle {
+    function area(self: Self): i32 { return self.r * self.r * 3; }
+    function name(self: Self): string { return "circle"; }
+}
+impl Shape for Rect {
+    function area(self: Self): i32 { return self.w * self.h; }
+    function name(self: Self): string { return "rect"; }
+}
+function describe(s: dyn Shape): string {
+    return s.name() + "=" + s.area().to_string();
+}
+function main(): i32 {
+    var shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
+    var total: i32 = 0;
+    for s in shapes {
+        print(describe(s));
+        total = total + s.area();
+    }
+    print("total=" + total.to_string());
+    return 0;
+}
+`
+	want := dynInterpStdout(t, src)
+	got, code := compileAndRunX86_64(t, src)
+	got = strings.TrimSpace(got)
+	if code != 0 {
+		t.Fatalf("x86-64 exit = %d, want 0; stdout:\n%s", code, got)
+	}
+	if got != want {
+		t.Errorf("x86-64 dyn array dispatch =\n%q\nwant (interp):\n%q", got, want)
+	}
+	for _, line := range []string{"circle=12", "rect=12", "circle=3", "total=27"} {
+		if !strings.Contains(got, line) {
+			t.Errorf("x86-64 output missing %q; got:\n%s", line, got)
+		}
+	}
+}

@@ -122,7 +122,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// method of a concrete type that coerces to a `dyn Trait` so it
 	// survives tree-shake and IR dead-function elimination. See
 	// docs/DYN-TRAITS.md §4.2.1.
-	dynImplMethods := dynCoercionImplMethods(info)
+	dynImplMethods := treeshake.DynCoercionImplMethods(info)
 	treeshakeExtras = append(treeshakeExtras, dynImplMethods...)
 	if opts.HttpHandler {
 		// `handle` is called by the wrapper but the treeshake
@@ -203,42 +203,4 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		SynthCliRun:        opts.SynthCliRun,
 		CliRunResult:       opts.CliRunResult,
 	})
-}
-
-// dynCoercionImplMethods returns the mangled impl-method names that a
-// `dyn Trait` vtable points at, for every (trait, concrete) pair the
-// checker recorded as a coercion site. These methods are reachable only
-// through the runtime vtable, never via a static call the tree-shake /
-// IR reachability walkers can follow, so the build pins them as roots.
-// The names mirror ir.collectVtables' slot resolution (info.Methods,
-// falling back to the conventional `__method_<concrete>_<method>`).
-func dynCoercionImplMethods(info *checker.Info) []string {
-	if len(info.DynCoercions) == 0 {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	add := func(name string) {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			out = append(out, name)
-		}
-	}
-	for _, dc := range info.DynCoercions {
-		td, ok := info.Traits[dc.Trait]
-		if !ok {
-			continue
-		}
-		for _, m := range td.Methods {
-			if m.Assoc {
-				continue
-			}
-			fn := info.Methods[dc.Concrete+"."+m.Name]
-			if fn == "" {
-				fn = "__method_" + dc.Concrete + "_" + m.Name
-			}
-			add(fn)
-		}
-	}
-	return out
 }
