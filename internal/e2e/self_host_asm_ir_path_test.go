@@ -574,6 +574,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"ifexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { var c = 5; var ps = if (c > 3) { [P { x: 7 }] } else { [P { x: 1 }] }; return ps[0].x; }`},
 		{"ifexpr-struct-arr-len", `struct P { x: i32 } function main(): i32 { var c = 5; var ps = if (c > 3) { [P { x: 7 }, P { x: 8 }] } else { [P { x: 1 }] }; return ps.len() + ps[1].x; }`},
 		{"matchexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { var k = 1; var ps = match (k) { 1 => [P { x: 9 }], _ => [P { x: 0 }] }; return ps[0].x; }`},
+		// for-in / .len() over an array bound from an if-/match-EXPRESSION: the StmtVar
+		// is_arr inference now marks the slot is_arr for an IIFE-array result, so the
+		// foreach lowers (indexing already worked without is_arr) (#3141).
+		{"ifexpr-arr-foreach", `function main(): i32 { var c = 5; var a = if (c > 3) { [1, 2, 3] } else { [4] }; var s = 0; for x in a { s = s + x; } return s; }`},
+		{"ifexpr-arr-len", `function main(): i32 { var c = 5; var a = if (c > 3) { [1, 2, 3] } else { [4] }; return a.len(); }`},
+		{"matchexpr-arr-foreach", `function main(): i32 { var k = 1; var a = match (k) { 1 => [10, 20], _ => [1] }; var s = 0; for x in a { s = s + x; } return s; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},

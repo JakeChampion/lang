@@ -4628,6 +4628,19 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             // receiver gate keeps this to a genuine method call (#3040).
                             else if (se.is_arr_ret_fn(cfa.field) && expr_struct_type(cfa.obj, se) != "") { is_arr = true; }
                         },
+                        // `var a = if (c) { [..] } else { [..] }` — an if-/match-
+                        // EXPRESSION desugars to a 0-arg IIFE (callee is ExprLambda).
+                        // If the first branch returns an array literal, the slot
+                        // holds a fresh owned array (rc=1, a move — no alias_inc), so
+                        // track is_arr; `for x in a` / `a.len()` then resolve.
+                        parser.ExprLambda(clam) => {
+                            if (clam.body.len() > 0) {
+                                match (iife_first_return_expr(clam.body[0])) {
+                                    parser.ExprArray(_) => { is_arr = true; },
+                                    _ => {}
+                                }
+                            }
+                        },
                         _ => {}
                     }
                 },
