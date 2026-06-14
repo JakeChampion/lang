@@ -248,6 +248,26 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — u8/i8/u16/i16 arithmetic not width-wrapped on the self-host IR path (bug fix)
+
+Follow-on from the u32 div/rem sweep: sub-32-bit integer arithmetic (`+` `-` `*`
+`<<`) was **not masked back to its width** on the self-host IR path. An
+overflowing result kept its full value on every IR backend (`255u8 + 1` → 256)
+instead of wrapping (→ 0). The interpreter and the native Go backends both wrap
+per the declared width (`signExtend` by `IntWidth`), so this was a silent
+miscompile — the program routed through `"ir"` yet computed the wrong answer (the
+struct comment even encoded the wrong assumption: "u8/u16 … need no
+post-arithmetic wrap"). Fix: a new `local_subword` slot array (the sub-32-bit
+sibling of `local_is_u32`) records each slot's kind (`u8`/`i8`/`u16`/`i16`, set
+from the declared type at var-decl, param, and receiver binding; an array slot
+holds its element kind). `expr_subword_kind` classifies an expression, and the
+binary lowering emits an `int_cast` after `+`/`-`/`*`/`<<` whose result is
+sub-word — masking, and sign-extending `i8`/`i16`, exactly as `as u8`/`as i8`
+already do. u32/u64 are disjoint, so no double-wrap. Verified on x86-64, wasm,
+and arm64 (qemu) against the interpreter; fixpoint still converges byte-identically.
+Guarded by `TestSelfHostSubwordWrapIR{X86_64,Wasm}` (u8/i8/u16/i16 add/sub/mul/shl
+overflow + a no-overflow exact case).
+
 ### 2026-06-14 — u32 `/` and `%` lowered signed on the self-host IR path (bug fix)
 
 A differential sweep (x86 / wasm / arm64 / interp) turned up a real correctness
