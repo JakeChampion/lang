@@ -1160,3 +1160,18 @@ Still order-dependent (only earlier-defined callees propagate). Full convergence
 (later-defined / mutually recursive callees, arbitrary depth) is now a cheap
 follow-up: the registry is already off the per-function path, so iterating
 `borrowable_params_interproc` to a fixpoint costs only a few module-level passes.
+
+### Landed (2026-06-14): full convergence
+
+Iterated `borrowable_params_interproc` to a least-fixpoint: each pass re-runs the
+escape walker against the PREVIOUS pass's complete registry (pass 1 = conservative,
+each later pass only ADDS borrowability), stopping when the borrowable set stops
+growing (monotone ⇒ size-stable = converged), with a small safety cap. Now a param
+that forwards an array to ANY borrowable callee is a borrow regardless of
+definition order or mutual recursion — `outer` defined BEFORE the borrowable
+`inner` now reclaims (the single forward pass missed it), and mutually recursive
+borrowers stay sound. Affordable because it is computed once per module on the emit
+path (the iteration adds only a few module-level passes, not a per-function cost).
+Verified: caller-before-callee reclaims (value + detector sound), escape chains
+still rejected, mutual recursion sound; arm64 stage-2 self-compile stays green; full
+RC gate green with two added `caller-before-callee` cases in the targeted test.
