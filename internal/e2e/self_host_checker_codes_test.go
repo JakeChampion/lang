@@ -252,6 +252,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"assign-ok", "function main(): i32 { var x: i32 = 1; x = 2; return x; }\n", nil},
 		{"arg-type-mismatch", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, \"no\"); }\n", []string{"E038"}},
 		{"arg-type-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
+		// E038 (call-non-function variant): calling a value whose type isn't a
+		// function. A free function / closure / fn-value local / method call is
+		// fine; only a scalar / non-fn local callee is flagged.
+		{"call-nonfn-i32", "function main(): i32 { var x = 5; return x(3); }\n", []string{"E038"}},
+		{"call-nonfn-string", "function main(): i32 { var s = \"a\"; return s(3); }\n", []string{"E038"}},
+		{"call-nonfn-noargs", "function main(): i32 { var x = 5; return x(); }\n", []string{"E038"}},
+		{"call-closure-ok", "function main(): i32 { var g = function(x: i32): i32 { return x + 1; }; return g(41); }\n", nil},
+		{"call-fnval-named-ok", "function dbl(n: i32): i32 { return n * 2; }\nfunction main(): i32 { var f = dbl; return f(21); }\n", nil},
 		{"if-nonbool-cond", "function main(): i32 { if (5) { return 1; } return 0; }\n", []string{"E008"}},
 		{"while-nonbool-cond", "function main(): i32 { while (\"x\") { return 1; } return 0; }\n", []string{"E008"}},
 		{"if-bool-cond-ok", "function main(): i32 { if (1 < 2) { return 1; } return 0; }\n", nil},
