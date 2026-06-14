@@ -279,6 +279,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-elem-field-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction main(): i32 { var p = P { xs: [Q { n: 1 }, 5] }; return 0; }\n", []string{"E034"}},
 		{"arr-elem-field-update-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction f(p: P): P { return P { ...p, xs: [Q { n: 1 }, 5] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
 		{"arr-elem-field-union-ok", "struct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nstruct P { xs: U[] }\nfunction main(): i32 { var p = P { xs: [A { a: 1 }, B { b: 2 }] }; return 0; }\n", nil},
+		// E038 (builtin array-method arg type): `.append(elem)` and the value of
+		// `.with(i32, elem)` must match the array's element type. A union
+		// element widens; a correctly-typed call stays clean.
+		{"arr-append-arg-bad", "function main(): i32 { var a: i32[] = [1]; a = a.append(\"x\"); return 0; }\n", []string{"E038"}},
+		{"arr-append-arg-ok", "function main(): i32 { var a: i32[] = [1]; a = a.append(2); return 0; }\n", nil},
+		{"arr-with-arg-bad", "function main(): i32 { var a: i32[] = [1]; a = a.with(0, \"x\"); return 0; }\n", []string{"E038"}},
+		{"arr-append-union-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }]; a = a.append(Q { y: 2 }); return 0; }\n", nil},
 		// E043 (method-call on a numeric scalar): i32 / f64 carry no methods,
 		// so any `x.m(...)` on one is a field access on a non-struct. Valid
 		// string / array / struct method calls stay clean (no false positive).
@@ -805,6 +812,14 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// if/match-expression values flowing into typed positions (post-#3137).
 		{"if-expr-typed-ok", "function main(): i32 { var x: i32 = if (1 < 2) { 1 } else { 2 }; return x; }\n"},
 		{"match-expr-typed-ok", "enum E { A, B }\nfunction main(): i32 { var e: E = A; var x: i32 = match (e) { A => 1, B => 2 }; return x; }\n"},
+		// Builtin array-method calls with element-typed args (valid): the
+		// self-host uses .append / .with pervasively, so an arg-type rule over
+		// them must not false-positive on a correctly-typed call.
+		{"array-append-prim-ok", "function main(): i32 { var a: i32[] = [1]; a = a.append(2); return a.len(); }\n"},
+		{"array-append-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }]; a = a.append(P { x: 2 }); return 0; }\n"},
+		{"array-append-union-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }]; a = a.append(Q { y: 2 }); return 0; }\n"},
+		{"array-with-ok", "function main(): i32 { var a: i32[] = [1, 2]; a = a.with(0, 9); return a.len(); }\n"},
+		{"array-append-tuple-ok", "function main(): i32 { var a: (i32, string)[] = []; a = a.append((1, \"x\")); return 0; }\n"},
 	}
 
 	for _, tc := range progs {
