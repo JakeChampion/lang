@@ -873,3 +873,81 @@ absolute oracles + differentials + fixpoint, in **leak-mode** (no new frees).
 When the metric hits 100% and fixpoint runs on the IR, Phase A is done and
 Phase B (the direct Perceus port — analyses + emission + drop specialization,
 free turned on) begins on a complete, stable IR.
+
+---
+
+## Phase A status + Phase B kickoff (2026-06-14)
+
+### Phase A coverage — effectively complete for the common surface
+
+A broad eligibility survey (run `irlower.lower_func` via the `asm_pathprobe_run`
+driver over a corpus of native-valid programs) now routes through the IR path
+("ir") for essentially every native-valid construct probed: i32/i64/f64
+arithmetic + control flow, strings (+ split/chars/lines/case/trim/reverse/
+replace/predicates), arrays (i32/string/f64/i64, of-arrays, of-structs,
+of-tuples), structs (+ nested, update, methods, struct-returning), enums +
+`match` (payloads, qualified-variant locals, fresh-variant + enum-receiver
+method dispatch), `Option`/`Result` + the **try-operator `?`**, tuples,
+module-level `const`, closures (capture-by-value, capturing array/struct
+literals, **nested** capturing lambdas, fn-value args incl. at method sites,
+no-capture lambdas in **array + struct-field** positions), maps, and for-in.
+Recent slices: #2940/#2942 (chars/lines), #2954/#2961 (const), #2990/#2991 +
+#2997 (enum-receiver methods, incl. qualified variants), #3035 (nested
+closures), #3036/#3041 (lambdas in array/struct aggregates), plus the
+try-operator and capture-literal slices.
+
+Remaining Phase-A gap found: **first-class CAPTURING closures stored in
+collections** (a capturing lambda *literal* in an array/struct, or a closure
+local that escapes into one) — these still bail to AST. The closure-box-in-array
+runtime + call-through-element path already exists (`[mk(1), mk(2)]` of factory
+closures routes IR), so the gap is narrowly "lower a capturing-lambda literal to
+a uniquely-named closure box at an arbitrary value position" — a generalization
+of the current one-`<cur_fn>$clo`-per-function escaping model.
+
+### Current IR Perceus state (the foundation Phase B builds on)
+
+Layer-1 RC is live on the IR (`irlower.fern`), **free ON**, at native parity for
+the covered subset:
+- alias-inc (`needs_rc_inc_on_alias` over ident/field/index reads of rc-typed
+  values); reassignment retain + COW-aware release (skip the dec when the new
+  value == the old, the in-place-mutator case);
+- function-exit dec-sweep (`emit_dec_sweep_except`) over owned array locals AND
+  reclaimable (fresh, non-escaping) struct locals, with one level of struct
+  array-field deep-drop (`emit_struct_field_drops`, leaf-safe);
+- move-on-return (the `keep` slot elides the balanced inc/dec pair on a returned
+  bare owned local); `n_params` borrow boundary (params conservatively borrowed,
+  never swept); construction-store retains (struct/array/tuple/closure/enum
+  payload); freelist reuse (`__fern_alloc` size-class pop) so rc==0 reclaims.
+
+### Phase B — remaining native Perceus opts to port (issue #3003)
+
+All target-independent, as IR-level analyses/passes in `irlower` (never a backend
+hack), each gated behind a flag like native's, validated by the byte-identical
+fixpoint + `TestSelfHostStdTestE2E` (the over-release/UAF nets) at every slice:
+
+1. **Precise drops / drop-on-last-use** ← `computePreciseDrops` (ir.go ~3294).
+   Release a value right after its last use instead of at function exit, bounding
+   the live set. Depends on `freeEligible`/`movedLocals`/`localNameUnique`/
+   `preciseDroppableType`/`initMayAliasLive`/`flowsIntoUncountedAlias` guards.
+2. **Inter-procedural borrow inference** ← `inferParamEscapes` (ir.go ~1336).
+   The self-host borrows *all* params today; native proves which owned params can
+   stay borrowed (greatest-fixpoint call-graph escape analysis).
+3. **Reuse / FBIP** ← `computeReuseSources` (ir.go ~12119) — in-place
+   reconstruction of a unique value (dead owned box ↔ same-class construction).
+4. **Drop specialization** — per-type `__drop_*` bodies vs. the generic helper
+   (partially present for struct array fields).
+5. **TRMC** ← `findTrmcFuncs` (`trmc.go`) — tail-recursion-modulo-cons.
+
+**First slice — conservative precise-drops for arrays.** Fire only for a
+provably *linear, owned* array local: declared once, never reassigned anywhere
+(matches native's reassigned-walk bail); init is a fresh owned array (literal /
+scalar-arg array-returning call — never a slice/index/field/ident alias, the
+`initMayAliasLive` guard); never aliased into another slot, stored in a
+container, captured, or returned (no uncounted reference outlives the drop); a
+straight-line top-level last-use statement (control-flow-aware placement deferred
+to a later increment, as native staged it). Emit `__fern_rc_dec` right after the
+last-use statement and exclude the slot from the exit sweep — net dec count
+unchanged, just earlier. Anything uncertain degrades to today's exit-sweep
+(sound, the safe-leak invariant). Land behind an off-by-default flag (zero
+regression risk; full suite green with it off), then flip on in a separately
+fixpoint-/std-test-validated follow-up — native's staged `RcFreeEnabled` pattern.
