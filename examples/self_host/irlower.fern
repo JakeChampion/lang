@@ -516,6 +516,34 @@ pub function expr_opt_elem_tag(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// some_opt_type returns the "Option[T]" type of a DIRECT `Some(x)` construction
+// whose payload type T is statically recoverable (scalar / string / struct), or
+// "" otherwise. Lets a `var o = Some(7)` local record its opt_type and a direct
+// `match (Some(7))` scrutinee recover the payload — the construction analogue of
+// the call-returns-Option path (opt_ret_fns). `Ok`/`Err` are NOT handled: a
+// direct `Ok(x)` can't determine the Result's `E` arm (it needs an annotation,
+// handled separately). A nested-Option / fn payload is deferred ("").
+pub function some_opt_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Some" && c.args.len() == 1) {
+                        var pt: string = elem_type_tag(c.args[0], s);
+                        if (pt == "fn") { return ""; }
+                        if (pt.len() >= 7 && (pt[0:7] == "Option[" || pt[0:7] == "Result[")) { return ""; }
+                        return "Option[" + pt + "]";
+                    }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // "string" for a string, a struct type name for a struct, "fn" for a function
 // value, "Option[T]" for an Option value, "i64"/"f64" for an 8-byte scalar, else
 // "i32" (scalar). The 8-byte tags drive the wasm tuple's per-element
@@ -4250,7 +4278,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             match (v.init) {
                 parser.ExprCall(ic) => {
                     match (ic.callee) {
-                        parser.ExprIdent(icid) => { opt_ty = se.opt_ret_type(icid.name); },
+                        parser.ExprIdent(icid) => {
+                            opt_ty = se.opt_ret_type(icid.name);
+                            // `var o = Some(7)` — a direct Option construction
+                            // records o's opt_type so a later `match (o)`
+                            // recovers the payload (the construction analogue of
+                            // the Option-returning call above).
+                            if (opt_ty == "") { opt_ty = some_opt_type(v.init, se); }
+                        },
                         parser.ExprFieldAccess(ifa) => {
                             // `var o = x.get()` where x's method returns
                             // Option/Result — key by "<Type>.<method>" so a
@@ -5117,7 +5152,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 match (m.scrutinee) {
                                     parser.ExprCall(scl) => {
                                         match (scl.callee) {
-                                            parser.ExprIdent(scid) => { srt = ms.opt_ret_type(scid.name); },
+                                            parser.ExprIdent(scid) => {
+                                                srt = ms.opt_ret_type(scid.name);
+                                                // `match (Some(7))` — a direct Option
+                                                // construction recovers the payload from
+                                                // the scrutinee (no local needed).
+                                                if (srt == "") { srt = some_opt_type(m.scrutinee, ms); }
+                                            },
                                             parser.ExprFieldAccess(scfa) => {
                                                 // `m.get(k)` evaluates to Option[V] (V = the map's value type).
                                                 if (scfa.field == "get") {
