@@ -7762,7 +7762,7 @@ pub function to_string_helpers(): string {
 // (an i32[] array block `[len][cap][bytes-as-i32]`) into a fresh `[len][bytes]`
 // string block, truncating each i32 element to its low byte via i32.store8.
 // Depends on $__fern_alloc from heap_alloc_helpers.
-function string_from_bytes_helper(): string {
+pub function string_from_bytes_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_string_from_bytes (param $arr i32) (result i32)\n";
     o = o + "    (local $n i32) (local $s i32) (local $i i32)\n";

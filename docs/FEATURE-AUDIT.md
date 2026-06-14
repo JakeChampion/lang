@@ -247,6 +247,23 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — fix: `string_from_bytes` missing helper on the wasm IR path
+
+The wasm IR backend lowered `op_str_from_bytes` to `call
+$__fern_string_from_bytes`, but `wasm_ir_run` had no gate to emit that helper
+(its sibling `str_bytes` did) — so any IR-path program packing a `u8[]` into a
+string (`string_from_bytes(buf)`) produced a wasm module with a dangling call that
+failed to link (`unknown func $__fern_string_from_bytes`). x86-64 / arm64 already
+emitted the helper. Fix: export `wasm.string_from_bytes_helper` and gate it on
+`module_emits_op(mod, "str_from_bytes")` in `wasm_ir_run`, mirroring the
+`str_bytes` gate. (It depends on `$__fern_alloc` / `$__fern_str_box`, which
+`module_allocates` already pulls in.)
+
+New routing-pinned `TestSelfHostStringFromBytesIR` (x86-64 + wasm, oracle-checked:
+direct pack + length / byte round-trip, plus a `hex_encode` built on
+`__alloc_u8` + `.with` + `string_from_bytes`). Verified end-to-end on x86-64,
+wasm, and arm64; x86-64 + stage2 fixpoint hold. (Found while probing pure-Fern
+stdlib modules — `std/hex` etc. — for self-host IR coverage.)
 ### 2026-06-14 — `dyn Trait[]` LOCAL element dispatch via the self-host IR path
 
 A `dyn Trait[]` PARAM recorded the coarse `"dyn Trait"` element type on its slot,

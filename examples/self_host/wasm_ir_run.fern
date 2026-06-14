@@ -110,6 +110,12 @@ function main(): i32 {
         if (wasm_ir.module_emits_op(mod, "print_str")) { o = o + wasm.print_str_helper(); }
         if (wasm_ir.module_emits_op(mod, "eprint_str")) { o = o + wasm.eprint_str_helper(); }
         if (wasm_ir.module_emits_op(mod, "str_bytes")) { o = o + wasm.str_bytes_func(); }
+        // string_from_bytes(arr) packs a u8[] into a string block via
+        // $__fern_string_from_bytes; op_str_from_bytes emits the call, so the
+        // helper must be present (its absence left a dangling call -> the wasm
+        // module failed to link). Depends on $__fern_alloc / $__fern_str_box,
+        // which module_allocates pulls in via heap_alloc_helpers.
+        if (wasm_ir.module_emits_op(mod, "str_from_bytes")) { o = o + wasm.string_from_bytes_helper(); }
         // Function-value support: the $fn<N> call_indirect signature types, the
         // funcref table, and its elem segment (empty for non-closure modules).
         o = o + wasm_ir.fn_support_section(mod);
