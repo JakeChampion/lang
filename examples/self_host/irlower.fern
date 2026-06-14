@@ -3972,13 +3972,13 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     }
     // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
     // payload is i32, so the i32 temp stays the right width. An Option/Result
-    // scrutinee's type is tracked for a local/param; a user-enum payload is read
+    // scrutinee's type is recovered via try_opt_type — a local/param, a
+    // direct-call `f()` (opt_ret_fns), a map `.get()`, a struct field, or an
+    // Option/Result-/enum-receiver method — the same resolution the underlying
+    // StmtMatch path uses, so `return match (f(5)) { Ok(v) => v, Err(e) => e }`
+    // (a call scrutinee) lowers instead of bailing. A user-enum payload is read
     // from the variant's `__ev` field. A non-i32 (or unresolvable) payload bails.
-    var opt_srt: string = "";
-    match (m.scrutinee) {
-        parser.ExprIdent(sid) => { opt_srt = ts.opt_type_of_slot(ts.slot_of(sid.name)); },
-        _ => {}
-    }
+    var opt_srt: string = try_opt_type(m.scrutinee, ts);
     var newarms: parser.MatchArm[] = [];
     var i: i32 = 0;
     while (i < m.arms.len()) {
