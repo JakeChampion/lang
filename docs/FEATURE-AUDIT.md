@@ -201,7 +201,7 @@ per-function bugs in the audit log.
 | `std/i32` (~80 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | representative set (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum) — `audit_std_numeric`; self-host via array bundle |
 | `std/i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host abs/min/max/clamp via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) |
 | `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | max — `audit_std_path_numeric`; self-host unsigned min/max via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`); wasm IR unsigned-compare gap tracked in [#2917](https://github.com/JakeChampion/lang/issues/2917) |
-| `std/u64` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | clamp — `audit_std_path_numeric`; self-host: u64 unsigned compare / `>>` / `/` / `%` now correct via the IR path ([#2904](https://github.com/JakeChampion/lang/issues/2904); `TestSelfHostU64UnsignedIR`) — the i64-domain analog of the u32 wrapping fix |
+| `std/u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | clamp — `audit_std_path_numeric`; self-host via the IR path: u64 unsigned compare / `>>` / `/` / `%` ([#2904](https://github.com/JakeChampion/lang/issues/2904); `TestSelfHostU64UnsignedIR`) + the `min`/`max`/`clamp` methods incl. high-bit-set bounds (`TestSelfHostU64IR`, oracle-checked) — the i64-domain analog of the u32 wrapping fix; `to_string` routes via the AST path (core/int `__int_to_string_u64`'s `u8[]`/`usize`/`__memcpy`) |
 | `std/float` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host: f64 intrinsics (floor/ceil/sqrt/abs/round/trunc) ✅ via the IR path (`TestSelfHostFloatIntrinsicsIR`) |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
@@ -246,6 +246,20 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-14 — std/u64 `min`/`max`/`clamp` methods via the self-host IR path (x86-64 + wasm)
+
+Confirmed the std/u64 *method* surface on the self-hosted compiler (its S column
+was blank). `TestSelfHostU64IR` runs `min` / `max` / `clamp` (inlined verbatim
+from std/u64) through the x86-64 and wasm IR drivers, **oracle-checked against the
+interpreter** and pinned to the `"ir"` path. Complements the existing #2904
+`TestSelfHostU64UnsignedIR` (raw unsigned `>` `<` `>>` `/` `%` operators) by
+covering the methods those don't, with the new wrinkle being **unsigned `max` /
+`clamp` against a high-bit-set bound** (>= 2^63) — where the helper's internal
+comparison must be unsigned or it picks the wrong branch. Coverage-only, no
+compiler change. std/u64's `to_string` stays on the AST path (it wraps core/int's
+`__int_to_string_u64`, whose `u8[]` / `usize` / `__memcpy` internals are a
+separate low-level concern). std/u64 S column flipped to ✅.
 
 ### 2026-06-14 — std/time Zoned / TimeZone surface via the self-host IR path (x86-64 + wasm) — std/time row now fully ✅
 
