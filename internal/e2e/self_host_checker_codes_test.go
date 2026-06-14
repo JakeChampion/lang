@@ -135,9 +135,20 @@ func filterImplemented(codes []string) []string {
 // same source — restricted to the codes the port has implemented so far
 // (selfHostImplementedCodes). As later slices teach checker.fern more
 // codes, the corpus + that set grow together.
-func TestSelfHostCheckerCodesX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
+// buildCheckerCodesBin builds the self-host checker-codes driver binary:
+// it compiles checker_codes_run.fern (bundled with lexer / parser / checker /
+// util / io) with the Go-built self-host compiler, producing a binary that
+// reads a Fern program on stdin and prints the diagnostic CODE of every
+// diagnostic the self-host checker emits. Returns the binary path, the
+// (possibly empty) qemu/exec runner prefix, and the temp project dir (which
+// also holds goCheckerCodes' scratch input). Shared by the hand-written
+// corpus gate and the pure-differential verification harness so the
+// expensive self-host bundle compile happens once per test.
+func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
+	t.Helper()
+	gcc, run := x86_64Tooling(t)
+	runner = run
+	dir = writeSelfHostAsmProject(t) // lexer, parser, asm
 	for _, name := range []string{"flatten.fern", "util.fern", "checker.fern", "bundle_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -180,7 +191,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	if len(checkerAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the codes driver")
 	}
-	checkerBin := buildBin(t, gcc, dir, "codes", string(checkerAsm))
+	checkerBin = buildBin(t, gcc, dir, "codes", string(checkerAsm))
+	return checkerBin, runner, dir
+}
+
+func TestSelfHostCheckerCodesX86_64(t *testing.T) {
+	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	cases := []struct {
 		name string
@@ -737,4 +753,66 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestSelfHostCheckerDifferentialX86_64 is the pure-differential verification
+// harness for the self-host checker. For each program it runs BOTH the
+// self-host checker (the codes driver) and the production Go checker, and
+// asserts they agree on the diagnostic code SET (restricted to the codes the
+// port implements). Unlike TestSelfHostCheckerCodesX86_64 it carries NO
+// hardcoded expected codes — the Go checker is the sole oracle — so it catches
+// a self-host FALSE POSITIVE (or missing diagnostic) on any construct in the
+// corpus without the test author having to predict the codes.
+//
+// It is seeded with the real-world tuple / generic / union / method-chain
+// constructs the stdlib leans on (annotated tuples, tuple-of-union, nested
+// tuples, generic tuple containers, …). The whole-compiler fixpoint/bundle
+// gate never runs the self-host CHECKER over the stdlib, so before teaching
+// checker.fern a rule that touches these shapes (e.g. tuple-type assignability,
+// builtin-method return types) add the relevant valid programs here: a
+// regression then fails loudly in this differential instead of lurking as a
+// latent false positive only triggered when someone runs the self-host checker
+// over real code.
+func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
+	checkerBin, runner, dir := buildCheckerCodesBin(t)
+
+	progs := []struct{ name, src string }{
+		// Annotated tuple shapes — var binding, parameter, return, nested, and
+		// a tuple whose element is a (builtin) enum/union. All well-typed: the
+		// self-host must not invent a diagnostic the Go checker doesn't report.
+		{"tuple-return", "function pair(): (i32, string) { return (1, \"a\"); }\nfunction main(): i32 { return 0; }\n"},
+		{"tuple-var-annot", "function main(): i32 { var t: (i32, string) = (1, \"a\"); return t.0; }\n"},
+		{"tuple-array-annot", "function main(): i32 { var out: (i32, string)[] = []; return 0; }\n"},
+		{"tuple-nested", "function main(): i32 { var t: (i32, (string, i32)) = (1, (\"a\", 2)); return t.0; }\n"},
+		{"tuple-union-elem", "enum E { A, B }\nfunction f(): (E, i32) { return (A, 1); }\nfunction main(): i32 { return 0; }\n"},
+		{"tuple-param", "function f(p: (i32, string)): i32 { return p.0; }\nfunction main(): i32 { return f((1, \"a\")); }\n"},
+		{"tuple-struct-elem", "struct P { x: i32 }\nfunction f(): (P, i32) { return (P { x: 1 }, 2); }\nfunction main(): i32 { return 0; }\n"},
+		{"tuple-reassign", "function main(): i32 { var t: (i32, string) = (1, \"a\"); t = (2, \"b\"); return t.0; }\n"},
+		// Generic tuple container (the std/array `zip` shape).
+		{"tuple-generic-array", "function zip(a: i32[], b: string[]): (i32, string)[] { var out: (i32, string)[] = []; return out; }\nfunction main(): i32 { return 0; }\n"},
+		// Method chains on string / array builtins (valid).
+		{"method-chain-len", "function main(): i32 { var s = \"abc\"; var n = s.len(); return n; }\n"},
+		{"method-chain-array", "function main(): i32 { var a = [1, 2, 3]; return a.len(); }\n"},
+		// if/match-expression values flowing into typed positions (post-#3137).
+		{"if-expr-typed-ok", "function main(): i32 { var x: i32 = if (1 < 2) { 1 } else { 2 }; return x; }\n"},
+		{"match-expr-typed-ok", "enum E { A, B }\nfunction main(): i32 { var e: E = A; var x: i32 = match (e) { A => 1, B => 2 }; return x; }\n"},
+	}
+
+	for _, tc := range progs {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(checkerBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			out, _ := cmd.Output()
+			got := uniqueSortedCodes(strings.Fields(string(out)))
+			want := filterImplemented(goCheckerCodes(t, dir, tc.src))
+			if !equalStrings(got, want) {
+				t.Errorf("%s: self-host codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
+			}
+		})
+	}
 }
