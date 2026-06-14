@@ -1363,6 +1363,32 @@ function main(): i32 { return 0; }`)
 	}
 }
 
+// `pub use "path".{a, b};` parses into Program.PubUses with the path
+// and re-exported names. See docs/PRELUDE-TO-MODULES.md.
+func TestPubUseParses(t *testing.T) {
+	prog, err := Parse(`pub use "std/string".{split, trim};
+pub use "./helpers".{add5};
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(prog.PubUses) != 2 {
+		t.Fatalf("expected 2 pub uses, got %d", len(prog.PubUses))
+	}
+	if prog.PubUses[0].Path != "std/string" ||
+		len(prog.PubUses[0].Names) != 2 ||
+		prog.PubUses[0].Names[0] != "split" || prog.PubUses[0].Names[1] != "trim" {
+		t.Errorf("pub use[0] = %+v, want std/string {split, trim}", prog.PubUses[0])
+	}
+	if prog.PubUses[1].Path != "./helpers" || len(prog.PubUses[1].Names) != 1 || prog.PubUses[1].Names[0] != "add5" {
+		t.Errorf("pub use[1] = %+v, want ./helpers {add5}", prog.PubUses[1])
+	}
+	// Empty name list is a parse error.
+	if _, err := Parse(`pub use "x".{};`); err == nil {
+		t.Error("`pub use \"x\".{};` with no names should be a parse error")
+	}
+}
+
 // `arena` is no longer a reserved word. The `arena { … }` block
 // construct and the arena_save / arena_restore builtins it
 // desugared to were all removed; per-request memory is now

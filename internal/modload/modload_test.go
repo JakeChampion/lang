@@ -626,6 +626,86 @@ function main(): i32 { return util.secret(); }`,
 	}
 }
 
+// `pub use "path".{name}` re-exports a public symbol: a consumer of the
+// re-exporting module calls `facade.name`, and it rewrites to the
+// ORIGINAL module's mangled name (helpers__add5), not facade__add5 (no
+// copy is made). See docs/PRELUDE-TO-MODULES.md.
+func TestLoadPubUseReexport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `pub function add5(n: i32): i32 { return n + 5; }
+pub const BONUS: i32 = 100;`,
+		"facade.fern": `pub use "./helpers".{add5, BONUS};`,
+		"main.fern": `import "./facade";
+function main(): i32 { return facade.add5(10) + facade.BONUS; }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("pub use re-export should load: %v", err)
+	}
+	main := findFunc(prog, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	if !callsDirect(main, "helpers__add5") {
+		t.Errorf("facade.add5 should rewrite to helpers__add5 (the original), not facade__add5; funcs: %v", funcNames(prog))
+	}
+}
+
+// A `pub use` of a transitively-re-exported name resolves through the
+// chain to the ultimate original mangled name.
+func TestLoadPubUseTransitive(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `pub function add5(n: i32): i32 { return n + 5; }`,
+		"facade.fern":  `pub use "./helpers".{add5};`,
+		"prelude.fern": `pub use "./facade".{add5};`,
+		"main.fern": `import "./prelude";
+function main(): i32 { return prelude.add5(10); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("transitive pub use should load: %v", err)
+	}
+	main := findFunc(prog, "main")
+	if !callsDirect(main, "helpers__add5") {
+		t.Errorf("prelude.add5 should resolve transitively to helpers__add5; funcs: %v", funcNames(prog))
+	}
+}
+
+// `pub use` can only re-export PUBLIC symbols — re-exporting a private
+// one is rejected.
+func TestLoadPubUseRejectsPrivate(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `function secret(): i32 { return 9; }`,
+		"facade.fern":  `pub use "./helpers".{secret};`,
+		"main.fern": `import "./facade";
+function main(): i32 { return facade.secret(); }`,
+	})
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err == nil {
+		t.Fatal("re-exporting a private symbol should error")
+	}
+	if !strings.Contains(err.Error(), "does not export") || !strings.Contains(err.Error(), "secret") {
+		t.Errorf("error should mention the missing export `secret`; got %v", err)
+	}
+}
+
+// Re-exporting a type is not supported in v1 — clear error.
+func TestLoadPubUseRejectsType(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `pub struct Pt { x: i32 }`,
+		"facade.fern":  `pub use "./helpers".{Pt};`,
+		"main.fern": `import "./facade";
+function main(): i32 { return 0; }`,
+	})
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err == nil {
+		t.Fatal("re-exporting a type should error in v1")
+	}
+	if !strings.Contains(err.Error(), "not supported") {
+		t.Errorf("error should say type re-export is not supported; got %v", err)
+	}
+}
+
 // Cross-module function-value references (taking a private function
 // as a value, not calling it) are equally rejected.
 func TestLoadRejectsPrivateFunctionValueReference(t *testing.T) {

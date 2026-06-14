@@ -65,7 +65,24 @@ func Format(prog *ast.Program) string {
 			f.b.WriteByte('\n')
 		}
 	}
-	written := len(prog.Imports) > 0
+	// `pub use` re-exports cluster with the imports at the top of the
+	// file — same dependency-introduction role.
+	for _, pu := range prog.PubUses {
+		f.drainLeading(pu.P.Line, 0)
+		f.b.WriteString(`pub use "`)
+		f.b.WriteString(pu.Path)
+		f.b.WriteString(`".{`)
+		for i, name := range pu.Names {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString(name)
+		}
+		f.b.WriteString(`};`)
+		f.emitTrailing(pu.P.Line)
+		f.b.WriteByte('\n')
+	}
+	written := len(prog.Imports) > 0 || len(prog.PubUses) > 0
 	for _, sd := range prog.Structs {
 		if written {
 			f.b.WriteByte('\n')
