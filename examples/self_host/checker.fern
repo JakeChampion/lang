@@ -3127,6 +3127,27 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     // lookup returns empty and they're left alone.
                     var recv: Type = check_expr(mfa.obj, s);
                     match (recv) {
+                        // E043: a method call on a numeric scalar receiver
+                        // (`x.m(...)` where x is i32 or f64) for which no method
+                        // `m` is declared on that type. Fern allows user-defined
+                        // methods on primitives (`function (n: i32) twice()`), so
+                        // we only flag the call when the method table has no such
+                        // method — then it's a field access on a non-struct,
+                        // mirroring the Go checker, which resolves the method,
+                        // finds none, and reports E043. (A wider-int annotation
+                        // like i64 resolves to `unknown` and is skipped.) A
+                        // declared method, and string / array / map receivers
+                        // (whose builtin methods route elsewhere), stay clean.
+                        TypeI32(_) => {
+                            if (s.lookup_method(mfa.field, "i32").name.len() == 0) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                            }
+                        },
+                        TypeFloat(_) => {
+                            if (s.lookup_method(mfa.field, "f64").name.len() == 0) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                            }
+                        },
                         TypeStruct(sn) => {
                             var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
                             if (msig.name.len() > 0) {
