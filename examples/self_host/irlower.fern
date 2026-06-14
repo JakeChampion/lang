@@ -1825,19 +1825,21 @@ pub function is_fcmp_kind(kind: string): boolean {
     return kind == "feq" || kind == "fne" || kind == "flt" || kind == "fle" || kind == "fgt" || kind == "fge";
 }
 
-// f64_math_builtin_kind maps a std/float single-instruction math builtin name to
-// its op_funary opcode, or "" if `name` is not one. Covers the intrinsics every
-// backend implements with one hardware instruction: __sqrt_f64 (sqrtsd / fsqrt /
-// f64.sqrt), __floor_f64 / __ceil_f64 / __trunc_f64 (roundsd $1/$2/$3 / frint
-// m/p/z / f64.floor/ceil/trunc), and __abs_f64 (sign-bit mask / fabs / f64.abs).
-// __round_f64 (round-half-away needs trunc(x+copysign(0.5,x)) emulation) and the
-// libm transcendentals stay on the AST path.
+// f64_math_builtin_kind maps a std/float math builtin name to its op_funary
+// opcode, or "" if `name` is not one. Most are a single hardware instruction:
+// __sqrt_f64 (sqrtsd / fsqrt / f64.sqrt), __floor_f64 / __ceil_f64 / __trunc_f64
+// (roundsd $1/$2/$3 / frintm/p/z / f64.floor/ceil/trunc), and __abs_f64 (sign-bit
+// mask / fabs / f64.abs). __round_f64 (round-half-away, Go's math.Round) is one
+// instruction on arm64 (frinta) but needs trunc(x+copysign(0.5,x)) emulation on
+// x86 (roundsd toward zero) and wasm (f64.nearest is ties-to-even, not -away).
+// The libm transcendentals (log/exp/sin/cos/pow) still stay on the AST path.
 pub function f64_math_builtin_kind(name: string): string {
     if (name == "__sqrt_f64") { return "fsqrt"; }
     if (name == "__floor_f64") { return "ffloor"; }
     if (name == "__ceil_f64") { return "fceil"; }
     if (name == "__trunc_f64") { return "ftrunc"; }
     if (name == "__abs_f64") { return "fabs"; }
+    if (name == "__round_f64") { return "fround"; }
     return "";
 }
 

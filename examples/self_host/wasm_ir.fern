@@ -690,6 +690,17 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    i32.trunc_f64_s\n";
         } else if (o.kind == "f64_to_i64") {
             out = out + "    i64.trunc_f64_s\n";
+        } else if (o.kind == "fround") {
+            // round-half-away-from-zero (Go's math.Round). wasm's f64.nearest is
+            // ties-to-EVEN, so emulate via trunc(x + copysign(0.5, x)): stash x in
+            // the f64 scratch local, then add copysign(0.5, x) and truncate. (The
+            // other op_funary kinds are single instructions routed via wasm_binop_w;
+            // this one needs the scratch to reuse x twice.)
+            out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n";
+            out = out + "    f64.const 0.5\n";
+            out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n    f64.copysign\n";
+            out = out + "    f64.add\n    f64.trunc\n";
         } else if (o.kind == "int_extend") {
             // i32 -> i64: distinct wasm types, so an explicit widen.
             if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }
