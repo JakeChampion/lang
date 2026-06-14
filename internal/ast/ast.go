@@ -1960,6 +1960,11 @@ type FuncDecl struct {
 	// Default false (private) — modload rejects cross-module
 	// references to non-public decls before the checker runs.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// Receiver, when non-nil, marks this declaration as a method on
 	// the struct type Receiver.Type.(StructType).Name. The checker
 	// hoists methods into top-level functions under the mangled name
@@ -2071,6 +2076,11 @@ type StructDecl struct {
 	// Same semantics as FuncDecl.Public — private structs can't be
 	// referenced from other modules.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// Opaque marks a `pub opaque struct` — the type name is exported
 	// but its fields are private outside the declaring module: other
 	// modules can hold/pass values and call methods, but cannot read
@@ -2118,6 +2128,11 @@ type EnumDecl struct {
 	// other modules name `Foo`, including its variants in match
 	// patterns and constructors.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// SourceModule mirrors FuncDecl.SourceModule. See StructDecl
 	// for the cross-module-LSP rationale.
 	SourceModule string
@@ -2150,6 +2165,11 @@ type ResourceDecl struct {
 	// Public marks the resource as exported across modules — same semantics
 	// as FuncDecl.Public.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// SourceModule mirrors FuncDecl.SourceModule (modload stamps the
 	// declaring module path). Empty for parser-only single-file programs.
 	SourceModule string
@@ -2193,6 +2213,11 @@ type UnionDecl struct {
 	// Public marks the union as exported across modules — same
 	// semantics as EnumDecl.Public.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// SourceModule is the canonical module path that declared this
 	// union. modload stamps it during loadRecursive; the checker
 	// propagates it to the synthesised EnumDecl so cross-module
@@ -2221,6 +2246,11 @@ type TraitDecl struct {
 	// Public marks the trait as exported — same semantics as
 	// FuncDecl.Public / StructDecl.Public.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// SourceModule mirrors StructDecl.SourceModule — modload stamps
 	// the declaring module so the coherence (orphan-rule) check can
 	// tell a local trait from an imported one. Empty for single-file
@@ -2397,6 +2427,11 @@ type ConstDecl struct {
 	Type   Type
 	Value  Expr
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 }
 
 // Import is a top-level `import "<path>";` declaration. Path is the

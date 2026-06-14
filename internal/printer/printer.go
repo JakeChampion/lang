@@ -27,7 +27,9 @@ func Print(prog *ast.Program) string {
 }
 
 func printConstDecl(b *strings.Builder, cd *ast.ConstDecl) {
-	if cd.Public {
+	if cd.PackageScoped {
+		b.WriteString("pub(package) ")
+	} else if cd.Public {
 		b.WriteString("pub ")
 	}
 	b.WriteString("const ")
@@ -52,7 +54,9 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 		}
 		b.WriteString(")\n")
 	}
-	if sd.Public {
+	if sd.PackageScoped {
+		b.WriteString("pub(package) ")
+	} else if sd.Public {
 		b.WriteString("pub ")
 	}
 	b.WriteString("struct ")
@@ -79,7 +83,9 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 		b.WriteString(fn.ImportWITName)
 		b.WriteString("\")\n")
 	}
-	if fn.Public {
+	if fn.PackageScoped {
+		b.WriteString("pub(package) ")
+	} else if fn.Public {
 		b.WriteString("pub ")
 	}
 	b.WriteString("function ")

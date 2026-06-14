@@ -214,7 +214,9 @@ func (f *formatter) indent(n int) {
 // one and elided when it didn't, matching the parser's optional
 // shape so format → parse → format stays stable.
 func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
-	if cd.Public {
+	if cd.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if cd.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("const ")
@@ -234,7 +236,9 @@ func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
 // shape and keeps round-trips byte-stable for short enums.
 func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	f.writeDeriveAttr(ed.Derives)
-	if ed.Public {
+	if ed.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if ed.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("enum ")
@@ -277,7 +281,9 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 // yet (see the punted-follow-up note on UnionDecl); when they
 // land this needs to spell the `[T, U]` parameter list too.
 func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
-	if ud.Public {
+	if ud.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if ud.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("type ")
@@ -311,7 +317,9 @@ func (f *formatter) writeDeriveAttr(derives []string) {
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	f.writeDeriveAttr(sd.Derives)
-	if sd.Public {
+	if sd.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if sd.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("struct ")
@@ -339,7 +347,9 @@ func (f *formatter) formatResourceDecl(rd *ast.ResourceDecl) {
 		f.b.WriteString(rd.ImportWITName)
 		f.b.WriteString("\")\n")
 	}
-	if rd.Public {
+	if rd.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if rd.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("resource ")
@@ -374,7 +384,9 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString("\")\n")
 	}
 	f.indent(depth)
-	if fn.Public {
+	if fn.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if fn.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("function ")

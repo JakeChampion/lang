@@ -297,6 +297,25 @@ type module struct {
 	// target path + names) so resolveReexports can build the reexports
 	// table once every module + its prefix is known.
 	pubUses []pubUseEntry
+	// packageScoped holds the pre-mangle names of this module's
+	// `pub(package)` decls (across kinds). A cross-module reference to
+	// one is allowed only from a module in the SAME package (same
+	// directory; the stdlib is one package) — see samePackage. Distinct
+	// from publicFuncs/etc. so cross-package refs still fail. See
+	// docs/PUB-PACKAGE.md.
+	packageScoped map[string]bool
+}
+
+// samePackage reports whether two module paths belong to the same
+// package for `pub(package)` visibility: the same directory, or both
+// inside the embedded stdlib (which is treated as a single package).
+func samePackage(a, b string) bool {
+	aStd := strings.HasPrefix(a, stdlibPrefix)
+	bStd := strings.HasPrefix(b, stdlibPrefix)
+	if aStd || bStd {
+		return aStd && bStd
+	}
+	return filepath.Dir(a) == filepath.Dir(b)
 }
 
 // pubUseEntry is one resolved `pub use "path".{names…};` directive.
@@ -396,6 +415,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicEnums:   map[string]bool{},
 		allConsts:     map[string]bool{},
 		reexports:     map[string]string{},
+		packageScoped: map[string]bool{},
 	}
 	for _, fn := range prog.Funcs {
 		// Stamp every FuncDecl with the path of the module that
@@ -407,6 +427,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if fn.Public {
 			mod.publicFuncs[fn.Name] = true
 		}
+		if fn.PackageScoped {
+			mod.packageScoped[fn.Name] = true
+		}
 	}
 	for _, sd := range prog.Structs {
 		// Same source-module stamping as FuncDecl — used by the
@@ -416,11 +439,17 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if sd.Public {
 			mod.publicStructs[sd.Name] = true
 		}
+		if sd.PackageScoped {
+			mod.packageScoped[sd.Name] = true
+		}
 	}
 	for _, ed := range prog.Enums {
 		ed.SourceModule = path
 		if ed.Public {
 			mod.publicEnums[ed.Name] = true
+		}
+		if ed.PackageScoped {
+			mod.packageScoped[ed.Name] = true
 		}
 	}
 	for _, ud := range prog.Unions {
@@ -431,11 +460,17 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 			// across that pass.
 			mod.publicEnums[ud.Name] = true
 		}
+		if ud.PackageScoped {
+			mod.packageScoped[ud.Name] = true
+		}
 	}
 	for _, cd := range prog.Consts {
 		mod.allConsts[cd.Name] = true
 		if cd.Public {
 			mod.publicConsts[cd.Name] = true
+		}
+		if cd.PackageScoped {
+			mod.packageScoped[cd.Name] = true
 		}
 	}
 	for _, td := range prog.Traits {
@@ -445,6 +480,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		td.SourceModule = path
 		if td.Public {
 			mod.publicStructs[td.Name] = true
+		}
+		if td.PackageScoped {
+			mod.packageScoped[td.Name] = true
 		}
 	}
 	for _, impl := range prog.Impls {
@@ -1116,15 +1154,36 @@ type rewriter struct {
 	skipPaths map[string]bool
 }
 
+// packageScopedOK reports whether `name` is a `pub(package)` decl of
+// `mod` that the current module may use (i.e. is in the same package).
+// `handled` is true when `name` is package-scoped at all — so the caller
+// knows not to fall through to the generic "not exported" error. When
+// handled but not same-package, it records the package-scope error.
+func (r *rewriter) packageScopedOK(mod *module, name string, pos ast.Position) (ok, handled bool) {
+	if !mod.packageScoped[name] {
+		return false, false
+	}
+	if samePackage(r.modPath, mod.path) {
+		return true, true
+	}
+	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is `pub(package)` — only modules in the same package as %s may use it",
+		r.modPath, pos, mod.name, name, mod.name))
+	return false, true
+}
+
 // checkPublicFunc records an error if `fn` isn't exported from
 // `mod`. Cross-module function references go through this gate;
 // same-module references skip it because internal calls aren't
 // visibility-restricted.
 func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
-	if !mod.publicFuncs[fn] {
-		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)",
-			r.modPath, pos, mod.name, fn, fn))
+	if mod.publicFuncs[fn] {
+		return
 	}
+	if _, handled := r.packageScopedOK(mod, fn, pos); handled {
+		return
+	}
+	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)",
+		r.modPath, pos, mod.name, fn, fn))
 }
 
 // checkPublicStruct records an error if `name` isn't an exported
@@ -1136,6 +1195,9 @@ func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 // them apart pre-checker.
 func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position) {
 	if mod.publicStructs[name] || mod.publicEnums[name] {
+		return
+	}
+	if _, handled := r.packageScopedOK(mod, name, pos); handled {
 		return
 	}
 	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)",
@@ -1153,6 +1215,9 @@ func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position)
 // later in the checker either way.
 func (r *rewriter) checkPublicValue(mod *module, name string, pos ast.Position) {
 	if mod.publicFuncs[name] || mod.publicConsts[name] {
+		return
+	}
+	if _, handled := r.packageScopedOK(mod, name, pos); handled {
 		return
 	}
 	hint := "function"
