@@ -636,21 +636,20 @@ function main(): i32 {
 			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
 		}
 	}
-	// Compiled backends REJECT multi-trait `dyn` cleanly (no panic) —
-	// merged-vtable codegen is a later slice.
+	// Compiled backends now LOWER multi-trait `dyn A + B` dispatch through
+	// the merged vtable (docs/DYN-TRAITS.md §10) — codegen must succeed (no
+	// reject, no panic). The differential correctness tests against the
+	// interpreter live in dyn_trait_compiled_test.go (dynAllBackends).
 	for _, target := range []string{"arm64", "x86-64", "wasm"} {
 		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
 		var gerr bytes.Buffer
 		gen.Stderr = &gerr
 		err := gen.Run()
-		if err == nil {
-			t.Errorf("compiling multi-trait `dyn` to %s should reject (later slice), but succeeded", target)
-		}
-		if !strings.Contains(gerr.String(), "multi-trait `dyn A + B` is not yet supported") {
-			t.Errorf("%s: want clean multi-trait reject, got:\n%s", target, gerr.String())
+		if err != nil {
+			t.Errorf("compiling multi-trait `dyn` dispatch to %s should now succeed, got error:\n%s", target, gerr.String())
 		}
 		if strings.Contains(gerr.String(), "panic") {
-			t.Errorf("%s multi-trait reject panicked: %s", target, gerr.String())
+			t.Errorf("%s multi-trait codegen panicked: %s", target, gerr.String())
 		}
 	}
 }

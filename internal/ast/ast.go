@@ -1138,10 +1138,17 @@ type DowncastExpr struct {
 	P      Position
 	Inner  Expr
 	Target Type
-	// Trait is the trait name of `Inner`'s `dyn Trait` type, filled by
-	// the checker for later (vtable-pointer-compare) codegen. Empty
-	// before checking.
+	// Trait is the PRIMARY trait name of `Inner`'s `dyn Trait` type,
+	// filled by the checker for the single-trait (vtable-pointer-compare)
+	// codegen. Empty before checking.
 	Trait string
+	// Traits is the WHOLE trait set of `Inner`'s `dyn Trait` type (sorted,
+	// == Trait for a single-trait dyn). Compiled downcast codegen only
+	// supports a single-trait `dyn` (the merged-vtable address a
+	// multi-trait coercion stores differs from the per-trait
+	// `__vtable_<Trait>_<T>` the compare uses), so the IR rejects a
+	// len>1 downcast cleanly; the interpreter handles any set.
+	Traits []string
 }
 // BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.
 // The statements run first, in a fresh child scope, then the trailing
