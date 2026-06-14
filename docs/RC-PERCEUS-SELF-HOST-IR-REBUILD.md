@@ -1102,3 +1102,61 @@ session should PROFILE which cost dominates the arm64 `mmc1` self-compile OOM:**
 Reverted all three attempts; the tree stays at the merged conservative version,
 which is green. The validated fixpoint/single-pass logic is recorded here so
 whichever cost fix is needed, the widening itself is a drop-in.
+
+### Profiled (2026-06-14): the OOM is the per-function recomputation, not `precise_drop_names`
+
+Ran the decisive experiment the previous note called for: applied the single-pass
+growing-registry `borrowable_params_of` but made it `return []` (discard the
+result), so the computation runs in full while DOWNSTREAM does *less* work than the
+merged conservative version (an empty registry admits no borrow-based precise
+drops at all). `TestSelfHostStage2FixedPointArm64` still SIGKILLed (exit 137, in
+isolation, 14 GB free). **Conclusion: the cost is the computation itself (option A),
+not `precise_drop_names` (option B) — so a `precise_drop_names` last-use-map
+rewrite would NOT help.** Mechanism: the growing registry makes the escape walker
+short-circuit less (a param forwarded to a borrowable callee is no longer an
+immediate escape, so the walk continues instead of returning early), so each
+`body_unsafe_for` walks more of the body and allocates more in the recursive walk
+— and `borrowable_params_of` is recomputed once per lowered function, across ~15
+`module_uses_*` / `str_values` inspection passes PLUS the emit pass, each looping
+over every function. On the larger arm64 self-source that product OOMs.
+
+**So the fix is unambiguously to move `borrowable_params_of` off the per-function
+path — compute it ONCE per module compile and reuse it.** The cleanest mechanism:
+the inspection passes (`module_uses_*`, `str_values`, `fn_value_table`, `ir_eligible`,
+`calls_only_known`, …) do not need precise-drop accuracy — the only op a precise
+drop adds is `__fern_arr_dec`, which the function-exit dec-sweep already emits for
+every array-using function, so no `module_*`/`module_emits_op` property check can
+flip — so they can pass an EMPTY registry to `lower_func` (cheap, conservative).
+Only the real emit path (`emit_function_via_ir` in `asm_ir`/`asm_arm64_ir`,
+`emit_function_ir` in `wasm_ir`, driven from the per-module emit loops at
+`asm_ir.fern:2651` / `asm_arm64_ir.fern:793` / `wasm_ir.fern:1218`) needs the full
+registry — computed once before that loop (or stored on `EmitState`, which costs a
+field added to every `EmitState` constructor in `asmcore.fern`) and threaded into
+`lower_func`. With the computation off the per-function path, the single-pass (or a
+full fixpoint) drops in for free. Gate on the arm64 stage-2 self-compile, which is
+the specific test that catches this — it passes on x86 but not arm64 because the
+arm64 self-source is larger.
+
+### Landed (2026-06-14): inter-procedural widening via a per-module emit-path registry
+
+Executed the plan above. Added `borrowable_params_interproc(funcs)` (the single
+forward pass with a growing registry + `borrowable_key`) alongside the unchanged
+conservative `borrowable_params_of`. The ~15 inspection passes keep calling the
+cheap conservative `borrowable_params_of` inline (no edits, no recomputation cost
+change, and — as argued — no property-check flips). Only the three emit drivers
+compute `borrowable_params_interproc(mod.funcs)` ONCE before their per-function
+loop and thread it through `emit_function_via_ir` (`asm_ir` / `asm_arm64_ir`, new
+last param) / `emit_function_ir` (`wasm_ir`, new last param) into `lower_func`.
+`lower_module` (debug-only driver) keeps the conservative registry.
+
+Result: the arm64 stage-2 self-compile passes (201 s, was exit 137), and the
+transitive `inner`-before-`outer` forwarding now reclaims its array on the emit
+path (dec 3 → 4) with value + detector sound; the escape chain `wrap → idf` stays
+rejected. Full gate green (`TestSelfHostAsmRunX86_64` auto-routes to IR, x86 + arm64
+fixpoint/stage-2, `TestSelfHostStdTestE2E`, RC suites, targeted
+`TestSelfHostRcPreciseDropX86IR` with transitive-reclaim + escape-chain cases).
+
+Still order-dependent (only earlier-defined callees propagate). Full convergence
+(later-defined / mutually recursive callees, arbitrary depth) is now a cheap
+follow-up: the registry is already off the per-function path, so iterating
+`borrowable_params_interproc` to a fixpoint costs only a few module-level passes.
