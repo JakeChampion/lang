@@ -3876,14 +3876,22 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
 
 // try_opt_type recovers the Option/Result type spelling of a try-operator's
 // inner expression, mirroring the match-scrutinee resolution: a direct-call
-// `f()` via opt_ret_fns, a map `.get()` (Option[V]), a local/param via its
-// tracked Option/Result type, or an Option/Result struct field. "" when it
-// can't (lower_try then bails to AST).
+// `f()` via opt_ret_fns, a direct `Some(x)` construction via some_opt_type, a
+// map `.get()` (Option[V]), a local/param via its tracked Option/Result type, or
+// an Option/Result struct field. "" when it can't (lower_try then bails to AST).
 function try_opt_type(inner: parser.Expr, s: LowerState): string {
     match (inner) {
         parser.ExprCall(scl) => {
             match (scl.callee) {
-                parser.ExprIdent(scid) => { return s.opt_ret_type(scid.name); },
+                parser.ExprIdent(scid) => {
+                    var rt: string = s.opt_ret_type(scid.name);
+                    // A direct `Some(x)` construction scrutinee — recover its
+                    // Option[T] type (mirrors the main StmtMatch path's
+                    // some_opt_type fallback), so `match (Some(6)) { … }` in value
+                    // position lowers instead of bailing.
+                    if (rt == "") { rt = some_opt_type(inner, s); }
+                    return rt;
+                },
                 parser.ExprFieldAccess(scfa) => {
                     if (scfa.field == "get") {
                         match (scfa.obj) {
