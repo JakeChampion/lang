@@ -7810,7 +7810,14 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
 function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     match (st) {
         parser.StmtReturn(r) => {
-            var e: LiftExpr = lift_expr_walk(r.value, acc, gfns);
+            // `return function(x){...}` of a NO-CAPTURE lambda hoists to a
+            // top-level `__lam_N` (via lift_call_arg, the same lift a no-capture
+            // lambda argument / array element / struct-field value gets), so the
+            // return becomes a bare fn-name -> const_func, riding the existing
+            // "return a named function value" path. A capturing lambda is left in
+            // place (keeps the module on the AST path); a non-lambda value recurses
+            // through lift_expr_walk unchanged.
+            var e: LiftExpr = lift_call_arg(r.value, acc, gfns);
             var ns: parser.Stmt = parser.StmtReturn { value: e.expr, line: r.line, col: r.col };
             return LiftStmts { stmts: [ns], acc: e.acc };
         },
