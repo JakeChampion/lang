@@ -135,16 +135,22 @@ func filterImplemented(codes []string) []string {
 // same source — restricted to the codes the port has implemented so far
 // (selfHostImplementedCodes). As later slices teach checker.fern more
 // codes, the corpus + that set grow together.
-// buildCheckerCodesBin builds the self-host checker-codes driver binary:
-// it compiles checker_codes_run.fern (bundled with lexer / parser / checker /
-// util / io) with the Go-built self-host compiler, producing a binary that
-// reads a Fern program on stdin and prints the diagnostic CODE of every
-// diagnostic the self-host checker emits. Returns the binary path, the
-// (possibly empty) qemu/exec runner prefix, and the temp project dir (which
-// also holds goCheckerCodes' scratch input). Shared by the hand-written
-// corpus gate and the pure-differential verification harness so the
-// expensive self-host bundle compile happens once per test.
+// buildCheckerCodesBin builds the single-module checker-codes driver
+// (checker_codes_run.fern). See buildCheckerDriverBin.
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
+	return buildCheckerDriverBin(t, "checker_codes_run.fern", false)
+}
+
+// buildCheckerDriverBin builds a self-host checker-codes driver binary: it
+// compiles driverFile (bundled with lexer / parser / checker / util / io, plus
+// flatten when withFlatten) with the Go-built self-host compiler, producing a
+// binary that reads stdin and prints the diagnostic CODE of every diagnostic
+// the self-host checker emits. Returns the binary path, the (possibly empty)
+// qemu/exec runner prefix, and the temp project dir (which also holds
+// goCheckerCodes' scratch input). The single-module driver reads one program;
+// the bundle driver (withFlatten) reads a ///MODULE bundle. Shared so the
+// expensive self-host bundle compile happens once per driver.
+func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (checkerBin string, runner []string, dir string) {
 	t.Helper()
 	gcc, run := x86_64Tooling(t)
 	runner = run
@@ -164,13 +170,14 @@ func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir
 	parserSrc, _ := os.ReadFile(filepath.Join(dir, "parser.fern"))
 	checkerSrc, _ := os.ReadFile(filepath.Join(dir, "checker.fern"))
 	utilSrc, _ := os.ReadFile(filepath.Join(dir, "util.fern"))
+	flattenSrc, _ := os.ReadFile(filepath.Join(dir, "flatten.fern"))
 	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
 	if err != nil {
 		t.Fatalf("read std/io.fern: %v", err)
 	}
-	runSrc, err := os.ReadFile("../../examples/self_host/checker_codes_run.fern")
+	runSrc, err := os.ReadFile(filepath.Join("../../examples/self_host", driverFile))
 	if err != nil {
-		t.Fatalf("read checker_codes_run.fern: %v", err)
+		t.Fatalf("read %s: %v", driverFile, err)
 	}
 	driverMod := strings.ReplaceAll(string(runSrc), "import \"std/io\";", "import \"./io\";")
 	var bundle bytes.Buffer
@@ -182,6 +189,10 @@ func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir
 	bundle.Write(parserSrc)
 	bundle.WriteString("\n///MODULE checker\n")
 	bundle.Write(checkerSrc)
+	if withFlatten {
+		bundle.WriteString("\n///MODULE flatten\n")
+		bundle.Write(flattenSrc)
+	}
 	bundle.WriteString("\n///MODULE io\n")
 	bundle.Write(ioSrc)
 	bundle.WriteString("\n///MODULE main\n")
@@ -836,6 +847,102 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 			want := filterImplemented(goCheckerCodes(t, dir, tc.src))
 			if !equalStrings(got, want) {
 				t.Errorf("%s: self-host codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
+			}
+		})
+	}
+}
+
+// selfHostImportRE matches an `import "…/name";` statement and captures the
+// trailing path segment (the module's bundle name). Greedy `(?:[^"]*/)?`
+// eats any `std/`, `core/`, or `./` prefix.
+var selfHostImportRE = regexp.MustCompile(`import\s+"(?:[^"]*/)?([A-Za-z0-9_]+)"\s*;`)
+
+// selfHostBundleFor resolves entrySrc's transitive imports through the Go
+// modload (the same loader goCheckerCodes uses) and renders the ///MODULE
+// bundle the bundle-checker driver consumes: one section per loaded module —
+// its basename as the module name, every `import "<pkg>/<name>";` rewritten
+// to `import "./<name>";` — with the entry section last. This lets the
+// self-host bundle driver see the same module set Go's checker does, so a
+// diagnostic that depends on the imported method/type table (e.g. a string
+// method defined in std/string) is checked identically on both sides.
+func selfHostBundleFor(t *testing.T, entrySrc string) []byte {
+	t.Helper()
+	_, srcs, err := modload.LoadSource(entrySrc)
+	if err != nil {
+		t.Fatalf("modload.LoadSource: %v", err)
+	}
+	const entryPath = "/__fern_source__/main.fern"
+	rewrite := func(s string) string {
+		return selfHostImportRE.ReplaceAllString(s, `import "./$1";`)
+	}
+	base := func(p string) string {
+		return strings.TrimSuffix(filepath.Base(p), ".fern")
+	}
+	var paths []string
+	seen := map[string]string{}
+	for p := range srcs {
+		if p == entryPath {
+			continue
+		}
+		b := base(p)
+		if prev, ok := seen[b]; ok {
+			t.Fatalf("bundle module-name collision: %q and %q both map to %q", prev, p, b)
+		}
+		seen[b] = p
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var buf bytes.Buffer
+	for _, p := range paths {
+		buf.WriteString("///MODULE " + base(p) + "\n")
+		buf.WriteString(rewrite(srcs[p]))
+		buf.WriteString("\n")
+	}
+	buf.WriteString("///MODULE main\n")
+	buf.WriteString(rewrite(entrySrc))
+	return buf.Bytes()
+}
+
+// TestSelfHostCheckerBundleDifferentialX86_64 is the MULTI-MODULE differential
+// verification harness. Unlike TestSelfHostCheckerDifferentialX86_64 (which
+// checks a single self-contained module), it resolves each program's stdlib
+// imports into a ///MODULE bundle and runs it through the bundle-checker
+// driver (checker_codes_bundle_run.fern → flatten.bundle → check_module),
+// then asserts the self-host code set matches the Go checker's (modload +
+// check) — restricted to implemented codes, with the Go checker as the sole
+// oracle (no hardcoded expectations).
+//
+// This is the harness the method-table-dependent diagnostics need: it lets a
+// rule keyed off an IMPORTED module's methods/types (string methods from
+// std/string, etc.) be verified false-positive-free against real stdlib code
+// before it ships. Seed it with valid stdlib-method programs; extend it when
+// teaching the checker a rule that consults the imported table.
+func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
+	checkerBin, runner, dir := buildCheckerDriverBin(t, "checker_codes_bundle_run.fern", true)
+
+	progs := []struct{ name, src string }{
+		// Valid string-method calls (user-defined methods in std/string, not
+		// builtins): both checkers must agree they are well-typed.
+		{"string-contains-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; if (s.contains(\"b\")) { return 1; } return 0; }\n"},
+		{"string-starts-with-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; if (s.starts_with(\"a\")) { return 1; } return 0; }\n"},
+		{"string-is-empty-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }\n"},
+	}
+
+	for _, tc := range progs {
+		t.Run(tc.name, func(t *testing.T) {
+			bundle := selfHostBundleFor(t, tc.src)
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(checkerBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+			}
+			cmd.Stdin = bytes.NewReader(bundle)
+			out, _ := cmd.Output()
+			got := uniqueSortedCodes(strings.Fields(string(out)))
+			want := filterImplemented(goCheckerCodes(t, dir, tc.src))
+			if !equalStrings(got, want) {
+				t.Errorf("%s: self-host bundle codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
 			}
 		})
 	}
