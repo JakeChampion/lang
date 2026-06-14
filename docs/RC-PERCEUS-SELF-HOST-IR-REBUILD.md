@@ -1285,3 +1285,55 @@ scrutinee from "escape" only when the scrutinee is fresh/single-owner/dead-after
 and thread a reuse token into arm-body lowering with same-variant-box-size analysis.
 There is NO minimal sound slice before that prerequisite lands — you cannot reuse a box
 the compiler currently leaks and does not own.
+
+---
+
+## ROOT CAUSE pinned (2026-06-14): IR struct/enum boxes have no rc header → reclamation is latently unsound
+
+Investigating consumed-enum-box reclamation surfaced the EXACT prerequisite (and a
+pre-existing latent bug) behind the whole "free / reuse-with-free struct & enum boxes"
+direction. Pinned and reproduced on **origin/main**:
+
+- On the IR path, `op_struct_make` (`asm_ir.fern` ~2277; arm64/wasm mirrors) returns the
+  **raw alloc block** as the box pointer: layout `[shape_ptr@0, f0@8, f1@16, …]`, with
+  **no refcount word**. ARRAYS differ: `__fern_arr_box` offsets `base = rawptr+4` and
+  stores rc at `base-4` (`ir_x86.fern` ~101-104). So `__fern_rc_dec` (→ `__fern_arr_dec`),
+  which reads/decrements `[ptr-4]`, is correct for arrays but **reads the previous block's
+  last word as a refcount** for a struct/enum box → spurious over-release, and on a
+  spurious drop-to-0 pushes a bogus freelist block (shape ptr misread as length) → heap
+  corruption.
+
+- **Reproducible latent over-release on main** (`__rc_underflow()` reads non-zero):
+  - `struct P{x:i32,y:i32} fn compute(){ var d=P{x:3,y:4}; return d.x+d.y }` → detector **1**
+    (the exit dec-sweep decs d's header-less box).
+  - `struct V{xs:i32[],t:i32} fn use(){ var d=V{xs:[1,2,3],t:9}; return d.xs[0]+d.t }`
+    → detector **1** as well (a SECOND, distinct over-release in the array-field /
+    field-drop reclamation path).
+  These are masked because no existing green test calls `__rc_underflow()` after a plain
+  reclaimable-struct exit-sweep; the byte-identical fixpoint doesn't catch it (the unsound
+  dec is deterministic, so stage1 asm == stage2 asm), and AsmRun passes when the corruption
+  is benign for a given heap layout.
+
+- **Why the landed struct in-place reuse (#3177/#3191/#3202) is still sound:** the reuse
+  emitters deliberately bind the reused box into a NON-reclaimable alias and LEAK it (never
+  emit a struct-box dec), so they never hit the header-less dec. They save the allocation;
+  they do not free the box. The bug lives only in the *plain* reclaimable-struct exit-sweep
+  (`emit_dec_sweep_except`'s `slot_is_reclaimable_struct` branch) and `emit_struct_field_drops`.
+
+- A surgical "skip the header-less box dec, keep the (sound, rc-header'd) array-field drops"
+  edit fixes the plain-struct case (detector 1→0) but NOT the array-field case — confirming
+  the subsystem has multiple latent faults, not one. Reverted rather than ship a partial fix.
+
+### The unblocking refactor (one change fixes the bug AND enables enum free + consuming-match reuse)
+
+Give struct/enum boxes an **rc header** like arrays: in `op_struct_make` on all three
+backends (`asm_ir.fern`, `asm_arm64_ir.fern`, `wasm_ir.fern`) allocate `header + (nf+1)*8`,
+return a base offset past the rc word, init rc=1 — and move EVERY box-format reader in
+lockstep (`op_struct_get`/`op_struct_set` offsets, `op_variant_is`, dyn-dispatch shape read,
+`opt_payload`-of-struct, `emit_struct_field_drops`). Gate on the byte-identical fixpoint.
+Once boxes are header'd: (1) the plain-struct + array-field reclamation decs become sound
+(latent bug fixed), (2) the dead `emit_dec_sweep_except` struct branch becomes real, and
+(3) the consumed-scalar-enum free (analysis already prototyped + reverted) and ultimately
+consuming-`match` box reuse become implementable — there is no sound way to free or reuse a
+box the runtime can't refcount, so this header refactor is the single prerequisite for the
+entire remaining struct/enum-reclamation + FBIP-reuse-with-free roadmap.
