@@ -3936,6 +3936,34 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
             }
             return "";
         },
+        // `a[i]` where `a` is an Option/Result ARRAY — recover the element type
+        // from the array slot's opt_type (annotated `Option[T][]` / `Result[…][]`,
+        // or inferred from an Option-array literal), stripping the trailing `[]`.
+        // Mirrors the main StmtMatch path so `match (a[i]) { … }` in value position
+        // lowers; also handles `b.o[i]` (an Option/Result-array struct field).
+        parser.ExprIndex(six) => {
+            match (six.array) {
+                parser.ExprIdent(arrid) => {
+                    var aot: string = s.opt_type_of_slot(s.slot_of(arrid.name));
+                    if (aot.len() >= 2 && aot[aot.len() - 2 : aot.len()] == "[]") {
+                        var elt: string = aot[0 : aot.len() - 2];
+                        if (elt.len() >= 8 && (elt[0:7] == "Option[" || elt[0:7] == "Result[")) { return elt; }
+                    }
+                },
+                parser.ExprFieldAccess(sfa2) => {
+                    var foty2: string = expr_struct_type(sfa2.obj, s);
+                    if (foty2 != "") {
+                        var fat: string = decl_field_type(s.structs, foty2, sfa2.field);
+                        if (fat.len() >= 2 && fat[fat.len() - 2 : fat.len()] == "[]") {
+                            var felt: string = fat[0 : fat.len() - 2];
+                            if (felt.len() >= 8 && (felt[0:7] == "Option[" || felt[0:7] == "Result[")) { return felt; }
+                        }
+                    }
+                },
+                _ => {}
+            }
+            return "";
+        },
         _ => { return ""; }
     }
     return "";
