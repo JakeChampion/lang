@@ -247,6 +247,31 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — f32 scalar params / returns / locals via the self-host IR path
+
+Fixed a latent self-host IR miscompile: Fern represents f32 as an f64 internally
+(f32<->f64 casts are no-ops; every float op runs at double width), but
+`lower_func` and `f64_ret_fns_of` only matched the literal type name `"f64"`, so
+an `f32` param / return / local slipped through as a plain **i32** slot — its
+8-byte float bit pattern was then passed/returned/cast through the 4-byte integer
+path and miscompiled (`id32(5.5 as f32)` returned 0, not 5). A new
+`is_f64_scalar_type_name` (`"f64"`/`"f32"`/`"float"`) drives the 8-byte-float slot
+marking at the param/receiver/local-binding sites and the f64-returning-fn
+registration; wasm's `(result f64)` / `(param f64)` signature emission keys off it
+too. The std/float f32 methods (`abs`/`sqrt`/`floor`/`round` as
+`__*_f64(x as f64) as f32`), written as free functions, now lower correctly.
+New routing-pinned `TestSelfHostF32IR` (x86-64 + wasm, oracle-checked); verified
+end-to-end on x86-64, wasm, and arm64 (qemu); x86-64 + stage2 fixpoint hold.
+Only f32/"float" *scalar* signatures are covered — f32 arrays / struct fields /
+tuple elements are unchanged (still classified via their own paths).
+
+**Discovered, deferred (pre-existing, separate from the above):** a VALUE-receiver
+method on a scalar f64 (e.g. `(x: f64) dbl(): f64`) routes through the IR path but
+miscompiles (`(3.5).dbl()` → 0). The std/float intrinsic tests call the `__*_f64`
+builtins directly, so this dispatch path is uncovered. f32 value-receiver methods
+route AST (safe). Tracked as a follow-up — not addressed here to keep this change
+to the f32-scalar-signature fix.
+
 ### 2026-06-14 — `__round_f64` via the self-host IR path (all 3 backends)
 
 Follow-up to the f64-math-intrinsics work: `__round_f64` (round-half-away-from-
