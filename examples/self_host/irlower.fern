@@ -4269,7 +4269,13 @@ function iife_enum_payloads_i32(pv: parser.PatVariant, s: LowerState): boolean {
     }
     var k: i32 = 0;
     while (k < pv.extra_bindings.len()) {
-        if (pv.extra_bindings[k].len() > 0 && pv.extra_bindings[k] != "_") {
+        // Bind the array element to an explicitly-typed string local: the
+        // self-host compiler's inference defaults a parameter field's array
+        // element to i32, so `pv.extra_bindings[k].len()` would dispatch as
+        // `i32__len` (undefined) when this file is bootstrapped. The annotated
+        // local pins the receiver type to string.
+        var eb: string = pv.extra_bindings[k];
+        if (eb.len() > 0 && eb != "_") {
             if (decl_field_type(s.structs, vname, "__ev" + util.i32_to_string(k + 1)) != "i32") { return false; }
         }
         k = k + 1;
