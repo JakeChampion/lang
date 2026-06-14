@@ -4559,7 +4559,25 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         while (oali < oalit.elements.len()) {
                             var oaet: string = some_opt_type(oalit.elements[oali], se);
                             if (oaet != "") { opt_ty = oaet + "[]"; oali = oalit.elements.len(); }
-                            else { oali = oali + 1; }
+                            else {
+                                // A 2D Option literal (`[[Some(1)], …]`): the element
+                                // is itself an array — recurse for the innermost
+                                // Option type and append "[][]" (the depth-2 sibling;
+                                // the annotated `Option[T][][]` form already works via
+                                // the array-foreach opt propagation). #3073.
+                                match (oalit.elements[oali]) {
+                                    parser.ExprArray(oinner) => {
+                                        var ioi: i32 = 0;
+                                        while (ioi < oinner.elements.len()) {
+                                            var ioet: string = some_opt_type(oinner.elements[ioi], se);
+                                            if (ioet != "") { opt_ty = ioet + "[][]"; ioi = oinner.elements.len(); }
+                                            else { ioi = ioi + 1; }
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                                if (opt_ty != "") { oali = oalit.elements.len(); } else { oali = oali + 1; }
+                            }
                         }
                     },
                     _ => {}
