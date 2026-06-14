@@ -247,6 +247,25 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — functions returning a no-capture lambda via the self-host IR path
+
+Widened the IR subset: a function returning a NO-CAPTURE lambda
+(`function mk(): (i32) => i32 { return function(b) { ... }; }`) now lowers through
+the IR path. Returning a *capturing* lambda and returning a *named* function value
+already lowered; only the no-capture-lambda return position bailed, because
+`lift_lambdas` hoisted no-capture lambdas in call-argument / array-element /
+struct-field positions but not in RETURN position. The fix lifts the return value
+via `lift_call_arg`, so `return function(b){...}` becomes `return __lam_N` — the
+already-working named-function-return path. (The fixpoint driver `asm_run` doesn't
+apply `lift_lambdas`, and no compiler function returns a bare lambda, so the
+self-bootstrap is unaffected; x86-64 + stage2 fixpoint hold.)
+
+New routing-pinned `TestSelfHostFnRetIR` (x86-64 + wasm, oracle-checked: no-capture
+return bound + called, multiply-bodied / 2-arg / called-twice, plus capturing- and
+named-return regression guards). Verified end-to-end on x86-64, wasm, and arm64
+(qemu). Still on the AST path: immediately calling a returned function value
+(`mk()(4)` — a call on a call result), a separate dispatch gap left for later.
+
 ### 2026-06-14 — scalar f64 value-receiver methods via the self-host IR path
 
 Resolved the follow-up flagged in the f32-scalar fix: a VALUE-receiver method on a
