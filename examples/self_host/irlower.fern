@@ -8084,12 +8084,32 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // already set) or a non-struct body is unaffected. (An enum-valued if-/match-
 // expression is NOT lifted — its variant constructors read as captures — so it
 // stays an inline IIFE recovered via expr_enum_type, not here.)
-function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
+function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[], depth: i32): string {
+    if (depth > 8) { return ""; }
     if (fn.body.len() == 0) { return ""; }
     var re: parser.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
     match (re) {
         parser.ExprStructLit(sl) => {
             if (decl_is_struct(structs, sl.type_name) && decl_is_leaksafe(structs, sl.type_name)) { return sl.type_name; }
+        },
+        // A NESTED struct-valued if-/match-expression branch (`if (a) { if (b) {
+        // P{..} } else { … } } else { … }`) is itself lifted to another
+        // `__lam_M`, so this `__lam_N`'s leaf return is a call to it. Recurse
+        // into that callee's body to reach the innermost struct literal (bounded
+        // depth keeps a pathological cycle finite).
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") {
+                        var ni: i32 = 0;
+                        while (ni < funcs.len()) {
+                            if (funcs[ni].name == cid.name) { return fn_inferred_struct_ret(funcs[ni], structs, funcs, depth + 1); }
+                            ni = ni + 1;
+                        }
+                    }
+                },
+                _ => {}
+            }
         },
         _ => {}
     }
@@ -8111,7 +8131,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
         // .. }).x` recover the struct type at the `__lam_N()` call site.
         else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_") {
-            var inf: string = fn_inferred_struct_ret(funcs[k], structs);
+            var inf: string = fn_inferred_struct_ret(funcs[k], structs, funcs, 0);
             if (inf.len() > 0) { elig = true; elem_t = inf; }
         }
         // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
