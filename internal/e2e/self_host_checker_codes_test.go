@@ -253,6 +253,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// (closure-field call), is excluded — no false positive.
 		{"method-on-struct-missing", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.nope(); }\n", []string{"E043"}},
 		{"method-on-struct-defined-ok", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return p.x; }\nfunction main(): i32 { var p = P { x: 1 }; return p.m(); }\n", nil},
+		// E038 (struct non-function field called): `p.x()` where x is a field
+		// whose type isn't a function. A function-typed field (closure call)
+		// stays clean; a missing member is E043 (above), not E038.
+		{"call-struct-field-i32", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.x(); }\n", []string{"E038"}},
+		{"call-struct-field-string", "struct P { s: string }\nfunction main(): i32 { var p = P { s: \"a\" }; p.s(); return 0; }\n", []string{"E038"}},
 		{"call-too-few-args", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1); }\n", []string{"E004"}},
 		{"call-too-many-args", "function id(a: i32): i32 { return a; }\nfunction main(): i32 { return id(1, 2); }\n", []string{"E004"}},
 		{"call-correct-arity-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
