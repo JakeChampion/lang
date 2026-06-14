@@ -4911,6 +4911,37 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     _ => {}
                 }
             }
+            // `var a = if (c) { [Some(1)] } else { … }` — an Option-array bound
+            // from an if-/match-EXPRESSION (IIFE: ExprCall{callee: ExprLambda}).
+            // Recover the slot's "Option[T][]" from the first branch's array literal
+            // (the IIFE sibling of the array-literal case above), so `match (a[i])`
+            // / `for o in a` recover the element payload. The slot is already marked
+            // is_arr for an IIFE-array result (#3141).
+            if (opt_ty == "") {
+                match (v.init) {
+                    parser.ExprCall(oic) => {
+                        match (oic.callee) {
+                            parser.ExprLambda(oilam) => {
+                                if (oilam.body.len() > 0) {
+                                    match (iife_first_return_expr(oilam.body[0])) {
+                                        parser.ExprArray(obra) => {
+                                            var obi: i32 = 0;
+                                            while (obi < obra.elements.len()) {
+                                                var obaet: string = some_opt_type(obra.elements[obi], se);
+                                                if (obaet != "") { opt_ty = obaet + "[]"; obi = obra.elements.len(); }
+                                                else { obi = obi + 1; }
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                }
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // `var o = a[i]` where `a` is an Option/Result ARRAY — the element is
             // an Option/Result value, so record o's opt_type (strip the array's
             // `[]`) so a later `match (o)` recovers the payload. This also drives

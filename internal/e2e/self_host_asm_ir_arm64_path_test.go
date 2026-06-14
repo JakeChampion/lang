@@ -450,6 +450,13 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"ifexpr-arr-foreach", `function main(): i32 { var c = 5; var a = if (c > 3) { [1, 2, 3] } else { [4] }; var s = 0; for x in a { s = s + x; } return s; }`},
 		{"ifexpr-arr-len", `function main(): i32 { var c = 5; var a = if (c > 3) { [1, 2, 3] } else { [4] }; return a.len(); }`},
 		{"matchexpr-arr-foreach", `function main(): i32 { var k = 1; var a = match (k) { 1 => [10, 20], _ => [1] }; var s = 0; for x in a { s = s + x; } return s; }`},
+		// An Option array bound from an if-/match-EXPRESSION (IIFE): the StmtVar
+		// opt-array inference now records the slot's Option[T][] from the first
+		// branch's array literal, so match (a[i]) / for o in a recover the element
+		// payload (the Option-array sibling of #3141) (#3146).
+		{"ifexpr-optarr-index", `function main(): i32 { var c = 5; var a = if (c > 3) { [Some(7), None] } else { [Some(1)] }; return match (a[0]) { Some(v) => v, None => 0 }; }`},
+		{"ifexpr-optarr-foreach", `function main(): i32 { var c = 5; var a = if (c > 3) { [Some(7), None, Some(3)] } else { [Some(1)] }; var s = 0; for o in a { match (o) { Some(v) => { s = s + v; }, None => {} } } return s; }`},
+		{"matchexpr-optarr-index", `function main(): i32 { var k = 1; var a = match (k) { 1 => [Some(9)], _ => [Some(0)] }; return match (a[0]) { Some(v) => v, None => 0 }; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
