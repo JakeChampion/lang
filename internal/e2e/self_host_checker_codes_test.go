@@ -469,6 +469,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-update-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 5 }; return p.x; }\n", nil},
 		{"value-undefined", "function main(): i32 { return z; }\n", []string{"E001"}},
 		{"value-defined-ok", "function main(): i32 { var z: i32 = 5; return z; }\n", nil},
+		// A bare STRUCT type name in value position is E001 (you construct with
+		// `P { … }`); the struct literal and a field read stay clean.
+		{"struct-name-as-value", "struct P { x: i32 }\nfunction main(): i32 { return P; }\n", []string{"E001"}},
+		{"struct-name-as-value-var", "struct P { x: i32 }\nfunction main(): i32 { var q = P; return 0; }\n", []string{"E001"}},
+		{"struct-literal-not-value-ok", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.x; }\n", nil},
 		{"value-param-ok", "function f(a: i32): i32 { return a; }\nfunction main(): i32 { return f(1); }\n", nil},
 		{"value-function-as-value-ok", "function g(): i32 { return 1; }\nfunction run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(g); }\n", nil},
 		{"value-enum-variant-ok", "enum E { A, B }\nfunction main(): i32 { var e: E = A; return 0; }\n", nil},

@@ -451,7 +451,15 @@ function is_resolvable_value(name: string, s: Scope): boolean {
     if (s.lookup_sig(name).name.len() > 0) { return true; }
     if (variant_in_unions(name, s.unions)) { return true; }
     if (is_builtin_variant(name)) { return true; }
-    if (s.lookup_struct(name).name.len() > 0) { return true; }
+    // A bare STRUCT type name is NOT a value — `return P` / `var x = P` for a
+    // standalone struct P is E001 in the Go checker (you construct with the
+    // `P { … }` literal, an ExprStructLit, which never reaches here). Union
+    // members and enum-variant constructors are caught above by
+    // variant_in_unions / is_builtin_variant, so dropping the struct-name case
+    // only rejects pure type names — matching Go, with no new false positive
+    // (Go flags the same bare names). Struct CALLS (none exist — there's no
+    // `P(...)` form) go through is_resolvable_callee, which never consulted
+    // lookup_struct either.
     // A function — user or builtin — may also be referenced as a bare
     // value (e.g. `var w = write;` or passing a function by name).
     if (name.len() >= 2 && name[0:2] == "__") { return true; }
