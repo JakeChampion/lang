@@ -777,6 +777,13 @@ pub function expr_enum_type(e: parser.Expr, s: LowerState): string {
                 // Qualified payload construction `Enum.Variant(args)` — the
                 // variant is the field, confirmed against the bare enum name.
                 parser.ExprFieldAccess(cfa) => { return qualified_variant_enum(cfa, s); },
+                // An enum-valued if-/match-EXPRESSION (`var c = if (b) {
+                // Circle(2) } else { Square(3) }`) stays an inline 0-arg IIFE —
+                // its variant constructors read as captures, so lift_lambdas
+                // leaves it as ExprLambda. Its enum type is the leaf branch's
+                // variant owner (iife_leaf_value unwraps any nesting), so the
+                // bound local types as the enum and `c.method()` dispatches.
+                parser.ExprLambda(_) => { return expr_enum_type(iife_leaf_value(e), s); },
                 _ => { return ""; }
             }
         },
@@ -8067,13 +8074,16 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // over-match a non-enum bare nominal, but a spurious entry only risks an AST
 // fallback at a call site (never a miscompile) — the stage-2 fixpoint guards it.
 // fn_inferred_struct_ret infers a function's leaf-safe STRUCT return type from
-// its body when the declaration carries no `ret_type` — the shape an if-/match-
-// EXPRESSION desugar produces once lift_lambdas hoists it to a top-level
-// `__lam_N` (the IIFE callee becomes a bare fn name, so the value position is a
-// plain `__lam_N()` call whose result type must come from the body). The leaf
-// returned value (iife_first_return_expr sees through nested if/match) must be a
-// struct LITERAL of a leak-safe struct. Returns "" otherwise, so an annotated
-// function (rt already set) or a non-struct body is unaffected.
+// its body when the declaration carries no real ret_type — the shape an if-/
+// match-EXPRESSION desugar produces once lift_lambdas hoists it to a top-level
+// `__lam_N` (default `i32` ret_type, real struct result in the body; the IIFE
+// callee becomes a bare fn name, so the value position is a plain `__lam_N()`
+// call whose result type must come from the body). The leaf returned value
+// (iife_first_return_expr sees through nested if/match) must be a struct LITERAL
+// of a leak-safe struct. Returns "" otherwise, so an annotated function (rt
+// already set) or a non-struct body is unaffected. (An enum-valued if-/match-
+// expression is NOT lifted — its variant constructors read as captures — so it
+// stays an inline IIFE recovered via expr_enum_type, not here.)
 function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
     if (fn.body.len() == 0) { return ""; }
     var re: parser.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);

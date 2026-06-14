@@ -980,6 +980,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-match-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = match (1) { 1 => P{x:10,y:2}, _ => P{x:3,y:4} }; return p.x + p.y; }`},
 		{"struct-if-expr-direct-field", `struct P { x: i32, y: i32 } function main(): i32 { return (if (true) { P{x:7,y:2} } else { P{x:3,y:4} }).x; }`},
 		{"struct-if-expr-method", `struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { var p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.sum(); }`},
+		// An enum-valued if-/match-EXPRESSION binding stays an inline IIFE (its
+		// variant constructors read as captures, so lift_lambdas leaves it as
+		// ExprLambda); expr_enum_type sees through the IIFE so the bound local
+		// types as the enum and a method call on it dispatches to <Enum>.<method>.
+		{"enum-if-expr-method", `enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; } function main(): i32 { var s = if (true) { Circle(2) } else { Square(3) }; return s.area(); }`},
+		{"enum-match-expr-method", `enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; } function main(): i32 { var s = match (1) { 1 => Circle(2), _ => Square(3) }; return s.area(); }`},
+		{"enum-unit-if-expr-method", `enum Color { Red, Green, Blue } function (c: Color) code(): i32 { match (c) { Red => { return 1; }, Green => { return 2; }, Blue => { return 3; } } return 0; } function main(): i32 { var c = if (false) { Red } else { Green }; return c.code(); }`},
 		// `for x in <u64[]>`: the element rides the i64 8-byte read but is bound
 		// u64, so body compares/shifts on it are unsigned. The IR path now lowers
 		// this (previously bailed to AST); both paths must agree, and the large
