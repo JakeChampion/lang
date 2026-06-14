@@ -7186,6 +7186,25 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             }
             return LiftExpr { expr: parser.ExprCall { callee: c.callee, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, acc: a };
         },
+        // An array literal of NO-CAPTURE lambdas (`var fs = [function(x){...}, ...]`):
+        // hoist each lambda element to a top-level `__lam_N` (the same lift a
+        // no-capture lambda ARGUMENT gets), so the array becomes one of bare
+        // function-name idents -- which lower to a function-pointer array, and
+        // `fs[i](args)` rides the existing fn-pointer-array call_indirect path.
+        // A capturing lambda element is returned unchanged by lift_call_arg and
+        // keeps the module on the AST path.
+        parser.ExprArray(arr) => {
+            var aa: LiftAcc = acc;
+            var nelems: parser.Expr[] = [];
+            var ei: i32 = 0;
+            while (ei < arr.elements.len()) {
+                var er: LiftExpr = lift_call_arg(arr.elements[ei], aa, gfns);
+                aa = er.acc;
+                nelems = nelems.append(er.expr);
+                ei = ei + 1;
+            }
+            return LiftExpr { expr: parser.ExprArray { elements: nelems }, acc: aa };
+        },
         _ => { return LiftExpr { expr: e, acc: acc }; }
     }
     return LiftExpr { expr: e, acc: acc };
