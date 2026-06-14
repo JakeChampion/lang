@@ -291,3 +291,72 @@ function main(): i32 {
 		}
 	}
 }
+
+// --- `dyn Trait` over a PRIMITIVE receiver (i32) — regression for the
+// x86-64 OpBoxDyn register-clobber bug + the first proven slice of
+// "dyn over primitives". A primitive value isn't separately heap-
+// allocated, so the boxed `{data, vtable}` cell is the program's FIRST
+// allocation — which is exactly the case that triggers __fern_alloc's
+// heap-init mmap `syscall`. x86-64's OpBoxDyn used to hold data/vtable
+// in caller-save r10/r11 across that call; the syscall clobbered them
+// (r11 ← RFLAGS), so the cell came back as garbage and dispatch
+// segfaulted on the first `dyn` over an i32. Now data/vtable ride
+// callee-saved rbx/r12 (the x86-64 mirror of arm64's x19/x20). wasm
+// carries the i32 inline (no box) and arm64 already used callee-saved
+// regs, so both already worked — these pin all three. ---
+
+const dynPrimI32Src = `import "std/i32";
+trait Show {
+    function show(self: Self): i32;
+}
+impl Show for i32 {
+    function show(self: Self): i32 { return self + 100; }
+}
+function run(s: dyn Show): i32 { return s.show(); }
+function main(): i32 {
+    var x: i32 = 5;
+    print("v=" + run(x).to_string());
+    return 0;
+}
+`
+
+func TestX86_64DynTraitPrimitiveReceiver(t *testing.T) {
+	want := dynInterpStdout(t, dynPrimI32Src)
+	got, code := compileAndRunX86_64(t, dynPrimI32Src)
+	got = strings.TrimSpace(got)
+	if code != 0 {
+		t.Fatalf("x86-64 exit = %d, want 0; stdout:\n%s", code, got)
+	}
+	if got != want {
+		t.Errorf("x86-64 dyn-over-i32 = %q, want %q (interp)", got, want)
+	}
+	if want != "v=105" {
+		t.Errorf("interp baseline = %q, want \"v=105\"", want)
+	}
+}
+
+func TestArm64DynTraitPrimitiveReceiver(t *testing.T) {
+	want := dynInterpStdout(t, dynPrimI32Src)
+	got, code := compileAndRunArm64(t, dynPrimI32Src)
+	got = strings.TrimSpace(got)
+	if code != 0 {
+		t.Fatalf("arm64 exit = %d, want 0; stdout:\n%s", code, got)
+	}
+	if got != want {
+		t.Errorf("arm64 dyn-over-i32 = %q, want %q (interp)", got, want)
+	}
+	if want != "v=105" {
+		t.Errorf("interp baseline = %q, want \"v=105\"", want)
+	}
+}
+
+func TestWASMDynTraitPrimitiveReceiver(t *testing.T) {
+	want := dynInterpStdout(t, dynPrimI32Src)
+	got := runWasmCapturingStdout(t, dynPrimI32Src)
+	if got != want {
+		t.Errorf("wasm dyn-over-i32 = %q, want %q (interp)", got, want)
+	}
+	if want != "v=105" {
+		t.Errorf("interp baseline = %q, want \"v=105\"", want)
+	}
+}

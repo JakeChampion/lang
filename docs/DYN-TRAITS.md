@@ -357,6 +357,45 @@ inner `data`) is designed in **§4.4** (the Perceus follow-up): a trailing
 vtable drop slot + a per-trait `__drop_dyn_<Trait>` that runs the concrete
 destructor and frees the cell.
 
+**Register lifetime across `__fern_alloc` (boxed coercion).** `OpBoxDyn`
+holds `data`/`vtable` across `call __fern_alloc`, whose heap-init /
+heap-grow path does an mmap `syscall` — which clobbers caller-save regs
+(on x86-64 the CPU stashes RFLAGS into `r11` and the mmap arg lives in
+`r10`; arm64's `__fern_alloc` clobbers `x0..x14`). So both natives park
+`data`/`vtable` in **callee-saved** regs across the call (x86-64:
+`rbx`/`r12`; arm64: `x19`/`x20`), popping both operands *before* the
+save so the saved pair never aliases the operand-stack slots. This is
+load-bearing exactly when the box is the program's **first** allocation
+— e.g. a `dyn` over a primitive, whose value isn't separately
+heap-allocated — since that box alloc is the one that triggers heap
+init. (The struct cases never hit it: the struct is allocated, and the
+heap initialised, before its box.)
+
+#### 4.2.3 `dyn` over primitive receivers — partial
+
+A primitive/`string` value can `impl` a trait and coerce to `dyn` (the
+checker already allows it; the interpreter handles it by tag). On the
+compiled backends the data word holds the value directly (no separate
+heap box for the concrete), which works only while the value fits one
+slot and uses the integer-register receiver ABI:
+
+| receiver | x86-64 | arm64 | wasm |
+|----------|:------:|:-----:|:----:|
+| `i32`, `boolean` | ✓ | ✓ | ✓ |
+| `i64`, `f64` | ✓ | ✓ | ✗ (wider than wasm's i32 data slot) |
+| `string` | ✓ | ✗ | ✗ |
+
+`i32`/`boolean` work on all three (pinned by `Test*DynTraitPrimitive
+Receiver`). The gaps share one root: the inline (wasm) / boxed `data`
+word can't carry a value wider than a single slot, nor route a non-
+integer (`f64`/`string`) receiver ABI. The proper fix is uniform
+**primitive boxing**: heap-box the value so `data` is always a one-word
+pointer, and point the vtable method slot at an unboxing wrapper
+(`load value; tail-call __method_<C>_<m>`) — anticipated by §4.1's "for
+primitives, a heap box". That, plus the self-host's parallel primitive
+gap (its `op_dyn_dispatch` reads a shape pointer a primitive lacks), is
+the next `dyn` slice.
+
 ### 4.3 Self-host (x86-64 + arm64 — shipped)
 
 The self-hosted compiler dispatches heap values dynamically by shape
