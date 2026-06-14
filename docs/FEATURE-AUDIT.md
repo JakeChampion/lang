@@ -98,6 +98,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Bitwise `& \| ^ << >>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | prop generators (LCG) + audit fixture |
 | Unary minus `-x` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Operator precedence / parenthesisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `2+3*4`, left-assoc, parens |
+| Operator overloading on composites (`== != < <= > >= + - * /`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `==`→`eq`, `<`…→`cmp`, `+ - * /`→`add`/`sub`/`mul`/`div` (#2706); checker desugars to the method, structural by name |
 | Sized int types `i8 i16 i32 i64 u8 u16 u32 u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i64 arith, u8/u16 cast; out-of-range literal is a static error |
 | Integer overflow / wrapping semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | runtime narrowing cast wraps mod 2ⁿ |
 | Float types `f32 f64` arithmetic | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+ * /`, f32 + f64 |

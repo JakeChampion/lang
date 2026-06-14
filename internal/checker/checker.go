@@ -2288,6 +2288,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				IntWidth: 32,
 			}
 		}
+		// Composite arithmetic: `a <op> b` → `a.<add|sub|mul|div>(b)`.
+		if b.ArithCall != nil {
+			return b.ArithCall
+		}
 		return e
 	})
 
@@ -8436,6 +8440,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			fallthrough
 		case "-", "*", "/":
+			// Composite-type arithmetic operator overloading. `a <op> b`
+			// on a struct / enum desugars to the type's conventionally-
+			// named method (`+`→add, `-`→sub, `*`→mul, `/`→div), mirroring
+			// composite `==` (eq) / `<` (cmp). Stashed on ArithCall and
+			// swapped in by the post-check rewrite. See #2706.
+			if lt != nil && ast.Equal(lt, rt) {
+				switch lt.(type) {
+				case ast.StructType, ast.EnumType:
+					opMethod := map[string]string{"+": "add", "-": "sub", "*": "mul", "/": "div"}[n.Op]
+					tn, _ := methodTypeName(lt)
+					if mangled, ok := c.info.Methods[tn+"."+opMethod]; ok && c.methodVisibleHere(mangled) {
+						call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
+						rtt := c.checkExpr(call, s)
+						n.ArithCall = call
+						return rtt
+					}
+					c.errfCode(n.P, "E009", "operator %q is not defined for %s — implement `function (self: %s) %s(other: %s): %s` (or `impl … for %s`) to overload it", n.Op, lt, tn, opMethod, tn, tn, tn)
+					return lt
+				}
+			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)

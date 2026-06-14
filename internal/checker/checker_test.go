@@ -84,6 +84,37 @@ func TestTypeErrors(t *testing.T) {
 // not implement `Eq` is rejected (with a derive hint); arrays/slices/
 // tuples are rejected (no structural eq yet); a type that does
 // implement `Eq` type-checks (and desugars to `a.eq(b)`).
+// Arithmetic operators `+ - * /` on a composite type desugar to its
+// conventionally-named method (add/sub/mul/div); a composite without the
+// method is rejected with a clear E009. See #2706.
+func TestCompositeArithmeticOverload(t *testing.T) {
+	const ops = `struct V { x: i32 }
+function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
+function (self: V) sub(o: V): V { return V { x: self.x - o.x }; }
+function (self: V) mul(o: V): V { return V { x: self.x * o.x }; }
+function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
+`
+	if err := checkSource(t, ops+`function main(): i32 {
+  var a: V = V { x: 6 };
+  var b: V = V { x: 7 };
+  var r: V = ((a + b) - a) * b;
+  return (r / b).x;
+}`); err != nil {
+		t.Errorf("composite arithmetic with add/sub/mul/div should type-check, got: %v", err)
+	}
+	// A composite without the operator method is rejected.
+	err := checkSource(t, `struct W { x: i32 }
+function main(): i32 { var a: W = W{x:1}; var b: W = W{x:2}; var c: W = a + b; return c.x; }`)
+	if err == nil || !strings.Contains(err.Error(), `operator "+" is not defined for W`) {
+		t.Errorf("struct without `add` should be rejected with an operator-overload hint, got: %v", err)
+	}
+	// Numeric arithmetic is unaffected (the overload path only fires for
+	// struct/enum operands).
+	if err := checkSource(t, `function main(): i32 { return 2 + 3 * 4 - 1; }`); err != nil {
+		t.Errorf("numeric arithmetic should still type-check, got: %v", err)
+	}
+}
+
 func TestCompositeEqualityRoutesToEq(t *testing.T) {
 	const eqI32 = `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
