@@ -211,6 +211,21 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// fire and c gets a fresh box. Value still correct, detector 0.
 		{"struct-cross-no-reuse-donor-used-after-value", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { x: 10, y: 20 }; return c.x + c.y + d.x; }`, 33},
 		{"struct-cross-no-reuse-donor-used-after-detector", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { x: 10, y: 20 }; var r = c.x + c.y + d.x; if (r != 33) { return 99; } return __rc_underflow(); }`, 0},
+		// Plain single-struct reclamation through the rc-headered box: a fresh,
+		// non-escaping struct local is rc-dec'd at exit and FREED soundly. Before
+		// the struct box gained a refcount header (struct_make via __fern_arr_box),
+		// __fern_arr_dec read the word below the raw __fern_alloc block as a bogus
+		// refcount and over-released, so this read 1; now it reads 0.
+		{"plain-struct-reclaim-value", `struct P { x: i32, y: i32 } function compute(): i32 { var d = P { x: 3, y: 4 }; return d.x + d.y; } function main(): i32 { return compute(); }`, 7},
+		{"plain-struct-reclaim-detector", `struct P { x: i32, y: i32 } function compute(): i32 { var d = P { x: 3, y: 4 }; return d.x + d.y; } function main(): i32 { var r = compute(); if (r != 7) { return 99; } return __rc_underflow(); }`, 0},
+		// Two independent plain structs, both reclaimed at exit — both boxes freed,
+		// detector 0.
+		{"two-plain-structs-reclaim-detector", `struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 3, y: 4 }; var s = a.x + a.y + b.x + b.y; if (s != 10) { return 99; } return __rc_underflow(); }`, 0},
+		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
+		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
+		// Detector 0 proves neither the box nor the array field over-releases.
+		{"struct-array-field-reclaim-value", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; return b.xs[1] + b.n; } function main(): i32 { return go(); }`, 23},
+		{"struct-array-field-reclaim-detector", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; var r = b.xs[1] + b.n; if (r != 23) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

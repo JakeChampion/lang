@@ -510,14 +510,22 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
-            // order). Box = [shape_ptr@0, f0@8, …], (nf+1)*8 bytes; shape = the
-            // interned struct-name string (asm_arm64's layout). x0 (box) stays
-            // live across the pops; pop top-down (field nf-1 → slot nf .. 0 → 1).
+            // order). Box = [shape_ptr@0, f0@8, …]; shape = the interned
+            // struct-name string (asm_arm64's layout). The box is rc-HEADERED so
+            // the exit dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) can
+            // refcount AND free it at the right size: allocate via __fern_arr_box
+            // with cap=(nf+1) words, which returns data=base+16 with rc=1 at
+            // data-8 and the block size (cap+3 words) recoverable from cap at
+            // data-16 — exactly the array layout __fern_arr_dec frees. The slot
+            // offsets are unchanged (data+0=shape, data+(i+1)*8=field i), so every
+            // struct/enum reader (struct_get/_set, variant_is, dyn dispatch's
+            // shape@0) stays correct. __fern_arr_box writes len=cap at data+0; we
+            // overwrite it with the shape pointer, leaving cap@data-16 intact.
             s = s.mark_heap();
             var nf: i32 = o.i32_imm;
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
-            s = s.write("    mov x0, #" + util.i32_to_string((nf + 1) * 8) + "\n    bl __fern_alloc\n");
+            s = s.write("    mov x0, #" + util.i32_to_string(nf + 1) + "\n    bl __fern_arr_box\n");
             s = s.write("    adrp x1, .S" + util.i32_to_string(lo.idx) + "\n");
             s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(lo.idx) + "\n");
             s = s.write("    str x1, [x0]\n");

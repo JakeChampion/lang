@@ -2279,15 +2279,23 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.need("now_ns");
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
-            // order). Box = [shape_ptr@0, f0@8, f1@16, …], (nf+1)*8 bytes; shape
-            // = the interned struct-name string (asm.fern's layout). Pop fields
-            // top-down (field nf-1 → slot nf .. field 0 → slot 1); %rax (box)
-            // stays live across the pops (they touch only the operand stack).
+            // order). Box = [shape_ptr@0, f0@8, f1@16, …]; shape = the interned
+            // struct-name string (asm.fern's layout). The box is rc-HEADERED so
+            // the exit dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) can
+            // refcount AND free it at the right size: allocate via __fern_arr_box
+            // with cap=(nf+1) words, which returns data=base+16 with rc=1 at
+            // data-8 and the block size (cap+3 words) recoverable from cap at
+            // data-16 — exactly the array layout __fern_arr_dec frees. The
+            // returned pointer's slot offsets are unchanged (data+0=shape,
+            // data+(i+1)*8=field i), so every struct/enum reader (struct_get/_set,
+            // variant_is, dyn dispatch's shape@0) stays byte-for-byte correct.
+            // __fern_arr_box writes len=cap at data+0; we overwrite it with the
+            // shape pointer, leaving cap@data-16 (the free-size word) intact.
             var nf: i32 = o.i32_imm;
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
-            s = s.write("    movq $" + util.i32_to_string((nf + 1) * 8) + ", %rdi\n");
-            s = s.write("    call __fern_alloc\n");
+            s = s.write("    movq $" + util.i32_to_string(nf + 1) + ", %rdi\n");
+            s = s.write("    call __fern_arr_box\n");
             s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             var em: i32 = nf - 1;
