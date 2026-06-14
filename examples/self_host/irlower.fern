@@ -2064,6 +2064,18 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             return 32;
         },
         parser.ExprCall(c) => {
+            // An i64-width if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
+            // is an i64 value, so an unannotated `var x = if (c) { 5000000000 }
+            // else { 1 }` width-tracks i64. (iife_any_return_i64 inspects every
+            // branch — see lower_iife.)
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprLambda(lam) => {
+                        if (lam.params.len() == 0 && lam.body.len() == 1 && iife_any_return_i64(lam.body[0], s)) { return 64; }
+                    },
+                    _ => {}
+                }
+            }
             match (c.callee) {
                 parser.ExprIdent(cid) => {
                     // The clock builtins return an i64 timespec reading, so a
@@ -2172,6 +2184,21 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             return r.emit(ir.op_bin(i64k, 64, false));
         },
         parser.ExprCall(c) => {
+            // An i64-valued if/match-EXPRESSION (the 0-arg IIFE) — delegate to
+            // lower_iife, which marks the inline temp i64 and widens each branch
+            // value. Gated on i64-classifiability so a fully-small-literal i64
+            // expression (i64-ness only from the annotation) stays on the AST path
+            // instead of inlining into an i32 temp.
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprLambda(lam) => {
+                        if (lam.params.len() == 0 && lam.body.len() == 1 && iife_any_return_i64(lam.body[0], s)) {
+                            return lower_iife(c, lam, s);
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // A call to an i64-returning free function OR method IS an i64 value:
             // lower it via the normal call path (which pushes the result).
             match (c.callee) {
@@ -3697,6 +3724,44 @@ function iife_first_return_expr(st: parser.Stmt): parser.Expr {
     return parser.e_unknown("");
 }
 
+// iife_any_return_i64 reports whether ANY `return` in an if/match-expression
+// IIFE body yields an i64-width value — an i64-typed expr (infer_expr_width 64)
+// or an i64-sized integer literal. Unlike f64 / string (where the first branch
+// classifies the whole expression), an i64 if-expression can mix an i64-sized
+// branch with a small-literal branch (`{ 5000000000 } else { 1 }`), so every
+// return is checked. A fully-small-literal i64 expression (whose i64-ness comes
+// only from the binding annotation) isn't caught here and stays on the AST path.
+function iife_any_return_i64(st: parser.Stmt, s: LowerState): boolean {
+    match (st) {
+        parser.StmtReturn(r) => {
+            if (infer_expr_width(r.value, s) == 64) { return true; }
+            match (r.value) {
+                parser.ExprNumber(num) => { if (!num.is_float && literal_is_i64(num.text)) { return true; } },
+                _ => {}
+            }
+            return false;
+        },
+        parser.StmtIf(iff) => {
+            var k: i32 = 0;
+            while (k < iff.then_body.len()) { if (iife_any_return_i64(iff.then_body[k], s)) { return true; } k = k + 1; }
+            var j: i32 = 0;
+            while (j < iff.else_body.len()) { if (iife_any_return_i64(iff.else_body[j], s)) { return true; } j = j + 1; }
+            return false;
+        },
+        parser.StmtMatch(mm) => {
+            var a: i32 = 0;
+            while (a < mm.arms.len()) {
+                var b: i32 = 0;
+                while (b < mm.arms[a].body.len()) { if (iife_any_return_i64(mm.arms[a].body[b], s)) { return true; } b = b + 1; }
+                a = a + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): LowerState {
     if (c.args.len() != 0) { return s.fail(); }
     if (lam.params.len() != 0) { return s.fail(); }
@@ -3708,12 +3773,14 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): 
             var tslot: i32 = ts.slot_of(tmp);
             // Type the inline temp from the if-expression's result (the first
             // branch's returned value classifies it, since all branches share a
-            // type): an f64 temp (8-byte) for a float result, else a string temp
-            // (pointer) for a string result, else the default i32 temp. The temp
-            // type steers the branch-tail value lowering + the loaded value's
-            // downstream dispatch.
+            // type): an f64 temp (8-byte) for a float result, an i64 temp for an
+            // i64-width result (any branch — see iife_any_return_i64), else a
+            // string temp (pointer) for a string result, else the default i32
+            // temp. The temp type steers the branch-tail value lowering + the
+            // loaded value's downstream dispatch.
             var ifre: parser.Expr = iife_first_return_expr(lam.body[0]);
             if (expr_is_f64(ifre, ts)) { ts = ts.mark_f64(tslot, true); }
+            else if (iife_any_return_i64(lam.body[0], ts)) { ts = ts.mark_i64(tslot, true); }
             else if (expr_is_str(ifre, ts)) { ts = ts.mark_str(tslot, true); }
             var rs: LowerState = lower_value_if(iff, tslot, ts);
             if (!rs.ok) { return rs; }
@@ -3768,7 +3835,15 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     // an i32-payload arm (`A(n) => n.to_string()`) still binds n as i32.
     if (m.arms.len() > 0 && m.arms[0].body.len() > 0) {
         var mfre: parser.Expr = iife_first_return_expr(m.arms[0].body[0]);
+        var many_i64: boolean = false;
+        var mi: i32 = 0;
+        while (mi < m.arms.len()) {
+            var mj: i32 = 0;
+            while (mj < m.arms[mi].body.len()) { if (iife_any_return_i64(m.arms[mi].body[mj], ts)) { many_i64 = true; } mj = mj + 1; }
+            mi = mi + 1;
+        }
         if (expr_is_f64(mfre, ts)) { ts = ts.mark_f64(tslot, true); }
+        else if (many_i64) { ts = ts.mark_i64(tslot, true); }
         else if (expr_is_str(mfre, ts)) { ts = ts.mark_str(tslot, true); }
     }
     // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
@@ -3804,7 +3879,10 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
                 // temp's slot type.
                 if (expr_is_f64(r.value, ts) && !ts.is_f64_slot(tslot)) { return s.fail(); }
                 if (expr_is_str(r.value, ts) && !ts.is_str_slot(tslot)) { return s.fail(); }
-                if (infer_expr_width(r.value, ts) == 64) { return s.fail(); }
+                // An i64-width result is admitted into an i64 temp (the rewritten
+                // `tmp = E` store widens via the i64-typed target); into a non-i64
+                // temp it bails.
+                if (infer_expr_width(r.value, ts) == 64 && !ts.is_i64_slot(tslot)) { return s.fail(); }
                 var nbody: parser.Stmt[] = [parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 }];
                 newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
             },
@@ -3858,6 +3936,15 @@ function lower_value_tail(body: parser.Stmt[], tslot: i32, s: LowerState): Lower
             if (expr_is_f64(r.value, cs)) {
                 if (!cs.is_f64_slot(tslot)) { return s.fail(); }
                 cs = lower_expr(r.value, cs);
+                if (!cs.ok) { return cs; }
+                return cs.emit(ir.op_store_local(tslot));
+            }
+            // An i64 result is admitted into an i64 temp (lower_iife marked it for
+            // an i64-width if-expr); lower_i64 widens each branch value (so a small
+            // literal branch becomes a full i64) and the 8-byte store is steered by
+            // the temp's i64 slot type.
+            if (cs.is_i64_slot(tslot)) {
+                cs = lower_i64(r.value, cs);
                 if (!cs.ok) { return cs; }
                 return cs.emit(ir.op_store_local(tslot));
             }
