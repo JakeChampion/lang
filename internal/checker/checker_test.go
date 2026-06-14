@@ -2676,6 +2676,69 @@ function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]
 	}
 }
 
+// TestDynCoercionRecorded: the checker records each concrete→`dyn Trait`
+// boxing site in Info.DynCoercions with the right (trait, concrete)
+// pair, so compiled-backend IR lowering can box the value with the
+// correct vtable (docs/DYN-TRAITS.md §4.2.1). Covers a var-init
+// coercion and an argument-passing coercion; both must be recorded with
+// Trait="Shape", Concrete="Circle".
+func TestDynCoercionRecorded(t *testing.T) {
+	const src = `trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+function f(d: dyn Shape): i32 { return d.area(); }
+function main(): i32 {
+    var d: dyn Shape = Circle { r: 3 };
+    return f(Circle { r: 4 });
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(info.DynCoercions) != 2 {
+		t.Fatalf("want 2 recorded dyn coercions (var-init + arg), got %d: %+v", len(info.DynCoercions), info.DynCoercions)
+	}
+	for holder, dc := range info.DynCoercions {
+		if dc.Trait != "Shape" || dc.Concrete != "Circle" {
+			t.Errorf("coercion = %+v, want {Shape Circle}", dc)
+		}
+		// The holder is the concrete struct literal, not a dyn value.
+		if _, ok := holder.(*ast.StructLit); !ok {
+			t.Errorf("holder = %T, want *ast.StructLit (the Circle literal)", holder)
+		}
+	}
+}
+
+// A dyn→dyn assignment (no boxing) and a non-dyn destination record
+// nothing — only concrete→dyn sites are coercions.
+func TestDynCoercionNotRecordedForNonBoxing(t *testing.T) {
+	const src = `trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+function passthrough(d: dyn Shape): i32 {
+    var e: dyn Shape = d;
+    return e.area();
+}
+function main(): i32 { return passthrough(Circle { r: 1 }); }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	// Only the `Circle{r:1}` argument to passthrough is a real coercion;
+	// `var e: dyn Shape = d` (dyn→dyn) records nothing.
+	if len(info.DynCoercions) != 1 {
+		t.Fatalf("want exactly 1 coercion (the Circle arg), got %d: %+v", len(info.DynCoercions), info.DynCoercions)
+	}
+}
+
 // A body-less `@import` function (extern WIT binding, P4 —
 // docs/WIT-BRING-YOUR-OWN.md) type-checks: its signature is registered so
 // call sites resolve against it, and its (absent) body is not walked.

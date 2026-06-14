@@ -126,6 +126,30 @@ type Info struct {
 	// `impl Trait for Type` exists. Phase 2's bound checking asks
 	// "does i32 implement Display?" against this.
 	Impls map[string]map[string]bool
+	// DynCoercions records every concrete→`dyn Trait` boxing site,
+	// keyed by the holder expression the checker saw flow into a `dyn`
+	// slot (var init, assignment, argument, return, array element,
+	// struct field — all route through maybeWrapForUnion). Compiled-
+	// backend IR lowering reads this to box the concrete value into the
+	// `{data, vtable}` fat pointer with the named concrete type's vtable
+	// (docs/DYN-TRAITS.md §4.2.1). The interpreter ignores it (it
+	// dispatches by the receiver's runtime type). Empty for programs
+	// with no `dyn` coercions.
+	//
+	// Keyed by the *unrewritten* holder expression pointer, which flows
+	// unchanged to the IR for non-generic code. (A coercion inside a
+	// generic body is cloned to a fresh pointer by monomorph and so is
+	// not found — out of scope for the first compiled `dyn` slice.)
+	DynCoercions map[ast.Expr]DynCoercion
+}
+
+// DynCoercion identifies one concrete→`dyn Trait` boxing site: the
+// trait being coerced to and the concrete type flowing in. The IR uses
+// the pair to select the (trait, concrete) vtable to pair with the
+// boxed value. See checker.Info.DynCoercions and docs/DYN-TRAITS.md.
+type DynCoercion struct {
+	Trait    string
+	Concrete string
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -4340,6 +4364,26 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 // intentional and matches the natural reading of the variant.
 func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.Type, s *scope) ast.Type {
 	if holder == nil || *holder == nil {
+		return srcType
+	}
+	// dyn-trait coercion recording. Every concrete→`dyn Trait` boxing
+	// site routes through here (this is the implicit-coercion chokepoint
+	// the assignable() callers funnel through), so recording the
+	// (trait, concrete) pair against the holder expression here covers
+	// var init / assignment / argument / return / array-element /
+	// struct-field uniformly. Recording-only — unlike the union case
+	// below it does not rewrite the holder; the IR boxes it later. The
+	// gate mirrors assignable()'s dyn branch (concrete impls the trait,
+	// src is not already dyn). See docs/DYN-TRAITS.md §4.2.1.
+	if dt, ok := dst.(ast.DynTraitType); ok {
+		if _, isDyn := srcType.(ast.DynTraitType); !isDyn {
+			if tn, ok := methodTypeName(srcType); ok && c.info.Impls[dt.Trait][tn] {
+				if c.info.DynCoercions == nil {
+					c.info.DynCoercions = map[ast.Expr]DynCoercion{}
+				}
+				c.info.DynCoercions[*holder] = DynCoercion{Trait: dt.Trait, Concrete: tn}
+			}
+		}
 		return srcType
 	}
 	du, dok := dst.(ast.EnumType)
