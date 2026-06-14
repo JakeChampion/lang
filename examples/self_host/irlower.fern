@@ -4188,7 +4188,10 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     // type). The payload-width gate below is orthogonal — a string result from
     // an i32-payload arm (`A(n) => n.to_string()`) still binds n as i32.
     if (m.arms.len() > 0 && m.arms[0].body.len() > 0) {
-        var mfre: parser.Expr = iife_first_return_expr(m.arms[0].body[0]);
+        // Classify by the first arm's TAIL statement (the value-producing
+        // terminal) — a multi-statement arm body (block-expressions slice 1)
+        // has leading statements before it, so body[0] may not be the return.
+        var mfre: parser.Expr = iife_first_return_expr(m.arms[0].body[m.arms[0].body.len() - 1]);
         var many_i64: boolean = false;
         var mi: i32 = 0;
         while (mi < m.arms.len()) {
@@ -4234,8 +4237,14 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
             },
             _ => {}
         }
-        if (arm.body.len() != 1) { return s.fail(); }
-        match (arm.body[0]) {
+        // A multi-statement arm body (block-expressions slice 1: leading
+        // statements before a value-producing terminal) is admitted — the
+        // leading statements lower unchanged in the rewritten arm; only the
+        // FINAL `return E` becomes `tmp = E`. A single-expr arm is the
+        // len()==1 case of this (no leading statements). An empty body bails.
+        if (arm.body.len() == 0) { return s.fail(); }
+        var last: parser.Stmt = arm.body[arm.body.len() - 1];
+        match (last) {
             parser.StmtReturn(r) => {
                 // f64 / string results admitted only into a matching temp (set
                 // above for an f64- / string-valued match); otherwise into the i32
@@ -4247,7 +4256,11 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
                 // `tmp = E` store widens via the i64-typed target); into a non-i64
                 // temp it bails.
                 if (infer_expr_width(r.value, ts) == 64 && !ts.is_i64_slot(tslot)) { return s.fail(); }
-                var nbody: parser.Stmt[] = [parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 }];
+                // Keep any leading statements, then the rewritten terminal store.
+                var nbody: parser.Stmt[] = [];
+                var bj: i32 = 0;
+                while (bj < arm.body.len() - 1) { nbody = nbody.append(arm.body[bj]); bj = bj + 1; }
+                nbody = nbody.append(parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 });
                 newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
             },
             _ => { return s.fail(); }

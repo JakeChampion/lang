@@ -1510,6 +1510,99 @@ function build_literal_match(scrut: Expr, arms: LitArm[]): Stmt {
     return else_body[0];
 }
 
+// BranchBodyResult carries a parsed if/match value-branch body: the
+// Stmt[] (leading statements followed by `s_return(tail)`) plus the
+// return-type tag derived from the TAIL expression (the block's value).
+struct BranchBodyResult { par: Par, body: Stmt[], rt: string }
+
+// branch_stmt_start reports whether the next token begins a STATEMENT
+// inside an if/match value-branch body (block-expressions slice 1). These
+// are the keyword-led statements parse_stmt handles directly (each
+// consumes its own terminator) plus a nested `{`-block. `if` / `match`
+// are deliberately EXCLUDED: they stand as the trailing value expression
+// (`{ …; if (c) { a } else { b } }`) and the single-expr branch form
+// `else { if (c) { … } else { … } }` relies on the inner if/match parsing
+// as a value-expression. `switch` IS a statement here (the self-host has
+// no value-position switch). Everything else parses as an expression
+// (an ExprStmt when a `;` follows, else the trailing tail). Mirrors the
+// Go parser's branchStmtStart.
+function branch_stmt_start(p: Par): boolean {
+    if (p.peek_punct() == "{") { return true; }
+    var kw: string = p.peek_keyword();
+    if (kw == "while" || kw == "loop" || kw == "for" || kw == "break"
+        || kw == "continue" || kw == "return" || kw == "defer"
+        || kw == "errdefer" || kw == "var" || kw == "let"
+        || kw == "function" || kw == "switch") { return true; }
+    return false;
+}
+
+// parse_branch_body parses the `{ … }` body of an if/match value-branch
+// (block-expressions slice 1), mirroring the Go parser's parseBranchBody.
+// The body is a sequence of `;`-terminated statements run before an
+// optional trailing expression written WITHOUT a `;` — that trailing
+// expression is the branch's value. The cursor is expected on `{`.
+//
+//   - `{ e }`          → `[s_return(e)]` (single-expr branch, kept
+//     byte-identical to the pre-block-expr behaviour so existing
+//     if/match expressions don't regress).
+//   - `{ s; …; tail }` → `[<leading stmts…>, s_return(tail)]`, which
+//     irlower's lower_value_tail already lowers (leading statements +
+//     a final value-producing statement).
+//
+// A keyword-led item (var/let/while/… or a nested `{`-block) parses as a
+// statement via parse_stmt. A non-keyword item parses as an expression:
+// an ExprStmt if a `;` follows, otherwise the trailing TAIL (which must
+// be followed by `}`). The `rt` tag is derived from the TAIL expression
+// (the value), not a leading statement, so the desugared IIFE / value-
+// lowering gets the right return type.
+function parse_branch_body(p: Par): BranchBodyResult {
+    var ebody: Stmt[] = [];
+    var rt: string = "i32";
+    if (p.peek_punct() != "{") {
+        ebody = ebody.append(s_unknown("missing { in branch body"));
+        return BranchBodyResult { par: p, body: ebody, rt: rt };
+    }
+    p = p.advance();  // consume `{`
+    var leading: Stmt[] = [];
+    var have_tail: boolean = false;
+    var tail: Expr = e_unknown("empty branch");
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        if (branch_stmt_start(p)) {
+            var sr: StmtResult = parse_stmt(p);
+            // Progress guard: a malformed statement that consumed no token
+            // would otherwise spin forever — skip it instead.
+            if (sr.par.pos == p.pos) { p = p.advance(); continue; }
+            p = sr.par;
+            leading = leading.append(sr.stmt);
+            continue;
+        }
+        // Non-keyword item: an expression that is either an ExprStmt
+        // (followed by `;`) or the trailing value (followed by `}`).
+        var er: ExprResult = parse_expr(p);
+        p = er.par;
+        if (p.peek_punct() == ";") {
+            p = p.advance();
+            leading = leading.append(s_expr(er.expr));
+            continue;
+        }
+        // No `;` — this is the trailing tail expression; `}` must follow.
+        tail = er.expr;
+        have_tail = true;
+        break;
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    if (have_tail) { rt = if_expr_rt(tail); }
+    // A value-less block (no trailing tail) in value position has no
+    // result — yield a StmtUnknown so the branch surfaces an error rather
+    // than silently miscompiling (the Go checker reports E061).
+    if (!have_tail) {
+        leading = leading.append(s_unknown("value branch has no trailing expression"));
+        return BranchBodyResult { par: p, body: leading, rt: rt };
+    }
+    leading = leading.append(s_return(tail));
+    return BranchBodyResult { par: p, body: leading, rt: rt };
+}
+
 // parse_if_chain parses `if (c) { E1 } else { E2 }` (and `else if`
 // chains, via recursion through the else arm) into a StmtIf whose arms
 // `return` the branch expressions. parse_primary wraps the result in an
@@ -1517,20 +1610,22 @@ function build_literal_match(scrut: Expr, arms: LitArm[]): Stmt {
 // ExprLambda the rest of the pipeline already handles — no new AST node,
 // so every backend supports if-expressions at once. The IIFE captures
 // any referenced locals automatically (the lambda machinery computes
-// captures). Mirrors the Go parser's parseIfExpr: then/else are single
-// expressions and a final `else` is required (the if-expression is total).
+// captures). Mirrors the Go parser's parseIfExpr: then/else are
+// block-with-tail bodies (block-expressions slice 1) — a multi-statement
+// branch (`{ var k = …; k }`) runs the leading statements then yields the
+// trailing tail — and a final `else` is required (the if-expression is
+// total). A lone trailing expression with no leading statements stays
+// `[s_return(expr)]`, byte-identical to the pre-block-expr behaviour.
 function parse_if_chain(p: Par): IfChain {
     p = p.advance();                              // `if`
     if (p.peek_punct() == "(") { p = p.advance(); }
     var condr: ExprResult = parse_expr(p);
     p = condr.par;
     if (p.peek_punct() == ")") { p = p.advance(); }
-    if (p.peek_punct() == "{") { p = p.advance(); }
-    var thenr: ExprResult = parse_expr(p);
-    p = thenr.par;
-    if (p.peek_punct() == "}") { p = p.advance(); }
-    var then_body: Stmt[] = [s_return(thenr.expr)];
-    var rt: string = if_expr_rt(thenr.expr);
+    var thenb: BranchBodyResult = parse_branch_body(p);
+    p = thenb.par;
+    var then_body: Stmt[] = thenb.body;
+    var rt: string = thenb.rt;
     if (p.peek_keyword() == "else") { p = p.advance(); }
     var else_body: Stmt[] = [];
     if (p.peek_keyword() == "if") {
@@ -1539,11 +1634,9 @@ function parse_if_chain(p: Par): IfChain {
         p = nested.par;
         else_body = [nested.stmt];
     } else {
-        if (p.peek_punct() == "{") { p = p.advance(); }
-        var elser: ExprResult = parse_expr(p);
-        p = elser.par;
-        if (p.peek_punct() == "}") { p = p.advance(); }
-        else_body = [s_return(elser.expr)];
+        var elseb: BranchBodyResult = parse_branch_body(p);
+        p = elseb.par;
+        else_body = elseb.body;
     }
     return IfChain { par: p, stmt: s_if(condr.expr, then_body, else_body), rt: rt };
 }
@@ -1594,10 +1687,24 @@ function parse_match_expr(p: Par): IfChain {
                 lhas_guard = true;
             }
             if (p.peek_punct() == "=>") { p = p.advance(); }
-            var ler: ExprResult = parse_expr(p);
-            p = ler.par;
-            if (lfirst) { rt = if_expr_rt(ler.expr); lfirst = false; }
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: [s_return(ler.expr)] });
+            // A `{ … }` arm body is a block-with-tail (block-expressions
+            // slice 1): leading statements then the trailing value. A bare
+            // expression arm body stays the pre-block-expr single-expr form.
+            var lbody: Stmt[] = [];
+            var lrt: string = "i32";
+            if (p.peek_punct() == "{") {
+                var lbb: BranchBodyResult = parse_branch_body(p);
+                p = lbb.par;
+                lbody = lbb.body;
+                lrt = lbb.rt;
+            } else {
+                var ler: ExprResult = parse_expr(p);
+                p = ler.par;
+                lbody = [s_return(ler.expr)];
+                lrt = if_expr_rt(ler.expr);
+            }
+            if (lfirst) { rt = lrt; lfirst = false; }
+            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbody });
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
@@ -1621,10 +1728,24 @@ function parse_match_expr(p: Par): IfChain {
             arm_has_guard = true;
         }
         if (p.peek_punct() == "=>") { p = p.advance(); }
-        var er: ExprResult = parse_expr(p);
-        p = er.par;
-        if (first) { rt = if_expr_rt(er.expr); first = false; }
-        arms = arms.append(MatchArm { pattern: pr.pattern, body: [s_return(er.expr)], line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        // A `{ … }` arm body is a block-with-tail (block-expressions slice
+        // 1): leading statements then the trailing value. A bare expression
+        // arm body stays the pre-block-expr single-expr form.
+        var abody: Stmt[] = [];
+        var art: string = "i32";
+        if (p.peek_punct() == "{") {
+            var abb: BranchBodyResult = parse_branch_body(p);
+            p = abb.par;
+            abody = abb.body;
+            art = abb.rt;
+        } else {
+            var er: ExprResult = parse_expr(p);
+            p = er.par;
+            abody = [s_return(er.expr)];
+            art = if_expr_rt(er.expr);
+        }
+        if (first) { rt = art; first = false; }
+        arms = arms.append(MatchArm { pattern: pr.pattern, body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
