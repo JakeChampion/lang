@@ -2943,11 +2943,15 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
-// dynVtableLabel returns the GAS symbol for the (trait, concrete)
-// `dyn Trait` vtable cell. Trait / concrete names are Fern identifiers,
-// so the joined symbol is always a valid assembler label.
+// dynVtableLabel returns the GAS symbol for the (trait-set, concrete)
+// `dyn Trait` vtable cell. Single-trait keys are Fern identifiers, so the
+// joined symbol is a valid assembler label as-is. A merged multi-trait
+// key (ir.dynVtableSetKey joins with '+', e.g. "A+B") is sanitized: '+' →
+// "_x_" so the label stays a valid GAS identifier. The IR's
+// OpConstVtable.Str carries the same key, so coercion (which stores the
+// vtable address) and dispatch / downcast (which reference it) agree.
 func dynVtableLabel(trait, concrete string) string {
-	return "__vtable_" + trait + "_" + concrete
+	return "__vtable_" + strings.ReplaceAll(trait, "+", "_x_") + "_" + concrete
 }
 
 // splitPair undoes the "<trait>/<concrete>" key used by dynVtableCells.

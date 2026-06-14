@@ -736,3 +736,92 @@ function main(): i32 {
 `
 	dynAllBackends(t, src, "not a rect\ncircle=25")
 }
+
+// --- Multi-trait `dyn A + B` dispatch through the MERGED vtable
+// (docs/DYN-TRAITS.md §10). A concrete C impl-ing both traits coerces to
+// `dyn A + B`; calling a method from EACH trait dispatches through the
+// concatenated (sorted-set, concrete) vtable. The differential against the
+// interpreter (the source of truth) proves compiled == interp. ---
+
+// TestDynMultiTraitDispatch: a single `dyn Show + Weigh` value calls a
+// method from EACH trait (Show.show + Weigh.weight). Weigh.weight sits in
+// the merged vtable AFTER Show's methods, so this exercises a non-zero
+// global slot (the prefix offset), not just an append.
+func TestDynMultiTraitDispatch(t *testing.T) {
+	src := `import "std/i32";
+trait Show  { function show(self: Self): string; }
+trait Weigh { function weight(self: Self): i32; }
+struct Apple { g: i32 }
+impl Show  for Apple { function show(self: Self): string { return "apple"; } }
+impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } }
+function describe(d: dyn Show + Weigh): string {
+    return d.show() + "=" + d.weight().to_string();
+}
+function main(): i32 {
+    // order-insensitive: dyn Weigh + Show normalises to the same set/vtable
+    var one: dyn Weigh + Show = Apple { g: 150 };
+    print(describe(one));
+    return 0;
+}
+`
+	dynAllBackends(t, src, "apple=150")
+}
+
+// TestDynMultiTraitHeterogeneousArray: a `dyn Show + Weigh[]` holding two
+// different concrete types, iterated with BOTH-trait calls per element.
+// Each element's merged vtable routes both traits' methods to its own
+// concrete impls.
+func TestDynMultiTraitHeterogeneousArray(t *testing.T) {
+	src := `import "std/i32";
+trait Show  { function show(self: Self): string; }
+trait Weigh { function weight(self: Self): i32; }
+struct Apple { g: i32 }
+struct Brick { kg: i32 }
+impl Show  for Apple { function show(self: Self): string { return "apple"; } }
+impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } }
+impl Show  for Brick { function show(self: Self): string { return "brick"; } }
+impl Weigh for Brick { function weight(self: Self): i32 { return self.kg * 1000; } }
+function describe(d: dyn Show + Weigh): string {
+    return d.show() + "=" + d.weight().to_string();
+}
+function main(): i32 {
+    var items: dyn Show + Weigh[] = [Apple { g: 120 }, Brick { kg: 2 }];
+    var total: i32 = 0;
+    for it in items {
+        print(describe(it));
+        total = total + it.weight();
+    }
+    print("total=" + total.to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "apple=120\nbrick=2000\ntotal=2120")
+}
+
+// TestDynThreeTraitMiddleSegment: a THREE-trait `dyn A + B + C` calling a
+// method from each trait — including the MIDDLE trait B, whose method sits
+// at a non-zero offset that is neither 0 (A) nor the tail (C). This proves
+// the global-slot math (prefix = sum of earlier traits' method counts),
+// not merely "first segment + appended last segment". A has 2 methods, so
+// B.b1 is at global slot 2 and C.c1 at slot 3.
+func TestDynThreeTraitMiddleSegment(t *testing.T) {
+	src := `import "std/i32";
+trait Aa { function a1(self: Self): i32; function a2(self: Self): i32; }
+trait Bb { function b1(self: Self): i32; }
+trait Cc { function c1(self: Self): i32; }
+struct S { x: i32 }
+impl Aa for S { function a1(self: Self): i32 { return self.x; } function a2(self: Self): i32 { return self.x + 1; } }
+impl Bb for S { function b1(self: Self): i32 { return self.x * 10; } }
+impl Cc for S { function c1(self: Self): i32 { return self.x * 100; } }
+function sum(d: dyn Aa + Bb + Cc): i32 {
+    return d.a1() + d.a2() + d.b1() + d.c1();
+}
+function main(): i32 {
+    var d: dyn Cc + Aa + Bb = S { x: 3 };
+    print("sum=" + sum(d).to_string());
+    return 0;
+}
+`
+	// a1=3, a2=4, b1=30, c1=300 → 337
+	dynAllBackends(t, src, "sum=337")
+}

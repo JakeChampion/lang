@@ -5748,12 +5748,14 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
-// dynVtableLabel returns the GAS symbol for the (trait, concrete)
-// `dyn Trait` vtable cell. Trait / concrete names are Fern identifiers,
-// so the joined symbol is always a valid assembler label. Mirrors the
-// x86-64 backend so the two natives emit identically-named cells.
+// dynVtableLabel returns the GAS symbol for the (trait-set, concrete)
+// `dyn Trait` vtable cell. Single-trait keys are Fern identifiers, so the
+// joined symbol is a valid assembler label as-is. A merged multi-trait
+// key (ir.dynVtableSetKey joins with '+', e.g. "A+B") is sanitized: '+' →
+// "_x_". Mirrors the x86-64 backend so the two natives emit
+// identically-named cells.
 func dynVtableLabel(trait, concrete string) string {
-	return "__vtable_" + trait + "_" + concrete
+	return "__vtable_" + strings.ReplaceAll(trait, "+", "_x_") + "_" + concrete
 }
 
 // splitPair undoes the "<trait>/<concrete>" key used by dynVtableCells.

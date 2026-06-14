@@ -73,8 +73,9 @@ function main(): i32 {
 ```
 
 - `dyn Trait` is a trait-object type. Multi-trait objects `dyn A + B`
-  (slice 1 shipped on the interpreter; compiled backends reject) span a
-  set of traits — see §10.
+  (interpreter + all three compiled backends, via the merged vtable —
+  only the multi-trait `as?` downcast still rejects) span a set of
+  traits — see §10.
 - `dyn Trait` carries no postfix generics of its own; `dyn Trait[]`
   parses as `(dyn Trait)[]` — an array of trait objects.
 - A `dyn Trait` value is produced by **coercion**: a concrete value
@@ -672,14 +673,16 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    ordinary heap-box `Option` representation. Downcast-only targets are
    rooted via `treeshake.DowncastImplMethods`. Struct/enum targets;
    primitive targets remain a follow-up.
-7. **Multi-trait objects (`dyn A + B`) — slice 1 IN PROGRESS (interp-first).**
-   Surface + checker + interpreter shipped; compiled backends reject a
-   multi-trait `dyn` cleanly (single-trait `dyn A` still lowers). Spec +
-   status in **§10**. Remaining: the merged-vtable compiled codegen and
-   disambiguation syntax for a method declared by two traits.
+7. **Multi-trait objects (`dyn A + B`) — slices 1 + 2 shipped.**
+   Slice 1: surface + checker + interpreter. Slice 2: merged-vtable
+   **dispatch** codegen on all three backends (wasm + x86-64 + arm64) —
+   single-trait `dyn A` lowers byte-for-byte as before. Spec + status in
+   **§10**. Remaining: the multi-trait `as?` **downcast** codegen (still
+   rejects cleanly) and disambiguation syntax for a method declared by
+   two traits.
 8. **Follow-ups.** Explicit upcast, primitive downcast targets, `dyn` in
    struct fields with the fat-pointer layout, RC of the produced downcast
-   `Option`/`data` (§4.4), and the merged-vtable codegen for `dyn A + B`.
+   `Option`/`data` (§4.4), and the multi-trait `as?` downcast codegen.
 
 ## 8. Testing
 
@@ -849,22 +852,43 @@ Dispatch is still by the receiver's **runtime concrete type** (the
 interpreter's `valueTypeName` tag), so once `m` is resolved the call
 lands on `C`'s impl exactly as for single-trait `dyn`.
 
-**Status — interp-first; compiled rejects.** Slice 1 ships the surface
-(parser), the checker (validity / coercion / resolution / ambiguity), and
-the interpreter (dispatch from any trait in the set, heterogeneous
-`dyn A + B[]`, passing to a `dyn A + B` param) — mirroring how single-
-trait `dyn`, `as?` downcast, and block-expressions shipped interp-first.
-The compiled backends **reject** a multi-trait `dyn` cleanly
-(`ir.rejectMultiTraitDyn`, a `WalkProgram` scan that fires regardless of
-the single-trait gate; clean message, no panic). Single-trait `dyn A`
-lowers exactly as before.
+**Status — slices 1 + 2 shipped (interp + merged-vtable codegen).**
+Slice 1 shipped the surface (parser), the checker (validity / coercion /
+resolution / ambiguity), and the interpreter (dispatch from any trait in
+the set, heterogeneous `dyn A + B[]`, passing to a `dyn A + B` param) —
+mirroring how single-trait `dyn`, `as?` downcast, and block-expressions
+shipped interp-first. Slice 2 lifts the compiled gate: **merged-vtable
+dispatch now lowers on all three backends** (wasm + x86-64 + arm64),
+matching the interpreter. Single-trait `dyn A` lowers exactly as before
+(byte-for-byte — the merged key collapses to the bare trait name for a
+1-element set). The one multi-trait sub-case still rejected on the
+compiled backends is the `e as? T` **downcast** of a multi-trait value
+(`rejectDowncast`): its per-trait `__vtable_<Trait>_<T>` pointer-compare
+doesn't understand the merged table's address yet — a follow-up.
 
-**Planned merged-vtable codegen (later slice).** The compiled
-representation will pair the boxed `data` with a **merged vtable** that
-lays out the union of the traits' method slots (in a deterministic
-sorted-trait, then declaration order), so `OpCallDyn` indexes the right
-slot per resolved (owning-trait, method). The single-(trait,concrete)
-`collectVtables` infrastructure (§4.2) generalises to a
-(trait-set,concrete) key; `DynCoercion.Traits` already records the whole
-set so tree-shaking roots the impl methods of every trait, and
-`dynTraitNamesUsed` already collects all traits in a set.
+**Merged-vtable codegen (shipped).** For `dyn {A,B}` (sorted set) over
+concrete `C`, the vtable is the **concatenation** of the per-trait tables
+in the set's sorted order: `[ C's A-methods (A decl order)…, C's B-methods
+(B decl order)… ]`. A method `m` owned by trait `T` dispatches at **global
+slot = (sum of method counts of traits ordered before T in the set) +
+m's index within T** (`ir.dynTraitMethodPrefix` + the local slot). The
+single-(trait,concrete) `collectVtables` infrastructure (§4.2) generalises
+to a (trait-set,concrete) key:
+
+- `collectVtables` keys each merged `VtableDecl.Trait` by
+  `ir.dynVtableSetKey(traits)` — the sorted traits joined with `+`
+  (`"A+B"`); a 1-element set is the bare trait name, so single-trait
+  tables are unchanged. Its methods concatenate the per-trait slot lists
+  (`ir.traitVtableSlots`), and its concrete set is the **intersection** of
+  the traits' implementors (a `C` coerces only if it impls every trait).
+- `OpConstVtable.Str` carries the same set key at both the coercion site
+  (which stores the merged vtable address) and the dispatch site.
+- `OpCallDyn.I32` is the global slot, computed at the `*ast.Call` lowering
+  from the receiver's static set (`Call.Method.Receiver`, a
+  `DynTraitType`) + the owning trait (`Call.DynTrait`).
+- The natives sanitize the `+` in the set key to `_x_` when building the
+  GAS label (`dynVtableLabel`), since `+` isn't a valid assembler-label
+  char; wasm keys by data-segment offset and needs no sanitisation.
+- `DynCoercion.Traits` records the whole set so tree-shaking
+  (`treeshake.DynCoercionImplMethods`) already roots the impl methods of
+  every trait, and `ir.dynTraitSetsUsed` collects each whole set used.

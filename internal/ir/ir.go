@@ -1644,73 +1644,6 @@ func rejectDynTrait(prog *ast.Program) error {
 	return nil
 }
 
-// typeHasMultiTraitDyn reports whether a type is, or nests, a multi-trait
-// `dyn A + B` (a DynTraitType with len(Traits) > 1).
-func typeHasMultiTraitDyn(t ast.Type) bool {
-	switch x := t.(type) {
-	case ast.DynTraitType:
-		return len(x.Traits) > 1
-	case ast.ArrayType:
-		return typeHasMultiTraitDyn(x.Elem)
-	case ast.SliceType:
-		return typeHasMultiTraitDyn(x.Elem)
-	case ast.TupleType:
-		for _, e := range x.Elems {
-			if typeHasMultiTraitDyn(e) {
-				return true
-			}
-		}
-	case *ast.FuncType:
-		for _, p := range x.Params {
-			if typeHasMultiTraitDyn(p) {
-				return true
-			}
-		}
-		return typeHasMultiTraitDyn(x.Result)
-	}
-	return false
-}
-
-// rejectMultiTraitDyn scans a program for any multi-trait `dyn A + B`
-// usage (function signatures, local-var annotations, downcast targets,
-// and the receiver type stamped on a dyn method call) and returns a
-// clean unsupported-feature error if any is found. Multi-trait trait
-// objects need a merged-vtable codegen that is a later slice; until then
-// they are interpreter-only. Single-trait `dyn` is unaffected. Mirrors
-// rejectDynTrait / rejectBlockExpr (WalkProgram scan, clean message, no
-// panic). See docs/DYN-TRAITS.md.
-func rejectMultiTraitDyn(prog *ast.Program) error {
-	const msg = "multi-trait `dyn A + B` is not yet supported on compiled backends; run it on the interpreter (fern -interp). Single-trait `dyn A` is supported."
-	var found bool
-	check := func(t ast.Type) {
-		found = found || typeHasMultiTraitDyn(t)
-	}
-	ast.WalkProgram(prog, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.FuncDecl:
-			for _, p := range x.Params {
-				check(p.Type)
-			}
-			check(x.ReturnType)
-		case *ast.Var:
-			check(x.Type)
-		case *ast.Call:
-			// A method call on a multi-trait receiver stamps the dyn
-			// set on Method.Receiver (the value itself necessarily came
-			// from a var/param/return whose type the scans above also
-			// catch, but this is a direct, robust signal).
-			if x.Method != nil {
-				check(x.Method.Receiver)
-			}
-		}
-		return true
-	})
-	if found {
-		return fmt.Errorf("ir: %s", msg)
-	}
-	return nil
-}
-
 // rejectDowncast scans a program for any `e as? T` downcast
 // (DowncastExpr) that this backend cannot lower. The fallible downcast
 // lowers to a runtime vtable-pointer compare reusing the slice-2 vtable
@@ -1726,6 +1659,7 @@ func rejectMultiTraitDyn(prog *ast.Program) error {
 func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) error {
 	const unsupportedBackend = "'as?' downcast (dyn Trait → concrete) is not yet supported on this backend; run it on the interpreter (fern -interp)"
 	const primTarget = "'as?' downcast target must be a concrete struct or enum (slice 1); primitive targets are not yet supported on compiled backends"
+	const multiTrait = "'as?' downcast on a multi-trait `dyn A + B` value is not yet supported on compiled backends; run it on the interpreter (fern -interp). Single-trait `dyn A` downcast is supported."
 	var rejected error
 	ast.WalkProgram(prog, func(n ast.Node) bool {
 		dc, ok := n.(*ast.DowncastExpr)
@@ -1734,6 +1668,15 @@ func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) er
 		}
 		if !dynSupported {
 			rejected = fmt.Errorf("ir: %s", unsupportedBackend)
+			return false
+		}
+		// Multi-trait `dyn A + B` downcast: the merged-vtable address a
+		// multi-trait coercion stores differs from the per-trait
+		// `__vtable_<Trait>_<T>` cell the compare uses, so the
+		// vtable-pointer compare would never match. Dispatch on a
+		// multi-trait `dyn` is supported; downcast is a follow-up.
+		if len(dc.Traits) > 1 {
+			rejected = fmt.Errorf("ir: %s", multiTrait)
 			return false
 		}
 		// Struct/enum target only (slice-1 scope). A primitive/string
@@ -1762,22 +1705,41 @@ func downcastTargetName(t ast.Type) (string, bool) {
 	return "", false
 }
 
-// dynTraitNamesUsed collects every trait named in a `dyn Trait` type
-// anywhere in the program's function signatures and local-var
-// annotations — the traits that need vtables emitted. Mirrors the scan
-// in rejectDynTrait, but records the trait name rather than a bool.
-func dynTraitNamesUsed(prog *ast.Program) map[string]bool {
-	used := map[string]bool{}
+// dynVtableSetKey returns the canonical key string for a (possibly
+// multi-trait) `dyn` trait set, used as the `VtableDecl.Trait` /
+// `OpConstVtable.Str` identity for a MERGED vtable. The traits are
+// joined in their already-sorted set order with '+' (which can never
+// appear in a Fern identifier or a mangled name, so the join is
+// unambiguous). A single-trait set returns the bare trait name
+// UNCHANGED — so single-trait vtable keys, OpConstVtable emission, and
+// backend lookups are byte-for-byte identical to before merged vtables
+// existed (docs/DYN-TRAITS.md §10).
+func dynVtableSetKey(traits []string) string {
+	if len(traits) == 1 {
+		return traits[0]
+	}
+	return strings.Join(traits, "+")
+}
+
+// dynTraitSetsUsed collects every `dyn` trait SET (the whole sorted
+// trait list) named in a `dyn Trait` / `dyn A + B` type anywhere in the
+// program's function signatures and local-var annotations. The result
+// maps the set key (dynVtableSetKey) → the sorted trait list, so
+// collectVtables can emit one merged vtable per multi-trait set actually
+// used. Single-trait sets are included too (key == the trait name).
+func dynTraitSetsUsed(prog *ast.Program) map[string][]string {
+	sets := map[string][]string{}
+	record := func(traits []string) {
+		if len(traits) == 0 {
+			return
+		}
+		sets[dynVtableSetKey(traits)] = traits
+	}
 	var walk func(t ast.Type)
 	walk = func(t ast.Type) {
 		switch x := t.(type) {
 		case ast.DynTraitType:
-			// Every trait in the set needs a vtable (multi-trait `dyn`
-			// is compiled-rejected before this runs, so today this is a
-			// 1-element loop; set-aware for when merged vtables land).
-			for _, tr := range x.Traits {
-				used[tr] = true
-			}
+			record(x.Traits)
 		case ast.ArrayType:
 			walk(x.Elem)
 		case ast.SliceType:
@@ -1805,7 +1767,32 @@ func dynTraitNamesUsed(prog *ast.Program) map[string]bool {
 		}
 		return true
 	})
-	return used
+	return sets
+}
+
+// dynTraitMethodPrefix returns the number of vtable slots that precede
+// trait `owner`'s method block in the MERGED vtable for trait set
+// `traits` (sorted set order). For a single-trait set this is always 0
+// (the owner is the only trait), so single-trait slot math is unchanged.
+// For `dyn A + B`, a method owned by B sits after all of A's
+// non-associated methods, so its global slot = prefix(B) + index-in-B.
+func dynTraitMethodPrefix(info *checker.Info, traits []string, owner string) int {
+	prefix := 0
+	for _, tr := range traits {
+		if tr == owner {
+			break
+		}
+		td, ok := info.Traits[tr]
+		if !ok {
+			continue
+		}
+		for i := range td.Methods {
+			if !td.Methods[i].Assoc {
+				prefix++
+			}
+		}
+	}
+	return prefix
 }
 
 // isPrimitiveConcrete reports whether a `dyn` coercion's concrete
@@ -1868,72 +1855,107 @@ func dynboxWrapperName(concrete, method string) string {
 	return "__dynbox_" + concrete + "_" + method
 }
 
-// collectVtables builds one VtableDecl per (trait, concrete-type) pair
-// where the trait is used in a `dyn Trait` type somewhere in the program
-// and the concrete type implements it. The method slots follow the
-// trait's declaration order (skipping associated functions, which have
-// no receiver and so are never dispatched through a trait object), so
-// slot k names the same method for every implementing type. The result
-// is deterministically ordered (trait, then concrete, both by name) so
-// codegen emits identical static data run to run.
+// traitVtableSlots returns the vtable slots for ONE trait's
+// non-associated methods (declaration order) over `concrete`. A
+// struct/enum slot points at the real receiver method; a
+// primitive/string slot points at the unboxing wrapper
+// (docs/DYN-TRAITS.md §4.2.3). This is the per-trait building block both
+// single-trait and merged (`dyn A + B`) vtables concatenate.
+func traitVtableSlots(info *checker.Info, td *ast.TraitDecl, concrete string, prim bool) []VtableMethod {
+	var methods []VtableMethod
+	for _, m := range td.Methods {
+		if m.Assoc {
+			continue
+		}
+		if prim {
+			methods = append(methods, VtableMethod{Method: m.Name, Func: dynboxWrapperName(concrete, m.Name)})
+			continue
+		}
+		fn := info.Methods[concrete+"."+m.Name]
+		if fn == "" {
+			// Fall back to the conventional mangled name the
+			// receiver-hoist produces; an empty entry would make
+			// the slot un-dispatchable.
+			fn = "__method_" + concrete + "_" + m.Name
+		}
+		methods = append(methods, VtableMethod{Method: m.Name, Func: fn})
+	}
+	return methods
+}
+
+// collectVtables builds one VtableDecl per (dyn trait SET, concrete-type)
+// pair where the set is used in a `dyn Trait` / `dyn A + B` type
+// somewhere in the program and the concrete type implements EVERY trait
+// in the set. For a single-trait set the table is the trait's methods in
+// declaration order (slot k names the same method for every implementing
+// type — byte-identical to the pre-merged behaviour, since the key is the
+// bare trait name). For a multi-trait set `dyn A + B` the table is the
+// CONCATENATION of the per-trait tables in the set's sorted order
+// (`[ A-methods…, B-methods… ]`), so a method owned by B sits at global
+// slot len(A.methods)+idx — the merged-vtable design (docs/DYN-TRAITS.md
+// §10). The result is deterministically ordered (set key, then concrete,
+// both by name) so codegen emits identical static data run to run.
 //
 // This intentionally over-approximates: it emits a vtable for every
-// implementor of a `dyn`-used trait, not only the concrete types that
-// actually flow into a `dyn` value. Unused vtables are dead static data
-// the linker/backend can drop; precise per-coercion-site selection is a
-// later refinement. See docs/DYN-TRAITS.md §4.2.
+// implementor (of all traits in the set), not only the concrete types
+// that actually flow into a `dyn` value. Unused vtables are dead static
+// data the linker/backend can drop. See docs/DYN-TRAITS.md §4.2.
 func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
-	used := dynTraitNamesUsed(prog)
-	if len(used) == 0 {
+	sets := dynTraitSetsUsed(prog)
+	if len(sets) == 0 {
 		return nil
 	}
-	traitNames := make([]string, 0, len(used))
-	for t := range used {
-		if _, ok := info.Traits[t]; ok {
-			traitNames = append(traitNames, t)
-		}
+	// Deterministic order over set keys.
+	keys := make([]string, 0, len(sets))
+	for k := range sets {
+		keys = append(keys, k)
 	}
-	sort.Strings(traitNames)
+	sort.Strings(keys)
 
 	var out []VtableDecl
-	for _, trait := range traitNames {
-		td := info.Traits[trait]
-		impls := info.Impls[trait]
-		concretes := make([]string, 0, len(impls))
-		for c, ok := range impls {
-			if ok {
-				concretes = append(concretes, c)
+	for _, key := range keys {
+		traits := sets[key]
+		// Every trait in the set must be known; skip the whole set if any
+		// is missing (a malformed program the checker already errored on).
+		ok := true
+		for _, tr := range traits {
+			if _, found := info.Traits[tr]; !found {
+				ok = false
+				break
 			}
+		}
+		if !ok {
+			continue
+		}
+		// Concrete types: the intersection of every trait's implementors
+		// (a concrete coerces to `dyn A + B` only if it impls A AND B).
+		// For a single-trait set this is just that trait's implementors.
+		concreteSet := map[string]bool{}
+		for c, impld := range info.Impls[traits[0]] {
+			if impld {
+				concreteSet[c] = true
+			}
+		}
+		for _, tr := range traits[1:] {
+			impls := info.Impls[tr]
+			for c := range concreteSet {
+				if !impls[c] {
+					delete(concreteSet, c)
+				}
+			}
+		}
+		concretes := make([]string, 0, len(concreteSet))
+		for c := range concreteSet {
+			concretes = append(concretes, c)
 		}
 		sort.Strings(concretes)
 		for _, concrete := range concretes {
 			prim := isPrimitiveConcrete(info, concrete)
 			var methods []VtableMethod
-			for _, m := range td.Methods {
-				if m.Assoc {
-					continue
-				}
-				// For a struct/enum concrete the vtable slot points at the
-				// real receiver method (the `data` word is already a heap
-				// pointer). For a primitive/string concrete the value is
-				// heap-boxed at the coercion site, so the slot points at an
-				// unboxing wrapper `__dynbox_<C>_<m>(boxptr, args...)` that
-				// loads the concrete value back and calls the real method
-				// with the unboxed receiver (docs/DYN-TRAITS.md §4.2.3).
-				if prim {
-					methods = append(methods, VtableMethod{Method: m.Name, Func: dynboxWrapperName(concrete, m.Name)})
-					continue
-				}
-				fn := info.Methods[concrete+"."+m.Name]
-				if fn == "" {
-					// Fall back to the conventional mangled name the
-					// receiver-hoist produces; an empty entry would make
-					// the slot un-dispatchable.
-					fn = "__method_" + concrete + "_" + m.Name
-				}
-				methods = append(methods, VtableMethod{Method: m.Name, Func: fn})
+			for _, tr := range traits {
+				methods = append(methods, traitVtableSlots(info, info.Traits[tr], concrete, prim)...)
 			}
-			out = append(out, VtableDecl{Trait: trait, Concrete: concrete, Methods: methods})
+			out = append(out, VtableDecl{Trait: key, Concrete: concrete, Methods: methods})
 		}
 	}
 	return out
@@ -2096,15 +2118,17 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			return nil, err
 		}
 	}
-	// Multi-trait trait objects (`dyn A + B`) need a merged-vtable codegen
-	// that is a LATER slice (docs/DYN-TRAITS.md). Until then reject a
-	// multi-trait `dyn` cleanly on EVERY compiled backend (even those that
-	// lifted their single-trait gate), so a multi-trait program is
-	// interpreter-only rather than miscompiled through the single-trait
-	// vtable path. Single-trait `dyn` (len(Traits)==1) is unaffected.
-	if err := rejectMultiTraitDyn(prog); err != nil {
-		return nil, err
-	}
+	// Multi-trait trait objects (`dyn A + B`) lower through the MERGED
+	// vtable on every backend that supports `dyn`: collectVtables emits a
+	// concatenated (trait-set, concrete) table and OpCallDyn indexes the
+	// global slot (per-trait prefix + index-in-trait) — docs/DYN-TRAITS.md
+	// §10. A backend that has NOT lifted its single-trait `dyn` gate
+	// (a future ptrW==8 backend, or a test harness omitting DynSupported())
+	// still rejects ALL `dyn` (including multi-trait) via rejectDynTrait
+	// above. The one multi-trait sub-case still rejected on supporting
+	// backends is the `as? T` downcast (rejectDowncast, below) — its
+	// per-trait vtable-pointer compare doesn't yet understand the merged
+	// table.
 	// The `e as? T` fallible downcast (DowncastExpr) now lowers to a
 	// runtime vtable-pointer compare on every backend that supports `dyn`
 	// (the (trait,concrete) vtable that uniquely tags the concrete type is
@@ -9934,7 +9958,12 @@ func (b *builder) expr(e ast.Expr) error {
 					return err
 				}
 			}
-			b.emit(Op{Kind: OpConstVtable, Str: dc.Trait, Str2: dc.Concrete})
+			// Key the vtable by the whole trait SET: for a single-trait
+			// coercion dynVtableSetKey(dc.Traits) == dc.Trait, so this is
+			// byte-identical to before; for a multi-trait `dyn A + B`
+			// coercion it selects the MERGED (concatenated) vtable
+			// collectVtables emitted for the set (docs/DYN-TRAITS.md §10).
+			b.emit(Op{Kind: OpConstVtable, Str: dynVtableSetKey(dc.Traits), Str2: dc.Concrete})
 			if b.dynBoxed() {
 				b.emit(Op{Kind: OpBoxDyn})
 			}
@@ -12918,6 +12947,18 @@ func (b *builder) call(n *ast.Call) error {
 		}
 		if slot < 0 || meth == nil {
 			return fmt.Errorf("ir: method %q not found on trait %s", fa.Field, n.DynTrait)
+		}
+		// Global slot in the MERGED vtable: a `dyn A + B` receiver's vtable
+		// concatenates the per-trait tables in sorted-set order, so a method
+		// owned by a non-first trait sits after every earlier trait's method
+		// block. The static trait set is the receiver type the checker
+		// stamped on Method.Receiver; n.DynTrait is the owning trait. For a
+		// single-trait receiver the prefix is 0 → `slot` is unchanged
+		// (docs/DYN-TRAITS.md §10).
+		if n.Method != nil {
+			if dt, ok := n.Method.Receiver.(ast.DynTraitType); ok && len(dt.Traits) > 1 {
+				slot += dynTraitMethodPrefix(b.info, dt.Traits, n.DynTrait)
+			}
 		}
 		// Receiver-first signature: param[0] is the concrete-receiver
 		// pointer (an i32 on wasm — any pointer-shaped type lowers to

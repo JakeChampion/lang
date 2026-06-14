@@ -7546,6 +7546,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// path (multi-trait downcast is compiled-rejected). The impl gate
 		// below checks the whole set.
 		n.Trait = dt.Trait0()
+		n.Traits = dt.Traits
 		// The target must be a struct or enum (slice 1 scope).
 		tn, hasName := methodTypeName(n.Target)
 		_, isStruct := n.Target.(ast.StructType)
