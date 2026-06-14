@@ -3458,3 +3458,57 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestDynMethodCallNoSelfParamNoPanic guards against a checker crash on a
+// `dyn Trait` method call where the trait method signature has no leading
+// `self` param. checkDynMethodCall unconditionally sliced `tm.Params[1:]` to
+// "drop the self receiver", which panicked (`slice bounds out of range [1:0]`)
+// on the common `function area(): i32;` form and silently dropped the first
+// real argument of a method that had params but no explicit self. The call must
+// now type-check (resolving the no-arg method) rather than panic.
+func TestDynMethodCallNoSelfParamNoPanic(t *testing.T) {
+	// No explicit self in the trait method; calling it through `dyn` must not
+	// panic. (Whether the bare receiver method conforms is a separate, cleanly
+	// reported concern; here we only require the checker to survive.)
+	src := `trait Sh { function area(): i32; }
+struct Sq { s: i32 }
+function (x: Sq) area(): i32 { return x.s * x.s; }
+function via(sh: dyn Sh): i32 { return sh.area(); }
+function main(): i32 { return 0; }`
+	// Must return normally (nil or a diagnostic) — the bug made Check panic.
+	_ = checkSource(t, src)
+
+	// A trait method WITH a param but no explicit self: the call must see the
+	// real argument count (the old `[1:]` dropped it, reporting "0 arguments").
+	srcParam := `trait Sh { function scaled(f: i32): i32; }
+struct Sq { s: i32 }
+function (x: Sq) scaled(f: i32): i32 { return x.s * f; }
+function via(sh: dyn Sh): i32 { return sh.scaled(); }
+function main(): i32 { return 0; }`
+	err := checkSource(t, srcParam)
+	if err == nil || !strings.Contains(err.Error(), "expects 1 argument") {
+		t.Errorf("no-self dyn method with a param: want a 1-argument arity error, got %v", err)
+	}
+}
+
+// TestDynMethodCallProperPattern confirms the canonical `dyn Trait` shape
+// (explicit `self: Self` + an `impl` block) still type-checks after the
+// self-stripping fix, including a method that takes an extra argument.
+func TestDynMethodCallProperPattern(t *testing.T) {
+	for _, src := range []string{
+		`trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } }
+function describe(s: dyn Shape): i32 { return s.area(); }
+function main(): i32 { return describe(Circle { r: 5 }); }`,
+		`trait Shape { function scaled(self: Self, f: i32): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function scaled(self: Self, f: i32): i32 { return self.r * f; } }
+function describe(s: dyn Shape): i32 { return s.scaled(3); }
+function main(): i32 { return describe(Circle { r: 5 }); }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("proper dyn pattern: unexpected error %v", err)
+		}
+	}
+}
