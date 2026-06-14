@@ -247,6 +247,26 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — scalar f64 value-receiver methods via the self-host IR path
+
+Resolved the follow-up flagged in the f32-scalar fix: a VALUE-receiver method on a
+scalar f64 (`function (x: f64) m(): f64`, called `a.m()`) routed through the IR
+path but miscompiled (`(3.5).dbl()` → 0). Root cause: `expr_is_f64` classified a
+method call `recv.m()` as f64 only when the receiver was a STRUCT
+(`expr_struct_type`), so a scalar f64 receiver fell through as "not f64" and a
+following `a.m() as i32` masked the double's low 32 bits (→ 0) instead of
+truncating via `f64_to_i32`. The fix adds an `expr_recv_prim_type` fallback so an
+f64-returning method `<f64>.m` on a scalar receiver is recognised as an f64 value.
+New routing-pinned `TestSelfHostF64RecvIR` (x86-64 + wasm, oracle-checked: arith /
+identity / div / chained / intrinsic-bodied); verified end-to-end on x86-64, wasm,
+and arm64 (qemu); x86-64 + stage2 fixpoint hold.
+
+(i64 value-receiver methods are unaffected by this class of bug — i32 truncation of
+an i64 result equals the low-32-bit mask the integer path already applied. Their
+one remaining manifestation is a wasm **legacy-AST** gap: `wasm_eligible` rejects
+the module so it falls to `wasm.fern`, which lowers the i64 receiver param as i32
+and traps. Per the legacy-AST policy that gap is not fixed here.)
+
 ### 2026-06-14 — f32 scalar params / returns / locals via the self-host IR path
 
 Fixed a latent self-host IR miscompile: Fern represents f32 as an f64 internally
