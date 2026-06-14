@@ -3774,6 +3774,32 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 parser.ExprLambda(lam) => {
                     return lower_iife(c, lam, s);
                 },
+                // `mk()(args)` — the callee is itself a CALL returning a plain
+                // function value (a bare fn pointer; e.g. mk returns a no-capture
+                // lambda, lifted to a const_func by lift_lambdas). Lower the args,
+                // then the callee call (its returned fn pointer on TOS), then
+                // call_indirect — the same shape as a fn-pointer array element /
+                // tuple element call. A callee that returns a CLOSURE box (a
+                // capturing-lambda-returning fn, tracked in closure_fns) needs the
+                // env-passing form, so it bails to AST for now.
+                parser.ExprCall(cocall) => {
+                    var coc_is_closure: boolean = false;
+                    match (cocall.callee) {
+                        parser.ExprIdent(cocid) => { if (util.index_of_str(s.closure_fns, cocid.name) >= 0) { coc_is_closure = true; } },
+                        _ => {}
+                    }
+                    if (coc_is_closure) { return s.fail(); }
+                    var cocs: LowerState = s;
+                    var coci: i32 = 0;
+                    while (coci < c.args.len()) {
+                        cocs = lower_expr(c.args[coci], cocs);
+                        if (!cocs.ok) { return cocs; }
+                        coci = coci + 1;
+                    }
+                    var coce: LowerState = lower_expr(c.callee, cocs);
+                    if (!coce.ok) { return coce; }
+                    return coce.emit(ir.op_call_indirect(c.args.len()));
+                },
                 _ => { return s.fail(); }
             }
             return s.fail();
