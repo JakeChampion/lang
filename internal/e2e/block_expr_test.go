@@ -1,10 +1,12 @@
-// Block-expressions (slice 1, interpreter-only): `if`/`match`
-// expression branches accept a `{ stmts; tail }` body whose statements
-// run in a fresh child scope and whose trailing expression (no `;`) is
-// the branch's value. These end-to-end tests run real programs on the
-// interpreter (the source of truth for slice 1) and assert main()'s exit
-// code, plus confirm the compiled backends reject a BlockExpr cleanly.
-// See docs/BLOCK-EXPRESSIONS.md.
+// Block-expressions: `if`/`match` expression branches accept a
+// `{ stmts; tail }` body whose statements run in a fresh child scope and
+// whose trailing expression (no `;`) is the branch's value. The
+// interpreter is the source of truth; slice 2 lowers them on all three
+// compiled backends (wasm / x86-64 / arm64) via the target-agnostic IR.
+// The TestBlockExprInterp cases below run on the interpreter and assert
+// main()'s exit code; the differential tests further down run real
+// programs on every backend and assert each backend's stdout matches the
+// interpreter's. See docs/BLOCK-EXPRESSIONS.md.
 package e2e
 
 import (
@@ -12,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -122,38 +123,111 @@ func TestBlockExprInterp(t *testing.T) {
 	}
 }
 
-// All compiled backends reject a BlockExpr cleanly (a clear error, no
-// panic) — slice 1 is interpreter-only. Driven through the CLI compile
-// path so the whole pipeline is exercised, not just the IR unit.
-func TestBlockExprCompiledRejectCLI(t *testing.T) {
-	bin := buildLangBinForInterp(t)
+// Slice 2: block-expressions COMPILE + run correctly on all three native
+// backends (wasm / x86-64 / arm64), checked differentially against the
+// interpreter. This was the slice-1 reject test — flipped, like the `as?`
+// downcast codegen PR flipped its reject test, to assert correct
+// compilation + execution rather than a clean reject. `dynAllBackends`
+// (defined in dyn_trait_compiled_test.go) runs src on the interpreter and
+// every compiled backend and asserts each compiled stdout matches the
+// interpreter's, and that the interpreter's matches the expected string.
+
+// An `if`-expression branch block whose value flows into a `var`, printed
+// so each backend's stdout is differentially compared. The taken branch
+// runs a leading `var k = e + 1;` and yields `k`; e=5 → 6.
+func TestBlockExprCompiledIfBranch(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var e = 5;
+	var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+	print("x=" + x.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "x=6")
+}
+
+// A `match`-arm block-expression: arm 0 runs `var v = t + 10; v * 2`.
+// t=0 → v=10 → 20.
+func TestBlockExprCompiledMatchArm(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var t = 0;
+	var r: i32 = match (t) { 0 => { var v = t + 10; v * 2 }, _ => 0 };
+	print("r=" + r.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "r=20")
+}
+
+// A STRING-producing block tail: `{ var s = a + b; s }`. The block-local
+// `s` is a heap value; it's the block's result, so it must survive the
+// function-exit dec sweep (its reference flows out to the printed
+// result) — no double-free / leak-induced wrongness. Differential across
+// all backends confirms RC correctness end to end.
+func TestBlockExprCompiledStringTail(t *testing.T) {
 	src := `function main(): i32 {
-		var x: i32 = if (true) { var k = 1; k } else { 0 };
-		return x;
-	}`
-	dir := t.TempDir()
-	p := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	for _, target := range []string{"wasm", "arm64", "x86-64"} {
-		t.Run(target, func(t *testing.T) {
-			outBin := filepath.Join(dir, "out-"+target)
-			cmd := exec.Command(bin, "-target", target, "-o", outBin, p)
-			var out, errb bytes.Buffer
-			cmd.Stdout = &out
-			cmd.Stderr = &errb
-			err := cmd.Run()
-			if err == nil {
-				t.Fatalf("compile to %s unexpectedly succeeded (BlockExpr should reject in slice 1)", target)
-			}
-			combined := out.String() + errb.String()
-			if strings.Contains(combined, "panic") {
-				t.Errorf("compile to %s PANICKED instead of clean reject:\n%s", target, combined)
-			}
-			if !strings.Contains(combined, "block-expression") {
-				t.Errorf("compile to %s error should mention block-expression, got:\n%s", target, combined)
-			}
-		})
-	}
+	var a = "foo";
+	var b = "bar";
+	var s: string = if (true) { var joined = a + b; joined } else { "" };
+	print("s=" + s);
+	return 0;
+}
+`
+	dynAllBackends(t, src, "s=foobar")
+}
+
+// Nested: a block-expr whose tail is itself an `if`-expression. The outer
+// block runs `var base = 3;` then yields `if (base > 0) { base * 7 } else
+// { -1 }` → 21.
+func TestBlockExprCompiledNestedIfTail(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var x: i32 = if (true) {
+		var base = 3;
+		if (base > 0) { base * 7 } else { 0 - 1 }
+	} else { 0 };
+	print("x=" + x.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "x=21")
+}
+
+// Nested: a block-expr whose tail is itself a `match`-expression, and
+// whose tail-match has a block arm too. Exercises composition of the new
+// lowering with the existing match-expr lowering.
+func TestBlockExprCompiledNestedMatchTail(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var sel = 1;
+	var r: i32 = if (true) {
+		var bump = 100;
+		match (sel) {
+			1 => { var hit = bump + 5; hit },
+			_ => 0
+		}
+	} else { 0 };
+	print("r=" + r.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "r=105")
+}
+
+// Block-locals don't leak and each block gets its own scope: the same
+// name `k` is rebound in two sibling block-exprs without collision, and
+// both contribute to the result (10 + 20 = 30). Confirms the
+// shadowrename frame + per-slot allocation works through codegen.
+func TestBlockExprCompiledLocalsConfined(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var a: i32 = if (true) { var k = 10; k } else { 0 };
+	var b: i32 = if (true) { var k = 20; k } else { 0 };
+	print("sum=" + (a + b).to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "sum=30")
 }

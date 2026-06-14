@@ -1681,25 +1681,6 @@ func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) er
 	return rejected
 }
 
-// rejectBlockExpr scans a program for any block-expression
-// (`{ stmts; tail }` in an `if`/`match` value branch) and rejects it
-// cleanly: slice 1 of block-expressions is interp-only, so no compiled
-// backend can lower it yet. Mirrors rejectDowncast — a WalkProgram scan
-// plus a clean error, never a panic. (The lowering switch also has a
-// guard arm, but this surfaces a friendlier message before lowering.)
-func rejectBlockExpr(prog *ast.Program) error {
-	const unsupported = "block-expression (`if`/`match` value branch `{ stmts; tail }`) is not yet supported on compiled backends (slice 1 is interpreter-only); run it on the interpreter (fern -interp)"
-	var rejected error
-	ast.WalkProgram(prog, func(n ast.Node) bool {
-		if _, ok := n.(*ast.BlockExpr); ok {
-			rejected = fmt.Errorf("ir: %s", unsupported)
-			return false
-		}
-		return true
-	})
-	return rejected
-}
-
 // downcastTargetName returns the concrete type-name string for a
 // struct/enum downcast target (the `T` in `e as? T`), matching the
 // spelling collectVtables / OpConstVtable use for the (trait,concrete)
@@ -2055,13 +2036,18 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		return nil, err
 	}
 	// Block-expressions (`if`/`match` value branches `{ stmts; tail }`)
-	// are interp-only in slice 1 — no compiled lowering yet. Reject any
-	// BlockExpr cleanly on every compiled backend (mirrors
-	// rejectDowncast's clean-reject contract) rather than hitting the
-	// lowering switch's guard arm with a panic.
-	if err := rejectBlockExpr(prog); err != nil {
-		return nil, err
-	}
+	// now lower on every compiled backend (slice 2): the builder lowers
+	// the leading statements through the normal statement-lowering path
+	// (in a fresh shadowrename frame so block-local `var`s get their own
+	// slots) and then lowers the trailing expression as the block's
+	// value. Block-local RC is handled by the existing function-exit dec
+	// sweep — every block-local `var` is registered in `info.Locals[fn]`
+	// (checkBlockExpr → checkStmt), gets a zero-init'd slot, and is
+	// dec'd at scope exit exactly like a top-level local; the Tail value
+	// is produced after the leading stmts and (when it references a
+	// block-local) is alias-inc'd / moved by the normal Var/Ident rules,
+	// so it survives the exit sweep without double-free. No reject gate
+	// here anymore — see the *ast.BlockExpr arm in (*builder).expr.
 	// Automatic drop for owned WIT resource handles (P5 slice 3): insert
 	// `defer <drop>(h);` for each kept `own R` local and synthesize the
 	// `[resource-drop]` import functions. Runs before eraseHandleTypes because
@@ -11436,12 +11422,43 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emitOwnedSlotDrop(faContainerSlot, b.scratchType[faContainerSlot])
 		}
 	case *ast.BlockExpr:
-		// Slice 1 of block-expressions is interpreter-only — the
-		// rejectBlockExpr pre-pass should have already returned a clean
-		// error before lowering. This guard arm is defence-in-depth so a
-		// BlockExpr that somehow reaches lowering errors cleanly instead
-		// of falling through to a panic-shaped path.
-		return fmt.Errorf("ir: block-expression is not yet supported on compiled backends (slice 1 is interpreter-only)")
+		// A block-expression `{ stmts; tail }` (an `if`/`match` value
+		// branch) runs its leading statements, then yields `tail`'s value.
+		// Lower it by composing the EXISTING statement- and expression-
+		// lowering machinery — no new IR op:
+		//
+		//   1. Lower each leading statement through `b.stmt` — the same
+		//      path a normal `{ }` block's statements take. Block-local
+		//      `var`s already have their own pre-allocated, zero-init'd
+		//      slots: shadowrename gave the block its own frame (so a `k`
+		//      here doesn't collide with a `k` in a sibling branch), and
+		//      checkBlockExpr → checkStmt registered each in
+		//      `info.Locals[fn]`, which `lowerFunc` turned into a slot.
+		//   2. Lower `Tail` as an expression, leaving its value on the
+		//      operand stack as the BlockExpr's result.
+		//
+		// RC / ownership: block-local `var`s are dropped by the existing
+		// function-exit dec sweep (`emitRcDecLocalsAtExit`) exactly like
+		// any other local — there's no separate scope-exit drop here, so
+		// there's nothing to order against the Tail value. When `Tail`
+		// references a block-local (e.g. `{ var s = a + b; s }`), the
+		// normal Ident-load rules apply: a bare-ident tail is the value
+		// being returned, and the slot's exit dec is balanced against the
+		// reference the caller now holds (the result is consumed by the
+		// enclosing if/match-expr's result slot / block, which is itself
+		// covered by the surrounding lowering). This mirrors how a normal
+		// block whose final action produces the result interacts with the
+		// exit sweep. The checker (E061) guarantees a non-nil Tail in
+		// value position; guard defensively all the same.
+		if n.Tail == nil {
+			return fmt.Errorf("ir: block-expression has no trailing value (compiler bug — checker E061 should have rejected this)")
+		}
+		for _, st := range n.Stmts {
+			if err := b.stmt(st); err != nil {
+				return err
+			}
+		}
+		return b.expr(n.Tail)
 	default:
 		return fmt.Errorf("ir: unsupported expression %T", e)
 	}
