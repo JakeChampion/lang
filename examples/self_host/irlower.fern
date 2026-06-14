@@ -1369,6 +1369,20 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprCall(c) => {
+            // A string-valued if/match-EXPRESSION desugars to a 0-arg IIFE
+            // `(function(): string { if (c) { return "a"; } … })()`. Classify it
+            // by its first branch's returned value, so `var s = if (…) { … }`
+            // tracks s as a string (and `lower_iife` admits the string temp).
+            if (c.args.len() == 0) {
+                match (c.callee) {
+                    parser.ExprLambda(lam) => {
+                        if (lam.params.len() == 0 && lam.body.len() == 1) {
+                            return expr_is_str(iife_first_return_expr(lam.body[0]), s);
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // A call to a string-returning user function (str_ret_fns), or the
             // random_bytes builtin (a fresh string of n random bytes).
             match (c.callee) {
@@ -3620,6 +3634,28 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
 // shape — a match-expression IIFE (StmtMatch body), an f64 / string / i64
 // result, or a multi-statement body that isn't a value tail — bails to the AST
 // emitter, exactly as before (#2938).
+// iife_first_return_expr returns the value expression of the FIRST `return`
+// reachable in an if-expression / match-expression IIFE body — the then-branch
+// tail of a StmtIf (recursing nested else-ifs) or the first arm's tail of a
+// StmtMatch. All branches share the if/match result type, so the first return
+// classifies the whole expression's value (string vs i32). Returns ExprUnknown
+// for any other shape.
+function iife_first_return_expr(st: parser.Stmt): parser.Expr {
+    match (st) {
+        parser.StmtReturn(r) => { return r.value; },
+        parser.StmtIf(iff) => {
+            if (iff.then_body.len() > 0) { return iife_first_return_expr(iff.then_body[iff.then_body.len() - 1]); }
+            return parser.e_unknown("");
+        },
+        parser.StmtMatch(mm) => {
+            if (mm.arms.len() > 0 && mm.arms[0].body.len() > 0) { return iife_first_return_expr(mm.arms[0].body[mm.arms[0].body.len() - 1]); }
+            return parser.e_unknown("");
+        },
+        _ => { return parser.e_unknown(""); }
+    }
+    return parser.e_unknown("");
+}
+
 function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): LowerState {
     if (c.args.len() != 0) { return s.fail(); }
     if (lam.params.len() != 0) { return s.fail(); }
@@ -3629,6 +3665,11 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): 
             var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
             var ts: LowerState = s.add_local(tmp);
             var tslot: i32 = ts.slot_of(tmp);
+            // A STRING-valued if-expression stores a string pointer in the temp
+            // (same slot mechanics as i32); mark the temp a string so the branch
+            // tails admit string results and the loaded value dispatches as a
+            // string (`.len()` / concat). i32 stays the default.
+            if (expr_is_str(iife_first_return_expr(lam.body[0]), ts)) { ts = ts.mark_str(tslot, true); }
             var rs: LowerState = lower_value_if(iff, tslot, ts);
             if (!rs.ok) { return rs; }
             return rs.emit(ir.op_load_local(tslot));
@@ -3674,6 +3715,15 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     var tmp: string = "$ife" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
     var tslot: i32 = ts.slot_of(tmp);
+    // A STRING-valued match-expression stores a string pointer in the temp (same
+    // slot mechanics as i32); mark the temp a string so the arm tails admit
+    // string results and the loaded value dispatches as a string. The first
+    // arm's returned value classifies the whole match (all arms share the result
+    // type). The payload-width gate below is orthogonal — a string result from
+    // an i32-payload arm (`A(n) => n.to_string()`) still binds n as i32.
+    if (m.arms.len() > 0 && m.arms[0].body.len() > 0) {
+        if (expr_is_str(iife_first_return_expr(m.arms[0].body[0]), ts)) { ts = ts.mark_str(tslot, true); }
+    }
     // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
     // payload is i32, so the i32 temp stays the right width. An Option/Result
     // scrutinee's type is tracked for a local/param; a user-enum payload is read
@@ -3702,7 +3752,9 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
         match (arm.body[0]) {
             parser.StmtReturn(r) => {
                 if (expr_is_f64(r.value, ts)) { return s.fail(); }
-                if (expr_is_str(r.value, ts)) { return s.fail(); }
+                // String result admitted only into a string temp (set above for a
+                // string-valued match); otherwise a string into the i32 temp bails.
+                if (expr_is_str(r.value, ts) && !ts.is_str_slot(tslot)) { return s.fail(); }
                 if (infer_expr_width(r.value, ts) == 64) { return s.fail(); }
                 var nbody: parser.Stmt[] = [parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 }];
                 newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
@@ -3752,7 +3804,11 @@ function lower_value_tail(body: parser.Stmt[], tslot: i32, s: LowerState): Lower
     match (last) {
         parser.StmtReturn(r) => {
             if (expr_is_f64(r.value, cs)) { return s.fail(); }
-            if (expr_is_str(r.value, cs)) { return s.fail(); }
+            // A string result is admitted only when the temp is a STRING temp
+            // (a string-valued if/match-expression — lower_iife marked it); the
+            // pointer store/load is otherwise identical to the i32 path. A string
+            // value into an i32 temp (a type error / unexpected shape) still bails.
+            if (expr_is_str(r.value, cs) && !cs.is_str_slot(tslot)) { return s.fail(); }
             if (infer_expr_width(r.value, cs) == 64) { return s.fail(); }
             cs = lower_expr(r.value, cs);
             if (!cs.ok) { return cs; }
