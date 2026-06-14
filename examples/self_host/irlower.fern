@@ -8372,6 +8372,28 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             }
             return LiftExpr { expr: parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, acc: sa };
         },
+        // Recurse into the compound expression forms so a no-capture lambda CALL
+        // nested inside them is still hoisted: `(function(x){...})(5) + 1` (binary),
+        // `0 - (function(){...})()` (unary), `a[(function(){...})()]` (index). The
+        // operands rarely hold a BARE lambda (that wouldn't type-check), so these
+        // recurse via lift_expr_walk (which lifts an IIFE callee / a lambda call
+        // argument inside), not lift_call_arg. An operand with nothing to lift is
+        // rebuilt identically (the counter is untouched), so existing programs are
+        // unchanged.
+        parser.ExprBinary(b) => {
+            var blr: LiftExpr = lift_expr_walk(b.left, acc, gfns);
+            var brr: LiftExpr = lift_expr_walk(b.right, blr.acc, gfns);
+            return LiftExpr { expr: parser.ExprBinary { op: b.op, left: blr.expr, right: brr.expr, line: b.line, col: b.col }, acc: brr.acc };
+        },
+        parser.ExprUnary(u) => {
+            var uor: LiftExpr = lift_expr_walk(u.operand, acc, gfns);
+            return LiftExpr { expr: parser.ExprUnary { op: u.op, operand: uor.expr, line: u.line, col: u.col }, acc: uor.acc };
+        },
+        parser.ExprIndex(ix) => {
+            var ixar: LiftExpr = lift_expr_walk(ix.array, acc, gfns);
+            var ixir: LiftExpr = lift_expr_walk(ix.index, ixar.acc, gfns);
+            return LiftExpr { expr: parser.ExprIndex { array: ixar.expr, index: ixir.expr }, acc: ixir.acc };
+        },
         _ => { return LiftExpr { expr: e, acc: acc }; }
     }
     return LiftExpr { expr: e, acc: acc };

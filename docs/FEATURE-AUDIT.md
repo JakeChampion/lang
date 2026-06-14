@@ -247,6 +247,25 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — no-capture lambda calls nested in compound expressions via the IR path
+
+Follow-up to the IIFE/tuple/assignment lift slice (#3125): `lift_expr_walk` now
+recurses through the compound expression forms — `ExprBinary`, `ExprUnary`,
+`ExprIndex` — so a no-capture lambda CALL nested inside them is still hoisted and
+the module stays on the IR path. Previously a lambda call inside `(...) + 1`,
+`0 - (...)`, or `a[...]` survived unlifted and bailed to AST. Each operand recurses
+via `lift_expr_walk` (reaching a nested IIFE callee / lambda call argument); an
+operand with nothing to lift is rebuilt identically (counter untouched), so
+existing programs are unchanged.
+
+New routing-pinned `TestSelfHostLambdaLiftNestedIR` (x86-64 + wasm,
+oracle-checked: IIFE in either binary operand, under unary minus, as an array
+index, a lambda call argument inside a binary, and both operands IIFE calls).
+Verified end-to-end on x86-64, wasm, and arm64 (qemu); x86-64 + stage2 fixpoint
+hold. (`ExprSlice` / `ExprFieldAccess`-obj recursion is not added here — no probed
+gap — and a CAPTURING lambda nested anywhere still bails, pending the closure
+ABI.)
+
 ### 2026-06-14 — no-capture lambdas in IIFE / tuple / assignment positions via the IR path
 
 Widened the lambda-lift pre-pass to hoist no-capture lambdas in three more
