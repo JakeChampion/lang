@@ -95,6 +95,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// call_indirect, not a method dispatch).
 		{"fnval-struct-field", `struct H { f: (i32) => i32 } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { var h = H { f: dbl }; return h.f(21); }`},
 		{"fnval-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function inc(n: i32): i32 { return n + 1; } function main(): i32 { var h = H { f: inc, n: 100 }; return h.f(h.n); }`},
+		// No-capture lambda as a struct-literal field value (#2994) on wasm.
+		{"clo-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var b = Box { f: function(x: i32): i32 { return x * 3; } }; return b.f(7); }`},
+		{"clo-struct-field-2fn", `struct Ops { add1: (i32) => i32, dbl: (i32) => i32 } function main(): i32 { var o = Ops { add1: function(x: i32): i32 { return x + 1; }, dbl: function(x: i32): i32 { return x * 2; } }; return o.add1(10) + o.dbl(10); }`},
 		// Calling an element of a function-value ARRAY inline (`fns[i](args)`):
 		// a plain fn-pointer array element lowers to args + the element + call_
 		// indirect (the local-bind form `var f = fns[i]; f()` already lowered).
