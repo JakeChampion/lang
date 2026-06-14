@@ -545,6 +545,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// the payload type is read from the variant's __ev field.
 		{"matchexpr-userenum-bind", `enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(7); var y = match (o) { Has(n) => n, Nil => 0 }; return y; }`},
 		{"matchexpr-userenum-3var", `enum E { Num(i32), Word, Nil } function main(): i32 { var e: E = Num(5); return match (e) { Num(n) => n * 3, Word => 1, Nil => 0 }; }`},
+		// STRING-valued if / match expressions: the inlined temp holds a string
+		// pointer and is marked a string, so `.len()` / concat dispatch and the
+		// outer binding tracks it as a string (extends the i32-gated IIFE inline).
+		{"ifexpr-str", `function main(): i32 { var n = 5; var s = if (n > 3) { "big" } else { "small" }; return s.len(); }`},
+		{"ifexpr-str-return", `function classify(n: i32): string { return if (n > 0) { "pos" } else { "nonpos" }; } function main(): i32 { return classify(5).len() + classify(0 - 1).len(); }`},
+		{"ifexpr-str-elseif", `function main(): i32 { var n = 5; var s = if (n > 10) { "big" } else if (n > 3) { "mid" } else { "low" }; return s.len(); }`},
+		{"ifexpr-str-concat", `function main(): i32 { var n = 2; var s = if (n > 3) { "a" } else { "bb" }; return (s + "!").len(); }`},
+		{"matchexpr-str-unit", `enum C { A, B } function main(): i32 { var c: C = A; var s = match (c) { A => "xx", B => "y" }; return s.len(); }`},
+		{"matchexpr-str-3arm", `enum C { R, G, B } function pick(c: C): string { return match (c) { R => "red", G => "green", B => "blue" }; } function main(): i32 { return pick(G).len(); }`},
+		{"matchexpr-str-payload", `enum E { N(i32), Z } function f(e: E): string { return match (e) { N(n) => if (n > 0) { "pos" } else { "neg" }, Z => "zero" }; } function main(): i32 { return f(N(5)).len() + f(Z).len(); }`},
 		{"i64-cmp", `function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`},
 		{"i64-add", `function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`},
 		{"i64-mul", `function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`},
