@@ -1046,6 +1046,24 @@ type CastExpr struct {
 	// resolve it (treat as the legacy i32 default).
 	InnerType Type
 }
+
+// DowncastExpr is `expr as? Type` — a fallible downcast of a
+// `dyn Trait` value to a concrete type. `Inner` must be a
+// `dyn Trait`; `Target` a concrete struct/enum that implements that
+// trait. It evaluates to `Option[Target]`: `Some(v)` when `Inner`'s
+// runtime concrete type is exactly `Target`, else `None`. This is the
+// runtime-checked counterpart to coercion (docs/DYN-TRAITS.md §9), and
+// is deliberately a separate node from CastExpr (which is specialised
+// for numeric truncate/extend) so the two never share lowering paths.
+type DowncastExpr struct {
+	P      Position
+	Inner  Expr
+	Target Type
+	// Trait is the trait name of `Inner`'s `dyn Trait` type, filled by
+	// the checker for later (vtable-pointer-compare) codegen. Empty
+	// before checking.
+	Trait string
+}
 type BoolLit struct {
 	P     Position
 	Value bool
@@ -1514,34 +1532,41 @@ type MakeClosure struct {
 	Captures  []Expr
 }
 
-func (e *NumberLit) Pos() Position   { return e.P }
-func (e *CastExpr) Pos() Position    { return e.P }
-func (e *BoolLit) Pos() Position     { return e.P }
-func (e *StringLit) Pos() Position   { return e.P }
-func (e *FString) Pos() Position     { return e.P }
-func (e *FloatLit) Pos() Position    { return e.P }
-func (e *Ident) Pos() Position       { return e.P }
-func (e *ArrayLit) Pos() Position    { return e.P }
-func (e *Index) Pos() Position       { return e.P }
-func (e *SliceExpr) Pos() Position   { return e.P }
-func (e *Call) Pos() Position        { return e.P }
-func (e *Binary) Pos() Position      { return e.P }
-func (e *Unary) Pos() Position       { return e.P }
-func (e *Assign) Pos() Position      { return e.P }
-func (e *IfExpr) Pos() Position      { return e.P }
-func (e *MatchExpr) Pos() Position   { return e.P }
-func (e *TryOp) Pos() Position       { return e.P }
-func (e *StructLit) Pos() Position   { return e.P }
-func (e *TupleLit) Pos() Position    { return e.P }
-func (e *MapLit) Pos() Position      { return e.P }
-func (e *FieldAccess) Pos() Position { return e.P }
-func (e *EnumLit) Pos() Position     { return e.P }
-func (e *CaptureRef) Pos() Position  { return e.P }
-func (e *MakeClosure) Pos() Position { return e.P }
-func (e *Lambda) Pos() Position      { return e.P }
+func (e *NumberLit) Pos() Position    { return e.P }
+func (e *CastExpr) Pos() Position     { return e.P }
+func (e *DowncastExpr) Pos() Position { return e.P }
+func (e *BoolLit) Pos() Position      { return e.P }
+func (e *StringLit) Pos() Position    { return e.P }
+func (e *FString) Pos() Position      { return e.P }
+func (e *FloatLit) Pos() Position     { return e.P }
+func (e *Ident) Pos() Position        { return e.P }
+func (e *ArrayLit) Pos() Position     { return e.P }
+func (e *Index) Pos() Position        { return e.P }
+func (e *SliceExpr) Pos() Position    { return e.P }
+func (e *Call) Pos() Position         { return e.P }
+func (e *Binary) Pos() Position       { return e.P }
+func (e *Unary) Pos() Position        { return e.P }
+func (e *Assign) Pos() Position       { return e.P }
+func (e *IfExpr) Pos() Position       { return e.P }
+func (e *MatchExpr) Pos() Position    { return e.P }
+func (e *TryOp) Pos() Position        { return e.P }
+func (e *StructLit) Pos() Position    { return e.P }
+func (e *TupleLit) Pos() Position     { return e.P }
+func (e *MapLit) Pos() Position       { return e.P }
+func (e *FieldAccess) Pos() Position  { return e.P }
+func (e *EnumLit) Pos() Position      { return e.P }
+func (e *CaptureRef) Pos() Position   { return e.P }
+func (e *MakeClosure) Pos() Position  { return e.P }
+func (e *Lambda) Pos() Position       { return e.P }
 
-func (*NumberLit) isExpr()   {}
-func (*CastExpr) isExpr()    {}
+func (*NumberLit) isExpr()    {}
+func (*CastExpr) isExpr()     {}
+func (*DowncastExpr) isExpr() {}
+
+// String renders the downcast in source form, `<inner> as? <Target>`.
+func (e *DowncastExpr) String() string {
+	return fmt.Sprintf("%v as? %s", e.Inner, e.Target)
+}
 func (*BoolLit) isExpr()     {}
 func (*StringLit) isExpr()   {}
 func (*FString) isExpr()     {}

@@ -260,6 +260,19 @@ func valueTypeName(v Value) (string, bool) {
 	return "", false
 }
 
+// downcastTargetName returns the runtime type-name key for a downcast
+// target type (`e as? T`). Slice 1 targets are struct/enum types, whose
+// names line up with the TypeName/EnumName carried on the boxed value.
+func downcastTargetName(t ast.Type) string {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name
+	case ast.EnumType:
+		return x.Name
+	}
+	return ""
+}
+
 func (n Number) String() string { return fmt.Sprintf("%d", int64(n)) }
 func (f Float) String() string {
 	if f.Width == 32 {
@@ -2609,6 +2622,22 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			v = float64(float32(v))
 		}
 		return Float{V: v, Width: w}, nil
+	case *ast.DowncastExpr:
+		// `e as? T` — fallible downcast of a `dyn Trait` value (which is
+		// just the concrete boxed value, already carrying its TypeName)
+		// to the concrete type T. Evaluate the inner, recover its runtime
+		// type name, and produce Some(value) iff it matches T exactly,
+		// else None. The bound value is the concrete value itself, so a
+		// `Some(x)` arm sees x as the concrete type (docs/DYN-TRAITS.md §9).
+		v, err := i.evalExpr(x.Inner, env)
+		if err != nil {
+			return nil, err
+		}
+		want := downcastTargetName(x.Target)
+		if got, ok := valueTypeName(v); ok && want != "" && got == want {
+			return optionSome(v), nil
+		}
+		return optionNone(), nil
 	case *ast.CastExpr:
 		// Numeric casts: integer → integer, float → float (width
 		// change), and the cross-family int↔float conversions.

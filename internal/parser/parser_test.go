@@ -2030,3 +2030,37 @@ func TestNamedArgs(t *testing.T) {
 		t.Errorf("all-positional call should have nil ArgNames, got %#v", call2.ArgNames)
 	}
 }
+
+// `e as? T` parses to a DowncastExpr (the fallible dyn-Trait downcast),
+// while plain `e as T` stays a CastExpr (numeric cast / ascription).
+// docs/DYN-TRAITS.md §9.
+func TestParseDowncastVsCast(t *testing.T) {
+	prog, err := Parse(`function f(s: dyn Shape): i32 { var c: Option[Circle] = s as? Circle; return 0; }`)
+	if err != nil {
+		t.Fatalf("parse downcast: %v", err)
+	}
+	v := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
+	dc, ok := v.Init.(*ast.DowncastExpr)
+	if !ok {
+		t.Fatalf("expected *ast.DowncastExpr, got %T", v.Init)
+	}
+	if _, ok := dc.Inner.(*ast.Ident); !ok {
+		t.Errorf("downcast inner = %T, want *ast.Ident", dc.Inner)
+	}
+	if st, ok := dc.Target.(ast.StructType); !ok || st.Name != "Circle" {
+		t.Errorf("downcast target = %v, want Circle struct", dc.Target)
+	}
+
+	// Plain `as` stays a CastExpr.
+	prog2, err := Parse(`function g(n: i32): i64 { return n as i64; }`)
+	if err != nil {
+		t.Fatalf("parse cast: %v", err)
+	}
+	ret := prog2.Funcs[0].Body.Stmts[0].(*ast.Return)
+	if _, ok := ret.Value.(*ast.CastExpr); !ok {
+		t.Fatalf("expected *ast.CastExpr, got %T", ret.Value)
+	}
+	if _, ok := ret.Value.(*ast.DowncastExpr); ok {
+		t.Fatalf("plain `as` must not parse to DowncastExpr")
+	}
+}

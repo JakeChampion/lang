@@ -730,6 +730,17 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte(')')
 		}
+	case *ast.DowncastExpr:
+		needsParens := parentPrec >= precCast
+		if needsParens {
+			f.b.WriteByte('(')
+		}
+		f.formatExpr(x.Inner, precCast)
+		f.b.WriteString(" as? ")
+		f.b.WriteString(x.Target.String())
+		if needsParens {
+			f.b.WriteByte(')')
+		}
 	case *ast.NumberLit:
 		// A non-zero Width on a NumberLit in formatter input means
 		// the parser saw a typed suffix (`42i64`, `7u8`). Preserve

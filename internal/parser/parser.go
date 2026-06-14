@@ -3303,6 +3303,17 @@ func (p *parser) parseCast() (ast.Expr, error) {
 	}
 	for p.match(lexer.Keyword, "as") {
 		kw := p.advance()
+		// `as?` is the fallible downcast of a `dyn Trait` value to a
+		// concrete type; plain `as` is the numeric cast / ascription.
+		// Peek after the `as` keyword: a `?` punct selects the downcast.
+		if _, ok := p.accept(lexer.Punct, "?"); ok {
+			target, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			expr = &ast.DowncastExpr{P: kw.Pos, Inner: expr, Target: target}
+			continue
+		}
 		target, err := p.parseType()
 		if err != nil {
 			return nil, err

@@ -2737,6 +2737,65 @@ function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]
 	}
 }
 
+// TestDowncastChecker exercises the `e as? T` fallible downcast
+// (docs/DYN-TRAITS.md §9): a valid downcast of a `dyn Trait` value to a
+// concrete struct/enum that implements the trait checks to `Option[T]`;
+// a non-dyn LHS and a target that doesn't implement the trait error.
+func TestDowncastChecker(t *testing.T) {
+	const prelude = `trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } }
+`
+	// Valid downcast: result type Option[Circle], usable through match.
+	if err := checkSource(t, prelude+`
+function describe(s: dyn Shape): i32 {
+    var c: Option[Circle] = s as? Circle;
+    return match (c) { Some(x) => x.r, None => 0 };
+}
+function main(): i32 { return describe(Circle { r: 7 }); }`); err != nil {
+		t.Fatalf("valid downcast should check: %v", err)
+	}
+
+	// Result type flows: the downcast expression IS Option[Circle].
+	prog, err := parser.Parse(prelude + `
+function describe(s: dyn Shape): Option[Circle] { return s as? Circle; }
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("downcast result-type flow should check: %v", err)
+	}
+	// The checker stamped DowncastExpr.Trait for later codegen.
+	ret := prog.Funcs[len(prog.Funcs)-2].Body.Stmts[0].(*ast.Return)
+	if dc, ok := ret.Value.(*ast.DowncastExpr); !ok {
+		t.Fatalf("expected DowncastExpr, got %T", ret.Value)
+	} else if dc.Trait != "Shape" {
+		t.Errorf("DowncastExpr.Trait = %q, want Shape", dc.Trait)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"non-dyn LHS",
+			prelude + `function main(): i32 { var c: i32 = 1; var d: Option[Circle] = c as? Circle; return 0; }`,
+			"requires a 'dyn Trait' value on the left"},
+		{"target does not implement trait",
+			prelude + `struct NoShape { z: i32 }
+function describe(s: dyn Shape): i32 { var c: Option[NoShape] = s as? NoShape; return 0; }
+function main(): i32 { return 0; }`,
+			"does not implement Shape"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
 // TestDynCoercionRecorded: the checker records each concrete→`dyn Trait`
 // boxing site in Info.DynCoercions with the right (trait, concrete)
 // pair, so compiled-backend IR lowering can box the value with the

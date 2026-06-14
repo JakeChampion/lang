@@ -264,6 +264,8 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Operand, selfName, siblings, seen)
 	case *ast.CastExpr:
 		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.DowncastExpr:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
 	case *ast.SliceExpr:
 		walkExprForNames(n.Source, selfName, siblings, seen)
 		walkExprForNames(n.Low, selfName, siblings, seen)
@@ -769,6 +771,13 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		n.Operand = nv
 		return n, nil
 	case *ast.CastExpr:
+		ni, err := c.rewriteExpr(n.Inner, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Inner = ni
+		return n, nil
+	case *ast.DowncastExpr:
 		ni, err := c.rewriteExpr(n.Inner, ctx)
 		if err != nil {
 			return nil, err
