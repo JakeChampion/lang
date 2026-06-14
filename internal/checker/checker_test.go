@@ -2898,6 +2898,73 @@ function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]
 	}
 }
 
+// TestDynMultiTraitChecker exercises multi-trait trait objects
+// (`dyn A + B`, docs/DYN-TRAITS.md): a concrete coerces in iff it impls
+// EVERY trait; a method resolves across the UNION of the traits' method
+// sets; a method declared by two traits is ambiguous; a non-object-safe
+// or unknown trait anywhere in the set errors. Single-trait `dyn A` is
+// unaffected (covered by TestDynTraitChecker).
+func TestDynMultiTraitChecker(t *testing.T) {
+	const prelude = `trait Show { function show(self: Self): i32; }
+trait Sized { function size(self: Self): i32; }
+struct Both { v: i32 }
+impl Show for Both { function show(self: Self): i32 { return self.v; } }
+impl Sized for Both { function size(self: Self): i32 { return 1; } }
+struct OnlyShow { v: i32 }
+impl Show for OnlyShow { function show(self: Self): i32 { return self.v; } }
+`
+	// Accepted: Both impls Show AND Sized → coerces to `dyn Show + Sized`,
+	// and a method from EACH trait resolves.
+	if err := checkSource(t, prelude+`
+function f(d: dyn Show + Sized): i32 { return d.show() + d.size(); }
+function main(): i32 { var d: dyn Show + Sized = Both { v: 3 }; return f(d); }`); err != nil {
+		t.Fatalf("valid multi-trait dyn use should check: %v", err)
+	}
+	// Order-insensitive: `dyn Sized + Show` is the same type.
+	if err := checkSource(t, prelude+`
+function main(): i32 { var d: dyn Sized + Show = Both { v: 3 }; return d.show() + d.size(); }`); err != nil {
+		t.Fatalf("order-insensitive multi-trait dyn should check: %v", err)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"missing one trait",
+			prelude + `function main(): i32 { var d: dyn Show + Sized = OnlyShow { v: 1 }; return 0; }`,
+			"Sized"},
+		{"ambiguous method across traits",
+			`trait A { function m(self: Self): i32; }
+trait B { function m(self: Self): i32; }
+struct C { v: i32 }
+impl A for C { function m(self: Self): i32 { return 1; } }
+impl B for C { function m(self: Self): i32 { return 2; } }
+function f(d: dyn A + B): i32 { return d.m(); }
+function main(): i32 { return 0; }`,
+			"ambiguous method"},
+		{"unknown trait in set",
+			`trait Show { function show(self: Self): i32; }
+function f(d: dyn Show + Bogus): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"unknown trait"},
+		{"non-object-safe trait in set",
+			`trait Show { function show(self: Self): i32; }
+trait Eq { function eq(self: Self, other: Self): boolean; }
+function f(d: dyn Show + Eq): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"not object-safe"},
+		{"method on neither trait",
+			prelude + `function f(d: dyn Show + Sized): i32 { return d.nope(); }
+function main(): i32 { return 0; }`,
+			`no method "nope"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
 // TestDowncastChecker exercises the `e as? T` fallible downcast
 // (docs/DYN-TRAITS.md §9): a valid downcast of a `dyn Trait` value to a
 // concrete struct/enum that implements the trait checks to `Option[T]`;
