@@ -21,9 +21,34 @@ name: Test e2e self-host
 # claims `index % N == shard` over the sorted `go test -list` output,
 # so the set splits ~evenly and new tests are picked up
 # automatically. Crossed with the per-arch matrix this gives 2×N
-# parallel jobs, each well under a minute, vs the previous single
-# ~9.5 min job. `go test -list` builds the test binary once; the
-# gotestsum run reuses that cached build.
+# parallel jobs vs the previous single ~9.5 min job. `go test -list`
+# builds the test binary once; the gotestsum run reuses that cached
+# build.
+#
+# SHARD COUNT — why 8, not 16 or 4. An earlier revision used 16
+# shards (32 jobs). Measured per-job timing showed that was past the
+# point of diminishing returns: with 32 jobs all dispatched at once,
+# runner-queue wait dominated (jobs on the arm64 lane ran in ~30s but
+# queued ~4-5 min) and each job *also* re-paid a fixed cost it can't
+# share — the test-binary build (`go test -list` recompiles the e2e
+# package; ~2.5 min, paid once per job). Net: ~50 billable job-minutes
+# and a 5-13 min wall-clock long pole for <10 min of real testing.
+#
+# Going the other way (4 shards) over-corrected: the x86_64 self-host
+# backend tests are the entire long pole (~23 min of work — the arm64
+# runner skips them for lack of qemu-x86_64, and the x86 runner skips
+# the arm64 backend tests, so each arch concentrates its native
+# backend's heavy self-host driver builds). Split 4 ways the worst
+# x86 shard ran 9m51s — 9 seconds under this job's 10-min timeout, so
+# one new test would tip CI over.
+#
+# Eight is the balance: ~23 min / 8 ≈ 3 min of tests + the ~2.5 min
+# build ≈ ~6 min worst-case shard (allowing for round-robin load
+# imbalance), a comfortable timeout margin and ~6 min wall-clock,
+# while halving the job count vs 16 so queue contention stays low.
+# Bump N (here and in NSHARD below) only if the worst x86 shard's
+# wall-clock creeps toward ~8 min; drop it only if all shards finish
+# well under ~4 min.
 
 on:
   pull_request:
@@ -37,10 +62,9 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Sixteen shards keeps the slowest shard (~30s) well under the
-        # other e2e workflows. Bump N (here and in NSHARD below) if the
-        # suite grows enough to push a shard past ~90s.
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        # Eight shards (16 jobs across the per-arch matrix). See the
+        # SHARD COUNT note above for why this is 8.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 10
@@ -49,10 +73,10 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - name: go test (self-host shard ${{ matrix.shard }}/16)
+      - name: go test (self-host shard ${{ matrix.shard }}/8)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "16"
+          NSHARD: "8"
         run: |
           set -euo pipefail
           # Sorted list of every TestSelfHost* function, partitioned
