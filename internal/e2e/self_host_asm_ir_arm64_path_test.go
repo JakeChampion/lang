@@ -401,6 +401,12 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// inner `match (b)` recovers its payload — the whole thing lowers (#3106).
 		{"nested-opt-unannot", `function main(): i32 { var a = Some(Some(5)); match (a) { Some(b) => { return match (b) { Some(v) => v, None => 1 }; }, None => { return 2; } } return 9; }`},
 		{"nested-opt-unannot-inner-expr", `function main(): i32 { var a = Some(Some(42)); match (a) { Some(b) => { return match (b) { Some(v) => v * 2, None => 1 }; }, None => { return 2; } } return 9; }`},
+		// The value-position (match-EXPRESSION) form of the nested-Option match: the
+		// outer `Some(b)` binds b: Option[i32]. lower_iife_match now admits a nested-
+		// Option payload into an i32 temp for an ident scrutinee, so the inner
+		// `match (b)` lowers instead of bailing (#3111).
+		{"nested-opt-expr-ident", `function main(): i32 { var a = Some(Some(5)); return match (a) { Some(b) => match (b) { Some(v) => v, None => 1 }, None => 2 }; }`},
+		{"nested-opt-expr-ident-derived", `function main(): i32 { var a = Some(Some(21)); return match (a) { Some(b) => match (b) { Some(v) => v * 2, None => 1 }, None => 2 }; }`},
 		// Iterating an Option-array struct field — the leak-safe-field foreach
 		// opt-types the loop var so match(o) recovers the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { var b = B { xs: [Some(1), Some(2), None] }; var n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
