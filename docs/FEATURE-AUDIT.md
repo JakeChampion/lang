@@ -248,6 +248,20 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-14 — u32 `/` and `%` lowered signed on the self-host IR path (bug fix)
+
+A differential sweep (x86 / wasm / arm64 / interp) turned up a real correctness
+bug: u32 division and remainder were lowered as **signed** `div_s` / `rem_s` on
+the IR path. A u32 numerator >= 2^31 reads as signed-negative in a 32-bit slot,
+so x86-64 and wasm computed the wrong quotient (e.g. `3000000000u32 / 3` ≠ 1e9);
+arm64 happened to be right only because its 64-bit register held the value
+zero-extended. The interpreter computes unsigned. Fix: `irlower.lower_expr`
+remaps `div_s`/`rem_s` → `div_u`/`rem_u` when either operand is u32 (mirroring
+the existing u32 ordering-compare and u64 div remaps), and `wasm_ir.wasm_binop`
+gained the 32-bit `i32.div_u` / `i32.rem_u` selections it was missing. Guarded
+by `TestSelfHostU32DivRemIR{X86_64,Wasm}` (high-bit-set div/rem, 4e9 div, and
+low-value div/rem), oracle-checked against the interpreter. Fixpoint intact.
+
 ### 2026-06-14 — std/base64 via the self-host IR path (coverage)
 
 Same vehicle as the std/hex coverage: `TestSelfHostBase64IR` compiles the real

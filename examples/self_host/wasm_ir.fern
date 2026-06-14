@@ -194,6 +194,11 @@ function wasm_binop(kind: string): string {
     if (kind == "shl") { return "i32.shl"; }
     if (kind == "shr_s") { return "i32.shr_s"; }
     if (kind == "shr_u") { return "i32.shr_u"; }
+    // Unsigned u32 div/rem (#3204+): wasm's native i32.div_u/rem_u — irlower
+    // remaps div_s/rem_s -> div_u/rem_u when an operand is u32, so a u32
+    // numerator >= 2^31 divides as unsigned (signed div gave the wrong answer).
+    if (kind == "div_u") { return "i32.div_u"; }
+    if (kind == "rem_u") { return "i32.rem_u"; }
     if (kind == "eq") { return "i32.eq"; }
     if (kind == "ne") { return "i32.ne"; }
     if (kind == "lt_s") { return "i32.lt_s"; }
