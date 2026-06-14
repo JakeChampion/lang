@@ -5551,6 +5551,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 } else if (ev_ty == "string[]") {
                                     ms = ms.mark_arr(bslot, true);
                                     ms = ms.mark_strarr(bslot, true);
+                                } else if (ev_ty.len() >= 3 && ev_ty[ev_ty.len() - 2 : ev_ty.len()] == "[]"
+                                           && (decl_is_struct(ms.structs, ev_ty[0 : ev_ty.len() - 2]) || is_enum_like_name(ev_ty[0 : ev_ty.len() - 2], ms.structs))) {
+                                    // A struct- / enum-array payload (`Items(P[])`):
+                                    // mark the slot is_arr and carry the ELEMENT type
+                                    // so `ps[i].field` / `for p in ps` resolve (the
+                                    // array-element analog of the struct payload case).
+                                    ms = ms.mark_arr(bslot, true);
+                                    ms = ms.mark_struct_type(bslot, ev_ty[0 : ev_ty.len() - 2]);
                                 }
                             }
                             bidx = bidx + 1;
