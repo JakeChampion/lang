@@ -5768,6 +5768,216 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     return st.emit(ir.op_end());
 }
 
+// --- Perceus precise drops (drop-on-last-use) for arrays -----------------
+//
+// Native's computePreciseDrops (ir.go ~3294) releases a value right after its
+// last use instead of at function exit, bounding the live set. This is the
+// conservative self-host first cut: it fires ONLY for a provably linear, owned
+// array literal local — `var v = [ ... ]` declared once, never reassigned, and
+// used ONLY as a borrow read (`v[i]`, `v.method()`, `for x in v`). Such a v is
+// the sole owner of a fresh rc=1 buffer that never escapes, so releasing it
+// right after its last top-level use is sound. Anything uncertain is omitted and
+// falls back to the function-exit dec-sweep (the safe-leak invariant). The drop
+// is emitted as dec + ZERO the slot, so the later exit-sweep harmlessly decs a
+// null on that slot (no LowerState threading needed).
+
+// expr_unsafe_for reports whether `name` appears anywhere in `e` in a position
+// that could create a reference outliving a precise drop — i.e. ANY occurrence
+// except a borrow read: the base of an index (`name[i]`), the receiver of a
+// method/field access (`name.m(...)` / `name.f`). A bare ident, a slice base
+// (a view aliases the buffer), a call argument, a container-literal element, or
+// a lambda capture all escape.
+function expr_unsafe_for(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprBinary(b) => { return expr_unsafe_for(b.left, name) || expr_unsafe_for(b.right, name); },
+        parser.ExprUnary(u) => { return expr_unsafe_for(u.operand, name); },
+        parser.ExprIndex(ix) => {
+            var base_unsafe: boolean = false;
+            match (ix.array) {
+                parser.ExprIdent(_) => { base_unsafe = false; },   // name[i] / other[i]: base read is a borrow
+                _ => { base_unsafe = expr_unsafe_for(ix.array, name); }
+            }
+            return base_unsafe || expr_unsafe_for(ix.index, name);
+        },
+        parser.ExprSlice(sl) => {
+            // a slice creates a VIEW that aliases the source buffer → escapes.
+            return expr_unsafe_for(sl.array, name) || expr_unsafe_for(sl.start, name) || expr_unsafe_for(sl.end, name);
+        },
+        parser.ExprCall(c) => {
+            var callee_unsafe: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        parser.ExprIdent(_) => { callee_unsafe = false; },   // name.method(): receiver is a borrow
+                        _ => { callee_unsafe = expr_unsafe_for(fa.obj, name); }
+                    }
+                },
+                _ => { callee_unsafe = expr_unsafe_for(c.callee, name); }
+            }
+            if (callee_unsafe) { return true; }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) { if (expr_unsafe_for(c.args[ai], name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(_) => { return false; },   // name.field: base read is a borrow
+                _ => { return expr_unsafe_for(fa.obj, name); }
+            }
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (expr_unsafe_for(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (expr_unsafe_for(t.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && expr_unsafe_for(sl.base, name)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (expr_unsafe_for(sl.field_values[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => {
+            var used: string[] = [];
+            var i: i32 = 0;
+            while (i < lm.body.len()) { used = astwalk.collect_idents_stmt(lm.body[i], used); i = i + 1; }
+            return util.index_of_str(used, name) >= 0;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// stmt_unsafe_for / body_unsafe_for lift expr_unsafe_for over statements,
+// special-casing `for x in name` (a borrow iteration, safe) and recursing into
+// nested control-flow bodies. A reassignment of `name` is handled separately by
+// the body_assign_targets bail, so StmtAssign only checks the RHS here.
+function body_unsafe_for(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_unsafe_for(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_unsafe_for(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name); },
+        parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name); },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name); },
+        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name); },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name)) { return true; }
+            return body_unsafe_for(f.then_body, name) || body_unsafe_for(f.else_body, name);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name)) { return true; }
+            return body_unsafe_for(w.body, name);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name); }
+            }
+            if (iter_unsafe) { return true; }
+            return body_unsafe_for(fo.body, name);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name)) { return true; }
+                if (body_unsafe_for(m.arms[ai].body, name)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// all_i32_number_elems reports whether every element of an array literal is a
+// non-float number literal — i.e. the literal is a pure i32[] (the only element
+// type precise drops handle: scalar values whose buffer free needs no element
+// walk and whose methods don't keep the buffer live).
+function all_i32_number_elems(elems: parser.Expr[]): boolean {
+    if (elems.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < elems.len()) {
+        match (elems[i]) {
+            parser.ExprNumber(num) => { if (num.is_float) { return false; } },
+            _ => { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// PreciseDrops is the result of precise_drop_names: two PARALLEL arrays — for
+// each precise drop, the top-level body-statement index AFTER which to release
+// the array, and the local name to release. (A flat pair, not a `string[][]`,
+// because the self-host compiler can't yet compile a nested string-array
+// `.append` on itself — the fixpoint link gate caught it.)
+struct PreciseDrops { idxs: i32[], names: string[] }
+
+// precise_drop_names computes the array-literal LOCAL drop-on-last-use points: a
+// name qualifies only if its init is a fresh `[ ... ]` literal, it is declared
+// exactly once (not shadowed), never reassigned anywhere, and never used
+// unsafely (body_unsafe_for is false — i.e. only borrow reads). Its drop point
+// is its LAST top-level statement reference; releasing after that whole
+// statement completes is sound even when the last reference sits inside a
+// nested block.
+function precise_drop_names(body: parser.Stmt[]): PreciseDrops {
+    var idxs: i32[] = [];
+    var names: string[] = [];
+    var reassigned: string[] = body_assign_targets(body);
+    var seen: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                // Only a PURE i32 array literal (every element a non-float number
+                // literal) qualifies. This excludes string[] / f64[] / i64[] /
+                // nested-array literals, whose buffers hold pointers / wide values
+                // and whose method semantics differ — freeing such a buffer early
+                // is unsound (its elements / views can still be live). The
+                // fixpoint + std-test validated the i32[] case; a string[] literal
+                // segfaulted (its join/first/last keep the buffer live).
+                var is_lit: boolean = false;
+                match (v.init) {
+                    parser.ExprArray(arrl) => { is_lit = all_i32_number_elems(arrl.elements); },
+                    _ => {}
+                }
+                var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
+                seen = seen.append(v.name);
+                if (is_lit && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name)) {
+                    var last: i32 = 0 - 1;
+                    var k: i32 = i + 1;
+                    var none: string[] = [];
+                    while (k < body.len()) {
+                        if (util.index_of_str(astwalk.collect_idents_stmt(body[k], none), v.name) >= 0) { last = k; }
+                        k = k + 1;
+                    }
+                    if (last > i) {
+                        idxs = idxs.append(last);
+                        names = names.append(v.name);
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return PreciseDrops { idxs: idxs, names: names };
+}
+
 pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
     var st: LowerState = s;
     var i: i32 = st.n_params;
@@ -6312,10 +6522,31 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // free at scope exit / loop-rebind (conservative escape analysis above).
     var reclaim: string[] = reclaimable_names_of(fn.body, structs);
     var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, local_is_f64: isf64, local_is_f64arr: isf64arr, local_is_i64arr: isi64arr, local_is_closurearr: isclosurearr, local_is_arrarr: isarrarr, local_is_u32: isu32, local_is_u64: isu64, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns, reclaimable_names: reclaim, n_params: names.len(), ok: true };
+    // Perceus precise drops: release each linear, owned array-literal local right
+    // after its last top-level use (drop-on-last-use), instead of at the exit
+    // sweep — bounding the live set so its block recycles for later allocations.
+    // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
+    var pdrops: PreciseDrops = precise_drop_names(fn.body);
     var j: i32 = 0;
     while (j < fn.body.len()) {
         s = lower_stmt(fn.body[j], s);
         if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots }; }
+        var pi: i32 = 0;
+        while (pi < pdrops.idxs.len()) {
+            if (pdrops.idxs[pi] == j) {
+                var dslot: i32 = s.slot_of(pdrops.names[pi]);
+                if (dslot >= s.n_params && s.is_arr_slot(dslot)
+                        && !s.is_strarr_slot(dslot) && !s.is_f64arr_slot(dslot)
+                        && !s.is_i64arr_slot(dslot) && !s.is_arrarr_slot(dslot)) {
+                    s = s.emit(ir.op_load_local(dslot));
+                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    s = s.emit(ir.op_drop());
+                    s = s.emit(ir.op_const_i32(0));
+                    s = s.emit(ir.op_store_local(dslot));
+                }
+            }
+            pi = pi + 1;
+        }
         j = j + 1;
     }
     return LowerResult { ok: true, ops: s.ops, n_locals: s.local_names.len(), n_params: s.n_params, arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s) };
