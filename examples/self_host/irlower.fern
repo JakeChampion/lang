@@ -8053,6 +8053,26 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // variant box (its variants are leaf-safe structs); is_enum_like_name can
 // over-match a non-enum bare nominal, but a spurious entry only risks an AST
 // fallback at a call site (never a miscompile) — the stage-2 fixpoint guards it.
+// fn_inferred_struct_ret infers a function's leaf-safe STRUCT return type from
+// its body when the declaration carries no `ret_type` — the shape an if-/match-
+// EXPRESSION desugar produces once lift_lambdas hoists it to a top-level
+// `__lam_N` (the IIFE callee becomes a bare fn name, so the value position is a
+// plain `__lam_N()` call whose result type must come from the body). The leaf
+// returned value (iife_first_return_expr sees through nested if/match) must be a
+// struct LITERAL of a leak-safe struct. Returns "" otherwise, so an annotated
+// function (rt already set) or a non-struct body is unaffected.
+function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
+    if (fn.body.len() == 0) { return ""; }
+    var re: parser.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    match (re) {
+        parser.ExprStructLit(sl) => {
+            if (decl_is_struct(structs, sl.type_name) && decl_is_leaksafe(structs, sl.type_name)) { return sl.type_name; }
+        },
+        _ => {}
+    }
+    return "";
+}
+
 pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -8062,6 +8082,15 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         var elem_t: string = rt;
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) { elig = true; }
         else if (is_enum_like_name(rt, structs)) { elig = true; }
+        // A lifted if-/match-EXPRESSION (`__lam_N`) carries a default `i32`
+        // ret_type from the desugar, not the struct it actually returns — so
+        // trust the BODY, not the declaration. Infer a leaf-safe struct return
+        // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
+        // .. }).x` recover the struct type at the `__lam_N()` call site.
+        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_") {
+            var inf: string = fn_inferred_struct_ret(funcs[k], structs);
+            if (inf.len() > 0) { elig = true; elem_t = inf; }
+        }
         // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
         // struct type so a call site `var a = f()` (already is_arr via
         // arr_ret_fns) recovers `a[i]`'s struct type for field access / foreach.

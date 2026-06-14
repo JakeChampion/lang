@@ -971,6 +971,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"lines-just-nl", `function main(): i32 { return "\n".lines().len() + 5; }`},
 		{"lines-elem", `function main(): i32 { var ls = "ab\ncd".lines(); return ls[1].len() * 10 + ls[1][0]; }`},
 		{"lines-forin", `function main(): i32 { var n = 0; for ln in "a\nbb\nccc".lines() { n = n + ln.len(); } return n; }`},
+		// A struct-valued if-/match-EXPRESSION binding (lifted to a `__lam_N`
+		// whose return type is inferred from its struct-literal body, so the
+		// `__lam_N()` call site recovers the struct type for `.field` / method
+		// dispatch). The legacy AST path also handles these, so they ride the
+		// differential gate.
+		{"struct-if-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.x + p.y; }`},
+		{"struct-match-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = match (1) { 1 => P{x:10,y:2}, _ => P{x:3,y:4} }; return p.x + p.y; }`},
+		{"struct-if-expr-direct-field", `struct P { x: i32, y: i32 } function main(): i32 { return (if (true) { P{x:7,y:2} } else { P{x:3,y:4} }).x; }`},
+		{"struct-if-expr-method", `struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { var p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.sum(); }`},
 		// `for x in <u64[]>`: the element rides the i64 8-byte read but is bound
 		// u64, so body compares/shifts on it are unsigned. The IR path now lowers
 		// this (previously bailed to AST); both paths must agree, and the large
