@@ -723,6 +723,14 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"opt-fncall-if-none-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { None }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"opt-fncall-if-call-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { mkO(2) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"result-fncall-if-err-else", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`, 5},
+		// A struct-ARRAY-valued if-/match-expression (literal, or a P[]-returning
+		// call in the branch): the lifted __lam's element struct type is inferred
+		// so `ps[i].field` / `for p in ps { p.method() }` resolve. P[] sibling of
+		// the string[]/f64[] array fixes (#3224).
+		{"structarr-if-expr-elem", `struct P { x: i32, y: i32 } function main(): i32 { var ps = if (true) { [P{x:1,y:2}, P{x:3,y:4}] } else { [P{x:0,y:0}] }; return ps[1].x + ps[1].y; }`, 7},
+		{"structarr-if-expr-forin-method", `struct P { x: i32, y: i32 } function (p: P) s(): i32 { return p.x + p.y; } function main(): i32 { var ps = if (true) { [P{x:1,y:2}, P{x:3,y:4}] } else { [P{x:0,y:0}] }; var t = 0; for p in ps { t = t + p.s(); } return t; }`, 10},
+		{"structarr-match-expr-elem", `struct P { x: i32, y: i32 } function main(): i32 { var ps = match (1) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; return ps[0].x * 10 + ps[0].y; }`, 56},
+		{"structarr-fncall-if-expr", `struct P { x: i32, y: i32 } function mk(): P[] { return [P{x:5,y:6}]; } function main(): i32 { var ps = if (true) { mk() } else { mk() }; return ps[0].x + ps[0].y; }`, 11},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"uuid-v4", uuidV4Program, 0},
