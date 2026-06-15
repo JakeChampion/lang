@@ -748,6 +748,12 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     // `match (t.N)` recovers the payload type (a leak-only pointer slot).
     var optag: string = expr_opt_elem_tag(e, s);
     if (optag != "") { return optag; }
+    // A Map element (`(Map { … }, x)`): tag it with its full `Map[K, V]` type so
+    // a later `t.N.get_or(…)` dispatches as a map op (the map sibling of the
+    // struct / Option element tags). The element is a heap-map POINTER — one
+    // slot, leak-only like a struct element — so only the tag carries it. #3317.
+    var maptag: string = expr_map_type_tag(e, s);
+    if (maptag != "") { return maptag; }
     var st: string = expr_struct_type(e, s);
     if (st != "") { return st; }
     if (expr_is_f64(e, s)) { return "f64"; }
@@ -823,6 +829,42 @@ pub function expr_map_kind(e: parser.Expr, s: LowerState): i32 {
         _ => { return 0 - 1; }
     }
     return 0 - 1;
+}
+
+// expr_map_type_tag returns the full "Map[K, V]" type of a map EXPRESSION — a
+// `Map { … }` literal's `map_new[_i32](n).insert(…)` desugar chain, or a map-
+// typed local that already carries a full tag — or "" if `e` is not a map. K
+// comes from expr_map_kind (1 = i32, 0 = string); V from the outermost
+// `.insert`'s value arg (string if that arg is a string, else i32). Mirrors the
+// unannotated map-binding inference in lower_stmt so a map in a NON-local
+// position (a tuple element) recovers a tag is_map_type_name / map_key_kind_of /
+// map_value_of accept. #3317.
+pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
+    // A map-typed local already carries its full tag — reuse it directly.
+    match (e) {
+        parser.ExprIdent(mid) => {
+            var lt: string = s.map_type_of(s.slot_of(mid.name));
+            if (is_map_type_name(lt)) { return lt; }
+        },
+        _ => {}
+    }
+    var kk: i32 = expr_map_kind(e, s);
+    if (kk < 0) { return ""; }
+    var ktag: string = "string";
+    if (kk == 1) { ktag = "i32"; }
+    var vtag: string = "i32";
+    match (e) {
+        parser.ExprCall(vc) => {
+            match (vc.callee) {
+                parser.ExprFieldAccess(vfa) => {
+                    if (vfa.field == "insert" && vc.args.len() == 2 && expr_is_str(vc.args[1], s)) { vtag = "string"; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "Map[" + ktag + ", " + vtag + "]";
 }
 
 pub function (s: LowerState) mark_i64(i: i32, v: boolean): LowerState {
@@ -1852,6 +1894,31 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                         match (cfa.obj) {
                             parser.ExprIdent(mgid) => {
                                 if (map_value_of(s.map_type_of(s.slot_of(mgid.name))) == "string") { return true; }
+                            },
+                            // A string-VALUE map reached through a struct field
+                            // (`c.m.get_or(...)`) or a TUPLE element (`t.0.get_or(...)`):
+                            // resolve the receiver's Map type the same way map-method
+                            // dispatch does, so the string result feeds `.len()` /
+                            // concat as a string. #3317.
+                            parser.ExprFieldAccess(mgfa) => {
+                                if (util.is_all_digits(mgfa.field)) {
+                                    if (map_value_of(expr_tuple_elem_tag(mgfa.obj, util.digits_to_i32(mgfa.field), s)) == "string") { return true; }
+                                } else {
+                                    var goty: string = expr_struct_type(mgfa.obj, s);
+                                    if (goty != "" && map_value_of(decl_field_type(s.structs, goty, mgfa.field)) == "string") { return true; }
+                                }
+                            },
+                            // A string-VALUE map reached through an ARRAY element
+                            // (`ms[i].get_or(...)`): the array slot's element map
+                            // type carries V. #3317.
+                            parser.ExprIndex(mgix) => {
+                                match (mgix.array) {
+                                    parser.ExprIdent(mgaid) => {
+                                        var mgasl: i32 = s.slot_of(mgaid.name);
+                                        if (mgasl >= 0 && s.is_arr_slot(mgasl) && map_value_of(s.map_type_of(mgasl)) == "string") { return true; }
+                                    },
+                                    _ => {}
+                                }
                             },
                             _ => {}
                         }
@@ -3530,7 +3597,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // always present where it matters. The depth-aware comma encoding
                 // protects the inner `,` so `match (t.N)` recovers both payloads.
                 var el_result_ok: boolean = expr_is_result(el, s);
-                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok) { return s.fail(); }
+                // A Map element (`(Map { … }, x)` / `(m, x)`) is a leak-only heap
+                // box stored in one pointer slot, like a struct / Option / array
+                // element — admit it. Its `Map[K, V]` tag (elem_type_tag) lets a
+                // later `t.N.get_or(…)` dispatch as a map op. #3317.
+                var el_map_ok: boolean = expr_map_type_tag(el, s) != "";
+                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok) { return s.fail(); }
                 tei = tei + 1;
             }
             // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
@@ -4093,6 +4165,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                     var mft: string = decl_field_type(s.structs, moty, mrfa.field);
                                     if (is_map_type_name(mft)) { mtype = mft; }
                                 }
+                            } else {
+                                // A map TUPLE element receiver (`t.0.get_or(k, d)`):
+                                // the element's recorded tuple tag is its Map[K,V]
+                                // type, so the map op dispatches. lower_expr(fa.obj)
+                                // reads the element (tuple_get pushes the map ptr),
+                                // same as a struct field. #3317.
+                                var mtt: string = expr_tuple_elem_tag(mrfa.obj, util.digits_to_i32(mrfa.field), s);
+                                if (is_map_type_name(mtt)) { mtype = mtt; }
+                            }
+                        },
+                        // A map ARRAY element receiver (`ms[i].get_or(k, d)`): the
+                        // array slot's recorded element map type drives dispatch;
+                        // lower_expr(fa.obj) reads the element (arr_get pushes the
+                        // map ptr), same as a struct-array element. #3317.
+                        parser.ExprIndex(mrix) => {
+                            match (mrix.array) {
+                                parser.ExprIdent(maid) => {
+                                    var maslot: i32 = s.slot_of(maid.name);
+                                    if (maslot >= 0 && s.is_arr_slot(maslot) && is_map_type_name(s.map_type_of(maslot))) { mtype = s.map_type_of(maslot); }
+                                },
+                                _ => {}
                             }
                         },
                         _ => {}
@@ -6383,12 +6476,38 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             sb = sb.mark_arrarr(slot, is_arrarr);
             sb = sb.mark_struct_type(slot, struct_ty);
             sb = sb.mark_opt_type(slot, opt_ty);
+            // An array-of-maps binding (`var ms = [Map { … }, …]`, an annotated
+            // `Map[K,V][]`, or an alias `var qs = ms`): record the ELEMENT map type
+            // on the (is_arr) slot — the map sibling of the element-struct-type
+            // overload — so `ms[i].get_or(…)` dispatches as a map op. The slot
+            // stays is_arr (dropped as an array box; its element maps leak, like
+            // struct-array elements). #3317.
+            if (is_arr) {
+                var map_elem_ty: string = "";
+                if (is_array_type_name(v.type_name) && is_map_type_name(v.type_name[0 : v.type_name.len() - 2])) {
+                    map_elem_ty = v.type_name[0 : v.type_name.len() - 2];
+                } else {
+                    match (v.init) {
+                        parser.ExprArray(marr) => {
+                            if (marr.elements.len() > 0) { map_elem_ty = expr_map_type_tag(iife_leaf_value(marr.elements[0]), se); }
+                        },
+                        parser.ExprIdent(amid) => {
+                            var amsl: i32 = se.slot_of(amid.name);
+                            if (amsl >= 0 && se.is_arr_slot(amsl) && is_map_type_name(se.map_type_of(amsl))) { map_elem_ty = se.map_type_of(amsl); }
+                        },
+                        _ => {}
+                    }
+                }
+                if (is_map_type_name(map_elem_ty)) { sb = sb.mark_map_type(slot, map_elem_ty); }
+            }
             // A `var m: Map[K, V] = <expr>` annotation records the slot's full
             // Map type so a later `m.get/insert/has/...` dispatches as a map op.
             // The `= map_new(n)` form is handled by the early-return path above;
             // this catches the other map-typed inits, e.g. binding a map struct
-            // field (`var m: Map[K, V] = c.m`).
-            if (is_map_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
+            // field (`var m: Map[K, V] = c.m`). An ARRAY-of-maps type
+            // (`Map[K,V][]`) also prefix-matches is_map_type_name but is handled
+            // by the element-type overload above — exclude it here.
+            if (is_map_type_name(v.type_name) && !is_array_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
             else {
                 // UNANNOTATED map binding — `var m = Map { k: v, … }` (no
                 // `: Map[K,V]`). The literal desugars to a
@@ -6442,6 +6561,29 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     var mrt1: string = sb.map_ret_type(mroty + "." + mrcfa.field);
                                     if (mrt1 != "") { sb = sb.mark_map_type(slot, mrt1); }
                                 }
+                            },
+                            _ => {}
+                        }
+                    },
+                    // UNANNOTATED binding from a map TUPLE element (`var m = t.0`):
+                    // recover the slot's map type from the element's recorded tuple
+                    // tag, so `m.get_or(...)` dispatches — the map sibling of the
+                    // struct-from-tuple-element binding. #3317.
+                    parser.ExprFieldAccess(mtfa) => {
+                        if (util.is_all_digits(mtfa.field)) {
+                            var mtet: string = expr_tuple_elem_tag(mtfa.obj, util.digits_to_i32(mtfa.field), sb);
+                            if (is_map_type_name(mtet)) { sb = sb.mark_map_type(slot, mtet); }
+                        }
+                    },
+                    // UNANNOTATED binding from a map ARRAY element (`var m = ms[i]`):
+                    // recover the slot's map type from the array slot's element map
+                    // type — the map sibling of the struct-from-array-element
+                    // binding. #3317.
+                    parser.ExprIndex(maix) => {
+                        match (maix.array) {
+                            parser.ExprIdent(maeid) => {
+                                var maesl: i32 = sb.slot_of(maeid.name);
+                                if (maesl >= 0 && sb.is_arr_slot(maesl) && is_map_type_name(sb.map_type_of(maesl))) { sb = sb.mark_map_type(slot, sb.map_type_of(maesl)); }
                             },
                             _ => {}
                         }
