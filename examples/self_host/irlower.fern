@@ -1705,6 +1705,8 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // i32_to_string(n) yields a fresh decimal-text string box (the
                     // free-function spelling of `n.to_string()`).
                     if (cid.name == "i32_to_string") { return true; }
+                    // chr(n) yields a fresh 1-char string box.
+                    if (cid.name == "chr") { return true; }
                     return s.is_str_ret_fn(cid.name);
                 },
                 // `X.to_string()` yields a string box (the i32 runtime helper or
@@ -3693,6 +3695,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var s2i: LowerState = lower_expr(c.args[0], s);
                         if (!s2i.ok) { return s2i; }
                         return s2i.emit(ir.op_call_direct("__fern_str_to_i32", 1));
+                    }
+                    // Built-in `chr(n)` — an i32 byte value to a fresh 1-char
+                    // string box. Routes to the __fern_chr runtime (allocates).
+                    // The result is a string (expr_is_str tracks it below).
+                    if (cid.name == "chr" && c.args.len() == 1) {
+                        var chrs: LowerState = lower_expr(c.args[0], s);
+                        if (!chrs.ok) { return chrs; }
+                        return chrs.emit(ir.op_call_direct("__fern_chr", 1));
                     }
                     // Built-in `exit(n)` — terminate the process with exit code n
                     // (an inline sys_exit / proc_exit per backend).

@@ -204,6 +204,11 @@ pub function (s: EmitState) mark_str_to_i32(): EmitState {
     return s.need("str_to_i32");
 }
 
+// chr(n): i32 byte -> 1-char string box. Allocates, so pull in the heap.
+pub function (s: EmitState) mark_chr(): EmitState {
+    return s.need("heap").need("chr");
+}
+
 pub function (s: EmitState) mark_eprint(): EmitState {
     return s.need("eprint");
 }
