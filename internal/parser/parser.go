@@ -1839,7 +1839,7 @@ func (p *parser) parseType() (ast.Type, error) {
 		// by generic arguments (`dyn Container[i32]`). Additional traits
 		// after the first are joined with `+` (mirroring trait-bound
 		// syntax, parseOptBounds). The set is normalised (sorted +
-		// deduped) by NewDynTraitTypeArgs so `dyn A + B` ≡ `dyn B + A`.
+		// deduped) by NewDynTraitTypeFull so `dyn A + B` ≡ `dyn B + A`.
 		// Falls through to the trailing-`[]` suffix loop, so `dyn Shape[]`
 		// / `dyn A + B[]` is an array of trait objects. A trailing/empty
 		// `+` is a parse error. The `[` immediately followed by `]` is the

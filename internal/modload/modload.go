@@ -1809,7 +1809,7 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 		// and fails the `unknown trait` check in validateDynTraitTypes.
 		// DynTraitType carries no position; the public-visibility check
 		// reports at the zero position, which is acceptable for the rare
-		// non-pub case. Re-normalise (sort+dedup) via NewDynTraitTypeArgs
+		// non-pub case. Re-normalise (sort+dedup) via NewDynTraitTypeFull
 		// since mangling can reorder names. Any generic trait-arguments
 		// (`dyn Container[mod.Foo]`) are themselves rewritten and carried
 		// through, kept paired with their trait across the re-sort.

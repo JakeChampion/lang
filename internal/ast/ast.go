@@ -253,7 +253,8 @@ func (d DynTraitType) AssocFor(i int) []AssocBinding {
 // NewDynTraitType builds a DynTraitType from a trait-name set, normalising
 // it to the canonical sorted+deduped form. Callers (the parser, modload,
 // any code synthesising a `dyn` type) should go through this so the
-// invariant holds everywhere. Use NewDynTraitTypeArgs for generic traits.
+// invariant holds everywhere. Use NewDynTraitTypeFull for generic traits /
+// pinned associated types.
 func NewDynTraitType(traits ...string) DynTraitType {
 	if len(traits) <= 1 {
 		return DynTraitType{Traits: append([]string(nil), traits...)}
@@ -271,18 +272,10 @@ func NewDynTraitType(traits ...string) DynTraitType {
 	return DynTraitType{Traits: out}
 }
 
-// NewDynTraitTypeArgs builds a DynTraitType carrying per-trait generic
-// arguments (args parallel to traits), normalising to canonical sorted +
-// deduped form. The (trait, args) pairs sort together by trait name, with
-// the args' string form breaking ties so `dyn A[i32] + A[string]` is
-// deterministic (and only deduped when BOTH name and args match). When
-// every args entry is empty this is equivalent to NewDynTraitType.
-func NewDynTraitTypeArgs(traits []string, args [][]Type) DynTraitType {
-	return NewDynTraitTypeFull(traits, args, nil)
-}
-
-// NewDynTraitTypeFull is NewDynTraitTypeArgs plus pinned associated-type
-// bindings (assoc parallel to traits). The (trait, args, assoc) triples sort
+// NewDynTraitTypeFull builds a DynTraitType carrying per-trait generic
+// arguments (args) and pinned associated-type bindings (assoc), both parallel
+// to traits, normalising to canonical sorted + deduped form. The (trait, args,
+// assoc) triples sort
 // together by trait name, with the args' and assoc' string forms breaking
 // ties. Each trait's assoc bindings are sorted by name so Equal is an
 // elementwise compare. When both args and assoc are all-empty this is
