@@ -897,6 +897,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// like the map-method dispatch. #map-struct-field-iter.
 		{"map-field-keys-forin", `struct Cfg { m: Map[i32, i32] } function main(): i32 { var c = Cfg{m: Map { 1: 10, 2: 20, 3: 30 }}; var t = 0; for k in c.m.keys() { t = t + c.m.get_or(k, 0); } return t; }`, 60},
 		{"map-field-values-forin", `struct Cfg { m: Map[string, i32] } function main(): i32 { var c = Cfg{m: Map { "a": 3, "b": 4 }}; var t = 0; for v in c.m.values() { t = t + v; } return t; }`, 7},
+		// An UNANNOTATED binding from a map-returning function (`var m = build()`):
+		// the `map_ret_fns` registry recovers the slot's map type so `m.get_or(...)`
+		// dispatches without a `: Map[K,V]` annotation. #3317.
+		{"map-ret-fn-binding", `function build(): Map[i32, i32] { return Map { 1: 5, 2: 6 }; } function main(): i32 { var m = build(); return m.get_or(1, 0) + m.get_or(2, 0); }`, 11},
+		{"map-ret-method-binding", `struct Reg { base: i32 } function (r: Reg) table(): Map[i32, i32] { return Map { 1: r.base, 2: r.base + 1 }; } function main(): i32 { var reg = Reg{base: 10}; var m = reg.table(); return m.get_or(1, 0) + m.get_or(2, 0); }`, 21},
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
