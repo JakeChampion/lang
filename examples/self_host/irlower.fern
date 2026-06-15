@@ -65,6 +65,12 @@ pub struct LowerState {
     // The slot itself is an 8-byte bit pattern like any value; only the ops on
     // it differ. i32 stays the default.
     local_is_f64: boolean[],
+    // local_is_f32[i] marks slot i as holding an f32 value. f32 is STORED as an
+    // 8-byte f64 (so it is also local_is_f64 — storage/arith/compare are the
+    // f64 ops), but its TYPE is tracked distinctly here so method dispatch keys
+    // "f32.<m>" (not "f64.<m>") — they differ for `to_string`/`to_json`
+    // (precision). expr_recv_prim_type returns "f32" when this is set.
+    local_is_f32: boolean[],
     // local_is_f64arr[i] marks slot i as holding an f64[] array (alongside
     // local_is_arr, which still drives the array's RC). It only affects element
     // WIDTH: a[i] on an f64-array slot reads an 8-byte f64 (arr_get width 64,
@@ -237,7 +243,7 @@ pub function (s: LowerState) emit(op: ir.Op): LowerState {
     var nctrl: i32 = s.ctrl;
     if (op.kind == "block" || op.kind == "loop" || op.kind == "if") { nctrl = s.ctrl + 1; }
     if (op.kind == "end") { nctrl = s.ctrl - 1; }
-    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: nctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops.append(op), local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: nctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // enter_loop / exit_loop push and pop the loop_blk stack. enter_loop is called
@@ -245,13 +251,13 @@ pub function (s: LowerState) emit(op: ir.Op): LowerState {
 // level); exit_loop after both of the loop's `end`s. cur_loop_blk returns the
 // innermost loop's recorded block level, or -1 outside any loop.
 pub function (s: LowerState) enter_loop(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk.append(s.ctrl), ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk.append(s.ctrl), ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) exit_loop(): LowerState {
     var trimmed: i32[] = [];
     var k: i32 = 0;
     while (k + 1 < s.loop_blk.len()) { trimmed = trimmed.append(s.loop_blk[k]); k = k + 1; }
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: trimmed, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: trimmed, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) cur_loop_blk(): i32 {
     if (s.loop_blk.len() == 0) { return 0 - 1; }
@@ -269,7 +275,7 @@ pub function (s: LowerState) loop_blk_at_depth(n: i32): i32 {
 }
 
 pub function (s: LowerState) fail(): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: false };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: false };
 }
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
@@ -305,7 +311,7 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), local_opt_type: s.local_opt_type.append(""), local_tuple_elems: s.local_tuple_elems.append(""), local_map_type: s.local_map_type.append(""), local_is_i64: s.local_is_i64.append(false), local_is_f64: s.local_is_f64.append(false), local_is_f64arr: s.local_is_f64arr.append(false), local_is_i64arr: s.local_is_i64arr.append(false), local_is_closurearr: s.local_is_closurearr.append(false), local_is_arrarr: s.local_is_arrarr.append(false), local_is_u32: s.local_is_u32.append(false), local_is_u64: s.local_is_u64.append(false), local_subword: s.local_subword.append(""), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names.append(name), local_is_arr: s.local_is_arr.append(false), local_is_str: s.local_is_str.append(false), local_is_strarr: s.local_is_strarr.append(false), local_struct_type: s.local_struct_type.append(""), local_opt_type: s.local_opt_type.append(""), local_tuple_elems: s.local_tuple_elems.append(""), local_map_type: s.local_map_type.append(""), local_is_i64: s.local_is_i64.append(false), local_is_f64: s.local_is_f64.append(false), local_is_f32: s.local_is_f32.append(false), local_is_f64arr: s.local_is_f64arr.append(false), local_is_i64arr: s.local_is_i64arr.append(false), local_is_closurearr: s.local_is_closurearr.append(false), local_is_arrarr: s.local_is_arrarr.append(false), local_is_u32: s.local_is_u32.append(false), local_is_u64: s.local_is_u64.append(false), local_subword: s.local_subword.append(""), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // is_arr_slot / mark_arr query and set the array-ness of slot i.
@@ -316,7 +322,7 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr.with(i, v), local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // is_u32_slot / mark_u32 query and set the u32-ness of slot i (a u32 scalar or
@@ -327,7 +333,7 @@ pub function (s: LowerState) is_u32_slot(i: i32): boolean {
     return s.local_is_u32[i];
 }
 pub function (s: LowerState) mark_u32(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32.with(i, v), local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32.with(i, v), local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 // is_u64_slot / mark_u64 query and set the u64-ness of slot i — drives UNSIGNED
 // compare / shift-right / div-rem in the i64 domain (#2904).
@@ -337,7 +343,7 @@ pub function (s: LowerState) is_u64_slot(i: i32): boolean {
     return s.local_is_u64[i];
 }
 pub function (s: LowerState) mark_u64(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64.with(i, v), local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64.with(i, v), local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 // subword_kind_of_slot returns slot i's sub-word int kind ("u8"/"i8"/"u16"/
 // "i16") or "". mark_subword sets it. For an array slot the kind is the ELEMENT
@@ -348,7 +354,7 @@ pub function (s: LowerState) subword_kind_of_slot(i: i32): string {
     return s.local_subword[i];
 }
 pub function (s: LowerState) mark_subword(i: i32, k: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword.with(i, k), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword.with(i, k), ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // is_const_fn reports whether `name` is a zero-arg, receiver-less module
@@ -364,7 +370,7 @@ pub function (s: LowerState) is_closure_local(name: string): boolean {
     return util.index_of_str(s.closure_locals, name) >= 0;
 }
 pub function (s: LowerState) mark_closure_local(name: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals.append(name), f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals.append(name), f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
@@ -375,7 +381,7 @@ pub function (s: LowerState) is_str_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_str(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str.with(i, v), local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
@@ -385,7 +391,7 @@ pub function (s: LowerState) is_strarr_slot(i: i32): boolean {
 }
 
 pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr.with(i, v), local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // is_struct_slot / struct_type_of_slot / mark_struct_type query and set the
@@ -397,13 +403,13 @@ pub function (s: LowerState) struct_type_of_slot(i: i32): string {
 }
 
 pub function (s: LowerState) mark_struct_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type.with(i, t), local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // mark_opt_type records slot i's Option[T]/Result[T,E] type string, so a later
 // `match` on that local can recover the bound payload type.
 pub function (s: LowerState) mark_opt_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type.with(i, t), local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type.with(i, t), local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // opt_type_of_slot returns slot i's recorded Option/Result type, or "".
@@ -414,7 +420,7 @@ pub function (s: LowerState) opt_type_of_slot(i: i32): string {
 
 // mark_tuple_elems records slot i's comma-joined tuple element-type tags.
 pub function (s: LowerState) mark_tuple_elems(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems.with(i, t), local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems.with(i, t), local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // tuple_elem_tag returns slot i's Nth tuple element-type tag, or "". The split is
@@ -776,7 +782,7 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
 }
 
 pub function (s: LowerState) mark_map_type(i: i32, t: string): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type.with(i, t), local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type.with(i, t), local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) map_type_of(i: i32): string {
     if (i < 0 || i >= s.local_map_type.len()) { return ""; }
@@ -820,7 +826,7 @@ pub function expr_map_kind(e: parser.Expr, s: LowerState): i32 {
 }
 
 pub function (s: LowerState) mark_i64(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64.with(i, v), local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64.with(i, v), local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) is_i64_slot(i: i32): boolean {
     if (i < 0) { return false; }
@@ -832,11 +838,21 @@ pub function (s: LowerState) is_i64_slot(i: i32): boolean {
     return s.local_is_i64[i];
 }
 pub function (s: LowerState) mark_f64(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64.with(i, v), local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64.with(i, v), local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 pub function (s: LowerState) is_f64_slot(i: i32): boolean {
     if (i < 0 || i >= s.local_is_f64.len()) { return false; }
     return s.local_is_f64[i];
+}
+// mark_f32 / is_f32_slot query and set whether slot i holds an f32 value (a
+// strict overlay on is_f64: an f32 slot is ALSO is_f64 for storage/arith, but
+// carries the f32 type tag for "f32.<method>" dispatch). Mirrors mark_f64.
+pub function (s: LowerState) mark_f32(i: i32, v: boolean): LowerState {
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32.with(i, v), local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+}
+pub function (s: LowerState) is_f32_slot(i: i32): boolean {
+    if (i < 0 || i >= s.local_is_f32.len()) { return false; }
+    return s.local_is_f32[i];
 }
 // is_f64arr_slot / mark_f64arr query and set whether slot i holds an f64[]
 // array (8-byte element width on wasm). The element-width driver for a[i].
@@ -845,7 +861,7 @@ pub function (s: LowerState) is_f64arr_slot(i: i32): boolean {
     return s.local_is_f64arr[i];
 }
 pub function (s: LowerState) mark_f64arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr.with(i, v), local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr.with(i, v), local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 // is_i64arr_slot / mark_i64arr query and set whether slot i holds an i64[]
 // array (8-byte i64 elements). The driver for a[i] -> arr_get_i64.
@@ -854,7 +870,7 @@ pub function (s: LowerState) is_i64arr_slot(i: i32): boolean {
     return s.local_is_i64arr[i];
 }
 pub function (s: LowerState) mark_i64arr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr.with(i, v), local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr.with(i, v), local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // is_closurearr_slot / mark_closurearr query and set whether slot i holds a
@@ -865,7 +881,7 @@ pub function (s: LowerState) is_closurearr_slot(i: i32): boolean {
     return s.local_is_closurearr[i];
 }
 pub function (s: LowerState) mark_closurearr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr.with(i, v), local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr.with(i, v), local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 // is_arrarr_slot / mark_arrarr query and set whether slot i holds an array-of-
 // arrays (`T[][]`), so a local bound from its element a[i] is typed is_arr.
@@ -874,7 +890,7 @@ pub function (s: LowerState) is_arrarr_slot(i: i32): boolean {
     return s.local_is_arrarr[i];
 }
 pub function (s: LowerState) mark_arrarr(i: i32, v: boolean): LowerState {
-    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr.with(i, v), local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
+    return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr.with(i, v), local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
 // variant_enum_owner returns the enum a variant struct belongs to
@@ -988,13 +1004,19 @@ pub function is_scalar_array_type(t: string): boolean {
 }
 
 // is_leaksafe_array_field reports whether `t` is an array type that is leak-safe
-// AS A STRUCT FIELD: the scalar-element arrays (i32[]/boolean[]) plus the 8-byte-
-// element f64[]/i64[]. All store a pointer in the field slot, are owned by the
-// struct (a fresh array literal at construction — is_scalar_arr_field_access bails
-// the aliasing forms), and are deep-dropped on the struct's reclamation. NOT used
-// for enum payloads (those need the element-width mark, not a plain mark_arr).
+// AS A STRUCT FIELD: the scalar-element arrays (i32[]/boolean[]) plus the 4-byte
+// u32[] and the 8-byte-element f64[]/i64[]. All store a pointer in the field slot,
+// are owned by the struct (a fresh array literal at construction —
+// is_scalar_arr_field_access bails the aliasing forms), and are deep-dropped on
+// the struct's reclamation. u32[] rides the i32[] 4-byte element read unchanged;
+// its unsignedness only affects arithmetic ON a read element, not the field
+// round-trip. NOT here: u64[] (its 8-byte element read needs the i64-width
+// dispatch routed through the "u64[]" field tag — like the u64 tuple element
+// slice — a separate increment) and the sub-word arrays (u8[]/u16[]/i8[]/i16[],
+// whose element read needs sign/zero-extension). NOT used for enum payloads
+// (those need the element-width mark, not a plain mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
-    return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]";
+    return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]" || t == "u32[]";
 }
 
 // is_map_type_name reports whether `t` is a Map[K, V] type. Maps are leak-only
@@ -1561,6 +1583,9 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // Arrays / tuples / maps aren't primitive receivers either; their builtin
     // methods (.len / .append / map ops) are intercepted before this fallback.
     if (expr_is_str(e, s)) { return "string"; }
+    // f32 BEFORE f64: an f32 value is also is_f64 (stored 8-byte), but its
+    // method dispatch must key "f32.<m>" (distinct from f64 for to_string/etc.).
+    if (expr_is_f32(e, s)) { return "f32"; }
     if (expr_is_f64(e, s)) { return "f64"; }
     if (infer_expr_width(e, s) == 64) { return "i64"; }
     return "i32";
@@ -2387,6 +2412,45 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
             return decl_field_type(s.structs, oty, fa.field) == "f64";
         },
         parser.ExprIndex(ix) => { return arr_index_is_f64(ix.array, s); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// expr_is_f32 reports whether `e` evaluates to an f32 value (STRICTLY — false
+// for a genuine f64). f32 is stored as an 8-byte f64, so expr_is_f64 also
+// returns true for it; this strict view drives "f32.<method>" dispatch
+// (expr_recv_prim_type) which must NOT collide with f64 (their to_string /
+// to_json differ by precision). Sources: an f32-tracked local/param/receiver,
+// an `as f32` cast, f32 arithmetic, an f32 struct field / tuple element. A bare
+// float literal is f64 by default (becomes f32 only via `as f32`). A method-
+// CALL result is conservatively not classified f32 here (no f32-ret registry):
+// such a chained receiver falls back to the f64-twin dispatch, which is
+// behavior-identical for the value ops and only the (unused-in-practice)
+// chained-`to_string` would differ.
+pub function expr_is_f32(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return s.is_f32_slot(s.slot_of(id.name)); },
+        parser.ExprBinary(b) => {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+                return expr_is_f32(b.left, s) || expr_is_f32(b.right, s);
+            }
+            return false;
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") { return expr_is_f32(u.operand, s); }
+            // Only `as f32` yields f32; `as f64` / `as float` are f64.
+            if (u.op == "as_f32") { return true; }
+            return false;
+        },
+        parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f32";
+            }
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return decl_field_type(s.structs, oty, fa.field) == "f32";
+        },
         _ => { return false; }
     }
     return false;
@@ -4903,6 +4967,186 @@ function iife_arm_returns_ident(arm: parser.MatchArm, name: string): boolean {
     return false;
 }
 
+// iife_arm_tail_expr returns the arm's TAIL `return E` value expression, or an
+// e_unknown when the arm's last statement is not a return. Used to classify the
+// arm's RESULT for the borrow-only payload gate below.
+function iife_arm_tail_expr(arm: parser.MatchArm): parser.Expr {
+    if (arm.body.len() == 0) { return parser.e_unknown(""); }
+    var last: parser.Stmt = arm.body[arm.body.len() - 1];
+    match (last) {
+        parser.StmtReturn(r) => { return r.value; },
+        _ => { return parser.e_unknown(""); }
+    }
+    return parser.e_unknown("");
+}
+
+// iife_expr_mentions_ident reports whether `name` appears anywhere in `e`. Used to
+// route a sub-expression that does NOT reference the bound payload through the
+// ordinary `s`-based i32 classifier (the binding is irrelevant to it), and one that
+// DOES through the payload-aware borrow check.
+function iife_expr_mentions_ident(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprBinary(b) => { return iife_expr_mentions_ident(b.left, name) || iife_expr_mentions_ident(b.right, name); },
+        parser.ExprUnary(u) => { return iife_expr_mentions_ident(u.operand, name); },
+        parser.ExprFieldAccess(fa) => { return iife_expr_mentions_ident(fa.obj, name); },
+        parser.ExprIndex(ix) => { return iife_expr_mentions_ident(ix.array, name) || iife_expr_mentions_ident(ix.index, name); },
+        parser.ExprCall(c) => {
+            if (iife_expr_mentions_ident(c.callee, name)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (iife_expr_mentions_ident(c.args[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_method_ret_i32 reports whether method `method` on a receiver of type `recv`
+// (a struct / enum) provably returns an i32 (or boolean — both ride the i32 temp).
+// Sound by EXCLUSION: a method registered as returning string / i64 / f64 / an array
+// / a tuple / a struct / an Option is rejected; anything else (an i32 / boolean
+// return) is admitted. The qualified key "<recv>.<method>" is how every *_ret
+// registry stores receiver methods (mirroring expr_is_str / infer_expr_width).
+function iife_method_ret_i32(recv: string, method: string, s: LowerState): boolean {
+    var key: string = recv + "." + method;
+    if (s.is_str_ret_fn(key)) { return false; }
+    if (s.is_i64_ret_fn(key)) { return false; }
+    if (s.is_f64_ret_fn(key)) { return false; }
+    if (s.is_arr_ret_fn(key) || s.is_strarr_ret_fn(key) || s.is_f64arr_ret_fn(key) || s.is_i64arr_ret_fn(key)) { return false; }
+    if (s.struct_ret_type(key) != "") { return false; }
+    if (s.tuple_ret_type(key) != "") { return false; }
+    if (s.opt_ret_type(key) != "") { return false; }
+    return true;
+}
+
+// iife_borrow_leaf_i32 reports whether `e` — a borrow READ of the bound payload
+// `name` (declared type `ft`) — provably yields an i32 value, WITHOUT constructing a
+// trial scope (the type is recovered directly from `ft`). The admitted shapes:
+//   - `name.<field>`  : struct / enum payload, the field's type is i32.
+//   - `name.<digit>`  : tuple payload, that element's tag is i32 / boolean.
+//   - `name.len()`    : string OR array payload → i32 length.
+//   - `name[idx]`     : string payload (a char code) or i32[]/boolean[] element.
+// A BARE `name` (the payload itself) is NOT i32 — it is rejected so the arm bails
+// (it would need a payload-typed result temp). Any other read is rejected.
+function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return false; },   // bare payload — not i32
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name != name) { return false; }
+                    // `name.<digit>` — a tuple element read; i32 iff that element is i32 / boolean.
+                    if (util.is_all_digits(fa.field)) {
+                        var et: string = tuple_type_elem_tag(ft, util.digits_to_i32(fa.field));
+                        return et == "i32" || et == "boolean";
+                    }
+                    // `name.<field>` — a struct / enum field read; i32 iff the field is i32 / boolean.
+                    if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
+                        var fdt: string = decl_field_type(s.structs, ft, fa.field);
+                        return fdt == "i32" || fdt == "boolean";
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(aid) => {
+                    if (aid.name != name) { return false; }
+                    // `name[idx]` — a string char code (i32) or a scalar-array element (i32).
+                    if (ft == "string" || is_scalar_array_type(ft)) { return iife_borrow_subexpr_i32(ix.index, name, ft, s); }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        parser.ExprIdent(rid) => {
+                            if (rid.name != name) { return false; }
+                            // `name.len()` — string / array length → i32.
+                            if (cfa.field == "len" && c.args.len() == 0) { return true; }
+                            // `name.method()` on a struct / enum payload whose return is
+                            // provably i32 (NOT in any wider-result registry — a boolean
+                            // return also rides the i32 temp, so it's fine).
+                            if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
+                                return iife_method_ret_i32(ft, cfa.field, s);
+                            }
+                            return false;
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => {}
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_borrow_subexpr_i32 reports whether `e` provably yields an i32 value given the
+// bound payload `name` (type `ft`) is in scope. A sub-expression that does NOT
+// mention `name` is classified by the ordinary i32 predicates over `s` (the binding
+// is irrelevant); one that DOES is either an arithmetic / comparison / logical
+// COMPOSITION of i32 sub-results, or a direct borrow LEAF (iife_borrow_leaf_i32).
+// This is the trial-scope-free classifier the borrow gate uses (it avoids adding a
+// local to the lowering state purely to classify).
+function iife_borrow_subexpr_i32(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
+    if (!iife_expr_mentions_ident(e, name)) {
+        // The bound payload is irrelevant here — classify with the existing rules.
+        if (expr_is_str(e, s)) { return false; }
+        if (expr_is_f64(e, s)) { return false; }
+        if (infer_expr_width(e, s) == 64) { return false; }
+        if (expr_is_tuple(e, s)) { return false; }
+        if (expr_is_result(e, s)) { return false; }
+        if (expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s)) { return false; }
+        if (expr_struct_type(e, s) != "") { return false; }
+        return true;
+    }
+    match (e) {
+        parser.ExprBinary(b) => {
+            // Comparison / logical ops yield an i32 boolean regardless of operand
+            // width (booleans ride the i32 slot). Arithmetic / bitwise ops are i32
+            // only when BOTH operands are provably i32 (an i64 operand widens the op).
+            if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=" || b.op == "&&" || b.op == "||") { return true; }
+            return iife_borrow_subexpr_i32(b.left, name, ft, s) && iife_borrow_subexpr_i32(b.right, name, ft, s);
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "!") { return true; }                  // boolean → i32
+            if (u.op == "as_i64" || u.op == "as_u64") { return false; }
+            return iife_borrow_subexpr_i32(u.operand, name, ft, s);
+        },
+        _ => { return iife_borrow_leaf_i32(e, name, ft, s); }
+    }
+    return false;
+}
+
+// iife_payload_borrow_i32 admits a STRUCT / STRING / TUPLE / ENUM payload binding
+// for the inlined match-EXPRESSION when the arm's tail reads it as a BORROW that
+// produces a provably-i32 result (`p.x` of an i32 field, `s.len()`, `t.0` of an i32
+// element, an i32 composition of these). The underlying StmtMatch path already
+// binds + deep-drops / leaks these payloads correctly; this gate only needs to
+// guarantee the i32 result temp is the right width. A BARE return (`V(p) => p`)
+// would need a payload-typed temp the IIFE can't classify, so it is rejected (like
+// the array case). A non-i32 borrow result (string / i64 / f64 / tuple / array /
+// struct field read) is rejected too — its temp would be mis-classified at the
+// width inferred before the binding is in scope. Leak-safe struct payloads only.
+function iife_payload_borrow_i32(ft: string, name: string, arm: parser.MatchArm, s: LowerState): boolean {
+    // A struct payload must be leak-safe (no aliasing array fields needing RC) — it
+    // is borrowed from the enum box, never reclaimable, so it must leak cleanly.
+    if (decl_is_struct(s.structs, ft) && !is_enum_like_name(ft, s.structs) && !decl_is_leaksafe(s.structs, ft)) { return false; }
+    // Bare return of the payload is rejected (needs a payload-typed temp).
+    if (iife_arm_returns_ident(arm, name)) { return false; }
+    var tail: parser.Expr = iife_arm_tail_expr(arm);
+    return iife_borrow_subexpr_i32(tail, name, ft, s);
+}
+
 // iife_payload_field_bindable reports whether a payload of field TYPE `ft`, bound to
 // `name` in `arm`, is admissible for the inlined match-EXPRESSION:
 //   - i32: always (an i32 store / borrow).
@@ -4917,10 +5161,20 @@ function iife_arm_returns_ident(arm: parser.MatchArm, name: string): boolean {
 //     (is_scalar_array_type only) doesn't carry the i64/f64 element width, so an
 //     element read would default to i32 width and read garbage — they stay gated to
 //     AST (the same limitation applies to the statement-match path itself).
+//   - struct / string / tuple / nominal-enum payload: only when read as a BORROW
+//     whose result is provably i32 (`p.x` of an i32 field, `s.len()`, `t.0` of an
+//     i32 element, an enum method returning i32) — NOT returned bare. The result
+//     temp stays the (default) i32 width, so the value lands correctly; a non-i32
+//     borrow result (string / i64 / f64 / tuple / array / struct field) is rejected
+//     because its temp would be mis-classified at the i32 width inferred before the
+//     binding is in scope (iife_payload_borrow_i32 / iife_expr_result_is_i32).
 function iife_payload_field_bindable(ft: string, name: string, arm: parser.MatchArm, s: LowerState): boolean {
     if (ft == "i32") { return true; }
     if (ft == "i64" || ft == "f64") { return iife_arm_returns_ident(arm, name); }
     if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }
+    if (ft == "string" || decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs) || tuple_elems_lowerable(ft, s.structs)) {
+        return iife_payload_borrow_i32(ft, name, arm, s);
+    }
     return false;
 }
 
@@ -5410,6 +5664,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 var fvb: LowerState = fv.add_local(v.name);
                 var fslot: i32 = fvb.slot_of(v.name);
                 fvb = fvb.mark_f64(fslot, true);
+                // An f32 local is ALSO f32-tagged (overlay on f64) so its method
+                // calls dispatch "f32.<m>" — by annotation (`var x: f32`) or an
+                // f32-valued init (`var x = y as f32` / another f32 value).
+                if (v.type_name == "f32" || v.type_name == "float" || expr_is_f32(v.init, s)) {
+                    fvb = fvb.mark_f32(fslot, true);
+                }
                 return fvb.emit(ir.op_store_local(fslot));
             }
             // i64 array LITERAL: `var a: i64[] = [e0, e1, …]`. Elements aren't
@@ -10022,6 +10282,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var mapty: string[] = [];
     var isi64: boolean[] = [];
     var isf64: boolean[] = [];
+    var isf32: boolean[] = [];
     var isf64arr: boolean[] = [];
     var isi64arr: boolean[] = [];
     var isu32: boolean[] = [];
@@ -10043,7 +10304,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     if (fn.receiver_name.len() > 0) {
         var rbase: string = util.base_type_name(fn.receiver_type);
         var r_is_struct: boolean = decl_is_struct(structs, rbase);
-        var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64" || rbase == "f64";
+        var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64" || is_f64_scalar_type_name(rbase);
         var r_is_enum: boolean = is_enum_like_name(rbase, structs);
         // An Option[T] / Result[T, E] receiver (`function (o: Option[i32])
         // unwrap_or(...)`) binds slot 0 as a leak-only opt box carrying the full
@@ -10076,6 +10337,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         mapty = mapty.append("");
         isi64 = isi64.append(rbase == "i64");
         isf64 = isf64.append(is_f64_scalar_type_name(rbase));
+        isf32 = isf32.append(rbase == "f32" || rbase == "float");
         isf64arr = isf64arr.append(false);
         isi64arr = isi64arr.append(false);
         isu32 = isu32.append(is_u32_type_name(fn.receiver_type));
@@ -10140,6 +10402,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         if (is_map_type_name(ptn)) { mapty = mapty.append(ptn); } else { mapty = mapty.append(""); }
         isi64 = isi64.append(fn.params[i].type_name == "i64");
         isf64 = isf64.append(is_f64_scalar_type_name(fn.params[i].type_name));
+        isf32 = isf32.append(fn.params[i].type_name == "f32" || fn.params[i].type_name == "float");
         // An f64[] param is element-width-tracked (a[i] reads an 8-byte f64);
         // the array itself rides the same 8-byte-stride layout every f64 array
         // literal in this (whole-module-IR) program uses, so passing one is safe.
@@ -10192,7 +10455,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
     var reclaim: string[] = reclaimable_names_of(fn.body, structs);
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, local_is_f64: isf64, local_is_f64arr: isf64arr, local_is_i64arr: isi64arr, local_is_closurearr: isclosurearr, local_is_arrarr: isarrarr, local_is_u32: isu32, local_is_u64: isu64, local_subword: subword, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, local_is_f64: isf64, local_is_f32: isf32, local_is_f64arr: isf64arr, local_is_i64arr: isi64arr, local_is_closurearr: isclosurearr, local_is_arrarr: isarrarr, local_is_u32: isu32, local_is_u64: isu64, local_subword: subword, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, n_params: names.len(), ok: true };
     // Perceus precise drops: release each linear, owned array-literal local right
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.

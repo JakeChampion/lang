@@ -545,6 +545,36 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"iife-match-arr-payload-detector", `enum E { V(i32[]), W(i32[]) } function go(): i32 { var x: E = E.V([10, 20, 30]); var r = match (x) { V(xs) => xs[0], W(ys) => ys[0] }; if (r != 10) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// boolean[] payload bound, read .len() (single-expr arm); result is i32.
 		{"iife-match-boolarr-payload-len-value", `enum E { V(boolean[]), N } function main(): i32 { var x: E = E.V([true, false, true]); var r = match (x) { V(xs) => xs.len(), N => 0 }; return r; }`, 3},
+		// STRUCT / STRING / TUPLE / ENUM payload BORROW widening (lower_iife_match's
+		// iife_payload_borrow_i32): a `var r = match (e) { V(p) => p.x, ... }` IIFE
+		// match-EXPRESSION binding a STRUCT / STRING / TUPLE / nominal-ENUM payload now
+		// routes "ir" (was "ast") WHEN the arm reads it as a borrow whose result is
+		// provably i32 (`p.x` of an i32 field, `s.len()`, `t.0` of an i32 element, an
+		// enum method returning i32, `s[i]` char code, or an i32 COMPOSITION of these).
+		// The default i32 result temp then holds the right value; a non-i32 borrow
+		// result (string field / i64 element / bare payload) stays gated to AST (its
+		// temp would mis-classify at the i32 width inferred before the binding is in
+		// scope). The structural classifier proves i32 without a trial scope, recovering
+		// each leaf's type directly from the payload type. The underlying StmtMatch path
+		// already binds + leak-drops these payloads at width.
+		// Struct payload read by an i32 FIELD: result is the i32 field value.
+		{"iife-match-struct-payload-field-value", `struct P { x: i32, y: i32 } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { x: 5, y: 9 }); var r = match (e) { V(p) => p.x + p.y, N => 0 }; return r; }`, 14},
+		// String payload read by .len(): result is the i32 length.
+		{"iife-match-string-payload-len-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("hello"); var r = match (e) { V(s) => s.len(), N => 0 }; return r; }`, 5},
+		// String payload indexed `s[i]`: result is the i32 char code ('H' = 72).
+		{"iife-match-string-payload-index-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("Hi"); var r = match (e) { V(s) => s[0], N => 0 }; return r; }`, 72},
+		// Tuple payload read by ELEMENT `t.0` / `t.1` (i32 elements): result is i32.
+		{"iife-match-tuple-payload-elem-value", `enum E { V((i32, i32)), N } function main(): i32 { var e: E = E.V((3, 4)); var r = match (e) { V(t) => t.0 + t.1, N => 0 }; return r; }`, 7},
+		// Enum payload with a METHOD returning i32 (`t.sum()`): result is i32 — the
+		// method's i32 return is recovered by exclusion from the wider-result registries.
+		{"iife-match-enum-payload-method-value", `enum Tree { Leaf(i32), Node(Tree, Tree) } function (t: Tree) sum(): i32 { return match (t) { Leaf(v) => v, Node(l, r) => l.sum() + r.sum() } } enum E { V(Tree), N } function main(): i32 { var tr: Tree = Tree.Leaf(7); var e: E = E.V(tr); var r = match (e) { V(t) => t.sum(), N => 0 }; return r; }`, 7},
+		// Leak-safety detector: the STRING payload box is bound + borrow-read through the
+		// IIFE path then leaked-with-the-enum; the over-release detector reads 0 (the
+		// borrowed payload is never double-freed through the IIFE path).
+		{"iife-match-struct-payload-detector", `struct P { x: i32 } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { x: 42 }); var r = match (e) { V(p) => p.x, N => 0 }; if (r != 42) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Leak-safety detector for the STRING-payload borrow (the box is reclaimed
+		// exactly once — no leak, no double-free through the inlined match path).
+		{"iife-match-string-payload-detector", `enum E { V(string), N } function go(): i32 { var e: E = E.V("world"); var r = match (e) { V(s) => s.len(), N => 0 }; if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// ARROW LAMBDA (`(params): R => expr`) — the self-host parser now parses the
 		// concise arrow form into the SAME ExprLambda the verbose `function (params):
 		// R { return expr; }` produces, so it rides the existing lambda-lift + IR

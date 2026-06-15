@@ -198,6 +198,10 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"struct-arr-field", `struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }`},
 		{"struct-arr-param", `struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }`},
 		{"struct-arr-extract", `struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [7, 8, 9] }; var a = b.data; return a[0] + a[2]; }`},
+		// u32[] struct fields ride the i32[] 4-byte element read; verifies the
+		// wasm path agrees on the field round-trip (construction + indexed read).
+		{"struct-u32arr-field", `struct Vec { vals: u32[], n: i32 } function main(): i32 { var v = Vec { vals: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; }`},
+		{"struct-u32arr-extract", `struct Vec { vals: u32[] } function main(): i32 { var v = Vec { vals: [7, 8, 9] }; var a = v.vals; return (a[0] as i32) + (a[2] as i32); }`},
 		// Aliasing a struct/enum-element array local carries the element type
 		// over (`qs[i].field` / `qs[i].method()` dispatch).
 		{"struct-arr-alias-method", `struct P { x: i32 } function (p: P) g(): i32 { return p.x; } function main(): i32 { var ps = [P{x: 1}, P{x: 2}]; var qs = ps; return qs[0].g() + qs[1].g(); }`},
@@ -904,6 +908,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// == 1 (a 32-bit-truncated read gives 0); < 2^63 so signedness-agnostic.
 		{"opt-u64-payload-wide-val", `function main(): i32 { var o: Option[u64] = Some(5000000000 as u64); match (o) { Some(n) => { return (n >> 32) as i32; }, None => { return 0; } } return 0; }`, 1},
 		{"result-u64-payload-val", `struct S { r: Result[u64, i32] } function main(): i32 { var s = S { r: Ok(42 as u64) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
+		// u32[] struct-field round-trip pinned on wasm: three elements read back
+		// through the field array and sum.
+		{"struct-u32arr-field-val", `struct Vec { vals: u32[], n: i32 } function main(): i32 { var v = Vec { vals: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; }`, 60},
 		// A struct-ARRAY-valued if-/match-expression (literal, or a P[]-returning
 		// call in the branch): the lifted __lam's element struct type is inferred
 		// so `ps[i].field` / `for p in ps { p.method() }` resolve. P[] sibling of

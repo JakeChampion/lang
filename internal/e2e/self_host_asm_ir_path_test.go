@@ -237,6 +237,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// reverse_words shape (`words.reverse().join(" ")`). rev([1,2,3])=[3,2,1],
 		// sum2 -> 6.
 		{"chained-arr-method", "function __method_Array_rev(xs: i32[]): i32[] { var out: i32[] = []; var i = xs.len() - 1; while (i >= 0) { out = out.append(xs[i]); i = i - 1; } return out; } function __method_Array_sum2(xs: i32[]): i32 { var s = 0; var i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function f(xs: i32[]): i32 { return xs.rev().sum2(); } function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return f(a); }"},
+		// f32 method dispatch: f32 is stored as an 8-byte f64, but its TYPE is
+		// tracked distinctly (local_is_f32) so an f32 receiver dispatches
+		// "f32.<m>", NOT the f64 twin — they can differ (e.g. to_string precision).
+		// Here f32.tag returns 32, f64.tag returns 64; an f32 value must pick 32
+		// and an f64 value 64. 32*100+64 = 3264 (exit 192 mod 256). Was BAIL (f32
+		// receiver not admitted as prim + conflated with f64).
+		{"f32-vs-f64-dispatch", "function (x: f32) tag(): i32 { return 32; } function (x: f64) tag(): i32 { return 64; } function f(): i32 { var v: f32 = 1.0 as f32; var w: f64 = 1.0; return v.tag() * 100 + w.tag(); } function main(): i32 { return f(); }"},
+		// f32-only methods (no f64 twin) on f32 locals — the std/float method
+		// shape (`__op_f64(x as f64) as f32`). myabs(-5)=5, myclamp via mymax(7,3)=7
+		// -> 5*10+7 = 57.
+		{"f32-methods", "function (x: f32) myabs(): f32 { var d: f64 = x as f64; if (d < 0.0) { return (0.0 - d) as f32; } return d as f32; } function (x: f32) mymax(y: f32): f32 { if ((x as f64) > (y as f64)) { return x; } return y; } function (x: f32) myclamp(lo: f32, hi: f32): f32 { return lo.mymax(x); } function f(): i32 { var a: f32 = 0.0 - 5.0 as f32; var b = a.myabs(); var c: f32 = 3.0 as f32; var m = c.myclamp(7.0 as f32, 9.0 as f32); return (b as i32) * 10 + (m as i32); } function main(): i32 { return f(); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
@@ -350,6 +361,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-arr-field", `struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }`},
 		{"struct-arr-param", `struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }`},
 		{"struct-arr-extract", `struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [7, 8, 9] }; var a = b.data; return a[0] + a[2]; }`},
+		// u32[] struct fields ride the i32[] 4-byte element read; only the leak-
+		// safety gate (is_leaksafe_array_field) had to admit them. Field
+		// round-trip: construction, indexed read, extract-to-local, by-value param.
+		{"struct-u32arr-field", `struct Vec { vals: u32[], n: i32 } function main(): i32 { var v = Vec { vals: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; }`},
+		{"struct-u32arr-extract", `struct Vec { vals: u32[] } function main(): i32 { var v = Vec { vals: [7, 8, 9] }; var a = v.vals; return (a[0] as i32) + (a[2] as i32); }`},
+		{"struct-u32arr-param", `struct Vec { vals: u32[], n: i32 } function sum(v: Vec): i32 { var s = 0; var i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; } function main(): i32 { var v = Vec { vals: [5, 10, 15], n: 3 }; return sum(v); }`},
 		// Aliasing a struct/enum-element array local (`var qs = ps`) carries the
 		// element type over, so `qs[i].field` / `qs[i].method()` dispatch.
 		{"struct-arr-alias-field", `struct P { x: i32 } function main(): i32 { var ps = [P{x: 5}, P{x: 6}]; var qs = ps; return qs[1].x; }`},
@@ -1391,6 +1408,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// box width from the separate frontend u64-typing gap.
 		{"opt-u64-payload-wide-val", `function main(): i32 { var o: Option[u64] = Some(5000000000 as u64); match (o) { Some(n) => { return (n >> 32) as i32; }, None => { return 0; } } return 0; }`, 1},
 		{"result-u64-payload-val", `struct S { r: Result[u64, i32] } function main(): i32 { var s = S { r: Ok(42 as u64) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
+		// u32[] struct-field round-trip, IR value pinned: the three elements read
+		// back through the field array and sum.
+		{"struct-u32arr-field-val", `struct Vec { vals: u32[], n: i32 } function main(): i32 { var v = Vec { vals: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; }`, 60},
 		// A struct-ARRAY-valued if-/match-expression (literal, or a P[]-returning
 		// call in the branch): the lifted __lam's element struct type is inferred
 		// so `ps[i].field` / `for p in ps { p.method() }` resolve. P[] sibling of
