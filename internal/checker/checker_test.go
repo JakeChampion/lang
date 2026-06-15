@@ -111,6 +111,35 @@ function main(): i32 { return 0; }`)
 	}
 }
 
+// From-based error-converting `?`: a `Result[_, E1]` propagated through a
+// function returning `Result[_, E2]` is accepted when E2 has an associated
+// `from(E1): E2` (`impl From[E1] for E2`), mapping `Err(e)` to
+// `Err(E2.from(e))`. Rejected when no such `from` (and no `dyn`) exists.
+// See #2674.
+func TestTryConvertErrViaFrom(t *testing.T) {
+	const hdr = `trait From[T] { function from(v: T): Self; }
+struct IoErr { code: i32 }
+struct AppErr { msg: i32 }
+impl From[IoErr] for AppErr { function from(e: IoErr): Self { return AppErr { msg: e.code }; } }
+function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
+`
+	if err := checkSource(t, hdr+`function run(): Result[i32, AppErr] {
+  var v: i32 = read()?;
+  return Ok(v);
+}`); err != nil {
+		t.Errorf("From-based error-converting `?` should type-check, got: %v", err)
+	}
+	// No `from(IoErr)` on the target and no dyn → rejected.
+	err := checkSource(t, `struct IoErr { code: i32 }
+struct AppErr { msg: i32 }
+function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
+function run(): Result[i32, AppErr] { var v: i32 = read()?; return Ok(v); }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "error types must match") {
+		t.Errorf("`?` with no conversion should be rejected, got: %v", err)
+	}
+}
+
 // Arithmetic operators `+ - * /` on a composite type desugar to its
 // conventionally-named method (add/sub/mul/div); a composite without the
 // method is rejected with a clear E009. See #2706.
