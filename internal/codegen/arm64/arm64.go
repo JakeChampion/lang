@@ -819,16 +819,19 @@ func (g *generator) emitAllocRuntime() {
 	// space is reserved up front but pages only commit as
 	// they're touched, so the wider window costs nothing on
 	// programs that don't grow into it.
-	// 1.75 GiB (was 1 GiB, was 512 MiB) so a cmd/fern-built self-host
-	// compiler can bootstrap-compile the whole self-host source (unified
-	// fern.fern + all modules) in one process. The AST path's live set grew
-	// past 1 GiB as the bundle widened, so this matches the self-host
-	// emitters' own heap_size (asm.fern / asm_arm64.fern = 1879048192),
-	// keeping the native (stage-0 mmc) and self-host (stage-1+ gen) heaps in
-	// lockstep instead of letting the native one lag. Lazy-mapped via a
-	// literal-pool load (`ldr =N`), so the wider window costs nothing until
-	// touched and has no 32-bit-immediate constraint.
-	const heapBytes = 1879048192
+	// 2.5 GiB (was 1.75 GiB, was 1 GiB, was 512 MiB) so a cmd/fern-built
+	// self-host compiler can bootstrap-compile the whole self-host source in
+	// one process. arm64 needs MORE headroom than x86 here: it emits longer
+	// asm per IR op (literal-pool `ldr =N` loads, 16-byte operand-stack
+	// pushes), so its self-compile live set runs higher than x86's for the
+	// same bundle — at 1.75 GiB (which x86 still clears) the arm64 stage-2
+	// fixpoint tipped into the exit-137 alloc trap as the IR subset widened.
+	// Matches asm_arm64.fern's own heap_size so the native (stage-0 mmc) and
+	// self-host (stage-1+ gen) arm64 heaps stay in lockstep. The region base
+	// is 0x10000000, so base+size = 0xB0000000 stays < 4 GiB and 32-bit
+	// pointers round-trip. Lazy-mapped via a literal-pool load, so the wider
+	// window costs nothing until touched and has no 32-bit-immediate limit.
+	const heapBytes = 2684354560
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")

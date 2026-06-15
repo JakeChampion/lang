@@ -765,6 +765,20 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-forkv-values", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + v; } return s; }`},
 		{"map-forkv-keys", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }`},
 		{"map-forkv-pair", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }`},
+		// UNANNOTATED map-literal bindings (`var m = Map { … }` with no
+		// `: Map[K,V]`): the binding must infer the key kind from the desugared
+		// `map_new[_i32](n).insert(…)` chain (expr_map_kind) and store the full
+		// `Map[K,V]` form, else `.get_or`/.has on an i32-key map emit key-kind 0
+		// (string) and deref the i32 key as a string pointer (segfault). The AST
+		// path (asm.fern) already infers this, so AST and IR must agree.
+		{"map-unannot-i32-hit", `function main(): i32 { var m = Map { 1: 10, 2: 20 }; return m.get_or(2, 0); }`},
+		{"map-unannot-i32-miss", `function main(): i32 { var m = Map { 1: 10 }; return m.get_or(9, 7); }`},
+		{"map-unannot-i32-insert", `function main(): i32 { var m = Map { 1: 10 }; m = m.insert(2, 20); return m.get_or(2, 0); }`},
+		{"map-unannot-i32-has", `function main(): i32 { var m = Map { 1: 10 }; var r = 0; if (m.has(1)) { r = r + 1; } if (m.has(9)) { r = r + 10; } return r; }`},
+		{"map-unannot-i32-len", `function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; return m.len(); }`},
+		{"map-unannot-i32-keys", `function main(): i32 { var m = Map { 3: 1, 4: 1, 5: 1 }; var s = 0; for k in m.keys() { s = s + k; } return s; }`},
+		{"map-unannot-str-hit", `function main(): i32 { var m = Map { "a": 5, "bb": 6 }; return m.get_or("bb", 0); }`},
+		{"map-unannot-str-miss", `function main(): i32 { var m = Map { "a": 5 }; return m.get_or("z", 8); }`},
 		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
 		// `.set` is the PUBLIC map mutator (the existing cases above use the
 		// internal `.insert`); it lowers through the IR path identically (#2926).
