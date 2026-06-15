@@ -875,6 +875,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"map-field-get_or", `struct Cache { m: Map[i32, i32], hits: i32 } function main(): i32 { var c = Cache{m: Map { 5: 50, 7: 70 }, hits: 1}; return c.m.get_or(5, 0) + c.m.get_or(7, 0) + c.hits; }`, 121},
 		{"map-field-method", `struct Cfg { table: Map[string, i32] } function (c: Cfg) lookup(k: string): i32 { return c.table.get_or(k, 0); } function main(): i32 { var c = Cfg{table: Map { "a": 3, "b": 4 }}; return c.lookup("a") + c.lookup("b"); }`, 7},
 		{"map-field-has-len", `struct Cache { m: Map[string, i32] } function main(): i32 { var c = Cache{m: Map { "a": 1, "b": 2 }}; var t = 0; if (c.m.has("a")) { t = t + c.m.len(); } return t; }`, 2},
+		// A Map[K,V] PARAMETER recovers its map type, so map methods on the param
+		// (`m.get_or(k, d)`) dispatch as map ops (the local-annotation path already
+		// did this; params lacked it). #map-param.
+		{"map-param-get_or", `function total(m: Map[i32, i32]): i32 { return m.get_or(1, 0) + m.get_or(2, 0); } function main(): i32 { var m: Map[i32, i32] = Map { 1: 10, 2: 20 }; return total(m); }`, 30},
+		{"map-param-string-key", `function look(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0); } function main(): i32 { var m: Map[string, i32] = Map { "x": 7 }; return look(m, "x"); }`, 7},
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
