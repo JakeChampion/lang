@@ -567,6 +567,47 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// grouping `(a + b)` next to an arrow lambda confirms the lookahead doesn't
 		// mis-class an ordinary parenthesised expression: (3 + 4) + ((x) => x)(1) = 8.
 		{"arrow-lambda-vs-grouping", `function main(): i32 { var a: i32 = 3; var b: i32 = 4; var id = (x: i32): i32 => x; return (a + b) + id(1); }`, 8},
+
+		// VALUE-PRODUCING `.with` (this slice). `a.with(i, v)` in expression position
+		// is a FRESH clone of `a` with element i replaced — `a` is UNMUTATED. The
+		// oracle reads BOTH `b[1]` (the replaced value 99) AND `a[1]` (the original 2):
+		// if `.with` mutated `a` in place, `a[1]` would be 99 and the sum 198, not 101.
+		// 99 + 2 = 101 proves the clone is independent. (Detector cases below confirm
+		// no over-release.)
+		{"with-value-expr-unmutated", `function main(): i32 { var a = [1, 2, 3]; var b = a.with(1, 99); return b[1] + a[1]; }`, 101},
+		{"with-value-expr-detector", `function main(): i32 { var a = [1, 2, 3]; var b = a.with(1, 99); if (b[1] + a[1] != 101) { return 99; } return __rc_underflow(); }`, 0},
+		// Whole clone is correct: sum of b (1+99+3) plus a unchanged (1+2+3) = 103+6.
+		{"with-value-expr-full", `function main(): i32 { var a = [1, 2, 3]; var b = a.with(1, 99); var sb = b[0] + b[1] + b[2]; var sa = a[0] + a[1] + a[2]; return sb + sa; }`, 109},
+		// i64[] / f64[] element clones.
+		{"with-value-i64-detector", `function main(): i32 { var a: i64[] = [10, 20, 30]; var b = a.with(0, 100); if ((b[0] + a[0]) as i32 != 110) { return 99; } return __rc_underflow(); }`, 0},
+		{"with-value-f64-detector", `function main(): i32 { var a: f64[] = [1.5, 2.5, 3.0]; var b = a.with(2, 9.0); if (((b[2] + a[2]) as i32) != 12) { return 99; } return __rc_underflow(); }`, 0},
+
+		// VALUE-PRODUCING `.append` in expression position: clones the receiver then
+		// grows the clone — the receiver is UNMUTATED. b has 4 elements (1,2,3,4),
+		// a still has 3 (1,2,3): b[3] + a.len() = 4 + 3 = 7.
+		{"append-value-field-detector", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var s = Buf { xs: [1, 2, 3], n: 3 }; var t = Buf { xs: s.xs.append(4), n: s.n + 1 }; var r = t.xs[3] + s.xs.len() + t.n; if (r != 11) { return 99; } return __rc_underflow(); }`, 0},
+
+		// STRUCT-FIELD `.with` — the headline BAIL→ir flip: the pervasive immutable-
+		// update idiom `State { xs: s.xs.with(i, v), n: s.n }`. The base `s.xs` field
+		// is cloned (borrowed for the copy, not aliased), so the new struct owns a
+		// fresh array with NO alias-inc. `t.xs[1]` reads 99, `s.xs[1]` still reads 2
+		// (the original struct's array is unmutated): 99 + 2 = 101.
+		{"struct-field-with-value", `struct State { xs: i32[], n: i32 } function main(): i32 { var s = State { xs: [1, 2, 3], n: 3 }; var t = State { xs: s.xs.with(1, 99), n: s.n }; return t.xs[1] + s.xs[1]; }`, 101},
+		{"struct-field-with-detector", `struct State { xs: i32[], n: i32 } function main(): i32 { var s = State { xs: [1, 2, 3], n: 3 }; var t = State { xs: s.xs.with(1, 99), n: s.n }; if (t.xs[1] + s.xs[1] != 101) { return 99; } return __rc_underflow(); }`, 0},
+		// Read back the whole updated struct: t.xs = [1,99,3] (sum 103) + t.n 3 = 106;
+		// s unchanged: s.xs sum 6 + s.n 3 = 9. Total 115.
+		{"struct-field-with-full", `struct State { xs: i32[], n: i32 } function main(): i32 { var s = State { xs: [1, 2, 3], n: 3 }; var t = State { xs: s.xs.with(1, 99), n: s.n }; var st = t.xs[0] + t.xs[1] + t.xs[2] + t.n; var ss = s.xs[0] + s.xs[1] + s.xs[2] + s.n; return st + ss; }`, 115},
+		// STRUCT-FIELD `.append`: `State { xs: s.xs.append(v), n: s.n + 1 }`. t.xs has
+		// 4 elements; s.xs still 3. t.xs sum (1+2+3+4)=10 + t.n 4 = 14; s.xs sum 6 +
+		// s.n 3 = 9 → 23.
+		{"struct-field-append-value", `struct State { xs: i32[], n: i32 } function main(): i32 { var s = State { xs: [1, 2, 3], n: 3 }; var t = State { xs: s.xs.append(4), n: s.n + 1 }; var st = t.xs[0] + t.xs[1] + t.xs[2] + t.xs[3] + t.n; var ss = s.xs[0] + s.xs[1] + s.xs[2] + s.n; return st + ss; }`, 23},
+		{"struct-field-append-detector", `struct State { xs: i32[], n: i32 } function main(): i32 { var s = State { xs: [1, 2, 3], n: 3 }; var t = State { xs: s.xs.append(4), n: s.n + 1 }; if (t.xs[3] != 4) { return 98; } if (s.xs.len() != 3) { return 97; } return __rc_underflow(); }`, 0},
+		// i64[]-field and f64[]-field struct updates.
+		{"struct-field-with-i64-detector", `struct State { xs: i64[], n: i32 } function main(): i32 { var s = State { xs: [10, 20, 30], n: 3 }; var t = State { xs: s.xs.with(0, 100), n: s.n }; if (((t.xs[0] + s.xs[0]) as i32) != 110) { return 99; } return __rc_underflow(); }`, 0},
+		{"struct-field-with-f64-detector", `struct State { xs: f64[], n: i32 } function main(): i32 { var s = State { xs: [1.5, 2.5, 3.0], n: 3 }; var t = State { xs: s.xs.with(2, 9.0), n: s.n }; if ((((t.xs[2] + s.xs[2]) as i32)) != 12) { return 99; } return __rc_underflow(); }`, 0},
+		// Chained immutable updates: t = update(s), u = update(t). Each clones; all
+		// three structs independent. u.xs = [1,99,3] then [1,99,42]; s/t unmutated.
+		{"struct-field-with-chain-detector", `struct State { xs: i32[], n: i32 } function main(): i32 { var s = State { xs: [1, 2, 3], n: 3 }; var t = State { xs: s.xs.with(1, 99), n: s.n }; var u = State { xs: t.xs.with(2, 42), n: t.n }; if (u.xs[1] != 99) { return 98; } if (u.xs[2] != 42) { return 97; } if (s.xs[1] != 2) { return 96; } if (t.xs[2] != 3) { return 95; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -580,25 +621,8 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		})
 	}
 
-	// NEGATIVE: a `.with(i, v)` / `.append(v)` CALL as a struct-literal array-field
-	// value STAYS bailing to the AST emitter. The bare field-COPY admission above is
-	// only a bare ExprFieldAccess (a value-producing field READ); an ExprCall is
-	// explicitly NOT admitted because the current self-host IR has no value-producing
-	// COW `.with` and `arr_push` reuses the receiver buffer in place — admitting it
-	// would over-release. That needs a separate COW-`arr_with` prerequisite slice, so
-	// this case must continue to route "ast" (the unsound path stays bailing).
-	negatives := []struct {
-		name string
-		src  string
-	}{
-		{"field-with-call-stays-ast", `struct S { xs: i32[], n: i32 } function main(): i32 { var s = S { xs: [10, 20, 30], n: 3 }; var s2 = S { xs: s.xs.with(0, 99), n: s.n }; return s2.xs[0]; }`},
-	}
-	for _, tc := range negatives {
-		t.Run(tc.name, func(t *testing.T) {
-			route := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
-			if route != "ast" {
-				t.Errorf("%s routed through %q path, want \"ast\" (the unsound .with-into-field case must stay bailing)", tc.name, route)
-			}
-		})
-	}
+	// (The former `field-with-call-stays-ast` negative is now obsolete: a
+	// `.with(i,v)` / `.append(v)` array-field value lowers via IR through the
+	// value-producing clone path added in this slice — covered by the
+	// `struct-field-with-*` / `struct-field-append-*` positive cases above.)
 }
