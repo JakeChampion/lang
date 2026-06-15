@@ -276,7 +276,7 @@ func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err err
 	if rem := rodataVAddr % 8; rem != 0 {
 		rodataVAddr += 8 - rem
 	}
-	return a.bytesProgramAt(textVAddr, rodataVAddr, nil)
+	return a.bytesProgramAt(textVAddr, rodataVAddr, nil, nil)
 }
 
 // BytesProgramWX is BytesProgram for the W^X two-segment ELF layout
@@ -288,7 +288,7 @@ func (a *Assembler) BytesProgramWX(textVAddr uint64) (text, rodata []byte, err e
 	a.FlushLiterals()
 	const page = 0x10000 // must match elf.pageAlign
 	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
-	return a.bytesProgramAt(textVAddr, rodataVAddr, nil)
+	return a.bytesProgramAt(textVAddr, rodataVAddr, nil, nil)
 }
 
 // Reloc is one R_AARCH64_RELATIVE dynamic relocation for a position-
@@ -314,8 +314,26 @@ func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relo
 	a.FlushLiterals()
 	const page = 0x10000 // must match elf.pageAlign
 	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
+
+	// Synthetic symbols the self-relocation prologue references via
+	// adrp/:lo12:. Their addresses are relative to a load base of 0 and
+	// MUST match where elf.StaticPieExecutable lays the corresponding
+	// bytes: .rela.dyn is 8-aligned after the data blob, one Elf64_Rela
+	// (24 bytes) per `.quad <symbol>` slot; __ehdr_start is the ELF header
+	// at vaddr 0, so adrp/:lo12: of it yields the runtime load base.
+	relaStart := rodataVAddr + uint64(len(a.rodata))
+	if rem := relaStart % 8; rem != 0 {
+		relaStart += 8 - rem
+	}
+	relaEnd := relaStart + uint64(len(a.quadSymFixups))*24
+	pieSyms := map[string]uint64{
+		"__ehdr_start": 0,
+		"__rela_start": relaStart,
+		"__rela_end":   relaEnd,
+	}
+
 	var rs []Reloc
-	text, rodata, err = a.bytesProgramAt(textVAddr, rodataVAddr, &rs)
+	text, rodata, err = a.bytesProgramAt(textVAddr, rodataVAddr, &rs, pieSyms)
 	return text, rodata, rs, err
 }
 
@@ -325,7 +343,7 @@ func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relo
 // must already be flushed by the caller. When relocs != nil the layout is
 // treated as base-relative (a PIE) and each `.quad <symbol>` slot records
 // an R_AARCH64_RELATIVE entry into *relocs.
-func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Reloc) (text, rodata []byte, err error) {
+func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Reloc, pieSyms map[string]uint64) (text, rodata []byte, err error) {
 	// Resolve each ldr-literal's PC-relative offset.
 	for _, f := range a.litFixups {
 		insnAddr := textVAddr + uint64(f.at)*4
@@ -335,6 +353,14 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 	}
 
 	symVAddr := func(name string) (uint64, bool) {
+		// PIE self-relocation symbols (__ehdr_start / __rela_start /
+		// __rela_end) are synthetic — not labels in the program — and
+		// resolve to fixed base-relative addresses.
+		if pieSyms != nil {
+			if v, ok := pieSyms[name]; ok {
+				return v, true
+			}
+		}
 		s, ok := a.syms[name]
 		if !ok {
 			return 0, false
