@@ -2794,22 +2794,39 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     jj = jj + 1;
                 }
                 if (found >= 0) {
-                    // A scalar-array field must be set from a FRESH array literal:
-                    // it's then owned by the struct and never enters the local
-                    // exit-sweep, so it leaks with the struct (no dangling). An
-                    // aliased array (an ident / call) would be swept + freed while
-                    // the struct still references it → bail to the AST path.
+                    // A scalar-array field must be set from a FRESH array literal,
+                    // OR from a bare ident naming an rc-tracked scalar-array local
+                    // (the alias-into-construction case). A fresh literal is owned
+                    // by the struct and never enters the local exit-sweep, so it
+                    // leaks with the struct (no dangling). For an aliased local we
+                    // emit a Perceus dup (rc_inc) below, so the struct's field owns
+                    // a counted reference: the source local's slot is still swept
+                    // (dec) at exit, and the struct's field is deep-dropped (dec) on
+                    // the box's reclamation — the inc balances both decs (rc 1 →inc
+                    // 2 →sweep(local) 1 →field-drop 0). Anything else (a call, an
+                    // IIFE with a non-literal branch, an array-OF-struct/enum alias)
+                    // could alias a swept local with no counted handle → bail.
                     var cfft: string = decl_field_type(s.structs, slit.type_name, slit.field_names[found]);
+                    var fav_alias_inc: boolean = false;
                     if (is_leaksafe_array_field(cfft) || is_struct_array_field_type(s.structs, cfft)) {
                         // A fresh array LITERAL, or an if-/match-expression whose
                         // every branch returns a fresh array literal (#3175) — both
-                        // are owned by the struct (no aliasing). Anything else (an
-                        // ident / call, or an IIFE with a non-literal branch) could
-                        // alias a swept local, so bail.
+                        // are owned by the struct (no aliasing). A bare ident naming
+                        // an array-tracked scalar-element local is admitted via the
+                        // dup (alias-inc), but ONLY for the scalar-element field
+                        // (is_leaksafe_array_field); array-of-struct / array-of-enum
+                        // field aliasing (deep-drop recursion) is a later slice.
                         var fav: parser.Expr = slit.field_values[found];
                         var fav_ok: boolean = iife_returns_fresh_array(fav);
                         match (fav) {
                             parser.ExprArray(_) => { fav_ok = true; },
+                            parser.ExprIdent(faid) => {
+                                if (is_leaksafe_array_field(cfft)
+                                    && s.is_arr_slot(s.slot_of(faid.name))) {
+                                    fav_ok = true;
+                                    fav_alias_inc = true;
+                                }
+                            },
                             _ => {}
                         }
                         if (!fav_ok) { return s.fail(); }
@@ -2822,6 +2839,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         sm = lower_expr(slit.field_values[found], sm);
                     }
                     if (!sm.ok) { return sm; }
+                    // Perceus dup: the field value (an array pointer) is now on the
+                    // operand stack and about to be stored into the struct box. When
+                    // it ALIASES an rc-tracked local, retain it (rc_inc) so the
+                    // struct owns a counted reference. The inc reads the pointer off
+                    // the stack and pushes it back (the helper returns its arg), so
+                    // the net stack effect is unchanged for struct_make — the same
+                    // alias-inc idiom as emit_arr_store, without the cow/store wrap.
+                    if (fav_alias_inc) {
+                        sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
                 } else if (slit.has_base) {
                     // copy decl field di from the base: base then struct_get(di).
                     // An ident base re-reads its slot; a non-ident base loads the

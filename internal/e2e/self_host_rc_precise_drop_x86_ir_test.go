@@ -226,6 +226,22 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// Detector 0 proves neither the box nor the array field over-releases.
 		{"struct-array-field-reclaim-value", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; return b.xs[1] + b.n; } function main(): i32 { return go(); }`, 23},
 		{"struct-array-field-reclaim-detector", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; var r = b.xs[1] + b.n; if (r != 23) { return 99; } return __rc_underflow(); }`, 0},
+		// Array-field from an ALIASED VARIABLE (this slice): `Box { v: a }` where
+		// `a` is an rc-tracked scalar-array local. Previously bailed to the AST
+		// emitter (only a FRESH literal was admitted); now the alias is admitted
+		// via a Perceus dup (rc_inc) at the construction store, so the struct's
+		// field owns a counted reference. The exit dec-sweep still decs `a`'s slot
+		// and the struct's array field deep-drops at the box's reclamation — the
+		// inc balances both decs (rc 1 →inc 2 →sweep(a) 1 →field-drop 0). Reads
+		// back correctly and the over-release detector stays 0.
+		{"struct-arr-field-from-var-value", `struct Box { v: i32[] } function main(): i32 { var a = [1, 2, 3]; var b = Box { v: a }; return b.v[0]; }`, 1},
+		{"struct-arr-field-from-var-detector", `struct Box { v: i32[] } function main(): i32 { var a = [1, 2, 3]; var b = Box { v: a }; var r = b.v[0]; if (r != 1) { return 99; } return __rc_underflow(); }`, 0},
+		// TWO-alias stress: the same array local aliased into TWO struct boxes.
+		// Each construction emits its own dup, so the array's rc reaches 3 (1 →inc
+		// 2 →inc 3) and is dec'd three times (sweep(a) + b's field-drop + c's
+		// field-drop) — freed exactly once. Detector 0 proves the inc count is
+		// correct under multiple aliases (no leak, no over-release).
+		{"struct-arr-field-two-alias-detector", `struct Box { v: i32[] } function main(): i32 { var a = [1, 2, 3]; var b = Box { v: a }; var c = Box { v: a }; var r = b.v[0] + c.v[1]; if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
 		// Consumed scalar-payload enum free: a function-local `var x = V(scalar...)`
 		// of an all-scalar-variant enum consumed by exactly one `match (x)` where x
 		// is single-owner and DEAD after the match. The box (now rc-headered via
