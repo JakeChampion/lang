@@ -7823,6 +7823,212 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
     }
 }
 
+// --- enum-donor cross-reuse (FBIP): a dead scalar-enum box donates to a struct -
+//
+// A THIRD reuse shape. The `consumed_scalar_enum_frees` analysis already proves a
+// function-local `var x = V(scalars...)` of an all-scalar enum, consumed by exactly
+// one `match (x)` and DEAD after that match, is a sole-owner box that gets freed
+// right after the match. Instead of FREEING that box, DONATE it: if a LATER full
+// construction `var y = W { ... }` (a no-base struct literal of a
+// struct_fields_reusable type W) has the SAME box size as x's box — i.e. the same
+// field count, so x's `__fern_arr_box(p+1)` (p = V's payload count) equals W's
+// `__fern_arr_box(nf+1)` (nf = W's field count) on every backend — then REUSE x's
+// box for y: re-shape it (write W's shape pointer at offset 0, replacing V's), write
+// every field of y into it, bind y to the box, zero x's slot, and SUPPRESS the
+// post-match free of x (the reuse consumes the box; the exit sweep frees it once via
+// y). Net: zero-alloc for y — the map/fold FBIP win in the contained cross-statement
+// form. Donor (x) payloads are all scalar (enum_all_variants_scalar), so its old
+// slots hold no rc-tracked value to release before the overwrite (unlike the
+// struct-cross donor); W's leak-safe array fields are written as fresh literals and
+// deep-dropped at y's reclamation, like the struct-cross recipient.
+//
+// Soundness: x is dead-after-match and non-escaping (the consumed_scalar_enum_frees
+// gates), which already covers every statement at index >= match_idx, including y's
+// construction index k — so y's field values cannot reference x (no read-while-write)
+// and nothing else aliases the box. The box carries an rc header (op_struct_make), so
+// the single exit dec (via y) frees it at the right size.
+//
+// Determinism / disjointness: computed AFTER cross_reuse_sites + self_overwrite, in
+// index order. The donor x is an enum ctor, never a `fresh_struct_lit_type`, so it is
+// structurally disjoint from the struct-cross / self-overwrite donor pools. The
+// recipient y must not already be a self-overwrite or struct-cross site. Each donor x
+// is consumed at most once and, once chosen, is removed from the enum-free set so it
+// is NOT also freed (no double-free). The recipient construction is lowered in place
+// by emit_enum_donor_reuse instead of lower_stmt + a fresh alloc.
+
+// EnumDonorSites: parallel arrays — for each enum-donor reuse, the recipient
+// construction's body-statement index, the recipient struct name, and the donor enum
+// local name x whose box it reuses. Flat triple for the self-host nested-array limit.
+struct EnumDonorSites { idxs: i32[], recips: string[], donors: string[] }
+
+// enum_init_box_fields returns the box field count of a `var name = V(args)` /
+// `var name = V` scalar-enum donor: V's payload field count (decl_field_count of the
+// variant struct V), or 0 - 1 if name's init isn't a variant ctor / unit variant.
+function enum_init_box_fields(body: parser.Stmt[], structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprIdent(id) => {
+                                    if (variant_enum_owner(structs, id.name) != "") { return decl_field_count(structs, id.name); }
+                                    return 0 - 1;
+                                },
+                                _ => { return 0 - 1; },
+                            }
+                        },
+                        parser.ExprIdent(id2) => {
+                            if (variant_enum_owner(structs, id2.name) != "") { return decl_field_count(structs, id2.name); }
+                            return 0 - 1;
+                        },
+                        _ => { return 0 - 1; },
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// enum_donor_reuse_sites pairs each later full no-base struct construction with an
+// earlier consumed-and-dead scalar-enum donor of the SAME box size (field count).
+// It is given the already-computed self-overwrite + cross-struct sites (so it never
+// re-uses one of their construction indices) and the consumed_scalar_enum_frees set
+// (its candidate donor pool, of which it consumes a disjoint subset). A donor is
+// eligible for recipient at index k iff its consuming match index < k (so the box is
+// live + reclaimable at k) and its field count equals the recipient struct's. Each
+// donor is consumed at most once; the FIRST (nearest-from-front) eligible donor is
+// chosen for determinism.
+function enum_donor_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], so: ReuseSites, xr: CrossReuseSites, ef: EnumFrees): EnumDonorSites {
+    var idxs: i32[] = [];
+    var recips: string[] = [];
+    var donors: string[] = [];
+    var k: i32 = 0;
+    while (k < body.len()) {
+        // skip a statement already owned by a self-overwrite or cross-struct site.
+        var taken: boolean = false;
+        var si: i32 = 0;
+        while (si < so.idxs.len()) { if (so.idxs[si] == k) { taken = true; } si = si + 1; }
+        var xi: i32 = 0;
+        while (xi < xr.idxs.len()) { if (xr.idxs[xi] == k) { taken = true; } xi = xi + 1; }
+        if (!taken) {
+            match (body[k]) {
+                parser.StmtVar(v) => {
+                    match (v.init) {
+                        parser.ExprStructLit(slit) => {
+                            if (!slit.has_base && struct_fields_reusable(structs, slit.type_name)) {
+                                // every leak-safe array field VALUE must be a fresh
+                                // array literal (the reused box then owns it) — same
+                                // rule as cross_reuse_sites.
+                                var okv: boolean = true;
+                                var fk: i32 = 0;
+                                while (fk < slit.field_names.len()) {
+                                    var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
+                                    if (is_leaksafe_array_field(fkt)) {
+                                        match (slit.field_values[fk]) {
+                                            parser.ExprArray(_) => {},
+                                            _ => { okv = false; }
+                                        }
+                                    }
+                                    fk = fk + 1;
+                                }
+                                if (okv) {
+                                    var want: i32 = decl_field_count(structs, slit.type_name);
+                                    // find the nearest unconsumed enum donor whose
+                                    // consuming match is before k and whose box size
+                                    // (field count) equals the recipient's.
+                                    var di: i32 = 0;
+                                    var chosen: string = "";
+                                    while (di < ef.idxs.len() && chosen == "") {
+                                        var dname: string = ef.names[di];
+                                        if (ef.idxs[di] < k
+                                                && dname != v.name
+                                                && util.index_of_str(donors, dname) < 0
+                                                && enum_init_box_fields(body, structs, dname) == want) {
+                                            chosen = dname;
+                                        }
+                                        di = di + 1;
+                                    }
+                                    if (chosen != "") {
+                                        idxs = idxs.append(k);
+                                        recips = recips.append(slit.type_name);
+                                        donors = donors.append(chosen);
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        }
+        k = k + 1;
+    }
+    return EnumDonorSites { idxs: idxs, recips: recips, donors: donors };
+}
+
+// emit_enum_donor_reuse lowers a full `var y = W { ... }` construction as an IN-PLACE
+// reuse of donor x's (dead, consumed scalar-enum) box. It RE-SHAPES x's box to W
+// (op_struct_set_shape — overwrites the donor variant's shape at offset 0 with W's),
+// writes every field of y into the box (decl order; no old-value dec needed — the
+// donor's old slots are all scalars), binds y to the box, and ZEROES x's slot so the
+// exit sweep frees the box exactly once (via y). Mirrors emit_cross_struct_reuse, but
+// the donor shape differs (enum variant -> struct W), hence the shape rewrite, and
+// there are no leak-safe array OLD values to release (donor payloads are all scalar).
+function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string, donor_name: string, s: LowerState): LowerState {
+    var dslot: i32 = s.slot_of(donor_name);
+    if (dslot < 0) { return s.fail(); }
+    match (init) {
+        parser.ExprStructLit(slit) => {
+            var st: LowerState = s;
+            // Re-shape the donor box to W: load box, write W's shape at offset 0.
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_struct_set_shape(recip));
+            st = st.emit(ir.op_drop());
+            // Write every decl field of W into the box, in decl order.
+            var ndecl: i32 = decl_field_count(st.structs, slit.type_name);
+            var di: i32 = 0;
+            while (di < ndecl) {
+                var jj: i32 = 0;
+                var found: i32 = 0 - 1;
+                while (jj < slit.field_names.len()) {
+                    if (st.field_index_in(slit.type_name, slit.field_names[jj]) == di) { found = jj; }
+                    jj = jj + 1;
+                }
+                if (found < 0) { return st.fail(); }
+                if (struct_field_is_i64(st.structs, slit.type_name, di)) {
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_i64(slit.field_values[found], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set_i64(di));
+                } else {
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_expr(slit.field_values[found], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
+                }
+                di = di + 1;
+            }
+            // Bind y to the box; zero x's slot (y now owns the box).
+            var yb: LowerState = st.add_local(y_name);
+            var yslot: i32 = yb.slot_of(y_name);
+            yb = yb.mark_struct_type(yslot, slit.type_name);
+            yb = yb.emit(ir.op_load_local(dslot));
+            yb = yb.emit(ir.op_store_local(yslot));
+            yb = yb.emit(ir.op_const_i32(0));
+            yb = yb.emit(ir.op_store_local(dslot));
+            return yb;
+        },
+        _ => { return s.fail(); },
+    }
+}
+
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
 // arr_ret_fns is the set of array-returning function names (for move tracking);
 // strarr_ret_fns is the string[]-returning subset (for element typing at calls).
@@ -8078,6 +8284,11 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // sound because the box now carries an rc header and the match read its scalar
     // payloads as borrows before any free.
     var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs);
+    // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
+    // a later same-size full struct construction instead of being freed (see
+    // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
+    // the donor's post-match free is SUPPRESSED below (the reuse consumes the box).
+    var edon: EnumDonorSites = enum_donor_reuse_sites(fn.body, structs, reuse, xreuse, enumfrees);
     var j: i32 = 0;
     while (j < fn.body.len()) {
         // Is statement j a self-overwrite reuse site? If so, lower it in place.
@@ -8094,6 +8305,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (xreuse.idxs[xri] == j) { xreuse_i = xri; }
             xri = xri + 1;
         }
+        // Is statement j an enum-donor reuse site (a struct construction reusing a
+        // consumed-and-dead scalar-enum box)?
+        var edon_i: i32 = 0 - 1;
+        var edi: i32 = 0;
+        while (edi < edon.idxs.len()) {
+            if (edon.idxs[edi] == j) { edon_i = edi; }
+            edi = edi + 1;
+        }
         if (reuse_i >= 0) {
             match (fn.body[j]) {
                 parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, reuse.bases[reuse_i], s); },
@@ -8102,6 +8321,11 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         } else if (xreuse_i >= 0) {
             match (fn.body[j]) {
                 parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xreuse_i], s); },
+                _ => { s = lower_stmt(fn.body[j], s); },
+            }
+        } else if (edon_i >= 0) {
+            match (fn.body[j]) {
+                parser.StmtVar(rv) => { s = emit_enum_donor_reuse(rv.name, rv.init, edon.recips[edon_i], edon.donors[edon_i], s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else {
@@ -8136,7 +8360,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // the only release — no double-free.
         var ei: i32 = 0;
         while (ei < enumfrees.idxs.len()) {
-            if (enumfrees.idxs[ei] == j) {
+            // Suppress the free if this donor's box was donated to a later enum-donor
+            // reuse site (the reuse consumes the box; freeing it too is a double-free).
+            if (enumfrees.idxs[ei] == j && util.index_of_str(edon.donors, enumfrees.names[ei]) < 0) {
                 var xslot: i32 = s.slot_of(enumfrees.names[ei]);
                 if (xslot >= s.n_params) {
                     s = s.emit(ir.op_load_local(xslot));

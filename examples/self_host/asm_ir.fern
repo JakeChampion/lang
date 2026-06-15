@@ -2394,6 +2394,16 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "struct_set") {
             // pop val (top), box; store val at field (index+1)*8.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax)\n");
+        } else if (o.kind == "struct_set_shape") {
+            // peek box (top of stack); write o.str's interned shape pointer (the
+            // SAME .S label struct_make writes / variant_is compares) at offset 0.
+            // Leaves the box on the stack. Used by the enum-donor in-place reuse to
+            // re-shape a dead scalar-enum box as a same-size struct.
+            var sslo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = sslo.state;
+            s = s.write("    movq (%rsp), %rax\n");
+            s = s.write("    leaq .S" + util.i32_to_string(sslo.idx) + "(%rip), %rcx\n");
+            s = s.write("    movq %rcx, (%rax)\n");
         } else if (o.kind == "variant_is") {
             // pop variant box; shape ptr @0; compare to the interned variant name
             // (same .S label struct_make stores, so pointer equality identifies
