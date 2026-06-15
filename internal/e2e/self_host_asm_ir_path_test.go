@@ -1265,6 +1265,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"switch-assign", "function main(): i32 { var x = 0; switch (2) { case 1: x = 10; case 2: x = 20; default: x = 99; } return x; }"},
 		{"switch-nested", "function f(a: i32, b: i32): i32 { switch (a) { case 1: switch (b) { case 1: return 11; default: return 19; } default: return 0; } } function main(): i32 { return f(1, 1); }"},
 		{"switch-string", "function f(s: string): i32 { switch (s) { case \"a\": return 1; case \"b\": return 2; default: return 9; } } function main(): i32 { return f(\"b\"); }"},
+		// `defer` / `errdefer` — lift_lambdas now runs parser.lower_defers_module
+		// (after the switch desugar), scheduling the deferred action at every
+		// scope exit, exactly as module_with_builtins does for the AST backend.
+		// A module whose only IR-ineligible construct was a defer now lowers via
+		// the IR path. Covers basic / early-return / two-defer-order / errdefer.
+		{"defer-basic", "function main(): i32 { var x = 0; defer { x = 99; } x = 1; return x; }"},
+		{"defer-early-return", "function f(n: i32): i32 { var x = 5; defer { x = 0; } if (n > 0) { return n; } return x; } function main(): i32 { return f(7); }"},
+		{"defer-order-two", "function main(): i32 { var a = [0, 0]; defer { a = a.with(0, 1); } defer { a = a.with(1, 2); } return a[0] + a[1]; }"},
+		{"errdefer-ok-path", "function f(): Result[i32, string] { var x = 1; errdefer { x = 9; } return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return v; }, Err(_) => { return 0; } } }"},
 	}
 
 	for _, tc := range cases {

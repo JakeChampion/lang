@@ -12775,13 +12775,23 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         acc = LiftAcc { funcs: [], counter: acc.counter };
         wi = wi + 1;
     }
-    // Desugar `switch` to the nested if/else-if chain the IR path already
-    // lowers (mirrors the AST backend's desugar_switch_in_stmt at emit time),
-    // so a module whose only IR-ineligible construct was a switch now lowers
-    // through the IR path instead of bailing to AST. Applied to the FINAL
-    // module so switches inside lifted-lambda bodies (now top-level funcs in
-    // `newfuncs`) are covered too. The AST fallback path uses the original
-    // `mod`, not this lifted module, so its own switch handling is unchanged.
-    if (acc.counter == 0) { return parser.desugar_switches_module(mod); }
-    return parser.desugar_switches_module(parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports });
+    // Normalise the lifted module for the IR path, mirroring the transient-node
+    // passes the AST backend gets via module_with_builtins:
+    //   * desugar `switch` → the nested if/else-if chain the IR path lowers
+    //     (cf. desugar_switch_in_stmt);
+    //   * lower `defer` / `errdefer` → the action scheduled at every scope exit
+    //     (cf. lower_defers; the AST emitters likewise see no StmtDefer).
+    // Without these a module whose only IR-ineligible construct was a switch or
+    // a defer bailed the whole module to the AST backend. Applied to the FINAL
+    // lifted module so switches/defers inside lifted-lambda bodies (now
+    // top-level funcs in `newfuncs`) are covered — lower_defers doesn't descend
+    // into lambda bodies, but after lifting those bodies are ordinary functions.
+    // `switch` is desugared before `defer` is lowered, matching module_with_
+    // builtins' pass order. The AST fallback path uses the original `mod`, not
+    // this lifted module, so its own switch/defer handling is unchanged.
+    var result: parser.Module = mod;
+    if (acc.counter != 0) {
+        result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    }
+    return parser.lower_defers_module(parser.desugar_switches_module(result));
 }
