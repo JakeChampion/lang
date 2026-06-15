@@ -226,6 +226,10 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { var b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n; }`},
 		{"struct-i8-neg-field", `struct B { v: i8, n: i32 } function main(): i32 { var b = B { v: 0 - 5 as i8, n: 10 }; return b.n - (b.v as i32); }`},
 		{"struct-mixed-int-fields", `struct B { a: u8, b: i16, c: u32, d: i32 } function main(): i32 { var x = B { a: 1 as u8, b: 2 as i16, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.b as i32) + (x.c as i32) + x.d; }`},
+		// A u64 struct field routes through the 64-bit integer path (struct_get_i64);
+		// the high half must survive (4294967296 >> 32 == 1), verified on wasm.
+		{"struct-u64-field", `struct B { hi: u64, n: i32 } function main(): i32 { var b = B { hi: 5000000000 as u64, n: 3 }; var q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`},
+		{"struct-u64-param", `struct B { hi: u64, n: i32 } function f(b: B): i32 { var q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`},
 		{"struct-in-loop", `struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }`},
 		// Functional update with a NON-IDENT base (`P { ...<expr>, f: v }`): the
 		// base is spilled into a scratch local once so each copied field re-reads

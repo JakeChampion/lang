@@ -369,6 +369,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-u32-param", `struct B { hi: u32, n: i32 } function sz(b: B): i32 { return b.n; } function main(): i32 { return sz(B { hi: 1 as u32, n: 9 }); }`},
 		{"struct-mixed-int-fields", `struct B { a: u8, b: i16, c: u32, d: i32 } function main(): i32 { var x = B { a: 1 as u8, b: 2 as i16, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.b as i32) + (x.c as i32) + x.d; }`},
 		{"struct-u32-update", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 5 as u32, n: 1 }; var c = B { ...b, n: 9 }; return (c.hi as i32) + c.n; }`},
+		// A u64 struct field is a 64-bit integer field — routed through the i64 path
+		// (struct_get_i64 / lower_i64 / struct_field_width 64). The full 64 bits must
+		// survive (high half via `>> 32`); local / struct-returning / param shapes.
+		{"struct-u64-field", `struct B { hi: u64, n: i32 } function main(): i32 { var b = B { hi: 5000000000 as u64, n: 3 }; var q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`},
+		{"struct-u64-ret", `struct B { hi: u64, n: i32 } function mk(): B { return B { hi: 8000000000 as u64, n: 2 }; } function main(): i32 { var b = mk(); var q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`},
+		{"struct-u64-param", `struct B { hi: u64, n: i32 } function f(b: B): i32 { var q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`},
 		{"struct-in-loop", `struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }`},
 		{"struct-update-one", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }`},
 		{"struct-update-keeps-base", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }`},
@@ -1272,6 +1278,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// the u32 high bits and the signed-i8 negative survive the field round-trip.
 		{"struct-u32-field-val", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 4000000000 as u32, n: 7 }; var hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`, 10},
 		{"struct-i8-neg-field-val", `struct B { v: i8, n: i32 } function main(): i32 { var b = B { v: 0 - 5 as i8, n: 10 }; return b.n - (b.v as i32); }`, 15},
+		// A u64 struct field, pinned to the absolute IR value: 2^32 >> 32 == 1 proves
+		// the high 32 bits survive the field round-trip (a truncating read gives 5).
+		{"struct-u64-param-val", `struct B { hi: u64, n: i32 } function f(b: B): i32 { var q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`, 6},
 		// A string-ARRAY-valued if-/match-expression: the lifted `__lam` carries a
 		// default i32 ret_type, so the binding was mis-treated as a scalar and the
 		// 8-byte string elements were read at i32 width — a silent miscompile

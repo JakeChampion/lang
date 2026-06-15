@@ -1177,7 +1177,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -1357,13 +1357,14 @@ pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: strin
 // f64.load/store vs i32.load/store selection (register backends ignore it).
 pub function struct_field_width(structs: parser.StructDecl[], struct_name: string, index: i32): i32 {
     var t: string = decl_field_type_at(structs, struct_name, index);
-    if (t == "f64" || t == "i64") { return 64; }
+    if (t == "f64" || t == "i64" || t == "u64") { return 64; }
     return 0;
 }
 // struct_field_is_i64 reports whether field `index` of `struct_name` is i64 (an
 // 8-byte INTEGER field — i64.load/store on wasm, vs f64.load/store for f64).
 pub function struct_field_is_i64(structs: parser.StructDecl[], struct_name: string, index: i32): boolean {
-    return decl_field_type_at(structs, struct_name, index) == "i64";
+    var ft64: string = decl_field_type_at(structs, struct_name, index);
+    return ft64 == "i64" || ft64 == "u64";
 }
 
 pub function (s: LowerState) field_index_in(struct_name: string, field: string): i32 {
@@ -8662,7 +8663,7 @@ function reuse_field_is_scalar(t: string): boolean {
 // NOT admitted: struct_field_is_i64 / struct_field_width both classify a u64 field
 // as i32-shaped, so the i64 8-byte path is never selected and the value truncates.
 function inarm_reuse_payload_type_ok(t: string): boolean {
-    return t == "i32" || t == "u32" || t == "boolean" || t == "i64" || t == "f64";
+    return t == "i32" || t == "u32" || t == "boolean" || t == "i64" || t == "u64" || t == "f64";
 }
 
 // struct_fields_reusable: every field of `struct_name` is either a flat scalar
