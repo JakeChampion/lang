@@ -803,6 +803,19 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-unannot-i32-keys", `function main(): i32 { var m = Map { 3: 1, 4: 1, 5: 1 }; var s = 0; for k in m.keys() { s = s + k; } return s; }`},
 		{"map-unannot-str-hit", `function main(): i32 { var m = Map { "a": 5, "bb": 6 }; return m.get_or("bb", 0); }`},
 		{"map-unannot-str-miss", `function main(): i32 { var m = Map { "a": 5 }; return m.get_or("z", 8); }`},
+		// String-VALUE maps (`Map[K, string]`): `m.get_or(k, d)` returns the
+		// stored string, so the result must track as a string for `.len()` /
+		// concat (else it reads the box's data-ptr slot as a length — garbage).
+		// asm.fern infers the value type via infer_expr_type/map_val (annotated)
+		// so AST is the oracle; the IR side now matches (expr_is_str + the
+		// unannotated value-tag inference). Covers annotated + unannotated, i32-
+		// and string-key, get_or hit, and .values() iteration.
+		{"map-strval-annot-getor", `function main(): i32 { var m: Map[i32, string] = Map { 1: "hi" }; return m.get_or(1, "x").len(); }`},
+		{"map-strval-annot-strkey", `function main(): i32 { var m: Map[string, string] = Map { "a": "bcd" }; return m.get_or("a", "z").len(); }`},
+		{"map-strval-unannot-getor", `function main(): i32 { var m = Map { 1: "hi" }; return m.get_or(1, "x").len(); }`},
+		{"map-strval-unannot-strkey", `function main(): i32 { var m = Map { "a": "bb", "c": "ddd" }; return m.get_or("c", "z").len(); }`},
+		{"map-strval-values", `function main(): i32 { var m = Map { "a": "bb", "c": "ddd" }; var n = 0; for v in m.values() { n = n + v.len(); } return n; }`},
+		{"map-strval-getor-miss", `function main(): i32 { var m = Map { 1: "hi" }; return m.get_or(9, "zzzz").len(); }`},
 		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
 		// `.set` is the PUBLIC map mutator (the existing cases above use the
 		// internal `.insert`); it lowers through the IR path identically (#2926).
