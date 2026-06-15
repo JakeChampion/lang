@@ -7488,6 +7488,269 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
     return EnumFrees { idxs: idxs, names: names };
 }
 
+// --- consumed RC-PAYLOAD enum free (deep-drop at the free site) -------------
+//
+// The scalar-enum free above only admits enums whose variant payloads are all
+// flat scalars: a single __fern_rc_dec on the box buffer is the whole free. This
+// widens that to enums whose variants carry an RC-TRACKED payload that a SINGLE
+// __fern_rc_dec fully releases — a leak-safe scalar array
+// (i32[]/i64[]/f64[]/boolean[]; a flat rc-headered element buffer, exactly the
+// types emit_struct_field_drops already deep-drops on a struct's reclamation).
+//
+// NOTE on `string`: a string is NOT eligible. On this IR path a string is a
+// {data_ptr, len} fat-pointer struct allocated raw via __fern_alloc(16) with NO
+// rc header (its data may be a static / SSO / zero-copy slice view aliasing
+// another buffer), and the whole path treats strings as LEAK-ONLY ("strings are
+// never freed" — decl_is_leaksafe). Calling __fern_rc_dec on a string would read
+// a non-existent rc header (heap bytes at ptr-8) and mis-free / over-release. So
+// only rc-headered array payloads are deep-dropped; string payloads leak as
+// everywhere else on this path. string[] / nested struct / enum / map / option /
+// tuple payloads are EXCLUDED too (their buffers hold pointers needing an element
+// walk that a shallow dec does not perform). At the free the
+// runtime variant of x is unknown, so per variant V with an rc payload we emit a
+// `variant_is(box, V)` guard that struct_gets + decs exactly V's rc fields, then
+// the box dec — a runtime variant-dispatch deep-drop (emit_enum_variant_drops).
+//
+// SOUNDNESS GATE (problem-2, the trivial-and-sound starting point): the candidate
+// is REJECTED if ANY arm BINDS an rc-typed payload variable (a non-`_` binding at
+// an rc payload field position). When no arm names the rc payload, the payload can
+// never escape the arm — the box still solely owns it — so deep-dropping it at the
+// free is sound (no use-after-free / double-free). Borrow-only escape analysis is
+// deliberately sidestepped. Scalar payloads may be bound freely (they are copied,
+// not rc-tracked); only the rc payload binding is forbidden.
+//
+// DISJOINTNESS: this set is kept entirely SEPARATE from consumed_scalar_enum_frees
+// and is NOT passed to enum_donor_reuse_sites, so an rc-payload box can never be
+// donated (the donor path overwrites fields without dropping old values — sound
+// only for scalar donors) and is freed by exactly one deep-drop here.
+
+// enum_field_rc_droppable: a payload field type whose value is a single
+// rc-headered box that one __fern_rc_dec fully releases — a leak-safe scalar array
+// (i32[]/i64[]/f64[]/boolean[]). NOT a scalar (no rc — released with the box),
+// NOT a string (a header-less {ptr,len} fat struct, leak-only on this path — see
+// the block comment above), NOT string[] / struct / enum / map / opt / tuple.
+function enum_field_rc_droppable(t: string): boolean {
+    return is_leaksafe_array_field(t);
+}
+
+// enum_variant_rc_droppable: every payload field of variant `vname` is either a
+// flat scalar (reuse_field_is_scalar — no rc, dropped by box free) or rc-droppable
+// (enum_field_rc_droppable). A field outside both bails the whole enum.
+function enum_variant_rc_droppable(structs: parser.StructDecl[], vname: string): boolean {
+    var n: i32 = decl_field_count(structs, vname);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var t: string = decl_field_type_at(structs, vname, fi);
+        if (!reuse_field_is_scalar(t) && !enum_field_rc_droppable(t)) { return false; }
+        fi = fi + 1;
+    }
+    return true;
+}
+
+// enum_variant_has_rc_payload: variant `vname` has at least one rc-droppable
+// payload field (string / leak-safe array) — the field(s) the deep-drop releases.
+function enum_variant_has_rc_payload(structs: parser.StructDecl[], vname: string): boolean {
+    var n: i32 = decl_field_count(structs, vname);
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (enum_field_rc_droppable(decl_field_type_at(structs, vname, fi))) { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// enum_all_variants_rc_droppable: every variant of `enum_name` is rc-droppable AND
+// at least one variant actually carries an rc payload. The second clause keeps this
+// set DISJOINT from the all-scalar set (enum_all_variants_scalar) — a pure-scalar
+// enum is handled by consumed_scalar_enum_frees, not here.
+function enum_all_variants_rc_droppable(structs: parser.StructDecl[], enum_name: string): boolean {
+    var any: boolean = false;
+    var rc: boolean = false;
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == enum_name) {
+            any = true;
+            if (!enum_variant_rc_droppable(structs, structs[i].name)) { return false; }
+            if (enum_variant_has_rc_payload(structs, structs[i].name)) { rc = true; }
+        }
+        i = i + 1;
+    }
+    return any && rc;
+}
+
+// fresh_rcpayload_enum_init: `e` is a sole-owner construction of an rc-payload
+// (deep-droppable) enum — `V(args...)` or a bare unit variant `V`. Returns the
+// enum's name, or "". Mirrors fresh_scalar_enum_init for the widened set.
+function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    var owner: string = variant_enum_owner(structs, id.name);
+                    if (owner != "" && enum_all_variants_rc_droppable(structs, owner)) { return owner; }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        parser.ExprIdent(id) => {
+            var owner2: string = variant_enum_owner(structs, id.name);
+            if (owner2 != "" && enum_all_variants_rc_droppable(structs, owner2)) { return owner2; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+}
+
+// match_arm_binds_rc_payload: does any arm of match `st` BIND (name, non-`_`) an
+// rc-typed payload variable? Field 0 of variant V binds `pv.binding`; field k>=1
+// binds `pv.extra_bindings[k-1]`. A binding is rejected iff its field's type is
+// rc-droppable (string / leak-safe array). Scalar-field bindings are allowed (the
+// scalar is copied, not rc-tracked). True => the candidate enum is NOT admitted
+// (the bound rc payload could escape past the free), so it falls back to the
+// normal exit sweep. This is the trivial-and-sound problem-2 gate.
+function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                match (m.arms[ai].pattern) {
+                    parser.PatVariant(pv) => {
+                        // strip a qualified `Enum.Variant` to the bare variant name.
+                        var vname: string = pv.type_name;
+                        var vc: i32 = 0;
+                        while (vc < pv.type_name.len()) {
+                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()]; }
+                            vc = vc + 1;
+                        }
+                        // field 0 binding. (Compare against "" / "_" rather than
+                        // calling .len() on the binding: a non-empty, non-`_` name is
+                        // a real binding. Bind each extra to a typed local first — a
+                        // .len()/method call directly on the index expression
+                        // `extra_bindings[eb]` mis-infers the receiver on the
+                        // self-host path, emitting an undefined __fn_i32__len.)
+                        if (pv.binding != "" && pv.binding != "_") {
+                            if (enum_field_rc_droppable(decl_field_type_at(structs, vname, 0))) { return true; }
+                        }
+                        // extra bindings (fields 1..).
+                        var eb: i32 = 0;
+                        while (eb < pv.extra_bindings.len()) {
+                            var ebn: string = pv.extra_bindings[eb];
+                            if (ebn != "" && ebn != "_") {
+                                if (enum_field_rc_droppable(decl_field_type_at(structs, vname, eb + 1))) { return true; }
+                            }
+                            eb = eb + 1;
+                        }
+                    },
+                    _ => {}
+                }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
+// RcEnumFrees: parallel arrays for the rc-payload enum free — the consuming match
+// index, the freed local name x, and x's ENUM name (so the deep-drop can iterate
+// the enum's variants at the free site).
+struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
+
+// consumed_rcpayload_enum_frees: the rc-payload analogue of
+// consumed_scalar_enum_frees. Finds every function-local `var x = V(payload...)`
+// of an rc-droppable enum consumed by exactly one `match (x)`, single-owner,
+// dead-after, non-escaping, AND whose arms do not bind any rc payload variable
+// (match_arm_binds_rc_payload). Each such x's box is deep-dropped + freed right
+// after its match (emit_enum_variant_drops). Same shape as the scalar pass.
+function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[]): RcEnumFrees {
+    var idxs: i32[] = [];
+    var names: string[] = [];
+    var enums: string[] = [];
+    var reassigned: string[] = body_assign_targets(body);
+    var vi: i32 = 0;
+    while (vi < body.len()) {
+        match (body[vi]) {
+            parser.StmtVar(v) => {
+                var owner: string = fresh_rcpayload_enum_init(v.init, structs);
+                if (owner != "" && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = 0 - 1;
+                    var n_match: i32 = 0;
+                    var mj: i32 = 0;
+                    while (mj < body.len()) {
+                        if (match_scrutinee_is(body[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
+                        mj = mj + 1;
+                    }
+                    if (n_match == 1 && match_idx > vi) {
+                        var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
+                        var dead_after: boolean = !name_used_after(body, v.name, match_idx);
+                        var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
+                        // the rc-payload-specific gate: reject if any arm binds an rc payload.
+                        var binds_rc: boolean = match_arm_binds_rc_payload(body[match_idx], structs);
+                        if (!arms_use && dead_after && !escapes && !binds_rc) {
+                            idxs = idxs.append(match_idx);
+                            names = names.append(v.name);
+                            enums = enums.append(owner);
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return RcEnumFrees { idxs: idxs, names: names, enums: enums };
+}
+
+// emit_enum_variant_drops deep-drops the rc payload of the box in `slot` (an
+// rc-payload enum value), then frees the box and zeroes the slot. The runtime
+// variant is unknown, so for each variant V of `enum_name` that carries an rc
+// payload we emit a guarded block:
+//     if (box != null && variant_is(box, V)) { drop V's rc payload fields }
+// (variant_is is false for a null/mismatched box, so the guard also covers null).
+// Each rc field is struct_get + __fern_rc_dec (the same single-dec full release
+// emit_struct_field_drops uses for a leak-safe array — the only eligible rc
+// payload here; enum_field_rc_droppable excludes strings, which are leak-only).
+// After the per-variant drops, the box itself
+// is dec'd (__fern_rc_dec frees the box buffer) and the slot zeroed so the exit
+// sweep harmlessly decs a null. The payload is therefore dropped BEFORE the box
+// and exactly once.
+function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): LowerState {
+    var st: LowerState = s;
+    var vi: i32 = 0;
+    while (vi < st.structs.len()) {
+        if (st.structs[vi].enum_owner == enum_name && enum_variant_has_rc_payload(st.structs, st.structs[vi].name)) {
+            var vname: string = st.structs[vi].name;
+            // if (box != null && variant_is(box, V)) { ... }
+            st = st.emit(ir.op_block(0));
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_variant_is(vname));
+            st = st.emit(ir.op_bin("not", 0, false));   // 1 if NOT this variant
+            st = st.emit(ir.op_brif(0));                // -> skip on mismatch / null
+            var n: i32 = decl_field_count(st.structs, vname);
+            var fk: i32 = 0;
+            while (fk < n) {
+                if (enum_field_rc_droppable(decl_field_type_at(st.structs, vname, fk))) {
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                }
+                fk = fk + 1;
+            }
+            st = st.emit(ir.op_end());
+        }
+        vi = vi + 1;
+    }
+    // free the box itself and zero the slot.
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    return st;
+}
+
 // slot_is_reclaimable_struct: slot i holds a reclaimable struct — a non-param
 // struct slot whose name was proven fresh + non-escaping. Such a box is the sole
 // reference (rc=1) and outlives nothing, so a shallow rc-dec at scope exit /
@@ -8435,6 +8698,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // sound because the box now carries an rc header and the match read its scalar
     // payloads as borrows before any free.
     var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs);
+    // Consumed RC-PAYLOAD enum frees: a function-local `var x = V(payload...)` of
+    // an rc-droppable enum (variant payloads are scalar / string / leak-safe array)
+    // consumed by exactly one `match (x)`, single-owner, dead-after, non-escaping,
+    // and whose arms bind NO rc payload. The box is DEEP-DROPPED (per-variant
+    // variant_is guard releasing that variant's rc fields) then freed right after
+    // its match (emit_enum_variant_drops). Kept DISJOINT from enumfrees and never
+    // fed to the donor path, so an rc-payload box is freed exactly once here.
+    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs);
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -8524,6 +8795,21 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                 }
             }
             ei = ei + 1;
+        }
+        // Consumed rc-payload enum deep-drop free: if statement j is the consuming
+        // match of an rc-payload enum local, deep-drop its variant's rc payload
+        // (variant_is dispatch) then free the box now. Disjoint from enumfrees (a
+        // pure-scalar enum is in enumfrees, never here) and never a donor, so the
+        // box is freed exactly once.
+        var rei: i32 = 0;
+        while (rei < rcenumfrees.idxs.len()) {
+            if (rcenumfrees.idxs[rei] == j) {
+                var rxslot: i32 = s.slot_of(rcenumfrees.names[rei]);
+                if (rxslot >= s.n_params) {
+                    s = emit_enum_variant_drops(s, rxslot, rcenumfrees.enums[rei]);
+                }
+            }
+            rei = rei + 1;
         }
         j = j + 1;
     }

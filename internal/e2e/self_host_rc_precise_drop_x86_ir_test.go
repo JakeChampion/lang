@@ -279,6 +279,39 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// x's slot is zeroed so no double-free), but more importantly the value is
 		// correct and the detector reads 0.
 		{"enum-donor-reuse-recipient-escapes-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function mk(): W { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: t, q: 4 }; return y; } function main(): i32 { var w = mk(); if (w.p + w.q != 34) { return 99; } return __rc_underflow(); }`, 0},
+		// RC-PAYLOAD enum free (deep-drop at the free site). The widened consumed-enum
+		// free admits enums whose variants carry an RC-TRACKED payload that a single
+		// __fern_rc_dec fully releases — a leak-safe scalar array (i32[]/i64[]/f64[]/
+		// boolean[]) — as long as no match arm BINDS the rc payload. At the free, a
+		// per-variant variant_is dispatch deep-drops exactly that variant's rc array
+		// fields BEFORE the box dec, so the array is freed exactly once (no leak, no
+		// double-free). (A `string` payload is NOT eligible: on this IR path a string
+		// is a header-less {ptr,len} fat struct that is leak-only — never freed — so a
+		// string-payload enum is classified by NEITHER free path and its box leaks;
+		// those cases below confirm the detector stays 0 anyway.)
+		//
+		// FIRING: a leak-safe array-payload enum (i32[]) whose match IGNORES the rc
+		// payload (binds `_`), consumed-and-dead. The variant_is(V) deep-drop dec's the
+		// array field, then the box. Value correct, detector 0 (array freed once).
+		{"rc-enum-arr-free-value", `enum E { V(i32[]), N } function go(): i32 { var x = V([1, 2, 3]); var r = 0; match (x) { V(_) => { r = 5; }, N => { r = 2; }, } return r; } function main(): i32 { return go(); }`, 5},
+		{"rc-enum-arr-free-detector", `enum E { V(i32[]), N } function go(): i32 { var x = V([1, 2, 3]); var r = 0; match (x) { V(_) => { r = 5; }, N => { r = 2; }, } if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING (multi-variant): both variants carry an i32[] payload. The free emits a
+		// variant_is dispatch per rc-bearing variant; only the live variant's array is
+		// dec'd at runtime. Match binds neither payload. Value correct, detector 0.
+		{"rc-enum-multi-variant-arr-detector", `enum E { A(i32[]), B(i32[]) } function go(): i32 { var x = B([4, 5]); var r = 0; match (x) { A(_) => { r = 1; }, B(_) => { r = 2; }, } if (r != 2) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING (f64[] payload widening): a leak-safe f64[] array payload is deep-dropped
+		// the same way (flat 8-byte-element rc box). Value correct, detector 0.
+		{"rc-enum-f64arr-free-detector", `enum E { V(f64[]), N } function go(): i32 { var x = V([1.5, 2.5]); var r = 0; match (x) { V(_) => { r = 7; }, N => { r = 2; }, } if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-FIRING (arm binds the rc payload): the `V(a)` arm NAMES the array payload,
+		// which could escape past the free, so the candidate is REJECTED (the
+		// match_arm_binds_rc_payload gate) and falls back to the normal exit sweep
+		// (which DOES sweep the bound array slot — sound). Value correct, detector 0
+		// (the deep-drop free is suppressed — no over-release).
+		{"rc-enum-arm-binds-payload-detector", `enum E { V(i32[]), N } function go(): i32 { var x = V([10, 20, 30]); var r = 0; match (x) { V(a) => { r = a[0]; }, N => { r = 0; }, } if (r != 10) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-FIRING (rc payload used after match): x is matched twice, so it is NOT dead
+		// after the first match — the consumed-free never classifies it; the box (and its
+		// array) stays live, freed by the exit sweep. Value correct, detector 0.
+		{"rc-enum-used-after-match-detector", `enum E { V(i32[]), N } function go(): i32 { var x = V([3, 4]); var a = 0; match (x) { V(_) => { a = 1; }, N => { a = 0; }, } var b = 0; match (x) { V(_) => { b = 2; }, N => { b = 0; }, } if (a + b != 3) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
