@@ -2827,9 +2827,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// `dyn Trait` RC: synthesize the per-trait-set `__drop_dyn_<set>`
 	// destructor helpers the Perceus dec/drop sweep calls at a `dyn`
 	// value's last use / scope exit (docs/DYN-TRAITS.md §4.4). wasm
-	// (ptrW==4, slice 4a — inline) + x86-64 (DynSupported, slice 4b —
-	// boxed); buildDynDropHelpers no-ops on arm64 (slice 4c, still
-	// leaking). Appended in lockstep like the other synthesized helpers.
+	// (ptrW==4, slice 4a — inline) + x86-64 (DynRcSupported, slice 4b —
+	// boxed) + arm64 (DynRcSupported, slice 4c — boxed, the structural
+	// mirror of x86-64). buildDynDropHelpers no-ops only when a ptrW==8
+	// backend omits DynRcSupported (none today). Appended in lockstep
+	// like the other synthesized helpers.
 	for _, fn := range buildDynDropHelpers(prog, info, ptrW, lo.dynRcSupported) {
 		prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
 			Name:       fn.Name,
@@ -6711,15 +6713,18 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 		// destructor (docs/DYN-TRAITS.md §4.4). Per-SET (not per-trait) so
 		// the drop-slot index (= the merged method count) is baked into
 		// the helper; a single-trait set keys by the bare trait name.
-		// wasm (ptrW==4, slice 4a) and x86-64 (ptrW==8 + dynRcSupported,
-		// slice 4b — boxed) both have a __drop_dyn_<set> helper
-		// (buildDynDropHelpers emits the right shape per ptrW). arm64
-		// (ptrW==8, !dynRcSupported, slice 4c) still leaks `dyn` — it lifts
-		// dispatch (DynSupported) but not RC: its vtable emitter doesn't
-		// append the drop slot and buildDynDropHelpers declines, so routing
-		// a `dyn` drop through a non-existent __drop_dyn_ helper there would
-		// be a dangling call. ptrW==0 (the collectVtables Drop probe) only
-		// asks struct/enum, never reaching this arm, so its argument is moot.
+		// wasm (ptrW==4, slice 4a), x86-64 (ptrW==8 + dynRcSupported,
+		// slice 4b — boxed), and arm64 (ptrW==8 + dynRcSupported, slice
+		// 4c — boxed, structural mirror) all have a __drop_dyn_<set>
+		// helper (buildDynDropHelpers emits the right shape per ptrW). A
+		// hypothetical ptrW==8 backend that lifts dispatch (DynSupported)
+		// but NOT RC (!dynRcSupported) would still leak `dyn` — its vtable
+		// emitter wouldn't append the drop slot and buildDynDropHelpers
+		// would decline, so routing a `dyn` drop through a non-existent
+		// __drop_dyn_ helper there would be a dangling call; the gate keeps
+		// it correct-but-leaking. ptrW==0 (the collectVtables Drop probe)
+		// only asks struct/enum, never reaching this arm, so its argument
+		// is moot.
 		if ptrW != 4 && !dynRcSupported {
 			return "", false
 		}
