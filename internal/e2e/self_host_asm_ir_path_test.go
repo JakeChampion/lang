@@ -229,6 +229,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// to_acronym shape (i32.to_lower vs string.to_lower). f(64): 64+1 -> char
 		// 65 'A' -> s[0] -> 65.
 		{"method-name-collision", "function (n: i32) bump(): i32 { return n + 1; } function (s: string) bump(): string { return s + \"!\"; } function (n: i32) chr(): string { var a: u8[] = __alloc_u8(1); a = a.with(0, n as u8); return string_from_bytes(a); } function f(b: i32): i32 { var s: string = b.bump().chr(); return s[0] as i32; } function main(): i32 { return f(64); }"},
+		// Chained ARRAY-method call `arr.m().n()` where the inner m returns an
+		// array — `__method_Array_rev` (-> i32[]) then `.sum2()`. Was BAIL call:
+		// expr_is_arr_src didn't recognise an array-RETURNING array-method call
+		// result as an array source, so the outer `.sum2()` mis-dispatched. Now
+		// it resolves the helper + checks is_arr_ret_fn. This is the std/string
+		// reverse_words shape (`words.reverse().join(" ")`). rev([1,2,3])=[3,2,1],
+		// sum2 -> 6.
+		{"chained-arr-method", "function __method_Array_rev(xs: i32[]): i32[] { var out: i32[] = []; var i = xs.len() - 1; while (i >= 0) { out = out.append(xs[i]); i = i - 1; } return out; } function __method_Array_sum2(xs: i32[]): i32 { var s = 0; var i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function f(xs: i32[]): i32 { return xs.rev().sum2(); } function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return f(a); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
