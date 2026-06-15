@@ -1450,6 +1450,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// dispatches without a `: Map[K,V]` annotation. #3317.
 		{"map-ret-fn-binding", `function build(): Map[i32, i32] { return Map { 1: 5, 2: 6 }; } function main(): i32 { var m = build(); return m.get_or(1, 0) + m.get_or(2, 0); }`, 11},
 		{"map-ret-method-binding", `struct Reg { base: i32 } function (r: Reg) table(): Map[i32, i32] { return Map { 1: r.base, 2: r.base + 1 }; } function main(): i32 { var reg = Reg{base: 10}; var m = reg.table(); return m.get_or(1, 0) + m.get_or(2, 0); }`, 21},
+		// A Map TUPLE element (`(Map { … }, x)`): the map-literal element is admitted
+		// to tuple construction (a leak-only pointer slot) with a `Map[K,V]` tag, so
+		// `t.0.get_or(…)` dispatches as a map op, a rebind `var m = t.0` recovers the
+		// map type, and a string-VALUE element's get_or tracks as a string. The
+		// self-host AST path also mishandled this (returned 4), so these pin the
+		// absolute IR value. #3317.
+		{"map-tuple-elem-get_or", `function main(): i32 { var t = (Map { 1: 10 }, 5); return t.0.get_or(1, 0) + t.1; }`, 15},
+		{"map-tuple-elem-rebind", `function main(): i32 { var t = (Map { 1: 10 }, 5); var m = t.0; return m.get_or(1, 0) + t.1; }`, 15},
+		{"map-tuple-elem-string-val", `function main(): i32 { var t = (Map { 1: "abcd" }, 5); return t.0.get_or(1, "z").len() + t.1; }`, 9},
 		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		// A random byte is in 0..255.
