@@ -250,6 +250,26 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — oracle-checked modload coverage: std/u32, std/u64, std/i64, std/sort (coverage)
+
+Extends the self-host **modload** coverage (the `asm_load_run` driver that resolves
+`import "std/…"` / `core/…` transitively and lowers the whole program). Unlike the
+existing `TestSelfHostStdlibImport` (hardcoded exits), each case is **oracle-checked
+against the interpreter** — the interpreter resolves the same imports, so it's an
+apples-to-apples oracle for the multi-module program. New coverage: the int-method
+modules `std/u32` / `std/u64` / `std/i64` (→ `core/int`) — `.min` / `.max` /
+`.clamp` / `.abs` / `.gcd` / `.pow` — plus more `std/sort` variants
+(`sort_i32_desc`, `sort_u32_asc`). x86-64 only (the loader driver takes argv file
+paths, so it can't run under the qemu runner — mirrors the existing import test's
+gate). Coverage-only, no compiler change. Guarded by
+`TestSelfHostStdlibModloadIRX86_64`.
+
+Surfaced (not fixed here): an **unqualified** call to an imported free function
+(`format_bytes(…)` after `import "std/format"`, rather than `format.format_bytes`)
+links against `__fn_format_bytes` while the loader emits the mangled
+`format__format_bytes` — an interp-vs-loader qualification discrepancy worth a
+separate look.
+
 ### 2026-06-15 — std/crypto, std/path, std/math via the self-host IR path (coverage)
 
 Same vehicle as the std/hex / std/base64 coverage: each REAL no-import std module
