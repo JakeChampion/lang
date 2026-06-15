@@ -497,6 +497,28 @@ pub function expr_is_tuple(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// expr_is_result reports whether `e` evaluates to a Result value: a bare `Ok(x)`
+// / `Err(x)` construction, or a Result-typed local/param. Drives admitting a
+// Result as a (leak-only, one-pointer) tuple element. The full `Result[T, E]`
+// tag is recovered from the binding's annotation (a bare `Ok(x)` cannot name E),
+// so this only gates ADMISSION, not the tag.
+pub function expr_is_result(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return (cid.name == "Ok" || cid.name == "Err") && c.args.len() == 1; },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(id) => {
+            var ot: string = s.opt_type_of_slot(s.slot_of(id.name));
+            return ot.len() >= 7 && ot[0:7] == "Result[";
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // literal_is_i64 reports whether a non-negative integer literal text is too big
 // for i32 (so it is an i64 value): >10 digits always, exactly 10 digits if it
 // exceeds i32-max "2147483647". (Negative literals are unary minus over a
@@ -3142,7 +3164,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // so admit it. Its `(t0,t1,…)` tag (elem_type_tag) round-trips
                 // through the depth-aware comma encoding for `t.N.M` typing.
                 var el_tuple_ok: boolean = expr_is_tuple(el, s);
-                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_opt_ok && !el_tuple_ok) { return s.fail(); }
+                // A Result element (`(1, Ok(5))`) is likewise a leak-only box —
+                // one pointer slot, like an Option element. Its full
+                // `Result[T, E]` tag (E is not knowable from a bare `Ok(x)`) comes
+                // from the binding's tuple TYPE annotation at marking time; the
+                // checker rejects an un-annotated Result, so the annotation is
+                // always present where it matters. The depth-aware comma encoding
+                // protects the inner `,` so `match (t.N)` recovers both payloads.
+                var el_result_ok: boolean = expr_is_result(el, s);
+                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok) { return s.fail(); }
                 tei = tei + 1;
             }
             // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
@@ -5460,11 +5490,27 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 },
                 parser.ExprTuple(tlit) => {
                     var enc: string = "";
-                    var ti: i32 = 0;
-                    while (ti < tlit.elements.len()) {
-                        if (ti > 0) { enc = enc + ","; }
-                        enc = enc + elem_type_tag(tlit.elements[ti], se);
-                        ti = ti + 1;
+                    // A tuple TYPE annotation carries each element's full type — in
+                    // particular a Result[T, E] element's E, which a bare `Ok(x)`
+                    // construction cannot name. Prefer it so `match (t.N)` recovers
+                    // each element's payload; fall back to the construction's
+                    // inferred tags for an un-annotated binding. (For scalar /
+                    // struct / Option / nested-tuple elements the two agree, so
+                    // this is strictly more accurate.)
+                    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+                        var tti: i32 = 0;
+                        while (tti < tlit.elements.len()) {
+                            if (tti > 0) { enc = enc + ","; }
+                            enc = enc + tuple_type_elem_tag(v.type_name, tti);
+                            tti = tti + 1;
+                        }
+                    } else {
+                        var ti: i32 = 0;
+                        while (ti < tlit.elements.len()) {
+                            if (ti > 0) { enc = enc + ","; }
+                            enc = enc + elem_type_tag(tlit.elements[ti], se);
+                            ti = ti + 1;
+                        }
                     }
                     sb = sb.mark_tuple_elems(slot, enc);
                 },
@@ -9045,9 +9091,15 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // matches here: a `Result[T, E]` tag has an internal comma this
             // split sees as a top-level separator, so it stays deferred.
             if (!ok_elem && t.len() >= 8 && t[0:7] == "Option[") { ok_elem = true; }
+            // A Result[T, E] element is a leak-only box too (one pointer slot);
+            // its internal comma is bracketed, so the depth-aware split above
+            // keeps the tag whole. `match (t.N)` recovers both payloads via
+            // opt_payload_type. (#3018 deferred this only because the old split
+            // was comma-naive.)
+            if (!ok_elem && t.len() >= 8 && t[0:7] == "Result[") { ok_elem = true; }
             // A NESTED tuple element `(…)` is itself a leak-only heap-tuple
             // pointer; admit it iff its own elements are all lowerable (recursion
-            // bails on an inner array / Result, matching the construction guard).
+            // bails on an inner array, matching the construction guard).
             if (!ok_elem && t.len() >= 2 && t[0:1] == "(") { ok_elem = tuple_elems_lowerable(t, structs); }
             if (!ok_elem) { return false; }
             start = i + 1;
