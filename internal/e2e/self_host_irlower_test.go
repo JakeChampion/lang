@@ -167,6 +167,18 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"struct-update", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { ...a, y: 40 }; return b.x + b.y; }", 41},
 		{"struct-in-loop", "struct P { x: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i }; s = s + p.x; i = i + 1; } return s; }", 6},
 		{"enum-bare-construct", "enum E { A, B } function main(): i32 { var e = E.A; return 5; }", 5},
+		// Enum `match`: a variant box is a struct_make whose name is the variant
+		// (its payload is field 0); `match` arms test the discriminant with
+		// variant_is, which the round-trip evaluator now models by reading the
+		// box's slot-0 shape id (struct_make writes it, struct_get skips it). A
+		// payload binding reads field 0 via struct_get. Before this, variant_is
+		// fell into the binary-op default and SIGABRT'd.
+		{"enum-match-first", "enum E { A, B } function main(): i32 { var e = E.A; match (e) { A => { return 1; }, B => { return 2; } } }", 1},
+		{"enum-match-second", "enum E { A, B } function main(): i32 { var e = E.B; match (e) { A => { return 1; }, B => { return 2; } } }", 2},
+		{"enum-match-three", "enum C { R, G, B2 } function main(): i32 { var c = C.G; match (c) { R => { return 1; }, G => { return 2; }, B2 => { return 3; } } }", 2},
+		{"enum-match-payload", "enum O { S(i32), N } function main(): i32 { var o = O.S(42); match (o) { S(v) => { return v; }, N => { return 0; } } }", 42},
+		{"enum-match-none-arm", "enum O { S(i32), N } function main(): i32 { var o = O.N; match (o) { S(v) => { return v; }, N => { return 99; } } }", 99},
+		{"enum-match-value-pos", "enum O { S(i32), N } function main(): i32 { var o = O.S(20); var r = match (o) { S(v) => v + 1, N => 0 }; return r * 2; }", 42},
 	}
 
 	for _, tc := range cases {
