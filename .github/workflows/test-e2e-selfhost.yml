@@ -42,14 +42,17 @@ name: Test e2e self-host
 # x86 shard ran 9m51s — 9 seconds under this job's 10-min timeout, so
 # one new test would tip CI over.
 #
-# Eight was the earlier balance, but the worst x86 shard had crept to
-# 9m51s — 9 s under the 10-min timeout — and widening the IR subset
-# (the self-host compiler now lowers far more of itself through the IR
-# path, so the compile-heavy fixpoint / bootstrap tests run longer)
-# tipped that shard past 10 min (cancelled mid-run). Twelve restores
-# the margin: ~23 min / 12 ≈ 1.9 min of tests + the ~2.5 min build ≈
-# ~4.5 min nominal (~6 min worst-case with round-robin imbalance +
-# the qemu-arm64 fixpoint long pole), well under the 10-min timeout.
+# Twelve is the current balance. Eight had crept too close to the edge
+# (worst x86 shard ~9m51s) and #3362 moved to 10; then widening the IR
+# subset (the self-host compiler now lowers far more of itself through
+# the IR path, so the compile-heavy fixpoint / bootstrap / frontend-
+# bundle tests run longer) tipped shard 7 back over the 10-min timeout
+# (cancelled mid-run) even at 10. Twelve restores the margin: ~23 min /
+# 12 ≈ 1.9 min of tests + the ~2.5 min build ≈ ~4.5 min nominal (~6 min
+# worst-case with round-robin imbalance + the qemu-arm64 fixpoint long
+# pole), well under the 10-min timeout, at the cost of 4 more jobs (2
+# per arch) vs 10 — still well short of the 16-shard queue-contention
+# regime.
 # Bump N (here and in NSHARD below) only if the worst x86 shard's
 # wall-clock creeps toward ~8 min; drop it only if all shards finish
 # well under ~4 min.
