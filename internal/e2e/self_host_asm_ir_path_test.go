@@ -200,6 +200,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"memcpy-clone", "function main(): i32 { var src: u8[] = __alloc_u8(3); src = src.with(0, 5 as u8); src = src.with(1, 7 as u8); src = src.with(2, 9 as u8); var dst: u8[] = __alloc_u8(3); __memcpy(dst as usize, src as usize, 32); return (dst[0] as i32) + (dst[1] as i32) + (dst[2] as i32); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
+		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
+		// reassign-self form): return position and var-init. Was BAIL call (only
+		// the reassign-self statement lowered); now lowers via op_arr_push leaving
+		// the grown array on the stack. StmtReturn excludes a moved receiver ident
+		// from the exit dec-sweep so the consumed buffer isn't double-freed. This
+		// is the shape std/string split/splitn/chunks end with (return out.append).
+		{"append-return", "function build(a: i32[], v: i32): i32[] { return a.append(v); } function main(): i32 { var a: i32[] = []; a = a.append(10); var b = build(a, 20); return b[0] + b[1]; }"},
+		{"append-varinit", "function main(): i32 { var a: i32[] = []; a = a.append(7); var b = a.append(35); return b[0] + b[1]; }"},
+		{"append-return-loop", "function trail(xs: i32[]): i32[] { var out: i32[] = []; var i = 0; while (i < xs.len()) { if (xs[i] > 2) { out = out.append(xs[i]); } i = i + 1; } return out.append(99); } function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(5); a = a.append(3); var r = trail(a); return r.len() * 100 + r[r.len() - 1]; }"},
 		// NB: __alloc_u8 / string_from_bytes programs are NOT differential cases —
 		// the standalone asm_ir_run AST fallback references __fern_alloc_u8 without
 		// emitting it (a legacy-driver gap), so the AST side won't link. The IR
