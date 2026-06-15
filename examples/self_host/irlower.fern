@@ -3600,6 +3600,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!i2s.ok) { return i2s; }
                         return i2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                     }
+                    // Built-in `str_to_i32(s)` — parse a string box into an i32
+                    // (optional leading '-', decimal digits, stops at the first
+                    // non-digit; empty → 0). Routes to the __fern_str_to_i32 runtime;
+                    // the result is an i32 (no str-tracking). Allocation-free. The
+                    // self-host source uses this form (parsing numeric arguments).
+                    if (cid.name == "str_to_i32" && c.args.len() == 1) {
+                        var s2i: LowerState = lower_expr(c.args[0], s);
+                        if (!s2i.ok) { return s2i; }
+                        return s2i.emit(ir.op_call_direct("__fern_str_to_i32", 1));
+                    }
                     // Built-in `exit(n)` — terminate the process with exit code n
                     // (an inline sys_exit / proc_exit per backend).
                     if (cid.name == "exit" && c.args.len() == 1) {

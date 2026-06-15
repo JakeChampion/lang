@@ -407,6 +407,24 @@ pub function module_uses_i32_to_string(mod: parser.Module): boolean {
     return false;
 }
 
+// module_uses_str_to_i32 reports whether any function emits the str_to_i32(s)
+// runtime call (a call_direct to __fern_str_to_i32) — so wasm.str_to_i32_helper
+// is emitted. Allocation-free, so it has no heap dependency. (module_emits_op
+// keys on op.kind, not the call_direct symbol, so this needs its own scan.)
+pub function module_uses_str_to_i32(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_str_to_i32") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 // module_uses_random reports whether the module calls random_bytes or random_i32
 // (so the wasi random_get import is emitted).
 pub function module_uses_random(mod: parser.Module): boolean {
