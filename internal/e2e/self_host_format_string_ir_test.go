@@ -26,7 +26,13 @@ const formatStringIRPrelude = `function fmt_format(fmt: string, args: string[]):
     var i: i32 = 0;
     var argi: i32 = 0;
     while (i < n) {
-        if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 125) {
+        if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
+            out = out + "{";
+            i = i + 2;
+        } else if (i + 1 < n && fmt[i] == 125 && fmt[i + 1] == 125) {
+            out = out + "}";
+            i = i + 2;
+        } else if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 125) {
             if (argi < args.len()) {
                 out = out + args[argi];
                 argi = argi + 1;
@@ -55,6 +61,15 @@ var formatStringIRCases = []struct {
 	{"no-placeholder", `var a: string[] = []; return fmt_format("hello", a).len();`},
 	// trailing text after a placeholder: "{}-end" + ["ab"] -> "ab-end" (6).
 	{"trailing-text", `var a: string[] = ["ab"]; return fmt_format("{}-end", a).len();`},
+	// escaped braces (Python/Rust convention): "{{}}" + [] -> "{}" (2); the
+	// `{{`/`}}` are NOT consumed as a placeholder.
+	{"escaped-empty", `var a: string[] = []; return fmt_format("{{}}", a).len();`},
+	// `{{` -> literal "{" amid text: "a{{b" + [] -> "a{b" (3).
+	{"escaped-open", `var a: string[] = []; return fmt_format("a{{b", a).len();`},
+	// escape + placeholder: "{{{}}}" + ["X"] -> "{X}" (3).
+	{"escape-then-arg", `var a: string[] = ["X"]; return fmt_format("{{{}}}", a).len();`},
+	// `}}` -> literal "}": "x}}y" + [] -> "x}y" (3).
+	{"escaped-close", `var a: string[] = []; return fmt_format("x}}y", a).len();`},
 }
 
 func formatStringIRSrc(mainBody string) string {
