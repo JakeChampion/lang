@@ -7671,18 +7671,29 @@ function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[])
 }
 
 // match_arm_binds_rc_payload: does any arm of match `st` BIND (name, non-`_`) an
-// rc-typed payload variable? Field 0 of variant V binds `pv.binding`; field k>=1
-// binds `pv.extra_bindings[k-1]`. A binding is rejected iff its field's type is
-// rc-droppable (string / leak-safe array). Scalar-field bindings are allowed (the
-// scalar is copied, not rc-tracked). True => the candidate enum is NOT admitted
-// (the bound rc payload could escape past the free), so it falls back to the
-// normal exit sweep. This is the trivial-and-sound problem-2 gate.
+// rc-typed payload variable that ESCAPES its arm body? Field 0 of variant V binds
+// `pv.binding`; field k>=1 binds `pv.extra_bindings[k-1]`. A binding is an rc
+// payload iff its field's type is rc-droppable (string / leak-safe array); scalar
+// bindings are always allowed (the scalar is copied, not rc-tracked).
+//
+// WIDENED (bind-but-no-escape): an arm MAY bind an rc payload variable as long as
+// that bound name is used ONLY as a BORROW (a read: indexing `a[i]`, `a.len()`,
+// arithmetic over reads) within its arm body. The bound name `a` aliases the box's
+// array field; the box is deep-dropped + freed AFTER the whole match runs, so a
+// borrow whose last use is inside the arm is sound. We REJECT (return true) only
+// when a bound rc payload escapes its arm — i.e. body_unsafe_for finds it stored
+// to an outer var, returned, sliced/aliased, captured, or passed to any call (the
+// empty `[]` borrowable registry treats every call arg as a retain). A guard read
+// is a borrow; a guard escape is rejected via expr_unsafe_for. True => the
+// candidate enum is NOT admitted; it falls back to the normal exit sweep.
 function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[]): boolean {
+    var none: string[] = [];
     match (st) {
         parser.StmtMatch(m) => {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                match (m.arms[ai].pattern) {
+                var arm: parser.MatchArm = m.arms[ai];
+                match (arm.pattern) {
                     parser.PatVariant(pv) => {
                         // strip a qualified `Enum.Variant` to the bare variant name.
                         var vname: string = pv.type_name;
@@ -7698,14 +7709,18 @@ function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[
                         // `extra_bindings[eb]` mis-infers the receiver on the
                         // self-host path, emitting an undefined __fn_i32__len.)
                         if (pv.binding != "" && pv.binding != "_") {
-                            if (enum_field_rc_droppable(decl_field_type_at(structs, vname, 0))) { return true; }
+                            if (enum_field_rc_droppable(decl_field_type_at(structs, vname, 0))) {
+                                if (binding_escapes_arm(arm, pv.binding, none)) { return true; }
+                            }
                         }
                         // extra bindings (fields 1..).
                         var eb: i32 = 0;
                         while (eb < pv.extra_bindings.len()) {
                             var ebn: string = pv.extra_bindings[eb];
                             if (ebn != "" && ebn != "_") {
-                                if (enum_field_rc_droppable(decl_field_type_at(structs, vname, eb + 1))) { return true; }
+                                if (enum_field_rc_droppable(decl_field_type_at(structs, vname, eb + 1))) {
+                                    if (binding_escapes_arm(arm, ebn, none)) { return true; }
+                                }
                             }
                             eb = eb + 1;
                         }
@@ -7720,6 +7735,17 @@ function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[
     }
 }
 
+// binding_escapes_arm reports whether the arm-bound rc payload `name` escapes its
+// arm: it is used anywhere in the arm body or guard in a position other than a
+// borrow read. Reuses the precise-drop escape family (body_unsafe_for /
+// expr_unsafe_for) with an EMPTY borrowable registry, so every call argument is
+// conservatively a retain (escape). A borrow-only binding (indexing, `.len()`,
+// arithmetic over reads) returns false and is admitted.
+function binding_escapes_arm(arm: parser.MatchArm, name: string, borrowable: string[]): boolean {
+    if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable)) { return true; }
+    return body_unsafe_for(arm.body, name, borrowable);
+}
+
 // RcEnumFrees: parallel arrays for the rc-payload enum free — the consuming match
 // index, the freed local name x, and x's ENUM name (so the deep-drop can iterate
 // the enum's variants at the free site).
@@ -7728,8 +7754,9 @@ struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
 // consumed_rcpayload_enum_frees: the rc-payload analogue of
 // consumed_scalar_enum_frees. Finds every function-local `var x = V(payload...)`
 // of an rc-droppable enum consumed by exactly one `match (x)`, single-owner,
-// dead-after, non-escaping, AND whose arms do not bind any rc payload variable
-// (match_arm_binds_rc_payload). Each such x's box is deep-dropped + freed right
+// dead-after, non-escaping, AND whose arms bind no rc payload that ESCAPES its arm
+// (match_arm_binds_rc_payload — a borrow-only binding is admitted). Each such x's
+// box is deep-dropped + freed right
 // after its match (emit_enum_variant_drops). Same shape as the scalar pass.
 function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[]): RcEnumFrees {
     var idxs: i32[] = [];
