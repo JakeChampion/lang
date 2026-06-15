@@ -40,7 +40,17 @@ pub function format(fmt: string, args: string[]): string {
     var i: i32 = 0;
     var argi: i32 = 0;
     while (i < n) {
-        if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 125) {
+        // Escaped braces: `{{` -> literal `{`, `}}` -> literal `}` (the
+        // Python str.format() / Rust format!() convention this mirrors). Checked
+        // before the `{}` placeholder so `{{}}` renders the literal "{}" rather
+        // than consuming an arg, and `{{{}}}` renders "{<arg>}".
+        if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
+            out = out + "{";
+            i = i + 2;
+        } else if (i + 1 < n && fmt[i] == 125 && fmt[i + 1] == 125) {
+            out = out + "}";
+            i = i + 2;
+        } else if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 125) {
             if (argi < args.len()) {
                 out = out + args[argi];
                 argi = argi + 1;
