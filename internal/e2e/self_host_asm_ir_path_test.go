@@ -237,6 +237,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// reverse_words shape (`words.reverse().join(" ")`). rev([1,2,3])=[3,2,1],
 		// sum2 -> 6.
 		{"chained-arr-method", "function __method_Array_rev(xs: i32[]): i32[] { var out: i32[] = []; var i = xs.len() - 1; while (i >= 0) { out = out.append(xs[i]); i = i - 1; } return out; } function __method_Array_sum2(xs: i32[]): i32 { var s = 0; var i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function f(xs: i32[]): i32 { return xs.rev().sum2(); } function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return f(a); }"},
+		// f32 method dispatch: f32 is stored as an 8-byte f64, but its TYPE is
+		// tracked distinctly (local_is_f32) so an f32 receiver dispatches
+		// "f32.<m>", NOT the f64 twin — they can differ (e.g. to_string precision).
+		// Here f32.tag returns 32, f64.tag returns 64; an f32 value must pick 32
+		// and an f64 value 64. 32*100+64 = 3264 (exit 192 mod 256). Was BAIL (f32
+		// receiver not admitted as prim + conflated with f64).
+		{"f32-vs-f64-dispatch", "function (x: f32) tag(): i32 { return 32; } function (x: f64) tag(): i32 { return 64; } function f(): i32 { var v: f32 = 1.0 as f32; var w: f64 = 1.0; return v.tag() * 100 + w.tag(); } function main(): i32 { return f(); }"},
+		// f32-only methods (no f64 twin) on f32 locals — the std/float method
+		// shape (`__op_f64(x as f64) as f32`). myabs(-5)=5, myclamp via mymax(7,3)=7
+		// -> 5*10+7 = 57.
+		{"f32-methods", "function (x: f32) myabs(): f32 { var d: f64 = x as f64; if (d < 0.0) { return (0.0 - d) as f32; } return d as f32; } function (x: f32) mymax(y: f32): f32 { if ((x as f64) > (y as f64)) { return x; } return y; } function (x: f32) myclamp(lo: f32, hi: f32): f32 { return lo.mymax(x); } function f(): i32 { var a: f32 = 0.0 - 5.0 as f32; var b = a.myabs(); var c: f32 = 3.0 as f32; var m = c.myclamp(7.0 as f32, 9.0 as f32); return (b as i32) * 10 + (m as i32); } function main(): i32 { return f(); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
