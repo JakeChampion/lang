@@ -163,9 +163,9 @@ Bounded generics (Phase 2) let a function abstract over any `T` that
 implements a trait:
 
 ```fern
-pub function assert_eq[T: Display + Eq](actual: T, expected: T): Option[string] {
-    if actual.eq(expected) { return None; }
-    return Some("expected " + expected.to_string()
+pub function assert_eq[T: Display + Eq](actual: T, expected: T): TestOutcome {
+    if actual.eq(expected) { return Pass; }
+    return Fail("expected " + expected.to_string()
                 + " but got " + actual.to_string());
 }
 ```

@@ -9,41 +9,41 @@ import "std/test";
 //     file/subdir names (`readdir` order not observable
 //     so the helper sorts both sides before compare).
 
-function test_string_count_pass(): Option[string] {
+function test_string_count_pass(): test.TestOutcome {
     return test.assert_string_count(
         "[ERROR] one\n[ERROR] two\n[INFO] three\n",
         "[ERROR]", 2);
 }
 
-function test_string_count_zero(): Option[string] {
+function test_string_count_zero(): test.TestOutcome {
     return test.assert_string_count("hello world", "xyz", 0);
 }
 
-function test_string_count_single_char(): Option[string] {
+function test_string_count_single_char(): test.TestOutcome {
     return test.assert_string_count("a-b-c-d", "-", 3);
 }
 
-function test_string_count_overlap_non_overlap(): Option[string] {
+function test_string_count_overlap_non_overlap(): test.TestOutcome {
     // "aaa" with needle "aa" — non-overlapping count is 1
     // (not 2 — overlap would consume the same byte twice).
     return test.assert_string_count("aaa", "aa", 1);
 }
 
-function test_string_count_wrong_reports(): Option[string] {
+function test_string_count_wrong_reports(): test.TestOutcome {
     match (test.assert_string_count("hello world hello", "hello", 5)) {
-        None => { return test.fail("wrong count should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("wrong count should fail"); },
+        Fail(msg) => {
             // Diagnostic should embed observed AND expected.
             if (!msg.contains("appears 2 times") ||
                 !msg.contains("expected 5")) {
-                return Some("expected both counts in msg: " + msg);
+                return test.fail("expected both counts in msg: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_string_count_empty_haystack(): Option[string] {
+function test_string_count_empty_haystack(): test.TestOutcome {
     return test.assert_string_count("", "x", 0);
 }
 
@@ -91,26 +91,26 @@ function test_dir_listing_extra_file_fails(r: test.TestRunner): test.TestRunner 
     }
     // Expected lacks b.txt — must fail.
     match (test.assert_eq_dir_listing(dir, ["a.txt"])) {
-        None => { return rr.it("missing-from-expected", test.fail("missed")); },
-        Some(msg) => {
+        Pass => { return rr.it("missing-from-expected", test.fail("missed")); },
+        Fail(msg) => {
             if (!msg.contains("length differs")) {
                 return rr.it("listing diff length msg", test.fail("got: " + msg));
             }
-            return rr.it("extra file flagged via length diff", None);
+            return rr.it("extra file flagged via length diff", test.pass());
         }
     }
 }
 
-function test_dir_listing_missing_dir(): Option[string] {
+function test_dir_listing_missing_dir(): test.TestOutcome {
     match (test.assert_eq_dir_listing(
         "/tmp/lang-no-such-dir-batch35-zztop",
         ["x"])) {
-        None => { return test.fail("missing dir should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("missing dir should fail"); },
+        Fail(msg) => {
             if (!msg.contains("failed to read")) {
-                return Some("expected 'failed to read': " + msg);
+                return test.fail("expected 'failed to read': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }

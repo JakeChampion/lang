@@ -10,30 +10,30 @@ import "std/test";
 // Output is TAP-13. Exit code is 0 if every case passes, 1
 // if any case fails.
 
-function test_addition(): Option[string] {
+function test_addition(): test.TestOutcome {
     return test.assert_eq(2 + 2, 4);
 }
 
-function test_subtraction(): Option[string] {
+function test_subtraction(): test.TestOutcome {
     return test.assert_eq(10 - 7, 3);
 }
 
-function test_multiplication(): Option[string] {
+function test_multiplication(): test.TestOutcome {
     return test.assert_eq(6 * 7, 42);
 }
 
-function test_integer_division(): Option[string] {
+function test_integer_division(): test.TestOutcome {
     return test.assert_eq(20 / 6, 3);
 }
 
-function test_modulo(): Option[string] {
+function test_modulo(): test.TestOutcome {
     return test.assert_eq(17 % 5, 2);
 }
 
 // Tests that walk a fixture and bail out on the first
 // failure. Returns None ("pass") if every iteration
 // agrees with the table.
-function test_modulo_table(): Option[string] {
+function test_modulo_table(): test.TestOutcome {
     var inputs: i32[] = [0, 1, 5, 10, 11, 100];
     var expected: i32[] = [0, 1, 5, 0, 1, 0];
     var i: i32 = 0;
@@ -48,10 +48,10 @@ function test_modulo_table(): Option[string] {
 }
 
 // Comparison predicates.
-function test_lt(): Option[string] { return test.assert_lt(3, 7); }
-function test_le(): Option[string] { return test.assert_le(7, 7); }
-function test_gt(): Option[string] { return test.assert_gt(9, 1); }
-function test_ge(): Option[string] { return test.assert_ge(9, 9); }
+function test_lt(): test.TestOutcome { return test.assert_lt(3, 7); }
+function test_le(): test.TestOutcome { return test.assert_le(7, 7); }
+function test_gt(): test.TestOutcome { return test.assert_gt(9, 1); }
+function test_ge(): test.TestOutcome { return test.assert_ge(9, 9); }
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("arithmetic");

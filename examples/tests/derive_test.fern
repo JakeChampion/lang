@@ -21,34 +21,34 @@ struct Outer { a: Inner, tag: string }
 @derive(cmp.Eq, cmp.Display, cmp.Ord, cmp.Hash, json.Json)
 enum Shape { Circle(i32), Square(i32), Empty }
 
-function test_eq_reflexive(): Option[string] {
+function test_eq_reflexive(): test.TestOutcome {
     var a: Point = Point { x: 3, y: 7 };
     var b: Point = Point { x: 3, y: 7 };
-    if (a.eq(b)) { return None; }
+    if (a.eq(b)) { return test.pass(); }
     return test.fail("equal points should be eq");
 }
 
-function test_eq_distinguishes(): Option[string] {
+function test_eq_distinguishes(): test.TestOutcome {
     var a: Point = Point { x: 3, y: 7 };
     var c: Point = Point { x: 3, y: 9 };
-    if (!a.eq(c)) { return None; }
+    if (!a.eq(c)) { return test.pass(); }
     return test.fail("differing points should not be eq");
 }
 
-function test_display(): Option[string] {
+function test_display(): test.TestOutcome {
     var a: Point = Point { x: 3, y: 7 };
     return test.assert_eq(a.to_string(), "Point { x: 3, y: 7 }");
 }
 
-function test_display_nested(): Option[string] {
+function test_display_nested(): test.TestOutcome {
     var p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
     return test.assert_eq(p.to_string(), "Outer { a: Inner { n: 5 }, tag: hi }");
 }
 
-function test_eq_nested(): Option[string] {
+function test_eq_nested(): test.TestOutcome {
     var p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
     var q: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
-    if (p.eq(q)) { return None; }
+    if (p.eq(q)) { return test.pass(); }
     return test.fail("nested equal structs should be eq");
 }
 
@@ -58,65 +58,65 @@ function sign(n: i32): string {
     return "eq";
 }
 
-function test_ord_first_field(): Option[string] {
+function test_ord_first_field(): test.TestOutcome {
     // First field decides when it differs.
     var a: Point = Point { x: 1, y: 9 };
     var b: Point = Point { x: 2, y: 0 };
     return test.assert_eq(sign(a.cmp(b)), "lt");
 }
 
-function test_ord_second_field(): Option[string] {
+function test_ord_second_field(): test.TestOutcome {
     // Equal first field falls through to the second.
     var a: Point = Point { x: 3, y: 7 };
     var c: Point = Point { x: 3, y: 9 };
     return test.assert_eq(sign(a.cmp(c)), "lt");
 }
 
-function test_ord_equal(): Option[string] {
+function test_ord_equal(): test.TestOutcome {
     var a: Point = Point { x: 3, y: 7 };
     var b: Point = Point { x: 3, y: 7 };
     return test.assert_eq(sign(a.cmp(b)), "eq");
 }
 
-function test_enum_display_payload(): Option[string] {
+function test_enum_display_payload(): test.TestOutcome {
     var c: Shape = Circle(5);
     return test.assert_eq(c.to_string(), "Circle(5)");
 }
 
-function test_enum_display_unit(): Option[string] {
+function test_enum_display_unit(): test.TestOutcome {
     var e: Shape = Empty;
     return test.assert_eq(e.to_string(), "Empty");
 }
 
-function test_enum_eq_same_variant(): Option[string] {
+function test_enum_eq_same_variant(): test.TestOutcome {
     var a: Shape = Circle(5);
-    if (a.eq(Circle(5))) { return None; }
+    if (a.eq(Circle(5))) { return test.pass(); }
     return test.fail("same variant + payload should be eq");
 }
 
-function test_enum_eq_diff_variant(): Option[string] {
+function test_enum_eq_diff_variant(): test.TestOutcome {
     var a: Shape = Circle(5);
     var b: Shape = Square(5);
-    if (!a.eq(b)) { return None; }
+    if (!a.eq(b)) { return test.pass(); }
     return test.fail("different variants should not be eq");
 }
 
-function test_enum_eq_diff_payload(): Option[string] {
+function test_enum_eq_diff_payload(): test.TestOutcome {
     var a: Shape = Circle(5);
     var c: Shape = Circle(6);
-    if (!a.eq(c)) { return None; }
+    if (!a.eq(c)) { return test.pass(); }
     return test.fail("same variant, differing payload should not be eq");
 }
 
-function test_enum_ord_within_variant(): Option[string] {
+function test_enum_ord_within_variant(): test.TestOutcome {
     // Same variant → payload decides.
     return test.assert_eq(sign(Circle(1).cmp(Circle(2))), "lt");
 }
 
-function test_enum_ord_across_variants(): Option[string] {
+function test_enum_ord_across_variants(): test.TestOutcome {
     // Earlier-declared variant sorts first, regardless of payload.
-    var lt: Option[string] = test.assert_eq(sign(Circle(9).cmp(Square(0))), "lt");
-    match (lt) { Some(_) => { return lt; }, None => {} }
+    var lt: test.TestOutcome = test.assert_eq(sign(Circle(9).cmp(Square(0))), "lt");
+    match (lt) { Fail(_) => { return lt; }, Pass => {} }
     return test.assert_eq(sign(Empty.cmp(Circle(0))), "gt");
 }
 
@@ -126,30 +126,30 @@ function test_enum_ord_across_variants(): Option[string] {
 // `testdata/cases/hash_struct_enum` exercises that the mix actually
 // spreads.) These law tests stay deterministic on every backend.
 
-function test_hash_law(): Option[string] {
+function test_hash_law(): test.TestOutcome {
     // Eq ⇒ equal hashes: equal-valued points must hash the same.
     var a: Point = Point { x: 3, y: 7 };
     var b: Point = Point { x: 3, y: 7 };
-    if (a.hash() == b.hash()) { return None; }
+    if (a.hash() == b.hash()) { return test.pass(); }
     return test.fail("equal points should hash equal");
 }
 
-function test_enum_hash_law(): Option[string] {
+function test_enum_hash_law(): test.TestOutcome {
     // Same variant + payload hashes equal.
-    if (Circle(5).hash() == Circle(5).hash()) { return None; }
+    if (Circle(5).hash() == Circle(5).hash()) { return test.pass(); }
     return test.fail("same variant + payload should hash equal");
 }
 
-function test_json_struct(): Option[string] {
+function test_json_struct(): test.TestOutcome {
     var p: Point = Point { x: 3, y: 7 };
     return test.assert_eq(p.to_json(), "{\"x\":3,\"y\":7}");
 }
 
-function test_json_enum_payload(): Option[string] {
+function test_json_enum_payload(): test.TestOutcome {
     return test.assert_eq(Circle(5).to_json(), "{\"Circle\":5}");
 }
 
-function test_json_enum_unit(): Option[string] {
+function test_json_enum_unit(): test.TestOutcome {
     return test.assert_eq(Empty.to_json(), "\"Empty\"");
 }
 

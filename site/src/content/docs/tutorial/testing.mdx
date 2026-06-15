@@ -9,7 +9,7 @@ import FernPlayground from "../../../components/FernPlayground.astro";
 
 Fern ships with a pure-Fern unit-test runner under
 [`std/test`](../../stdlib/test/). Tests are ordinary `.fern` files:
-write functions that return `Option[string]`, list them in `main`,
+write functions that return `TestOutcome`, list them in `main`,
 and the runner prints [TAP-13](https://testanything.org/) to
 stdout.
 
@@ -19,8 +19,8 @@ the compiler is self-hosted) keeps working unchanged.
 
 ## Hello, test
 
-A test function returns `None` when the assertion holds and
-`Some(message)` when it fails. `import "std/test";` to bring the
+A test function returns `Pass` when the assertion holds and
+`Fail(message)` when it fails. `import "std/test";` to bring the
 runner into scope, then call its functions qualified
 (`test.test_new`, `test.assert_eq`, …) with the runner type written
 `test.TestRunner`. Receiver methods (`.it`, `.finish`) stay bare.
@@ -28,11 +28,11 @@ runner into scope, then call its functions qualified
 <FernPlayground
   code={`import "std/test";
 
-function test_addition(): Option[string] {
+function test_addition(): test.TestOutcome {
     return test.assert_eq(2 + 2, 4);
 }
 
-function test_strings(): Option[string] {
+function test_strings(): test.TestOutcome {
     return test.assert_eq("foo" + "bar", "foobar");
 }
 
@@ -69,7 +69,7 @@ diagnostic block.
 
 ## Assertions
 
-Each helper returns `Option[string]`. The failure message names
+Each helper returns `TestOutcome`. The failure message names
 the predicate, so a grep across CI logs finds the regression.
 
 | Family       | Helpers                                                                                                              |
@@ -133,7 +133,7 @@ assertion family above (`assert_exit` / `assert_stdout_eq` /
 `assert_process`) operates on that struct.
 
 ```fern
-function test_fern_hello(): Option[string] {
+function test_fern_hello(): test.TestOutcome {
     var r: ProcessResult = subprocess("./fern",
         ["-interp", "/tmp/hello.fern"], "");
     return assert_process(r, 0, "hello");
@@ -171,14 +171,14 @@ children; `remove_file(path)` and `remove_dir_all(path)` return
 
 ## Fuzzing
 
-A fuzz target is a `(string) => Option[string]` — the same shape
+A fuzz target is a `(string) => TestOutcome` — the same shape
 as a regular test, called repeatedly with mutated inputs from a
 seed corpus.
 
 ```fern
-function check_to_upper_idempotent(input: string): Option[string] {
-    if (input.to_upper().to_upper() == input.to_upper()) { return None; }
-    return Some("to_upper is not idempotent");
+function check_to_upper_idempotent(input: string): test.TestOutcome {
+    if (input.to_upper().to_upper() == input.to_upper()) { return test.pass(); }
+    return test.fail("to_upper is not idempotent");
 }
 
 function main(): i32 {
@@ -259,12 +259,12 @@ fuzz targets where any single malformed byte breaks the property.
 
 ## Writing your own assertion
 
-A test function can run any logic that returns `Option[string]` —
+A test function can run any logic that returns `TestOutcome` —
 the assertions above are conveniences. For a hand-rolled check,
 return `fail(...)` directly:
 
 ```fern
-function test_modulo_table(): Option[string] {
+function test_modulo_table(): test.TestOutcome {
     var inputs: i32[] = [0, 1, 5, 10, 11];
     var expected: i32[] = [0, 1, 5, 0, 1];
     var i: i32 = 0;

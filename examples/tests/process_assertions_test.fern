@@ -12,53 +12,53 @@ import "std/test";
 // same pattern with `subprocess("/path/to/fern", ["-interp", ...],
 // "")`.
 
-function test_echo_stdout_eq(): Option[string] {
+function test_echo_stdout_eq(): test.TestOutcome {
     var r: ProcessResult = subprocess("echo", ["hello"], "");
     return test.assert_stdout_eq(r, "hello\n");
 }
 
-function test_echo_exit_code(): Option[string] {
+function test_echo_exit_code(): test.TestOutcome {
     var r: ProcessResult = subprocess("echo", ["x"], "");
     return test.assert_exit(r, 0);
 }
 
-function test_cat_passthrough(): Option[string] {
+function test_cat_passthrough(): test.TestOutcome {
     var r: ProcessResult = subprocess("cat", [], "piped\n");
     return test.assert_process(r, 0, "piped");
 }
 
-function test_sh_nonzero_exit(): Option[string] {
+function test_sh_nonzero_exit(): test.TestOutcome {
     var r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
     return test.assert_exit(r, 7);
 }
 
-function test_sh_stderr_contains(): Option[string] {
+function test_sh_stderr_contains(): test.TestOutcome {
     var r: ProcessResult = subprocess("sh", ["-c", "echo err-line 1>&2; exit 0"], "");
     return test.assert_stderr_contains(r, "err-line");
 }
 
-function test_spawn_missing_binary(): Option[string] {
+function test_spawn_missing_binary(): test.TestOutcome {
     var r: ProcessResult = subprocess("this-binary-definitely-does-not-exist-7349", [], "");
     // Spawn failure → exit_code = 127 per POSIX convention,
     // with the OS error message in stderr.
     return test.assert_exit(r, 127);
 }
 
-function test_temp_dir_writes_and_reads(): Option[string] {
+function test_temp_dir_writes_and_reads(): test.TestOutcome {
     match (temp_dir("lang-process-assert")) {
         Ok(dir) => {
             var path: string = dir + "/fixture.txt";
             match (write_file(path, "hello tempdir")) {
                 None => { },
-                Some(_) => { return Some("write_file failed under " + dir); }
+                Some(_) => { return test.fail("write_file failed under " + dir); }
             }
             // Confirm `cat` reads what we just wrote.
             var r: ProcessResult = subprocess("cat", [path], "");
             return test.assert_process(r, 0, "hello tempdir");
         },
-        Err(_) => { return Some("temp_dir returned Err"); }
+        Err(_) => { return test.fail("temp_dir returned Err"); }
     }
-    return None;
+    return test.pass();
 }
 
 function main(): i32 {

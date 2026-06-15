@@ -11,79 +11,79 @@ import "std/test";
 //     `(r).log_kv_i32(key, value)` (unquoted),
 //     `(r).log_kv_i64(key, value)` (unquoted).
 
-function test_eq_string_ci_same_case(): Option[string] {
+function test_eq_string_ci_same_case(): test.TestOutcome {
     return test.assert_eq_string_ci("hello", "hello");
 }
 
-function test_eq_string_ci_different_case(): Option[string] {
+function test_eq_string_ci_different_case(): test.TestOutcome {
     return test.assert_eq_string_ci("Hello", "hELLo");
 }
 
-function test_eq_string_ci_truly_different_reports(): Option[string] {
+function test_eq_string_ci_truly_different_reports(): test.TestOutcome {
     match (test.assert_eq_string_ci("hello", "world")) {
-        None => { return test.fail("expected ci-mismatch fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected ci-mismatch fail"); },
+        Fail(msg) => {
             // Both raw values should be quoted in the
             // diagnostic (NO case-folding applied for
             // display) so the reader sees the bytes.
             if (!msg.contains("\"hello\"") || !msg.contains("\"world\"")) {
-                return Some("expected both quoted raw: " + msg);
+                return test.fail("expected both quoted raw: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_neq_string_ci_pass(): Option[string] {
+function test_neq_string_ci_pass(): test.TestOutcome {
     return test.assert_neq_string_ci("hello", "world");
 }
 
-function test_neq_string_ci_matches_ci_fails(): Option[string] {
+function test_neq_string_ci_matches_ci_fails(): test.TestOutcome {
     match (test.assert_neq_string_ci("Hello", "HELLO")) {
-        None => { return test.fail("matching case-insensitive must fail neq"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("matching case-insensitive must fail neq"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_contains_ci_pass(): Option[string] {
+function test_contains_ci_pass(): test.TestOutcome {
     return test.assert_contains_ci("Content-Type: text/html", "TEXT/HTML");
 }
 
-function test_contains_ci_pass_subseq(): Option[string] {
+function test_contains_ci_pass_subseq(): test.TestOutcome {
     return test.assert_contains_ci("HelloWorld", "lowo");
 }
 
-function test_contains_ci_missing_reports(): Option[string] {
+function test_contains_ci_missing_reports(): test.TestOutcome {
     match (test.assert_contains_ci("hello world", "xyz")) {
-        None => { return test.fail("missing should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("missing should fail"); },
+        Fail(msg) => {
             if (!msg.contains("hello world") || !msg.contains("xyz")) {
-                return Some("expected both in failure: " + msg);
+                return test.fail("expected both in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_starts_with_ci_pass(): Option[string] {
+function test_starts_with_ci_pass(): test.TestOutcome {
     return test.assert_starts_with_ci("HTTP/1.1 200 OK", "http/");
 }
 
-function test_starts_with_ci_fail(): Option[string] {
+function test_starts_with_ci_fail(): test.TestOutcome {
     match (test.assert_starts_with_ci("ABC", "xyz")) {
-        None => { return test.fail("mismatch should fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("mismatch should fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_ends_with_ci_pass(): Option[string] {
+function test_ends_with_ci_pass(): test.TestOutcome {
     return test.assert_ends_with_ci("script.FERN", ".fern");
 }
 
-function test_ends_with_ci_fail(): Option[string] {
+function test_ends_with_ci_fail(): test.TestOutcome {
     match (test.assert_ends_with_ci("script.txt", ".fern")) {
-        None => { return test.fail("mismatch should fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("mismatch should fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 

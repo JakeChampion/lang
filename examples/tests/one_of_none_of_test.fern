@@ -8,107 +8,107 @@ import "std/test";
 //     `assert_none_of_string` — negative membership;
 //     value must NOT match any in the forbidden set.
 
-function test_one_of_i32_pass(): Option[string] {
+function test_one_of_i32_pass(): test.TestOutcome {
     // Classic "exit code is one of [0, 1, 2]" use case.
     return test.assert_one_of_i32(1, [0, 1, 2]);
 }
 
-function test_one_of_i32_single_element(): Option[string] {
+function test_one_of_i32_single_element(): test.TestOutcome {
     // Degenerate case — single-element allowed set works
     // the same as `assert_eq` but reads at the call
     // site as "this is the only acceptable value".
     return test.assert_one_of_i32(42, [42]);
 }
 
-function test_one_of_i32_first_element(): Option[string] {
+function test_one_of_i32_first_element(): test.TestOutcome {
     return test.assert_one_of_i32(0, [0, 1, 2]);
 }
 
-function test_one_of_i32_last_element(): Option[string] {
+function test_one_of_i32_last_element(): test.TestOutcome {
     return test.assert_one_of_i32(2, [0, 1, 2]);
 }
 
-function test_one_of_i32_missing_reports_set(): Option[string] {
+function test_one_of_i32_missing_reports_set(): test.TestOutcome {
     match (test.assert_one_of_i32(99, [0, 1, 2])) {
-        None => { return test.fail("expected fail for value not in set"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected fail for value not in set"); },
+        Fail(msg) => {
             // Diagnostic must embed both the actual and the
             // rendered allowed list.
             if (!msg.contains("99") || !msg.contains("[0, 1, 2]")) {
-                return Some("expected '99' + '[0, 1, 2]' in failure: " + msg);
+                return test.fail("expected '99' + '[0, 1, 2]' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_one_of_i32_empty_set_always_fails(): Option[string] {
+function test_one_of_i32_empty_set_always_fails(): test.TestOutcome {
     var empty: i32[] = [];
     match (test.assert_one_of_i32(0, empty)) {
-        None => { return test.fail("empty allowed set should always fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("empty allowed set should always fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_one_of_string_pass(): Option[string] {
+function test_one_of_string_pass(): test.TestOutcome {
     // "HTTP method is one of the safe ones".
     return test.assert_one_of_string("GET",
                                 ["GET", "HEAD", "OPTIONS"]);
 }
 
-function test_one_of_string_missing_reports(): Option[string] {
+function test_one_of_string_missing_reports(): test.TestOutcome {
     match (test.assert_one_of_string("POST",
                                 ["GET", "HEAD", "OPTIONS"])) {
-        None => { return test.fail("expected POST to fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected POST to fail"); },
+        Fail(msg) => {
             // Allowed values must be quoted in the diagnostic so
             // "GET" reads distinctly from `GET` (unquoted i32-
             // style rendering would be wrong here).
             if (!msg.contains("\"POST\"") || !msg.contains("\"GET\"")) {
-                return Some("expected quoted POST + GET in failure: " + msg);
+                return test.fail("expected quoted POST + GET in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_none_of_i32_pass(): Option[string] {
+function test_none_of_i32_pass(): test.TestOutcome {
     // "Exit code is not any of these failure sentinels".
     return test.assert_none_of_i32(0, [127, 128, 130]);
 }
 
-function test_none_of_i32_match_reports(): Option[string] {
+function test_none_of_i32_match_reports(): test.TestOutcome {
     match (test.assert_none_of_i32(127, [127, 128, 130])) {
-        None => { return test.fail("expected forbidden-match to fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected forbidden-match to fail"); },
+        Fail(msg) => {
             if (!msg.contains("127")) {
-                return Some("expected '127' in failure: " + msg);
+                return test.fail("expected '127' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_none_of_i32_empty_forbidden_always_passes(): Option[string] {
+function test_none_of_i32_empty_forbidden_always_passes(): test.TestOutcome {
     // Vacuous: nothing forbidden, anything is OK.
     var empty: i32[] = [];
     return test.assert_none_of_i32(42, empty);
 }
 
-function test_none_of_string_pass(): Option[string] {
+function test_none_of_string_pass(): test.TestOutcome {
     return test.assert_none_of_string("hello",
                                  ["error", "fatal", "panic"]);
 }
 
-function test_none_of_string_match_reports(): Option[string] {
+function test_none_of_string_match_reports(): test.TestOutcome {
     match (test.assert_none_of_string("fatal",
                                  ["error", "fatal", "panic"])) {
-        None => { return test.fail("expected forbidden-match to fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected forbidden-match to fail"); },
+        Fail(msg) => {
             if (!msg.contains("\"fatal\"")) {
-                return Some("expected '\"fatal\"' in failure: " + msg);
+                return test.fail("expected '\"fatal\"' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }

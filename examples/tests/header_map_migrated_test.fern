@@ -18,14 +18,14 @@ import "std/headers";
 //
 // Needs `import "std/headers";`.
 
-function test_case_insensitive_get(): Option[string] {
+function test_case_insensitive_get(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("Content-Type", "application/json");
     return test.assert_is_some_eq_string(h.get("CONTENT-TYPE"),
                                     "application/json");
 }
 
-function test_get_all_preserves_insertion_order(): Option[string] {
+function test_get_all_preserves_insertion_order(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.append("Set-Cookie", "a=1");
     h = h.append("Set-Cookie", "b=2");
@@ -38,7 +38,7 @@ function test_get_all_preserves_insertion_order(): Option[string] {
                                   ["a=1", "b=2", "c=3"]);
 }
 
-function test_set_replaces_then_size_2(): Option[string] {
+function test_set_replaces_then_size_2(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.append("X", "first");
     h = h.append("Y", "y1");
@@ -49,7 +49,7 @@ function test_set_replaces_then_size_2(): Option[string] {
     return test.assert_eq(h.len(), 2);
 }
 
-function test_set_replaces_get_returns_new(): Option[string] {
+function test_set_replaces_get_returns_new(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.append("X", "first");
     h = h.append("Y", "y1");
@@ -58,13 +58,13 @@ function test_set_replaces_get_returns_new(): Option[string] {
     return test.assert_is_some_eq_string(h.get("x"), "replaced");
 }
 
-function test_set_on_absent_appends(): Option[string] {
+function test_set_on_absent_appends(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("X-First", "1");
     return test.assert_eq(h.len(), 1);
 }
 
-function test_get_all_on_missing_is_empty(): Option[string] {
+function test_get_all_on_missing_is_empty(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.append("X", "1");
     return test.assert_eq((h.get_all("Y")).len(), 0);

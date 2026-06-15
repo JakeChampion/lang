@@ -13,156 +13,156 @@ import "std/test";
 // helpers (`assert_set_eq_*` / `assert_subset_*` /
 // `assert_array_intersects_*` / `_disjoint_*`).
 
-function test_starts_with_i32_pass(): Option[string] {
+function test_starts_with_i32_pass(): test.TestOutcome {
     return test.assert_array_starts_with_i32([1, 2, 3, 4, 5], [1, 2, 3]);
 }
 
-function test_starts_with_i32_empty_prefix_vacuous(): Option[string] {
+function test_starts_with_i32_empty_prefix_vacuous(): test.TestOutcome {
     var empty: i32[] = [];
     return test.assert_array_starts_with_i32([1, 2, 3], empty);
 }
 
-function test_starts_with_i32_full_array_is_own_prefix(): Option[string] {
+function test_starts_with_i32_full_array_is_own_prefix(): test.TestOutcome {
     return test.assert_array_starts_with_i32([1, 2, 3], [1, 2, 3]);
 }
 
-function test_starts_with_i32_prefix_too_long(): Option[string] {
+function test_starts_with_i32_prefix_too_long(): test.TestOutcome {
     match (test.assert_array_starts_with_i32([1, 2], [1, 2, 3])) {
-        None => { return test.fail("too-long prefix should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("too-long prefix should fail"); },
+        Fail(msg) => {
             if (!msg.contains("array length 2") || !msg.contains("prefix length 3")) {
-                return Some("expected both lengths in failure: " + msg);
+                return test.fail("expected both lengths in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_starts_with_i32_mismatch_at_index(): Option[string] {
+function test_starts_with_i32_mismatch_at_index(): test.TestOutcome {
     match (test.assert_array_starts_with_i32([1, 99, 3], [1, 2, 3])) {
-        None => { return test.fail("mismatch should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("mismatch should fail"); },
+        Fail(msg) => {
             // First differing index is 1.
             if (!msg.contains("at index 1")) {
-                return Some("expected 'at index 1': " + msg);
+                return test.fail("expected 'at index 1': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_starts_with_string_pass(): Option[string] {
+function test_starts_with_string_pass(): test.TestOutcome {
     return test.assert_array_starts_with_string(
         ["alpha", "beta", "gamma"],
         ["alpha", "beta"]);
 }
 
-function test_ends_with_i32_pass(): Option[string] {
+function test_ends_with_i32_pass(): test.TestOutcome {
     return test.assert_array_ends_with_i32([1, 2, 3, 4, 5], [3, 4, 5]);
 }
 
-function test_ends_with_i32_empty_suffix_vacuous(): Option[string] {
+function test_ends_with_i32_empty_suffix_vacuous(): test.TestOutcome {
     var empty: i32[] = [];
     return test.assert_array_ends_with_i32([1, 2, 3], empty);
 }
 
-function test_ends_with_i32_suffix_too_long(): Option[string] {
+function test_ends_with_i32_suffix_too_long(): test.TestOutcome {
     match (test.assert_array_ends_with_i32([1, 2], [1, 2, 3])) {
-        None => { return test.fail("too-long suffix should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("too-long suffix should fail"); },
+        Fail(msg) => {
             if (!msg.contains("array length 2") || !msg.contains("suffix length 3")) {
-                return Some("expected both lengths in failure: " + msg);
+                return test.fail("expected both lengths in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_ends_with_i32_mismatch_reports_arr_index(): Option[string] {
+function test_ends_with_i32_mismatch_reports_arr_index(): test.TestOutcome {
     // arr[2] = 99, suffix expects 3 there. The diagnostic
     // names index 2 (in arr coords), not 0 in suffix coords
     // — so test failures pinpoint the actual array slot.
     match (test.assert_array_ends_with_i32([1, 2, 99, 4, 5], [3, 4, 5])) {
-        None => { return test.fail("mismatch should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("mismatch should fail"); },
+        Fail(msg) => {
             if (!msg.contains("at index 2")) {
-                return Some("expected 'at index 2': " + msg);
+                return test.fail("expected 'at index 2': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_ends_with_string_pass(): Option[string] {
+function test_ends_with_string_pass(): test.TestOutcome {
     return test.assert_array_ends_with_string(
         ["alpha", "beta", "gamma"],
         ["beta", "gamma"]);
 }
 
-function test_subseq_i32_pass_middle(): Option[string] {
+function test_subseq_i32_pass_middle(): test.TestOutcome {
     return test.assert_array_contains_subseq_i32(
         [10, 20, 30, 40, 50],
         [30, 40]);
 }
 
-function test_subseq_i32_pass_at_start(): Option[string] {
+function test_subseq_i32_pass_at_start(): test.TestOutcome {
     return test.assert_array_contains_subseq_i32(
         [10, 20, 30],
         [10, 20]);
 }
 
-function test_subseq_i32_pass_at_end(): Option[string] {
+function test_subseq_i32_pass_at_end(): test.TestOutcome {
     return test.assert_array_contains_subseq_i32(
         [10, 20, 30],
         [20, 30]);
 }
 
-function test_subseq_i32_empty_vacuous(): Option[string] {
+function test_subseq_i32_empty_vacuous(): test.TestOutcome {
     var empty: i32[] = [];
     return test.assert_array_contains_subseq_i32([1, 2, 3], empty);
 }
 
-function test_subseq_i32_needle_longer(): Option[string] {
+function test_subseq_i32_needle_longer(): test.TestOutcome {
     match (test.assert_array_contains_subseq_i32([1, 2], [1, 2, 3])) {
-        None => { return test.fail("over-long needle should fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("over-long needle should fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_subseq_i32_order_matters(): Option[string] {
+function test_subseq_i32_order_matters(): test.TestOutcome {
     // The pieces are present but in the wrong order —
     // subseq is order-sensitive, unlike `assert_subset`.
     match (test.assert_array_contains_subseq_i32(
         [1, 2, 3, 4, 5], [2, 4])) {
-        None => { return test.fail("non-contiguous should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("non-contiguous should fail"); },
+        Fail(msg) => {
             if (!msg.contains("length 2") || !msg.contains("length 5")) {
-                return Some("expected both lengths in failure: " + msg);
+                return test.fail("expected both lengths in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_subseq_i32_almost_match(): Option[string] {
+function test_subseq_i32_almost_match(): test.TestOutcome {
     // Needle partly matches then diverges — the scan must
     // try the next start position, NOT bail out.
     return test.assert_array_contains_subseq_i32(
         [1, 2, 3, 1, 2, 4], [1, 2, 4]);
 }
 
-function test_subseq_string_pass(): Option[string] {
+function test_subseq_string_pass(): test.TestOutcome {
     return test.assert_array_contains_subseq_string(
         ["GET", "/foo", "HTTP/1.1"],
         ["/foo", "HTTP/1.1"]);
 }
 
-function test_subseq_string_missing(): Option[string] {
+function test_subseq_string_missing(): test.TestOutcome {
     match (test.assert_array_contains_subseq_string(
         ["GET", "/foo", "HTTP/1.1"],
         ["POST"])) {
-        None => { return test.fail("missing needle should fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("missing needle should fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 

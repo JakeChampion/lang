@@ -38,7 +38,32 @@ import "./parser";
 // decl (e.g. a local `range` shadowing the `range()` function). Without
 // this, a shadowing local was rewritten to the decl's mangled name and
 // the codegen resolved it to the function value — see std/math.random_int.
-pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[], locals: string[] }
+// `ivar_names` / `ivar_mangled` are parallel arrays mapping a bare
+// imported-enum variant name (e.g. `Fail`, a variant of `std/test`'s
+// `TestOutcome`) to its bundled, prefix-mangled struct name
+// (`test__Fail`). The reference front-end resolves a bare variant
+// reference to its owning import; the self-host bundler must do the
+// same so a downstream module can `match`/construct an imported user
+// enum's variants by their bare names — exactly how `Some`/`None`
+// (Option) and `JString`/`NotFound` (the globally-injected builtin
+// enums) already resolve. Without this, only the variant's OWN module
+// could name it bare; a `match (test.assert_eq(...)) { Fail(m) => … }`
+// in a test file would silently fail to match (issue #2666's
+// TestOutcome). The self-host compiler's own modules sidestep this by
+// always qualifying (`parser.ExprIdent`), so this only widens what
+// downstream code can spell, never changing existing resolution.
+pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[], locals: string[], ivar_names: string[], ivar_mangled: string[] }
+
+// lookup_ivar returns the bundled mangled name for a bare imported
+// enum-variant reference, or "" when `name` isn't an imported variant.
+function lookup_ivar(name: string, ctx: RewriteCtx): string {
+    var i: i32 = 0;
+    while (i < ctx.ivar_names.len()) {
+        if (ctx.ivar_names[i] == name) { return ctx.ivar_mangled[i]; }
+        i = i + 1;
+    }
+    return "";
+}
 
 // first_dot / first_bracket: byte index of the first '.' / '[' in s,
 // or -1. Used to split a type spelling into its qualifier / base.
@@ -96,6 +121,11 @@ pub function mod_names(mod: parser.Module): string[] {
 // form when it names one of this module's top-level decls.
 function mangle_bare(name: string, ctx: RewriteCtx): string {
     if (is_in(name, ctx.declnames)) { return ctx.prefix + "__" + name; }
+    // A bare reference to one of this module's imported enum variants
+    // resolves to its bundled (prefix-mangled) struct name. Checked
+    // after own decls so a same-named local decl still wins.
+    var iv: string = lookup_ivar(name, ctx);
+    if (iv.len() > 0) { return iv; }
     return name;
 }
 
@@ -445,7 +475,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         // bindings, so a local shadowing a module decl is left unmangled.
         var bctx: RewriteCtx = RewriteCtx {
             modnames: ctx.modnames, prefix: ctx.prefix,
-            declnames: ctx.declnames, locals: collect_local_names(fd)
+            declnames: ctx.declnames, locals: collect_local_names(fd),
+            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled
         };
         funcs = funcs.append(parser.FuncDecl {
             name: new_name,
@@ -497,7 +528,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         imports: mod.imports,
         top_stmts: rewrite_block(mod.top_stmts, RewriteCtx {
             modnames: ctx.modnames, prefix: ctx.prefix, declnames: ctx.declnames,
-            locals: collect_locals_stmts(mod.top_stmts, [])
+            locals: collect_locals_stmts(mod.top_stmts, []),
+            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled
         }),
         enums: mod.enums,
         resources: mod.resources,
@@ -508,9 +540,9 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 // flatten_qualified rewrites only QUALIFIED cross-module references
 // (`mod.X` → `mod__X`) in a module — no own-decl mangling. Used on
 // the entry module (whose own decls keep their bare names).
-pub function flatten_qualified(mod: parser.Module): parser.Module {
+pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[]): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty, locals: empty };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -543,12 +575,14 @@ pub function collect_decl_names(mod: parser.Module): string[] {
 // mangle_module renames a non-entry module's own decls to
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
-pub function mangle_module(mod: parser.Module, prefix: string): parser.Module {
+pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: string[], ivar_mangled: string[]): parser.Module {
     var ctx: RewriteCtx = RewriteCtx {
         modnames: mod_names(mod),
         prefix: prefix,
         declnames: collect_decl_names(mod),
-        locals: []
+        locals: [],
+        ivar_names: ivar_names,
+        ivar_mangled: ivar_mangled
     };
     return rewrite_module_bodies(mod, ctx);
 }
@@ -592,9 +626,31 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     var enums: parser.EnumDecl[] = [];
     var resources: parser.ResourceDecl[] = [];
     var exports: parser.ExportBinding[] = [];
+    // Build the imported-enum-variant → mangled-name map once, from
+    // every import's parsed (pre-mangle) variant structs. A variant is
+    // an enum-member struct decl (`enum_owner != ""`); its bundled name
+    // is `<importname>__<variant>`, matching what mangle_module renames
+    // the owning module's decl to. Threaded into every module's rewrite
+    // so a bare variant reference (`Fail`) from any module resolves the
+    // same way the reference front-end resolves it (issue #2666).
+    var ivar_names: string[] = [];
+    var ivar_mangled: string[] = [];
+    var iv: i32 = 0;
+    while (iv < imports.len()) {
+        var isd: i32 = 0;
+        while (isd < imports[iv].mod.structs.len()) {
+            var sd: parser.StructDecl = imports[iv].mod.structs[isd];
+            if (sd.enum_owner.len() > 0) {
+                ivar_names = ivar_names.append(sd.name);
+                ivar_mangled = ivar_mangled.append(imports[iv].name + "__" + sd.name);
+            }
+            isd = isd + 1;
+        }
+        iv = iv + 1;
+    }
     var i: i32 = 0;
     while (i < imports.len()) {
-        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name);
+        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled);
         funcs = append_funcs(funcs, m.funcs);
         structs = append_structs(structs, m.structs);
         aliases = append_aliases(aliases, m.aliases);
@@ -605,7 +661,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         while (mxi < m.exports.len()) { exports = exports.append(m.exports[mxi]); mxi = mxi + 1; }
         i = i + 1;
     }
-    var e: parser.Module = flatten_qualified(entry);
+    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled);
     funcs = append_funcs(funcs, e.funcs);
     structs = append_structs(structs, e.structs);
     aliases = append_aliases(aliases, e.aliases);
@@ -636,11 +692,13 @@ function append_enum_decls(into: parser.EnumDecl[], more: parser.EnumDecl[]): pa
 }
 
 function flatten_source(src: string): parser.Module {
-    return flatten_qualified(parser.parse_module(lexer.tokenize(src)));
+    var none: string[] = [];
+    return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none);
 }
 
 function mangle_source(src: string, prefix: string): parser.Module {
-    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix);
+    var none: string[] = [];
+    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none);
 }
 
 function main(): i32 {
@@ -780,13 +838,20 @@ function main(): i32 {
     mn = mn.append("lexer");
     var dn: string[] = [];
     dn = dn.append("Token");
-    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [] };
+    var ivn: string[] = [];
+    ivn = ivn.append("Fail");
+    var ivm: string[] = [];
+    ivm = ivm.append("test__Fail");
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
     if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
     if (rewrite_type_name("Map[string, i32]", ctx) != "Map[string, i32]") { return 93; }
     if (rewrite_type_name("i32", ctx) != "i32") { return 94; }
     if (rewrite_type_name("other.Thing", ctx) != "other.Thing") { return 95; }
+    // Bare imported-enum variant resolves to its bundled mangled name;
+    // a same-named own decl still wins (declnames checked first).
+    if (rewrite_type_name("Fail", ctx) != "test__Fail") { return 96; }
 
     // --- Brick 3: bundle (merge entry + mangled imports) ---
     var amod: parser.Module = parser.parse_module(lexer.tokenize(

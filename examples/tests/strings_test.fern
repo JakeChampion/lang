@@ -7,81 +7,81 @@ import "std/test";
 // harness: per-module test file, explicit list of cases in
 // main(), single TAP-13 stream on stdout.
 
-function test_uppercase(): Option[string] {
+function test_uppercase(): test.TestOutcome {
     return test.assert_eq("hello".to_upper(), "HELLO");
 }
 
-function test_lowercase(): Option[string] {
+function test_lowercase(): test.TestOutcome {
     return test.assert_eq("HELLO".to_lower(), "hello");
 }
 
-function test_contains_substring(): Option[string] {
+function test_contains_substring(): test.TestOutcome {
     return test.assert_contains("hello world", "world");
 }
 
-function test_not_contains(): Option[string] {
+function test_not_contains(): test.TestOutcome {
     return test.assert_not_contains("hello world", "xyz");
 }
 
-function test_starts_with(): Option[string] {
+function test_starts_with(): test.TestOutcome {
     return test.assert_starts_with("foobar", "foo");
 }
 
-function test_ends_with(): Option[string] {
+function test_ends_with(): test.TestOutcome {
     return test.assert_ends_with("foobar", "bar");
 }
 
-function test_concat(): Option[string] {
+function test_concat(): test.TestOutcome {
     return test.assert_eq("foo" + "bar", "foobar");
 }
 
-function test_split_join_roundtrip(): Option[string] {
+function test_split_join_roundtrip(): test.TestOutcome {
     var parts: string[] = "a,b,c,d".split(",");
     return test.assert_eq(parts.join("|"), "a|b|c|d");
 }
 
 // Length assertion + array-of-string assertion in one test.
 // Both pass; folded together to keep the test list short.
-function test_split_yields_four_parts(): Option[string] {
+function test_split_yields_four_parts(): test.TestOutcome {
     var parts: string[] = "a,b,c,d".split(",");
     return test.assert_len_string(parts, 4);
 }
 
 // Option-returning search family: find / rfind / find_ci report a
 // hit as Some(byte-index) and a miss as None.
-function test_find_hit(): Option[string] {
+function test_find_hit(): test.TestOutcome {
     match ("hello world".find("world")) {
         Some(i) => { return test.assert_eq(i, 6); },
         None => { return test.fail("find: expected Some, got None"); },
     }
 }
 
-function test_find_miss(): Option[string] {
+function test_find_miss(): test.TestOutcome {
     match ("hello".find("xyz")) {
         Some(_) => { return test.fail("find: expected None, got Some"); },
-        None => { return None; },
+        None => { return test.pass(); },
     }
 }
 
-function test_rfind_hit(): Option[string] {
+function test_rfind_hit(): test.TestOutcome {
     match ("a/b/c".rfind("/")) {
         Some(i) => { return test.assert_eq(i, 3); },
         None => { return test.fail("rfind: expected Some, got None"); },
     }
 }
 
-function test_find_ci_hit(): Option[string] {
+function test_find_ci_hit(): test.TestOutcome {
     match ("Hello World".find_ci("WORLD")) {
         Some(i) => { return test.assert_eq(i, 6); },
         None => { return test.fail("find_ci: expected Some, got None"); },
     }
 }
 
-function test_empty_string(): Option[string] {
+function test_empty_string(): test.TestOutcome {
     return test.assert_empty_string("");
 }
 
-function test_non_empty_string(): Option[string] {
+function test_non_empty_string(): test.TestOutcome {
     return test.assert_non_empty_string("x");
 }
 

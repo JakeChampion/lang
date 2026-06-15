@@ -339,7 +339,7 @@ beyond its placeholder shape.
 ### `std/test`
 
 Pure-Fern unit-test runner. Tests are functions returning
-`Option[string]` (None = pass, Some(msg) = fail). The shape
+`TestOutcome` (`Pass` = pass, `Fail(msg)` = fail). The shape
 the project plans to migrate to once the compiler is self-
 hosted and the Go-side `*_test.go` harness retires; see
 `docs/ROADMAP-AND-SELF-HOSTING.md`. Output is TAP-13 so
@@ -349,7 +349,7 @@ can consume it directly.
 ```
 import "std/test";
 
-function test_addition(): Option[string] {
+function test_addition(): test.TestOutcome {
     return test.assert_eq(2 + 2, 4);
 }
 
