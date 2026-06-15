@@ -726,6 +726,15 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // push order), then push a dummy 0 (value discarded). This is the
             // wasm sibling of rep movsb / the arm64 byte loop.
             out = out + "    memory.copy\n    i32.const 0\n";
+        } else if (o.kind == "load_i32" || o.kind == "load_ptr") {
+            // stack: addr -> 4-byte load (ptr is i32-width on wasm32).
+            out = out + "    i32.load\n";
+        } else if (o.kind == "load_i64") {
+            // stack: addr -> 8-byte i64 load.
+            out = out + "    i64.load\n";
+        } else if (o.kind == "store_i32" || o.kind == "store_ptr") {
+            // stack: addr, val (val on top) -> i32.store, then push dummy 0.
+            out = out + "    i32.store\n    i32.const 0\n";
         } else if (o.kind == "alloc_u8") {
             // stack: n -> a fresh n-element array. wasm has no $__fern_alloc_u8;
             // synthesize via $__fern_arr_box(n*4) + the [len@0, cap@4] header

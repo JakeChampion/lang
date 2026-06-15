@@ -198,6 +198,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// (8-byte header + 3*8-byte slots = 32 bytes) makes the copy observable:
 		// dst[0..2] become src's 5/7/9 -> 21. IR must match the AST rep-movsb path.
 		{"memcpy-clone", "function main(): i32 { var src: u8[] = __alloc_u8(3); src = src.with(0, 5 as u8); src = src.with(1, 7 as u8); src = src.with(2, 9 as u8); var dst: u8[] = __alloc_u8(3); __memcpy(dst as usize, src as usize, 32); return (dst[0] as i32) + (dst[1] as i32) + (dst[2] as i32); }"},
+		// Raw-memory load/store intrinsics — op_load_i32 / op_load_i64 /
+		// op_load_ptr / op_store_i32 / op_store_ptr (the inline IR siblings of the
+		// AST __fn___load_* runtime helpers). Was BAIL (call/lower: no IR op),
+		// which kept core/map's __map_hash and friends off the IR path. A
+		// store/load round-trip at a raw usize address makes them observable: IR
+		// must match the AST runtime-helper path.
+		{"rawmem-i32", "function main(): i32 { var buf: u8[] = __alloc_u8(8); var p: usize = buf as usize; __store_i32(p, 1234567); return __load_i32(p); }"},
+		{"rawmem-ptr-i64", "function main(): i32 { var buf: u8[] = __alloc_u8(16); var p: usize = buf as usize; __store_ptr(p, 9999); __store_i32(p + 8, 4242); var c: usize = __load_ptr(p); var b: i64 = __load_i64(p + 8); if ((c as i32) == 9999 && (b % 100000) as i32 == 4242) { return 7; } return 1; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
