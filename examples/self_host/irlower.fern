@@ -11335,7 +11335,19 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var i: i32 = 0;
     while (i < funcs.len()) {
         var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs));
-        out = out.append(LoweredFn { name: funcs[i].name, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots });
+        // A receiver method is registered under the receiver-qualified name
+        // `<BaseType>.<method>` — the SAME label a method call lowers to
+        // (op_call_direct(receiver_type + "." + field)) and the backends'
+        // `__fn_<Type>.<method>` emission. Without this the round-trip
+        // evaluator's find_fn looked up "P.getx" while the def was stored as
+        // bare "getx", so a method call missed and bailed. (The asm backends
+        // re-derive the label from the FuncDecl directly, so they're unaffected
+        // by this stored name.)
+        var fname: string = funcs[i].name;
+        if (funcs[i].receiver_type.len() > 0) {
+            fname = util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name;
+        }
+        out = out.append(LoweredFn { name: fname, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots });
         i = i + 1;
     }
     return out;
