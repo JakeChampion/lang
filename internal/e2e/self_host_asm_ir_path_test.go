@@ -953,6 +953,22 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"predicate-param", `function pre(s: string, p: string): i32 { if (s.starts_with(p)) { return 1; } return 0; } function main(): i32 { return pre("foobar", "foo") * 10 + pre("foobar", "bar"); }`},
 		{"predicate-freecall", `function main(): i32 { if (str_starts_with("hello", "he")) { return str_index_of("hello", "ll"); } return 0; }`},
 		{"predicate-on-literal", `function main(): i32 { if ("abcdef".contains("cde")) { return "abcdef".index_of("d"); } return 0; }`},
+		// f-string interpolation (`f"...{expr}..."`): the parser desugars to a
+		// `+`-chain of literal string parts and `(expr).to_string()` calls, so the
+		// AST and IR self-host paths must agree byte-for-byte. Covers i32 / string
+		// / expression / method-call / negation interpolants, adjacent interpolants,
+		// an interpolant-then-literal, the `{{` brace escape, and empty / plain.
+		{"fstring-i32", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s.len(); }`},
+		{"fstring-i32-char", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2]; }`},
+		{"fstring-str", `function main(): i32 { var w = "xy"; var s = f"[{w}]"; return s.len(); }`},
+		{"fstring-expr", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2]; }`},
+		{"fstring-method", `function main(): i32 { var w = "hi"; return f"v={w.len()}".len(); }`},
+		{"fstring-neg", `function main(): i32 { var a = 5; return f"v={0 - a}".len(); }`},
+		{"fstring-multi", `function main(): i32 { var a = 1; var b = 2; return f"{a}{b}".len(); }`},
+		{"fstring-interp-lit", `function main(): i32 { var n = 42; return f"{n} apples".len(); }`},
+		{"fstring-empty", `function main(): i32 { return f"".len(); }`},
+		{"fstring-plain", `function main(): i32 { return f"plain".len(); }`},
+		{"fstring-esc-brace", `function main(): i32 { var s = f"a{{b"; return s[1]; }`},
 		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
 		// AST path emits __fern_str_to_upper/_lower (str_search runtime); the IR
 		// path emits its own emit_ir_str_case bodies — lengths/bytes must match.
@@ -1161,6 +1177,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"str-concat-if-expr-var", `function main(): i32 { var s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { var s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
 		{"str-concat-match-expr", `function main(): i32 { return (match (1) { 1 => "aa" + "bb", _ => "z" }).len(); }`, 4},
+		// f-string interpolation, pinned to the absolute IR-path value (the
+		// AST==IR differential above is blind to a both-paths-wrong desugar). The
+		// returned byte proves the interpolant text actually landed: `f"n={7}!"`
+		// → "n=7!" (s[2]='7'=55); `f"v={10*2}"` → "v=20" (s[2]='2'=50); the `{{`
+		// escape → "a{b" (s[1]='{'=123).
+		{"fstring-i32-val", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2]; }`, 55},
+		{"fstring-expr-val", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2]; }`, 50},
+		{"fstring-esc-brace-val", `function main(): i32 { var s = f"a{{b"; return s[1]; }`, 123},
+		{"fstring-len-val", `function main(): i32 { var n = 42; return f"{n} apples".len(); }`, 9},
 		// A string-ARRAY-valued if-/match-expression: the lifted `__lam` carries a
 		// default i32 ret_type, so the binding was mis-treated as a scalar and the
 		// 8-byte string elements were read at i32 width — a silent miscompile

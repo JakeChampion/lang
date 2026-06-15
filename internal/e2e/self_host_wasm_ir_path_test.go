@@ -737,6 +737,15 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"contains-true", `function main(): i32 { var s = "hello world"; if (s.contains("o w")) { return 7; } return 0; }`},
 		{"contains-false", `function main(): i32 { var s = "hello"; if (s.contains("xyz")) { return 7; } return 9; }`},
 		{"predicate-param", `function pre(s: string, p: string): i32 { if (s.starts_with(p)) { return 1; } return 0; } function main(): i32 { return pre("foobar", "foo") * 10 + pre("foobar", "bar"); }`},
+		// f-string interpolation (`f"...{expr}..."`) → desugared `+`-chain of
+		// literal parts and `(expr).to_string()`; AST and IR wasm paths must agree.
+		{"fstring-i32", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s.len(); }`},
+		{"fstring-i32-char", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2]; }`},
+		{"fstring-str", `function main(): i32 { var w = "xy"; var s = f"[{w}]"; return s.len(); }`},
+		{"fstring-expr", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2]; }`},
+		{"fstring-method", `function main(): i32 { var w = "hi"; return f"v={w.len()}".len(); }`},
+		{"fstring-multi", `function main(): i32 { var a = 1; var b = 2; return f"{a}{b}".len(); }`},
+		{"fstring-esc-brace", `function main(): i32 { var s = f"a{{b"; return s[1]; }`},
 		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
 		// wasm IR path emits the narrow str_case_helpers ($__fern_str_upper /
 		// _lower); the AST path gets them from strcat_helpers — must agree.
