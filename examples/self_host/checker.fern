@@ -779,6 +779,211 @@ function type_from_name(name: string): Type {
 // check_expr returns the inferred type. Errors surface as
 // TypeUnknown with a `reason` string so callers can inspect them
 // without an exception channel.
+// check_call_expr types an ExprCall (plain / closure / method call).
+// Extracted verbatim from check_expr's ExprCall arm to keep check_expr
+// under the self-host oversized-function compile threshold (#2720); the
+// body is self-contained on c + s.
+function check_call_expr(c: parser.ExprCall, s: Scope): Type {
+    // A desugared value if/match-expression is a 0-arg call of a
+    // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
+    // returning each branch's value. Its value type is the branches'
+    // common type. Return it (instead of `unknown`) so assignment /
+    // return / argument checks see the real type — closing E003/E002
+    // on `var x: string = if (…) { 1 } else { 2 }` and the match form.
+    // Only when EVERY branch agrees (type_eq); a mixed-type set (e.g. a
+    // numeric i32/f64 widening, which the Go checker unifies but this
+    // port's type_assignable doesn't) falls back to `unknown` so it
+    // can't false-positive. Arm-type *consistency* itself is E031,
+    // checked separately.
+    if (c.args.len() == 0) {
+        match (c.callee) {
+            parser.ExprLambda(lm) => {
+                if (lm.params.len() == 0 && lm.body.len() == 1) {
+                    var bts: Type[] = [];
+                    match (lm.body[0]) {
+                        parser.StmtIf(f) => { bts = mx_if_branch_types(f, s); },
+                        parser.StmtMatch(m) => { bts = mx_match_arm_types(m, s); },
+                        _ => { }
+                    }
+                    if (bts.len() > 0) {
+                        var all_same: boolean = true;
+                        var bi: i32 = 1;
+                        while (bi < bts.len()) {
+                            if (!type_eq(bts[bi], bts[0])) { all_same = false; }
+                            bi = bi + 1;
+                        }
+                        if (all_same && !is_unknown(bts[0])) { return bts[0]; }
+                    }
+                }
+            },
+            _ => { }
+        }
+    }
+    // Bare-ident callee → plain function call.
+    // FieldAccess callee → method call: type-check the
+    // receiver, look up the method by (name, recv_type).
+    var name: string = "";
+    var is_method: boolean = false;
+    var recv_type_name: string = "";
+    var recv_ty: Type = t_unknown("__noreceiver__");
+    match (c.callee) {
+        parser.ExprIdent(id) => { name = id.name; },
+        parser.ExprFieldAccess(fa) => {
+            // Qualified-name call: `Ns.func(…)` resolves
+            // to a plain function named "Ns.func" when
+            // such a sig exists. Otherwise fall through
+            // to method-dispatch semantics.
+            var qhandled: boolean = false;
+            match (fa.obj) {
+                parser.ExprIdent(ns_id) => {
+                    var qname: string = ns_id.name + "." + fa.field;
+                    var qsig: FuncSig = s.lookup_sig(qname);
+                    if (qsig.name.len() > 0) {
+                        name = qname;
+                        qhandled = true;
+                    }
+                },
+                _ => { }
+            }
+            if (!qhandled) {
+                name = fa.field;
+                is_method = true;
+                recv_ty = check_expr(fa.obj, s);
+                // Receiver type-name comes from the receiver
+                // expression's static type. Primitive types
+                // use their type-keyword spelling so methods
+                // declared on them dispatch correctly.
+                match (recv_ty) {
+                    TypeStruct(sn) => { recv_type_name = sn.name; },
+                    TypeString(_) => { recv_type_name = "string"; },
+                    TypeI32(_) => { recv_type_name = "i32"; },
+                    TypeBool(_) => { recv_type_name = "bool"; },
+                    TypeFloat(_) => { recv_type_name = "f64"; },
+                    TypeMap(_) => { recv_type_name = "Map"; },
+                    _ => { return t_unknown("method call: receiver isn't a typed value"); }
+                }
+            }
+        },
+        _ => { return t_unknown("call target is not an identifier"); }
+    }
+    // Builtins: `len(x)` returns i32 for any array or
+    // string. Checked separately because the sig table
+    // doesn't enumerate them.
+    if (!is_method && name == "len") {
+        if (c.args.len() != 1) { return t_unknown("len takes 1 argument"); }
+        var at: Type = check_expr(c.args[0], s);
+        match (at) {
+            TypeArray(_) => { return t_i32(); },
+            TypeString(_) => { return t_i32(); },
+            TypeMap(_) => { return t_i32(); },
+            _ => { return t_unknown("len: argument must be array, string, or map"); }
+        }
+        return t_unknown("unreachable len arm");
+    }
+    // map_new(cap) builtin — returns a TypeMap with
+    // TypeUnknown key/value types since the call site
+    // has no inference for them. The surrounding
+    // type-annotation (e.g. `var m: Map[K, V] = …`)
+    // pins them via assignability.
+    if (!is_method && name == "map_new") {
+        return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
+    }
+    // cell_new(v) builtin — the Cell[T] constructor
+    // (docs/CELL-TYPE-PLAN.md). T is the argument's type; the
+    // result is modelled as a nominal `Cell` struct handle. Typing
+    // it (rather than leaving it unknown) lets a nested
+    // `cell_new(cell_new(x))` see the inner cell as a composite
+    // element, which is the E057 case the call-diag walk flags.
+    if (!is_method && name == "cell_new") {
+        return t_struct("Cell");
+    }
+    // Built-in VMap method dispatch — handled ahead of
+    // the user MethodSig lookup.
+    if (is_method) {
+        match (recv_ty) {
+            TypeMap(mt) => {
+                if (name == "insert") {
+                    if (c.args.len() != 2) { return t_unknown("map.set: 2 args"); }
+                    return recv_ty;
+                }
+                if (name == "get_or") {
+                    if (c.args.len() != 2) { return t_unknown("map.get_or: 2 args"); }
+                    return mt.value;
+                }
+                if (name == "has") {
+                    if (c.args.len() != 1) { return t_unknown("map.has: 1 arg"); }
+                    return t_bool();
+                }
+                if (name == "without") {
+                    if (c.args.len() != 1) { return t_unknown("map.delete: 1 arg"); }
+                    return t_tuple([recv_ty, t_bool()]);
+                }
+                if (name == "len") {
+                    if (c.args.len() != 0) { return t_unknown("map.len: 0 args"); }
+                    return t_i32();
+                }
+                if (name == "keys") { return t_array(mt.key); }
+                if (name == "values") { return t_array(mt.value); }
+            },
+            _ => { }
+        }
+        var msig: MethodSig = s.lookup_method(name, recv_type_name);
+        if (msig.name.len() == 0) {
+            return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
+        }
+        if (c.args.len() != msig.param_types.len()) {
+            return t_unknown("arity mismatch calling method `" + name + "`");
+        }
+        var mi: i32 = 0;
+        while (mi < c.args.len()) {
+            var mat: Type = check_expr(c.args[mi], s);
+            if (!type_assignable(mat, msig.param_types[mi], s.unions)) {
+                return t_unknown("arg-type mismatch calling method `" + name + "`");
+            }
+            mi = mi + 1;
+        }
+        return msig.ret_type;
+    }
+    // If the ident is bound in scope to a TypeFunc,
+    // dispatch as a closure call rather than a plain
+    // function lookup. Otherwise fall through to the
+    // function-sig table.
+    var bound_ty: Type = s.lookup(name);
+    match (bound_ty) {
+        TypeFunc(tf) => {
+            if (c.args.len() != tf.param_types.len()) {
+                return t_unknown("arity mismatch calling closure `" + name + "`");
+            }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) {
+                var cat: Type = check_expr(c.args[ci], s);
+                if (!type_assignable(cat, tf.param_types[ci], s.unions)) {
+                    return t_unknown("arg-type mismatch calling closure `" + name + "`");
+                }
+                ci = ci + 1;
+            }
+            return tf.ret_type;
+        },
+        _ => { }
+    }
+    var sig: FuncSig = s.lookup_sig(name);
+    if (sig.name.len() == 0) {
+        return t_unknown("undefined function: " + name);
+    }
+    if (c.args.len() != sig.param_types.len()) {
+        return t_unknown("arity mismatch calling `" + name + "`");
+    }
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var at: Type = check_expr(c.args[i], s);
+        if (!type_assignable(at, sig.param_types[i], s.unions)) {
+            return t_unknown("arg-type mismatch calling `" + name + "`");
+        }
+        i = i + 1;
+    }
+    return sig.ret_type;
+}
+
 function check_expr(e: parser.Expr, s: Scope): Type {
     match (e) {
         parser.ExprNumber(n) => {
@@ -860,206 +1065,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return t_unknown("unknown unary op:" + u.op);
         },
-        parser.ExprCall(c) => {
-            // A desugared value if/match-expression is a 0-arg call of a
-            // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
-            // returning each branch's value. Its value type is the branches'
-            // common type. Return it (instead of `unknown`) so assignment /
-            // return / argument checks see the real type — closing E003/E002
-            // on `var x: string = if (…) { 1 } else { 2 }` and the match form.
-            // Only when EVERY branch agrees (type_eq); a mixed-type set (e.g. a
-            // numeric i32/f64 widening, which the Go checker unifies but this
-            // port's type_assignable doesn't) falls back to `unknown` so it
-            // can't false-positive. Arm-type *consistency* itself is E031,
-            // checked separately.
-            if (c.args.len() == 0) {
-                match (c.callee) {
-                    parser.ExprLambda(lm) => {
-                        if (lm.params.len() == 0 && lm.body.len() == 1) {
-                            var bts: Type[] = [];
-                            match (lm.body[0]) {
-                                parser.StmtIf(f) => { bts = mx_if_branch_types(f, s); },
-                                parser.StmtMatch(m) => { bts = mx_match_arm_types(m, s); },
-                                _ => { }
-                            }
-                            if (bts.len() > 0) {
-                                var all_same: boolean = true;
-                                var bi: i32 = 1;
-                                while (bi < bts.len()) {
-                                    if (!type_eq(bts[bi], bts[0])) { all_same = false; }
-                                    bi = bi + 1;
-                                }
-                                if (all_same && !is_unknown(bts[0])) { return bts[0]; }
-                            }
-                        }
-                    },
-                    _ => { }
-                }
-            }
-            // Bare-ident callee → plain function call.
-            // FieldAccess callee → method call: type-check the
-            // receiver, look up the method by (name, recv_type).
-            var name: string = "";
-            var is_method: boolean = false;
-            var recv_type_name: string = "";
-            var recv_ty: Type = t_unknown("__noreceiver__");
-            match (c.callee) {
-                parser.ExprIdent(id) => { name = id.name; },
-                parser.ExprFieldAccess(fa) => {
-                    // Qualified-name call: `Ns.func(…)` resolves
-                    // to a plain function named "Ns.func" when
-                    // such a sig exists. Otherwise fall through
-                    // to method-dispatch semantics.
-                    var qhandled: boolean = false;
-                    match (fa.obj) {
-                        parser.ExprIdent(ns_id) => {
-                            var qname: string = ns_id.name + "." + fa.field;
-                            var qsig: FuncSig = s.lookup_sig(qname);
-                            if (qsig.name.len() > 0) {
-                                name = qname;
-                                qhandled = true;
-                            }
-                        },
-                        _ => { }
-                    }
-                    if (!qhandled) {
-                        name = fa.field;
-                        is_method = true;
-                        recv_ty = check_expr(fa.obj, s);
-                        // Receiver type-name comes from the receiver
-                        // expression's static type. Primitive types
-                        // use their type-keyword spelling so methods
-                        // declared on them dispatch correctly.
-                        match (recv_ty) {
-                            TypeStruct(sn) => { recv_type_name = sn.name; },
-                            TypeString(_) => { recv_type_name = "string"; },
-                            TypeI32(_) => { recv_type_name = "i32"; },
-                            TypeBool(_) => { recv_type_name = "bool"; },
-                            TypeFloat(_) => { recv_type_name = "f64"; },
-                            TypeMap(_) => { recv_type_name = "Map"; },
-                            _ => { return t_unknown("method call: receiver isn't a typed value"); }
-                        }
-                    }
-                },
-                _ => { return t_unknown("call target is not an identifier"); }
-            }
-            // Builtins: `len(x)` returns i32 for any array or
-            // string. Checked separately because the sig table
-            // doesn't enumerate them.
-            if (!is_method && name == "len") {
-                if (c.args.len() != 1) { return t_unknown("len takes 1 argument"); }
-                var at: Type = check_expr(c.args[0], s);
-                match (at) {
-                    TypeArray(_) => { return t_i32(); },
-                    TypeString(_) => { return t_i32(); },
-                    TypeMap(_) => { return t_i32(); },
-                    _ => { return t_unknown("len: argument must be array, string, or map"); }
-                }
-                return t_unknown("unreachable len arm");
-            }
-            // map_new(cap) builtin — returns a TypeMap with
-            // TypeUnknown key/value types since the call site
-            // has no inference for them. The surrounding
-            // type-annotation (e.g. `var m: Map[K, V] = …`)
-            // pins them via assignability.
-            if (!is_method && name == "map_new") {
-                return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
-            }
-            // cell_new(v) builtin — the Cell[T] constructor
-            // (docs/CELL-TYPE-PLAN.md). T is the argument's type; the
-            // result is modelled as a nominal `Cell` struct handle. Typing
-            // it (rather than leaving it unknown) lets a nested
-            // `cell_new(cell_new(x))` see the inner cell as a composite
-            // element, which is the E057 case the call-diag walk flags.
-            if (!is_method && name == "cell_new") {
-                return t_struct("Cell");
-            }
-            // Built-in VMap method dispatch — handled ahead of
-            // the user MethodSig lookup.
-            if (is_method) {
-                match (recv_ty) {
-                    TypeMap(mt) => {
-                        if (name == "insert") {
-                            if (c.args.len() != 2) { return t_unknown("map.set: 2 args"); }
-                            return recv_ty;
-                        }
-                        if (name == "get_or") {
-                            if (c.args.len() != 2) { return t_unknown("map.get_or: 2 args"); }
-                            return mt.value;
-                        }
-                        if (name == "has") {
-                            if (c.args.len() != 1) { return t_unknown("map.has: 1 arg"); }
-                            return t_bool();
-                        }
-                        if (name == "without") {
-                            if (c.args.len() != 1) { return t_unknown("map.delete: 1 arg"); }
-                            return t_tuple([recv_ty, t_bool()]);
-                        }
-                        if (name == "len") {
-                            if (c.args.len() != 0) { return t_unknown("map.len: 0 args"); }
-                            return t_i32();
-                        }
-                        if (name == "keys") { return t_array(mt.key); }
-                        if (name == "values") { return t_array(mt.value); }
-                    },
-                    _ => { }
-                }
-                var msig: MethodSig = s.lookup_method(name, recv_type_name);
-                if (msig.name.len() == 0) {
-                    return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
-                }
-                if (c.args.len() != msig.param_types.len()) {
-                    return t_unknown("arity mismatch calling method `" + name + "`");
-                }
-                var mi: i32 = 0;
-                while (mi < c.args.len()) {
-                    var mat: Type = check_expr(c.args[mi], s);
-                    if (!type_assignable(mat, msig.param_types[mi], s.unions)) {
-                        return t_unknown("arg-type mismatch calling method `" + name + "`");
-                    }
-                    mi = mi + 1;
-                }
-                return msig.ret_type;
-            }
-            // If the ident is bound in scope to a TypeFunc,
-            // dispatch as a closure call rather than a plain
-            // function lookup. Otherwise fall through to the
-            // function-sig table.
-            var bound_ty: Type = s.lookup(name);
-            match (bound_ty) {
-                TypeFunc(tf) => {
-                    if (c.args.len() != tf.param_types.len()) {
-                        return t_unknown("arity mismatch calling closure `" + name + "`");
-                    }
-                    var ci: i32 = 0;
-                    while (ci < c.args.len()) {
-                        var cat: Type = check_expr(c.args[ci], s);
-                        if (!type_assignable(cat, tf.param_types[ci], s.unions)) {
-                            return t_unknown("arg-type mismatch calling closure `" + name + "`");
-                        }
-                        ci = ci + 1;
-                    }
-                    return tf.ret_type;
-                },
-                _ => { }
-            }
-            var sig: FuncSig = s.lookup_sig(name);
-            if (sig.name.len() == 0) {
-                return t_unknown("undefined function: " + name);
-            }
-            if (c.args.len() != sig.param_types.len()) {
-                return t_unknown("arity mismatch calling `" + name + "`");
-            }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                var at: Type = check_expr(c.args[i], s);
-                if (!type_assignable(at, sig.param_types[i], s.unions)) {
-                    return t_unknown("arg-type mismatch calling `" + name + "`");
-                }
-                i = i + 1;
-            }
-            return sig.ret_type;
-        },
+        parser.ExprCall(c) => { return check_call_expr(c, s); },
         parser.ExprTuple(t) => {
             var elems: Type[] = [];
             var i: i32 = 0;
