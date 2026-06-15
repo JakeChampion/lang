@@ -1101,6 +1101,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"f64arr-if-expr-elem", `function main(): i32 { var xs = if (true) { [1.5, 2.5] } else { [3.5] }; return xs.len() * 10 + (xs[1] as i32); }`, 22},
 		{"f64arr-if-expr-forin", `function main(): i32 { var xs = if (true) { [1.5, 2.5, 3.0] } else { [9.0] }; var t = 0.0; for x in xs { t = t + x; } return t as i32; }`, 7},
 		{"f64arr-match-expr-elem", `function main(): i32 { return (match (1) { 1 => [2.5, 4.5], _ => [0.0] })[1] as i32; }`, 4},
+		// A lifted if-/match-expression whose branch CALLS an opt-returning fn with
+		// a `None`/call other branch is lambda-lifted (None is a keyword) — its
+		// `__lam` opt return type is inferred from the body so a later `match (o)`
+		// recovers the payload (#3236 sibling for the lifted shape).
+		{"opt-fncall-if-none-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { None }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
+		{"opt-fncall-if-call-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { mkO(2) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
+		{"result-fncall-if-err-else", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`, 5},
 		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		// A random byte is in 0..255.
