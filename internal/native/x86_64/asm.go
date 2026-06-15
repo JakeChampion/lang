@@ -97,8 +97,25 @@ func (a *Assembler) emit32(v uint32) {
 
 // AssembleProgram assembles the Intel-syntax program text into .text and
 // .rodata blobs. textVAddr is where .text will be loaded (used to resolve
-// branch targets); pass elf.TextVAddr.
+// branch targets); pass elf.TextVAddr. .rodata is laid contiguously after
+// .text (8-byte aligned), matching the single-segment R+W+X image
+// (elf.StaticExecutableDataX86).
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
+	return assembleProgram(src, textVAddr, false)
+}
+
+// AssembleProgramWX is AssembleProgram for the W^X two-segment ELF layout
+// (elf.StaticExecutableDataX86WX): .rodata is page-aligned into a separate
+// R+W segment instead of laid contiguously after .text, so the code
+// segment can be mapped R+X. Pass elf.TextVAddrWX as textVAddr.
+func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
+	return assembleProgram(src, textVAddr, true)
+}
+
+// assembleProgram is the shared body of AssembleProgram (wx=false,
+// contiguous .rodata) and AssembleProgramWX (wx=true, page-aligned .rodata
+// in a separate R+W segment).
+func assembleProgram(src string, textVAddr uint64, wx bool) (text, rodata []byte, err error) {
 	a := newAssembler()
 	sec := "text"
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -143,11 +160,19 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 		rel := int32(dst - (f.at + 4))
 		putLE32(a.text, f.at, uint32(rel))
 	}
-	// Resolve rip-relative data references. StaticExecutableDataX86 pads
-	// .text to 8 bytes and appends .rodata, so .rodata begins at
-	// align8(len(text)) within the segment; the textVAddr base cancels
-	// in (symVAddr - ripEnd), leaving a layout-only computation.
+	// Resolve rip-relative data references. In the single-segment image
+	// StaticExecutableDataX86 pads .text to 8 bytes and appends .rodata,
+	// so .rodata begins at align8(len(text)) within the segment. In the
+	// W^X image StaticExecutableDataX86WX, .rodata moves to the first
+	// 16 KiB page boundary past .text (a separate R+W segment), so its
+	// segment-relative base is pageUp(textVAddr+len(text)) - textVAddr.
+	// Either way rodataBase is the data blob's offset from textVAddr, so
+	// the textVAddr base still cancels in (symVAddr - ripEnd).
 	rodataBase := align8(len(a.text))
+	if wx {
+		const page = 0x10000 // must match elf.pageAlign
+		rodataBase = int((textVAddr+uint64(len(a.text))+page-1)&^(page-1) - textVAddr)
+	}
 	for _, f := range a.ripFixups {
 		var symOff int
 		if off, ok := a.rodataLabels[f.sym]; ok {

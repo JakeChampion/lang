@@ -56,7 +56,6 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 	elfsrc := string(mustRead(t, "../../examples/self_host/elf.fern"))
 	const driverMain = `
 function to_u8(b: i32[]): u8[] { var o: u8[] = []; var i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
-function roundup8x(n: i32): i32 { return (n + 7) & (0 - 8); }
 function main(): i32 {
     var asm: string = ""; var ok: boolean = false;
     match (read_file("in.s")) { Ok(s) => { asm = s; ok = true; }, Err(e) => { ok = false; } }
@@ -68,15 +67,15 @@ function main(): i32 {
         write(msg); return 0;
     }
     var pa: Arm64Asm = p.asm;
-    var tv: i64 = (elf_text_vaddr()) as i64;
-    var dv: i64 = tv + (roundup8x(pa.code.len()) as i64);
+    // W^X two-segment layout (matches fern.fern's arm64_elf_binary): .text
+    // R+X, data R+W on the next page boundary.
+    var tv: i64 = (elf_text_vaddr_wx()) as i64;
+    var dv: i64 = (elf_data_vaddr_wx(pa.code.len())) as i64;
     p = arm64_gas_link(p, tv, dv);
     var pa2: Arm64Asm = p.asm;
     var entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
-    var body: i32[] = elf_pad_to_8(pa2.code);
-    body = elf_cat(body, p.data);
-    var bin: i32[] = elf_image_entry_bss(body, 7, elf_em_aarch64(), entry_off, p.bss_size);
+    var bin: i32[] = elf_image_wx(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
     write(string_from_bytes(to_u8(bin)));
     return 0;
 }
@@ -126,6 +125,21 @@ function main(): i32 {
 			}
 			if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_EXEC {
 				t.Fatalf("got machine=%v type=%v, want AARCH64/EXEC", f.Machine, f.Type)
+			}
+			// W^X: two PT_LOAD segments (R+X code, R+W data), and no
+			// segment is both writable and executable.
+			loads := 0
+			for _, prog := range f.Progs {
+				if prog.Type != elf.PT_LOAD {
+					continue
+				}
+				loads++
+				if prog.Flags&elf.PF_W != 0 && prog.Flags&elf.PF_X != 0 {
+					t.Errorf("%s: PT_LOAD is W+X (%v) — not W^X", c.name, prog.Flags)
+				}
+			}
+			if loads != 2 {
+				t.Errorf("%s: got %d PT_LOAD segments, want 2 (W^X code + data)", c.name, loads)
 			}
 			binPath := filepath.Join(rdir, c.name)
 			if err := os.WriteFile(binPath, out, 0o755); err != nil {

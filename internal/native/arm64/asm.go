@@ -268,21 +268,70 @@ func (a *Assembler) Bytes() ([]byte, error) {
 
 // BytesProgram resolves branches AND symbol references (adrp / add
 // #:lo12:), laying .text at textVAddr and .rodata immediately after
-// (8-byte aligned). It returns the final .text and .rodata blobs.
+// (8-byte aligned). It returns the final .text and .rodata blobs. This is
+// the single-segment layout (elf.StaticExecutableData / R+W+X).
 func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
-	// Flush any literals not yet placed by a .ltorg, then resolve each
-	// ldr-literal's PC-relative offset.
 	a.FlushLiterals()
+	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
+	if rem := rodataVAddr % 8; rem != 0 {
+		rodataVAddr += 8 - rem
+	}
+	return a.bytesProgramAt(textVAddr, rodataVAddr, nil)
+}
+
+// BytesProgramWX is BytesProgram for the W^X two-segment ELF layout
+// (elf.StaticExecutableDataWX): .rodata is placed on the first 16 KiB page
+// boundary at or after the end of .text — a separate R+W PT_LOAD — rather
+// than contiguously after it, so the code segment can be mapped R+X. The
+// page size matches elf.pageAlign; pass elf.TextVAddrWX as textVAddr.
+func (a *Assembler) BytesProgramWX(textVAddr uint64) (text, rodata []byte, err error) {
+	a.FlushLiterals()
+	const page = 0x10000 // must match elf.pageAlign
+	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
+	return a.bytesProgramAt(textVAddr, rodataVAddr, nil)
+}
+
+// Reloc is one R_AARCH64_RELATIVE dynamic relocation for a position-
+// independent executable: at load time the loader (or the program's own
+// self-relocation prologue) computes `*(base + Offset) = base + Addend`.
+// Both fields are link-time values relative to a load base of 0, matching
+// the ET_DYN image elf.StaticPieExecutable produces. The only absolute
+// addresses a Fern binary embeds are the `.quad <symbol>` function-pointer
+// table slots (vtables, closures); adrp/:lo12: code references are
+// PC-relative and need no relocation.
+type Reloc struct {
+	Offset uint64 // where the 8-byte slot lives (relative to load base)
+	Addend uint64 // the target's address (relative to load base)
+}
+
+// BytesProgramPIE resolves the program for a static position-independent
+// executable (elf.StaticPieExecutable): the same W^X two-segment layout,
+// but laid out relative to a load base of 0 (pass elf.TextVAddrPIE as
+// textVAddr) and returning the list of R_AARCH64_RELATIVE relocations for
+// the `.quad <symbol>` slots. PC-relative fixups (branches, adrp/:lo12:,
+// ldr-literals) are base-independent and need no relocation.
+func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
+	a.FlushLiterals()
+	const page = 0x10000 // must match elf.pageAlign
+	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
+	var rs []Reloc
+	text, rodata, err = a.bytesProgramAt(textVAddr, rodataVAddr, &rs)
+	return text, rodata, rs, err
+}
+
+// bytesProgramAt resolves every vaddr-dependent fixup for a layout where
+// .text loads at textVAddr and the .rodata/.data blob loads at rodataVAddr
+// (contiguous for BytesProgram, page-aligned for BytesProgramWX). Literals
+// must already be flushed by the caller. When relocs != nil the layout is
+// treated as base-relative (a PIE) and each `.quad <symbol>` slot records
+// an R_AARCH64_RELATIVE entry into *relocs.
+func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Reloc) (text, rodata []byte, err error) {
+	// Resolve each ldr-literal's PC-relative offset.
 	for _, f := range a.litFixups {
 		insnAddr := textVAddr + uint64(f.at)*4
 		litAddr := textVAddr + uint64(f.poolIdx)*4
 		imm19 := uint32(int32(int64(litAddr)-int64(insnAddr)) / 4)
 		a.insns[f.at] |= (imm19 & 0x7ffff) << 5
-	}
-
-	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
-	if rem := rodataVAddr % 8; rem != 0 {
-		rodataVAddr += 8 - rem
 	}
 
 	symVAddr := func(name string) (uint64, bool) {
@@ -333,7 +382,10 @@ func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err err
 		a.insns[f.at] = ADDimm(f.rd, f.rn, uint16(sv&0xfff), false)
 	}
 
-	// .quad <symbol> → absolute 8-byte virtual address in .rodata.
+	// .quad <symbol> → absolute 8-byte virtual address in .rodata. In a
+	// PIE this value is base-relative (textVAddr/rodataVAddr were laid out
+	// from base 0) and the slot also gets an R_AARCH64_RELATIVE entry so
+	// the loader adds the runtime base.
 	for _, f := range a.quadSymFixups {
 		sv, ok := symVAddr(f.label)
 		if !ok {
@@ -341,6 +393,9 @@ func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err err
 		}
 		for i := 0; i < 8; i++ {
 			a.rodata[f.at+i] = byte(sv >> (8 * i))
+		}
+		if relocs != nil {
+			*relocs = append(*relocs, Reloc{Offset: rodataVAddr + uint64(f.at), Addend: sv})
 		}
 	}
 

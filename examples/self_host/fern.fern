@@ -73,15 +73,17 @@ function arm64_elf_binary(asm: string): string {
         return "";
     }
     var pa: arm64_native.Arm64Asm = p.asm;
-    var tv: i64 = (elf.elf_text_vaddr()) as i64;
-    var dv: i64 = tv + ((((pa.code.len() + 7) & (0 - 8))) as i64); // data 8-aligned after .text
+    // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx() and the
+    // data blob (.rodata + globals + the .bss heap) loads R+W on the first
+    // page boundary past .text, so no mapping is both writable and
+    // executable (required by W^X-enforcing loaders such as Android's).
+    var tv: i64 = (elf.elf_text_vaddr_wx()) as i64;
+    var dv: i64 = (elf.elf_data_vaddr_wx(pa.code.len())) as i64;
     p = arm64_native.arm64_gas_link(p, tv, dv);
     var pa2: arm64_native.Arm64Asm = p.asm;
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
     if (eoff < 0) { eoff = 0; }
-    var body: i32[] = elf.elf_pad_to_8(pa2.code);
-    body = elf.elf_cat(body, p.data);
-    var bin: i32[] = elf.elf_image_entry_bss(body, 7, elf.elf_em_aarch64(), eoff, p.bss_size);
+    var bin: i32[] = elf.elf_image_wx(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
     return string_from_bytes(to_u8(bin));
 }
 

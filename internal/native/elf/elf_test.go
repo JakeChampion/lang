@@ -1,6 +1,8 @@
 package elf_test
 
 import (
+	"bytes"
+	goelf "debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +47,209 @@ func TestStaticExecutableHeader(t *testing.T) {
 	}
 	if p_flags := u32(bin, 68); p_flags != 5 { // PF_R|PF_X
 		t.Errorf("p_flags = %d, want 5 (R|X)", p_flags)
+	}
+}
+
+// TestStaticExecutableDataWXHeader checks the W^X two-segment layout:
+// two PT_LOAD program headers (R+X code, R+W data), an entry just past
+// the two headers, and a data segment whose file offset and load address
+// both land on the first 16 KiB page boundary past .text (so the segment
+// is never both writable and executable, and the offset is congruent to
+// the vaddr mod the page size).
+func TestStaticExecutableDataWXHeader(t *testing.T) {
+	text := []byte{0x00, 0x00, 0x80, 0xd2} // movz x0,#0
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8} // one 8-byte datum
+	bin := elf.StaticExecutableDataWX(text, data)
+
+	const base = 0x400000
+	const headers = 64 + 2*56 // ehdr + two phdrs = 176
+	const page = 0x10000
+	dataOff := (uint64(headers+len(text)) + page - 1) &^ (page - 1)
+
+	if want := int(dataOff) + len(data); len(bin) != want {
+		t.Fatalf("len = %d, want %d", len(bin), want)
+	}
+	if e_type := u16(bin, 16); e_type != 2 { // ET_EXEC
+		t.Errorf("e_type = %d, want 2 (ET_EXEC)", e_type)
+	}
+	if e_phnum := u16(bin, 56); e_phnum != 2 {
+		t.Errorf("e_phnum = %d, want 2", e_phnum)
+	}
+	if e_entry := u64(bin, 24); e_entry != base+headers {
+		t.Errorf("e_entry = %#x, want %#x", e_entry, base+headers)
+	}
+
+	// Program header 0 (offset 64): R+X code covering headers + .text.
+	if p_type := u32(bin, 64); p_type != 1 {
+		t.Errorf("seg0 p_type = %d, want 1 (PT_LOAD)", p_type)
+	}
+	if p_flags := u32(bin, 68); p_flags != 5 { // PF_R|PF_X
+		t.Errorf("seg0 p_flags = %d, want 5 (R|X)", p_flags)
+	}
+	if p_offset := u64(bin, 72); p_offset != 0 {
+		t.Errorf("seg0 p_offset = %d, want 0", p_offset)
+	}
+	if p_filesz := u64(bin, 96); p_filesz != uint64(headers+len(text)) {
+		t.Errorf("seg0 p_filesz = %d, want %d", p_filesz, headers+len(text))
+	}
+
+	// Program header 1 (offset 120): R+W data on its own page.
+	if p_type := u32(bin, 120); p_type != 1 {
+		t.Errorf("seg1 p_type = %d, want 1 (PT_LOAD)", p_type)
+	}
+	if p_flags := u32(bin, 124); p_flags != 6 { // PF_R|PF_W
+		t.Errorf("seg1 p_flags = %d, want 6 (R|W)", p_flags)
+	}
+	if p_offset := u64(bin, 128); p_offset != dataOff {
+		t.Errorf("seg1 p_offset = %#x, want %#x", p_offset, dataOff)
+	}
+	if p_vaddr := u64(bin, 136); p_vaddr != base+dataOff {
+		t.Errorf("seg1 p_vaddr = %#x, want %#x", p_vaddr, base+dataOff)
+	}
+	if p_filesz := u64(bin, 152); p_filesz != uint64(len(data)) {
+		t.Errorf("seg1 p_filesz = %d, want %d", p_filesz, len(data))
+	}
+	// The two segments must not share a page (else one protection wins).
+	codeEndPage := (uint64(headers+len(text)) - 1) / page
+	if dataStartPage := dataOff / page; dataStartPage <= codeEndPage {
+		t.Errorf("data page %d overlaps code end page %d", dataStartPage, codeEndPage)
+	}
+}
+
+// TestAssembledDataWXRunsUnderQemu is the W^X symbol-addressing gate: the
+// same adrp + add #:lo12: rodata load as TestAssembledDataTextRunsUnderQemu,
+// but assembled with AssembleProgramWX and wrapped with
+// StaticExecutableDataWX (page-aligned data in a separate R+W segment).
+// Proves the page-aligned data resolution and two-segment load agree:
+// loading the .rodata constant 42 and exiting with it.
+func TestAssembledDataWXRunsUnderQemu(t *testing.T) {
+	qemu, err := exec.LookPath("qemu-aarch64")
+	if err != nil {
+		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
+			t.Skip("qemu-aarch64 not on PATH")
+		}
+	}
+	src := "" +
+		"\t.text\n" +
+		"\tadrp x1, val\n" +
+		"\tadd x1, x1, :lo12:val\n" +
+		"\tldr x0, [x1]\n" + // x0 = *val = 42
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n" +
+		"\t.section .rodata\n" +
+		"\t.balign 8\n" +
+		"val:\n" +
+		"\t.8byte 42\n"
+	text, rodata, err := arm64.AssembleProgramWX(src, elf.TextVAddrWX)
+	if err != nil {
+		t.Fatalf("AssembleProgramWX: %v", err)
+	}
+	bin := elf.StaticExecutableDataWX(text, rodata)
+	path := filepath.Join(t.TempDir(), "data42wx")
+	if err := os.WriteFile(path, bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = exec.Command(qemu, path).Run()
+	got := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run failed: %v", err)
+		}
+		got = ee.ExitCode()
+	}
+	if got != 42 {
+		t.Fatalf("exit code = %d, want 42", got)
+	}
+}
+
+// TestStaticPieExecutableLayout checks the static-PIE (ET_DYN) image: a
+// position-independent type, three program headers (R+X code, R+W data,
+// PT_DYNAMIC) none of them W+X, one R_AARCH64_RELATIVE entry in .rela.dyn
+// with base-relative offset/addend, and a .dynamic section whose DT_RELA*
+// tags describe it. All addresses are relative to a load base of 0.
+func TestStaticPieExecutableLayout(t *testing.T) {
+	text := []byte{0x00, 0x00, 0x80, 0xd2} // movz x0,#0
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8} // one 8-byte slot
+	// One relocation: slot at data start, target somewhere in .text.
+	const headers = 64 + 3*56 // 232
+	const page = 0x10000
+	dataOff := (uint64(headers+len(text)) + page - 1) &^ (page - 1)
+	relocs := []elf.Reloc{{Offset: dataOff, Addend: headers /* = TextVAddrPIE */}}
+	bin := elf.StaticPieExecutable(text, data, relocs)
+
+	if e_type := u16(bin, 16); e_type != 3 { // ET_DYN
+		t.Errorf("e_type = %d, want 3 (ET_DYN)", e_type)
+	}
+	if e_entry := u64(bin, 24); e_entry != headers {
+		t.Errorf("e_entry = %#x, want %#x (base-relative)", e_entry, headers)
+	}
+	if e_phnum := u16(bin, 56); e_phnum != 3 {
+		t.Errorf("e_phnum = %d, want 3", e_phnum)
+	}
+	// PH2 (offset 64 + 2*56 = 176) is PT_DYNAMIC (p_type = 2).
+	if p_type := u32(bin, 176); p_type != 2 {
+		t.Errorf("PH2 p_type = %d, want 2 (PT_DYNAMIC)", p_type)
+	}
+	// Parse it with debug/elf as a sanity check that the dynamic image is
+	// well-formed, and confirm the two PT_LOAD segments and no W+X.
+	f, err := goelf.NewFile(bytes.NewReader(bin))
+	if err != nil {
+		t.Fatalf("not a parseable ELF: %v", err)
+	}
+	if f.Type != goelf.ET_DYN {
+		t.Errorf("debug/elf type = %v, want ET_DYN", f.Type)
+	}
+	loads, dyn := 0, false
+	for _, p := range f.Progs {
+		switch p.Type {
+		case goelf.PT_LOAD:
+			loads++
+			if p.Flags&goelf.PF_W != 0 && p.Flags&goelf.PF_X != 0 {
+				t.Errorf("PT_LOAD is W+X (%v)", p.Flags)
+			}
+		case goelf.PT_DYNAMIC:
+			dyn = true
+		}
+	}
+	if loads != 2 || !dyn {
+		t.Errorf("segments: %d PT_LOAD, PT_DYNAMIC=%v; want 2 + true", loads, dyn)
+	}
+
+	// .rela.dyn sits 8-aligned after the data blob: r_offset, r_info
+	// (type = R_AARCH64_RELATIVE = 1027), r_addend.
+	relaOff := dataOff + uint64(len(data)) // already 8-aligned here
+	if got := u64(bin, int(relaOff)); got != dataOff {
+		t.Errorf("rela r_offset = %#x, want %#x", got, dataOff)
+	}
+	if got := u64(bin, int(relaOff)+8); got != 1027 {
+		t.Errorf("rela r_info = %d, want 1027 (R_AARCH64_RELATIVE)", got)
+	}
+	if got := u64(bin, int(relaOff)+16); got != headers {
+		t.Errorf("rela r_addend = %#x, want %#x", got, headers)
+	}
+	// .dynamic follows: first tag DT_RELA(7) -> relaOff.
+	dynOff := relaOff + 24
+	if tag := u64(bin, int(dynOff)); tag != 7 {
+		t.Errorf("first .dynamic tag = %d, want 7 (DT_RELA)", tag)
+	}
+	if val := u64(bin, int(dynOff)+8); val != relaOff {
+		t.Errorf("DT_RELA value = %#x, want %#x", val, relaOff)
+	}
+
+	// The x86-64 PIE container shares the layout but differs in e_machine
+	// (EM_X86_64) and relocation type (R_X86_64_RELATIVE = 8). The x86
+	// assembler's PIE path is a later slice; the container is exercised
+	// here at the byte level.
+	binX := elf.StaticPieExecutableX86(text, data, relocs)
+	if e_machine := u16(binX, 18); e_machine != 62 { // EM_X86_64
+		t.Errorf("x86 e_machine = %d, want 62", e_machine)
+	}
+	if e_type := u16(binX, 16); e_type != 3 { // ET_DYN
+		t.Errorf("x86 e_type = %d, want 3 (ET_DYN)", e_type)
+	}
+	if got := u64(binX, int(relaOff)+8); got != 8 { // r_info type
+		t.Errorf("x86 rela r_info = %d, want 8 (R_X86_64_RELATIVE)", got)
 	}
 }
 
