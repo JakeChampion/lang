@@ -4596,6 +4596,54 @@ func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType
 	return block, true
 }
 
+// tryConvertErrViaFrom builds the desugar for a `From`-based error-converting
+// `?`: when the function's error type `E2` has an associated `from(E1): E2`
+// (i.e. `impl From[E1] for E2`), a `Result[_, E1]` propagated through it maps
+// `Err(e)` to `Err(E2.from(e))`. Structural by the `from` constructor's
+// signature (so it's module-agnostic). Returns (nil, false) when E2 isn't a
+// struct/enum with a matching `from`. See #2674.
+func (c *checker) tryConvertErrViaFrom(n *ast.TryOp, srcEnum, retEnum ast.EnumType, s *scope) (ast.Expr, bool) {
+	srcErr := srcEnum.Args[1]
+	fnErr := retEnum.Args[1]
+	tn, ok := methodTypeName(fnErr)
+	if !ok {
+		return nil, false
+	}
+	switch fnErr.(type) {
+	case ast.StructType, ast.EnumType:
+	default:
+		return nil, false
+	}
+	// E2 must have an associated `from(E1): E2`.
+	sig, ok := c.info.FuncSigs["__assoc_"+tn+"_from"]
+	if !ok || len(sig.Params) != 1 || !ast.Equal(sig.Params[0], srcErr) || !ast.Equal(sig.Result, fnErr) {
+		return nil, false
+	}
+	c.tryConvN++
+	tmp := fmt.Sprintf("__try_from_%d", c.tryConvN)
+	okBind := fmt.Sprintf("__try_ok_%d", c.tryConvN)
+	errBind := fmt.Sprintf("__try_err_%d", c.tryConvN)
+	p := n.P
+	resultConv := ast.EnumType{Name: "Result", Args: []ast.Type{srcEnum.Args[0], fnErr}}
+	// `E2.from(__e)` — an associated-function call (FieldAccess on the type name).
+	fromCall := &ast.Call{P: p,
+		Callee: &ast.FieldAccess{P: p, Target: &ast.Ident{P: p, Name: tn}, Field: "from"},
+		Args:   []ast.Expr{&ast.Ident{P: p, Name: errBind}}}
+	mapMatch := &ast.MatchExpr{P: p, Tag: n.Inner, Arms: []*ast.MatchExprArm{
+		{P: p, VariantName: "Ok", Bindings: []string{okBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Ok"}, Args: []ast.Expr{&ast.Ident{P: p, Name: okBind}}}},
+		{P: p, VariantName: "Err", Bindings: []string{errBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Err"}, Args: []ast.Expr{fromCall}}},
+	}}
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: tmp, Type: resultConv, Init: mapMatch},
+	}, Tail: &ast.TryOp{P: p, Inner: &ast.Ident{P: p, Name: tmp}}}
+	if t := c.checkExpr(block, s); t == nil {
+		return nil, false
+	}
+	return block, true
+}
+
 func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) (ast.Type, bool) {
 	if lt == nil || !ast.Equal(lt, rt) {
 		return nil, false
@@ -9326,8 +9374,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					n.Lowered = lowered
 					return n.Type
 				}
-				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match (or implement %s for the `dyn`-error conversion)",
-					srcEnum.Args[1], retEnum.Args[1], srcEnum.Args[1])
+				// Or convert via a `from` constructor: if the function's
+				// error type `E2` has an associated `from(E1): E2` (e.g.
+				// `impl From[E1] for E2`), `?` maps `Err(e)` to
+				// `Err(E2.from(e))` — the `From`-based `?` idiom. See #2674.
+				if lowered, ok := c.tryConvertErrViaFrom(n, srcEnum, retEnum, s); ok {
+					n.Kind = ast.TryKindResult
+					n.Type = srcEnum.Args[0]
+					n.Lowered = lowered
+					return n.Type
+				}
+				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match (implement %s for a `dyn`-error, or a `from(%s)` constructor on %s for the conversion)",
+					srcEnum.Args[1], retEnum.Args[1], srcEnum.Args[1], srcEnum.Args[1], retEnum.Args[1])
 				return nil
 			}
 			n.Kind = ast.TryKindResult
