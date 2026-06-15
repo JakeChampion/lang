@@ -212,8 +212,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // (str x0,[sp,#-16]! / ldr x0,[sp],#16), params copied from the caller rt-stack
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
-function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[]): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, irlower.str_ret_fns_of(s.funcs), irlower.strarr_ret_fns_of(s.funcs), irlower.arr_method_fns_of(s.funcs), irlower.opt_ret_fns_of(s.funcs), irlower.i64_ret_fns_of(s.funcs), irlower.tuple_ret_fns_of(s.funcs), irlower.struct_ret_fns_of(s.funcs, s.struct_decls), irlower.f64_ret_fns_of(s.funcs), irlower.f64arr_ret_fns_of(s.funcs), irlower.i64arr_ret_fns_of(s.funcs), irlower.fn_param_sigs_of(s.funcs), irlower.closure_ret_fns_of(s.funcs), irlower.const_fns_of(s.funcs), borrowable_params);
+function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret: string[], strarr_ret: string[], arr_method: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_param_sigs: string[], closure_ret: string[], const_fns: string[]): asmcore.EmitState {
+    // Module-wide ret-fn registries threaded in (precomputed once per module);
+    // per-function recompute is O(funcs^2) leaked on the arena → self-compile OOM.
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret, strarr_ret, arr_method, opt_ret, i64_ret, tuple_ret, struct_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_ret, const_fns, borrowable_params);
 
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
@@ -860,9 +862,24 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     // Inter-procedural borrowability computed ONCE per module (not per function —
     // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    // Module-wide ret-fn registries: compute ONCE here (per-function recompute is
+    // O(funcs^2) leaked on the arena → self-compile OOM).
+    var srf: string[] = irlower.str_ret_fns_of(s.funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(s.funcs);
+    var amf: string[] = irlower.arr_method_fns_of(s.funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(s.funcs);
+    var i64rf: string[] = irlower.i64_ret_fns_of(s.funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(s.funcs);
+    var strf: string[] = irlower.struct_ret_fns_of(s.funcs, s.struct_decls);
+    var f64rf: string[] = irlower.f64_ret_fns_of(s.funcs);
+    var f64arf: string[] = irlower.f64arr_ret_fns_of(s.funcs);
+    var i64arf: string[] = irlower.i64arr_ret_fns_of(s.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(s.funcs);
+    var clf: string[] = irlower.closure_ret_fns_of(s.funcs);
+    var cf: string[] = irlower.const_fns_of(s.funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, i64rf, trf, strf, f64rf, f64arf, i64arf, fps, clf, cf);
         fi = fi + 1;
     }
     s = s.write("_start:\n");
