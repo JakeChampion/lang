@@ -1692,6 +1692,15 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                     if (cfa.field == "lines" && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
                     }
+                    // An array-receiver method `arr.m()` whose std/array helper
+                    // __method_Array_m RETURNS an array (reverse / sorted_asc /
+                    // distinct / …) is itself an array source — so a chained
+                    // `arr.reverse().join(...)` (reverse_words) recognises the
+                    // inner array and dispatches the outer array method.
+                    if (expr_is_arr_src(cfa.obj, s) || expr_is_strarr(cfa.obj, s) || expr_is_f64arr(cfa.obj, s) || expr_is_i64arr(cfa.obj, s)) {
+                        var amn: string = s.find_arr_method(cfa.field);
+                        if (amn.len() > 0 && s.is_arr_ret_fn(amn)) { return true; }
+                    }
                     return false;
                 },
                 _ => { return false; }
